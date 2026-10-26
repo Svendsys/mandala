@@ -1135,8 +1135,9 @@ mod section_cap_writer_tests {
     /// loop body), by a statement that propagates the guard's refusal —
     /// so a third writer cannot miss it the way the second did. A guard
     /// promises room for **one** section, so it covers only a single
-    /// `push` / `insert`, and in a loop only a guard that runs every
-    /// iteration does; a multi-element growth always fails.
+    /// `push` / `insert` — one per guard — and in a loop only a guard
+    /// that runs every iteration does; a multi-element growth always
+    /// fails.
     ///
     /// Fails when: a growth site's fn drops the guard or swallows its
     /// refusal, a new growth site is added without one, or a wholesale
@@ -1487,6 +1488,62 @@ impl Doc {
         Ok(())
     }
 
+    pub fn two_pushes_after_one_guard(&mut self, node: &mut MindNode) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        node.sections.push(MindSection::default());
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn two_growths_in_one_envelope(&mut self, id: &str) -> Result<(), String> {
+        validate::room_for_another_section(self.node(id)?)?;
+        self.mutate(id, move |n| {
+            n.sections.push(MindSection::default());
+            n.sections.insert(0, MindSection::default());
+            Some(0)
+        });
+        Ok(())
+    }
+
+    pub fn two_envelopes_after_one_guard(&mut self, id: &str) -> Result<(), String> {
+        validate::room_for_another_section(self.node(id)?)?;
+        self.mutate(id, move |n| {
+            n.sections.push(MindSection::default());
+            Some(0)
+        });
+        self.mutate(id, move |n| {
+            n.sections.push(MindSection::default());
+            Some(0)
+        });
+        Ok(())
+    }
+
+    pub fn two_pushes_per_iteration(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        for _ in 0..n {
+            validate::room_for_another_section(node)?;
+            node.sections.push(MindSection::default());
+            node.sections.push(MindSection::default());
+        }
+        Ok(())
+    }
+
+    pub fn push_in_from_fn_after_guard(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        std::iter::from_fn(|| {
+            node.sections.push(MindSection::default());
+            Some(())
+        })
+        .take(n)
+        .count();
+        Ok(())
+    }
+
+    pub fn push_in_boxed_closure_after_guard(&mut self, node: &mut MindNode, hooks: &mut Vec<Box<dyn FnMut()>>) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        hooks.push(Box::new(move || node.sections.push(MindSection::default())));
+        Ok(())
+    }
+
     pub fn replaces(&mut self, node: &mut MindNode, snapshot: Vec<MindSection>) {
         node.sections = snapshot;
     }
@@ -1551,6 +1608,16 @@ impl Doc {
                 ("err_arm_behind_a_match_guard", Single, false),
                 ("if_is_err_panics", Single, true),
                 ("match_ok_arm_returns", Single, false),
+                ("two_pushes_after_one_guard", Single, true),
+                ("two_pushes_after_one_guard", Single, false),
+                ("two_growths_in_one_envelope", Single, true),
+                ("two_growths_in_one_envelope", Single, false),
+                ("two_envelopes_after_one_guard", Single, true),
+                ("two_envelopes_after_one_guard", Single, false),
+                ("two_pushes_per_iteration", Single, true),
+                ("two_pushes_per_iteration", Single, false),
+                ("push_in_from_fn_after_guard", Single, false),
+                ("push_in_boxed_closure_after_guard", Single, false),
                 ("replaces", Assign, false),
                 ("mem_replace", Assign, false),
                 ("mem_swap", Assign, false),
@@ -1558,7 +1625,8 @@ impl Doc {
             ],
             "each planted site must be found once, in its own fn, with its kind, and guarded \
              only where it adds one element after a top-level statement of its own fn \
-             or loop body that propagates the guard's refusal; a read and a comment are not sites"
+             or loop body that propagates the guard's refusal, and no earlier site has \
+             spent that guard; a read and a comment are not sites"
         );
     }
 }

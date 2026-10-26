@@ -880,40 +880,50 @@ pub(crate) struct SectionGrowth {
 ///   repeated N times behind one check before the loop is N growths;
 ///   a site in a loop nested deeper needs a guard in its own body;
 /// - it is not inside an **opaque closure**. A closure written directly
-///   as a call's argument runs where the call does — the undo-envelope
-///   shape both shipped writers grow in — unless the call is one of
-///   [`ITERATING_CLOSURE_METHODS`], which run it per item. Any other
-///   closure (bound with `let`, returned, stored) is opaque: where and
-///   how often it is called is data flow, which a syntax scan cannot
-///   follow, so a growth in it is never guarded rather than guessed at.
-///   A `?` inside any closure ends the closure, not the fn, so a guard
-///   there never counts either.
+///   as a **method** call's argument runs where the call does — the
+///   undo-envelope shape both shipped writers grow in — unless the
+///   method is one of [`ITERATING_CLOSURE_METHODS`], which run it per
+///   item. Any other closure is opaque: one bound with `let`, returned
+///   or stored, and every closure argument of a *path* call
+///   (`iter::from_fn`, `repeat_with`, `Box::new`, `thread::spawn`, …),
+///   which may store it or call it any number of times. Where and how
+///   often an opaque closure runs is data flow, which a syntax scan
+///   cannot follow, so a growth in it is never guarded rather than
+///   guessed at;
+/// - the guard has **not been spent**. It promises room for one
+///   section, so it covers the first guardable site after it in its
+///   body and no other: a second `push` after one guard — in the same
+///   statement, the same envelope closure, a second envelope, or the
+///   same iteration — needs a guard of its own.
 ///
-///   The propagating shapes are four: `room_for_another_section(…)`
-///   followed only by `map_err(…)` / `ok()` and then `?` (as a
-///   statement or a `let` initializer); `let Ok(..) = room_for_another_section(…)
-///   else { … }` (the compiler makes the `else` diverge);
-///   `if room_for_another_section(…)….is_err() { … }` or
-///   `if let Err(..) = room_for_another_section(…) { … }` whose block
-///   **ends** in a diverging statement; or a
-///   `match room_for_another_section(…)` with an unguarded `Err(..)` arm
-///   that ends in one. Diverging means `return`, `break`, `continue`, a
-///   `panic!`-family macro or `Err(…)?` — a block that merely
-///   *contains* a `return` (`if strict { return … }`) can fall through,
-///   and does not count. The call counts as a path
-///   (`validate::room_for_another_section(n)`) or a method
-///   (`n.room_for_another_section()`).
+/// The propagating shapes are four: `room_for_another_section(…)`
+/// followed only by `map_err(…)` / `ok()` and then `?` (as a statement
+/// or a `let` initializer); `let Ok(..) = room_for_another_section(…)
+/// else { … }` (the compiler makes the `else` diverge);
+/// `if room_for_another_section(…)….is_err() { … }` or
+/// `if let Err(..) = room_for_another_section(…) { … }` whose block
+/// **ends** in a diverging statement; or a
+/// `match room_for_another_section(…)` with an unguarded `Err(..)` arm
+/// that ends in one. Diverging means `return`, `break`, `continue`, a
+/// `panic!`-family macro or `Err(…)?` — a block that merely *contains*
+/// a `return` (`if strict { return … }`) can fall through, and does not
+/// count. The call counts as a path (`validate::room_for_another_section(n)`)
+/// or a method (`n.room_for_another_section()`). A `?` inside any
+/// closure ends the closure, not the fn, so a guard there never counts.
 ///
 /// Not a guard, so reported unguarded: a discarded result (`let _ = …`),
 /// a call inside a closure or on a branch, a call after the growth, a
 /// refusal swallowed (`or_else(…)?`), inverted (`is_ok()`) or answered
 /// only conditionally, or a check in a helper the fn calls.
 ///
-/// Two approximations, stated so nobody reads in more: the guard is
+/// Three approximations, stated so nobody reads in more: the guard is
 /// **not tied to the growth's receiver** — `room_for_another_section(a)?`
 /// covers a later `b.sections.push(…)` — and the receiver's **type is
 /// not resolved**, so a `.sections` field on an unrelated struct is a
 /// site too (the conservative direction: it is reported, not missed).
+/// And a third, in the same direction: guards are spent in source
+/// order, not per path, so `room(n)?; if a { push } else { push }`
+/// reports the second push although only one of the two runs.
 ///
 /// What this cannot see: a growth through a binding
 /// (`let s = &mut node.sections; s.push(…)`), a raw pointer, or code
@@ -964,19 +974,21 @@ fn scan_fn_body(function: &str, body: &syn::Block, out: &mut Vec<SectionGrowth>)
         };
         syn::visit::Visit::visit_stmt(&mut finder, stmt);
         for site in finder.found {
-            let covered = if site.loop_depth == 0 {
-                guard_seen
-            } else {
-                site.iteration_guarded
-            };
+            let guarded = site.guardable()
+                && if site.loop_depth == 0 {
+                    // One guard is room for one section: the first
+                    // guardable site after it spends it, and the next
+                    // growth needs a guard of its own.
+                    std::mem::take(&mut guard_seen)
+                } else {
+                    site.iteration_guarded
+                };
             out.push(SectionGrowth {
                 file: String::new(),
                 line: site.line,
                 function: function.to_string(),
                 kind: site.kind,
-                guarded: covered
-                    && !site.in_opaque_closure
-                    && matches!(site.kind, GrowthKind::Single | GrowthKind::Ufcs),
+                guarded,
             });
         }
         if propagates_section_guard(stmt) {
@@ -1020,6 +1032,14 @@ struct FoundSite {
     in_opaque_closure: bool,
 }
 
+impl FoundSite {
+    /// Whether a guard could cover this site at all: one element added,
+    /// outside an opaque closure. A guard is spent only on such a site.
+    fn guardable(&self) -> bool {
+        matches!(self.kind, GrowthKind::Single | GrowthKind::Ufcs) && !self.in_opaque_closure
+    }
+}
+
 /// Collects the sites inside one statement, each with its loop depth
 /// and whether its innermost loop body guards every iteration. Nested
 /// fn items are skipped — the outer visitor scans them as fns of their
@@ -1043,11 +1063,11 @@ impl GrowthFinder {
         });
     }
 
-    /// Visit one argument of a call. A closure written directly as the
-    /// argument is walked as code that runs where the call runs — the
-    /// undo-envelope shape both shipped writers grow in. Any other
-    /// argument goes through the ordinary visitor, where a closure
-    /// nested deeper is opaque.
+    /// Visit one argument of a (non-iterating) **method** call. A
+    /// closure written directly as the argument is walked as code that
+    /// runs where the call runs — the undo-envelope shape both shipped
+    /// writers grow in. Any other argument goes through the ordinary
+    /// visitor, where a closure nested deeper is opaque.
     fn visit_call_arg(&mut self, arg: &syn::Expr) {
         match arg {
             syn::Expr::Closure(closure) => syn::visit::visit_expr_closure(self, closure),
@@ -1066,11 +1086,12 @@ impl GrowthFinder {
         for stmt in &body.stmts {
             let start = self.found.len();
             syn::visit::Visit::visit_stmt(self, stmt);
-            if guard_seen {
-                for site in &mut self.found[start..] {
-                    if site.loop_depth == self.loop_depth {
-                        site.iteration_guarded = true;
-                    }
+            for site in &mut self.found[start..] {
+                // As at fn level, the guard covers the first guardable
+                // site after it in this iteration, and only that one.
+                if guard_seen && site.loop_depth == self.loop_depth && site.guardable() {
+                    site.iteration_guarded = true;
+                    guard_seen = false;
                 }
             }
             if propagates_section_guard(stmt) {
@@ -1084,9 +1105,9 @@ impl GrowthFinder {
 impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
     fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
 
-    /// Reached only for a closure that is not a direct call argument
-    /// (those go through [`GrowthFinder::visit_call_arg`]), or one
-    /// handed to an iterating method.
+    /// Reached for every closure except one written directly as the
+    /// argument of a non-iterating method call (those go through
+    /// [`GrowthFinder::visit_call_arg`]).
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
         self.opaque_closure_depth += 1;
         syn::visit::visit_expr_closure(self, closure);
@@ -1161,8 +1182,12 @@ impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
             }
         }
         self.visit_expr(&call.func);
+        // A closure passed to a path call is opaque: `iter::from_fn`,
+        // `repeat_with`, `Box::new`, `thread::spawn` and the like store it
+        // or call it any number of times, and a path names no receiver
+        // the way the undo envelope's method call does.
         for arg in &call.args {
-            self.visit_call_arg(arg);
+            self.visit_expr(arg);
         }
     }
 

@@ -54,9 +54,10 @@ that moved.
    scanning the shipped source for growth sites; `split_section`
    skipped the check until #208. The guard promises room for one
    section, so the scan accepts it only before a single `push` /
-   `insert` — in a loop, only when the guard runs in the same loop
-   body, once per iteration; a writer that adds several at once has
-   to bound its count against the constant itself.
+   `insert`, and one guard covers one such growth — a second needs a
+   guard of its own. In a loop, only a guard in the same loop body,
+   run once per iteration, counts; a writer that adds several at once
+   has to bound its count against the constant itself.
 3. **Coherence — `verify` reports.** Everything else: a file that
    loads and renders but still says something incoherent. Dangling
    edge references, a Dewey ID that disagrees with `parent_id`, an
