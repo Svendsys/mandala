@@ -190,7 +190,11 @@ shipped the Unix transport):
   to remove at exit: a pipe vanishes with its server's last handle.
 - **Single controller.** The acceptor keeps one instance waiting; a
   client that connects while a controller is attached gets
-  `connection_rejected` and is disconnected, exactly as on Unix.
+  `connection_rejected` at once and its connection is closed, as on
+  Unix. The acceptor never waits on it: the frame is written on the
+  pipe's I/O runtime, and a refused client that has not taken it
+  within a second is disconnected (on Unix the frame is one
+  non-blocking write).
 - **Half-close** does not exist for a pipe. A client that closes its
   end still has a final unterminated line executed, but it cannot read
   the reply, so send a terminated line and read before closing.

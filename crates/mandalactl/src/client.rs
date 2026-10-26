@@ -763,9 +763,11 @@ mod pipe_wire {
                         .map_err(|_| io::Error::from(ErrorKind::BrokenPipe))?;
                     self.read_pending = true;
                 }
-                let chunk = wait(&self.chunks, self.read_timeout.get())??;
+                // A timeout leaves the read pending; a result taken off
+                // the channel, error or not, ends it.
+                let read = wait(&self.chunks, self.read_timeout.get())?;
                 self.read_pending = false;
-                self.leftover = chunk;
+                self.leftover = read?;
                 if self.leftover.is_empty() {
                     return Ok(0);
                 }

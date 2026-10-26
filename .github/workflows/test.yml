@@ -84,13 +84,18 @@ jobs:
   # has never run on Windows: making all of it pass there is a port of
   # its own, not part of a transport. What this job holds instead:
   #
-  # - clippy over the app crate with every target, `-D warnings` — a
-  #   hard gate as on Linux, and the only lint the `cfg(windows)` code
-  #   gets;
+  # - clippy over the app crate and `mandalactl`, every target,
+  #   `-D warnings` — a hard gate as on Linux, and the only lint the
+  #   `cfg(windows)` code on either side gets;
   # - the `ipc::` tests: the transport's loopback suite against a real
   #   pipe (and `mandalactl` round-tripping a `ping` over it), the
   #   pipe's own unit tests, and the protocol tests above the
-  #   transport.
+  #   transport;
+  # - `mandalactl`'s connection tests (`client::`), the part of its
+  #   suite the pipe client shares with the socket one. Not the rest of
+  #   that suite: its path-parameter tests spell Unix paths
+  #   (`/work/dump.json`), so running them here is the same port as
+  #   running `./test.sh`, not part of a transport.
   #
   # Same triggers as the Linux job, so a pull request cannot merge red on
   # the platform this code is for.
@@ -116,7 +121,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy, Windows (hard)
-        run: cargo clippy -p mandala --all-targets -- -D warnings
+        run: cargo clippy -p mandala -p mandalactl --all-targets -- -D warnings
 
       # A filter that matches nothing passes with "0 passed", which would
       # turn this job green while testing nothing — a renamed module, a
@@ -130,5 +135,17 @@ jobs:
           echo "ipc:: tests passed: $count"
           if [ "$count" -eq 0 ]; then
             echo "FAILED: the ipc:: filter selected no tests"
+            exit 1
+          fi
+
+      - name: The mandalactl connection tests, Windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p mandalactl --lib client:: 2>&1 | tee client-tests.log
+          count=$(grep -Eo 'test result: ok\. [0-9]+ passed' client-tests.log | awk '{ sum += $4 } END { print sum + 0 }')
+          echo "mandalactl client:: tests passed: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "FAILED: the client:: filter selected no tests"
             exit 1
           fi

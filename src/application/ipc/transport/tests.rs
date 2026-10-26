@@ -454,6 +454,39 @@ fn test_ipc_loopback_half_close_still_gets_every_reply() {
     assert!(client.at_eof(), "the server closes once every reply is written");
 }
 
+/// A client that closes its connection right after a final line it
+/// did not terminate still has that line executed — on the pipe too,
+/// which has no half-close to fall back on, so this is the one way a
+/// pipe client ends its input (`format/ipc.md` §Windows). The failing
+/// inputs are a reader that takes the close for an error rather than
+/// end-of-file, which drops the line, and a disconnect that overtakes
+/// the request.
+#[test]
+fn test_ipc_loopback_a_final_unterminated_line_runs_after_the_client_closes() {
+    let mut harness = Harness::paused("ipc-unterminated");
+    let mut client = Client::connect(&harness.path);
+    assert_eq!(client.next()["event"], json!("hello"));
+    client
+        .writer
+        .write_all(br#"{"id":"last","cmd":"ping"}"#)
+        .expect("write the unterminated line");
+    drop(client);
+
+    let mut ran = Vec::new();
+    let deadline = Instant::now() + FRAME_TIMEOUT;
+    while ran.is_empty() {
+        harness
+            .wakes()
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("the line reached the main thread before the deadline");
+        harness.server().drain(|request, session| {
+            ran.push(request.id.clone());
+            execute_detached(request, session)
+        });
+    }
+    assert_eq!(ran, vec![json!("last")]);
+}
+
 #[test]
 fn test_ipc_loopback_answers_a_pipelined_burst_in_full_and_in_order() {
     // The main thread executes a burst as fast as it can, while the

@@ -42,7 +42,7 @@
 //! (`ipc: listening on …` is logged after).
 //!
 //! **Why tokio, and why its instances.** A pipe has no `SO_SNDTIMEO`,
-//! and a blocking pipe write cannot be cancelled without `unsafe`. The
+//! and a blocking pipe write cannot be canceled without `unsafe`. The
 //! stalled-write rule needs both. A tokio instance gives the timeout
 //! (an overlapped write raced against a timer) and the cancellation:
 //! [`NamedPipeServer::disconnect`], which fails the server's pending
@@ -459,6 +459,12 @@ mod tests {
     /// accepted by Windows. The failing input is an edit that widens it:
     /// dropping `P` would let the pipe inherit ACEs, and any added ACE
     /// would let someone besides the owner in.
+    ///
+    /// This holds the text, not its application: deleting
+    /// `.security_descriptor(Some(descriptor))` from `bind` passes it,
+    /// and so does the same-user round trip. Reading the descriptor
+    /// back off the live pipe (`GetSecurityInfo`) has no safe API in
+    /// the graph, so that line is held by review, not by a test.
     #[test]
     fn test_the_pipe_is_created_owner_only() {
         assert_eq!(SDDL, "D:P(A;;GA;;;OW)");

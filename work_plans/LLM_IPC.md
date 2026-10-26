@@ -341,6 +341,19 @@ auditable shape this boundary can have; the single-controller
 promise (D-transport) is exactly why accept and read are *separate*
 blocking loops rather than one.
 
+*As built for Windows (#169):* the named pipe's transport runs a
+one-worker tokio runtime (`mandala-ipc-io`, `ipc/transport/pipe.rs`)
+under the same three threads, and it is not the loop rejected above.
+Each boundary thread still makes one blocking call at a time — the
+acceptor waits for one client, a reader for one read, a writer for one
+write step — through `Runtime::block_on`, so each body is still
+"blocking call, forward, repeat", written once above a four-trait seam
+(`ipc/transport/connection.rs`) that the Unix socket implements
+unchanged. No readiness state machine or partial-write buffering is
+written here: the worker is tokio's driver, and it exists because a
+pipe has neither a write timeout nor a safe way to disconnect a client
+stalled on one without it.
+
 **Watchdog interplay (pinned invariants).** Commands execute inside
 `about_to_wait`, which ticks `unparked()` on entry like every
 handler (as does the `user_event` wake), so a command that wedges

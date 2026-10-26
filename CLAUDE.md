@@ -392,9 +392,11 @@ the parity trajectory (or why none is owed):
   of this file, and every other document, is on your own care.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
-- **Drive the running app over IPC** (native, Unix): launch with
+- **Drive the running app over IPC** (native): launch with
   `--ipc <socket-path>` — `$XDG_RUNTIME_DIR/mandala.sock` is the
-  recommended place — then speak newline-delimited JSON to it, e.g.
+  recommended place; on Windows the value is a pipe name instead,
+  `--ipc mandala` serving `\\.\pipe\mandala-mandala`, and `mandalactl`
+  takes the same name — then speak newline-delimited JSON to it, e.g.
   `printf '{"id":1,"cmd":"ping"}\n' | nc -N -U $XDG_RUNTIME_DIR/mandala.sock`
   (`-N` closes the write half after the request; the server answers
   everything it received, then closes).

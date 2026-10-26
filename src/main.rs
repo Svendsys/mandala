@@ -61,16 +61,18 @@ const MAX_SURFACE_SIDE: u32 = 16_384;
 ///
 /// A value is never another flag: `--size --headless` is a forgotten
 /// size, not a size spelled `--headless`, and that flag is left to be
-/// parsed as itself. `--ipc` with no path after it is the one flag
-/// whose missing value is kept rather than refused — as an *empty*
-/// path, which the listener refuses by name — so its refusal reads the
-/// same however the path went missing; running without the IPC the user
-/// asked for would be the silent no-op `format/ipc.md` rules out.
+/// parsed as itself. `--ipc` with no value after it — a socket path, or
+/// on Windows a pipe name — is the one flag whose missing value is kept
+/// rather than refused, as an *empty* one, which the listener refuses
+/// by name — so its refusal reads the same however the value went
+/// missing; running without the IPC the user asked for would be the
+/// silent no-op `format/ipc.md` rules out.
 ///
 /// Three combinations are refused whole: `--overwrite` without
 /// `--screenshot` (it qualifies nothing), and `--headless` with neither
-/// `--ipc` nor `--screenshot` — an app with no window, no socket and no
-/// capture can neither be driven nor seen, and would run until killed.
+/// `--ipc` nor `--screenshot` — an app with no window, no IPC endpoint
+/// and no capture can neither be driven nor seen, and would run until
+/// killed.
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliArgs, String> {
     use std::path::PathBuf;
@@ -132,8 +134,8 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliArgs, String> 
     }
     if cli.headless && cli.ipc_socket.is_none() && cli.screenshot.is_none() {
         return Err(
-            "--headless needs --ipc <socket> or --screenshot <path>: with no window, a socket or a \
-             capture is the only way in or out"
+            "--headless needs --ipc <socket, or pipe name on Windows> or --screenshot <path>: with no \
+             window, an IPC endpoint or a capture is the only way in or out"
                 .into(),
         );
     }
