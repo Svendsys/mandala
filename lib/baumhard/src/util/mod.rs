@@ -66,6 +66,12 @@ pub(crate) mod manifests;
 /// Hashable, `Eq`-able 2D float vector (each axis wrapped in
 /// `OrderedFloat`).
 pub mod ordered_vec2;
+/// No Rust comment cites a work plan by an unnamed section, batch,
+/// risk or review-finding number — the class `aa73bcd0` stripped,
+/// held so it does not regrow. Test-only and native-only for the
+/// same reasons `source_scan`, whose walker it reads through, is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod plan_refs;
 /// Lazy Sieve of Eratosthenes — the prime table the region-params
 /// grid chooser consults to avoid prime dimension factors.
 pub mod primes;
