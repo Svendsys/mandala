@@ -633,7 +633,8 @@ pub(in crate::application::app) fn handle_text_edit_key(
         )
     });
     // `TextEditCommit` / `TextEditCancel` are funneled via the
-    // keyboard handler's pre-filter (`event_keyboard.rs:135-153`).
+    // keyboard handler's pre-filter (`ModalEditor::stealing` +
+    // `steal_key_for_modal` in `event_keyboard.rs`).
     // This handler reaches only the literal-Key character + cursor
     // primitive paths.
 

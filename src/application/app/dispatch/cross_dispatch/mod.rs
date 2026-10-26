@@ -89,10 +89,10 @@ pub(in crate::application::app) use selection::*;
 pub(in crate::application::app) use style::*;
 
 /// Pure inner helper for the keybind-triggered custom-mutation path.
-/// Runs the same animation-aware apply + always-`apply_document_actions`
-/// sequence the click-trigger path at `click.rs:35-64` uses, but
-/// without touching the renderer. Returns `true` when the mutation
-/// was applied.
+/// Runs the same animation-aware apply + `apply_document_actions`
+/// sequence the click-trigger path (`click_triggers::fire_onclick_triggers`)
+/// uses, but without touching the renderer, and with the differences
+/// the body below names. Returns `true` when the mutation was applied.
 ///
 /// Cross-platform: takes only `MindMapDocument`, `Option<MindMapTree>`,
 /// `SceneConnectionCache`, `CustomMutation`, `node_id`, `now_ms`.
