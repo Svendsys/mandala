@@ -1073,9 +1073,13 @@ fn test_a_second_press_on_a_resize_handle_grabs_it_inside_the_double_click_windo
 /// **A finger's tap and then drag on a resize handle resizes** (#218):
 /// since #160 a finger on a handle is the left button, so the tap is a
 /// click and the drag a second press inside the double-click window,
-/// through the real `dispatch_touch_event`. Before #218 the drag
-/// opened the text editor and resized nothing, exactly as the mouse
-/// did; the mouse test above holds the double-click control.
+/// through the real `dispatch_touch_event`. The finger lands on the
+/// same grip as the mouse test, 3 px inside the corner, on the handle
+/// and on node 1's body (both asserted), so before #218 the drag
+/// completed a double-click on node 1, opened its text editor and
+/// resized nothing, exactly as the mouse did. The editor is checked
+/// first, so that is the failure the old code gives; the mouse test
+/// above holds the double-click control.
 #[test]
 fn test_a_finger_tapping_then_dragging_a_resize_handle_resizes() {
     use crate::application::platform::input::TouchPhase;
@@ -1088,11 +1092,16 @@ fn test_a_finger_tapping_then_dragging_a_resize_handle_resizes() {
     resize_node_1(init);
     zoom_onto_node_1(init);
     let (pos, size) = node_1_rect(init);
-    let se = init.renderer.canvas_to_screen(pos + size);
+    let grip = pos + size - glam::Vec2::splat(3.0) * init.renderer.canvas_per_pixel();
     assert!(
-        on_node_1_resize_handle(init, pos + size),
-        "precondition: node 1's SE corner must be its resize handle in Resize mode"
+        on_node_1_resize_handle(init, grip),
+        "precondition: the grip inside node 1's SE corner must be on its resize handle in Resize mode"
     );
+    assert!(
+        matches!(press_lands_on(init, grip), super::ClickHit::Node(ref id, None) if id == "1"),
+        "precondition: a press on the grip lands on node 1's body too"
+    );
+    let se = init.renderer.canvas_to_screen(grip);
     let at = |i: f32| PhysicalPosition::new(f64::from(se.x + i * 8.0), f64::from(se.y + i * 8.0));
 
     init.input_context()
@@ -1111,15 +1120,15 @@ fn test_a_finger_tapping_then_dragging_a_resize_handle_resizes() {
         .dispatch_touch_event(TouchPhase::Ended, 2, at(5.0));
     init.input_context().drain_frame(Beat::Loop);
 
-    let (_, resized) = node_1_rect(init);
-    assert!(
-        resized.x > size.x && resized.y > size.y,
-        "a finger's tap and drag on the SE handle must grow the node: {size:?} -> {resized:?}"
-    );
     assert_eq!(
         init.text_edit_state.node_id(),
         None,
         "the drag must not complete a double-click into the text editor"
+    );
+    let (_, resized) = node_1_rect(init);
+    assert!(
+        resized.x > size.x && resized.y > size.y,
+        "a finger's tap and drag on the SE handle must grow the node: {size:?} -> {resized:?}"
     );
 }
 
