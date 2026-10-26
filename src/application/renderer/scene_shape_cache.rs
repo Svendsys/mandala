@@ -255,11 +255,11 @@ impl ScenePassKind {
 ///
 /// Returned rather than merely performed for the reason
 /// `RebuildTier` on the app side is a value rather than a statement:
-/// the pass runs inside a `Renderer`, and TEST_CONVENTIONS §T8 keeps
-/// live wgpu out of the harness, so a granularity claim about it has
-/// to be observable from somewhere a test can stand. `refresh` takes
-/// a `&Scene` and not a renderer precisely so that place exists, and
-/// these counts are what the claim is made in.
+/// the pass runs inside a `Renderer`, and the renderer-free tier of
+/// the suite (TEST_CONVENTIONS §T8) has no device, so a granularity
+/// claim about it has to be observable from somewhere a test can
+/// stand. `refresh` takes a `&Scene` and not a renderer precisely so
+/// that place exists, and these counts are what the claim is made in.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct ScenePassCounts {
     /// Walk positions visited across every visible tree of the

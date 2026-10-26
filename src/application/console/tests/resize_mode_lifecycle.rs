@@ -8,8 +8,8 @@
 //!
 //! The actual `Action::ExitMode` / `Action::EnterResizeMode`
 //! dispatch arms aren't invoked here (they sit behind
-//! `RebuildContext`, which needs a `Renderer` we can't construct
-//! per `TEST_CONVENTIONS §T8`). Instead we mirror the
+//! `RebuildContext`, which needs a `Renderer` only the GPU-backed
+//! tier of `TEST_CONVENTIONS §T8` builds). Instead we mirror the
 //! `apply_enter_resize_mode` resolver path via the console verb's
 //! side-effect, manually flip `interaction_mode` (matching what
 //! the dispatcher's `SetInteractionMode` consumer does), and

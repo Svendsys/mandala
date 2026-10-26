@@ -159,8 +159,8 @@ pub(in crate::application::app) fn apply_delete_selection(rc: &mut RebuildContex
 /// What `apply_enter_node_edit` should do given the current
 /// (selection, model) state. Pure function output — the testable
 /// half of the action helper, separated from the renderer-driving
-/// side of `apply_enter_node_edit` itself (per `TEST_CONVENTIONS
-/// §T8`, the renderer-touching arms can't run under `cargo test`).
+/// side of `apply_enter_node_edit` itself, which only the GPU-backed
+/// tier of `TEST_CONVENTIONS §T8` runs, one app at a time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::application::app) enum EnterNodeEditPlan {
     /// Selection has no node target (Multi / MultiSection / Edge /

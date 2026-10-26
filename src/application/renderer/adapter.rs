@@ -215,6 +215,21 @@ async fn by_name(
     Ok((adapter, device, queue))
 }
 
+/// Whether this machine has an adapter that can open a device under
+/// `policy`, through [`acquire`] itself — the plan the app runs, with
+/// no surface, as the headless bootstrap asks. `Ok` names the adapter;
+/// `Err` carries every attempt's failure. For the GPU-backed test
+/// harness (`app::gpu_harness`), which asks once per process and skips
+/// with a note on `Err`. The device opened here is dropped with the
+/// answer: the probe says whether an app *could* be built, and the
+/// harness then builds one through the same bootstrap the app uses.
+#[cfg(test)]
+pub(crate) async fn probe_adapter(policy: AdapterPolicy) -> Result<String, String> {
+    let instance = Instance::new(instance_descriptor());
+    let (adapter, _device, _queue) = acquire(&instance, None, policy).await?;
+    Ok(adapter.get_info().name)
+}
+
 /// A device and its queue on `adapter`, with the limits every target
 /// shares: the downlevel defaults, raised to what the adapter offers.
 async fn open_device(adapter: &Adapter) -> Result<(Device, Queue), wgpu::RequestDeviceError> {
