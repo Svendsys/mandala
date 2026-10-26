@@ -461,13 +461,13 @@ industrial cost/benefit reasoning. This is not license for speculation.
   reader runs it. `test_no_doc_names_an_identifier_that_does_not_exist`
   (`lib/baumhard/src/util/doc_identifiers.rs`) reads every `///` and
   `//!` on an item in the tree — `cfg(test)` and `cfg(wasm32)` modules
-  included; `//` comments, Markdown and doc comments on statements
-  inside a function body are not read — and fails on a backticked
-  `snake_case` name that is qualified (`Type::method`,
-  `module::function`, `Self::…`) and not declared by that type or
-  module, or that is a bare multi-word name no file's code writes and
-  nothing declares. A
-  deliberate mention of a removed item is fine and sometimes required
+  included; `//` comments, Markdown, doc comments on statements inside
+  a function body, and a span rustfmt wrapped across two doc lines are
+  not read — and fails on a backticked `snake_case` name that is
+  qualified (`Type::method`, `module::function`, `Self::…`) and not
+  declared by that type or module, or that is a bare multi-word name
+  no file's code writes and nothing declares. A deliberate mention of
+  a removed item is fine and sometimes required
   — naming the input that made a regression test fail, or the shape a
   rewrite replaced — and it carries its own disclosure so a reader is
   never sent looking: write `(gone)` directly after the closing
