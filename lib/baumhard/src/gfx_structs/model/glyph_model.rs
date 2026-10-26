@@ -51,6 +51,27 @@ impl GlyphModel {
         }
     }
 
+    /// Whether `self` and `other` hold the same state: every field,
+    /// the `hitbox` included — which `==` ignores. The comparison a
+    /// journal closes on
+    /// ([`TreeElement::same_state`](crate::engine::element::TreeElement::same_state)).
+    ///
+    /// Cost: O(glyph matrix + hit rectangles); no allocation. The body
+    /// destructures `self`, so a field added to this struct will not
+    /// compile until it is accounted for here.
+    pub fn same_state(&self, other: &Self) -> bool {
+        let GlyphModel {
+            glyph_matrix,
+            layer,
+            position,
+            hitbox,
+        } = self;
+        *glyph_matrix == other.glyph_matrix
+            && *layer == other.layer
+            && *position == other.position
+            && *hitbox == other.hitbox
+    }
+
     /// Borrow the hit-box. O(1).
     pub fn hitbox(&self) -> &HitBox {
         &self.hitbox

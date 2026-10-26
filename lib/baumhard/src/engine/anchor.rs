@@ -23,9 +23,10 @@
 //! ordered by their keys alone — the sorted-children invariant.
 
 use crate::engine::element::{TreeCache, TreeElement};
+use crate::engine::journal::JournalBuilder;
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
-use crate::engine::walker::{walk_anchor, Rekeyed};
+use crate::engine::walker::{walk_anchor, Walk};
 use indextree::{Arena, NodeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -59,14 +60,17 @@ impl Anchors {
     }
 }
 
-/// The body of [`MutatorTree::apply_at`]: validate, resolve to the
-/// root's kind, drop nested anchors, order, seed every anchor, then
-/// walk each one. See that method for the contract and its cost.
+/// The body of [`MutatorTree::apply_at`] and
+/// [`MutatorTree::apply_at_journaled`]: validate, resolve to the root's
+/// kind, drop nested anchors, order, seed every anchor, then walk each
+/// one, recording into `journal` when there is one. See `apply_at` for
+/// the contract and its cost.
 pub(in crate::engine) fn apply_anchored<E, M, F>(
     mutator_tree: &MutatorTree<E, M>,
     tree: &mut Tree<E>,
     anchors: &Anchors,
     seed_for: F,
+    journal: Option<&mut JournalBuilder<E>>,
 ) -> Result<(), TreeError>
 where
     E: TreeElement,
@@ -121,11 +125,11 @@ where
         })
         .collect();
 
-    let mut rekeyed = Rekeyed::default();
+    let mut walk = Walk::new(journal);
     for (anchor, seed) in &seeded {
-        walk_anchor(tree, mutator_tree, *anchor, seed, &mut rekeyed);
+        walk_anchor(tree, mutator_tree, *anchor, seed, &mut walk);
     }
-    rekeyed.settle(tree);
+    walk.settle(tree);
     tree.cache.invalidate();
     Ok(())
 }

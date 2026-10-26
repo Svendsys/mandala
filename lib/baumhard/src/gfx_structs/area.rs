@@ -289,6 +289,53 @@ impl GlyphArea {
         zoom_visibility.hash(state);
     }
 
+    /// Whether `self` and `other` hold the same state: every field
+    /// compared, the region colors and font pins and the `hitbox`
+    /// included.
+    ///
+    /// This is the comparison a journal closes on
+    /// ([`TreeElement::same_state`](crate::engine::element::TreeElement::same_state)),
+    /// and `==` cannot be it: `PartialEq` ignores `hitbox`, and compares
+    /// `regions` by range alone ([`ColorFontRegions::same_content`]
+    /// says why), so a recolor compares equal to the area it replaced —
+    /// and a journal that took `==` would drop the recolor and could
+    /// not revert it. Floats compare by value, so `0.0` and `-0.0` are
+    /// the same state.
+    ///
+    /// Cost: O(text bytes + region count + hit rectangles); no
+    /// allocation. The body destructures `self`, so a field added to
+    /// this struct will not compile until it is accounted for here.
+    pub fn same_state(&self, other: &Self) -> bool {
+        let GlyphArea {
+            text,
+            scale,
+            line_height,
+            position,
+            render_bounds,
+            regions,
+            background_color,
+            background_padding,
+            align_center,
+            outline,
+            shape,
+            zoom_visibility,
+            hitbox,
+        } = self;
+        *text == other.text
+            && *scale == other.scale
+            && *line_height == other.line_height
+            && *position == other.position
+            && *render_bounds == other.render_bounds
+            && regions.same_content(&other.regions)
+            && *background_color == other.background_color
+            && *background_padding == other.background_padding
+            && *align_center == other.align_center
+            && *outline == other.outline
+            && *shape == other.shape
+            && *zoom_visibility == other.zoom_visibility
+            && *hitbox == other.hitbox
+    }
+
     /// Construct an empty-text area with the given metrics and
     /// placement. Regions and hitbox start empty; `align_center`,
     /// `background_color`, `background_padding`, and `outline`

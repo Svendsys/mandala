@@ -12,6 +12,7 @@
 
 use crate::core::primitives::{ColorFontRegionField, Flag, Flaggable, Range};
 use crate::engine::element::TreeElement;
+use crate::engine::interpolate::{Interpolable, Interpolate, Snap};
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
 use crate::gfx_structs::model::{GlyphModel, GlyphModelField};
 use crate::gfx_structs::mutator::GlyphTreeEventInstance;
@@ -21,6 +22,7 @@ use crate::util::geometry::clockwise_rotation_around_pivot;
 use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
 use log::warn;
+use ordered_float::OrderedFloat;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
@@ -66,10 +68,15 @@ pub enum GfxElementField {
 /// Cost: construction allocates a `Box` for the inner glyph type
 /// (except `Void`). Field access is O(1) with a single match.
 ///
+/// `Clone` copies every field — payload, flags, channel, id and the
+/// subscriber handles (`Rc` clones, not new callbacks). A journal's
+/// before-image is a clone, so a clone that dropped a field would make
+/// the journal's `revert` drop it too.
+///
 /// The payload-free `GfxElementType` tag is derived from this enum
 /// and reached through
 /// [`Discriminated::variant`](crate::core::primitives::Discriminated::variant).
-#[derive(EnumDiscriminants)]
+#[derive(Clone, EnumDiscriminants)]
 #[strum_discriminants(name(GfxElementType))]
 #[strum_discriminants(derive(Hash))]
 #[strum_discriminants(doc = "Payload-free tag for [`GfxElement`], derived by strum. Lets a")]
@@ -481,33 +488,6 @@ impl PartialEq for GfxElement {
     }
 }
 
-impl Clone for GfxElement {
-    fn clone(&self) -> Self {
-        // Direct pattern-match on `self` binds the payload without
-        // needing a second `variant()` dispatch + `unwrap()` on the
-        // accessor. The subscriber copy is a common tail handled once.
-        let mut output = match self {
-            GfxElement::GlyphArea { glyph_area, .. } => {
-                // `glyph_area` is `Box<GlyphArea>`; deref + clone hands
-                // the constructor a bare `GlyphArea` by value.
-                GfxElement::new_area_non_indexed_with_id(
-                    (**glyph_area).clone(),
-                    self.channel(),
-                    self.unique_id(),
-                )
-            }
-            GfxElement::GlyphModel { glyph_model, .. } => GfxElement::new_model_non_indexed_with_id(
-                (**glyph_model).clone(),
-                self.channel(),
-                self.unique_id(),
-            ),
-            GfxElement::Void { .. } => GfxElement::new_void_with_id(self.channel(), self.unique_id()),
-        };
-        *output.subscribers_mut() = self.subscribers_as_ref().clone();
-        output
-    }
-}
-
 impl TreeEventConsumer for GfxElement {
     fn accept_event(&mut self, event: &GlyphTreeEventInstance) {
         // Snapshot the `Rc` handles before invoking any callback.
@@ -560,6 +540,74 @@ impl TreeElement for GfxElement {
         Self::new_void_with_id(0, 0)
     }
 
+    /// The same variant with the same payload state
+    /// ([`GlyphArea::same_state`], [`GlyphModel::same_state`]), the
+    /// same flags, channel and unique id. The event subscribers are
+    /// callbacks, not state, and are not compared; the subtree AABBs
+    /// are derived, and live in the tree's [`GlyphTreeCache`], not on
+    /// the element.
+    fn same_state(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                GfxElement::GlyphArea {
+                    glyph_area,
+                    flags,
+                    channel,
+                    unique_id,
+                    event_subscribers: _,
+                },
+                GfxElement::GlyphArea {
+                    glyph_area: other_area,
+                    flags: other_flags,
+                    channel: other_channel,
+                    unique_id: other_id,
+                    event_subscribers: _,
+                },
+            ) => {
+                glyph_area.same_state(other_area)
+                    && flags == other_flags
+                    && channel == other_channel
+                    && unique_id == other_id
+            }
+            (
+                GfxElement::GlyphModel {
+                    glyph_model,
+                    flags,
+                    channel,
+                    unique_id,
+                    event_subscribers: _,
+                },
+                GfxElement::GlyphModel {
+                    glyph_model: other_model,
+                    flags: other_flags,
+                    channel: other_channel,
+                    unique_id: other_id,
+                    event_subscribers: _,
+                },
+            ) => {
+                glyph_model.same_state(other_model)
+                    && flags == other_flags
+                    && channel == other_channel
+                    && unique_id == other_id
+            }
+            (
+                GfxElement::Void {
+                    channel,
+                    unique_id,
+                    flags,
+                    event_subscribers: _,
+                },
+                GfxElement::Void {
+                    channel: other_channel,
+                    unique_id: other_id,
+                    flags: other_flags,
+                    event_subscribers: _,
+                },
+            ) => channel == other_channel && unique_id == other_id && flags == other_flags,
+            _ => false,
+        }
+    }
+
     fn inherit(&self, _parent: &()) {}
 
     /// `(position, render_bounds)` of a `GlyphArea` whose render
@@ -569,6 +617,51 @@ impl TreeElement for GfxElement {
         let area = self.glyph_area()?;
         let bounds = area.render_bounds.to_vec2();
         (bounds.x > 0.0 && bounds.y > 0.0).then(|| (area.position.to_vec2(), bounds))
+    }
+}
+
+/// The glyph instantiation's interpolation. Between two `GlyphArea`s,
+/// `position`, `render_bounds`, `scale` and `line_height` interpolate,
+/// and so does `background_color` when both sides have one (per
+/// channel, rounded); between two `GlyphModel`s, `position`
+/// interpolates. Every other field — the text, the regions, a
+/// background color present on one side only, the flags, the channel,
+/// the id — takes the before or the after element by `snap`, and so
+/// does the whole element when the two are different variants.
+///
+/// Cost: one clone of the element `snap` picks, plus O(1) per
+/// interpolated field.
+impl Interpolable for GfxElement {
+    fn interpolate(before: &Self, after: &Self, t: f32, snap: Snap) -> Self {
+        let mut out = snap.pick(before, after, t).clone();
+        match (before, after, &mut out) {
+            (
+                GfxElement::GlyphArea { glyph_area: from, .. },
+                GfxElement::GlyphArea { glyph_area: to, .. },
+                GfxElement::GlyphArea { glyph_area: area, .. },
+            ) => {
+                area.position = OrderedVec2::lerp(&from.position, &to.position, t);
+                area.render_bounds = OrderedVec2::lerp(&from.render_bounds, &to.render_bounds, t);
+                area.scale = OrderedFloat::lerp(&from.scale, &to.scale, t);
+                area.line_height = OrderedFloat::lerp(&from.line_height, &to.line_height, t);
+                if let (Some(from_color), Some(to_color)) = (from.background_color, to.background_color) {
+                    area.background_color = Some(<[u8; 4]>::lerp(&from_color, &to_color, t));
+                }
+            }
+            (
+                GfxElement::GlyphModel {
+                    glyph_model: from, ..
+                },
+                GfxElement::GlyphModel { glyph_model: to, .. },
+                GfxElement::GlyphModel {
+                    glyph_model: model, ..
+                },
+            ) => {
+                model.position = OrderedVec2::lerp(&from.position, &to.position, t);
+            }
+            _ => {}
+        }
+        out
     }
 }
 

@@ -116,6 +116,18 @@ it with respect.
   `remove_subtree`, read with `arena()`. There is no `&mut` access to
   an element or the arena outside the engine, and `check_sorted`
   verifies the invariant.
+- **A tree that keeps history changes through a journal.**
+  `MutatorTree::apply_at_journaled` and `Tree::update_journaled` are
+  `apply_at` and `update` recorded in a `JournalBuilder`: the walker
+  records each element's before-image once, before its first apply,
+  and the closed `Journal` reverts and replays exactly. Never write a
+  second record beside it — a hand-kept snapshot of what an edit
+  touched is the thing the journal replaces — and never make a
+  `Mutation` aware of journals: recording is the walker's, so no
+  mutation can forget it. The plain entry points are for trees that
+  need no history (glyph layers that are rebuilt). An element's
+  `Clone` must copy its whole state and its `same_state` compare all
+  of it, or a journal loses what they leave out.
 - **Iterate with `NodeId::children(tree.arena())` and `descendants(tree.arena())`.**
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if

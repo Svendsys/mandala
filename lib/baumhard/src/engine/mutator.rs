@@ -183,6 +183,19 @@ impl<E: TreeElement, M: Mutation<E>> Mutator<E, M> {
         MutatorType::from(self) == mutator_type
     }
 
+    /// Whether [`Self::apply_to`] would apply any mutation: a `Single`,
+    /// a non-empty `Macro`, or an `Instruction` carrying a mutation.
+    /// The walker applies — and journals — only a mutator that does.
+    /// O(1).
+    pub fn has_payload(&self) -> bool {
+        match self {
+            Mutator::Single { .. } => true,
+            Mutator::Macro { mutations, .. } => !mutations.is_empty(),
+            Mutator::Instruction { mutation, .. } => mutation.is_some(),
+            Mutator::Void { .. } => false,
+        }
+    }
+
     /// Apply this node's payload to `target`: the one mutation of a
     /// `Single`, every mutation of a `Macro` in order, an
     /// `Instruction`'s mutation when it has one, nothing for `Void`.

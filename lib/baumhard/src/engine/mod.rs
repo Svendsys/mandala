@@ -20,6 +20,14 @@
 //! [builder DSL](crate::engine::builder) compiles a serde-friendly
 //! [`MutatorNode`](crate::engine::builder::MutatorNode) AST into a mutator tree.
 //!
+//! A walk can be **journaled**: the walker records every element it
+//! applies to, once, in a [`JournalBuilder`](crate::engine::journal::JournalBuilder),
+//! and the closed [`Journal`](crate::engine::journal::Journal) can
+//! [revert](crate::engine::journal::Journal::revert) or
+//! [replay](crate::engine::journal::Journal::replay) the change exactly,
+//! or [show it part-way](crate::engine::journal::Journal::write_interpolated)
+//! for an element type that is [`Interpolable`](crate::engine::interpolate::Interpolable).
+//!
 //! Nothing here knows what an element *is*. The glyph trees
 //! (`gfx_structs`) are one instantiation — `GfxElement` with the
 //! `GfxMutation` payload — and the document is meant to be another;
@@ -42,6 +50,15 @@ pub mod builder;
 /// provides to the engine — and its per-tree derived state,
 /// [`TreeCache`](element::TreeCache).
 pub mod element;
+/// [`Interpolate`](interpolate::Interpolate),
+/// [`Snap`](interpolate::Snap) and [`Interpolable`](interpolate::Interpolable):
+/// the state between a journal's before and after.
+pub mod interpolate;
+/// [`JournalBuilder`](journal::JournalBuilder) and
+/// [`Journal`](journal::Journal): the exact record of what a walk
+/// changed, with [`revert`](journal::Journal::revert) and
+/// [`replay`](journal::Journal::replay).
+pub mod journal;
 /// [`BranchKey`](key::BranchKey) — the kind and channel the walker
 /// routes on, and every parent's children are sorted by.
 pub mod key;

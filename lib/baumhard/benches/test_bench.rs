@@ -11,6 +11,8 @@ use baumhard::document::tests::shape_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
 use baumhard::engine::tests::inherited_tests::*;
+use baumhard::engine::tests::interpolate_tests::*;
+use baumhard::engine::tests::journal_tests::*;
 use baumhard::engine::tests::routing_tests::*;
 use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::walker_tests::*;
@@ -27,6 +29,7 @@ use baumhard::gfx_structs::tests::bvh_descent_tests::*;
 use baumhard::gfx_structs::tests::camera_tests::*;
 use baumhard::gfx_structs::tests::delta_tests::*;
 use baumhard::gfx_structs::tests::element_tests::*;
+use baumhard::gfx_structs::tests::journal_tests::*;
 use baumhard::gfx_structs::tests::map_children_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
 use baumhard::gfx_structs::tests::mutator_tests::*;
@@ -1848,6 +1851,92 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
     c.bench_function("engine_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_walk_wide_and_deep_tree)
+    });
+    c.bench_function("engine_journaled_walk_wide_and_deep_tree", |b| {
+        b.iter(do_engine_journaled_walk_wide_and_deep_tree)
+    });
+    // journals: exact revert / replay, one entry per element, positions,
+    // all-or-nothing calls //
+    c.bench_function("journal_revert_and_replay_are_exact", |b| {
+        b.iter(do_journal_revert_and_replay_are_exact)
+    });
+    c.bench_function("journal_records_one_entry_per_element", |b| {
+        b.iter(do_journal_records_one_entry_per_element)
+    });
+    c.bench_function("journal_of_an_apply_that_changes_nothing_is_empty", |b| {
+        b.iter(do_journal_of_an_apply_that_changes_nothing_is_empty)
+    });
+    c.bench_function("journal_records_an_element_touched_twice_in_one_walk_once", |b| {
+        b.iter(do_journal_records_an_element_touched_twice_in_one_walk_once)
+    });
+    c.bench_function("journal_restores_the_order_of_siblings_a_walk_rekeyed", |b| {
+        b.iter(do_journal_restores_the_order_of_siblings_a_walk_rekeyed)
+    });
+    c.bench_function(
+        "journal_restores_an_element_moved_twice_around_another_move",
+        |b| b.iter(do_journal_restores_an_element_moved_twice_around_another_move),
+    );
+    c.bench_function(
+        "journal_restores_an_element_whose_neighbors_moved_before_it_was_recorded",
+        |b| b.iter(do_journal_restores_an_element_whose_neighbors_moved_before_it_was_recorded),
+    );
+    c.bench_function(
+        "journal_restores_an_element_a_walk_moved_a_sibling_in_front_of",
+        |b| b.iter(do_journal_restores_an_element_a_walk_moved_a_sibling_in_front_of),
+    );
+    c.bench_function("journal_puts_back_an_element_that_followed_a_moved_one", |b| {
+        b.iter(do_journal_puts_back_an_element_that_followed_a_moved_one)
+    });
+    c.bench_function("journal_of_a_move_there_and_back_is_empty", |b| {
+        b.iter(do_journal_of_a_move_there_and_back_is_empty)
+    });
+    c.bench_function(
+        "a_failing_journaled_call_leaves_the_tree_as_the_builder_found_it",
+        |b| b.iter(do_a_failing_journaled_call_leaves_the_tree_as_the_builder_found_it),
+    );
+    c.bench_function("abandon_reverts_everything_the_builder_recorded", |b| {
+        b.iter(do_abandon_reverts_everything_the_builder_recorded)
+    });
+    c.bench_function("revert_and_replay_refuse_a_stale_node_before_writing", |b| {
+        b.iter(do_revert_and_replay_refuse_a_stale_node_before_writing)
+    });
+    c.bench_function("journal_names_every_change_as_a_field_touch", |b| {
+        b.iter(do_journal_names_every_change_as_a_field_touch)
+    });
+    c.bench_function("revert_refuses_a_tree_the_journal_does_not_fit", |b| {
+        b.iter(do_revert_refuses_a_tree_the_journal_does_not_fit)
+    });
+    c.bench_function("journal_skips_elements_visited_but_not_applied_to", |b| {
+        b.iter(do_journal_skips_elements_visited_but_not_applied_to)
+    });
+    // interpolation: Interpolate, Snap, write_interpolated //
+    c.bench_function("interpolate_returns_the_endpoints_exactly", |b| {
+        b.iter(do_interpolate_returns_the_endpoints_exactly)
+    });
+    c.bench_function("interpolate_is_linear_between_the_endpoints", |b| {
+        b.iter(do_interpolate_is_linear_between_the_endpoints)
+    });
+    c.bench_function("snap_switches_where_it_says", |b| {
+        b.iter(do_snap_switches_where_it_says)
+    });
+    c.bench_function("write_interpolated_at_the_ends_equals_revert_and_replay", |b| {
+        b.iter(do_write_interpolated_at_the_ends_equals_revert_and_replay)
+    });
+    c.bench_function("write_interpolated_halfway_lerps_value_and_snaps_the_rest", |b| {
+        b.iter(do_write_interpolated_halfway_lerps_value_and_snaps_the_rest)
+    });
+    // journals and interpolation over the glyph instantiation //
+    c.bench_function("gfx_same_state_compares_every_state_field", |b| {
+        b.iter(do_gfx_same_state_compares_every_state_field)
+    });
+    c.bench_function("gfx_clone_keeps_every_field", |b| {
+        b.iter(do_gfx_clone_keeps_every_field)
+    });
+    c.bench_function("gfx_journal_reverts_and_replays_a_glyph_walk_exactly", |b| {
+        b.iter(do_gfx_journal_reverts_and_replays_a_glyph_walk_exactly)
+    });
+    c.bench_function("gfx_interpolates_geometry_and_color_and_snaps_the_rest", |b| {
+        b.iter(do_gfx_interpolates_geometry_and_color_and_snaps_the_rest)
     });
     // routing keys, the sorted-children invariant and anchored walks //
     c.bench_function("engine_walk_routes_by_kind_and_channel", |b| {

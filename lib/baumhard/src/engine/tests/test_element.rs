@@ -15,6 +15,7 @@
 //! build trees with.
 
 use crate::engine::element::{TreeCache, TreeElement};
+use crate::engine::interpolate::{Interpolable, Interpolate, Snap};
 use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
@@ -133,8 +134,26 @@ impl TreeElement for TestElement {
         TestElement::new(0, 0)
     }
 
+    /// Every field is state.
+    fn same_state(&self, other: &Self) -> bool {
+        self == other
+    }
+
     fn inherit(&self, parent: &i64) -> i64 {
         parent + self.value
+    }
+}
+
+/// `value` interpolates — as an `f64`, rounded to the nearest integer —
+/// and the kind and channel snap.
+impl Interpolable for TestElement {
+    fn interpolate(before: &Self, after: &Self, t: f32, snap: Snap) -> Self {
+        let base = snap.pick(before, after, t);
+        TestElement {
+            kind: base.kind,
+            channel: base.channel,
+            value: f64::lerp(&(before.value as f64), &(after.value as f64), t).round() as i64,
+        }
     }
 }
 
@@ -269,6 +288,11 @@ impl TreeElement for SpatialTestElement {
 
     fn void() -> Self {
         SpatialTestElement::unboxed(0, 0)
+    }
+
+    /// Every field is state.
+    fn same_state(&self, other: &Self) -> bool {
+        self == other
     }
 
     fn inherit(&self, parent: &i64) -> i64 {

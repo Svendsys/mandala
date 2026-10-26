@@ -10,6 +10,9 @@
 pub mod anchor_tests;
 pub mod builder_tests;
 pub mod inherited_tests;
+pub mod interpolate_tests;
+pub mod journal_fixtures;
+pub mod journal_tests;
 pub mod routing_tests;
 pub mod sorted_tests;
 pub mod test_element;
