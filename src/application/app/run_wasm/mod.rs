@@ -121,7 +121,7 @@ pub(super) struct WasmInputState {
     pub modifiers: crate::application::platform::input::Modifiers,
     /// High-level interaction mode (Default / Reparent / Connect /
     /// NodeEdit / Resize). Cross-platform field per Batch 1 of
-    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` — the enum is target-agnostic
+    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` — the enum is target-agnostic
     /// even though some mode transitions still depend on native-only
     /// dispatch arms (Reparent / Connect). WASM construction
     /// initializes to `Default`; later batches add mode-aware click
@@ -514,13 +514,13 @@ impl WasmApp {
                 // `PendingRight` → `FastResizeStart` pipeline yet
                 // (it lands with the browser's drag-state machine;
                 // the touch vocabulary no longer waits on it).
-                // What we *can* do today is dispatch the bound
-                // `MouseGesture::RightClick` action on release —
-                // single-press right-click is just an action lookup,
-                // no DragState involved. Default-unbound so it's a
-                // no-op for users who didn't opt in; users who did
-                // get the action they bound. Without this arm the
-                // event drops silently.
+                // Today this arm does **not** dispatch anything: a
+                // bound `MouseGesture::RightClick` action is not
+                // looked up on the browser. `handle_right_button`
+                // logs a one-shot warning on the first release so
+                // the gap is observable rather than a silent drop;
+                // dispatching the bound action on release needs no
+                // DragState and is the obvious next step.
                 self.handle_right_button(state);
                 redraw_after = true;
             }
@@ -624,7 +624,7 @@ pub(super) fn run(mut app: Application) {
     // so the canvas can use right-button gestures
     // (`MouseGesture::RightClick` / `RightDrag`,
     // `Action::FastResizeStart` per Batch 4 of
-    // SECTIONS_BORDERS_RESIZE_PLAN.md §6.3). Without this, every
+    // work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md §6.3). Without this, every
     // right-press on the canvas would pop the browser's context
     // menu and the gesture would never reach the threshold-cross.
     //

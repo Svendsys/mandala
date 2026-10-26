@@ -4,24 +4,28 @@
 //! `capture.screenshot` command and the `screenshot` console verb call
 //! (`crate::application::capture` holds the rest).
 //!
-//! **A capture shows the current state, and leaves it as it found it.**
-//! It first runs the camera-geometry rebuild the next frame would run
-//! anyway, so a zoom the agent sent a moment ago is drawn with
-//! connections sampled at that zoom rather than the last one. A capture
-//! framed at another zoom then needs the zoom-dependent roles —
-//! connections, their labels, portals — projected at that zoom, because
-//! their glyph sizes are clamped in screen points; it projects them,
-//! draws, and projects them back at the live zoom before returning. The
-//! renderer's camera is never touched: the capture draws through a
-//! camera of its own. So the camera, the scene and every hit test
-//! afterwards are what they were before.
+//! **A capture shows the current state, and never writes it.** It first
+//! runs the camera-geometry rebuild the next frame would run anyway, so
+//! a zoom the agent sent a moment ago is drawn with connections sampled
+//! at that zoom rather than the last one. A capture framed at another
+//! zoom then needs the zoom-dependent roles — connections, their
+//! labels, portals — projected at that zoom, because their glyph sizes
+//! are clamped in screen points; it projects them into the capture's
+//! own scratch scene (`app::capture_scene`), draws one frame composed
+//! of that scratch over the live zoom-independent roles
+//! (`CanvasSource::Composed`), and is done. The renderer's camera is
+//! never touched either: the capture draws through a camera of its
+//! own. So the camera, the live scene, the live connection cache, the
+//! renderer's live set and every hit test afterwards are what they
+//! were before — not restored, but never written.
 //!
-//! **What it will not do.** Re-projecting during a node drag would draw
-//! the dragged node's connections where the model last had them and
-//! leave them there, because the drag keeps its offsets out of the
-//! model until release. A capture that needs another zoom while a node
-//! drag is in flight is therefore refused as busy; one at the live zoom
-//! draws the drag as the window does.
+//! **During a node drag too.** The drag keeps the dragged nodes'
+//! offsets out of the model until release and projects the live scene
+//! with them on every drained frame; the scratch is projected with the
+//! same offsets ([`CaptureScene::drag_offsets`]), so a capture at any
+//! zoom mid-drag shows the dragged node's connections where the window
+//! shows them. There is no `busy` here: nothing projects from the model
+//! alone any more.
 //!
 //! **And the one-shot launch's capture.** `--screenshot <path>` is the
 //! same engine, called by the loop rather than by a command
@@ -41,21 +45,27 @@ use crate::application::capture::record::Recorder;
 use crate::application::capture::{geometry, resolve, write, CaptureError, CaptureOutcome, Destination};
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::{
-    content_bounds, CaptureFailure, CapturedPixels, FrameSkip, ModalLayer, Renderer,
+    content_bounds, CanvasSource, CaptureFailure, CapturedPixels, FrameSkip, ModalLayer, Renderer,
 };
 use crate::application::scene_host::AppScene;
 
+use super::capture_scene::ScratchCanvas;
 use super::freeze_watchdog::FreezeWatchdog;
 use super::input_context::InputHandlerContext;
 use super::run_native_init::InitState;
-use super::scene_rebuild::rebuild_camera_geometry_at;
 use super::{InteractionMode, OneShot};
 use crate::application::ipc::Until;
 
-/// The app state a capture reads and, for another zoom, briefly
-/// re-projects. Borrowed from `InitState` by the IPC target and from the
-/// `InputHandlerContext` by the console, so the two surfaces hand the
-/// engine the same fields.
+/// The app state a capture reads, and the scratch it projects into for
+/// another zoom. Borrowed from `InitState` by the IPC target and from
+/// the `InputHandlerContext` by the console, so the two surfaces hand
+/// the engine the same fields.
+///
+/// The live scene, cache and renderer are `&mut` for the one write a
+/// capture makes to the window's state: the camera-geometry rebuild the
+/// next frame owes anyway (`drain_frame::drain_camera_geometry_rebuild`),
+/// run first so the capture shows it too. Nothing after that writes
+/// them.
 pub(super) struct CaptureScene<'a> {
     pub(super) document: &'a Option<MindMapDocument>,
     pub(super) mindmap_tree: &'a Option<MindMapTree>,
@@ -63,8 +73,14 @@ pub(super) struct CaptureScene<'a> {
     pub(super) renderer: &'a mut Renderer,
     pub(super) scene_cache: &'a mut SceneConnectionCache,
     pub(super) interaction_mode: &'a InteractionMode,
-    /// A node drag is in flight (`ThrottledDrag::MovingNode`).
-    pub(super) moving_node: bool,
+    /// The offsets a node drag has drained so far, while one is in
+    /// flight (`DragState::moving_node_offsets`): what the scratch is
+    /// projected with, so a capture mid-drag draws the dragged nodes'
+    /// connections where the window does. `None` outside a node drag.
+    pub(super) drag_offsets: Option<&'a std::collections::HashMap<String, (f32, f32)>>,
+    /// The capture's own scene for the zoom-dependent roles
+    /// (`app::capture_scene`).
+    pub(super) scratch: &'a mut ScratchCanvas,
     /// Ticked after every readback band and every encoded chunk: a
     /// large capture is long main-thread work that keeps progressing.
     pub(super) watchdog: &'a FreezeWatchdog,
@@ -76,16 +92,17 @@ impl<'a> CaptureScene<'a> {
     /// artifacts dir and the recorder — split off beside it: they are
     /// different fields, so all three are borrowed at once. The one
     /// place the loop's scene is assembled, so a field added to
-    /// [`CaptureScene`] (as `moving_node` was) is added once.
+    /// [`CaptureScene`] (as `drag_offsets` was) is added once.
     pub(super) fn of_init(init: &'a mut InitState) -> (Self, &'a mut Artifacts, &'a mut Recorder) {
         let scene = CaptureScene {
-            moving_node: init.drag_state.is_moving_node(),
+            drag_offsets: init.drag_state.moving_node_offsets(),
             document: &init.document,
             mindmap_tree: &init.mindmap_tree,
             app_scene: &mut init.app_scene,
             renderer: &mut init.renderer,
             scene_cache: &mut init.scene_cache,
             interaction_mode: &init.interaction_mode,
+            scratch: &mut init.scratch_canvas,
             watchdog: &init.watchdog,
         };
         (scene, &mut init.artifacts, &mut init.recorder)
@@ -97,13 +114,14 @@ impl<'a> CaptureScene<'a> {
         ctx: &'a mut InputHandlerContext<'_>,
     ) -> (Self, &'a mut Artifacts, &'a mut Recorder) {
         let scene = CaptureScene {
-            moving_node: ctx.drag_state.is_moving_node(),
+            drag_offsets: ctx.drag_state.moving_node_offsets(),
             document: &*ctx.document,
             mindmap_tree: &*ctx.mindmap_tree,
             app_scene: &mut *ctx.app_scene,
             renderer: &mut *ctx.renderer,
             scene_cache: &mut *ctx.scene_cache,
             interaction_mode: &*ctx.interaction_mode,
+            scratch: &mut *ctx.scratch_canvas,
             watchdog: ctx.watchdog,
         };
         (scene, &mut *ctx.artifacts, &mut *ctx.recorder)
@@ -185,7 +203,8 @@ pub(super) fn draw<T>(
         renderer,
         scene_cache,
         interaction_mode,
-        moving_node,
+        drag_offsets,
+        scratch,
         watchdog,
     } = scene;
     let mut progress = || watchdog.tick();
@@ -194,9 +213,10 @@ pub(super) fn draw<T>(
     };
 
     // What the next frame would rebuild before drawing, rebuilt now so
-    // the capture draws it too.
+    // the capture draws it too. The one write to the live state a
+    // capture makes, and the frame's own.
     super::drain_frame::drain_camera_geometry_rebuild(
-        moving_node,
+        drag_offsets.is_some(),
         document,
         interaction_mode,
         app_scene,
@@ -221,35 +241,32 @@ pub(super) fn draw<T>(
     let prepared = before_draw(&camera)?;
 
     // Exact comparison on purpose: any difference in zoom is a
-    // difference in the connection samples the scene holds.
-    let reproject = camera.zoom.to_bits() != live.zoom.to_bits();
-    if reproject && moving_node {
-        return Err(CaptureError::Busy(
-            "a node drag is in progress; a capture at another zoom would leave its connections behind. \
-             Capture at the current zoom, or once the drag is released"
-                .into(),
-        ));
-    }
-    if reproject {
-        rebuild_camera_geometry_at(
+    // difference in the connection samples the scene holds. A frame at
+    // the live zoom draws the live set as the window would, drag and
+    // all; one at another zoom draws the scratch's zoom-dependent roles
+    // — projected now, at that zoom, with the drag's offsets — over the
+    // live set's zoom-independent ones.
+    let canvas = if camera.zoom.to_bits() == live.zoom.to_bits() {
+        CanvasSource::Live
+    } else {
+        let no_offsets = std::collections::HashMap::new();
+        scratch.project(
             camera.zoom,
             doc,
             interaction_mode,
-            app_scene,
-            renderer,
+            drag_offsets.unwrap_or(&no_offsets),
             scene_cache,
         );
-    }
+        renderer.rebuild_capture_canvas_buffers(app_scene, scratch.scene_mut());
+        CanvasSource::Composed
+    };
     // A modal is laid out against the window's size; a capture sized
     // otherwise leaves it out rather than drawing it somewhere arbitrary.
     let modal = match request.size {
         Some(size) if size != live.viewport_size => ModalLayer::Omitted,
         _ => request.modal,
     };
-    let drawn = renderer.capture_frame(&camera, modal, &mut progress);
-    if reproject {
-        rebuild_camera_geometry_at(live.zoom, doc, interaction_mode, app_scene, renderer, scene_cache);
-    }
+    let drawn = renderer.capture_frame(&camera, modal, canvas, &mut progress);
 
     let drawn = match drawn {
         Ok(pixels) => Drawn::Frame { camera, pixels },
@@ -317,13 +334,9 @@ pub(super) fn one_shot(init: &mut InitState, shot: &OneShot) -> Option<std::proc
     };
     match capture(scene, &CaptureRequest::default(), destination, true, artifacts) {
         Ok(CaptureOutcome::Written { .. }) => Some(ExitCode::SUCCESS),
-        // Both say "the next frame may draw it": ask for that frame,
-        // whose iteration checks again.
+        // "The next frame may draw it": ask for that frame, whose
+        // iteration checks again.
         Ok(CaptureOutcome::Skipped { skip, .. }) if skip.is_transient() => {
-            init.request_redraw();
-            None
-        }
-        Err(CaptureError::Busy(_)) => {
             init.request_redraw();
             None
         }

@@ -26,6 +26,7 @@ use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Bare, Form, Grammar, Key, Subverb, Vocabulary, Word};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, OptionEdit, SelectionState};
@@ -61,6 +62,21 @@ const SUBVERBS: &[Subverb] = &[Subverb::bare(
     "reset",
     "drop both bounds so the selection always renders",
 )];
+
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    Clear,
+}
+
+const ROUTES: &Routes<Route> = &[("clear", Route::Clear)];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
 
 pub static GRAMMAR: Grammar = Grammar {
     label: "zoom",
@@ -114,8 +130,11 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Err(msg) => return ExecResult::err(msg),
     };
     let (min_edit, max_edit) = match descent.stop {
-        // `clear` is `min=unset max=unset` under one word.
-        Stop::Matched(_) => (OptionEdit::Clear, OptionEdit::Clear),
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            // `clear` is `min=unset max=unset` under one word.
+            Some(Route::Clear) => (OptionEdit::Clear, OptionEdit::Clear),
+            None => return ExecResult::err(route::miss(descent.level, subverb)),
+        },
         Stop::Bare => {
             if pairs.is_empty() {
                 return ExecResult::err(usage::no_arguments_message(&GRAMMAR));

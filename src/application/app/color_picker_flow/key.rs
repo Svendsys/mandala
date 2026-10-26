@@ -510,8 +510,8 @@ mod tests {
     //
     // The three cases where the picker arm must report `Unhandled`.
     // They read only `(op, is_open, is_standalone, has_document)`,
-    // so §T8's no-wgpu rule doesn't reach them — and each one is a
-    // silent failure if it regresses.
+    // so the renderer-free tier (§T8) reaches them — and each one is
+    // a silent failure if it regresses.
 
     /// An open contextual picker with a document runs every op.
     #[test]

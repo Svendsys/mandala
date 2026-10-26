@@ -27,7 +27,7 @@
 //! no surface, no verb). Reparent / Connect transitions remain
 //! keybind-only (`Ctrl+P` / `Ctrl+D`).
 //!
-//! See `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.9 for the full target
+//! See `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §3.9 for the full target
 //! grammar.
 
 use super::Command;
@@ -37,6 +37,7 @@ use crate::application::app::{resolve_resize_target, InteractionMode, ResizeTarg
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Grammar, Subverb};
 use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ExecResult};
 use crate::application::document::SelectionState;
@@ -50,6 +51,27 @@ const SUBVERBS: &[Subverb] = &[
         "enter NodeEdit on the selection's owning node",
     ),
 ];
+
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    Default,
+    Resize,
+    NodeEdit,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("default", Route::Default),
+    ("resize", Route::Resize),
+    ("node-edit", Route::NodeEdit),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
 
 pub static GRAMMAR: Grammar = Grammar {
     label: "mode",
@@ -76,8 +98,11 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Err(msg) = kvs::read_strict(&descent, args) {
         return ExecResult::err(msg);
     }
-    let name = match descent.stop {
-        Stop::Matched(subverb) => subverb.name,
+    let route = match descent.stop {
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(route) => route,
+            None => return ExecResult::err(route::miss(descent.level, subverb)),
+        },
         Stop::Bare => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
         _ => {
             return ExecResult::err(usage::unknown_subverb_message(
@@ -86,13 +111,13 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             ))
         }
     };
-    match name {
-        "default" => {
+    match route {
+        Route::Default => {
             eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Default));
             eff.close_console = true;
             ExecResult::ok_msg("mode: returning to Default")
         }
-        "resize" => match resolve_resize_target(&eff.document().selection, &eff.document().mindmap) {
+        Route::Resize => match resolve_resize_target(&eff.document().selection, &eff.document().mindmap) {
             Ok(target) => {
                 eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
                     target,
@@ -102,7 +127,7 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             Err(e) => ExecResult::err(format_resize_error(&e)),
         },
-        _ => match resolve_node_edit_target(&eff.document().selection) {
+        Route::NodeEdit => match resolve_node_edit_target(&eff.document().selection) {
             Ok(node_id) => {
                 eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::NodeEdit {
                     node_id: node_id.clone(),

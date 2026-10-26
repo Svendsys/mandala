@@ -125,9 +125,7 @@ fn report_start(started: Result<Started, CaptureError>, max_frames: u32) -> Exec
             };
             ExecResult::err(format!("record: {key}: {message}"))
         }
-        Err(CaptureError::Busy(message) | CaptureError::Internal(message)) => {
-            ExecResult::err(format!("record: {message}"))
-        }
+        Err(CaptureError::Internal(message)) => ExecResult::err(format!("record: {message}")),
     }
 }
 

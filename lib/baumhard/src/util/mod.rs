@@ -98,6 +98,12 @@ pub(crate) mod source_scan;
 /// the same reason `rust_source` and `test_temp` are not.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod test_logger;
+/// A `SKIPPED:` note written past libtest's per-test capture, so a
+/// test that cannot run on this machine says so in a plain
+/// `cargo test` run. Native-only and not `cfg(test)`-gated, for the
+/// reasons `test_temp` is not.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod test_skip;
 /// Collision-free scratch directories for filesystem tests, so
 /// concurrent `cargo test` runs cannot race on a shared path.
 /// Native-only — there is no filesystem to scratch on under wasm32.

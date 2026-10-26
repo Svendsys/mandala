@@ -59,8 +59,12 @@ time with a concrete migration pointer:
 
 ```
 legacy `text` / `text_runs` on node "0"; run
-`maptool convert --sections <file>` to migrate node text into `sections[]`
+`maptool convert --sections <file> <file>` to migrate node text into `sections[]` in place
 ```
+
+The same path twice is the in-place form: every `convert` verb
+takes an input and an output path, and the write is atomic (see
+[Writes are atomic](./migration.md#writes-are-atomic)).
 
 `maptool convert --sections <in.json> <out.json>` walks every
 node, lifts its legacy `text` + `text_runs` into a single default
@@ -125,7 +129,7 @@ spellings verbatim.
 ### Subverbs (Batch 5 redesign)
 
 The `section …` verb takes kv-style arguments per
-SECTIONS_BORDERS_RESIZE_PLAN.md §4.5 — the prior positional
+[`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`](../work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md) §4.5 — the prior positional
 `<dx> <dy>` / `<w> <h>` forms are gone (CODE_CONVENTIONS §10:
 no compatibility shims). Nine subverbs:
 
@@ -136,11 +140,12 @@ no compatibility shims). Nine subverbs:
 | `section move` | `x=<f64> y=<f64> [section=<idx>]` | Absolute set — `offset = (x, y)`. |
 | `section resize` | `w=<f64> h=<f64> [section=<idx>]` | Pin `size = Some({w, h})`. |
 | `section resize` | `fill [section=<idx>]` | Clear `size = None` (renamed from `none`). |
-| `section text` | `"<text>" [section=<idx>] [runs=preserve\|clear]` | Replace text. `runs=preserve` (default) keeps per-grapheme styling on overlapping ranges; `runs=clear` collapses to single-run plaintext. |
+| `section text` | `"<text>" [section=<idx>] [runs=preserve\|clear]` | Replace text. `runs=preserve` (default) keeps per-grapheme styling on overlapping ranges and gives graphemes appended past the old end the last run's style, without its link (see [text-runs.md](./text-runs.md#section-text-runspreserve)); `runs=clear` collapses to single-run plaintext. |
 | `section edit` | `[section=<idx>]` | Open the section text editor on the resolved target. Closes the console; modal handoff to the editor. |
 | `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. |
 | `section delete` | `[section=<idx>]` | Remove. Errors when only one section remains. |
 | `section split` | `[section=<idx>] at=<grapheme>` | Split in two at the given grapheme boundary. `at=` is required (use `section show` to see the section's grapheme count); pass `at=N` where `N` equals the count to split at end-of-text (creates an empty suffix). |
+| `section frame` | `show \| reset \| preview …`, or `<key>=<value> …` | The section's own frame-border override (`frame_border`), a subverb tree of its own — full grammar under [Console verbs (section frames)](./border-patterns.md#console-verbs-section-frames). |
 
 Mutually exclusive forms reject at the parser layer:
 `section move dx=1 x=2` errors with "cannot mix delta form

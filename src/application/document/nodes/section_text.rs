@@ -72,14 +72,37 @@ impl MindMapDocument {
     }
 
     /// Replace the section's `text` while preserving as much of
-    /// the existing `text_runs` as the new text supports. Runs
-    /// wholly inside the new text length carry through unchanged;
-    /// runs that straddle the new end get clipped at the new
-    /// `grapheme_count`; runs entirely past the new end are
-    /// dropped. Uncovered ranges (anything past the last surviving
-    /// run's `end`) fall through to section / node defaults per
-    /// `format/text-runs.md`. No-op (returns `false`, no undo push)
-    /// when the section doesn't exist or its text already matches.
+    /// the existing `text_runs` as the new text supports. Runs are
+    /// positional: they keep their grapheme ranges, not the words
+    /// they used to cover.
+    ///
+    /// - **Shorter text**: runs wholly inside the new text carry
+    ///   through unchanged; runs that straddle the new end are
+    ///   clipped at the new grapheme count; runs entirely past it
+    ///   are dropped.
+    /// - **Same length**: the run table is untouched.
+    /// - **Longer text**: the graphemes past the old end are new,
+    ///   and they take the style of the last run, but not its
+    ///   `hyperlink` — the run is extended when it reached the old
+    ///   end and carries no link, and a copy of it with the link
+    ///   cleared, covering the new graphemes, is appended
+    ///   otherwise. Runs past the old end (a table that overshot
+    ///   its text) are clamped to the old text first, so they
+    ///   neither lend their style nor leave part of the new text
+    ///   uncovered; if that leaves no run, the section becomes
+    ///   run-less and draws its whole text.
+    ///   A section with non-empty `text_runs` draws only the
+    ///   graphemes its runs cover (`baumhard::font::attrs::
+    ///   displayed_text`), so leaving the new graphemes uncovered
+    ///   would put them in the model and off the canvas (#197).
+    ///   Graphemes the old table left uncovered stay uncovered:
+    ///   this path preserves the table and adds to it only what
+    ///   the edit added.
+    ///
+    /// A run-less section stays run-less — it draws its whole text
+    /// at the cascade defaults, so it has no tail to cover. No-op
+    /// (returns `false`, no undo push) when the section doesn't
+    /// exist or its text already matches.
     ///
     /// Distinct from [`Self::set_section_text`] which collapses
     /// every prior run to a single run cloned from
@@ -99,6 +122,7 @@ impl MindMapDocument {
             if s.text == new_text {
                 return false;
             }
+            let old_grapheme_count = baumhard::util::grapheme_chad::count_grapheme_clusters(&s.text);
             let new_grapheme_count = baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text);
             // Clip runs to the new text length: keep runs whose
             // `start < new_grapheme_count`; clamp `end` down to
@@ -119,6 +143,32 @@ impl MindMapDocument {
                 // start).
                 r.start < r.end
             });
+            // Cover the graphemes the edit appended with the last
+            // run's style, minus its hyperlink.
+            if new_grapheme_count > old_grapheme_count {
+                // First clamp the table to the *old* text (still in
+                // `s.text`): a run past the old end — which a
+                // tree-walker shortening can leave behind — covers
+                // no grapheme the author saw, so it neither lends
+                // its style nor keeps part of the tail uncovered.
+                // After this every `end <= old_grapheme_count`, so
+                // the copy below starts at or after the last run
+                // ends and the table stays sorted and non-overlapping.
+                clamp_runs_to_text(s);
+                if let Some(last) = s.text_runs.last_mut() {
+                    if last.end == old_grapheme_count && last.hyperlink.is_none() {
+                        last.end = new_grapheme_count;
+                    } else {
+                        let tail = TextRun {
+                            start: old_grapheme_count,
+                            end: new_grapheme_count,
+                            hyperlink: None,
+                            ..last.clone()
+                        };
+                        s.text_runs.push(tail);
+                    }
+                }
+            }
             s.text = new_text;
             true
         })

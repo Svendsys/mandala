@@ -20,8 +20,9 @@ use super::RebuildContext;
 // `bool` for "did the selection change"; cross-platform; unit-tested
 // at the bottom of this module) and an outer `apply_*` wrapper that
 // triggers the scene rebuild only when the inner function reports a
-// change. Per `TEST_CONVENTIONS.md §T8`, renderer-touching outers
-// are verified manually; the pure inners carry the test surface.
+// change. The renderer-touching outers are the GPU-backed tier's to
+// reach (`TEST_CONVENTIONS.md §T8`); the pure inners carry the
+// renderer-free test surface.
 
 /// Set the document's selection to every visible node — hidden-by-
 /// fold descendants are excluded so a follow-up `DeleteSelection`

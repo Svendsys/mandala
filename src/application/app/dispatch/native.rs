@@ -3,7 +3,7 @@
 //! `dispatch_action` — the single entry point that runs `Action`
 //! bodies on native. Mouse handlers and the keyboard handler funnel
 //! through here. WASM has its own dispatch path today; the
-//! convergence track is documented in `WASM_CONVERGENCE.md`.
+//! convergence track is documented in `work_plans/WASM_CONVERGENCE.md`.
 //! Adding a new behavior
 //! is variant + default + arm, in that order; never inline a body in
 //! a handler.
@@ -67,8 +67,9 @@ fn quote_console_arg(s: &str) -> String {
 ///
 /// Pure so the arm is pinnable at `DragState` level — the arm itself
 /// takes an `InputHandlerContext`, i.e. a live wgpu device, which
-/// TEST_CONVENTIONS §T8 keeps out of the harness. Same shape, and
-/// for the same reason, as `event_mouse_click::route_middle_button`.
+/// only the suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8).
+/// Same shape, and for the same reason, as
+/// `event_mouse_click::route_middle_button`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PanCanvasRoute {
     /// Nothing is in flight that a pan would destroy — arm a
@@ -154,8 +155,8 @@ fn route_pan_canvas(drag_state: &DragState) -> PanCanvasRoute {
 ///
 /// The shell around [`take_rubber_band_for_target_picker`], which is
 /// the whole of it except dropping the overlay rectangle —
-/// `&mut Renderer` is a live wgpu device, which TEST_CONVENTIONS §T8
-/// keeps out of the harness.
+/// `&mut Renderer` is a live wgpu device, which only the suite's
+/// GPU-backed tier stands up (TEST_CONVENTIONS §T8).
 fn end_target_picker_rubber_band(
     drag_state: &mut DragState,
     document: &mut Option<crate::application::document::MindMapDocument>,
@@ -236,7 +237,7 @@ fn take_rubber_band_for_target_picker(
 ///     fix on the other side of the seam, so the two targets now
 ///     answer identically for identical input.
 ///
-/// `WASM_CONVERGENCE.md` Track C records the architecture; calling
+/// `work_plans/WASM_CONVERGENCE.md` Track C records the architecture; calling
 /// `dispatch_compatible` from this fn is the seam.
 pub(in crate::application::app) fn dispatch_action(
     action: Action,
@@ -1376,13 +1377,14 @@ mod tests {
     use baumhard::mindmap::tree_builder::ResizeHandleSide;
     use std::collections::HashSet;
 
-    // Most dispatch arms touch the renderer (wgpu) which is forbidden
-    // in tests per `TEST_CONVENTIONS.md §T8`. Arms whose bodies factor
-    // cleanly into a pure helper are tested through that helper —
-    // `route_pan_canvas` below is the first; the rest of the funnel is
-    // exercised manually via `./run.sh` and through end-to-end
-    // integration on top of the keybind tests in `keybinds/tests.rs`
-    // (which exercise the resolver, not the dispatch bodies).
+    // Most dispatch arms touch the renderer (wgpu), which only the
+    // GPU-backed tier of `TEST_CONVENTIONS.md §T8` stands up —
+    // `app/tests_gpu.rs` drives `DeleteSelection`, `Undo` and `ZoomIn`
+    // through the real arms there. Arms whose bodies factor cleanly
+    // into a pure helper are tested here through that helper —
+    // `route_pan_canvas` below is the first; the keybind tests in
+    // `keybinds/tests.rs` exercise the resolver, not the dispatch
+    // bodies.
 
     /// A right-started fast-resize, mid-gesture: the model write and
     /// the undo entry it owes happen only in

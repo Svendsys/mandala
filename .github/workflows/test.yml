@@ -2,7 +2,7 @@
 # The script itself owns the test logic (native cargo test + workspace-
 # wide wasm32 cargo check, plus the fmt / clippy / doc lint gates);
 # this workflow is a transport for invoking it so the dual-target
-# discipline in CODE_CONVENTIONS.md §2 and the lint baselines are
+# discipline in CODE_CONVENTIONS.md §4 and the lint baselines are
 # enforced remotely, not just aspirationally locally.
 #
 # `push: branches: [main]` (rather than bare `push:`) prevents the
@@ -40,12 +40,28 @@ jobs:
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
+      # The GPU-backed half of the suite (`src/application/app/tests_gpu.rs`,
+      # TEST_CONVENTIONS §T8) builds the real app, headless, on whatever
+      # adapter the machine has, and otherwise skips with a note. A
+      # runner has no GPU; Mesa's lavapipe is a Vulkan ICD that
+      # rasterizes on the CPU, and the app runs on it exactly as it
+      # does in a GPU-less container (the `mandala-drive` skill's
+      # recipe (b)). Installed here so the adapter exists by
+      # construction, and `MANDALA_REQUIRE_GPU` below makes a missing
+      # one fail the run rather than let the GPU-backed tests pass by
+      # skipping — the same arrangement as the wasm32 probe.
+      - name: Install Mesa's software Vulkan driver (lavapipe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
+
       # `lib/baumhard/tests/wasm_font_lock.rs` runs wasm32 code under
       # node and otherwise skips, with a note, when the target or node
       # is absent. Here both are present by construction (the target
       # is installed above; ubuntu-latest ships node), so a missing one
       # means this workflow broke, and the probe must fail rather than
-      # pass by skipping.
+      # pass by skipping. `MANDALA_REQUIRE_GPU` is the same contract
+      # for the GPU-backed tests and the adapter installed above.
       #
       # `--lint` adds the fmt, clippy and doc gates (host and wasm32
       # legs). They are hard gates with zero baselines, and without
@@ -54,4 +70,5 @@ jobs:
       - name: Run ./test.sh --lint
         env:
           MANDALA_REQUIRE_WASM_PROBE: "1"
+          MANDALA_REQUIRE_GPU: "1"
         run: ./test.sh --lint

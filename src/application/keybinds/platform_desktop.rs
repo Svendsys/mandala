@@ -19,8 +19,10 @@ use crate::application::user_config::load_desktop_layered;
 impl KeybindConfig {
     /// Load a config on desktop, with layered fallback: the explicit
     /// CLI path first, then the default user-config path, then the
-    /// hardcoded defaults. Never fails — missing or invalid files are
-    /// logged and the next layer is tried.
+    /// hardcoded defaults. Never fails — a missing file, or one that is
+    /// not a JSON object, is logged and the next layer is tried; a
+    /// malformed value inside a usable file costs only its own key
+    /// (see [`KeybindConfig::from_json`]).
     pub fn load_for_desktop(explicit_path: Option<&Path>) -> Self {
         match load_desktop_layered("keybinds", "keybinds.json", explicit_path, Self::from_json) {
             Some((cfg, source)) => {

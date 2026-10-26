@@ -210,6 +210,13 @@ else
   # convenience; it must not be able to fail the run.
   TOTAL=$( { grep -E '^test result: ok\. [0-9]+ passed' "$TEST_LOG" || true; } \
     | awk '{ sum += $4 } END { print sum+0 }')
+  # Tests that could not run here pass with a `SKIPPED:` note — the
+  # GPU-backed tests without an adapter, the wasm32 font-lock probe
+  # without the target or `node` — written past libtest's capture
+  # (`baumhard::util::test_skip`) so it lands in the log above. Count
+  # them, so "N tests passed" never reads as N tests proved. Same
+  # `|| true` as the count above: `grep -c` exits 1 on zero matches.
+  SKIPPED=$( { grep -c '^SKIPPED:' "$TEST_LOG" || true; } )
   echo
   if [ "$TOTAL" -gt 0 ]; then
     echo "== $TOTAL tests passed =="
@@ -220,6 +227,10 @@ else
     echo "== tests passed; count unavailable =="
     echo "(no 'test result: ok. <N> passed' lines matched — cargo's summary format"
     echo " has changed, or every binary reported zero tests)"
+  fi
+  if [ "$SKIPPED" -gt 0 ]; then
+    echo "== $SKIPPED of them SKIPPED with a note: what they guard was not proved here =="
+    echo "(each note above says what is missing on this machine and how to make it a failure)"
   fi
 fi
 

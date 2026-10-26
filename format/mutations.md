@@ -30,6 +30,12 @@ same `id`):
    `localStorage["mandala_mutations"]` on WASM. There is no
    `?mutations=` URL parameter: a link is composed by whoever sent
    it, not by the user, and this tier is trusted as the user's own.
+   The file is read **entry by entry**: a mutation that does not
+   parse logs a `warn!` naming its index and `id` and is skipped,
+   and the others load. A key written twice uses its last occurrence,
+   and a top-level key other than `mutations` is ignored; both log a
+   `warn!` naming the key. Only a file that is not a JSON object, or
+   whose `mutations` is not an array, is dropped whole.
 3. **Map-level** — the `custom_mutations: [...]` array in the
    `.mindmap.json` file itself.
 4. **Inline** — the `inline_mutations: [...]` array on a specific
@@ -120,9 +126,10 @@ value. The most common variants for authoring:
   nothing else. The object form fails with
   `invalid type: map, expected a sequence of 2 f32 values`, and
   because `custom_mutations` is a required-shape field, that error
-  takes the **whole `.mindmap.json` down** — or, in
-  `~/.config/mandala/mutations.json`, makes `load_user` warn and
-  silently drop the entire user mutation file. The same applies to
+  takes the **whole `.mindmap.json` down**. In
+  `~/.config/mandala/mutations.json` the cost is smaller — the user
+  loader parses entry by entry, so it warns and skips that one
+  mutation — but the mutation is still gone. The same applies to
   every future `Vec2` payload on either command enum.
   `do_area_rotate_command_json_wire_shape` **reads the example on the
   line above out of this file** and parses it, so editing it back to
@@ -298,11 +305,18 @@ writes won't be reverted by `Ctrl+Z` and won't reach the saved model.
 | `Siblings` | The anchor's siblings (excluding itself). **Empty on a root**: "sibling" means "shares my parent", and a root shares none, so the other roots of a multi-root map are *not* siblings. A `Siblings` mutation on a root snapshots nothing, mutates nothing, and pushes no undo entry. |
 | `SectionsOnly` | Every section of the anchor — bypasses the chrome-only container fan-out so text / font / region mutations land on the section-areas only. The anchor `MindNode` is still the snapshot window (whole-node clone covers per-section state). Use this when a mutation must avoid colliding with a sibling mind-node sharing the section's channel. |
 
-For scope-helper-generated MutatorNodes (via
-`baumhard::mindmap::custom_mutation::scope::*`) the helper name
-matches the `target_scope` value — `scope::self_and_descendants(...)`
-pairs with `SelfAndDescendants`, etc. For hand-authored MutatorNodes,
-pick the smallest scope that covers every node the AST will touch.
+`baumhard::mindmap::custom_mutation::scope` ships four helpers that
+bake a flat mutation list into a MutatorNode, and only three of them
+are named for a `target_scope` value: `self_only` pairs with
+`SelfOnly`, `descendants` with `Descendants`, `self_and_descendants`
+with `SelfAndDescendants`. The fourth, `at_anchor`, is the same
+anchor-only shape as `self_only` under a name that says the
+application, not the AST, picks the targets — which is how the
+remaining scopes work: `Children`, `Parent`, `Siblings` and
+`SectionsOnly` have no helper of their own, because the application
+resolves their target set and anchors the mutator at each target in
+turn (next section). For hand-authored MutatorNodes, pick the
+smallest scope that covers every node the AST will touch.
 
 ### Which scopes admit a tree-walking mutator
 

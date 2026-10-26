@@ -456,6 +456,8 @@ Everything above that is a launch problem — the adapter, the socket, a
 frozen loop — is `mandala-drive`'s troubleshooting table; this skill adds
 only what recording adds. `scripts/ipc_smoke.sh` is that skill's end-to-end
 check; `scripts/record_demo.sh` on the two examples is this one's, and like
-the smoke script it is deliberately outside `./test.sh` (no live GPU in the
-suite — TEST_CONVENTIONS §T8/§T10). Run both example scripts after changing
+the smoke script it is deliberately outside `./test.sh`: it needs the built
+binaries, a socket and a process to record, and the suite's GPU-backed tests
+assert on state, never on frames (TEST_CONVENTIONS §T8/§T10). Run both
+example scripts after changing
 anything on the recording path, and whenever this skill is edited.

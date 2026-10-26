@@ -25,7 +25,7 @@
 //!   this directly with `&mut InputContextCore` built from
 //!   `WasmInputState::input_context_core`.
 //!
-//! Track C from `WASM_CONVERGENCE.md`. Sibling to
+//! Track C from `work_plans/WASM_CONVERGENCE.md`. Sibling to
 //! `dispatch_macro_core` (Track B precedent). The arm coverage
 //! matches what `dispatch_compatible_action_wasm` already wires
 //! today — that function gets deleted in C3 once the WASM caller
@@ -688,8 +688,8 @@ pub(in crate::application::app) fn dispatch_compatible(
 #[cfg(test)]
 mod parsing_tests {
     //! Pin the §4.6 Action payload-parsing helpers. The full
-    //! dispatch arms need a `Renderer` per `TEST_CONVENTIONS.md
-    //! §T8` so they aren't testable headless; the parsing
+    //! dispatch arms need a `Renderer`, so only the GPU-backed
+    //! tier of `TEST_CONVENTIONS.md §T8` runs them; the parsing
     //! helpers are pure data and the load-bearing piece for
     //! "did the macro author's payload reach the apply_*?".
     //! Test Quality #1 flagged 0 tests for the §4.6 dispatch
@@ -751,9 +751,9 @@ mod parsing_tests {
 #[cfg(test)]
 mod tests {
     //! Unit coverage for the mixed-branch outcome lift. The full
-    //! `dispatch_compatible` body needs a `Renderer` per
-    //! `TEST_CONVENTIONS.md §T8` so it isn't testable headless;
-    //! the lift helper, however, is pure data — pin its contract
+    //! `dispatch_compatible` body needs a `Renderer`, so only the
+    //! GPU-backed tier of `TEST_CONVENTIONS.md §T8` runs it; the
+    //! lift helper, however, is pure data — pin its contract
     //! here so the WASM-macro `any_ran` regression flagged by the
     //! Track-C parity reviewer can't recur silently.
     use super::*;

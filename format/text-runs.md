@@ -23,15 +23,17 @@ formatting metadata: `bold`, `italic`, `underline`, `font`, `size_pt`,
 `color`, and `hyperlink`.
 
 **Only `start` and `end` are required.** Every styling field defaults
-to the value that renders like the uncovered text around it, so
-`{ "start": 0, "end": 5, "bold": true }` is a complete run:
+to *no opinion*, so `{ "start": 0, "end": 5, "bold": true }` is a
+complete run:
 
 - `bold` / `italic` / `underline` default to `false`.
 - `font` defaults to the empty string — no pin; the run uses the
   document default face (see [fonts.md](./fonts.md)).
 - `size_pt` is a number (fractional sizes like `14.5` are valid) and
-  defaults to `14`, the same scale a section with no runs at all
-  renders at — omitting it changes nothing visually.
+  defaults to `DEFAULT_TEXT_RUN_SIZE_PT`
+  (`lib/baumhard/src/mindmap/model/node.rs`), the same scale a
+  section with no runs at all renders at — omitting it changes
+  nothing visually.
 - `color` defaults to the empty string — the run declines to name a
   color and takes the node's effective text color; see
   ["Leaving `color` empty"](#leaving-color-empty) below.
@@ -68,9 +70,14 @@ When `text_runs` is non-empty:
 - `start < end` for every run
 - `start` and `end` are measured in **grapheme clusters** — what users
   see as "one character" — not bytes and not Unicode code points
-- Uncovered ranges inherit the node's base style (so partial coverage is
-  valid — you can decorate just the first word without declaring runs for
-  the rest)
+- **Uncovered graphemes are not drawn.** A section with non-empty
+  `text_runs` renders exactly the ranges its runs cover; a grapheme
+  no run covers is still in `text`, still saved, still searchable —
+  and absent from the canvas. Partial coverage loads and verifies
+  (it is not an invariant violation), so nothing warns you: to
+  decorate one word, cover the rest of the text with a plain run
+  (`{ "start": 5, "end": 11 }`) rather than leaving it bare. See
+  [Example: partial coverage](#example-partial-coverage).
 
 Grapheme clusters match the unit baumhard's text primitives speak in
 (see `lib/baumhard/CONVENTIONS.md §B1` and the helpers in
@@ -90,13 +97,33 @@ violations with run indices.
 {
   "text": "Hello world",
   "text_runs": [
-    { "start": 0, "end": 5, "bold": true, ... }
+    { "start": 0, "end": 5, "bold": true }
   ]
 }
 ```
 
-"Hello" is bold. " world" inherits the node's effective text color,
-default font, default size. Valid.
+Valid, and probably not what you meant: the canvas shows **"Hello"**
+alone, in bold. " world" stays in `text` but no run covers it, so it
+is not drawn. To keep the rest visible in the node's style, cover it
+with a run that names nothing:
+
+```json
+{
+  "text": "Hello world",
+  "text_runs": [
+    { "start": 0, "end": 5, "bold": true },
+    { "start": 5, "end": 11 }
+  ]
+}
+```
+
+The rule lives in one place — `covered_slices` in
+`lib/baumhard/src/font/attrs.rs`, behind both the renderer's span
+builder and `displayed_text` — and
+`test_displayed_text_is_the_concatenated_covered_slices` pins it: a
+run table covering `"hello world"` at `[0, 5)` and `[6, 11)` shows
+`"helloworld"`. A section with **no** runs is the other case, and
+draws its whole text (see [Why runs are optional](#why-runs-are-optional)).
 
 ## Leaving `color` empty
 
@@ -104,8 +131,8 @@ default font, default size. Valid.
 `#rrggbb` (or `var(--name)`) color owns those graphemes outright and
 keeps them through a retheme. A run whose `color` is the empty
 string declines to name one and takes the node's effective text
-color, exactly as an uncovered range does — it is a formatting span
-that happens to carry no color opinion.
+color (the cascade in [Why runs are optional](#why-runs-are-optional))
+— it is a formatting span that happens to carry no color opinion.
 
 The distinction is load-bearing, and it is why the authoring layer
 writes an empty `color` on every run it creates with nothing to
@@ -122,10 +149,45 @@ the covered text as a clickable link styled with that URL. Runs without
 a hyperlink omit the field (an explicit `null` also reads as "none";
 the saver writes neither).
 
+## `section text … runs=preserve`
+
+`section text "<text>"` (and `Action::SetSectionText` with
+`runs_mode = "preserve"`) replaces a section's text and keeps its
+run table, positionally — runs keep their grapheme ranges, not the
+words they used to cover:
+
+- **Shorter text**: runs wholly inside the new text survive
+  unchanged; a run straddling the new end is clipped to it; runs
+  past it are dropped.
+- **Same length**: the table is untouched.
+- **Longer text**: the graphemes past the old end take the style of
+  the **last** run — the convention of a text editor, where typing
+  at the end of styled text continues that style. The last run is
+  extended when it reached the old end; when it ended short of it,
+  a copy of it covering just the appended graphemes is added.
+  Graphemes the old table left uncovered stay uncovered: the edit
+  covers only what it appended. (The one exception is an
+  overshooting table whose every run lies past the old end; see the
+  last bullet.)
+- **A link does not continue.** The appended graphemes never take
+  the last run's `hyperlink`, following the same editor convention
+  (typing past a link's end does not extend it): a linked last run
+  keeps its range, and the appended graphemes get a copy of its
+  style with no link.
+- On longer text, a run that starts or ends past the old end (a
+  table that overshot its text) is clamped to the old text first, so
+  it lends no style and leaves no appended grapheme uncovered. If
+  that leaves no run, the section becomes run-less and draws its
+  whole text, as when a shorter edit drops every run.
+
+A section with no runs stays run-less and draws its whole text.
+Without the longer-text rule the appended graphemes would sit in
+`text` covered by no run.
+
 ## `section split` run partitioning
 
 The `section split [section=<idx>] [at=<grapheme>]` console verb
-(SECTIONS_BORDERS_RESIZE_PLAN.md §4.5) splits a section in two
+([`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`](../work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md) §4.5) splits a section in two
 at a grapheme boundary; the prefix stays at `idx`, the suffix
 becomes a new section at `idx + 1`.
 

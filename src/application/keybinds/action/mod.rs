@@ -202,7 +202,7 @@ pub enum Action {
     /// the native-only residual (clearing `hovered_node` for the
     /// Reparent/Connect overlay rebuild) runs in the native arm.
     /// Replaces the pre-Batch-2 `CancelMode` per
-    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
+    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
     /// (rename rather than alias).
     #[action(context = Document, wasm = Compatible)]
     ExitMode,
@@ -297,7 +297,7 @@ pub enum Action {
     /// log-and-no-op stub today (async-clipboard integration
     /// pending). The Action is classified `Compatible` because it
     /// doesn't crash, but the user-visible behavior is "nothing
-    /// happens." Tracked in `WASM_CONVERGENCE.md`.
+    /// happens." Tracked in `work_plans/WASM_CONVERGENCE.md`.
     #[action(context = Document, wasm = Compatible, destructive)]
     Copy,
     /// Paste the system clipboard's text content into the focused component.
@@ -893,7 +893,8 @@ pub enum Action {
     SetSectionOffsetAbs { x: String, y: String },
     /// Mirror `section text "<text>" [runs=preserve|clear]`.
     /// `runs_mode = "preserve"` clips existing runs to the new text
-    /// length; `"clear"` collapses to a single run. Destructive.
+    /// length and extends the last one's style over appended text;
+    /// `"clear"` collapses to a single run. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SetSectionText { text: String, runs_mode: String },
     /// Mirror `section add [at=<idx>] [text="<text>"]`. `at = ""`
@@ -958,7 +959,7 @@ pub enum Action {
 /// bound to e.g. `Action::OpenConsole` silently no-ops in the
 /// browser instead of triggering a panic
 /// at the dispatch site. As WASM gains its own version of the
-/// missing modals (see `WASM_CONVERGENCE.md`), variants migrate
+/// missing modals (see `work_plans/WASM_CONVERGENCE.md`), variants migrate
 /// from `NativeOnly` to `Compatible` one at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WasmCompatibility {
@@ -976,7 +977,7 @@ pub enum WasmCompatibility {
     /// Currently a no-op on WASM; the convergence path is to
     /// either port the underlying system or surface a WASM-
     /// specific equivalent and flip the classification to
-    /// `Compatible`. Tracked in `WASM_CONVERGENCE.md`.
+    /// `Compatible`. Tracked in `work_plans/WASM_CONVERGENCE.md`.
     NativeOnly,
 }
 

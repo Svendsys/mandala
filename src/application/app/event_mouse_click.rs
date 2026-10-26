@@ -27,8 +27,8 @@ use crate::application::keybinds::Action;
 ///
 /// Pure so both halves of the middle button are pinnable at
 /// `DragState` level — the dispatcher below takes an
-/// [`InputHandlerContext`], i.e. a live wgpu device, which
-/// TEST_CONVENTIONS §T8 keeps out of the harness.
+/// [`InputHandlerContext`], i.e. a live wgpu device, which only the
+/// suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MiddleButtonRoute {
     /// The drag state is idle — run whatever the user bound to
@@ -621,7 +621,7 @@ pub(super) fn handle_mouse_input(
 }
 
 /// Right-button press / release handler — fast-resize gesture
-/// substrate (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+/// substrate (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
 ///
 /// Press: stash the press-time hit (body of any node / section,
 /// no edge-handle / portal-label / resize-handle precedence — the

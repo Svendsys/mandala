@@ -39,7 +39,7 @@
 //! native and WASM. The native vs. WASM divergence is largely
 //! confined to the run-loop entry point; cross-platform
 //! `Action` arms route through [`dispatch::action_core`]'s
-//! `dispatch_compatible`. See `WASM_CONVERGENCE.md` for the
+//! `dispatch_compatible`. See `work_plans/WASM_CONVERGENCE.md` for the
 //! current convergence status.
 
 mod animation_drain;
@@ -58,6 +58,8 @@ pub(crate) mod dispatch;
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]
 mod capture_flow;
+#[cfg(not(target_arch = "wasm32"))]
+mod capture_scene;
 #[cfg(not(target_arch = "wasm32"))]
 mod click;
 mod click_triggers;
@@ -98,7 +100,7 @@ mod pump;
 #[cfg(not(target_arch = "wasm32"))]
 mod record_flow;
 // Cross-platform context-bundles for the unified `dispatch_action`
-// funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
+// funnel. Track C from `work_plans/WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
 #[cfg(not(target_arch = "wasm32"))]
 mod modal_editor;
@@ -958,9 +960,25 @@ impl DragState {
     /// model does not hold until release — so a camera-geometry rebuild
     /// in the middle of it, which projects from the model, would put
     /// them back where they were. The per-frame drain skips the rebuild
-    /// then, and a capture at another zoom refuses.
+    /// then, and a capture at another zoom projects its scratch scene
+    /// with the same offsets ([`Self::moving_node_offsets`]).
     fn is_moving_node(&self) -> bool {
-        matches!(self, Self::Throttled(d) if matches!(**d, ThrottledDrag::MovingNode(_)))
+        self.moving_node_offsets().is_some()
+    }
+
+    /// The offsets a node drag has drained into the tree so far
+    /// (`MovingNodeInteraction::drained_offsets`), while one is in
+    /// flight: the map that makes a projection from the model land
+    /// where the window shows the dragged nodes. `None` outside a node
+    /// drag — every other state leaves the model where the tree is.
+    fn moving_node_offsets(&self) -> Option<&std::collections::HashMap<String, (f32, f32)>> {
+        match self {
+            Self::Throttled(d) => match &**d {
+                ThrottledDrag::MovingNode(moving) => Some(moving.drained_offsets()),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// True when overwriting this state with a freshly-armed
@@ -1263,9 +1281,20 @@ pub(crate) fn project_scene_for_tests(
 }
 
 // Unit tests for pure helpers (cursor math, caret insertion,
-// double-click detection, Baumhard mutation round-trip). Event-loop
-// integration is verified manually via `cargo run`.
+// double-click detection, Baumhard mutation round-trip). What needs
+// the renderer is `tests_gpu`'s, below.
 
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests;
+
+// The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
+// native app with no window on whatever adapter the machine has —
+// Mesa's lavapipe on a GPU-less box — skipped with a note where there
+// is none, and never skipped in CI.
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod gpu_harness;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu;
