@@ -144,6 +144,56 @@ impl MouseGesture {
     }
 }
 
+/// A binding name that used to mean something and no longer does.
+///
+/// `KeyBind::parse` accepts any non-modifier word as a key, because
+/// that is what a key name is — every letter, every `NamedKey`, every
+/// gesture token. So a name *retired* from the vocabulary does not stop
+/// parsing when it is removed: it parses into a binding for a "key"
+/// nothing will ever press, and the user's config line goes inert in
+/// silence. This table is what tells the two apart. A retired name is
+/// refused at parse time with [`Self::diagnostic`], which every caller
+/// of `KeyBind::parse` already reports as a skipped binding, so the
+/// user is told the line is dead and what to do instead.
+///
+/// **Retiring a gesture or key name is a two-line change**: delete it
+/// from the vocabulary, and add a row here. The row stays for as long
+/// as an old config might carry the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetiredName {
+    /// The lowercase token, as `KeyBind::parse` normalizes it.
+    pub token: &'static str,
+    /// The spelling a user typed, for the message.
+    pub spelling: &'static str,
+    /// What happened to it and what to use instead, as one sentence
+    /// fragment the diagnostic quotes.
+    pub replacement: &'static str,
+}
+
+impl RetiredName {
+    /// The parse error a binding naming this token gets.
+    pub fn diagnostic(&self, input: &str) -> String {
+        format!(
+            "keybind '{input}' names '{}', which is no longer a bindable name: {}",
+            self.spelling, self.replacement
+        )
+    }
+}
+
+/// Every retired binding name. See [`RetiredName`].
+pub const RETIRED_NAMES: &[RetiredName] = &[RetiredName {
+    token: "twofingerdrag",
+    spelling: "TwoFingerDrag",
+    replacement: "two fingers now pan and zoom the canvas, and the gesture no longer \
+                  binds an Action (#35). FastResizeStart keeps Ctrl+RightDrag; by touch, \
+                  long-press a node (LongPress → enter_resize_mode) and drag a handle",
+}];
+
+/// The retired name `token` is, if it is one.
+fn retired(token: &str) -> Option<&'static RetiredName> {
+    RETIRED_NAMES.iter().find(|r| r.token == token)
+}
+
 /// Look up the [`MouseGesture::pascal_form`] for a known
 /// `lower`-case token, or `None` for keyboard names. Walks
 /// `MouseGesture::iter()` so adding a new gesture variant
@@ -161,7 +211,9 @@ fn gesture_emit_form(lower: &str) -> Option<&'static str> {
 impl KeyBind {
     /// Parse a binding string like `"Ctrl+Z"`, `"Shift+Alt+Delete"`, or
     /// just `"Escape"`. Modifier order doesn't matter; whitespace is
-    /// tolerated; key names are matched case-insensitively.
+    /// tolerated; key names are matched case-insensitively. A name in
+    /// [`RETIRED_NAMES`] is refused with its diagnostic rather than
+    /// parsed into a binding nothing can fire.
     pub fn parse(input: &str) -> Result<Self, String> {
         let mut ctrl = false;
         let mut shift = false;
@@ -186,6 +238,9 @@ impl KeyBind {
             }
         }
 
+        if let Some(retired) = key.as_deref().and_then(retired) {
+            return Err(retired.diagnostic(input));
+        }
         match key {
             Some(key) => Ok(KeyBind {
                 key,
