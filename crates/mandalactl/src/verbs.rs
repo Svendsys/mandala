@@ -478,7 +478,7 @@ pub const VERBS: &[Verb] = &[
         positional: &["path"],
         effect: Effect::Reads,
         render: Render::Flat,
-        example: "mandalactl capture.screenshot /tmp/shot.png fit=true width=1920 height=1080",
+        example: "mandalactl capture.screenshot shot.png fit=true width=1920 height=1080",
     },
     Verb {
         name: "capture.record_start",
@@ -498,7 +498,7 @@ pub const VERBS: &[Verb] = &[
         positional: &["dir"],
         effect: Effect::Reads,
         render: Render::Flat,
-        example: "mandalactl capture.record_start /tmp/zoom fps=20 max_frames=120",
+        example: "mandalactl capture.record_start zoom fps=20 max_frames=120",
     },
     Verb {
         name: "capture.record_stop",

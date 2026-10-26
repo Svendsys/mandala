@@ -728,6 +728,7 @@ fn unconfirmed_failure(outcome: &Outcome) -> &str {
 // other kind (the nearest thing, a value spelled like a path, is refused
 // by name). Each Unix-only test says so beside its `cfg`.
 
+// The socket's spelling; the twin below is the pipe's.
 #[cfg(unix)]
 #[test]
 fn test_no_socket_says_the_app_is_not_running_and_how_to_start_it() {
@@ -796,6 +797,7 @@ fn test_a_path_where_a_pipe_name_belongs_is_reported_by_name() {
     );
 }
 
+// The socket's limit; the twin below is the pipe name's.
 #[cfg(unix)]
 #[test]
 fn test_a_socket_path_over_the_platform_limit_is_reported_as_such() {

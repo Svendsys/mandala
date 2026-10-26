@@ -307,8 +307,16 @@ fn absolute(text: &str, cwd: Option<&Path>) -> Result<String, String> {
         return Ok(text.to_string());
     }
     let Some(cwd) = cwd else {
+        // Only on Windows can a path have a root and still not be
+        // absolute: `\tmp\x.png` is rooted on the current drive, which is
+        // the working directory's.
+        let why = if path.has_root() {
+            "has no drive"
+        } else {
+            "is relative"
+        };
         return Err(format!(
-            "`{text}` is relative and the working directory is unknown; give an absolute path"
+            "`{text}` {why} and the working directory is unknown; give an absolute path"
         ));
     };
     let mut joined = cwd.to_path_buf();
@@ -800,6 +808,24 @@ mod tests {
         );
         let absolute = native("/abs.png", r"C:\abs.png");
         assert!(build_params(&signature, &tokenize(&words(&[absolute])), None).is_ok());
+    }
+
+    /// On Windows a path with a root but no drive is absolute on the
+    /// working directory's drive: `PathBuf` keeps the drive and replaces
+    /// the rest. Without a directory there is no drive to take, and the
+    /// refusal says that rather than calling the path relative.
+    #[cfg(windows)]
+    #[test]
+    fn test_a_path_rooted_without_a_drive_takes_the_working_directorys() {
+        for typed in ["/tmp/x.png", r"\tmp\x.png"] {
+            let from_c = built_in(r"C:\work", "capture.screenshot", &[typed]);
+            assert_eq!(from_c["path"], json!(r"C:\tmp\x.png"), "{typed}");
+            let from_d = built_in(r"D:\maps", "capture.screenshot", &[typed]);
+            assert_eq!(from_d["path"], json!(r"D:\tmp\x.png"), "{typed}");
+        }
+        let signature = Signature::of(lookup("capture.screenshot").expect("a known verb"));
+        let err = build_params(&signature, &tokenize(&words(&[r"\tmp\x.png"])), None).expect_err("no drive");
+        assert!(err.contains("has no drive"), "{err}");
     }
 
     #[test]

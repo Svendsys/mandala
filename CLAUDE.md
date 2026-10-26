@@ -105,8 +105,9 @@ the parity trajectory (or why none is owed):
   every target (the workspace is type-checked for wasm32) and
   connects over the socket or the pipe. The Windows half runs on CI's
   `windows-ipc` job (`.github/workflows/test.yml`: clippy, the
-  `ipc::` tests and `mandalactl`'s whole test target), not in `./test.sh`, which cannot run it from Linux;
-  locally `cargo check --target x86_64-pc-windows-gnu -p mandala`
+  `ipc::` tests and `mandalactl`'s whole test target), not in
+  `./test.sh`, which cannot run it from Linux; locally
+  `cargo check --target x86_64-pc-windows-gnu -p mandala`
   type-checks it. Protocol: `format/ipc.md`; design:
   `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
   transport + browser-side capture, same envelope and commands) is

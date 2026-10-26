@@ -141,11 +141,13 @@ jobs:
       # Beyond a zero count, the step checks that the two halves that
       # used to be Unix-only actually ran: a `cfg` that quietly dropped
       # them again would still leave a non-zero count behind.
+      # `--no-fail-fast` so a red lib target does not hide what the
+      # binary target would have said: one run reports every target.
       - name: The mandalactl tests, Windows
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p mandalactl 2>&1 | tee mandalactl-tests.log
+          cargo test -p mandalactl --no-fail-fast 2>&1 | tee mandalactl-tests.log
           count=$(grep -Eo 'test result: ok\. [0-9]+ passed' mandalactl-tests.log | awk '{ sum += $4 } END { print sum + 0 }')
           echo "mandalactl tests passed: $count"
           if [ "$count" -eq 0 ]; then

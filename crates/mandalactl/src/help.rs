@@ -21,8 +21,8 @@ pub const WORKFLOW: &[&str] = &[
     "mandalactl scene.find_text Introduction",
     "mandalactl input.click_node 1.2",
     "mandalactl input.pending",
-    "mandalactl capture.screenshot /tmp/after.png fit=true width=1920 height=1080",
-    "mandalactl capture.record_start /tmp/zoom fps=20",
+    "mandalactl capture.screenshot after.png fit=true width=1920 height=1080",
+    "mandalactl capture.record_start zoom fps=20",
     "mandalactl act.action ZoomIn",
     "mandalactl capture.record_stop",
     "mandalactl events.subscribe document_changed --count 1",
@@ -31,9 +31,9 @@ pub const WORKFLOW: &[&str] = &[
 /// The client's own commands, which never touch the socket. Each is
 /// parsed in the tests, as [`WORKFLOW`] is.
 pub const LOCAL: &[&str] = &[
-    "mandalactl record assemble /tmp/zoom",
-    "mandalactl record assemble /tmp/zoom out=zoom.gif width=640 fps=15",
-    "mandalactl record assemble /tmp/zoom format=mp4 overwrite=true",
+    "mandalactl record assemble zoom",
+    "mandalactl record assemble zoom out=zoom.gif width=640 fps=15",
+    "mandalactl record assemble zoom format=mp4 overwrite=true",
 ];
 
 /// Argument spellings the overview teaches, one per line. Also parsed
@@ -272,7 +272,7 @@ mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps
     frames_out, width, height, duration_ms, bytes. stderr: warnings. Exit 0 made, 1 could not (no
     manifest, a bad frame, no ffmpeg, a file in the way), 3 bad command line.
 
-  example: mandalactl record assemble /tmp/zoom out=zoom.gif width=640
+  example: mandalactl record assemble zoom out=zoom.gif width=640
 ";
 
 const RAW_EXAMPLE: &str = "  mandalactl raw - <<'JSON'
@@ -300,12 +300,13 @@ mod tests {
             panic!("`{line}` is not an invocation");
         };
         let verb = verbs::lookup(&call.command).unwrap_or_else(|| panic!("`{line}`: no such verb"));
-        // No working directory on Unix, so a taught path that is not
-        // absolute fails here. On Windows the examples' `/tmp/...` is
-        // absolute but for its drive, which comes from the shell's
-        // directory — as it would for a user running the line there.
-        let cwd = cfg!(windows).then(|| std::path::Path::new(r"C:\work"));
-        build_params(&Signature::of(verb), &tokenize(&call.words), cwd)
+        // The examples teach relative paths, which every platform makes
+        // absolute against the shell's directory — an absolute one would
+        // be spelled for one platform only (`/tmp/...` has no drive on
+        // Windows). So the line is parsed as a shell in some directory
+        // would hand it over.
+        let cwd = std::path::Path::new(crate::platform::native("/work", r"C:\work"));
+        build_params(&Signature::of(verb), &tokenize(&call.words), Some(cwd))
             .unwrap_or_else(|e| panic!("`{line}`: {e}"));
         if call.options.wait_settled {
             assert_eq!(
@@ -347,8 +348,8 @@ mod tests {
                 panic!("`{line}` is not an invocation");
             };
             assert_eq!(call.command, crate::assemble::COMMAND, "{line}");
-            crate::assemble::parse_args(&call.words, Some(std::path::Path::new("/w")))
-                .unwrap_or_else(|e| panic!("`{line}`: {e}"));
+            let cwd = std::path::Path::new(crate::platform::native("/w", r"C:\w"));
+            crate::assemble::parse_args(&call.words, Some(cwd)).unwrap_or_else(|e| panic!("`{line}`: {e}"));
         }
         let overview = overview();
         for line in LOCAL {
