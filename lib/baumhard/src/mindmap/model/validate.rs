@@ -117,6 +117,38 @@ pub fn node_size_violations(size: Size) -> Vec<String> {
     out
 }
 
+/// The editor-side half of the section-count cap: whether `node` can
+/// take **one more** section without breaking [`section_count`].
+///
+/// [`section_count`] is the loader's question — is this node already
+/// over [`MAX_SECTIONS_PER_NODE`]? — and a writer that only asked it
+/// after growing the vector would author the very map the loader then
+/// refuses to reopen. This asks before: `Err` once the node holds the
+/// cap, naming the count and the bound. Both rules read the one
+/// constant, so the editor and the loader cannot disagree about where
+/// the line is.
+///
+/// **Every shipped writer that grows `node.sections` calls this
+/// first**, and `test_every_section_growth_checks_the_cap` holds that
+/// by scanning the workspace for growth sites rather than by
+/// remembering them — `split_section` skipped the check for as long as
+/// it was hand-kept (#208). The message carries no verb; each caller
+/// prefixes its own (`section add: …`, `section split: …`).
+///
+/// Cost: O(1).
+pub fn room_for_another_section(node: &MindNode) -> Result<(), String> {
+    let len = node.sections.len();
+    if len >= MAX_SECTIONS_PER_NODE {
+        Err(format!(
+            "node '{}' already holds {len} sections, the cap (MAX_SECTIONS_PER_NODE = \
+             {MAX_SECTIONS_PER_NODE}); a map with more would not reopen",
+            node.id
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Validate the section-count cap for one node.
 pub fn section_count(node: &MindNode) -> Result<(), String> {
     if node.sections.len() > MAX_SECTIONS_PER_NODE {
@@ -1085,4 +1117,54 @@ pub fn map_numeric_domain(map: &MindMap) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod section_cap_writer_tests {
+    /// **Every shipped writer that grows `node.sections` asks
+    /// [`super::room_for_another_section`] first, and this holds it by
+    /// construction rather than by remembering.**
+    ///
+    /// The loader refuses a node past `MAX_SECTIONS_PER_NODE`, so any
+    /// editor path that grows the vector unchecked authors a map that
+    /// will not reopen. `add_section` was guarded and `split_section`
+    /// was not, for as long as the list of writers was kept in heads
+    /// (#208). This scans the workspace's shipped source for every
+    /// `.sections.<growing method>(` and fails for one whose enclosing
+    /// function does not call the guard — so a third writer cannot
+    /// miss it the way the second did.
+    ///
+    /// Fails when: a growth site's function drops the guard, or a new
+    /// growth site is added without one. A growth written through a
+    /// binding (`let s = &mut node.sections; s.push(…)`), a raw
+    /// pointer or a macro is text this scan cannot see — see
+    /// `section_growth_sites` for the approximation it makes.
+    #[test]
+    fn test_every_section_growth_checks_the_cap() {
+        let sites = crate::util::source_scan::section_growth_sites();
+
+        // Precondition: the scan has to be reading something, or every
+        // assertion below passes on an empty list. `add_section` and
+        // `split_section` are two known growth sites today.
+        assert!(
+            sites.len() >= 2,
+            "the scan found {} section growth sites, fewer than the two known writers — \
+             the scan is what broke: {sites:#?}",
+            sites.len()
+        );
+
+        let unguarded: Vec<_> = sites.iter().filter(|(_, _, _, guarded)| !guarded).collect();
+        assert!(
+            unguarded.is_empty(),
+            "these lines grow `node.sections` without first calling \
+             `validate::room_for_another_section`:\n{}\n\nCall it before the vector grows. \
+             The loader refuses a node past MAX_SECTIONS_PER_NODE, so an unguarded writer \
+             saves a map that will not reopen (#208).",
+            unguarded
+                .iter()
+                .map(|(f, n, line, _)| format!("  {f}:{n}   {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
 }

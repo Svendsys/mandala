@@ -761,6 +761,81 @@ pub(crate) fn node_position_component_writes() -> Vec<(String, usize, String)> {
     out
 }
 
+/// The methods that make a `Vec` longer. A `.sections.` receiver
+/// followed by any of these is a site that can push a node past
+/// `MAX_SECTIONS_PER_NODE`.
+const SECTION_GROWTH_METHODS: &[&str] = &[
+    "insert(",
+    "push(",
+    "extend(",
+    "extend_from_slice(",
+    "append(",
+    "splice(",
+    "resize(",
+    "resize_with(",
+];
+
+/// Every shipped site that grows a `sections` vector, as
+/// `(repo-relative file, 1-based line, the line's text, whether the
+/// enclosing fn calls `validate::room_for_another_section`)`.
+///
+/// "Enclosing fn" is the nearest preceding line that declares one
+/// (`fn name(` after any qualifiers), and "calls" means the text from
+/// that line to the growth site contains `room_for_another_section(`.
+/// That is a textual approximation, stated so nobody mistakes it for
+/// more: a guard called *after* the growth, or in a helper the fn
+/// calls, does not count — which is the conservative direction, since
+/// the guard has to run before the vector grows to mean anything.
+///
+/// Reads shipped text only (`production_source` plus the out-of-line
+/// test modules `test_gated_module_files` resolves), so a fixture that
+/// pads a node by direct push is not a finding.
+pub(crate) fn section_growth_sites() -> Vec<(String, usize, String, bool)> {
+    let mut out = Vec::new();
+    let sources = workspace_rust_sources();
+    let test_only = test_gated_module_files(&sources);
+    for file in sources {
+        if test_only.contains(&file) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let shipped = production_source(&file, &text);
+        let lines: Vec<&str> = shipped.lines().collect();
+        for (index, line) in lines.iter().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            let Some(at) = code.find(".sections.") else { continue };
+            let tail = &code[at + ".sections.".len()..];
+            if !SECTION_GROWTH_METHODS
+                .iter()
+                .any(|method| tail.starts_with(method))
+            {
+                continue;
+            }
+            let fn_start = (0..=index)
+                .rev()
+                .find(|&i| {
+                    let l = lines[i].split("//").next().unwrap_or(lines[i]);
+                    l.contains("fn ") && l.contains('(')
+                })
+                .unwrap_or(0);
+            let guarded = lines[fn_start..=index].iter().any(|l| {
+                l.split("//")
+                    .next()
+                    .unwrap_or(l)
+                    .contains("room_for_another_section(")
+            });
+            out.push((
+                relative_to_repo(&file),
+                index + 1,
+                code.trim().to_string(),
+                guarded,
+            ));
+        }
+    }
+    out
+}
+
 /// Every shipped `NodeId::append(` call under `mindmap/tree_builder/`,
 /// as `(repo-relative file, 1-based line, the line's text)`.
 ///

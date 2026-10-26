@@ -2915,9 +2915,9 @@ Open follow-ups deferred to a future PR (acknowledged in plan's
 - [ ] Resource caps on text length / sections per node / undo
       depth (Security I-1/2/3 from the §4.6 review). Sections per
       node is capped (`MAX_SECTIONS_PER_NODE` in
-      `lib/baumhard/src/mindmap/model/node.rs`, though
-      `split_section` bypasses it — see below); text length and
-      undo depth are not.
+      `lib/baumhard/src/mindmap/model/node.rs`, held on every
+      growth path since #208 — see below); text length and undo
+      depth are not.
 - [x] §3.9 `node edit` console subverb — sugar over `mode
       node-edit`; landed. — shipped: `console/commands/node.rs`
       (`edit` subverb; test `node_edit_emits_set_interaction_mode_node_edit`)
@@ -3104,11 +3104,14 @@ The remainder are deferred here:
       `MAX_INLINE_MACROS_PER_NODE`, `MAX_TEXT_LEN`,
       `MAX_NODES_PER_MAP`, `MAX_PALETTE_GROUPS` at runtime AND
       verify.
-- [ ] **`split_section` ignores 1024 cap** (correctness MEDIUM):
+- [x] **`split_section` ignores 1024 cap** (correctness MEDIUM):
       `add_section` checks `MAX_SECTIONS_PER_NODE` but `split_section`
       doesn't, so repeated splits past the cap bypass the
-      protection. Still open in `document/nodes/section_structure.rs`.
-      The second half is closed: `maptool verify` no longer hardcodes
+      protection. — shipped (#208): both call
+      `validate::room_for_another_section` (`model/validate.rs`), and
+      `test_every_section_growth_checks_the_cap` holds every shipped
+      growth of `node.sections` to it; regression
+      `test_split_section_refuses_a_node_at_the_cap`. The second half is closed: `maptool verify` no longer hardcodes
       1024 — `verify/sections.rs` calls `validate::section_count`
       (`lib/baumhard/src/mindmap/model/validate.rs`), which reads the
       const.

@@ -1580,6 +1580,33 @@ mod tests {
     /// foot-gun finding). Post-fix `at=` is required; the bare
     /// `section split` form errors with a hint pointing at
     /// `section show` for the grapheme count.
+    /// #208 at the console: a `section split` on a node already at
+    /// `MAX_SECTIONS_PER_NODE` reaches the user as the named refusal,
+    /// not as a success that writes an unloadable map. The console is
+    /// also what `act.console` drives over IPC, so this is the text an
+    /// agent sees too.
+    #[test]
+    fn test_section_split_at_the_cap_is_refused_by_name() {
+        use baumhard::mindmap::model::{MindSection, MAX_SECTIONS_PER_NODE};
+        let (mut doc, id) = pinned_two_section_node();
+        let node = doc.mindmap.nodes.get_mut(&id).expect("fixture node");
+        let filler = MindSection::new_default(String::new(), Vec::new());
+        while node.sections.len() < MAX_SECTIONS_PER_NODE {
+            node.sections.push(filler.clone());
+        }
+        doc.set_section_text(&id, 1, "abcdef".to_string());
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let result = run("section split at=3", &mut doc);
+        assert_exec_err_contains(
+            result,
+            &format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}"),
+        );
+        assert_eq!(doc.mindmap.nodes[&id].sections.len(), MAX_SECTIONS_PER_NODE);
+    }
+
     #[test]
     fn section_split_no_at_rejects_with_hint() {
         let (mut doc, id) = pinned_two_section_node();

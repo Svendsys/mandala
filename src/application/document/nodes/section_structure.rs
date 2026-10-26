@@ -44,7 +44,8 @@ impl MindMapDocument {
     /// node's size. Pushes one `EditNodeStyle` undo entry.
     ///
     /// Returns the index the section was inserted at, or an error
-    /// when the node doesn't exist or the AABB is invalid.
+    /// when the node doesn't exist, already holds
+    /// `MAX_SECTIONS_PER_NODE` sections, or the AABB is invalid.
     ///
     /// `at` is clamped to `[0, sections.len()]`; inserting past the
     /// end is the same as appending. Authoring-time conveniences
@@ -62,15 +63,8 @@ impl MindMapDocument {
             Some(n) => n,
             None => return Err(format!("section add: node '{}' not found", node_id)),
         };
+        validate::room_for_another_section(node).map_err(|e| format!("section add: {e}"))?;
         let len = node.sections.len();
-        if len >= crate::application::document::MAX_SECTIONS_PER_NODE {
-            return Err(format!(
-                "section add: node '{}' already has {} sections (cap = {})",
-                node_id,
-                len,
-                crate::application::document::MAX_SECTIONS_PER_NODE
-            ));
-        }
         let insert_at = at.unwrap_or(len).min(len);
         validate::section_candidate_aabb(node.size, insert_at, section.offset, section.size)?;
 
@@ -159,8 +153,10 @@ impl MindMapDocument {
     ///
     /// Pushes one `EditNodeStyle` undo entry. Returns the new
     /// section's index (`idx + 1`). Errors on missing node,
-    /// out-of-range `idx`, or `at_grapheme` past the section's
-    /// text length.
+    /// out-of-range `idx`, a node already holding
+    /// `MAX_SECTIONS_PER_NODE` sections (a split adds one, and the
+    /// loader refuses a node past the cap — #208), or `at_grapheme`
+    /// past the section's text length.
     pub fn split_section(
         &mut self,
         node_id: &str,
@@ -182,6 +178,7 @@ impl MindMapDocument {
                 node.sections.len()
             ));
         };
+        validate::room_for_another_section(node).map_err(|e| format!("section split: {e}"))?;
 
         let original_text = &section.text;
         // Resolve `at_grapheme` against the section's text. We need
@@ -251,8 +248,8 @@ impl MindMapDocument {
 #[cfg(test)]
 mod tests {
     use super::super::super::tests_common::{first_testament_node_id, load_test_doc};
-    use super::super::super::{SectionSel, SelectionState};
-    use baumhard::mindmap::model::{MindSection, Position};
+    use super::super::super::{MindMapDocument, SectionSel, SelectionState};
+    use baumhard::mindmap::model::{MindSection, Position, MAX_SECTIONS_PER_NODE};
 
     fn empty_section() -> MindSection {
         MindSection {
@@ -553,36 +550,110 @@ mod tests {
         assert_eq!(run.color, "#00ff00");
     }
 
+    /// A document whose first testament node holds `count` sections,
+    /// padded with empty ones. Padding by direct push is a fixture
+    /// shortcut, not a writer: no shipped path grows `sections`
+    /// without `validate::room_for_another_section`.
+    fn doc_with_sections(count: usize) -> (MindMapDocument, String) {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        let node = doc.mindmap.nodes.get_mut(&id).expect("fixture node");
+        while node.sections.len() < count {
+            node.sections.push(empty_section());
+        }
+        assert_eq!(
+            node.sections.len(),
+            count,
+            "fixture must hold exactly {count} sections"
+        );
+        (doc, id)
+    }
+
+    /// Hostile-mindmap defense: `add_section` rejects when the
+    /// node is already at the section-count cap. Pre-fix the
+    /// cap was unenforced and a Map-tier macro firing AddSection
+    /// in a loop could OOM the host.
+    #[test]
+    fn add_section_rejects_at_cap() {
+        let (mut doc, id) = doc_with_sections(MAX_SECTIONS_PER_NODE);
+        let result = doc.add_section(&id, None, empty_section());
+        match result {
+            Err(msg) => {
+                assert!(msg.starts_with("section add: "), "the verb names itself: {msg}");
+                assert!(
+                    msg.contains(&format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}")),
+                    "error should name the cap: {msg}"
+                );
+            }
+            Ok(idx) => panic!("expected cap-rejection error, got Ok({})", idx),
+        }
+    }
+
+    /// **#208: a split adds a section, so it is held to the same cap
+    /// as `add_section`.** It was not: `split_section` inserted its
+    /// suffix with no check, so repeated splits grew a node past
+    /// `MAX_SECTIONS_PER_NODE` — a map the editor saved and the loader
+    /// (`detect_section_count_cap`) then refused to reopen.
+    ///
+    /// The refusal must leave the document exactly as it was: no
+    /// section added, nothing on the undo stack.
+    ///
+    /// Fails when: the guard in `split_section` goes — the split then
+    /// succeeds and the node holds one more than the cap.
+    #[test]
+    fn test_split_section_refuses_a_node_at_the_cap() {
+        let (mut doc, id) = doc_with_sections(MAX_SECTIONS_PER_NODE);
+        doc.undo_stack.clear();
+
+        let result = doc.split_section(&id, 0, Some(0));
+
+        let msg = result.expect_err("a split on a node at the cap must be refused");
+        assert!(msg.starts_with("section split: "), "the verb names itself: {msg}");
+        assert!(
+            msg.contains(&format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}")),
+            "the refusal names the cap: {msg}"
+        );
+        assert_eq!(
+            doc.mindmap.nodes[&id].sections.len(),
+            MAX_SECTIONS_PER_NODE,
+            "a refused split adds nothing"
+        );
+        assert!(doc.undo_stack.is_empty(), "a refused split pushes no undo entry");
+    }
+
+    /// The other side of the line: one under the cap, a split is
+    /// allowed and lands the node *exactly* on it — and a map with a
+    /// node at the cap is one the strict loader still opens. Without
+    /// this half, a guard that refused one section too early (an
+    /// off-by-one toward `>`) would pass the test above.
+    #[test]
+    fn test_split_section_may_reach_the_cap_and_the_map_still_reloads() {
+        use baumhard::mindmap::loader::{load_from_file, save_to_file};
+
+        let (mut doc, id) = doc_with_sections(MAX_SECTIONS_PER_NODE - 1);
+        doc.split_section(&id, 0, Some(0))
+            .expect("a split one under the cap is allowed");
+        assert_eq!(doc.mindmap.nodes[&id].sections.len(), MAX_SECTIONS_PER_NODE);
+
+        let dir = baumhard::util::test_temp::TempDir::new("split-at-cap-reload");
+        let path = dir.join("at_cap.mindmap.json");
+        save_to_file(&path, &doc.mindmap).expect("save must succeed");
+        let reloaded = load_from_file(&path)
+            .unwrap_or_else(|e| panic!("a node at the cap must reopen under the strict loader: {e}"));
+        assert_eq!(reloaded.nodes[&id].sections.len(), MAX_SECTIONS_PER_NODE);
+
+        assert!(
+            doc.split_section(&id, 0, Some(0)).is_err(),
+            "and the next split, now at the cap, is refused"
+        );
+    }
+
     /// Pin the `node.size` undo restoration. Pre-fix the floor
     /// pass after `add_section` could grow `node.size` to
     /// accommodate the inserted section's measured-text floor;
     /// `EditNodeStyle` only restored `style` + `sections`, leaving
     /// the node visibly inflated after undo. Now restored
     /// alongside.
-    /// Hostile-mindmap defense: `add_section` rejects when the
-    /// node is already at the section-count cap. Pre-fix the
-    /// cap was unenforced and a Map-tier macro firing AddSection
-    /// in a loop could OOM the host. Tests against a synthetic
-    /// 1024-section node.
-    #[test]
-    fn add_section_rejects_at_cap() {
-        let mut doc = load_test_doc();
-        let id = first_testament_node_id(&doc);
-        // Reach the cap quickly — the cap is 1024.
-        if let Some(node) = doc.mindmap.nodes.get_mut(&id) {
-            for _ in 0..(crate::application::document::MAX_SECTIONS_PER_NODE - node.sections.len()) {
-                node.sections.push(empty_section());
-            }
-        }
-        let result = doc.add_section(&id, None, empty_section());
-        match result {
-            Err(msg) => {
-                assert!(msg.contains("cap = 1024"), "error should name the cap: {}", msg);
-            }
-            Ok(idx) => panic!("expected cap-rejection error, got Ok({})", idx),
-        }
-    }
-
     #[test]
     fn add_section_undo_restores_node_size_when_floor_pass_grew_it() {
         use baumhard::mindmap::model::{MindSection, Position};

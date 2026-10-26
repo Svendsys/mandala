@@ -142,9 +142,9 @@ no compatibility shims). Nine subverbs:
 | `section resize` | `fill [section=<idx>]` | Clear `size = None` (renamed from `none`). |
 | `section text` | `"<text>" [section=<idx>] [runs=preserve\|clear]` | Replace text. `runs=preserve` (default) keeps per-grapheme styling on overlapping ranges; `runs=clear` collapses to single-run plaintext. |
 | `section edit` | `[section=<idx>]` | Open the section text editor on the resolved target. Closes the console; modal handoff to the editor. |
-| `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. |
+| `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. Refused, naming the cap, when the node already holds `MAX_SECTIONS_PER_NODE` sections. |
 | `section delete` | `[section=<idx>]` | Remove. Errors when only one section remains. |
-| `section split` | `[section=<idx>] at=<grapheme>` | Split in two at the given grapheme boundary. `at=` is required (use `section show` to see the section's grapheme count); pass `at=N` where `N` equals the count to split at end-of-text (creates an empty suffix). |
+| `section split` | `[section=<idx>] at=<grapheme>` | Split in two at the given grapheme boundary. `at=` is required (use `section show` to see the section's grapheme count); pass `at=N` where `N` equals the count to split at end-of-text (creates an empty suffix). A split adds a section, so it is refused the same way as `section add` on a node already at `MAX_SECTIONS_PER_NODE`. |
 | `section frame` | `show \| reset \| preview …`, or `<key>=<value> …` | The section's own frame-border override (`frame_border`), a subverb tree of its own — full grammar under [Console verbs (section frames)](./border-patterns.md#console-verbs-section-frames). |
 
 Mutually exclusive forms reject at the parser layer:
