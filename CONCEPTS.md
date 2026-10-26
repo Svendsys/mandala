@@ -2384,8 +2384,8 @@ What the loop body does *around* the drain is `pump::iterate`'s
 business and is pinned by its tests: the IPC drain runs after
 `drain_frame`, the recorder's `record_tick` after that, then the
 redraw request, the FPS overlay's idle flip, the `clock.wait`
-evaluation and the exit check. `Renderer::process` — the GPU half —
-runs only through `InitState::draw_frame`, which the
+evaluation and the exit check. On native, `Renderer::process` — the
+GPU half — runs only through `InitState::draw_frame`, which the
 `RedrawRequested` arm in `run_native.rs` calls, and which
 `run_headless.rs` calls when the redraw ledger (`app/settle.rs`)
 says a frame is owed; the FPS counter ticks there, not here.
@@ -2420,8 +2420,10 @@ builder, never committed back without an explicit step.
 
 `src/application/document/mod.rs` (`struct MindMapDocument`). Its
 seventeen fields, in declaration order: `mindmap: MindMap`,
-`file_path`, `dirty: bool`, `load_failure` (the placard's message,
-see [load-failure placard](#load-failure-placard)), `revision`
+`file_path`, `dirty: bool`, `load_failure: bool` (this document *is*
+the [load-failure placard](#load-failure-placard), which a one-shot
+`--screenshot` launch reads so it does not capture the placard as the
+map), `revision`
 (see [document revision](#document-revision)), `selection:
 SelectionState`, `undo_stack: Vec<UndoAction>`,
 `mutation_registry`, `mutation_sources`, `mutation_handlers`,
@@ -2982,9 +2984,11 @@ are each a single call through them. One more production-path
 match exists by design — `ThrottledDrag::to_ipc_json` in
 `app/ipc_state.rs`, the exhaustive projection `query.mode` reports
 the gesture through (see [IPC server](#ipc-server-ipcserver)) — and
-the test module adds `variant_name` and `latches_the_cursor`.
-Planting a variant yields E0004 at exactly those three production
-sites and nowhere else.
+the test builds add three more — `variant_name` and
+`latches_the_cursor` in this module's tests, and the enumeration in
+`app/ipc_state.rs`'s own test module. Planting a variant yields
+E0004 at exactly those three production sites, and at those three
+test sites under `--all-targets`.
 
 Touch does **not** ride this ladder. Pinch-zoom, one-finger pan
 and tap-select ship as `TouchGestureRecognizer` emissions that

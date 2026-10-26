@@ -594,7 +594,7 @@ impl NodeShape {
         match self {
             NodeShape::Rectangle => aabb_contains(local, Vec2::ZERO, bounds),
             NodeShape::Ellipse => {
-                // Normalised coordinates in [-1, 1] relative to the
+                // Normalized coordinates in [-1, 1] relative to the
                 // ellipse center. A perfect circle is `bounds.x ==
                 // bounds.y`; a stretched conic is anything else.
                 let rx = bounds.x * 0.5;
