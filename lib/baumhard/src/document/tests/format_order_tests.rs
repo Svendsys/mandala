@@ -271,6 +271,17 @@ fn test_an_index_never_reaches_the_file() {
         text.contains(r#""palette": "first""#),
         "a palette is written by name:\n{text}"
     );
+    // Name-keyed objects are written in ascending byte order of the name,
+    // whatever order the document holds them in.
+    let before = |first: &str, second: &str| text.find(first).unwrap() < text.find(second).unwrap();
+    assert!(
+        before(r#""alpha":"#, r#""zed":"#),
+        "variables are written by ascending name:\n{text}"
+    );
+    assert!(
+        before(r#""first":"#, r#""second":"#),
+        "palettes are written by ascending name:\n{text}"
+    );
     // Reloaded, the names are the same and the indices are the file's.
     let back = load(&text).unwrap();
     let (_, data) = node(&back, 1);
