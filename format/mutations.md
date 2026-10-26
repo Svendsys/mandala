@@ -30,6 +30,10 @@ same `id`):
    `localStorage["mandala_mutations"]` on WASM. There is no
    `?mutations=` URL parameter: a link is composed by whoever sent
    it, not by the user, and this tier is trusted as the user's own.
+   The file is read **entry by entry**: a mutation that does not
+   parse logs a `warn!` naming its index and `id` and is skipped,
+   and the others load. Only a file that is not a JSON object, or
+   whose `mutations` is not an array, is dropped whole.
 3. **Map-level** — the `custom_mutations: [...]` array in the
    `.mindmap.json` file itself.
 4. **Inline** — the `inline_mutations: [...]` array on a specific
@@ -120,9 +124,10 @@ value. The most common variants for authoring:
   nothing else. The object form fails with
   `invalid type: map, expected a sequence of 2 f32 values`, and
   because `custom_mutations` is a required-shape field, that error
-  takes the **whole `.mindmap.json` down** — or, in
-  `~/.config/mandala/mutations.json`, makes `load_user` warn and
-  silently drop the entire user mutation file. The same applies to
+  takes the **whole `.mindmap.json` down**. In
+  `~/.config/mandala/mutations.json` the cost is smaller — the user
+  loader parses entry by entry, so it warns and skips that one
+  mutation — but the mutation is still gone. The same applies to
   every future `Vec2` payload on either command enum.
   `do_area_rotate_command_json_wire_shape` **reads the example on the
   line above out of this file** and parses it, so editing it back to

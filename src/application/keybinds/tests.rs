@@ -2029,60 +2029,149 @@ fn test_clear_zoom_rejects_the_parametric_binding_shape() {
     // `{combo, args}` object was a *valid* `clear_zoom` value — it
     // parsed, it resolved, and Shift+F12 fired `Action::ClearZoom`.
     //
-    // What the break costs is bigger than the key. `from_json`
-    // returns `Err`, and `user_config::layered::load_layered`
-    // answers a failed parse by logging one warning and walking to
-    // the next layer, so a file with one stale `clear_zoom` entry
-    // loses *every other binding in it* to the built-in defaults.
-    // §10 licenses the shape change (pre-V1, no users); this test
-    // records the blast radius, and issue #129 tracks the per-field
-    // parsing that would scope it back to the one key.
+    // What the break costs is the one key and nothing else (#129):
+    // the file is parsed field by field, so the stale `clear_zoom`
+    // keeps its default and is named in a warning, while the two
+    // well-formed bindings beside it load. Before #129 one serde pass
+    // failed the whole document and the layer went with it.
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
     let json = r#"{
         "clear_zoom": [ { "combo": "Shift+F12", "args": [] } ],
         "undo": ["Ctrl+Alt+U"],
         "select_all": ["Ctrl+Alt+A"]
     }"#;
+    let defaults = KeybindConfig::default();
+    // The fixture's good values differ from the defaults, or "they
+    // loaded" and "the layer was dropped" would read the same.
+    assert_ne!(defaults.undo, vec!["Ctrl+Alt+U".to_string()]);
+    assert_ne!(defaults.select_all, vec!["Ctrl+Alt+A".to_string()]);
 
-    let err = KeybindConfig::from_json(json).unwrap_err();
-    assert!(
-        err.contains("parse keybinds JSON"),
-        "expected the loader's parse-error prefix, got: {err}",
-    );
-    // The prefix alone is what `from_json` puts on *every* failure,
-    // including a bare `{` — it would still be there if `clear_zoom`
-    // had simply been deleted from the table. The discriminating
-    // half is serde naming the value shape it refused.
-    assert!(
-        err.contains("invalid type: map, expected a string"),
-        "expected serde to name the refused value shape, got: {err}",
+    let (cfg, captured) = capture(|| KeybindConfig::from_json(json));
+    let cfg = cfg.expect("a malformed value inside an object is not a whole-file failure");
+    assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
+    assert_eq!(cfg.select_all, vec!["Ctrl+Alt+A".to_string()]);
+    assert_eq!(
+        cfg.clear_zoom, defaults.clear_zoom,
+        "the malformed key keeps its default"
     );
 
-    // The blast radius, through the real desktop loader and a real
-    // file: the two well-formed bindings beside the stale one are
-    // gone too.
-    //
-    // Under `with_no_user_config` because the claim is that the
-    // bindings fall back to the *built-in defaults*, and the loader
-    // has one more layer beneath the explicit path: on a machine
-    // carrying a real `~/.config/mandala/keybinds.json`, the fallback
-    // lands on that file and this asserts something about its
-    // contents instead.
+    let warning = captured
+        .records
+        .iter()
+        .find(|r| r.message.contains("'clear_zoom'"))
+        .unwrap_or_else(|| panic!("the malformed key must be named: {:?}", captured.records));
+    assert!(warning.message.starts_with("keybinds: "), "{}", warning.message);
+    assert!(
+        warning.message.contains("has a malformed value"),
+        "{}",
+        warning.message
+    );
+    // The key name alone would also appear in an unrecognized-key
+    // warning, the line `clear_zoom` would draw had it been deleted
+    // from the table. The discriminating half is serde naming the
+    // value shape it refused.
+    assert!(
+        warning.message.contains("invalid type: map, expected a string"),
+        "expected serde to name the refused value shape, got: {}",
+        warning.message,
+    );
+
+    // The same through the real desktop loader and a real file: the
+    // layer is used, not skipped. Under `with_no_user_config` so a real
+    // `~/.config/mandala/keybinds.json` cannot answer in its place.
     let scratch = baumhard::util::test_temp::TempDir::new("stale-clear-zoom-keybinds");
     let path = scratch.join("keybinds.json");
     std::fs::write(&path, json).unwrap();
     crate::application::user_config::test_env::with_no_user_config(|| {
         let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
-        let defaults = KeybindConfig::default();
-        assert_eq!(
-            cfg.undo, defaults.undo,
-            "the stale `clear_zoom` entry took `undo` down with it — the whole layer is \
-             discarded, not the one key",
-        );
-        assert_eq!(
-            cfg.select_all, defaults.select_all,
-            "the stale `clear_zoom` entry took `select_all` down with it too",
-        );
+        assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
+        assert_eq!(cfg.select_all, vec!["Ctrl+Alt+A".to_string()]);
     });
+}
+
+/// Text that is not a JSON object has no fields to salvage, so it is
+/// still the whole-file failure the loader answers by walking to its
+/// next layer — the boundary the per-field parse stops at.
+#[test]
+fn test_keybinds_text_that_is_not_an_object_still_fails_the_layer() {
+    for (source, reason) in [
+        ("{ \"undo\": [\"Ctrl+Alt+U\"]", "EOF"),
+        ("[\"Ctrl+Alt+U\"]", "expected a JSON object, found an array"),
+        ("null", "expected a JSON object, found null"),
+    ] {
+        let err = KeybindConfig::from_json(source).unwrap_err();
+        assert!(err.starts_with("parse keybinds JSON: "), "{err}");
+        assert!(err.contains(reason), "{source:?}: expected {reason:?} in {err}");
+    }
+
+    // And the loader does walk on: the explicit file is unusable, so
+    // the defaults answer. Control first — the same file made valid
+    // is honored, so the fallback below is the parse failure's doing.
+    let scratch = baumhard::util::test_temp::TempDir::new("keybinds-not-an-object");
+    let path = scratch.join("keybinds.json");
+    crate::application::user_config::test_env::with_no_user_config(|| {
+        std::fs::write(&path, r#"{ "undo": ["Ctrl+Alt+U"] }"#).unwrap();
+        let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
+        assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
+
+        std::fs::write(&path, r#"[ "undo", ["Ctrl+Alt+U"] ]"#).unwrap();
+        let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
+        assert_eq!(cfg.undo, KeybindConfig::default().undo);
+    });
+}
+
+/// Every key the config recognizes is read by the generated per-field
+/// walk, and a malformed value under *any* of them costs that key and
+/// nothing else. `known_keys()` is built from `bind_surface` plus
+/// `EXTRA_KEYS`; `take_fields` is a separate expansion of the table.
+/// A row the walk missed would leave its key unclaimed — reported as
+/// *unrecognized*, not malformed — and that is what this tells apart.
+#[test]
+fn test_a_malformed_value_under_any_known_key_costs_only_that_key() {
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+    // Malformed for every field type the table declares: not a string
+    // list, not a list of `{combo, args}` objects, not a map, not a
+    // string, not a number.
+    let malformed = serde_json::json!([[[]]]);
+    let probe_good = |bad: &str| if bad == "undo" { "select_all" } else { "undo" };
+    for key in KeybindConfig::known_keys() {
+        let good = probe_good(key);
+        let mut object = serde_json::Map::new();
+        object.insert(key.to_string(), malformed.clone());
+        object.insert(good.to_string(), serde_json::json!(["Ctrl+Alt+Shift+F9"]));
+        let json = serde_json::Value::Object(object).to_string();
+
+        let (cfg, captured) = capture(|| KeybindConfig::from_json(&json));
+        let cfg = cfg.unwrap_or_else(|e| panic!("`{key}` malformed failed the whole file: {e}"));
+        let good_value = if good == "undo" {
+            &cfg.undo
+        } else {
+            &cfg.select_all
+        };
+        assert_eq!(
+            good_value,
+            &vec!["Ctrl+Alt+Shift+F9".to_string()],
+            "a malformed `{key}` took `{good}` down with it"
+        );
+        let named: Vec<&str> = captured
+            .records
+            .iter()
+            .map(|r| r.message.as_str())
+            .filter(|m| m.contains(&format!("'{key}'")))
+            .collect();
+        assert!(
+            named.iter().any(|m| m.contains("has a malformed value")),
+            "`{key}` was not read by the per-field walk: {named:?}"
+        );
+        assert!(
+            !named.iter().any(|m| m.contains("unrecognized key")),
+            "`{key}` is recognized and must not be reported as unknown: {named:?}"
+        );
+    }
 }
 
 #[test]

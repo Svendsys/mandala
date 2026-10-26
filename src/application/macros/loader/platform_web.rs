@@ -16,8 +16,10 @@
 //! belong to `crate::application::user_config::web_storage` — the
 //! keybinds and mutations web loaders name their layers against the
 //! same driver, so the three cannot drift. Never panics: a missing
-//! or invalid payload is logged by the driver and the registry gets
-//! no user macros.
+//! payload, or one that is not a JSON array, is logged by the driver
+//! and the registry gets no user macros; a malformed macro inside a
+//! usable payload is skipped on its own by the shared
+//! `parse_user_macros_json`, exactly as on desktop.
 
 use super::Macro;
 use crate::application::user_config::web_storage::load_web_storage_only;

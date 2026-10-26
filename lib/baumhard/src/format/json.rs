@@ -24,6 +24,11 @@ use serde::de::DeserializeOwned;
 /// `Vec<serde_json::Value>` shape on `MindMap.macros`, etc).
 pub use serde_json::Value;
 
+/// Re-export of the map a JSON object parses into, for callers that
+/// walk an object's fields one at a time (the app's warn-and-skip
+/// config parsers) rather than deserializing it in one pass.
+pub use serde_json::Map;
+
 /// Parse a JSON string into a typed value, returning a
 /// caller-readable error string on failure. Wraps
 /// [`serde_json::from_str`].

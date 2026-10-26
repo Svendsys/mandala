@@ -1904,9 +1904,10 @@ WASM:
 - User from `localStorage` (never a URL query param).
 
 Map and inline are loaded from the document on every load. Each
-layer is best-effort — user file parse failures log a warning
-and skip; app bundle failures log an error (a build-time invariant
-violation).
+layer is best-effort — a malformed entry in the user file logs a
+warning and is skipped on its own (a file that is not the
+`{"mutations": [...]}` envelope at all is skipped whole); app bundle
+failures log an error (a build-time invariant violation).
 
 The provenance of each merged mutation is tracked in
 `MindMapDocument::mutation_sources` as a `SourceTier`
@@ -4014,14 +4015,13 @@ in a user's file are warned about (`"keybinds: unrecognized key
 skipped rather than rejected — one stale *key* must not cost the
 user the rest of their bindings — and keys starting with `_` are
 treated as comments, which is how the shipped
-`config/default_keybinds.json` carries its instructions. That
-tolerance stops at the key: a *malformed value* under a
-recognized key fails the whole serde pass, and
-`user_config::layered::load_layered` answers a failed parse by
-skipping the layer, so it costs the user every binding in the
-file. The asymmetry is real rather than designed — the three
-user configs share the seam — and issue #129 tracks the
-per-field parsing that would close it.
+`config/default_keybinds.json` carries its instructions. A
+*malformed value* under a recognized key gets the same posture one
+level down: the file is parsed field by field (a loop generated from
+the same table), so that key is warned about and keeps its default
+while every other binding loads. Only text that is not a JSON object
+costs the layer. `user_config::salvage` holds the primitives, and
+`macros.json` and `mutations.json` use them per entry.
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap

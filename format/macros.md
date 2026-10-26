@@ -472,9 +472,17 @@ keybind:
 
 ## Loader resilience
 
-Each loader is best-effort. Failures (missing file, malformed
-JSON, unknown step kinds, invalid action names) log a `warn!` and
-the loader returns an empty / partial slice. The application boots
-even if the macros file is broken. The application bundle is a
-build-time invariant and is parsed with `expect()` — a malformed
-bundle is a startup-time bug, not a user input error.
+Each loader is best-effort, and a broken part costs only that part.
+On every tier except the application bundle, the unit is the
+**macro**: an entry that does not parse (unknown step kind, invalid
+action name, missing `steps`) logs a `warn!` naming its index and
+`id` and is skipped, and every other macro in the same list loads.
+A macro is never loaded with a step missing — that would run a
+different program under the same id. Only a user file that is not a
+JSON array at all (or is not JSON) yields an empty user tier, again
+with a `warn!`; an empty file is an empty tier. A skipped user macro
+that overrode an App-tier macro of the same id leaves the App macro
+in effect. The application boots even if the macros file is broken.
+The application bundle is a build-time invariant and is parsed with
+`expect()` — a malformed bundle is a startup-time bug, not a user
+input error.

@@ -38,6 +38,7 @@ pub use platform_web::load_user_macros;
 
 use super::Macro;
 use crate::application::source_tier::SourceTier;
+use crate::application::user_config::salvage::{parse_array, parse_entries, parse_entry};
 
 /// Application-bundle JSON, embedded at compile time. Parsed by
 /// [`load_app_macros`]. Empty array today; future shipped macros
@@ -60,17 +61,27 @@ pub fn load_app_macros() -> Vec<Macro> {
         .expect("malformed assets/macros/application.json — bundle is invalid")
 }
 
-/// Parse a free-form JSON `Vec<Macro>` payload. Used by both
-/// targets' user-tier loaders (the native `platform_desktop` after
-/// `read_to_string`; the WASM `platform_web` after the query /
-/// localStorage fetch). Returns `Err(String)` so the platform
-/// layer can `warn!` consistently.
+/// Parse a user-tier `macros.json` payload: a JSON array of macro
+/// objects. Used by both targets' user-tier loaders (the native
+/// `platform_desktop` after the capped read; the WASM `platform_web`
+/// after the `localStorage` fetch).
+///
+/// **Per entry, not per file.** Text that is not a JSON array is the
+/// whole-layer failure (`Err`, which the shared driver logs before
+/// the user tier comes up empty); inside the array, a macro that
+/// does not parse is warned about by index and id and skipped, and
+/// every other macro loads. A macro is all-or-nothing — one with a
+/// step dropped would run a different program under the same id —
+/// so the entry, not the step, is the unit. A skipped user macro that
+/// was overriding an App-tier macro of the same id leaves the App
+/// macro in effect, which is the entry-level reading of "keeps its
+/// default". An empty or all-whitespace file is an empty tier.
 pub fn parse_user_macros_json(source: &str) -> Result<Vec<Macro>, String> {
     if source.trim().is_empty() {
         return Ok(Vec::new());
     }
-    baumhard::format::json::parse::<Vec<Macro>>(source)
-        .map_err(|e| format!("malformed user macros JSON: {}", e))
+    let values = parse_array(source).map_err(|e| format!("malformed user macros JSON: {e}"))?;
+    Ok(parse_entries("macros", "user", &values))
 }
 
 /// Parse Map-tier macros out of a loaded document's
@@ -85,28 +96,7 @@ pub fn parse_user_macros_json(source: &str) -> Result<Vec<Macro>, String> {
 /// enum would otherwise force a circular dependency). The JSON
 /// shape matches the User / App tiers — see `format/macros.md`.
 pub fn parse_map_macros(values: &[baumhard::format::json::Value]) -> Vec<Macro> {
-    let mut out = Vec::with_capacity(values.len());
-    for (idx, v) in values.iter().enumerate() {
-        match baumhard::format::json::parse_value::<Macro>(v.clone()) {
-            Ok(m) => out.push(m),
-            Err(e) => {
-                // Surface the entry's `id` field in the warning when
-                // available — the user / map author addresses macros
-                // by id, so "entry [3] (id=save-and-quit)" is a much
-                // better diagnostic than "entry [3]" alone. The id
-                // may be missing entirely on a malformed entry; fall
-                // back to a placeholder.
-                let id_hint = v.get("id").and_then(|s| s.as_str()).unwrap_or("<no id>");
-                log::warn!(
-                    "macros: Map-tier entry [{}] (id={}) failed to parse: {} (skipping)",
-                    idx,
-                    id_hint,
-                    e
-                );
-            }
-        }
-    }
-    out
+    parse_entries("macros", "Map-tier", values)
 }
 
 /// Refresh the registry's `Map` tier from a loaded document. App
@@ -155,39 +145,32 @@ pub fn parse_inline_macros(doc: &crate::application::document::MindMapDocument) 
             Some(n) => n,
             None => continue,
         };
+        if node.inline_macros.is_empty() {
+            continue;
+        }
+        let tier = format!("Inline-tier (node '{node_id}')");
         for (idx, v) in node.inline_macros.iter().enumerate() {
-            match baumhard::format::json::parse_value::<super::Macro>(v.clone()) {
-                Ok(m) => {
-                    if let Some(prev_node) = seen.get(&m.id).filter(|prev| *prev != node_id) {
-                        log::warn!(
-                            "macros: Inline-tier id '{}' duplicated across nodes \
-                             '{}' and '{}'; the lower-id node ('{}') wins. \
-                             Namespace your ids (e.g. '<node-id>.{}').",
-                            m.id,
-                            prev_node,
-                            node_id,
-                            prev_node,
-                            m.id
-                        );
-                        // The registry's insert is last-writer-wins, so
-                        // the winner the warning names is the one kept
-                        // only if a later node's entry never reaches it.
-                        continue;
-                    }
-                    seen.insert(m.id.clone(), node_id.clone());
-                    out.push(m);
-                }
-                Err(e) => {
-                    let id_hint = v.get("id").and_then(|s| s.as_str()).unwrap_or("<no id>");
-                    log::warn!(
-                        "macros: Inline-tier entry on node '{}' [{}] (id={}) failed to parse: {} (skipping)",
-                        node_id,
-                        idx,
-                        id_hint,
-                        e
-                    );
-                }
+            let Some(m) = parse_entry::<super::Macro>("macros", &tier, idx, v) else {
+                continue;
+            };
+            if let Some(prev_node) = seen.get(&m.id).filter(|prev| *prev != node_id) {
+                log::warn!(
+                    "macros: Inline-tier id '{}' duplicated across nodes \
+                     '{}' and '{}'; the lower-id node ('{}') wins. \
+                     Namespace your ids (e.g. '<node-id>.{}').",
+                    m.id,
+                    prev_node,
+                    node_id,
+                    prev_node,
+                    m.id
+                );
+                // The registry's insert is last-writer-wins, so
+                // the winner the warning names is the one kept
+                // only if a later node's entry never reaches it.
+                continue;
             }
+            seen.insert(m.id.clone(), node_id.clone());
+            out.push(m);
         }
     }
     out
@@ -399,10 +382,18 @@ mod tests {
                 "steps": [{"kind": "ConsoleLine", "line": "save"}]
             }),
         ];
-        let parsed = parse_map_macros(&values);
+        baumhard::util::test_logger::install();
+        let (parsed, captured) = baumhard::util::log::capture::capture(|| parse_map_macros(&values));
         assert_eq!(parsed.len(), 2, "malformed middle entry should be skipped");
         assert_eq!(parsed[0].id, "valid");
         assert_eq!(parsed[1].id, "valid-2");
+        let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].starts_with("macros: Map-tier entry [1] (id=missing-steps) failed to parse: "),
+            "{}",
+            messages[0]
+        );
     }
 
     #[test]
@@ -446,7 +437,17 @@ mod tests {
             })];
         }
 
-        let parsed = parse_inline_macros(&doc);
+        baumhard::util::test_logger::install();
+        let (parsed, captured) = baumhard::util::log::capture::capture(|| parse_inline_macros(&doc));
+        // The skipped entry is named with the node it sits on, since
+        // inline ids are only unique by convention.
+        let expected =
+            format!("macros: Inline-tier (node '{n0}') entry [1] (id=node0-malformed) failed to parse: ");
+        assert!(
+            captured.records.iter().any(|r| r.message.starts_with(&expected)),
+            "expected {expected:?} in {:?}",
+            captured.records
+        );
         // Two valid entries (one from each node), one malformed
         // skipped.
         assert_eq!(parsed.len(), 2);
@@ -519,6 +520,53 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].id, "u1");
         assert_eq!(parsed[1].id, "u2");
+    }
+
+    /// One malformed macro in a user's file costs that macro, not the
+    /// file (#129): the entries beside it load, and the warning names
+    /// the skipped one by index and id.
+    #[test]
+    fn test_parse_user_macros_json_skips_a_malformed_macro_and_keeps_the_rest() {
+        baumhard::util::test_logger::install();
+        let source = r#"[
+            {"id": "keep-1", "steps": [{"kind": "Action", "action": "Undo"}]},
+            {"id": "typo-5e21", "steps": [{"kind": "Acton", "action": "Undo"}]},
+            {"id": "keep-2", "steps": [{"kind": "Action", "action": "ZoomReset"}]}
+        ]"#;
+        let (parsed, captured) = baumhard::util::log::capture::capture(|| parse_user_macros_json(source));
+        let ids: Vec<String> = parsed
+            .expect("a usable array")
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, vec!["keep-1".to_string(), "keep-2".to_string()]);
+        let warning = captured
+            .records
+            .iter()
+            .find(|r| r.message.contains("typo-5e21"))
+            .unwrap_or_else(|| panic!("the skipped macro must be named: {:?}", captured.records));
+        assert!(
+            warning
+                .message
+                .starts_with("macros: user entry [1] (id=typo-5e21) failed to parse: "),
+            "{}",
+            warning.message
+        );
+        // Control: the same file with the typo fixed loads all three,
+        // so the skip above is the typo's doing.
+        let fixed = source.replace("Acton", "Action");
+        assert_eq!(parse_user_macros_json(&fixed).unwrap().len(), 3);
+    }
+
+    /// A user file that is not a JSON array has no entries to salvage,
+    /// so it is the whole-layer failure, with the shape named.
+    #[test]
+    fn test_parse_user_macros_json_rejects_a_file_that_is_not_an_array() {
+        let err = parse_user_macros_json(r#"{"id": "u1", "steps": []}"#).unwrap_err();
+        assert_eq!(
+            err,
+            "malformed user macros JSON: expected a JSON array, found an object"
+        );
     }
 
     #[test]
