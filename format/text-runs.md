@@ -140,6 +140,14 @@ words they used to cover:
   a copy of it covering just the appended graphemes is added.
   Graphemes the old table left uncovered stay uncovered: the edit
   covers only what it appended.
+- **A link does not continue.** The appended graphemes never take
+  the last run's `hyperlink`, following the same editor convention
+  (typing past a link's end does not extend it): a linked last run
+  keeps its range, and the appended graphemes get a copy of its
+  style with no link.
+- A run that starts or ends past the old end (a table that overshot
+  its text) is clamped to the old text before any of this, so it
+  lends no style and leaves no appended grapheme uncovered.
 
 A section with no runs stays run-less and draws its whole text.
 Without the longer-text rule the appended graphemes would sit in

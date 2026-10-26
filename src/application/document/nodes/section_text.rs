@@ -82,9 +82,14 @@ impl MindMapDocument {
     ///   are dropped.
     /// - **Same length**: the run table is untouched.
     /// - **Longer text**: the graphemes past the old end are new,
-    ///   and they take the style of the last run — the run is
-    ///   extended when it reached the old end, and a copy of it
-    ///   covering the new graphemes is appended when it did not.
+    ///   and they take the style of the last run, but not its
+    ///   `hyperlink` — the run is extended when it reached the old
+    ///   end and carries no link, and a copy of it with the link
+    ///   cleared, covering the new graphemes, is appended
+    ///   otherwise. Runs past the old end (a table that overshot
+    ///   its text) are clamped to the old text first, so they
+    ///   neither lend their style nor leave part of the new text
+    ///   uncovered.
     ///   A section with non-empty `text_runs` draws only the
     ///   graphemes its runs cover (`baumhard::font::attrs::
     ///   displayed_text`), so leaving the new graphemes uncovered
@@ -138,19 +143,25 @@ impl MindMapDocument {
                 r.start < r.end
             });
             // Cover the graphemes the edit appended with the last
-            // run's style. A last run reaching the old end (or,
-            // on a table that overshot its text, past it) is
-            // extended; one ending short of it gets a copy that
-            // starts at the old end, after it, so the table stays
-            // sorted and non-overlapping either way.
+            // run's style, minus its hyperlink.
             if new_grapheme_count > old_grapheme_count {
+                // First clamp the table to the *old* text (still in
+                // `s.text`): a run past the old end — which a
+                // tree-walker shortening can leave behind — covers
+                // no grapheme the author saw, so it neither lends
+                // its style nor keeps part of the tail uncovered.
+                // After this every `end <= old_grapheme_count`, so
+                // the copy below starts at or after the last run
+                // ends and the table stays sorted and non-overlapping.
+                clamp_runs_to_text(s);
                 if let Some(last) = s.text_runs.last_mut() {
-                    if last.end >= old_grapheme_count {
+                    if last.end == old_grapheme_count && last.hyperlink.is_none() {
                         last.end = new_grapheme_count;
                     } else {
                         let tail = TextRun {
                             start: old_grapheme_count,
                             end: new_grapheme_count,
+                            hyperlink: None,
                             ..last.clone()
                         };
                         s.text_runs.push(tail);

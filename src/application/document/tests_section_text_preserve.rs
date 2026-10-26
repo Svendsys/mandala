@@ -210,12 +210,52 @@ fn test_preserve_grow_undo_restores_text_runs_and_drawing() {
 
 /// A table that overshoots its text (a run ending past the last
 /// grapheme, which a tree-walker shortening can leave behind) is
-/// extended rather than given a copy starting at the old end,
-/// which would overlap the run it was copied from.
+/// clamped to the old text and then extended, rather than given a
+/// copy starting at the old end, which would overlap the run it was
+/// copied from.
 #[test]
 fn test_preserve_extends_a_run_that_overshot_the_old_text() {
     let (mut doc, id) = seeded("abc", vec![run(0, 5, "#ff0000", true)]);
     assert!(doc.set_section_text_preserving_runs(&id, 1, "abcdefg".into()));
     assert_eq!(runs_of(&doc, &id), vec![run(0, 7, "#ff0000", true)]);
     assert_eq!(drawn_text(&doc, &id, 1), "abcdefg");
+}
+
+/// A last run whose *start* overshot the old text is clamped away
+/// before the tail is covered, so every appended grapheme draws:
+/// `[4,6)` on "abc" covers nothing the author saw, and the tail
+/// takes the style of `[0,1)`, the last run that did. "b" and "c"
+/// were uncovered before the edit and stay so.
+#[test]
+fn test_preserve_covers_the_tail_when_the_last_run_started_past_the_old_text() {
+    let (mut doc, id) = seeded(
+        "abc",
+        vec![run(0, 1, "#ff0000", true), run(4, 6, "#00ff00", false)],
+    );
+    assert!(doc.set_section_text_preserving_runs(&id, 1, "abcdefg".into()));
+    assert_eq!(drawn_text(&doc, &id, 1), "adefg");
+    assert_eq!(
+        runs_of(&doc, &id),
+        vec![run(0, 1, "#ff0000", true), run(3, 7, "#ff0000", true)]
+    );
+}
+
+/// The appended graphemes take the last run's style but not its
+/// link: a linked run keeps its range, and the tail is a copy of it
+/// with `hyperlink: None`. The control is the same edit on the
+/// unlinked run, which is extended instead.
+#[test]
+fn test_preserve_does_not_carry_a_hyperlink_onto_appended_text() {
+    let linked = TextRun {
+        hyperlink: Some("https://example.com".into()),
+        ..run(0, 5, "#ff0000", true)
+    };
+    let (mut doc, id) = seeded("Hello", vec![linked.clone()]);
+    assert!(doc.set_section_text_preserving_runs(&id, 1, "Hello world".into()));
+    assert_eq!(drawn_text(&doc, &id, 1), "Hello world");
+    assert_eq!(runs_of(&doc, &id), vec![linked, run(5, 11, "#ff0000", true)]);
+
+    let (mut control, cid) = seeded("Hello", vec![run(0, 5, "#ff0000", true)]);
+    assert!(control.set_section_text_preserving_runs(&cid, 1, "Hello world".into()));
+    assert_eq!(runs_of(&control, &cid), vec![run(0, 11, "#ff0000", true)]);
 }
