@@ -583,12 +583,15 @@ fn node_1_rect(init: &InitState) -> (glam::Vec2, glam::Vec2) {
     )
 }
 
-/// Zoom in about node 1 until nothing else sits on it: at the
-/// fixture's opening zoom an edge label overlaps its SE corner, and a
-/// label outranks the node's body in a press's hit-test.
+/// Zoom in about node 1, so a press near one of its corners lands on
+/// its body with pixels to spare: at the fixture's opening zoom an edge
+/// label overlaps its SE corner, and a label outranks the node's body
+/// in a press's hit-test. Each test still asserts where its own press
+/// lands ([`press_lands_on`]); this only makes that likely.
 fn zoom_onto_node_1(init: &mut InitState) {
     let (pos, size) = node_1_rect(init);
     let center = pos + size / 2.0;
+    let zoom_before = init.renderer.camera_zoom();
     for id in 0..12 {
         let (reply, _) = act(
             init,
@@ -597,6 +600,19 @@ fn zoom_onto_node_1(init: &mut InitState) {
         assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
     }
     init.input_context().drain_frame(Beat::Loop);
+    let zoomed = init.renderer.camera_zoom();
+    assert!(
+        zoomed > zoom_before,
+        "precondition: ZoomIn must zoom in about node 1: {zoomed} from {zoom_before}"
+    );
+}
+
+/// What a press at canvas `at` lands on, asked as the press asks it:
+/// through surface pixels and back, then the click chain's hit-tests.
+fn press_lands_on(init: &mut InitState, at: glam::Vec2) -> super::ClickHit {
+    let surface = init.renderer.canvas_to_screen(at);
+    let canvas = init.renderer.screen_to_canvas(surface.x, surface.y);
+    super::compute_click_hit(canvas, init.mindmap_tree.as_mut(), &mut init.app_scene).click_hit
 }
 
 /// **`act.action FastResizeStart` with a pointer is refused, says
@@ -679,6 +695,12 @@ fn test_a_ctrl_right_drag_anchors_its_resize_at_the_press() {
     // canvas `cross`; answers the side of the drag the cross armed,
     // then releases.
     let mut press_then_cross = |press: glam::Vec2, cross: glam::Vec2| {
+        // Asked first, so a label drifting onto the press point fails
+        // as that, not as an anchor that came out wrong.
+        assert!(
+            matches!(press_lands_on(init, press), super::ClickHit::Node(ref id, None) if id == "1"),
+            "precondition: the press at {press:?} must land on node 1's body, with nothing over it"
+        );
         for (id, request) in [
             json!({"cmd": "input.mouse_move", "x": press.x, "y": press.y, "space": "canvas", "mods": ["ctrl"]}),
             json!({"cmd": "input.mouse_button", "button": "right", "state": "press", "mods": ["ctrl"]}),
