@@ -836,9 +836,9 @@ fn test_a_ctrl_right_drag_anchors_its_resize_at_the_press() {
     zoom_onto_node_1(init);
     let (pos, size) = node_1_rect(init);
 
-    // Press `button` with Ctrl at canvas `press`, then one move to
-    // canvas `cross`; answers the side of the drag the cross armed,
-    // then releases.
+    // Press the right button with Ctrl at canvas `press`, then one
+    // move to canvas `cross`; answers the side and owner of the drag
+    // the cross armed, then releases.
     let mut press_then_cross = |press: glam::Vec2, cross: glam::Vec2| {
         // Asked first, so a label drifting onto the press point fails
         // as that, not as an anchor that came out wrong.
