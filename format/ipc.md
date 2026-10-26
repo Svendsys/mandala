@@ -157,9 +157,17 @@ agent attaching later while the human watches.
 ### Windows
 
 The Windows transport is a **named pipe** at
-`\\.\pipe\mandala-<name>` (the `--ipc` value names the pipe), with
-the pipe's security descriptor restricted to the current user —
-the closest Windows analog to a `0600` socket in `$XDG_RUNTIME_DIR`.
+`\\.\pipe\mandala-<name>` (the `--ipc` value names the pipe:
+`mandala map.mindmap.json --ipc mandala` serves
+`\\.\pipe\mandala-mandala`, and `mandalactl --ipc mandala` finds it),
+with the pipe's security descriptor restricted to its owner — the
+closest Windows analog to a `0600` socket in `$XDG_RUNTIME_DIR`. The
+descriptor is a protected DACL granting generic-all to OWNER RIGHTS
+and nothing else (`D:P(A;;GA;;;OW)`), and every instance refuses
+remote clients. The owner is the launching user, except that an
+elevated (run-as-administrator) launch makes the Administrators group
+the owner, so any other elevated process of a member of that group
+can connect too; an unelevated launch is the launching user's alone.
 Localhost TCP was rejected: it is reachable by every local user on
 a multi-user machine (weaker than file permissions), it collides
 with other services on port allocation, and it triggers firewall
@@ -172,13 +180,41 @@ WebSocket message boundaries and re-expresses the size caps as
 max-message limits. "Same protocol" means the same envelope and
 commands, not the same framing bytes.
 
-IPC-02 ships the Unix transport; the named-pipe adapter is a
-self-contained follow-up inside the same transport module. IPC-02
-(#62) landed without a Windows environment to build it in, so the
-adapter is tracked as #169. Until it lands,
-`--ipc` on a Windows build fails at startup with a message pointing
-at this section (honest fail-fast per §9/§10 — no silent no-op of a
-user-requested feature).
+The lifecycle maps onto the pipe as follows (#169, after IPC-02
+shipped the Unix transport):
+
+- **One server per name.** The first instance is created with
+  `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a second app launched with the
+  same `--ipc` value fails at startup naming the pipe — the analog of
+  the live-socket refusal. There is no stale state to heal and nothing
+  to remove at exit: a pipe vanishes with its server's last handle.
+- **Single controller.** The acceptor keeps one instance waiting; a
+  client that connects while a controller is attached gets
+  `connection_rejected` at once and its connection is closed, as on
+  Unix. The acceptor never waits on it: the frame is written on the
+  pipe's I/O runtime, whatever the refused client sends meanwhile is
+  read and dropped, and its instance is disconnected when the client
+  leaves or after a second, whichever comes first — so a refused
+  client that has not read the frame within that second loses it, and
+  one still writing gets an error rather than blocking (on Unix the
+  frame is one non-blocking write, then the socket is closed).
+- **Half-close** does not exist for a pipe. A client that closes its
+  end still has a final unterminated line executed, but it cannot read
+  the reply, so send a terminated line and read before closing.
+- **Closing.** A connection that ended in order (after `shutdown`, a
+  `connection_rejected`, or a client that left) is closed without
+  discarding anything: what the client has not read yet stays
+  readable, as a socket's buffer drains after `shutdown`. A connection
+  the server gives up on — a write stalled past the stalled-write
+  timeout, or a hang-up — is *disconnected*, which discards its unread
+  output and fails the client's own pending writes, so a client that
+  stopped reading is never left blocked on a pipe the server has let
+  go of.
+- **Connecting** waits for a free instance (`WaitNamedPipeW`). The
+  server keeps one waiting except for the instant between handing one
+  to a client and creating the next, so a client should connect with a
+  short deadline rather than fail on the first `ERROR_PIPE_BUSY`;
+  `mandalactl` does.
 
 ### WASM
 
@@ -1121,7 +1157,7 @@ Params: none.
 | result field | type | meaning |
 |---|---|---|
 | `interaction_mode` | object | `kind`: `Default`, `Reparent` (`sources`), `Connect` (`source`), `NodeEdit` (`node_id`) or `Resize` (`target`: `{"kind": "Node", "node_id"}` or `{"kind": "Section", "node_id", "section_idx"}`). |
-| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Throttled`. `Pending` carries `start_pos` (surface pixels), `hit_node`, `hit_section_idx` and `grabs`, the names of any handle the press landed on (`edge_handle`, `portal_label`, `edge_label`, `section_resize_handle`, `node_resize_handle`). `PendingRight` carries `start_pos`, `start_canvas`, `hit_node`, `hit_section_idx`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. `Throttled` names its `gesture` (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) with what it is acting on (`node_ids`, `node_id`, `section_idx`, `side`, `edge`, `handle`, `endpoint_node_id`). A gesture's pre-drag snapshots, pending delta and throttle are omitted: bookkeeping, not identity. |
+| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Throttled`. `Pending` carries `start_pos` (surface pixels), `hit_node`, `hit_section_idx` and `grabs`, the names of every grab the press recorded, in the order a drag past the threshold resolves them, so the first is the gesture it becomes (`node_resize_handle`, `section_resize_handle`, `edge_label`, `portal_label`, `edge_handle`). `PendingRight` carries `start_pos`, `start_canvas`, `hit_node`, `hit_section_idx`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. `Throttled` names its `gesture` (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) with what it is acting on (`node_ids`, `node_id`, `section_idx`, `side`, `edge`, `handle`, `endpoint_node_id`). A gesture's pre-drag snapshots, pending delta and throttle are omitted: bookkeeping, not identity. |
 | `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`, `single_line_edit`, `text_edit`. Keys do not have one owner. The console takes **every** key. The color picker claims **only its own** keys (its commit, cancel and nudge verbs, and its clipboard keys); every other key falls through to the editors. The single-line editor, then the node text editor, take every key that reaches them. `query.editors` has each one's state. |
 | `key_owner` | string | Who receives an *ordinary* key right now: `console`, `single_line_edit`, `text_edit`, or `none` (normal dispatch). Never `color_picker`: with a picker and a text editor both open, a key the picker does not claim goes to `text_edit`, and that is what this field says. Type against `key_owner`, not against the head of `modals`. |
 | `hovered_node` | string | The node id under the pointer; `null` over none. |
