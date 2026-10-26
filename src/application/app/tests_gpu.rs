@@ -590,6 +590,12 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
 /// the finger goes — which fails on a claim that never fires (every
 /// touch to the recognizer: the size assertion) and on one that fires
 /// everywhere (the control's camera assertion).
+///
+/// Two preconditions are asserted first, with their own messages, so a
+/// drifted fixture does not fail as a claim that resized nothing: the
+/// zoom-in moved the camera, and the corner the press sees is the
+/// node's resize handle with no label on it (a label grab outranks a
+/// handle, #218).
 #[test]
 fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
     use crate::application::platform::input::TouchPhase;
@@ -636,6 +642,7 @@ fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
     // for a mouse and a finger alike (`Grab::PRECEDENCE`).
     let (pos, size) = node_rect(init);
     let center = pos + size / 2.0;
+    let zoom_before = init.renderer.camera_zoom();
     for id in 0..12 {
         let (reply, _) = act(
             init,
@@ -644,9 +651,40 @@ fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
         assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
     }
     init.input_context().drain_frame(Beat::Loop);
+    let zoomed = init.renderer.camera_zoom();
+    assert!(
+        zoomed > zoom_before,
+        "precondition: ZoomIn must zoom in about the node, or a label may still sit on its corner: \
+         {zoomed} from {zoom_before}"
+    );
+    // What the press at the corner would capture besides the handle,
+    // asked of the same hit-tests the press runs and of nothing the
+    // touch claim decides, so a fixture that drifts fails here and not
+    // as a claim that resized nothing.
+    let se = init.renderer.canvas_to_screen(pos + size);
+    // The corner as the press sees it: through surface pixels and back.
+    let corner = init.renderer.screen_to_canvas(se.x, se.y);
+    let tolerance = super::HANDLE_HIT_TOLERANCE_PX * init.renderer.canvas_per_pixel();
+    assert!(
+        super::event_mouse_click::resize_handle_press(
+            init.document.as_ref(),
+            &init.interaction_mode,
+            corner,
+            tolerance
+        )
+        .node
+        .is_some(),
+        "precondition: node 1's SE corner must be its resize handle in Resize mode"
+    );
+    let parts = super::compute_click_hit(corner, init.mindmap_tree.as_mut(), &mut init.app_scene);
+    assert!(
+        parts.edge_label_hit.is_none() && parts.portal_icon_hit.is_none() && parts.portal_text_hit.is_none(),
+        "precondition: no label may sit on node 1's SE corner, since a label grab outranks the handle \
+         (`Grab::PRECEDENCE`, #218); zoom further in"
+    );
+    let undo_before = init.document.as_ref().expect("document").undo_stack.len();
 
     let camera = init.renderer.camera().position;
-    let se = init.renderer.canvas_to_screen(pos + size);
     drag_finger(init, 2, se);
     let (_, resized) = node_rect(init);
     assert!(
@@ -664,8 +702,8 @@ fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
     );
     assert_eq!(
         init.document.as_ref().expect("document").undo_stack.len(),
-        1,
-        "the lift committed the resize with one undo entry"
+        undo_before + 1,
+        "the lift committed the resize with one undo entry of its own"
     );
 
     // Control: the same drag from the node's middle, still in Resize.
