@@ -53,6 +53,7 @@ develops it.
 | D26 | Box flows (sections, labels) break lines at `\n` only; the box grows to fit (D5). Automatic wrapping is not in V1. | §6.1 |
 | D27 | A verb target naming a node id that does not exist is **skipped at run time with a logged warning**, never a load error. Deleting a node a verb names is an ordinary delete. | §11.1 |
 | D28 | **One open transaction, and who yields.** While an interactive transaction is open (text editor session, drag or resize, color picker, frame preview), any other `apply` or `begin` is refused and the user sees a short status message; a verb's `Edit` step in that state is skipped with a warning. An animated edit is not interactive: any new `apply` or `begin` first fast-forwards it to its end and commits it, then proceeds. | §9 |
+| D29 | **Untrusted input is fuzzed, permanently.** Maps are shared with strangers, so every untrusted-input boundary (the `.mandala.json` loader, map-borne edits, presentations and verbs, shaping of arbitrary text, IPC frames) has a coverage-guided fuzz target (`fuzz/`, cargo-fuzz, outside the workspace), run as a short smoke on PRs and nightly once V1 is on `main`. Every finding becomes a stable regression test in `./test.sh`. Infrastructure and the loader target: V1-B8 (#278). | §16, §20 |
 
 ---
 
@@ -1306,6 +1307,7 @@ negative control (§T13).
 | Presentations never persist | Edit applied while presentations are active: the history journal holds only the edit; save output equals the save without the presentation |
 | Verbs are deterministic | Headless app, virtual clock: step timing and presentation states at stepped instants |
 | Verbs are sandboxed | Load rejects any step outside §11.1's set |
+| Hostile input degrades, never crashes | Coverage-guided fuzz targets per untrusted surface (D29, V1-B8): no panic, bounded time and memory, refusals name their JSON path, anything loaded validates and round-trips; findings become regression tests |
 | Dual target | `./test.sh` type-checks wasm32 as today; the wasm font-lock probe covers the new shaping paths |
 
 Bench entries accompany every new engine primitive (journaled walk,
@@ -1345,6 +1347,7 @@ levels; where they differ, the epic is updated, then this table.
 | A4 | Structural commands | A3 |
 | B1 | Document types, typed values, inheritance | A2 (bridges A3/A4, below) |
 | B2 | Format: schema, loader, saver | B1 |
+| B8 | Fuzzing: untrusted-input boundaries (#278) | B2 |
 | B3 | Document mutation vocabulary | A4, B1 |
 | B4 | Document writer: apply, history, transactions | B3 |
 | B5 | TextFlow: layout and path placement | B1 |
@@ -1374,6 +1377,7 @@ graph LR
   A4 --> B3
   B1 --> B3 --> B4
   B1 --> B2
+  B2 --> B8
   B1 --> B5 --> B6
   A3 --> B6
   B4 --> B7
@@ -1504,3 +1508,7 @@ workers who could not see the whole.
    document needs the owner's approval on the issue first, and then
    lands in the same commit as the code that needs it.
 9. **American English** (CLAUDE.md §5).
+10. **Untrusted input is fuzzed** (D29). A sub-issue that adds or
+   changes an untrusted-input surface ships its fuzz target in the
+   same PR (`fuzz/`, see V1-B8, #278), with the properties that apply
+   and a seed corpus; findings become stable regression tests.
