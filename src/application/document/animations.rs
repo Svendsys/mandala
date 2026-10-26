@@ -204,9 +204,10 @@ impl MindMapDocument {
     // interpolated — the other fields need per-mutation snapshot
     // logic that's deferred until a concrete consumer arrives.
 
-    /// Start an animation for `cm` targeting `target_id`. Snapshots
-    /// the current node state, applies the mutation to a scratch
-    /// copy to derive the `to` snapshot, and pushes an
+    /// Start an animation for `cm` targeting `target_id`, and
+    /// `section_idx` of it when the route that fired it names one.
+    /// Snapshots the current node state, applies the mutation to a
+    /// scratch copy to derive the `to` snapshot, and pushes an
     /// [`AnimationInstance`] onto [`Self::active_animations`]. The
     /// caller has already verified
     /// `cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0)`.
@@ -217,13 +218,13 @@ impl MindMapDocument {
     /// continuously; text / regions / structural fields snap at
     /// completion. `Followup` variants (`Reverse`, `Chain`, `Loop`)
     /// are recorded on the instance but not yet enacted.
-    /// Section-aware overload of [`Self::start_animation`]. When
-    /// `section_idx = Some(_)`, the re-trigger dedup key includes
-    /// the section index so adjacent sections of the same node
-    /// can host concurrent animations bound to the same mutation
-    /// id without coalescing. Section-targeted animations also
-    /// carry the index on the resulting [`AnimationInstance`] so
-    /// future per-section interpolators can lerp the right
+    ///
+    /// When `section_idx = Some(_)`, the re-trigger dedup key
+    /// includes the section index so adjacent sections of the same
+    /// node can host concurrent animations bound to the same
+    /// mutation id without coalescing. Section-targeted animations
+    /// also carry the index on the resulting [`AnimationInstance`]
+    /// so future per-section interpolators can lerp the right
     /// element.
     ///
     /// Today the interpolation surface is whole-node `position`
@@ -243,6 +244,14 @@ impl MindMapDocument {
         self.start_animation_inner(cm, target_id, section_idx, now_ms);
     }
 
+    /// Whole-node spelling of [`Self::start_animation_at`].
+    ///
+    /// Test-gated, as [`Self::find_triggered_mutations`] is and for
+    /// the same reason: every production route fires through
+    /// `app::fire_custom_mutation`, which carries a section target
+    /// (`None` from a keystroke, the hit's from a click), so this
+    /// stays as the tests' reading of "no section in play".
+    #[cfg(test)]
     pub fn start_animation(&mut self, cm: &CustomMutation, target_id: &str, now_ms: u64) {
         self.start_animation_inner(cm, target_id, None, now_ms);
     }
@@ -357,11 +366,9 @@ impl MindMapDocument {
     /// path runs exactly once from the true baseline, not on top of the
     /// last lerped frame), then the instance is dropped. Drain order is
     /// back-to-front so `swap_remove` is safe.
-    // Native-driver-only, with `shift_active_animations_start_ms`:
-    // `drain_animation_tick` is the only advance site and the
-    // browser has no rAF-driven equivalent wired to it yet
-    // (CLAUDE.md "Per-frame animation drain").
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    //
+    // `app::animation_drain::drain_animation_tick` is the one advance
+    // site, and both targets' frames run it.
     pub fn tick_animations(&mut self, now_ms: u64, mut tree: Option<&mut MindMapTree>) -> bool {
         if self.active_animations.is_empty() {
             return false;
@@ -547,6 +554,9 @@ impl MindMapDocument {
     /// next post-suppression tick observes a wall-clock-elapsed
     /// value `>= total` and snaps the animation to its `to` state
     /// in one frame.
+    // Native-driver-only: the pause is keyed to a tree-mutating
+    // drag, and the browser has no drag state yet (CLAUDE.md
+    // "Dual-target status", "Animation pause during a drag").
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn shift_active_animations_start_ms(&mut self, by_ms: u64) {
         if by_ms == 0 {

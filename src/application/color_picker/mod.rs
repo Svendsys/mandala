@@ -3,13 +3,15 @@
 //! Magical glyph-wheel color picker — a custom modal overlay for choosing
 //! colors that fits Mandala's "everything is a positioned glyph" aesthetic.
 //!
-//! Layout: a 24-glyph hue ring forming a mandala, a crosshair sat/value
-//! selector formed by two perpendicular glyph bars meeting at the wheel
-//! center, a central preview glyph showing the currently-previewed color,
-//! and a row of theme-variable quick-pick chips below. Mouse hover updates
-//! the preview live; click commits, click outside cancels. Keyboard
-//! fallback: h/H nudges hue, s/S sat, v/V value, Tab cycles chips, Enter
-//! commits, Esc cancels.
+//! Layout: a hue ring of `HUE_SLOT_COUNT` glyphs forming a mandala, a
+//! crosshair sat/value selector formed by two perpendicular glyph bars
+//! meeting at the wheel center, and a central preview glyph showing the
+//! currently-previewed color. (A row of theme-variable quick-pick chips
+//! used to sit below; it has been retired — see `compute_sizing.rs`,
+//! where its width reservation was removed — and nothing cycles chips
+//! any more.) Mouse hover updates the preview live; click commits,
+//! click outside cancels. Keyboard fallback: h/H nudges hue, s/S sat,
+//! v/V value, Enter commits, Esc cancels.
 //!
 //! The picker wires to `MindEdge.color` (via `set_edge_color`) and the
 //! three node color axes. Portal-mode edges flow through the same

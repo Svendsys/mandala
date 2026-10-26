@@ -2,11 +2,13 @@
 
 //! Per-frame drain helpers for the non-throttled paths in
 //! `AboutToWait`. Throttled drains (drag, hover) live under
-//! [`super::throttled_interaction`]; what's here are the three paths
-//! that deliberately skip the throttle: rect-select, camera-driven
-//! geometry rebuild, animation tick.
+//! [`super::throttled_interaction`]; what's here are the two
+//! input-driven paths that deliberately skip the throttle:
+//! rect-select and the camera-driven geometry rebuild. The frame's
+//! time-driven path, the animation tick, is `animation_drain` — it
+//! is not native's alone, and this module is.
 //!
-//! The rect-select path does one thing the other two do not: it owns
+//! The rect-select path does one thing the other does not: it owns
 //! an invariant rather than only a unit of work. See
 //! [`drain_rect_select`] — running unconditionally every frame is
 //! what lets it hold the rubber band's on-screen state to the drag
@@ -17,7 +19,7 @@
 
 use glam::Vec2;
 
-use super::scene_rebuild::{rebuild_all, rebuild_camera_geometry, rebuild_selection_highlight};
+use super::scene_rebuild::{rebuild_camera_geometry, rebuild_selection_highlight};
 use crate::application::document::{rect_select, MindMapDocument};
 use crate::application::renderer::Renderer;
 
@@ -62,15 +64,15 @@ use crate::application::renderer::Renderer;
 /// One consequence is worth stating rather than leaving to be
 /// discovered: the installed tree carries the geometry as of the
 /// last rebuild, and this drain runs *before*
-/// [`drain_animation_tick`] in the same frame, so a node whose
-/// position an animation is advancing is hit-tested one tick behind
-/// where it is drawn. The old code, building from the model each
-/// frame, was not. The window is a single frame and only opens while
-/// an animation and a rubber band are live at once; closing it would
-/// mean either ordering the animation tick first (which would make
-/// the *rectangle* lag the pointer instead — the trade
-/// `MutationFrequencyThrottle`'s contract forbids) or going back to
-/// a per-frame arena build.
+/// `animation_drain::drain_animation_tick` in the same frame, so a
+/// node whose position an animation is advancing is hit-tested one
+/// tick behind where it is drawn. The old code, building from the
+/// model each frame, was not. The window is a single frame and only
+/// opens while an animation and a rubber band are live at once;
+/// closing it would mean either ordering the animation tick first
+/// (which would make the *rectangle* lag the pointer instead — the
+/// trade `MutationFrequencyThrottle`'s contract forbids) or going
+/// back to a per-frame arena build.
 ///
 /// The repaint then ran on every frame regardless. Now the covered
 /// set lives on the document, where every rebuild path reads it, and
@@ -261,50 +263,6 @@ pub(super) fn drain_camera_geometry_rebuild(
             // dirty flag, because the browser has no per-frame drain
             // to hang it off.
             rebuild_camera_geometry(doc, interaction_mode, app_scene, renderer, scene_cache);
-        }
-    }
-}
-
-/// Tick any active animations at the app clock's whole-millisecond
-/// reading `now_ms` — the heartbeat passes it, so under a virtual
-/// clock the tick lands on the step's instants. Each tick lerps the from / to
-/// snapshots into the model and (on completion) routes the final
-/// state through `apply_custom_mutation` so the standard
-/// model-sync + undo-push runs once. Drives `rebuild_all` only
-/// when something actually advanced. The event loop's
-/// `ControlFlow::Wait` / `ControlFlow::Poll` choice is decided in
-/// `NativeApp::about_to_wait` from `InitState::needs_continuation`,
-/// which factors in `has_active_animations` — so when no animations
-/// are active and no other source needs continuation, the loop
-/// parks until the next OS event.
-pub(super) fn drain_animation_tick(
-    now_ms: u64,
-    document: &mut Option<MindMapDocument>,
-    interaction_mode: &super::InteractionMode,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-) {
-    let animation_advanced = match document.as_mut() {
-        Some(doc) if doc.has_active_animations() => doc.tick_animations(now_ms, mindmap_tree.as_mut()),
-        _ => false,
-    };
-    if animation_advanced {
-        if let Some(doc) = document.as_ref() {
-            // Animation ticks lerp positions (and on completion
-            // route through `apply_custom_mutation`) in place; the
-            // cache's `pre_clip_positions` go stale under both
-            // paths. Clear before re-sampling.
-            scene_cache.clear();
-            rebuild_all(
-                doc,
-                interaction_mode,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
-            );
         }
     }
 }

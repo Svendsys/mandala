@@ -272,6 +272,17 @@ away from it. An **empty** frame is a hole on this tier too, in the
 override as much as the group, so the edge falls through to tier 3
 rather than stroking the empty string's opaque black.
 
+`border show verbose` reports which tier the first selected node's
+frame color came from, and names each tier by its field: a themed
+frame reads
+`` # source: color_schema.palette `coral-v3` at level 0 ``, an override
+`color_schema.overrides.frame`, the floor `style.frame_color`. The
+readout's separate `border palette:` row is **not** this theme: it is
+`style.border.color_palette`, the border's per-glyph cycling (see
+[border-patterns.md](./border-patterns.md#palette-cycling)), which is
+often unset on a node whose frame color came from its palette. The
+readout names each by its field, so the two never read as one.
+
 The label and portal-marker channels hang off the edge cascade: each
 takes its own override when it has one, and otherwise follows the edge
 body, theme tier included.

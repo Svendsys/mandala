@@ -75,7 +75,7 @@ pub(in crate::application::app) fn open_text_edit_with_close_target(
     // `Section { node_id: id, section_idx }` opens the editor on
     // *that* section; any other selection (Single, Multi, edge-
     // adjacent) defaults to section 0 — preserving the historical
-    // single-section single-node behaviour for migrated maps.
+    // single-section single-node behavior for migrated maps.
     //
     // Clamp the candidate index against `node.sections.len()`: a
     // custom mutation between the click that set the Section
@@ -386,7 +386,7 @@ pub(in crate::application::app) fn commit_text_edit(
     }
     // Section-aware commit. The editor records both the
     // section index *and* the per-grapheme `buffer_regions`
-    // (font / colour spans) accumulated during the session.
+    // (font / color spans) accumulated during the session.
     // Pre-fix the commit went through `set_section_text`
     // alone, which collapses `text_runs` to a single
     // template-inherited run — every per-keystroke styling
@@ -633,7 +633,8 @@ pub(in crate::application::app) fn handle_text_edit_key(
         )
     });
     // `TextEditCommit` / `TextEditCancel` are funneled via the
-    // keyboard handler's pre-filter (`event_keyboard.rs:135-153`).
+    // keyboard handler's pre-filter (`ModalEditor::stealing` +
+    // `steal_key_for_modal` in `event_keyboard.rs`).
     // This handler reaches only the literal-Key character + cursor
     // primitive paths.
 

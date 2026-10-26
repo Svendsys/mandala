@@ -22,13 +22,13 @@ use super::super::color_picker_flow::{
 use super::super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
 };
+use super::super::fire_custom_mutation::fire_custom_mutation;
 use super::super::input_context::InputHandlerContext;
 use super::super::scene_rebuild::rebuild_all;
 use super::super::single_line_edit::{
     close_single_line_edit, open_single_line_edit, resolve_single_line_target, SingleLineEditTarget,
 };
 use super::super::{DragState, HeldInput, InteractionMode, PanOwner};
-use super::apply_keybind_custom_mutation;
 use crate::application::console::ConsoleState;
 
 // `DispatchHit` lives in `cross_dispatch::pointer` — both targets'
@@ -1079,7 +1079,7 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
 /// Iterates the macro's steps in order, forwarding each through the
 /// matching dispatch surface:
 /// - `MacroStep::Action` → `dispatch_action`
-/// - `MacroStep::CustomMutation` → `apply_keybind_custom_mutation`
+/// - `MacroStep::CustomMutation` → `fire_custom_mutation`
 ///   (selection-fallback target resolution)
 /// - `MacroStep::ConsoleLine` → `console_input::execute_console_line`
 ///
@@ -1129,7 +1129,7 @@ pub(in crate::application::app) type MacroStepObserver<'o> = &'o mut dyn FnMut(&
 /// Native impl of [`super::macro_core::MacroDispatchTarget`].
 /// Wraps `&mut InputHandlerContext` and forwards each operation to
 /// the existing native helpers (`dispatch_action`,
-/// `apply_keybind_custom_mutation`, `execute_console_line`).
+/// `fire_custom_mutation`, `execute_console_line`).
 struct NativeMacroDispatchTarget<'a, 'b, 'o> {
     ctx: &'a mut InputHandlerContext<'b>,
     after_step: Option<MacroStepObserver<'o>>,
@@ -1145,10 +1145,9 @@ impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchT
     }
 
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
-        // Lookup mutation, apply via the existing
-        // `apply_keybind_custom_mutation` helper, rebuild scene if
-        // applied. Mirrors the `MacroStep::CustomMutation` body
-        // pre-Commit-3 (lines 1067-1094 of the prior dispatch.rs).
+        // Look the mutation up, fire it through the one body every
+        // route lands through, rebuild. A macro step names a node,
+        // not a section, so the target is whole-node.
         let cm = self
             .ctx
             .document
@@ -1162,26 +1161,24 @@ impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchT
             return false;
         };
         let now = self.ctx.clock.now_whole_ms();
-        if apply_keybind_custom_mutation(
+        fire_custom_mutation(
             doc,
             self.ctx.mindmap_tree,
             self.ctx.scene_cache,
             &cm,
             node_id,
+            None,
             now,
-        ) {
-            rebuild_all(
-                doc,
-                self.ctx.interaction_mode,
-                self.ctx.mindmap_tree,
-                self.ctx.app_scene,
-                self.ctx.renderer,
-                self.ctx.scene_cache,
-            );
-            true
-        } else {
-            false
-        }
+        );
+        rebuild_all(
+            doc,
+            self.ctx.interaction_mode,
+            self.ctx.mindmap_tree,
+            self.ctx.app_scene,
+            self.ctx.renderer,
+            self.ctx.scene_cache,
+        );
+        true
     }
 
     fn execute_console_line(&mut self, line: &str) -> bool {

@@ -4,12 +4,10 @@
 //! under the `mandala_keybinds` key, then hardcoded defaults. Not
 //! compiled on native.
 //!
-//! **There is no `?keybinds=` layer.** The query-param machinery
-//! exists in `crate::application::user_config::web_storage` and this
-//! loader deliberately does not reach it — see
+//! **There is no `?keybinds=` layer**, deliberately — see
 //! [`KeybindConfig::load_for_web`] below for the trust argument, and
-//! the `web_storage` module header for the same note against its two
-//! siblings.
+//! `user_config::web_storage::load_web_storage_only` for the same
+//! argument made once for all three browser loaders.
 //!
 //! The storage read, the size cap, and the fallback walk all belong
 //! to `crate::application::user_config::web_storage` — the mutations

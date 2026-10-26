@@ -18,7 +18,12 @@
 //!    already listed. The `match` in `style_spellings` is
 //!    exhaustive, so step 1 does not compile until this one is
 //!    done — a new variant cannot silently stay on the
-//!    quiet-fallback path.
+//!    quiet-fallback path. Its shader id in
+//!    [`crate::gfx_structs::shape::NodeShape::shader_id`] is forced
+//!    the same way, and so are both arms of step 4: a planted
+//!    variant is four E0004s in this file, and once they are
+//!    answered a fifth in the mandala crate's
+//!    `wgsl_shape_const_name` (`renderer/tests.rs`).
 //! 3. Add a `SHAPE_*` constant + a `case` arm to the rect pipeline's
 //!    fragment shader (`src/application/renderer/mod.rs`,
 //!    `RECT_SHADER_WGSL`). Forced, not remembered:
@@ -71,7 +76,7 @@ use strum_macros::EnumIter;
 /// ever becoming parseable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, EnumIter)]
 pub enum NodeShape {
-    /// Fills the bounding box exactly — the legacy behaviour and the
+    /// Fills the bounding box exactly — the legacy behavior and the
     /// default for any node that doesn't opt in to a different shape.
     #[default]
     Rectangle,
@@ -589,7 +594,7 @@ impl NodeShape {
         match self {
             NodeShape::Rectangle => aabb_contains(local, Vec2::ZERO, bounds),
             NodeShape::Ellipse => {
-                // Normalised coordinates in [-1, 1] relative to the
+                // Normalized coordinates in [-1, 1] relative to the
                 // ellipse center. A perfect circle is `bounds.x ==
                 // bounds.y`; a stretched conic is anything else.
                 let rx = bounds.x * 0.5;
@@ -619,7 +624,7 @@ impl NodeShape {
     /// This matches [`Self::contains_local`] and the BVH's
     /// `bounds.x > 0.0 && bounds.y > 0.0` guard in `bvh_descend`:
     /// a zero-size node renders nothing, so selecting nothing for
-    /// it is the internally consistent answer. Small behaviour
+    /// it is the internally consistent answer. Small behavior
     /// change from the pre-shape `rect_select` (which would have
     /// matched a point-sized node under the cursor) — considered
     /// an improvement and noted here so a future test author can

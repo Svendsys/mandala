@@ -188,11 +188,10 @@ impl Renderer {
     pub fn patch_drag_positions(&mut self, patches: &[(usize, (f32, f32))]) {
         for &(unique_id, new_pos) in patches {
             if let Some(bufs) = self.mindmap_buffers.get_mut(&unique_id) {
+                // Canvas-space: the mindmap tree is walked at a zero
+                // offset, so the patch re-derives at one too.
                 for buf in bufs.iter_mut() {
-                    buf.pos = (
-                        new_pos.0 + buf.emission_offset.0,
-                        new_pos.1 + buf.emission_offset.1,
-                    );
+                    buf.place_at(new_pos, Vec2::ZERO);
                 }
             }
         }
@@ -229,7 +228,9 @@ impl Renderer {
     /// one entry per walked element in draw order; callers do not need
     /// to know about individual overlays.
     ///
-    /// **Only elements whose shaping inputs changed are re-shaped.**
+    /// **Only elements whose shaping inputs changed are re-shaped**;
+    /// an element whose position alone changed has its buffers moved
+    /// in place, halo stamps included.
     /// Every overlay mutator apply routes here — picker hover, picker
     /// HSV drag, console keystroke, console scrollback — and each of
     /// those writes every slot's fields whether or not the value

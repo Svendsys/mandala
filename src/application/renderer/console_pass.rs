@@ -9,12 +9,13 @@ use glam::Vec2;
 
 use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range as ColorFontRange};
 use baumhard::font::color::cosmic_color_to_rgba;
-use baumhard::font::fonts::app_font_by_family;
+use baumhard::font::fonts::{app_font_by_family, AppFont};
 use baumhard::font::{Color, FontSystem};
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
+use baumhard::util::color::FloatRgba;
 
 use super::console_geometry::{
     build_console_border_strings, lerp_alpha, side_row_count, with_alpha, ConsoleFrameLayout,
@@ -40,14 +41,14 @@ use super::measure_max_glyph_advance;
 // populates carry empty `""` text, which the walker shapes as
 // nothing — a stable element set even when scrollback is short.
 
-const CONSOLE_CHANNEL_TOP_BORDER: usize = 1;
-const CONSOLE_CHANNEL_BOTTOM_BORDER: usize = 2;
-const CONSOLE_CHANNEL_LEFT_COL: usize = 3;
-const CONSOLE_CHANNEL_RIGHT_COL: usize = 4;
-const CONSOLE_CHANNEL_SCROLLBACK_GUTTER_BASE: usize = 100;
-const CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE: usize = 1_000;
-const CONSOLE_CHANNEL_COMPLETION_BASE: usize = 10_000;
-const CONSOLE_CHANNEL_PROMPT: usize = 100_000;
+pub(super) const CONSOLE_CHANNEL_TOP_BORDER: usize = 1;
+pub(super) const CONSOLE_CHANNEL_BOTTOM_BORDER: usize = 2;
+pub(super) const CONSOLE_CHANNEL_LEFT_COL: usize = 3;
+pub(super) const CONSOLE_CHANNEL_RIGHT_COL: usize = 4;
+pub(super) const CONSOLE_CHANNEL_SCROLLBACK_GUTTER_BASE: usize = 100;
+pub(super) const CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE: usize = 1_000;
+pub(super) const CONSOLE_CHANNEL_COMPLETION_BASE: usize = 10_000;
+pub(super) const CONSOLE_CHANNEL_PROMPT: usize = 100_000;
 
 /// Single source of truth for the console overlay's GlyphArea
 /// content, keyed by stable channel. Both
@@ -94,13 +95,22 @@ pub(super) fn console_overlay_areas(
         completion_rows,
     } = layout;
 
+    // Everything the console draws shapes in `default_font` unless a
+    // row pins a face of its own. A pinned family that is not loaded
+    // falls back to the console default rather than to cosmic-text's,
+    // so a `console_font` the user chose holds for every row that
+    // cannot honor its own pin — never a panic per §9.
+    let default_font = geometry.default_font;
+    let face_or_default =
+        |font_family: Option<&str>| font_family.and_then(app_font_by_family).or(default_font);
+
     let mk_area = |text: &str,
                    color: Color,
                    font_size: f32,
                    line_height: f32,
                    pos: (f32, f32),
                    bounds: (f32, f32),
-                   font_family: Option<&str>|
+                   font: Option<AppFont>|
      -> GlyphArea {
         let mut area = GlyphArea::new_with_str(
             text,
@@ -110,12 +120,6 @@ pub(super) fn console_overlay_areas(
             Vec2::new(bounds.0, bounds.1),
         );
         let rgba = cosmic_color_to_rgba(color);
-        // Resolve the per-line family-name (if any) to an AppFont
-        // so the baumhard attrs builder pins the face. Unknown
-        // families fall through as `None`, which the attrs builder
-        // already degrades to monospace with a warning — never a
-        // panic per §9.
-        let font = font_family.and_then(app_font_by_family);
         area.regions = ColorFontRegions::single_span(
             baumhard::util::grapheme_chad::count_grapheme_clusters(text),
             Some(rgba),
@@ -124,7 +128,10 @@ pub(super) fn console_overlay_areas(
         area
     };
 
-    let measured_char_width = measure_max_glyph_advance(font_system, &["\u{2500}", "\u{2502}"], font_size);
+    // The border glyphs draw in the console default face, so the
+    // column pitch they tile at is measured in that face.
+    let measured_char_width =
+        measure_max_glyph_advance(font_system, default_font, &["\u{2500}", "\u{2502}"], font_size);
     let cols = ((frame_width / measured_char_width).floor() as usize).max(2);
     let side_rows = side_row_count(frame_height, font_size, row_height);
     let (top_border, bottom_border, left_col, right_col) = build_console_border_strings(cols, side_rows);
@@ -141,7 +148,7 @@ pub(super) fn console_overlay_areas(
             font_size,
             (left, top),
             (frame_width, font_size * 1.5),
-            None,
+            default_font,
         ),
     ));
     out.push((
@@ -153,7 +160,7 @@ pub(super) fn console_overlay_areas(
             font_size,
             (left, top + frame_height),
             (frame_width, font_size * 1.5),
-            None,
+            default_font,
         ),
     ));
     out.push((
@@ -165,7 +172,7 @@ pub(super) fn console_overlay_areas(
             row_height,
             (left, top + font_size),
             (measured_char_width, frame_height),
-            None,
+            default_font,
         ),
     ));
     let right_col_x = left + (cols.saturating_sub(1) as f32) * measured_char_width;
@@ -178,7 +185,7 @@ pub(super) fn console_overlay_areas(
             row_height,
             (right_col_x, top + font_size),
             (measured_char_width, frame_height),
-            None,
+            default_font,
         ),
     ));
 
@@ -262,7 +269,7 @@ pub(super) fn console_overlay_areas(
                 row_height,
                 (gutter_x, y),
                 (char_width, row_height),
-                None,
+                default_font,
             ),
         ));
         out.push((
@@ -274,7 +281,7 @@ pub(super) fn console_overlay_areas(
                 row_height,
                 (content_left, y),
                 (content_width, row_height),
-                line.font_family.as_deref(),
+                face_or_default(line.font_family.as_deref()),
             ),
         ));
     }
@@ -298,33 +305,36 @@ pub(super) fn console_overlay_areas(
             continue;
         };
         let y = completion_top + row_height * slot as f32;
-        let (text_str, color) = {
-            let is_selected = geometry.selected_completion == Some(slot);
-            let color = if is_selected { ACCENT_COLOR } else { TEXT_COLOR };
-            let prefix = if is_selected {
-                SELECTED_COMPLETION_MARKER
-            } else {
-                UNSELECTED_COMPLETION_MARKER
-            };
-            let line = match &c.hint {
-                Some(hint) => format!("{prefix}{}    {}", c.text, hint),
-                None => format!("{prefix}{}", c.text),
-            };
-            let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(&line, content_cols);
-            (clipped.to_string(), color)
+        let is_selected = geometry.selected_completion == Some(slot);
+        let color = if is_selected { ACCENT_COLOR } else { TEXT_COLOR };
+        let marker = if is_selected {
+            SELECTED_COMPLETION_MARKER
+        } else {
+            UNSELECTED_COMPLETION_MARKER
         };
-        out.push((
-            CONSOLE_CHANNEL_COMPLETION_BASE + slot,
-            mk_area(
-                &text_str,
-                color,
-                font_size,
-                row_height,
-                (content_left, y),
-                (content_width, row_height),
-                c.font_family.as_deref(),
-            ),
-        ));
+        let line = match &c.hint {
+            Some(hint) => format!("{marker}{}    {}", c.text, hint),
+            None => format!("{marker}{}", c.text),
+        };
+        let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(&line, content_cols);
+        let mut area = GlyphArea::new_with_str(
+            clipped,
+            font_size,
+            row_height,
+            Vec2::new(content_left, y),
+            Vec2::new(content_width, row_height),
+        );
+        area.regions = completion_row_regions(
+            CompletionRowSpans {
+                marker: baumhard::util::grapheme_chad::count_grapheme_clusters(marker),
+                text: baumhard::util::grapheme_chad::count_grapheme_clusters(&c.text),
+                shown: baumhard::util::grapheme_chad::count_grapheme_clusters(clipped),
+            },
+            cosmic_color_to_rgba(color),
+            default_font,
+            face_or_default(c.font_family.as_deref()),
+        );
+        out.push((CONSOLE_CHANNEL_COMPLETION_BASE + slot, area));
     }
 
     // Prompt line — single GlyphArea with two ColorFontRegions so
@@ -357,13 +367,13 @@ pub(super) fn console_overlay_areas(
     let mut regions = ColorFontRegions::new_empty();
     regions.submit_region(ColorFontRegion::new(
         ColorFontRange::new(0, prompt_chars),
-        None,
+        default_font,
         Some(cosmic_color_to_rgba(ACCENT_COLOR)),
     ));
     if input_chars > 0 {
         regions.submit_region(ColorFontRegion::new(
             ColorFontRange::new(prompt_chars, prompt_chars + input_chars),
-            None,
+            default_font,
             Some(cosmic_color_to_rgba(TEXT_COLOR)),
         ));
     }
@@ -371,6 +381,48 @@ pub(super) fn console_overlay_areas(
     out.push((CONSOLE_CHANNEL_PROMPT, prompt_area));
 
     out
+}
+
+/// Grapheme-cluster lengths of one completion row's three parts, as
+/// laid out in `marker ++ text ++ hint`: the selection marker, the
+/// candidate text, and `shown` — how many clusters of the whole row
+/// survived truncation to the popup's width. Whatever follows
+/// `marker + text` is the hint and its separator.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CompletionRowSpans {
+    pub(super) marker: usize,
+    pub(super) text: usize,
+    pub(super) shown: usize,
+}
+
+/// Regions for one completion row: the candidate text in
+/// `candidate_font`, the marker before it and the hint after it in
+/// `default_font`, all in `color`. Each range is clamped to
+/// `spans.shown`, so a row truncated mid-text or mid-marker still
+/// yields only in-bounds, non-empty regions.
+pub(super) fn completion_row_regions(
+    spans: CompletionRowSpans,
+    color: FloatRgba,
+    default_font: Option<AppFont>,
+    candidate_font: Option<AppFont>,
+) -> ColorFontRegions {
+    let text_start = spans.marker.min(spans.shown);
+    let text_end = (spans.marker + spans.text).min(spans.shown);
+    let mut regions = ColorFontRegions::new_empty();
+    for (start, end, font) in [
+        (0, text_start, default_font),
+        (text_start, text_end, candidate_font),
+        (text_end, spans.shown, default_font),
+    ] {
+        if start < end {
+            regions.submit_region(ColorFontRegion::new(
+                ColorFontRange::new(start, end),
+                font,
+                Some(color),
+            ));
+        }
+    }
+    regions
 }
 
 /// Build the console overlay tree from a geometry + pre-computed

@@ -290,9 +290,10 @@ decision, not a drive-by edit.
   `MindMapDocument::apply_document_actions`. There are three, and
   the second is the one a hostile map would take:
 
-  1. `dispatch::apply_keybind_custom_mutation`
-     (`cross_dispatch/mod.rs`) — the keybind / macro tier, which
-     is the route `dispatch_macro`'s gates cover.
+  1. The keybind / macro tier —
+     `cross_dispatch::dispatch_custom_mutation_for_key` and the two
+     `MacroDispatchTarget` impls — which is the route
+     `dispatch_macro`'s gates cover.
   2. `click_triggers::fire_onclick_triggers` — a node's `OnClick`
      binding, authored **in the map**, fired by a click or a touch
      tap. It carries no `SourceTier` at all, because it is document
@@ -300,6 +301,11 @@ decision, not a drive-by edit.
      at `dispatch_macro` stays fully reachable here.
   3. `console::commands::mutation` — the `mutation` console verb,
      User tier by construction, since the user typed it.
+
+  Routes 1 and 2 land through one body since #144,
+  `app::fire_custom_mutation`, and it carries no tier of its own:
+  a gate placed there has to be told which route fired it, or sit
+  at the two callers. Either way it is still every route, not one.
 
   Nothing turns on this today: both shipped variants
   (`SetThemeVariant`, `SetThemeVariables`) are in-memory theme
@@ -686,6 +692,14 @@ Workspace-level commitment:
   new Baumhard primitives ship with a `do_*()` test and a criterion
   bench in the same commit.**
 - **`./test.sh` green before every commit.**
+- **Review asks of every new assertion what input makes it fail.**
+  A test that cannot fail on its subject passes CI and reads as
+  coverage, so the author's green run says nothing about it; most of
+  the instances [`TEST_CONVENTIONS.md §T13`](./TEST_CONVENTIONS.md)
+  catalogs were found by a reviewer asking exactly that, not by the
+  author. Review a
+  test against §T13's six shapes, and hold the pull request to the
+  negative controls §T13.2 requires it to report.
 
 ## §12 Commit hygiene
 
