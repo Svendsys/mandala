@@ -45,7 +45,7 @@ pub(in crate::application::app) fn apply_toggle_border_visible(rc: &mut RebuildC
         match crate::application::console::commands::border::toggle_border_visible_on_selection(doc) {
             Ok(report) => report.toggled > 0,
             Err(_) => {
-                log::warn!("ToggleBorderVisible: no border-applicable selection");
+                log::warn!("dispatch: ToggleBorderVisible: no border-applicable selection");
                 false
             }
         }
@@ -234,7 +234,7 @@ pub(in crate::application::app) fn apply_set_section_offset_delta(
     rc: &mut RebuildContext<'_>,
 ) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
-        log::warn!("SetSectionOffsetDelta: no section selected");
+        log::warn!("dispatch: SetSectionOffsetDelta: no section selected");
         return;
     };
     let (cx, cy) = match rc
@@ -248,7 +248,7 @@ pub(in crate::application::app) fn apply_set_section_offset_delta(
         Some(p) => p,
         None => {
             log::warn!(
-                "SetSectionOffsetDelta: section[{}] not found on node '{}'",
+                "dispatch: SetSectionOffsetDelta: section[{}] not found on node '{}'",
                 idx,
                 node_id
             );
@@ -259,7 +259,7 @@ pub(in crate::application::app) fn apply_set_section_offset_delta(
         match doc.set_section_offset(&node_id, idx, cx + dx, cy + dy) {
             Ok(changed) => changed,
             Err(msg) => {
-                log::warn!("SetSectionOffsetDelta: {}", msg);
+                log::warn!("dispatch: SetSectionOffsetDelta: {}", msg);
                 false
             }
         }
@@ -274,17 +274,21 @@ pub(in crate::application::app) fn apply_set_section_size(
     rc: &mut RebuildContext<'_>,
 ) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
-        log::warn!("SetSectionSize: no section selected");
+        log::warn!("dispatch: SetSectionSize: no section selected");
         return;
     };
     if !section_exists(rc.document, &node_id, idx) {
-        log::warn!("SetSectionSize: section[{}] not found on node '{}'", idx, node_id);
+        log::warn!(
+            "dispatch: SetSectionSize: section[{}] not found on node '{}'",
+            idx,
+            node_id
+        );
         return;
     }
     apply_with_rebuild(rc, |doc| match doc.set_section_size(&node_id, idx, size) {
         Ok(changed) => changed,
         Err(msg) => {
-            log::warn!("SetSectionSize: {}", msg);
+            log::warn!("dispatch: SetSectionSize: {}", msg);
             false
         }
     });
@@ -295,7 +299,7 @@ pub(in crate::application::app) fn apply_set_section_size(
 /// keybind / macro path (`Action::SetSectionOffsetAbs`).
 pub(in crate::application::app) fn apply_set_section_offset_abs(x: f64, y: f64, rc: &mut RebuildContext<'_>) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
-        log::warn!("SetSectionOffsetAbs: no section selected");
+        log::warn!("dispatch: SetSectionOffsetAbs: no section selected");
         return;
     };
     let exists = rc
@@ -307,7 +311,7 @@ pub(in crate::application::app) fn apply_set_section_offset_abs(x: f64, y: f64, 
         .unwrap_or(false);
     if !exists {
         log::warn!(
-            "SetSectionOffsetAbs: section[{}] not found on node '{}'",
+            "dispatch: SetSectionOffsetAbs: section[{}] not found on node '{}'",
             idx,
             node_id
         );
@@ -316,7 +320,7 @@ pub(in crate::application::app) fn apply_set_section_offset_abs(x: f64, y: f64, 
     apply_with_rebuild(rc, |doc| match doc.set_section_offset(&node_id, idx, x, y) {
         Ok(changed) => changed,
         Err(msg) => {
-            log::warn!("SetSectionOffsetAbs: {}", msg);
+            log::warn!("dispatch: SetSectionOffsetAbs: {}", msg);
             false
         }
     });
@@ -334,11 +338,15 @@ pub(in crate::application::app) fn apply_set_section_text(
     rc: &mut RebuildContext<'_>,
 ) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
-        log::warn!("SetSectionText: no section selected");
+        log::warn!("dispatch: SetSectionText: no section selected");
         return;
     };
     if !section_exists(rc.document, &node_id, idx) {
-        log::warn!("SetSectionText: section[{}] not found on node '{}'", idx, node_id);
+        log::warn!(
+            "dispatch: SetSectionText: section[{}] not found on node '{}'",
+            idx,
+            node_id
+        );
         return;
     }
     apply_with_rebuild(rc, |doc| {
@@ -370,14 +378,14 @@ pub(in crate::application::app) fn apply_add_section(
 ) {
     use baumhard::mindmap::model::MindSection;
     let Some(node_id) = rc.document.selection.primary_node_id().map(str::to_string) else {
-        log::warn!("AddSection: no node selected (Multi/None selection or no primary)");
+        log::warn!("dispatch: AddSection: no node selected (Multi/None selection or no primary)");
         return;
     };
     let section = MindSection::new_default(text, Vec::new());
     apply_with_rebuild(rc, |doc| match doc.add_section(&node_id, at, section) {
         Ok(_) => true,
         Err(msg) => {
-            log::warn!("AddSection: {}", msg);
+            log::warn!("dispatch: AddSection: {}", msg);
             false
         }
     });
@@ -390,17 +398,21 @@ pub(in crate::application::app) fn apply_add_section(
 /// macro path (`Action::DeleteSection`). Destructive.
 pub(in crate::application::app) fn apply_delete_section(rc: &mut RebuildContext<'_>) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
-        log::warn!("DeleteSection: no section selected");
+        log::warn!("dispatch: DeleteSection: no section selected");
         return;
     };
     if !section_exists(rc.document, &node_id, idx) {
-        log::warn!("DeleteSection: section[{}] not found on node '{}'", idx, node_id);
+        log::warn!(
+            "dispatch: DeleteSection: section[{}] not found on node '{}'",
+            idx,
+            node_id
+        );
         return;
     }
     apply_with_rebuild(rc, |doc| match doc.delete_section(&node_id, idx) {
         Ok(_) => true,
         Err(msg) => {
-            log::warn!("DeleteSection: {}", msg);
+            log::warn!("dispatch: DeleteSection: {}", msg);
             false
         }
     });
@@ -426,7 +438,7 @@ pub(in crate::application::app) fn apply_split_section(
     apply_with_rebuild(rc, |doc| match doc.split_section(&node_id, idx, Some(at)) {
         Ok(_) => true,
         Err(msg) => {
-            log::warn!("SplitSection: {}", msg);
+            log::warn!("dispatch: SplitSection: {}", msg);
             false
         }
     });
@@ -448,18 +460,22 @@ fn resolve_split_section_target(
 ) -> Option<(String, usize, usize)> {
     let Some(at) = at_grapheme else {
         log::warn!(
-            "SplitSection: at_grapheme is required — split-at-end-of-text \
+            "dispatch: SplitSection: at_grapheme is required — split-at-end-of-text \
              silently creates an empty suffix section, so the console verb \
              requires `at=<grapheme>` and the macro / keybind path does too"
         );
         return None;
     };
     let Some((node_id, idx)) = target_section(&doc.selection) else {
-        log::warn!("SplitSection: no section selected");
+        log::warn!("dispatch: SplitSection: no section selected");
         return None;
     };
     if !section_exists(doc, &node_id, idx) {
-        log::warn!("SplitSection: section[{}] not found on node '{}'", idx, node_id);
+        log::warn!(
+            "dispatch: SplitSection: section[{}] not found on node '{}'",
+            idx,
+            node_id
+        );
         return None;
     }
     Some((node_id, idx, at))

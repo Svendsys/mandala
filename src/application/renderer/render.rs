@@ -684,13 +684,13 @@ impl Renderer {
         if let Err(payload) = result {
             if fonts::font_system_poisoned() {
                 log::error!(
-                    "renderer.prewarm: first render panicked while holding the font system, \
+                    "renderer: prewarm: first render panicked while holding the font system, \
                      which leaves it unusable; re-raising the original panic"
                 );
                 std::panic::resume_unwind(payload);
             }
             log::warn!(
-                "renderer.prewarm: first render panicked; continuing with cold pipelines. \
+                "renderer: prewarm: first render panicked; continuing with cold pipelines. \
                  First user interaction may show a one-frame stutter."
             );
         }

@@ -72,7 +72,7 @@ impl MindMapDocument {
                 // orphans already re-rooted, restore the node, and report the
                 // delete as a no-op rather than leave a dangling child.
                 log::error!(
-                    "delete_node({node_id}): re-rooting child '{cid}' to '{new_root_id}' was \
+                    "document: delete_node({node_id}): re-rooting child '{cid}' to '{new_root_id}' was \
                      refused; aborting delete to avoid corrupting the map"
                 );
                 for (done_cid, done_root) in orphaned_children.iter().rev() {
@@ -156,7 +156,7 @@ impl MindMapDocument {
         for (_, new) in &renames {
             if !rename_map.contains_key(new.as_str()) && self.mindmap.nodes.contains_key(new) {
                 log::error!(
-                    "cascade_rename({old_id} -> {new_id}): target id '{new}' is already \
+                    "document: cascade_rename({old_id} -> {new_id}): target id '{new}' is already \
                      occupied by an unrelated node; aborting rename to avoid corrupting the map"
                 );
                 return false;

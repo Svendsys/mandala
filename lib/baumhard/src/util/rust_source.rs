@@ -17,7 +17,7 @@
 //! two a person deleting code actually writes:
 //!
 //! - **A comment.** Gutting a function and leaving
-//!   `// this used to be log::error!("startup: {}", message);` keeps
+//!   `// this used to be log::error!("startup: {}", collapse_home_in(&message));` keeps
 //!   the scan green while the behavior is gone. That is not a
 //!   contrived mutation — it is the ordinary shape of a removal.
 //! - **The test's own body, or a later test module.** The needle a
@@ -82,7 +82,7 @@
 //! [`strip_comments`](crate::util::rust_source::strip_comments)
 //! leaves literals alone — it has to, since the needles here contain
 //! string literals themselves
-//! (`log::error!("startup: {}", message)`). That is the residual,
+//! (`log::error!("startup: {}", collapse_home_in(&message))`). That is the residual,
 //! and it is a deliberate act rather than the ordinary shape of a
 //! mistake: scoping a pin to one function body with
 //! [`braced_block_after`](crate::util::rust_source::braced_block_after)

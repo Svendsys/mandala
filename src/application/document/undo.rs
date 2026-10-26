@@ -26,7 +26,7 @@ impl MindMapDocument {
         if let Some(UndoAction::DeleteNode { node, .. }) = self.undo_stack.last() {
             if self.mindmap.nodes.contains_key(node.id.as_str()) {
                 log::error!(
-                    "undo DeleteNode: id '{}' is already occupied; refusing to overwrite a \
+                    "undo: DeleteNode: id '{}' is already occupied; refusing to overwrite a \
                      live node and leaving the action on the undo stack",
                     node.id
                 );

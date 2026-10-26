@@ -300,7 +300,7 @@ pub(super) fn one_shot(init: &mut InitState, shot: &OneShot) -> Option<std::proc
     {
         log::error!(
             "screenshot: the map did not load (the `startup:` line says why); nothing was written to {}",
-            shot.path.display()
+            baumhard::util::log::tilde_path(&shot.path)
         );
         return Some(ExitCode::FAILURE);
     }
@@ -331,12 +331,15 @@ pub(super) fn one_shot(init: &mut InitState, shot: &OneShot) -> Option<std::proc
             log::error!(
                 "screenshot: the frame was not drawn ({}); nothing was written to {}",
                 skip.word(),
-                shot.path.display()
+                baumhard::util::log::tilde_path(&shot.path)
             );
             Some(ExitCode::FAILURE)
         }
         Err(refused) => {
-            log::error!("screenshot: {}", refused.into_message());
+            log::error!(
+                "screenshot: {}",
+                baumhard::util::log::collapse_home_in(&refused.into_message())
+            );
             Some(ExitCode::FAILURE)
         }
     }

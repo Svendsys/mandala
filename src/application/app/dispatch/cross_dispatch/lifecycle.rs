@@ -222,7 +222,7 @@ pub(in crate::application::app) fn apply_enter_node_edit(
     match plan {
         EnterNodeEditPlan::NoTarget => {
             log::warn!(
-                "EnterNodeEdit: selection has no primary node \
+                "dispatch: EnterNodeEdit: selection has no primary node \
                  (Multi / MultiSection / Edge / None) — nothing to edit"
             );
             false
@@ -321,12 +321,12 @@ pub(in crate::application::app) fn apply_enter_section_edit(
     let plan = resolve_enter_section_edit_plan(&*rc.interaction_mode, &rc.document.selection);
     match plan {
         EnterSectionEditPlan::NotInNodeEdit => {
-            log::warn!("EnterSectionEdit: no active NodeEdit mode; nothing to edit");
+            log::warn!("dispatch: EnterSectionEdit: no active NodeEdit mode; nothing to edit");
             false
         }
         EnterSectionEditPlan::OwnerMismatch { active_node, owner } => {
             log::warn!(
-                "EnterSectionEdit: selection owner ≠ active NodeEdit node ({:?} vs {})",
+                "dispatch: EnterSectionEdit: selection owner ≠ active NodeEdit node ({:?} vs {})",
                 owner,
                 active_node
             );
@@ -364,23 +364,23 @@ pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildConte
             rc.rebuild_after_selection_change();
         }
         Err(ResizeTargetError::NoSelection) => {
-            log::warn!("EnterResizeMode: no selection; nothing to resize");
+            log::warn!("dispatch: EnterResizeMode: no selection; nothing to resize");
         }
         Err(ResizeTargetError::MultiTarget) => {
             log::warn!(
-                "EnterResizeMode: multi-target selection — single-target only; \
+                "dispatch: EnterResizeMode: multi-target selection — single-target only; \
                  select a single node or section first"
             );
         }
         Err(ResizeTargetError::SectionFillParent { node_id, section_idx }) => {
             log::warn!(
-                "EnterResizeMode: section {}[{}] is fill-parent (no Some size); cannot resize",
+                "dispatch: EnterResizeMode: section {}[{}] is fill-parent (no Some size); cannot resize",
                 node_id,
                 section_idx,
             );
         }
         Err(ResizeTargetError::EdgeOrPortal) => {
-            log::warn!("EnterResizeMode: edge / label / portal selection — not resizable");
+            log::warn!("dispatch: EnterResizeMode: edge / label / portal selection — not resizable");
         }
     }
 }

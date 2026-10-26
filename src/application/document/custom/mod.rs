@@ -125,7 +125,7 @@ fn unsupported_fields_of_mutation(m: &baumhard::gfx_structs::mutator::Mutation) 
 fn warn_if_predicate_filtered_everything(mutation_id: &str, has_predicate: bool, seen: usize, passed: usize) {
     if has_predicate && seen > 0 && passed == 0 {
         log::warn!(
-            "mutation '{}': top-level predicate filtered every candidate ({} elements seen, 0 passed); \
+            "mutation: '{}': top-level predicate filtered every candidate ({} elements seen, 0 passed); \
              the apply path completed but no element was mutated",
             mutation_id,
             seen
@@ -260,7 +260,7 @@ impl MindMapDocument {
                 self.apply_to_tree(custom, node_id, tree);
             } else {
                 log::warn!(
-                    "apply_custom_mutation: Toggle mutation '{}' called with None tree; \
+                    "mutation: Toggle mutation '{}' called with None tree; \
                      visual toggle skipped. Pass Some(&mut tree) for Toggle mutations.",
                     custom.id
                 );
@@ -278,7 +278,7 @@ impl MindMapDocument {
             let reach = mutator_reach(mutator);
             if !custom.target_scope.covers_reach(reach) {
                 log::warn!(
-                    "mutation '{}': mutator reach is {:?} but target_scope is \
+                    "mutation: '{}': mutator reach is {:?} but target_scope is \
                      {:?}; undo will not capture edits beyond the declared scope",
                     custom.id,
                     reach,
@@ -357,7 +357,7 @@ impl MindMapDocument {
             any_changed
         } else {
             log::warn!(
-                "apply_custom_mutation: declarative mutation '{}' called with None tree; \
+                "mutation: declarative mutation '{}' called with None tree; \
                  flat-apply skipped. Pass Some(&mut tree) when the mutation isn't \
                  handler-dispatched.",
                 custom.id
@@ -411,7 +411,7 @@ impl MindMapDocument {
         };
         let Some(mutations) = flat_mutations(mutator) else {
             log::warn!(
-                "mutation '{}': mutator AST is not flat-extractable — the flat-apply path \
+                "mutation: '{}': mutator AST is not flat-extractable — the flat-apply path \
                  can't evaluate this shape, so the apply is skipped. Causes: a root that \
                  isn't a `Macro` with a literal list, a `RepeatWhile` predicate that isn't \
                  `always_match`, a runtime-supplied payload, or two nested payloads that \
@@ -432,7 +432,7 @@ impl MindMapDocument {
         }
         if !fields.is_empty() {
             log::warn!(
-                "mutation '{}': writes field(s) [{}] that have no model home; the change \
+                "mutation: '{}': writes field(s) [{}] that have no model home; the change \
                  applies to the display tree but is NOT persisted and reverts on the next \
                  rebuild. Persisted fields: position, section offset/size, text, color/font \
                  runs, font size.",
@@ -529,7 +529,7 @@ impl MindMapDocument {
                 // `lib/baumhard/src/mindmap/custom_mutation/mod.rs`
                 // doc-comment on `DocumentAction`.
                 _ => {
-                    log::warn!("apply_document_actions: unknown DocumentAction variant; skipping");
+                    log::warn!("mutation: unknown DocumentAction variant; skipping");
                 }
             }
         }
@@ -604,7 +604,7 @@ impl MindMapDocument {
         if let Some(p) = predicate_gate {
             if p.fields.is_empty() && !p.always_match {
                 log::warn!(
-                    "mutation '{}': predicate has no fields and `always_match` is false; \
+                    "mutation: '{}': predicate has no fields and `always_match` is false; \
                      every candidate element will be filtered out (apply runs but produces no change)",
                     custom.id
                 );

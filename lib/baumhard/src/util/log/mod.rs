@@ -21,6 +21,11 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capture;
+pub mod redact;
+
+pub use redact::{
+    collapse_home, collapse_home_in, collapse_home_in_with, excerpt, tilde_path, EXCERPT_WIDTH,
+};
 
 /// Initialize the global logger for whichever target this binary
 /// is built for. Native uses `env_logger` (reads `RUST_LOG`);

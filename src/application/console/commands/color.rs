@@ -418,7 +418,7 @@ fn apply_section_colors(
                         // it doesn't silently land as
                         // "color: no change".
                         log::warn!(
-                            "color verb on section {} of node {} \
+                            "color: verb on section {} of node {} \
                              range {}..{} produced no change \
                              (range may extend past the section's \
                              grapheme count or section was deleted)",
@@ -480,7 +480,7 @@ pub(crate) fn apply_color_axis_to_selection(
 ) -> bool {
     let kvs = vec![(axis.to_string(), value.to_string())];
     let report = apply_kvs(doc, &kvs, stage_color_axis);
-    log_not_applicable_if_silent(&report, "color", axis);
+    log_not_applicable_if_silent(&report, axis);
     report.any_applied
 }
 
@@ -512,27 +512,21 @@ pub(crate) fn apply_color_axis_to_selection(
 /// "not applicable" substring nor anything else, so a keybinding
 /// carrying an unparseable color was the quietest failure on the
 /// path: no scrollback, no log, no change.
-fn log_not_applicable_if_silent(
-    report: &crate::application::console::traits::DispatchReport,
-    verb: &str,
-    axis: &str,
-) {
+fn log_not_applicable_if_silent(report: &crate::application::console::traits::DispatchReport, axis: &str) {
     if report.any_applied {
         return;
     }
     if !report.invalid.is_empty() {
         log::warn!(
-            "{} {}: value rejected, so this binding cannot apply to any selection \
+            "color: {} value rejected, so this binding cannot apply to any selection \
              (Action path; no scrollback): {}",
-            verb,
             axis,
             report.invalid.join("; "),
         );
     } else if report.messages.iter().any(|m| m.contains("not applicable")) {
         log::info!(
-            "{} {}: not applicable to current selection (Action path; no scrollback). \
+            "color: {} not applicable to current selection (Action path; no scrollback). \
              Dispatcher messages: {}",
-            verb,
             axis,
             report.messages.join("; "),
         );
