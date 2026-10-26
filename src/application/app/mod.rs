@@ -42,6 +42,7 @@
 //! `dispatch_compatible`. See `WASM_CONVERGENCE.md` for the
 //! current convergence status.
 
+mod animation_drain;
 mod scene_rebuild;
 mod text_edit;
 
@@ -55,7 +56,6 @@ pub(crate) mod dispatch;
 
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
-mod animation_drain;
 #[cfg(not(target_arch = "wasm32"))]
 mod capture_flow;
 #[cfg(not(target_arch = "wasm32"))]

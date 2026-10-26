@@ -70,15 +70,19 @@ pub(crate) fn fire_custom_mutation(
         doc.apply_custom_mutation_instantly(cm, node_id, mindmap_tree.as_mut());
         scene_cache.clear();
     }
-    // The second of the three routes from a map to
-    // `apply_document_actions` runs through here with no `SourceTier`
-    // — an `OnClick` binding is authored in the `.mindmap.json`, which
+    // Two of the three routes from a map to `apply_document_actions`
+    // run through here, and this body carries no `SourceTier`: route
+    // 1's (a keystroke or a macro step) is checked at `dispatch_macro`
+    // before it gets here, and route 2 (a node's `OnClick` binding)
+    // has none at all — it is authored in the `.mindmap.json`, which
     // this project treats as untrusted (`macros::SourceTier`'s
     // "hostile shared mindmap"). Both shipped variants are in-memory
     // theme writes, so there is nothing to gate today; the first
     // variant that touches the filesystem, the network or another
-    // process must be refused here as well as at `dispatch_macro`, or
-    // it stays reachable from any node's `OnClick`. CODE_CONVENTIONS
-    // §3 carries the rule and enumerates the routes.
+    // process must be refused on route 2 as well as at
+    // `dispatch_macro`, or it stays reachable from any node's
+    // `OnClick` — and a gate placed here has to be told which route
+    // fired it. CODE_CONVENTIONS §3 carries the rule and enumerates
+    // the routes.
     doc.apply_document_actions(cm);
 }

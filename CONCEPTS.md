@@ -2246,7 +2246,8 @@ one.
 ### Event loop and `drain_frame`
 
 The per-frame heartbeat: tick watchdog, drive
-throttled interactions, advance animations, rebuild geometry,
+throttled interactions, advance animations (`animation_drain`, the
+body the browser's frame runs too), rebuild geometry,
 rebuild scene if dirty, render, log frame interval.
 
 Every frame runs the same six steps in the
