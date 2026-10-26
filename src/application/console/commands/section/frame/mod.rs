@@ -30,7 +30,7 @@ use baumhard::mindmap::border::resolve_section_frame_border;
 use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 use crate::application::console::commands::border::{
-    check_palette_ref, edits_has_glyph_field, nodes_in_selection, stage_kv, BorderEdit,
+    edits_has_glyph_field, nodes_in_selection, stage_kv, BorderEdit,
 };
 use crate::application::console::parser::Args;
 use crate::application::console::spec::descent::Stop;
@@ -106,9 +106,6 @@ fn apply_reset(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult {
-    if let Err(why) = check_palette_ref(&edits, &eff.document().mindmap) {
-        return ExecResult::err(format!("section frame: {}", why));
-    }
     // Surface the specific not-applicable variant from
     // `nodes_in_selection` rather than collapsing all five branches
     // (no selection / edge / edge-label / portal-label / portal-text)

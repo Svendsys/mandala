@@ -267,7 +267,7 @@ impl MindMapDocument {
         // loader's own rule rather than a copy of it. Atomic: a
         // refusal leaves the node exactly as it was, preview
         // included.
-        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+        if let Some(refusal) = refuse_border_edits(&edits, &self.mindmap) {
             return refusal;
         }
         // Scope-gated implicit cancel: a committing per-node edit
@@ -357,7 +357,7 @@ impl MindMapDocument {
         // section's `frame_border` exactly as it screens a node's
         // `style.border`, so this surface authors the same
         // unopenable file when it is left unguarded.
-        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+        if let Some(refusal) = refuse_border_edits(&edits, &self.mindmap) {
             return refusal;
         }
         // Scope-gated implicit cancel — only clear previews whose
@@ -429,7 +429,7 @@ impl MindMapDocument {
         // `canvas_numeric_violations` screens `default_border` with
         // the same rule the per-node door uses, so this surface is
         // no less able to author a map that will not reopen.
-        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+        if let Some(refusal) = refuse_border_edits(&edits, &self.mindmap) {
             return refusal;
         }
         // Scope-gated implicit cancel — `CanvasDefault` previews
@@ -502,7 +502,7 @@ impl MindMapDocument {
         // `default_section_frame_border` and
         // `default_focused_section_frame_border` — are screened by
         // `canvas_numeric_violations` at load.
-        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+        if let Some(refusal) = refuse_border_edits(&edits, &self.mindmap) {
             return refusal;
         }
         // Scope-gated implicit cancel — clear previews whose
@@ -597,7 +597,7 @@ impl MindMapDocument {
         // renders the over-ceiling glyph, so the user is shown a border
         // they cannot keep and finds out at commit — or, before
         // `merge_outcome` carried the refusal, did not find out.
-        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+        if let Some(refusal) = refuse_border_edits(&edits, &self.mindmap) {
             return refusal;
         }
         // Drop any orphan-by-drift preview before recording a new
@@ -1051,8 +1051,19 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
 /// more; a writer that skipped the screen entirely would author an
 /// unopenable file, which is why the load-bearing copy lives at the
 /// chokepoint and not here.
-fn refuse_border_glyph_edits(edits: &BorderConfigEdits) -> Option<BorderEditOutcome> {
-    let rejected = border_glyph_edit_violations(edits);
+///
+/// It also refuses a cycling palette the map does not define
+/// ([`border_palette_violation`]), which is why it takes the map: the
+/// console stages one pair at a time with no document in hand, and
+/// six write paths — four surfaces, the preview, two keybinds —
+/// reach these five setters, so this screen is the one place every
+/// one of them passes.
+fn refuse_border_edits(
+    edits: &BorderConfigEdits,
+    map: &baumhard::mindmap::model::MindMap,
+) -> Option<BorderEditOutcome> {
+    let mut rejected = border_glyph_edit_violations(edits);
+    rejected.extend(border_palette_violation(edits, map));
     if rejected.is_empty() {
         return None;
     }
@@ -1060,6 +1071,61 @@ fn refuse_border_glyph_edits(edits: &BorderConfigEdits) -> Option<BorderEditOutc
         rejected,
         ..Default::default()
     })
+}
+
+/// A staged cycling palette the map does not define, as the message
+/// a caller shows. `None` unless the edit *sets* a palette: an edit
+/// that leaves the slot alone passes whatever name the slot already
+/// carries.
+///
+/// The name is matched exactly, the way the renderer looks it up; a
+/// near miss in case is a different palette.
+///
+/// Validated rather than accepted as a forward reference: the console
+/// has no verb that adds a palette, so from the console a forward
+/// reference could never come to resolve, and accepting it is how
+/// `border palette=preset` reported success while `border show`
+/// admitted one command later that the palette did not exist (#136).
+/// A dangling name a *file* carries still loads, the readout still
+/// says `(not found in map)` about it, and an edit that does not set
+/// a palette still applies over it — the file format stays as
+/// permissive as it was.
+pub(crate) fn border_palette_violation(
+    edits: &BorderConfigEdits,
+    map: &baumhard::mindmap::model::MindMap,
+) -> Option<String> {
+    use crate::application::document::OptionEdit;
+    let OptionEdit::Set(name) = &edits.color_palette else {
+        return None;
+    };
+    if map.palettes.contains_key(name) {
+        return None;
+    }
+    if map.palettes.is_empty() {
+        return Some(format!(
+            "palette '{}' not found; this map defines no palettes",
+            name
+        ));
+    }
+    // Quoted where the tokenizer would split it, so `My Palette`
+    // reads as the one name it is and pastes back as one token.
+    let mut known: Vec<String> = map
+        .palettes
+        .keys()
+        .map(|k| {
+            if k.chars().any(char::is_whitespace) {
+                format!("\"{}\"", k)
+            } else {
+                k.clone()
+            }
+        })
+        .collect();
+    known.sort_unstable();
+    Some(format!(
+        "palette '{}' not found in map; pick one of {}",
+        name,
+        known.join(" | ")
+    ))
 }
 
 fn border_glyph_edit_violations(edits: &BorderConfigEdits) -> Vec<String> {

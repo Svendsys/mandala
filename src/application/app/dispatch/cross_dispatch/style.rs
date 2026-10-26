@@ -71,9 +71,9 @@ pub(in crate::application::app) fn apply_set_border_preview(
 
 /// The body of [`apply_set_border_preview`], on a bare document so a
 /// test can reach it without a `RebuildContext`. `true` when the
-/// preview was staged; `false` when the kv does not stage, names a
-/// palette the map does not define, finds no target in the
-/// selection, or the setter rejects it. A keybind has no scrollback,
+/// preview was staged; `false` when the kv does not stage, finds no
+/// target in the selection, or the setter rejects it — a glyph past
+/// the loader's ceiling, or a palette the map does not define. A keybind has no scrollback,
 /// so every refusal but the empty selection — a stray keypress, not
 /// a defect — is logged at `warn!`.
 fn stage_border_preview_binding(
@@ -82,17 +82,13 @@ fn stage_border_preview_binding(
     field: &str,
     value: &str,
 ) -> bool {
-    use crate::application::console::commands::border::{check_palette_ref, stage_kv};
+    use crate::application::console::commands::border::stage_kv;
     use crate::application::document::{BorderConfigEdits, BorderPreviewTarget};
     use crate::application::keybinds::BorderPreviewTargetKind;
 
     let mut edits = BorderConfigEdits::default();
     if let Err(msg) = stage_kv(&mut edits, field, value) {
         log::warn!("border: SetBorderPreview stage_kv error: {msg}");
-        return false;
-    }
-    if let Err(msg) = check_palette_ref(&edits, &doc.mindmap) {
-        log::warn!("border: SetBorderPreview {field}={value:?}: {msg}");
         return false;
     }
 

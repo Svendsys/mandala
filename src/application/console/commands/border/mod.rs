@@ -59,7 +59,7 @@ pub(crate) use preview::dispatch_border_preview;
 // of `grammar::KEYS` rather than a function, and
 // `custom_preset_hint` is reached only through [`BorderEdit`],
 // which is the only thing that still emits it.
-pub(crate) use execute::{check_palette_ref, edits_has_glyph_field, nodes_in_selection, stage_kv};
+pub(crate) use execute::{edits_has_glyph_field, nodes_in_selection, stage_kv};
 // The closing move all four of them make — see `finish.rs` for
 // what the four copies of it had in common and where they differed.
 pub(crate) use finish::BorderEdit;

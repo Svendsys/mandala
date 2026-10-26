@@ -25,7 +25,7 @@ use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
 
-use super::execute::{check_palette_ref, edits_has_glyph_field, stage_kv};
+use super::execute::{edits_has_glyph_field, stage_kv};
 use super::finish::BorderEdit;
 
 /// Entry point for the per-node `border preview …` verb.
@@ -89,9 +89,6 @@ where
         Ok(e) => e,
         Err(err) => return ExecResult::err(err),
     };
-    if let Err(why) = check_palette_ref(&edits, &eff.document().mindmap) {
-        return ExecResult::err(format!("{}: {}", descent.level.label, why));
-    }
     let target = match target_for_verb(&eff.document().selection) {
         Ok(t) => t,
         Err(e) => return e,
