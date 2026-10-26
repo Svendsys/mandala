@@ -452,6 +452,17 @@ impl TypeGraph {
     /// `#[cfg(test)]` modules were all excluded. Nothing had
     /// collided yet, which is the only reason it was quiet.
     ///
+    /// **`src/document/` is not indexed either.** This graph is the
+    /// `.mindmap.json` model's, walked from `MindMap`; the document
+    /// (V1-B1) is the model that replaces it, and reuses bare type
+    /// names the model also declares — `NodeStyle`, `Anchor`,
+    /// `PaletteField`, `Rgba` — which an index keyed by bare name
+    /// cannot hold twice. No `MindMap` walk can reach a document type:
+    /// the model names nothing in `document`
+    /// (`test_the_mindmap_model_is_walked_without_the_document` holds
+    /// that). This module goes with the model's unknown-key capture,
+    /// which the document's strict format does not have (design §7.2).
+    ///
     /// Panics if a file cannot be read or parsed, or if a `mod x;`
     /// names no file on disk: this backs a test whose entire job is to
     /// notice that the source moved, so a silent skip would defeat it.
@@ -459,6 +470,8 @@ impl TypeGraph {
         let mut graph = TypeGraph::default();
         let mut files = Vec::new();
         collect_source_files(src_root, &mut files);
+        let document = src_root.join("document");
+        files.retain(|file| !file.starts_with(&document));
         files.sort();
         let test_only = test_gated_module_files(&files);
         files.retain(|file| !test_only.contains(file));
@@ -2188,6 +2201,33 @@ mod tests {
             stale.is_empty(),
             "EXPECTED_TERMINATORS lists name(s) the walk from MindMap no longer \
              stops at — delete them: {stale:?}"
+        );
+    }
+
+    /// The document's files are left out of the index, and that costs
+    /// the `MindMap` walk nothing: nothing it reaches is declared under
+    /// `src/document/`, and where the two declare one name the index
+    /// holds the model's — an index that took the document's
+    /// `NodeStyle` would walk the wrong type silently. Control: the
+    /// exclusion is real, since `DocElement` is not in the index.
+    #[test]
+    fn test_the_mindmap_model_is_walked_without_the_document() {
+        let graph = TypeGraph::build(&crate_src_root());
+        assert!(graph.get("MindMap").is_some(), "the model is indexed");
+        assert!(graph.get("DocElement").is_none(), "the document is not");
+        let document = crate_src_root().join("document");
+        for reached in graph.reachable_from("MindMap") {
+            assert!(
+                !reached.file.starts_with(&document),
+                "{} is reached from MindMap and declared in the document",
+                reached.name
+            );
+        }
+        let node_style = graph.get("NodeStyle").expect("the model's NodeStyle is indexed");
+        assert!(
+            node_style.file.ends_with("mindmap/model/node.rs"),
+            "the index holds the model's NodeStyle, not the document's: {}",
+            node_style.file.display()
         );
     }
 
