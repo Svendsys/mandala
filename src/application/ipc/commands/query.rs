@@ -545,7 +545,7 @@ mod tests {
     }
 
     impl CommandTarget for LoadedApp {
-        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> bool {
+        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> crate::application::ipc::ActionOutcome {
             panic!("a query must not dispatch an Action");
         }
         fn run_console_line(&mut self, _: &str) -> Option<LineOutcome> {

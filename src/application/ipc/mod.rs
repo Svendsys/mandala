@@ -43,7 +43,7 @@ mod wait;
 
 pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
-pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
+pub(crate) use target::{ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
 pub(crate) use wait::{Settling, Until};

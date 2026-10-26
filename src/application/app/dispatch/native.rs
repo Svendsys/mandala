@@ -426,12 +426,12 @@ fn dispatch_action_arms(
             // press-time anchor and the owning button all come off
             // `hit` (`fast_resize_drag`), and the drag drains and
             // commits through the existing resize plumbing on its
-            // owning button's release. A refusal ran nothing, and the
-            // native macro loop reads this for `any_ran`.
-            if apply_fast_resize_start(ctx, hit) {
-                DispatchOutcome::Handled
-            } else {
-                DispatchOutcome::Unhandled
+            // owning button's release. A refusal ran nothing — the
+            // native macro loop reads this for `any_ran` — and says why,
+            // which IPC `act.action` returns as its `reason`.
+            match apply_fast_resize_start(ctx, hit) {
+                Ok(()) => DispatchOutcome::Handled,
+                Err(reason) => DispatchOutcome::Refused(reason),
             }
         }
         Action::EnterNodeEdit | Action::EnterNodeEditClean => {
@@ -697,11 +697,15 @@ fn dispatch_action_arms(
             // reads this for `any_ran` — is told so.
             PanCanvasRoute::Held => {
                 log::debug!("dispatch: PanCanvas ignored (a held input owns the pan); state stays put");
-                DispatchOutcome::Unhandled
+                DispatchOutcome::Refused(
+                    "a pan is already running, held by a button or key; its release ends it",
+                )
             }
             PanCanvasRoute::Refuse => {
                 log::debug!("dispatch: PanCanvas ignored (uncommitted gesture in flight); state stays put");
-                DispatchOutcome::Unhandled
+                DispatchOutcome::Refused(
+                    "a drag is in flight and owes the model a commit; its release ends it",
+                )
             }
         },
         // ── Console-verb Actions ───────────────────────────────
@@ -1231,28 +1235,48 @@ impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchT
 /// this only clears the scene cache and installs the drag it hands
 /// back. A refusal leaves the drag state as it found it — the
 /// threshold cross that dispatched this has already taken its pending
-/// press down (#194), so there is nothing stale to reset. True when a
-/// drag started.
-fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit>) -> bool {
-    let Some(h) = hit else {
-        log::debug!("dispatch: FastResizeStart: no DispatchHit; skipping");
-        return false;
+/// press down (#194), so there is nothing stale to reset. `Err` names
+/// why nothing started.
+fn apply_fast_resize_start(
+    ctx: &mut InputHandlerContext<'_>,
+    hit: Option<&DispatchHit>,
+) -> Result<(), &'static str> {
+    let started = match (hit, ctx.document.as_ref()) {
+        (None, _) => Err(FastResizeRefusal::NO_POINTER),
+        (Some(_), None) => Err(FastResizeRefusal::NO_DOCUMENT),
+        (Some(h), Some(doc)) => fast_resize_drag(doc, h),
     };
-    let Some(doc) = ctx.document.as_ref() else {
-        log::debug!("dispatch: FastResizeStart: no document; skipping");
-        return false;
-    };
-    match fast_resize_drag(doc, h) {
+    match started {
         Ok(drag) => {
             ctx.scene_cache.clear();
             *ctx.drag_state = DragState::throttled(drag);
-            true
+            Ok(())
         }
-        Err(why) => {
-            log::debug!("dispatch: FastResizeStart: {why}; skipping");
-            false
+        Err(reason) => {
+            log::debug!("dispatch: FastResizeStart refused: {reason}");
+            Err(reason)
         }
     }
+}
+
+/// Why a fast-resize started nothing — one sentence each, the text IPC
+/// `act.action` returns as `reason`. Named constants so the tests and
+/// the smoke check hold the reply to the arm without copying a string.
+pub(in crate::application::app) struct FastResizeRefusal;
+
+impl FastResizeRefusal {
+    pub(in crate::application::app) const NO_POINTER: &'static str =
+        "FastResizeStart needs a pointer gesture to anchor at";
+    pub(in crate::application::app) const NO_DOCUMENT: &'static str = "no document is loaded";
+    pub(in crate::application::app) const NO_HOLDER: &'static str =
+        "FastResizeStart needs a held mouse button to finalize it, and nothing holds this gesture";
+    pub(in crate::application::app) const UNFINALIZING_BUTTON: &'static str =
+        "only the left and right buttons finalize a drag";
+    pub(in crate::application::app) const NOT_ON_A_NODE: &'static str = "the press did not land on a node";
+    pub(in crate::application::app) const NODE_GONE: &'static str = "the pressed node no longer exists";
+    pub(in crate::application::app) const SECTION_GONE: &'static str = "the pressed section no longer exists";
+    pub(in crate::application::app) const FILL_PARENT: &'static str =
+        "a fill-parent section has no size of its own to resize";
 }
 
 /// The resize a fast-resize gesture starts, or why it starts none.
@@ -1281,7 +1305,7 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
 fn fast_resize_drag(
     doc: &crate::application::document::MindMapDocument,
     hit: &DispatchHit,
-) -> Result<super::super::throttled_interaction::ThrottledDrag, String> {
+) -> Result<super::super::throttled_interaction::ThrottledDrag, &'static str> {
     use baumhard::mindmap::tree_builder::infer_resize_anchor;
     use glam::Vec2;
 
@@ -1293,28 +1317,26 @@ fn fast_resize_drag(
     let started_with_right = match hit.held_by {
         Some(MouseButton::Right) => true,
         Some(MouseButton::Left) => false,
-        Some(other) => return Err(format!("{other:?} does not finalize a drag")),
-        None => return Err("no button holds the gesture, so no release could end it".into()),
+        Some(_) => return Err(FastResizeRefusal::UNFINALIZING_BUTTON),
+        None => return Err(FastResizeRefusal::NO_HOLDER),
     };
     let (node_id, section_idx) = match &hit.click_hit {
         super::super::ClickHit::Node(id, section_idx) => (id, *section_idx),
-        _ => return Err("the press did not land on a node".into()),
+        _ => return Err(FastResizeRefusal::NOT_ON_A_NODE),
     };
     let node = doc
         .mindmap
         .nodes
         .get(node_id)
-        .ok_or_else(|| format!("node '{node_id}' not found"))?;
+        .ok_or(FastResizeRefusal::NODE_GONE)?;
 
     // Two targets: a section of a multi-section node, or the node.
     if let Some(section_idx) = section_idx {
         let section = node
             .sections
             .get(section_idx)
-            .ok_or_else(|| format!("section[{section_idx}] not found on '{node_id}'"))?;
-        let start_size = section
-            .size
-            .ok_or_else(|| format!("section[{section_idx}] of '{node_id}' is fill-parent (size=None)"))?;
+            .ok_or(FastResizeRefusal::SECTION_GONE)?;
+        let start_size = section.size.ok_or(FastResizeRefusal::FILL_PARENT)?;
         let start_offset = section.offset;
         let aabb_pos = Vec2::new(
             (node.position.x + start_offset.x) as f32,
@@ -1502,8 +1524,12 @@ mod tests {
         };
         assert_eq!(owner(Some(MouseButton::Right)), Ok(true));
         assert_eq!(owner(Some(MouseButton::Left)), Ok(false));
-        assert!(owner(None).is_err(), "no button holds an IPC pointer's gesture");
-        assert!(
+        assert_eq!(
+            owner(None),
+            Err(FastResizeRefusal::NO_HOLDER),
+            "no button holds an IPC pointer's gesture, and the refusal says so by name"
+        );
+        assert_eq!(
             super::fast_resize_drag(
                 &doc,
                 &DispatchHit {
@@ -1511,7 +1537,8 @@ mod tests {
                     ..hit(Some(MouseButton::Right))
                 }
             )
-            .is_err(),
+            .map(|_| ()),
+            Err(FastResizeRefusal::NOT_ON_A_NODE),
             "a press on empty canvas has no target to resize"
         );
     }

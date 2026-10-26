@@ -698,7 +698,7 @@ pub(crate) mod fixture {
     }
 
     impl CommandTarget for EventsApp {
-        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> bool {
+        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> crate::application::ipc::ActionOutcome {
             panic!("an event test must not dispatch an Action");
         }
         /// Every console line stands for one committed document

@@ -320,6 +320,15 @@ else
     geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
     [ "$(field "$geo" model.size.width) $(field "$geo" model.size.height)" = "$before" ] \
         || fail "one undo did not restore $node's size"
+    # The same Action from IPC holds no button, so it must be refused,
+    # saying why, and start nothing: a drag no release could end.
+    reply="$("$CTL" act.action FastResizeStart x="$fx" y="$fy" space=surface)" || fail "act.action FastResizeStart failed"
+    [ "$(field "$reply" outcome)" = '"unhandled"' ] || fail "act.action FastResizeStart ran: $reply"
+    case "$(field "$reply" reason)" in
+        *"nothing holds this gesture"*) ;;
+        *) fail "act.action FastResizeStart was not refused with its reason: $reply" ;;
+    esac
+    [ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "a refused FastResizeStart armed a drag"
 fi
 
 # ---- Graceful quit -----------------------------------------------------
