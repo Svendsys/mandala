@@ -317,7 +317,7 @@ fn sweep_points<T>(rects: &[OracleRect<T>], global_steps: usize, local_steps: us
 /// Every clickable portal leaf as an oracle rectangle, in tree
 /// order. Zero-extent leaves (reserved text slots on text-less
 /// endpoints) are excluded — matching both the BVH, which requires
-/// strictly positive bounds, and the deleted `text_hitboxes` map,
+/// strictly positive bounds, and the `text_hitboxes` (gone) map,
 /// which suppressed the same entries.
 fn portal_oracle(portal: &PortalTree) -> Vec<OracleRect<PortalHit>> {
     let tree = &portal.tree;
@@ -494,8 +494,8 @@ fn test_connection_label_tree_hit_matches_a_linear_scan_over_the_same_rectangles
 /// label pinned to the crossing point, with different label
 /// lengths so their AABBs overlap at different areas. The
 /// `testament` fixture happens to have no overlapping labels, and
-/// crossing-edge label overlap is precisely the case the deleted
-/// `connection_label_hitboxes` scan resolved by hash order.
+/// crossing-edge label overlap is precisely the case the
+/// `connection_label_hitboxes` (gone) scan resolved by hash order.
 fn crossing_labels_map() -> MindMap {
     use crate::mindmap::model::EdgeLabelConfig;
 

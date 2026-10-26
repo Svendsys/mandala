@@ -215,7 +215,7 @@ fn test_console_oracle_execution_outcomes_are_unchanged() {
 /// The one outcome that ends in bytes this machine chose still
 /// *opens* the way it was pinned — the pinned string is a prefix
 /// of the signature rather than the whole of it, and stops where
-/// the console stops and `strerror_r` begins. See
+/// the console stops and `libc::strerror_r` begins. See
 /// [`super::oracle_corpus::EXEC_PREFIX_CORPUS`], which also
 /// records why the three `border show` rows that used to sit
 /// beside it are pinned whole instead: a prefix is the weaker

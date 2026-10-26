@@ -701,7 +701,7 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
 /// console — pinned as a prefix, with the host-dependent bytes
 /// left off the end.
 ///
-/// Rust's `Display` for `io::Error` goes through `strerror_r`, so
+/// Rust's `Display` for `io::Error` goes through `libc::strerror_r`, so
 /// the words after the path are glibc's and are
 /// `LC_MESSAGES`-sensitive: the same `open` of the same missing
 /// file reads "No such file or directory" under `LC_ALL=C` and

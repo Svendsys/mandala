@@ -223,8 +223,8 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
     [r1 + m, g1 + m, b1 + m]
 }
 
-/// Convert RGB → HSV. Inputs in `[0, 1]`; output `(h_deg, s, v)` with
-/// `h_deg` in `[0, 360)`. For achromatic inputs (max == min) hue is
+/// Convert RGB → HSV. Inputs in `[0, 1]`; output `(h, s, v)` with
+/// `h` in degrees, `[0, 360)`. For achromatic inputs (max == min) hue is
 /// reported as `0.0` — arbitrary but deterministic so round-trips are
 /// stable. Saturation is `0` when `max == 0`.
 pub fn rgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {

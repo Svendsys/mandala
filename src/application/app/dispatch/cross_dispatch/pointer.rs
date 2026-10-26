@@ -742,7 +742,7 @@ fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
 /// unchanged from pre-Batch-3.
 ///
 /// Plain click:
-/// - `route_to_section` true → `Section { node_id, section_idx }`.
+/// - `routed_section` `Some` → `Section { node_id, section_idx }`.
 /// - else → `Single(node_id)`.
 ///
 /// Shift+click, section-routed:
@@ -752,7 +752,7 @@ fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
 ///   back to `Section` when one remains.
 /// - any non-section starting state → start a fresh `Section`.
 ///
-/// Shift+click, whole-node (route_to_section false):
+/// Shift+click, whole-node (`routed_section` `None`):
 /// - `Single(existing)` matching → `None` (toggle off).
 /// - `Single(existing)` mismatching → `Multi(vec![existing, new])`.
 /// - `Multi` → toggle id in or out, narrowing back to `Single`.

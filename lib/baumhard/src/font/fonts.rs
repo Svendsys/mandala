@@ -93,7 +93,7 @@ lazy_static! {
 /// Call once at program start before any shaping / measurement
 /// path. Doing both eagerly here closes a latent re-entrant-read
 /// risk: `FAMILY_INDEX`'s lazy build acquires `FONT_SYSTEM.read()`,
-/// and `mindnode_to_glyph_area` indirectly calls
+/// and `mindnode_section_area` indirectly calls
 /// `app_font_by_family` from inside the tree builder; if a future
 /// caller ever holds `FONT_SYSTEM.write()` while invoking the tree
 /// builder, the lazy path would deadlock. Eager init at startup
@@ -499,7 +499,7 @@ fn this_thread() -> ThreadId {
 /// the wrong thread's record: the taker would then look re-entrant on
 /// its next acquire, or stop being caught when it really is.
 /// `parking_lot`'s own guards are `!Send` only while no crate in the
-/// graph enables its `send_guard` feature, and Cargo unifies features
+/// graph enables its `parking_lot/send_guard` feature, and Cargo unifies features
 /// across the whole graph, so that is not ours to rely on.
 type NotSend = PhantomData<*const ()>;
 

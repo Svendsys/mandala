@@ -7,7 +7,7 @@
 //! kinds — built-in `Action`, parameterised `CustomMutation`,
 //! console-line — cover every existing user-driven entry point at the
 //! application layer. Plugins, future macro-recording UI, and the
-//! `keybind_bindings` resolution tier all reach the same dispatcher.
+//! `macro_bindings` resolution tier all reach the same dispatcher.
 //!
 //! Loading parallels the custom-mutation loader at
 //! `src/application/document/mutations_loader/`: a registry is built

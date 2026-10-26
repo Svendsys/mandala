@@ -32,7 +32,7 @@ pub use super::region_indexer::RegionIndexer;
 ///   the caller should not retry.
 ///
 /// **Removed:** an earlier `Updating` variant signalled
-/// "lock-would-block" from the per-field `try_read` shape. After the
+/// "lock-would-block" from the per-field `RwLock::try_read` shape. After the
 /// 6-locks → 1-lock collapse (Batch 6 §6.4a), reads use a blocking
 /// `RwLock::read` that always succeeds (or returns `Poisoned`), so
 /// there is no longer a non-blocking failure mode to surface. Zero
@@ -159,7 +159,7 @@ impl RegionParams {
     /// # Costs
     ///
     /// O(output) — one push per intersected region, no redundant
-    /// iteration. Two lock reads (`region_size`, `region_factor_x`)
+    /// iteration. Two lock reads (`region_size_x`, `region_factor_x`)
     /// plus the validation reads.
     pub fn calculate_regions_intersected_by_rectangle(
         &self,

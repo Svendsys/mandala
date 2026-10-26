@@ -79,8 +79,8 @@ fn test_matches_modifiers_exactly() {
 
 /// One row of [`test_default_config_resolves_every_documented_binding`]'s
 /// table: `(context, key, ctrl, shift, alt, expected_action)`.
-/// Named because the tuple is six wide and clippy's
-/// `type_complexity` is right that the inline spelling is unreadable.
+/// Named because the tuple is six wide and
+/// `clippy::type_complexity` is right that the inline spelling is unreadable.
 type BindingCase = (Option<InputContext>, &'static str, bool, bool, bool, Action);
 
 /// Default-config bindings resolve in every context Mandala
