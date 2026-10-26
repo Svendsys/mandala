@@ -629,13 +629,13 @@ impl MindMapDocument {
                 let Some(section_arena_id) = tree.section_arena_id(mind_id, *section_idx) else {
                     continue;
                 };
-                if let Some(node) = tree.tree.arena.get_mut(section_arena_id) {
+                let _ = tree.tree.update(section_arena_id, |element| {
                     candidates_seen += 1;
-                    if passes(node.get()) {
+                    if passes(element) {
                         candidates_passed += 1;
-                        apply_mutations_to_element(&mutations, node.get_mut());
+                        apply_mutations_to_element(&mutations, element);
                     }
-                }
+                });
             }
             warn_if_predicate_filtered_everything(
                 &custom.id,
@@ -643,17 +643,8 @@ impl MindMapDocument {
                 candidates_seen,
                 candidates_passed,
             );
-            // Invalidate the tree's `subtree_aabb` and other geometry
-            // caches — `apply_mutations_to_element` mutated arena
-            // element fields directly (bypassing
-            // `MutatorTree::apply_to`'s wrapper that owns the
-            // invalidation). Pre-fix the dirty flag stayed false
-            // so a downstream `ensure_subtree_aabbs()` call (e.g.
-            // the editor click-outside-commit's overflow-aware
-            // `point_in_node_aabb`) was a no-op against a stale
-            // cache. Same shape as `MutatorTree::apply_to`'s
-            // invalidation (`lib/baumhard/src/gfx_structs/tree.rs`).
-            tree.tree.invalidate_caches();
+            // Every write above went through `Tree::update`, which
+            // invalidates the tree's geometry caches itself.
             return;
         }
 
@@ -680,18 +671,18 @@ impl MindMapDocument {
             // and silently collapse the offset.
             let pre_container_pos = tree
                 .tree
-                .arena
+                .arena()
                 .get(container_arena_id)
                 .and_then(|n| n.get().glyph_area())
                 .map(|a| (a.position.x.0, a.position.y.0));
 
-            if let Some(node) = tree.tree.arena.get_mut(container_arena_id) {
+            let _ = tree.tree.update(container_arena_id, |element| {
                 candidates_seen += 1;
-                if passes(node.get()) {
+                if passes(element) {
                     candidates_passed += 1;
-                    apply_mutations_to_element(&mutations, node.get_mut());
+                    apply_mutations_to_element(&mutations, element);
                 }
-            }
+            });
 
             // Derive the container's post-mutation delta. If the
             // mutations included an absolute MoveTo or position
@@ -702,7 +693,7 @@ impl MindMapDocument {
             // the same amount as the container).
             let container_translate_delta = pre_container_pos.and_then(|(pre_x, pre_y)| {
                 tree.tree
-                    .arena
+                    .arena()
                     .get(container_arena_id)
                     .and_then(|n| n.get().glyph_area())
                     .map(|a| (a.position.x.0 - pre_x, a.position.y.0 - pre_y))
@@ -719,9 +710,9 @@ impl MindMapDocument {
             //
             // §B7 borrow-split note: collecting into a
             // `Vec<indextree::NodeId>` here is the smallest correct
-            // shape. `container_arena_id.children(&tree.tree.arena)`
+            // shape. `container_arena_id.children(tree.tree.arena())`
             // borrows the arena immutably; the loop body needs
-            // `&mut tree.tree.arena.get_mut(...)` to apply the
+            // `tree.tree.update(...)`, a mutable borrow, to apply the
             // mutation. Holding the iterator across the mutable
             // borrow won't compile, so the fix is to materialize the
             // section ids first and drop the immutable borrow
@@ -730,10 +721,10 @@ impl MindMapDocument {
             // per node), per affected-node-per-call, so allocation
             // cost is negligible relative to the mutation walker.
             let section_arena_ids: Vec<indextree::NodeId> = container_arena_id
-                .children(&tree.tree.arena)
+                .children(tree.tree.arena())
                 .filter(|cid| {
                     tree.tree
-                        .arena
+                        .arena()
                         .get(*cid)
                         .map(|n| n.get().flag_is_set(Flag::SectionRoot))
                         .unwrap_or(false)
@@ -757,11 +748,11 @@ impl MindMapDocument {
                 .cloned()
                 .collect();
             for sid in section_arena_ids {
-                if let Some(node) = tree.tree.arena.get_mut(sid) {
+                let _ = tree.tree.update(sid, |element| {
                     candidates_seen += 1;
-                    if passes(node.get()) {
+                    if passes(element) {
                         candidates_passed += 1;
-                        apply_mutations_to_element(&section_safe_mutations, node.get_mut());
+                        apply_mutations_to_element(&section_safe_mutations, element);
                         // For absolute-position mutations on the
                         // container (filtered out of
                         // `section_safe_mutations` above),
@@ -773,13 +764,13 @@ impl MindMapDocument {
                         // collapsed.
                         if absolute_position_in_mutations {
                             if let Some((dx, dy)) = container_translate_delta {
-                                if let Some(area) = node.get_mut().glyph_area_mut() {
+                                if let Some(area) = element.glyph_area_mut() {
                                     area.move_position(dx, dy);
                                 }
                             }
                         }
                     }
-                }
+                });
             }
         }
         warn_if_predicate_filtered_everything(
@@ -788,15 +779,6 @@ impl MindMapDocument {
             candidates_seen,
             candidates_passed,
         );
-        // Same invalidation as the `SectionsOnly` branch above:
-        // `apply_mutations_to_element` writes arena element fields
-        // directly without going through `MutatorTree::apply_to`,
-        // so the tree's `subtree_aabbs_dirty` flag is unset until
-        // we explicitly mark it. Downstream callers that read
-        // `subtree_aabb()` (notably the overflow-aware
-        // `point_in_node_aabb` from the editor click-outside-commit)
-        // would otherwise hit a stale cache.
-        tree.tree.invalidate_caches();
     }
 
     /// Collect the section targets affected by a `SectionsOnly`

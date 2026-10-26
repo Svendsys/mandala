@@ -17,6 +17,7 @@ use crate::gfx_structs::util::regions::{RegionIndexer, RegionParams};
 use crate::util::geometry::aabb_contains;
 use glam::Vec2;
 use indextree::{Arena, NodeId};
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -49,8 +50,10 @@ pub trait TreeEventConsumer {
 ///
 /// The AABB memo and the subtree-AABB dirty flag are `Cell`s because
 /// [`TreeCache::invalidate`] runs through `&self` while the walker
-/// holds the arena mutably; the per-node subtree AABBs themselves
-/// live on the elements, and this flag says whether they are current.
+/// holds the arena mutably. The per-node subtree AABBs live here too,
+/// keyed by `NodeId` — they are derived from the tree, not facts about
+/// an element — and the flag says whether they are current; they are
+/// written only by the `&mut` pass that recomputes them.
 /// The region index is allocated by the indexed constructor
 /// ([`Tree::new`](crate::engine::tree::Tree::new)) but not maintained by the walker today; spatial
 /// queries use the BVH descent instead. It is a reserved seam for the
@@ -70,10 +73,15 @@ pub struct GlyphTreeCache {
     /// `Cell` (not `RefCell`) is fine because the inner type is
     /// `Copy` and we only ever swap whole values.
     aabb_cache: Cell<Option<Option<(Vec2, Vec2)>>>,
-    /// When `true`, per-node `subtree_aabb` caches in the arena are
-    /// stale and must be recomputed before the next BVH query.
-    /// `true` on construction and after any mutation.
+    /// When `true`, [`Self::subtree_aabbs`] is stale and must be
+    /// recomputed before the next BVH query. `true` on construction
+    /// and after any mutation.
     subtree_aabbs_dirty: Cell<bool>,
+    /// Each node's subtree AABB — the union of its own box and its
+    /// descendants' — as `(top_left, bottom_right)`; a node whose
+    /// subtree has no visible area has no entry. Current only while
+    /// [`Self::subtree_aabbs_dirty`] is `false`.
+    subtree_aabbs: FxHashMap<NodeId, (Vec2, Vec2)>,
 }
 
 /// Not derived: a fresh tree's subtree AABBs have never been computed,
@@ -86,6 +94,7 @@ impl Default for GlyphTreeCache {
             region_index: None,
             aabb_cache: Cell::new(None),
             subtree_aabbs_dirty: Cell::new(true),
+            subtree_aabbs: FxHashMap::default(),
         }
     }
 }
@@ -121,7 +130,7 @@ impl Tree<GfxElement> {
     /// # Algorithm
     ///
     /// Uses a BVH (bounding-volume hierarchy) descent: each node's
-    /// cached `subtree_aabb` is checked before recursing into its
+    /// cached subtree AABB is checked before recursing into its
     /// children. Subtrees whose aggregate AABB does not contain the
     /// point are pruned entirely.
     ///
@@ -166,7 +175,14 @@ impl Tree<GfxElement> {
         let slack = slack.max(0.0);
         self.ensure_subtree_aabbs();
         let mut best: Option<(NodeId, f32)> = None;
-        bvh_find(&self.arena, self.root, point, slack, &mut best);
+        bvh_find(
+            self.arena(),
+            &self.cache.subtree_aabbs,
+            self.root,
+            point,
+            slack,
+            &mut best,
+        );
         best.map(|(id, _)| id)
     }
 
@@ -178,9 +194,9 @@ impl Tree<GfxElement> {
     ///
     /// O(n) on the first call after the tree mutates; O(1) on
     /// repeated calls thanks to a per-tree memo. The memo is
-    /// cleared by every mutation the walker applies — any other
-    /// mutating caller that bypasses the mutator pipeline must call
-    /// [`Tree::invalidate_caches`](crate::engine::tree::Tree::invalidate_caches) itself or the bbox will drift.
+    /// cleared by every mutation the walker applies and by every
+    /// change made through the tree's own methods — the only other
+    /// way to change a tree.
     pub fn descendants_aabb(&self) -> Option<(Vec2, Vec2)> {
         if let Some(cached) = self.cache.aabb_cache.get() {
             return cached;
@@ -190,11 +206,34 @@ impl Tree<GfxElement> {
         computed
     }
 
-    /// Ensure every node's `subtree_aabb` cache is fresh. If the
-    /// tree has been mutated since the last computation, performs a
-    /// bottom-up (post-order) pass that writes each node's
-    /// `subtree_aabb` as the union of its own AABB with its
-    /// children's subtree AABBs.
+    /// The AABB covering `id` and all its descendants, as
+    /// `(top_left, bottom_right)` in tree-local coordinates — or `None`
+    /// when the subtree has no visible area, `id` is not in the tree,
+    /// or the tree has changed since [`Self::ensure_subtree_aabbs`] last
+    /// ran. Call that first for a current answer. O(1).
+    pub fn subtree_aabb(&self, id: NodeId) -> Option<(Vec2, Vec2)> {
+        if self.cache.subtree_aabbs_dirty.get() {
+            return None;
+        }
+        self.cache.subtree_aabbs.get(&id).copied()
+    }
+
+    /// Whether [`Self::descendants_aabb`]'s memo is current, so the next
+    /// call answers without a pass over the tree. O(1).
+    ///
+    /// It exists for tests, which observe the memo through it; it is
+    /// public only because the `do_*` test bodies are shipped for the
+    /// benches. Nothing outside the tests needs to ask.
+    pub fn descendants_aabb_is_memoized(&self) -> bool {
+        self.cache.aabb_cache.get().is_some()
+    }
+
+    /// Ensure every node's subtree AABB ([`Self::subtree_aabb`]) is
+    /// fresh. If the tree has been mutated since the last computation,
+    /// performs a bottom-up (post-order) pass that records each node's
+    /// subtree AABB as the union of its own AABB with its children's
+    /// subtree AABBs. Filling this derived state changes nothing about
+    /// the tree, so it leaves [`Self::descendants_aabb`]'s memo alone.
     ///
     /// # Costs
     ///
@@ -210,8 +249,8 @@ impl Tree<GfxElement> {
         self.cache.subtree_aabbs_dirty.set(false);
     }
 
-    /// Bottom-up pass: compute and cache `subtree_aabb` for every
-    /// node in the arena. Post-order guarantees that children are
+    /// Bottom-up pass: compute and record the subtree AABB of every
+    /// node in the tree. Post-order guarantees that children are
     /// processed before their parents, so each parent can read its
     /// children's already-computed subtree AABBs.
     ///
@@ -236,14 +275,20 @@ impl Tree<GfxElement> {
     /// running out is fatal rather than merely costly. The pass is
     /// gated behind `subtree_aabbs_dirty`, so it runs once per
     /// mutation rather than once per frame.
+    ///
+    /// The AABBs go to the cache, never to an element: they are derived
+    /// state, and writing them changes no element and invalidates
+    /// nothing.
     fn compute_subtree_aabbs(&mut self) {
         let root = self.root;
-        let arena = &mut self.arena;
+        let mut aabbs = std::mem::take(&mut self.cache.subtree_aabbs);
+        aabbs.clear();
         // `false` = this node's children still need queueing;
         // `true` = they are done and its own merge may run.
         let mut pending: Vec<(NodeId, bool)> = vec![(root, false)];
 
         while let Some((node_id, children_done)) = pending.pop() {
+            let arena = self.arena();
             if !children_done {
                 pending.push((node_id, true));
                 let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
@@ -270,24 +315,25 @@ impl Tree<GfxElement> {
             let mut combined = own_aabb;
             let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
             while let Some(cid) = child_opt {
-                if let Some(child_aabb) = arena.get(cid).and_then(|n| n.get().subtree_aabb()) {
+                if let Some(&child_aabb) = aabbs.get(&cid) {
                     combined = Some(union_aabb(combined, child_aabb));
                 }
                 child_opt = arena.get(cid).and_then(|n| n.next_sibling());
             }
 
-            if let Some(node) = arena.get_mut(node_id) {
-                node.get_mut().set_subtree_aabb(combined);
+            if let Some(aabb) = combined {
+                aabbs.insert(node_id, aabb);
             }
         }
+        self.cache.subtree_aabbs = aabbs;
     }
 
     fn compute_descendants_aabb(&self) -> Option<(Vec2, Vec2)> {
         let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
         let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
         let mut any = false;
-        for node_id in self.root.descendants(&self.arena) {
-            let Some(node) = self.arena.get(node_id) else {
+        for node_id in self.root.descendants(self.arena()) {
+            let Some(node) = self.arena().get(node_id) else {
                 continue;
             };
             let Some(area) = node.get().glyph_area() else {
@@ -342,11 +388,11 @@ fn union_aabb(base: Option<(Vec2, Vec2)>, other: (Vec2, Vec2)) -> (Vec2, Vec2) {
 
 /// The BVH descent behind [`Tree::descendant_near`](crate::engine::tree::Tree::descendant_near): slack-inflated
 /// AABB tests with shape refinement, so an ellipse-shaped node doesn't
-/// false-hit on its corner AABB. Reads the per-node `subtree_aabb`
-/// caches, which the caller has made fresh.
+/// false-hit on its corner AABB. Reads the per-node subtree AABBs in
+/// `aabbs`, which the caller has made fresh.
 ///
 /// For each child of `node_id`:
-/// 1. Prune: if the child's `subtree_aabb` doesn't contain `point`
+/// 1. Prune: if the child's subtree AABB doesn't contain `point`
 ///    inflated by `slack`, skip the entire subtree.
 /// 2. Test the child's own `GlyphArea` AABB (slack-inflated). On
 ///    hit, refine via `area.shape.contains_local` so an ellipse
@@ -370,6 +416,7 @@ fn union_aabb(base: Option<(Vec2, Vec2)>, other: (Vec2, Vec2)) -> (Vec2, Vec2) {
 /// exhaust it aborted the process instead of merely costing memory.
 fn bvh_find(
     arena: &Arena<GfxElement>,
+    aabbs: &FxHashMap<NodeId, (Vec2, Vec2)>,
     node_id: NodeId,
     point: Vec2,
     slack: f32,
@@ -397,7 +444,7 @@ fn bvh_find(
         let element = node.get();
 
         // 1. Prune: subtree AABB must contain (slack-inflated) point.
-        if let Some((st_min, st_max)) = element.subtree_aabb() {
+        if let Some(&(st_min, st_max)) = aabbs.get(&child_id) {
             let slack_vec = Vec2::splat(slack);
             if !aabb_contains(point, st_min - slack_vec, st_max + slack_vec) {
                 continue;

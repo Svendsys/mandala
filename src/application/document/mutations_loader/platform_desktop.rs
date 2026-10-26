@@ -82,7 +82,7 @@ mod tests {
             "mutations": [{
                 "id": "user-mut",
                 "name": "User Mutation",
-                "mutator": {"Macro": {"channel": 0, "mutations": {"Literal": []}}},
+                "mutator": {"Macro": {"kind": null, "channel": 0, "mutations": {"Literal": []}}},
                 "target_scope": "SelfOnly"
             }]
         }"#;
@@ -103,7 +103,7 @@ mod tests {
         let entry = |id: &str, scope: &str| {
             format!(
                 r#"{{"id": "{id}", "name": "{id}",
-                    "mutator": {{"Macro": {{"channel": 0, "mutations": {{"Literal": []}}}}}},
+                    "mutator": {{"Macro": {{"kind": null, "channel": 0, "mutations": {{"Literal": []}}}}}},
                     "target_scope": "{scope}"}}"#
             )
         };

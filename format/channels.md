@@ -13,8 +13,10 @@ tree walks the baumhard tree.
 ## What a channel is
 
 A mutator tree walking the GfxElement tree matches children against target
-children by channel. When a mutator on channel N reaches a tree level,
-it applies to all children on channel N and skips the rest.
+children by key — an element's kind and channel. The glyph elements a
+mindmap is drawn with have a single kind, so for them the key is the
+channel: when a mutator on channel N reaches a tree level, it applies to
+all children on channel N and skips the rest.
 
 Channels are **not unique**. Multiple siblings can share a channel to form
 a broadcast group — one mutator hits all of them. They are **not
@@ -42,12 +44,15 @@ This is the foundation for:
   borders, and connections (where stable channels enable delta application
   instead of full tree rebuild) becomes available to node mutations
 
-## Sorting constraint
+## Sibling order
 
-The tree walker assumes strictly ascending channels within sibling groups.
-If siblings share channels, the shared-channel nodes must be contiguous in
-sibling order. The tree_builder handles this by sorting children by
-(channel, id_sort_key) when constructing the baumhard tree.
+Every baumhard tree keeps each parent's children in ascending key order —
+for the glyph trees, ascending channel — and siblings that share a channel
+stay in the order they were added, which for mind-nodes is id order
+(`id_sort_key`). The walker relies on this to pair mutator children with
+target children in one pass. The tree keeps the order itself: every child
+is inserted at the place its channel gives it, and a child whose channel
+changes is moved.
 
 From the format perspective: you can set channels however you like.
 The runtime handles ordering.

@@ -31,7 +31,7 @@ fn test_container_is_empty_text_section_carries_glyphs() {
     let result = build_mindmap_tree(&map);
 
     let container_id = result.arena_id_for("n").unwrap();
-    let container = result.tree.arena.get(container_id).unwrap().get();
+    let container = result.tree.arena().get(container_id).unwrap().get();
     let container_area = container.glyph_area().expect("container is a GlyphArea");
     assert!(
         container_area.text.is_empty(),
@@ -43,7 +43,7 @@ fn test_container_is_empty_text_section_carries_glyphs() {
     );
 
     let section_id = result.section_arena_id("n", 0).unwrap();
-    let section = result.tree.arena.get(section_id).unwrap().get();
+    let section = result.tree.arena().get(section_id).unwrap().get();
     let section_area = section.glyph_area().expect("section-area is a GlyphArea");
     assert_eq!(section_area.text, "hello");
     assert!(
@@ -59,10 +59,10 @@ fn test_section_model_is_glyph_model_child_of_section_area() {
 
     let section_id = result.section_arena_id("n", 0).unwrap();
     let model_id = section_id
-        .children(&result.tree.arena)
+        .children(result.tree.arena())
         .next()
         .expect("section-area has a model child");
-    let model_element = result.tree.arena.get(model_id).unwrap().get();
+    let model_element = result.tree.arena().get(model_id).unwrap().get();
     assert_eq!(
         model_element.variant(),
         GfxElementType::GlyphModel,
@@ -90,7 +90,7 @@ fn test_multi_section_node_emits_one_subtree_per_section() {
             .unwrap_or_else(|| panic!("section {} missing from section_map", idx));
         let area = result
             .tree
-            .arena
+            .arena()
             .get(*section_id)
             .unwrap()
             .get()
@@ -121,7 +121,7 @@ fn test_section_offset_and_size_resolve_to_absolute_aabb() {
     let section_id = result.section_arena_id("n", 0).unwrap();
     let area = result
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -149,7 +149,7 @@ fn test_section_size_none_inherits_node_aabb() {
     let section_id = result.section_arena_id("n", 0).unwrap();
     let area = result
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -167,7 +167,7 @@ fn test_owning_mind_id_climbs_from_section_area_and_model() {
     let container_id = result.arena_id_for("n").unwrap();
     let section_id = result.section_arena_id("n", 0).unwrap();
     let model_id = section_id
-        .children(&result.tree.arena)
+        .children(result.tree.arena())
         .next()
         .expect("section-model present");
 
@@ -221,7 +221,7 @@ fn test_section_text_carries_zwj_emoji_and_combining_marks() {
     let section_id = *result.section_map.get(&("n".to_string(), 0)).unwrap();
     let area = result
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -251,7 +251,7 @@ fn test_default_section_channel_falls_through_to_index() {
     use crate::engine::element::TreeElement;
     for (idx, expected_channel) in [(0usize, 0usize), (1, 1), (2, 2)] {
         let section_id = result.section_arena_id("n", idx).unwrap();
-        let element = result.tree.arena.get(section_id).unwrap().get();
+        let element = result.tree.arena().get(section_id).unwrap().get();
         assert_eq!(
             element.channel(),
             expected_channel,
@@ -278,7 +278,7 @@ fn test_explicit_channel_zero_honored_for_non_zero_index() {
 
     use crate::engine::element::TreeElement;
     let s1_id = result.section_arena_id("n", 1).unwrap();
-    let element = result.tree.arena.get(s1_id).unwrap().get();
+    let element = result.tree.arena().get(s1_id).unwrap().get();
     assert_eq!(
         element.channel(),
         0,

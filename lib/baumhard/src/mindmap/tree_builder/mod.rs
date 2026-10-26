@@ -31,6 +31,7 @@ use std::collections::HashMap;
 
 use indextree::NodeId;
 
+use crate::engine::tree::Placement;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::model::MindMap;
@@ -102,8 +103,46 @@ pub use section_resize_handle::{
     SectionResizeHandleElement, SECTION_RESIZE_HANDLE_FONT_SIZE_PT, SECTION_RESIZE_HANDLE_GLYPH,
 };
 
+use crate::gfx_structs::mutator::GfxMutator;
+use crate::gfx_structs::tree::GfxMutatorTree;
 use crate::mindmap::model::ChildIndex;
-use node::{append_node_sections, build_descendants, mindnode_container_area};
+use node::build_nodes;
+
+/// Add `element` under `parent` — every glyph builder's one way to grow
+/// a tree. It lands in key order, after any sibling with an equal key
+/// ([`Placement::Last`]): the key decides a child's place, and the
+/// order children are added in decides only ties. A builder that adds
+/// each row in ascending channel order makes every insert the O(1)
+/// append; any other order costs a scan back past each sibling keyed
+/// above the new one.
+///
+/// The builders add only under nodes they have just created, so a
+/// refusal names a builder defect rather than bad input: it is logged
+/// and `None` tells the caller to skip the element and its subtree
+/// rather than abort a scene build (CODE_CONVENTIONS §9).
+///
+/// Cost: [`Tree::insert_child`](crate::engine::tree::Tree::insert_child) — O(1) for an ascending append, and
+/// never an ancestor walk.
+pub(crate) fn push_element(tree: &mut GfxTree, parent: NodeId, element: GfxElement) -> Option<NodeId> {
+    match tree.insert_child(parent, element, Placement::Last) {
+        Ok(id) => Some(id),
+        Err(e) => {
+            log::error!("tree_builder: could not add an element under {parent}: {e}");
+            None
+        }
+    }
+}
+
+/// [`push_element`] for a glyph mutator tree.
+pub(crate) fn push_mutator(mt: &mut GfxMutatorTree, parent: NodeId, mutator: GfxMutator) -> Option<NodeId> {
+    match mt.insert_child(parent, mutator, Placement::Last) {
+        Ok(id) => Some(id),
+        Err(e) => {
+            log::error!("tree_builder: could not add a mutator under {parent}: {e}");
+            None
+        }
+    }
+}
 
 /// Result of building a Baumhard tree from a MindMap. The tree
 /// mirrors the MindMap's parent-child hierarchy. Each MindNode
@@ -188,29 +227,14 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
     let mut id_counter: usize = 1; // 0 is reserved for the Void root
 
     let index = ChildIndex::build(map);
-    for root in index.roots() {
-        // Roots have no ancestors, so they are never hidden by fold.
-        let area = mindnode_container_area(map, root);
-        let element = GfxElement::new_area_non_indexed_with_id(area, root.channel, id_counter);
-        id_counter += 1;
-
-        let node_id = tree.root.append_value(element, &mut tree.arena);
-        node_map.insert(root.id.clone(), node_id);
-
-        append_node_sections(map, root, node_id, &mut tree, &mut section_map, &mut id_counter);
-
-        build_descendants(
-            map,
-            &index,
-            &root.id,
-            root.folded,
-            node_id,
-            &mut tree,
-            &mut node_map,
-            &mut section_map,
-            &mut id_counter,
-        );
-    }
+    build_nodes(
+        map,
+        &index,
+        &mut tree,
+        &mut node_map,
+        &mut section_map,
+        &mut id_counter,
+    );
 
     let reverse_node_map: HashMap<NodeId, String> = node_map
         .iter()
@@ -345,7 +369,7 @@ impl MindMapTree {
             if let Some(id) = self.mind_id_for_node(node_id) {
                 return Some(id);
             }
-            node_id = self.tree.arena.get(node_id)?.parent()?;
+            node_id = self.tree.arena().get(node_id)?.parent()?;
         }
     }
 }
@@ -354,12 +378,12 @@ impl MindMapTree {
 mod append_cost_tests {
     /// **The scene build must stay linear in the node count.**
     ///
-    /// `indextree::NodeId::append` calls `NodeId::checked_append`, which walks
-    /// `self.ancestors(arena)` looking for a cycle before every append.
-    /// A `.mindmap.json` may declare a linear `parent_id` chain — a
-    /// legal acyclic tree the loader accepts, with no depth bound
-    /// anywhere on the load path — so depth equals the node count and
-    /// the walk makes `build_mindmap_tree` O(N²).
+    /// indextree's checked inserts (`append`, `insert_after`, …) walk
+    /// the new node's would-be ancestors looking for a cycle before
+    /// every insert. A `.mindmap.json` may declare a linear `parent_id`
+    /// chain — a legal acyclic tree the loader accepts, with no depth
+    /// bound anywhere on the load path — so depth equals the node count
+    /// and the walk makes `build_mindmap_tree` O(N²).
     ///
     /// That is reachable from a file alone, and it is worse than a
     /// slow load: `FreezeWatchdog` calls `std::process::abort()` when
@@ -370,22 +394,95 @@ mod append_cost_tests {
     /// have removed. Converting the walker to iteration fixed the
     /// stack, and left the quadratic in place.
     ///
-    /// Every append here is of a node `arena.new_node` produced on the
-    /// line above: detached by construction, so the ancestor check can
-    /// never fire and `append_value` — indextree's documented O(1)
-    /// fast path — is exactly equivalent. This pins the source rather
-    /// than a duration, because a timing assertion on a shared runner
-    /// is a flake, and because the property that matters is structural.
+    /// The builder cannot reach the arena: it adds every node through
+    /// `push_element` / `push_mutator`, that is through
+    /// `insert_child`, whose sorted insert places a value it is handed
+    /// — a node that is new, so the ancestor check could never fire.
+    /// This pins that insert to indextree's value-inserting fast paths.
+    /// It pins the source rather than a duration, because a timing
+    /// assertion on a shared runner is a flake, and because the
+    /// property that matters is structural.
+    /// **Every row of the scene is added in key order.**
+    ///
+    /// The tree keeps each row sorted by channel, and `insert_child`
+    /// finds a new node's place by scanning back from the end of its
+    /// row. A row added in file order whose channels descend therefore
+    /// costs a scan past every sibling already in place — N²/2 key
+    /// reads for N siblings, on every structural rebuild, reachable
+    /// from a `.mindmap.json` alone. The builder sorts each row first,
+    /// so each insert is the append at the end of its row.
+    ///
+    /// Pinned structurally, for the reason the test below gives: the
+    /// arena hands out ids in creation order and the build removes
+    /// nothing, so a node appended at the end of its row has a larger
+    /// id than every sibling before it. Ids that ascend along every
+    /// row are exactly "every insert was the append". The fixture
+    /// descends everywhere the file decides an order: the roots, a
+    /// container's child nodes, and its sections interleaved among
+    /// them by explicit channels.
+    #[test]
+    fn test_every_scene_row_is_built_by_appending() {
+        use crate::mindmap::model::MindSection;
+        use crate::mindmap::test_helpers::{synthetic_map, synthetic_node_full};
+
+        const SIBLINGS: usize = 1000;
+        let node = |id: &str, parent: Option<&str>, channel: usize| {
+            let mut node = synthetic_node_full(id, parent, 0.0, 0.0, 80.0, 40.0, false);
+            node.channel = channel;
+            node
+        };
+        let mut nodes = vec![node("r0", None, 3), node("r1", None, 2), node("r2", None, 1)];
+        // Sections on channels above, among and below the children's.
+        nodes[0].sections = [Some(SIBLINGS + 10), Some(SIBLINGS / 2), None]
+            .into_iter()
+            .map(|channel| MindSection {
+                channel,
+                ..MindSection::new_default("s".into(), vec![])
+            })
+            .collect();
+        for i in 0..SIBLINGS {
+            nodes.push(node(&format!("c{i:04}"), Some("r0"), SIBLINGS - i));
+        }
+        let built = super::build_mindmap_tree(&synthetic_map(nodes, vec![]));
+        let tree = &built.tree;
+
+        let mut rows = 0;
+        for parent in tree.root.descendants(tree.arena()) {
+            let row: Vec<_> = parent.children(tree.arena()).collect();
+            rows += 1;
+            for pair in row.windows(2) {
+                assert!(
+                    pair[0] < pair[1],
+                    "a child of {parent} was inserted ahead of a sibling already in its row \
+                     ({} before {}): the row was not added in key order, so the insert scanned",
+                    pair[1],
+                    pair[0]
+                );
+            }
+        }
+        let wide = built.arena_id_for("r0").expect("r0 is built");
+        assert_eq!(
+            wide.children(tree.arena()).count(),
+            SIBLINGS + 3,
+            "precondition: the wide row holds every child and every section"
+        );
+        assert!(rows > SIBLINGS, "precondition: every row was read ({rows})");
+    }
+
     #[test]
     fn test_the_tree_builder_never_pays_for_a_cycle_check() {
-        let found = crate::util::source_scan::tree_builder_checked_appends();
+        let (found, value_inserts) = crate::util::source_scan::sorted_insert_checked_calls();
+        assert!(
+            value_inserts >= 4,
+            "precondition: the scan reads the sorted insert's body, which places its node \
+             through indextree's four value-inserting calls (found {value_inserts})"
+        );
         assert!(
             found.is_empty(),
-            "these appends re-check for a cycle on every call, which makes the scene build \
+            "the sorted insert re-checks for a cycle on every call, which makes the scene build \
              O(N²) on a linear parent_id chain a hostile file can declare:\n{}\n\n\
-             Use `parent.append_value(element, &mut arena)`, which returns the new NodeId \
-             and skips the ancestor walk. It is sound here because the node being appended \
-             was just created and is detached.",
+             Insert through `append_value` / `prepend_value` / `insert_after_value` / \
+             `insert_before_value`, which create the node and skip the ancestor walk.",
             found
                 .iter()
                 .map(|(f, n, line)| format!("  {f}:{n}   {line}"))

@@ -812,16 +812,20 @@ pub fn build_connection_tree(elements: &[ConnectionElement]) -> GfxTree {
 
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
-        let edge_root = tree.root.append_value(
+        let root = tree.root;
+        let Some(edge_root) = super::push_element(
+            &mut tree,
+            root,
             GfxElement::new_void_with_id(edge_channel, unique_id),
-            &mut tree.arena,
-        );
+        ) else {
+            continue;
+        };
         unique_id += 1;
 
         for (channel, area) in children {
             let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
             unique_id += 1;
-            edge_root.append_value(element, &mut tree.arena);
+            super::push_element(&mut tree, edge_root, element);
         }
     }
 
@@ -846,15 +850,17 @@ pub fn build_connection_mutator_tree(
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
-        let edge_node = mt
-            .root
-            .append_value(GfxMutator::new_void(edge_channel), &mut mt.arena);
+        let root = mt.root;
+        let Some(edge_node) = super::push_mutator(&mut mt, root, GfxMutator::new_void(edge_channel)) else {
+            continue;
+        };
 
         for (channel, area) in children {
             let delta = DeltaGlyphArea::full_assign_from(&area);
-            edge_node.append_value(
+            super::push_mutator(
+                &mut mt,
+                edge_node,
                 GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel),
-                &mut mt.arena,
             );
         }
     }

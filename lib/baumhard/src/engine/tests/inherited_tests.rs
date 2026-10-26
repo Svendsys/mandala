@@ -19,9 +19,10 @@
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::Predicate;
 use crate::engine::tests::test_element::{
-    add, add_mutator, value, SpatialTestElement, TestElement, TestMutation,
+    add, add_mutator, plain, value, SpatialTestElement, TestElement, TestMutation,
 };
-use crate::engine::tree::{MutatorTree, Tree};
+use crate::engine::tree::{MutatorTree, Placement, Tree};
+use crate::engine::walker::walk_tree;
 use crate::util::ordered_vec2::OrderedVec2;
 use indextree::NodeId;
 
@@ -45,8 +46,12 @@ pub fn do_inherited_state_reaches_a_grandchild() {
 
     let mut mt = MutatorTree::new();
     let mroot = mt.root;
-    let m_parent = add_mutator(&mut mt, mroot, Mutator::new_void(0));
-    add_mutator(&mut mt, m_parent, Mutator::new(TestMutation::SetToInherited, 0));
+    let m_parent = add_mutator(&mut mt, mroot, Mutator::new_void(plain(0)));
+    add_mutator(
+        &mut mt,
+        m_parent,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
 
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, grandchild), 1011);
@@ -72,8 +77,12 @@ pub fn do_inherited_state_is_read_after_the_ancestors_own_mutations() {
 
     let mut mt = MutatorTree::new();
     let mroot = mt.root;
-    let m_parent = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(5), 0));
-    add_mutator(&mut mt, m_parent, Mutator::new(TestMutation::SetToInherited, 0));
+    let m_parent = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(5), plain(0)));
+    add_mutator(
+        &mut mt,
+        m_parent,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, parent), 15);
     assert_eq!(value(&tree, grandchild), 1016);
@@ -81,9 +90,13 @@ pub fn do_inherited_state_is_read_after_the_ancestors_own_mutations() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 1));
     let root = tree.root;
     let child = add(&mut tree, root, TestElement::new(0, 10));
-    let mut mt = MutatorTree::new_with(Mutator::new(TestMutation::SetToInherited, 0));
+    let mut mt = MutatorTree::new_with(Mutator::new(TestMutation::SetToInherited, plain(0)));
     let mroot = mt.root;
-    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::SetToInherited, 0));
+    add_mutator(
+        &mut mt,
+        mroot,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, tree.root), SEED, "the root receives the seed");
     assert_eq!(
@@ -112,10 +125,18 @@ pub fn do_inherited_state_leaves_a_sibling_subtree_alone() {
 
     let mut mt = MutatorTree::new();
     let mroot = mt.root;
-    let m_mutated = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(5), 1));
-    add_mutator(&mut mt, m_mutated, Mutator::new(TestMutation::SetToInherited, 0));
-    let m_sibling = add_mutator(&mut mt, mroot, Mutator::new_void(2));
-    add_mutator(&mut mt, m_sibling, Mutator::new(TestMutation::SetToInherited, 0));
+    let m_mutated = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(5), plain(1)));
+    add_mutator(
+        &mut mt,
+        m_mutated,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
+    let m_sibling = add_mutator(&mut mt, mroot, Mutator::new_void(plain(2)));
+    add_mutator(
+        &mut mt,
+        m_sibling,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
 
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, under_mutated), 1016);
@@ -146,12 +167,16 @@ pub fn do_inherited_state_threads_through_repeat_while() {
     let c = add(&mut tree, b, TestElement::new(0, 7));
 
     let mut mt = MutatorTree::new_with(Mutator::Instruction {
-        channel: 0,
+        key: plain(0),
         instruction: Instruction::RepeatWhile(Predicate::always_true()),
         mutation: None,
     });
     let mroot = mt.root;
-    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::SetToInherited, 0));
+    add_mutator(
+        &mut mt,
+        mroot,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
 
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, a), 1001);
@@ -179,11 +204,19 @@ pub fn do_inherited_state_threads_through_map_children() {
     let below_first = add(&mut tree, first, TestElement::new(0, 0));
     let second = add(&mut tree, root, TestElement::new(9, 20));
 
-    let mut mt = MutatorTree::new_with(Mutator::new_instruction(Instruction::MapChildren));
+    let mut mt = MutatorTree::new_with(Mutator::new_instruction(Instruction::MapChildren, plain(0)));
     let mroot = mt.root;
-    let m_first = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(3), 0));
-    add_mutator(&mut mt, m_first, Mutator::new(TestMutation::SetToInherited, 0));
-    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::SetToInherited, 0));
+    let m_first = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(3), plain(0)));
+    add_mutator(
+        &mut mt,
+        m_first,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
+    add_mutator(
+        &mut mt,
+        mroot,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
 
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, first), 13);
@@ -212,13 +245,17 @@ pub fn do_inherited_state_reaches_the_terminator() {
         always_match: false,
     };
     let mut mt = MutatorTree::new_with(Mutator::Instruction {
-        channel: 0,
+        key: plain(0),
         instruction: Instruction::RepeatWhile(predicate),
         mutation: None,
     });
     let mroot = mt.root;
-    let repeated = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), 0));
-    add_mutator(&mut mt, repeated, Mutator::new(TestMutation::SetToInherited, 0));
+    let repeated = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
+    add_mutator(
+        &mut mt,
+        repeated,
+        Mutator::new(TestMutation::SetToInherited, plain(0)),
+    );
 
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, passes), 11);
@@ -243,23 +280,22 @@ fn test_inherited_state_reaches_a_spatial_descend_hit() {
 /// would give 1111; starting below the target, 1010; skipping the fold,
 /// `SEED`.
 ///
-/// An `Instruction` also applies its mutation to its own target when
-/// their channels match. The first walk keeps the target on another
-/// channel, so the hit is the only element written. The second puts it
-/// on the instruction's channel: the target becomes `SEED` first, and
-/// the fold reads that, so the hit gets `SEED + SEED + 10`.
+/// An `Instruction` also applies its mutation to its own target, under
+/// the rule of the walk's entry. `walk_tree` pairs the two roots as any
+/// pair is paired, by key, and the target here is on another channel,
+/// so the hit is the only element written. `apply_to` anchors at the
+/// root, where only kinds are compared: the target becomes `SEED`
+/// first, and the fold reads that, so the hit gets `SEED + SEED + 10`.
 pub fn do_inherited_state_reaches_a_spatial_descend_hit() {
     fn add_spatial(
         tree: &mut Tree<SpatialTestElement>,
         parent: NodeId,
         element: SpatialTestElement,
     ) -> NodeId {
-        let id = tree.arena.new_node(element);
-        parent.append(id, &mut tree.arena);
-        id
+        tree.insert_child(parent, element, Placement::Last).unwrap()
     }
     fn value_of(tree: &Tree<SpatialTestElement>, id: NodeId) -> i64 {
-        tree.arena
+        tree.arena()
             .get(id)
             .expect("fixture id belongs to the tree")
             .get()
@@ -286,18 +322,18 @@ pub fn do_inherited_state_reaches_a_spatial_descend_hit() {
         (tree, [parent, grandchild, sibling])
     }
     let mt: MutatorTree<SpatialTestElement, TestMutation> = MutatorTree::new_with(Mutator::Instruction {
-        channel: 0,
+        key: 0.into(),
         instruction: Instruction::SpatialDescend(OrderedVec2::new_f32(15.0, 15.0)),
         mutation: Some(TestMutation::SetToInherited),
     });
 
     let (mut tree, [parent, grandchild, sibling]) = fixture(5);
-    mt.apply_to(&mut tree, &SEED);
+    walk_tree(&mut tree, &mt, &SEED);
     assert_eq!(value_of(&tree, grandchild), 1011, "SEED + target 1 + parent 10");
     assert_eq!(
         value_of(&tree, tree.root),
         1,
-        "an off-channel target is not written"
+        "an off-channel target is not written by a pair walk"
     );
     assert_eq!(
         value_of(&tree, parent),
@@ -310,12 +346,12 @@ pub fn do_inherited_state_reaches_a_spatial_descend_hit() {
         "a box away from the point is not hit"
     );
 
-    let (mut tree, [parent, grandchild, sibling]) = fixture(0);
+    let (mut tree, [parent, grandchild, sibling]) = fixture(5);
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(
         value_of(&tree, tree.root),
         1000,
-        "the on-channel target takes SEED"
+        "the anchored target takes SEED whatever its channel"
     );
     assert_eq!(
         value_of(&tree, grandchild),

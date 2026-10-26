@@ -226,7 +226,7 @@ fn test_mutation_behavior_default_is_persistent() {
     let src = serde_json::json!({
         "id": "b",
         "name": "b",
-        "mutator": { "Macro": { "channel": 0, "mutations": { "Literal": [] } } },
+        "mutator": { "Macro": { "kind": null, "channel": 0, "mutations": { "Literal": [] } } },
         "target_scope": "SelfOnly"
     })
     .to_string();
@@ -588,6 +588,7 @@ mod reach_tests {
     fn test_reach_of_mapchildren_is_children() {
         use crate::engine::builder::{InstructionSpec, MutationSrc, MutatorNode};
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::MapChildren,
             mutation: MutationSrc::None,
@@ -622,6 +623,7 @@ mod flat_mutations_tests {
 
     fn macro_child() -> MutatorNode<GfxElement, GfxMutation> {
         MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![],
@@ -630,6 +632,7 @@ mod flat_mutations_tests {
 
     fn repeat_while(predicate: Predicate<GfxElement>) -> MutatorNode<GfxElement, GfxMutation> {
         MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhile(predicate),
             mutation: MutationSrc::None,
@@ -696,6 +699,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_repeat_while_always_true_sugar_is_flat_extractable() {
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             mutation: MutationSrc::None,
@@ -731,6 +735,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_macro_root_over_a_match_nothing_repeat_while_is_not_flat_extractable() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![repeat_while(Predicate::new())],
@@ -748,6 +753,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_repeat_while_wrapper_declines_when_any_child_is_unevaluatable() {
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             mutation: MutationSrc::None,
@@ -770,6 +776,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_repeat_while_wrapper_with_several_agreeing_children_still_extracts() {
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             mutation: MutationSrc::None,
@@ -844,6 +851,7 @@ mod flat_mutations_tests {
     fn test_a_nan_payload_still_declines_against_a_different_payload() {
         let nan = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(f32::NAN));
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nan]),
             children: vec![macro_child()],
@@ -862,11 +870,13 @@ mod flat_mutations_tests {
     #[test]
     fn test_signed_zero_payloads_agree() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![GfxMutation::area_command(
                 GlyphAreaCommand::NudgeRight(0.0),
             )]),
             children: vec![MutatorNode::Macro {
+                kind: (),
                 channel: 0,
                 mutations: MutationListSrc::Literal(vec![GfxMutation::area_command(
                     GlyphAreaCommand::NudgeRight(-0.0),
@@ -889,11 +899,13 @@ mod flat_mutations_tests {
     #[test]
     fn test_a_nan_payload_does_not_agree_with_an_infinity() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![GfxMutation::area_command(
                 GlyphAreaCommand::NudgeRight(f32::NAN),
             )]),
             children: vec![MutatorNode::Macro {
+                kind: (),
                 channel: 0,
                 mutations: MutationListSrc::Literal(vec![GfxMutation::area_command(
                     GlyphAreaCommand::NudgeRight(f32::INFINITY),
@@ -921,6 +933,7 @@ mod flat_mutations_tests {
 
     fn macro_child_999() -> MutatorNode<GfxElement, GfxMutation> {
         MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge_999()]),
             children: vec![],
@@ -938,6 +951,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_macro_root_over_a_differing_nested_macro_is_not_flat_extractable() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![macro_child_999()],
@@ -956,6 +970,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_repeat_while_wrapper_declines_when_children_payloads_differ() {
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             mutation: MutationSrc::None,
@@ -978,6 +993,7 @@ mod flat_mutations_tests {
     fn test_repeat_while_wrapper_with_its_own_area_delta_is_not_flat_extractable() {
         use crate::gfx_structs::template::CellField;
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             mutation: MutationSrc::Template(vec![CellField::position]),
@@ -996,6 +1012,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_repeat_while_wrapper_with_a_runtime_hole_is_not_flat_extractable() {
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             mutation: MutationSrc::Runtime("hole".into()),
@@ -1015,6 +1032,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_match_nothing_repeat_while_with_a_runtime_hole_is_not_flat_extractable() {
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhile(Predicate::new()),
             mutation: MutationSrc::Runtime("hole".into()),
@@ -1033,9 +1051,11 @@ mod flat_mutations_tests {
     #[test]
     fn test_empty_void_child_does_not_decline_the_mutator() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![MutatorNode::Void {
+                kind: (),
                 channel: 0,
                 children: vec![],
             }],
@@ -1058,9 +1078,11 @@ mod flat_mutations_tests {
     #[test]
     fn test_void_child_forwards_an_agreeing_payload_and_extracts() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![MutatorNode::Void {
+                kind: (),
                 channel: 0,
                 children: vec![macro_child()],
             }],
@@ -1080,9 +1102,11 @@ mod flat_mutations_tests {
     #[test]
     fn test_void_child_on_a_nonzero_channel_declines() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![MutatorNode::Void {
+                kind: (),
                 channel: 7,
                 children: vec![],
             }],
@@ -1106,9 +1130,11 @@ mod flat_mutations_tests {
     #[test]
     fn test_void_child_forwards_a_disagreeing_payload_and_declines() {
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![MutatorNode::Void {
+                kind: (),
                 channel: 0,
                 children: vec![macro_child_999()],
             }],
@@ -1127,6 +1153,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_empty_void_root_is_not_flat_extractable() {
         let node = MutatorNode::Void {
+            kind: (),
             channel: 0,
             children: vec![],
         };
@@ -1141,9 +1168,11 @@ mod flat_mutations_tests {
     fn test_single_child_is_not_flat_extractable_with_a_runtime_hole() {
         use crate::engine::builder::ChannelSrc;
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![MutatorNode::Single {
+                kind: (),
                 channel: ChannelSrc::Literal(0),
                 mutation: MutationSrc::Runtime("hole".into()),
             }],
@@ -1163,9 +1192,11 @@ mod flat_mutations_tests {
     fn test_payload_free_single_child_still_declines() {
         use crate::engine::builder::ChannelSrc;
         let node = MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
             children: vec![MutatorNode::Single {
+                kind: (),
                 channel: ChannelSrc::Literal(0),
                 mutation: MutationSrc::None,
             }],
@@ -1183,6 +1214,7 @@ mod flat_mutations_tests {
     #[test]
     fn test_map_children_is_not_flat_extractable() {
         let node = MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::MapChildren,
             mutation: MutationSrc::None,

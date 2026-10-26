@@ -12,6 +12,7 @@
 
 use glam::Vec2;
 
+use crate::engine::tree::Placement;
 use crate::font::fonts;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
@@ -29,8 +30,8 @@ pub fn do_descendant_at_finds_leaf_via_bvh() {
     let mut tree = build_test_tree();
     let hit = tree.descendant_at(Vec2::new(25.0, 45.0));
     assert!(hit.is_some());
-    let left_id = tree.root.children(&tree.arena).next().unwrap();
-    let left_child_id = left_id.children(&tree.arena).next().unwrap();
+    let left_id = tree.root.children(tree.arena()).next().unwrap();
+    let left_child_id = left_id.children(tree.arena()).next().unwrap();
     assert_eq!(hit.unwrap(), left_child_id);
 }
 
@@ -43,8 +44,8 @@ pub fn do_descendant_at_prunes_disjoint_subtree() {
     let mut tree = build_test_tree();
     let hit = tree.descendant_at(Vec2::new(210.0, 210.0));
     assert!(hit.is_some());
-    let left_id = tree.root.children(&tree.arena).next().unwrap();
-    let left_child_id = left_id.children(&tree.arena).next().unwrap();
+    let left_id = tree.root.children(tree.arena()).next().unwrap();
+    let left_child_id = left_id.children(tree.arena()).next().unwrap();
     assert_ne!(hit.unwrap(), left_id);
     assert_ne!(hit.unwrap(), left_child_id);
 }
@@ -67,8 +68,8 @@ fn test_descendant_at_smallest_area_wins() {
 pub fn do_descendant_at_smallest_area_wins() {
     let mut tree = build_test_tree();
     let hit = tree.descendant_at(Vec2::new(25.0, 42.0));
-    let left_id = tree.root.children(&tree.arena).next().unwrap();
-    let left_child_id = left_id.children(&tree.arena).next().unwrap();
+    let left_id = tree.root.children(tree.arena()).next().unwrap();
+    let left_child_id = left_id.children(tree.arena()).next().unwrap();
     assert_eq!(hit, Some(left_child_id));
 }
 
@@ -103,7 +104,7 @@ pub fn do_descendant_at_wide_tree_finds_correct_child() {
     let mut tree = build_wide_tree();
     let hit = tree.descendant_at(Vec2::new(510.0, 10.0));
     assert!(hit.is_some());
-    let children: Vec<_> = tree.root.children(&tree.arena).collect();
+    let children: Vec<_> = tree.root.children(tree.arena()).collect();
     assert_eq!(hit.unwrap(), children[10]);
 }
 
@@ -135,10 +136,8 @@ pub fn do_descendant_at_overlapping_siblings() {
         GlyphArea::new_with_str("sm", 14.0, 14.0, Vec2::new(50.0, 50.0), Vec2::new(20.0, 20.0)),
         1,
     );
-    let big_id = tree.arena.new_node(big);
-    let small_id = tree.arena.new_node(small);
-    tree.root.append(big_id, &mut tree.arena);
-    tree.root.append(small_id, &mut tree.arena);
+    let big_id = tree.insert_child(tree.root, big, Placement::Last).unwrap();
+    let small_id = tree.insert_child(tree.root, small, Placement::Last).unwrap();
 
     assert_eq!(tree.descendant_at(Vec2::new(55.0, 55.0)), Some(small_id));
     assert_eq!(tree.descendant_at(Vec2::new(5.0, 5.0)), Some(big_id));
@@ -158,8 +157,7 @@ pub fn do_descendant_near_negative_coords() {
         GlyphArea::new_with_str("neg", 14.0, 14.0, Vec2::new(-100.0, -50.0), Vec2::new(40.0, 30.0)),
         0,
     );
-    let id = tree.arena.new_node(area);
-    tree.root.append(id, &mut tree.arena);
+    let id = tree.insert_child(tree.root, area, Placement::Last).unwrap();
     assert_eq!(tree.descendant_at(Vec2::new(-80.0, -40.0)), Some(id));
     assert!(tree.descendant_at(Vec2::new(0.0, 0.0)).is_none());
 }
@@ -179,10 +177,8 @@ pub fn do_bvh_descend_skips_glyph_model_nodes() {
         GlyphArea::new_with_str("a", 14.0, 14.0, Vec2::new(100.0, 100.0), Vec2::new(50.0, 30.0)),
         0,
     );
-    let model_id = tree.arena.new_node(model);
-    let area_id = tree.arena.new_node(area);
-    tree.root.append(model_id, &mut tree.arena);
-    tree.root.append(area_id, &mut tree.arena);
+    tree.insert_child(tree.root, model, Placement::Last).unwrap();
+    let area_id = tree.insert_child(tree.root, area, Placement::Last).unwrap();
 
     assert_eq!(tree.descendant_at(Vec2::new(110.0, 110.0)), Some(area_id));
     assert!(tree.descendant_at(Vec2::new(0.0, 0.0)).is_none());
@@ -203,8 +199,7 @@ pub fn do_bvh_descend_point_on_exact_boundary() {
         GlyphArea::new_with_str("b", 14.0, 14.0, Vec2::new(10.0, 20.0), Vec2::new(30.0, 40.0)),
         0,
     );
-    let id = tree.arena.new_node(area);
-    tree.root.append(id, &mut tree.arena);
+    let id = tree.insert_child(tree.root, area, Placement::Last).unwrap();
 
     assert_eq!(tree.descendant_at(Vec2::new(10.0, 20.0)), Some(id));
     assert_eq!(tree.descendant_at(Vec2::new(40.0, 60.0)), Some(id));
@@ -242,8 +237,7 @@ pub fn do_bvh_far_edge_hit_survives_float_rounding() {
     let bounds = Vec2::new(22.4, 22.4);
     let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(GlyphArea::new_with_str("m", 14.0, 14.0, pos, bounds), 0);
-    let id = tree.arena.new_node(area);
-    tree.root.append(id, &mut tree.arena);
+    let id = tree.insert_child(tree.root, area, Placement::Last).unwrap();
 
     // The corner the AABB test admits is exactly `pos + bounds`.
     let far = pos + bounds;
@@ -280,10 +274,8 @@ pub fn do_bvh_point_in_subtree_aabb_but_outside_own_area() {
         GlyphArea::new_with_str("c", 14.0, 14.0, Vec2::new(70.0, 50.0), Vec2::new(30.0, 20.0)),
         0,
     );
-    let parent_id = tree.arena.new_node(parent);
-    let child_id = tree.arena.new_node(child);
-    tree.root.append(parent_id, &mut tree.arena);
-    parent_id.append(child_id, &mut tree.arena);
+    let parent_id = tree.insert_child(tree.root, parent, Placement::Last).unwrap();
+    let child_id = tree.insert_child(parent_id, child, Placement::Last).unwrap();
 
     assert_eq!(tree.descendant_at(Vec2::new(80.0, 55.0)), Some(child_id));
     assert_eq!(tree.descendant_at(Vec2::new(20.0, 15.0)), Some(parent_id));
@@ -305,8 +297,7 @@ pub fn do_descendant_near_slack_expands_hit_region() {
         GlyphArea::new_with_str("s", 14.0, 14.0, Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0)),
         0,
     );
-    let id = tree.arena.new_node(area);
-    tree.root.append(id, &mut tree.arena);
+    let id = tree.insert_child(tree.root, area, Placement::Last).unwrap();
 
     // Point just outside on the right: x=31, AABB max_x=30.
     assert!(tree.descendant_at(Vec2::new(31.0, 20.0)).is_none());
@@ -338,10 +329,8 @@ pub fn do_descendant_near_slack_smallest_area_still_wins() {
         GlyphArea::new_with_str("sm", 14.0, 14.0, Vec2::new(50.0, 50.0), Vec2::new(10.0, 10.0)),
         1,
     );
-    let big_id = tree.arena.new_node(big);
-    let small_id = tree.arena.new_node(small);
-    tree.root.append(big_id, &mut tree.arena);
-    tree.root.append(small_id, &mut tree.arena);
+    tree.insert_child(tree.root, big, Placement::Last).unwrap();
+    let small_id = tree.insert_child(tree.root, small, Placement::Last).unwrap();
 
     // Point at (62, 55) is outside small's AABB (max_x=60) but within
     // slack=5. Both big and small+slack contain the point; small wins.

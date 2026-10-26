@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use baumhard::engine::tree::Placement;
 use baumhard::font::fonts::AppFont;
 
 // ====================================================================
@@ -342,6 +343,9 @@ fn console_mutator_round_trips_to_fresh_build() {
     };
     mutator.apply_to(&mut tree, &());
 
+    // The tree keeps its children in channel order, and the areas
+    // come out in channel order — every gutter, then every text —
+    // so the two are compared as they stand.
     let expected = {
         let mut fs =
             baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay areas expected)");
@@ -349,8 +353,8 @@ fn console_mutator_round_trips_to_fresh_build() {
     };
 
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
-    for descendant_id in tree.root().descendants(&tree.arena) {
-        let node = tree.arena.get(descendant_id).expect("arena node");
+    for descendant_id in tree.root().descendants(tree.arena()) {
+        let node = tree.arena().get(descendant_id).expect("arena node");
         let element = node.get();
         if let Some(area) = element.glyph_area() {
             got.push((element.channel(), area.clone()));
@@ -1028,8 +1032,8 @@ fn overlay_cache_fixture_area() -> GlyphArea {
 fn overlay_cache_fixture() -> (Scene, SceneTreeId, GfxElement) {
     let element = GfxElement::new_area_non_indexed_with_id(overlay_cache_fixture_area(), 7, 7);
     let mut tree: GfxTree = GfxTree::new_non_indexed();
-    let leaf = tree.arena.new_node(element.clone());
-    tree.root.append(leaf, &mut tree.arena);
+    tree.insert_child(tree.root, element.clone(), Placement::Last)
+        .unwrap();
     let mut scene = Scene::new();
     let id = scene.insert(tree, 0, Vec2::ZERO);
     (scene, id, element)
@@ -1349,8 +1353,8 @@ fn test_glyph_area_equality_ignores_only_the_hitbox() {
 fn snapshot_overlay(scene: &Scene, id: SceneTreeId) -> Vec<ShapedSceneElement> {
     let tree = scene.tree(id).expect("tree registered");
     tree.root()
-        .descendants(&tree.arena)
-        .filter_map(|d| tree.arena.get(d).map(|n| n.get()))
+        .descendants(tree.arena())
+        .filter_map(|d| tree.arena().get(d).map(|n| n.get()))
         .map(|element| ShapedSceneElement::new(id, element, Vec2::ZERO, Vec::new(), None))
         .collect()
 }
@@ -1365,8 +1369,8 @@ fn overlay_elements_needing_reshape<'a>(
 ) -> Vec<&'a GfxElement> {
     let tree = scene.tree(id).expect("tree registered");
     tree.root()
-        .descendants(&tree.arena)
-        .filter_map(|d| tree.arena.get(d).map(|n| n.get()))
+        .descendants(tree.arena())
+        .filter_map(|d| tree.arena().get(d).map(|n| n.get()))
         .enumerate()
         .filter(|(i, element)| {
             cached
@@ -1573,8 +1577,7 @@ fn canvas_fill_fixture_scene() -> (Scene, Vec<SceneTreeId>) {
             let unique_id = tree_idx * 10 + leaf_idx + 1;
             let area = canvas_fill_fixture_area(&format!("r{unique_id}"), base_x + 60.0 * leaf_idx as f32);
             let element = GfxElement::new_area_non_indexed_with_id(area, 1, unique_id);
-            let leaf = tree.arena.new_node(element);
-            tree.root.append(leaf, &mut tree.arena);
+            tree.insert_child(tree.root, element, Placement::Last).unwrap();
         }
         ids.push(scene.insert(tree, tree_idx as i32, Vec2::ZERO));
     }
@@ -1642,20 +1645,19 @@ fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
     let first_leaf = {
         let tree = scene.tree(ids[0]).expect("tree registered");
         tree.root()
-            .children(&tree.arena)
+            .children(tree.arena())
             .next()
             .expect("fixture tree has leaves")
     };
     {
         let tree = scene.tree_mut(ids[0]).expect("tree registered");
-        let area = tree
-            .arena
-            .get_mut(first_leaf)
-            .expect("leaf resolves")
-            .get_mut()
-            .glyph_area_mut()
-            .expect("leaf is an area element");
-        area.background_color = Some([200, 100, 50, 255]);
+        tree.update(first_leaf, |element| {
+            element
+                .glyph_area_mut()
+                .expect("leaf is an area element")
+                .background_color = Some([200, 100, 50, 255]);
+        })
+        .expect("leaf resolves");
     }
 
     let partial = scene_shape_cache::refresh(&scene, &ids, &mut warm, ScenePassKind::Canvas);
@@ -2060,10 +2062,12 @@ fn test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings() {
     for (unique_id, ring) in [(1usize, true), (2usize, false)] {
         let mut area = canvas_fill_fixture_area(&format!("h{unique_id}"), 40.0 * unique_id as f32);
         area.outline = ring.then_some(outline);
-        let leaf = tree
-            .arena
-            .new_node(GfxElement::new_area_non_indexed_with_id(area, 1, unique_id));
-        tree.root.append(leaf, &mut tree.arena);
+        tree.insert_child(
+            tree.root,
+            GfxElement::new_area_non_indexed_with_id(area, 1, unique_id),
+            Placement::Last,
+        )
+        .unwrap();
     }
     let mut scene = Scene::new();
     let id = scene.insert(tree, 0, Vec2::ZERO);
@@ -2206,10 +2210,12 @@ fn patch_fixture_scene() -> (Scene, SceneTreeId) {
     let mut plain = GlyphArea::new_with_str("plain", 16.0, 18.0, Vec2::new(90.0, 5.0), Vec2::new(60.0, 20.0));
     plain.regions = ColorFontRegions::single_span(5, Some([0.4, 0.5, 0.6, 1.0]), None);
     for (area, unique_id) in [(outlined, 7usize), (plain, 8usize)] {
-        let leaf = tree
-            .arena
-            .new_node(GfxElement::new_area_non_indexed_with_id(area, 1, unique_id));
-        tree.root.append(leaf, &mut tree.arena);
+        tree.insert_child(
+            tree.root,
+            GfxElement::new_area_non_indexed_with_id(area, 1, unique_id),
+            Placement::Last,
+        )
+        .unwrap();
     }
     let mut scene = Scene::new();
     let id = scene.insert(tree, 0, Vec2::ZERO);
@@ -2222,17 +2228,13 @@ fn edit_leaf_area(scene: &mut Scene, id: SceneTreeId, nth: usize, edit: impl FnO
     let tree = scene.tree_mut(id).expect("tree registered");
     let leaf = tree
         .root
-        .children(&tree.arena)
+        .children(tree.arena())
         .nth(nth)
         .expect("fixture has that many leaves");
-    edit(
-        tree.arena
-            .get_mut(leaf)
-            .expect("leaf resolves")
-            .get_mut()
-            .glyph_area_mut()
-            .expect("leaf is an area element"),
-    );
+    tree.update(leaf, |element| {
+        edit(element.glyph_area_mut().expect("leaf is an area element"))
+    })
+    .expect("leaf resolves");
 }
 
 /// The buffers one walk position holds, as `(emission_offset, pos)`.
@@ -2586,8 +2588,8 @@ fn test_picker_drag_move_patches_every_cell_and_shapes_none() {
     let anchors = |scene: &Scene| -> Vec<Option<(f32, f32)>> {
         let tree = scene.tree(id).expect("tree registered");
         tree.root()
-            .descendants(&tree.arena)
-            .filter_map(|d| tree.arena.get(d).map(|n| n.get()))
+            .descendants(tree.arena())
+            .filter_map(|d| tree.arena().get(d).map(|n| n.get()))
             .map(|element| element.glyph_area().map(|a| (a.position.x.0, a.position.y.0)))
             .collect()
     };

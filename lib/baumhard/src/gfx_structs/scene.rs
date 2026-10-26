@@ -178,12 +178,13 @@ impl Scene {
         self.trees.get(id.0)
     }
 
-    /// Mutable borrow of just the tree. Builder-phase escape hatch.
-    /// Mutations via the returned reference that touch GlyphArea
-    /// position or bounds **must** call
-    /// [`Tree::invalidate_caches`](crate::engine::tree::Tree::invalidate_caches) afterwards, or the scene's
-    /// hit-test memos will drift. Prefer [`Self::apply_mutator`]
-    /// which handles invalidation automatically.
+    /// Mutable borrow of just the tree. Builder-phase escape hatch:
+    /// the tree changes only through its own methods
+    /// ([`Tree::insert_child`](crate::engine::tree::Tree::insert_child),
+    /// [`Tree::update`](crate::engine::tree::Tree::update),
+    /// [`Tree::remove_subtree`](crate::engine::tree::Tree::remove_subtree)),
+    /// each of which invalidates the tree's hit-test memos. Prefer
+    /// [`Self::apply_mutator`].
     pub fn tree_mut(&mut self, id: SceneTreeId) -> Option<&mut GfxTree> {
         self.trees.get_mut(id.0).map(|e| &mut e.tree)
     }

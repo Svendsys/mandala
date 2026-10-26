@@ -52,10 +52,10 @@ pub const HUE_SLOT_COUNT: usize = 24;
 pub fn picker_channel(section: &str, index: usize) -> usize {
     static CACHE: OnceLock<std::collections::HashMap<(String, usize), usize>> = OnceLock::new();
     let map = CACHE.get_or_init(|| {
-        use baumhard::engine::builder::{iter_section_channels, NoRuntime};
+        use baumhard::engine::builder::{iter_section_keys, NoRuntime};
         let mut out = Vec::new();
-        iter_section_channels(&load_spec().mutator_spec, &NoRuntime, &mut out);
-        out.into_iter().map(|(s, i, c)| ((s, i), c)).collect()
+        iter_section_keys(&load_spec().mutator_spec, &NoRuntime, &mut out);
+        out.into_iter().map(|(s, i, key)| ((s, i), key.channel)).collect()
     });
     *map.get(&(section.to_string(), index))
         .unwrap_or_else(|| panic!("picker_channel: unknown section/index ({section:?}, {index})"))

@@ -17,7 +17,7 @@ use crate::mindmap::loader;
 use crate::mindmap::model::{MindMap, TextRun, DISPLAY_MODE_PORTAL};
 use crate::mindmap::scene_cache::{EdgeKey, SceneConnectionCache};
 use crate::mindmap::scene_dump::{
-    dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, DumpFilter, Placement,
+    dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, DumpFilter, ScenePlacement,
 };
 use crate::mindmap::tree_builder::{
     build_connection_elements, build_connection_label_tree, build_connection_tree, build_label_elements,
@@ -74,7 +74,7 @@ pub fn do_scene_dump_nodes_are_the_tree_in_pre_order() {
     let walk_order: Vec<&str> = tree
         .tree
         .root()
-        .descendants(&tree.tree.arena)
+        .descendants(tree.tree.arena())
         .filter_map(|id| tree.mind_id_for_node(id))
         .collect();
     let dumped: Vec<&str> = dump.iter().map(|n| n.node_id.as_str()).collect();
@@ -86,11 +86,11 @@ pub fn do_scene_dump_nodes_are_the_tree_in_pre_order() {
         let arena_id = tree
             .arena_id_for(&node.node_id)
             .expect("dumped nodes are in the tree");
-        let area = tree.tree.arena[arena_id]
+        let area = tree.tree.arena()[arena_id]
             .get()
             .glyph_area()
             .expect("container area");
-        assert_eq!(node.placement, Placement::of_area(area, Vec2::ZERO, &camera));
+        assert_eq!(node.placement, ScenePlacement::of_area(area, Vec2::ZERO, &camera));
         assert_eq!(node.sections.len(), tree.section_count_for(&node.node_id));
         let indices: Vec<usize> = node.sections.iter().map(|s| s.section_idx).collect();
         let mut sorted = indices.clone();
@@ -98,8 +98,9 @@ pub fn do_scene_dump_nodes_are_the_tree_in_pre_order() {
         assert_eq!(indices, sorted, "sections in model order");
         assert_eq!(Some(node.clone()), dump_node(&tree, &map, &camera, &node.node_id));
     }
-    let boxes: Vec<(&str, Placement)> = node_boxes(&tree, &camera).collect();
-    let placements: Vec<(&str, Placement)> = dump.iter().map(|n| (n.node_id.as_str(), n.placement)).collect();
+    let boxes: Vec<(&str, ScenePlacement)> = node_boxes(&tree, &camera).collect();
+    let placements: Vec<(&str, ScenePlacement)> =
+        dump.iter().map(|n| (n.node_id.as_str(), n.placement)).collect();
     assert_eq!(
         boxes, placements,
         "the boxes are the dump's, without the sections"
@@ -394,7 +395,7 @@ pub fn do_scene_dump_placement_spans_what_the_renderer_draws() {
     let mut camera = Camera2D::new(800, 600);
     camera.position = Vec2::new(-400.0, 0.0);
     let boxed = |area: &GlyphArea| {
-        Placement::of_rect(
+        ScenePlacement::of_rect(
             area.position(),
             Vec2::new(100.0, 40.0),
             area.zoom_visibility,
@@ -410,7 +411,7 @@ pub fn do_scene_dump_placement_spans_what_the_renderer_draws() {
         Visibility::Offscreen,
         "precondition: the bare box misses"
     );
-    let placed = Placement::of_area(&filled, Vec2::ZERO, &camera);
+    let placed = ScenePlacement::of_area(&filled, Vec2::ZERO, &camera);
     assert_eq!(
         placed.visibility,
         Visibility::Visible,
@@ -437,7 +438,7 @@ pub fn do_scene_dump_placement_spans_what_the_renderer_draws() {
         Visibility::Offscreen,
         "precondition: the main glyph misses"
     );
-    let placed = Placement::of_area(&haloed, Vec2::ZERO, &camera);
+    let placed = ScenePlacement::of_area(&haloed, Vec2::ZERO, &camera);
     assert_eq!(
         placed.visibility,
         Visibility::Visible,
@@ -457,7 +458,7 @@ pub fn do_scene_dump_placement_spans_what_the_renderer_draws() {
     let bare = GlyphArea::new(16.0, 16.0, Vec2::new(-200.0, 0.0), Vec2::new(100.0, 40.0));
     assert_eq!(bare.text_stamp_offsets().count(), 0);
     assert_eq!(
-        Placement::of_area(&bare, Vec2::ZERO, &camera),
+        ScenePlacement::of_area(&bare, Vec2::ZERO, &camera),
         boxed(&bare),
         "an area that draws nothing is placed by its box"
     );

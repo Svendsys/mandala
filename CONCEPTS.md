@@ -147,11 +147,12 @@ Baumhard's mutation engine, generic over **the element type** and
 any element type that implements its traits.
 
 The engine lives in `lib/baumhard/src/engine/` and knows nothing
-about glyphs. An element type implements `TreeElement` — the channel
-the walker routes on, a `void()` placeholder, a kind (carried, not yet
-routed on), the state it hands its children
-(`inherit`, see "Inherited state" below), and, for an element type
-with geometry, its own box (`spatial_bounds`). A payload implements
+about glyphs. An element type implements `TreeElement` — the kind and
+channel the walker routes on, which together are the element's
+`BranchKey` (see [`Channel`](#channel)), a `void()` placeholder, the
+state it hands its children (`inherit`, see "Inherited state" below),
+and, for an element type with geometry, its own box
+(`spatial_bounds`). A payload implements
 `Mutation<E>`: one `apply_to(target, inherited)`, plus the shape of
 its builder template. The glyph trees are the first instantiation —
 `GfxElement` with the `GfxMutation` payload — and
@@ -172,20 +173,33 @@ tree can be rearranged, cached, or serialized without invalidating
 references. Nodes are `Clone`, mutation is in-place (never
 rebuild-the-arena).
 
+Every parent's children are kept in ascending `BranchKey` order —
+kind, then channel — with equal keys in the order they were placed
+in: the **sorted-children invariant**, which is what lets the walker
+merge sibling rows without sorting them. The arena is private to the
+engine, so the invariant is kept by the only ways to change a tree:
+`insert_child(parent, element, Placement)` places a new child in the
+run of its key (`First`, `Last`, or `Before` / `After` an equal-key
+sibling), `update(id, f)` — the one way to change an element outside
+a walk — moves an element whose key `f` changed, `remove_subtree`
+removes, and a walk moves the elements whose key it changed once it
+is over. `check_sorted` verifies it.
+
 Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
-`indextree::Arena<E>`; adds `root: NodeId`, `layer: usize`, and
-`cache: E::Cache` — the element type's `TreeCache`, which the walker
-invalidates whenever it applies a mutator. The glyph tree,
+`indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,
+`layer: usize`, and `cache: E::Cache` — the element type's
+`TreeCache`, which the walker and every one of those methods
+invalidate. The glyph tree,
 `GfxTree = Tree<GfxElement>`, keeps its AABB memo
 (`Cell<Option<...>>` because the values are `Copy`), its subtree-AABB
 dirty flag, and an optional `RegionParams` + `RegionIndexer` seam
 there (`GlyphTreeCache`, `lib/baumhard/src/gfx_structs/tree.rs`),
 and only glyph trees answer the spatial queries (`descendant_at`,
 `descendant_near`, `descendants_aabb`). The blessed iteration
-primitives are `NodeId::children(&arena)` and
-`descendants(&arena)`; collecting into a `Vec<NodeId>` is a code
-smell. Every `MutatorTree::apply_to` call leaves the cache
-invalidated; nothing invalidates it per field.
+primitives are `NodeId::children(tree.arena())` and
+`descendants(tree.arena())`; collecting into a `Vec<NodeId>` is a
+code smell. Every change leaves the cache invalidated, so no caller
+invalidates it by hand.
 
 ### `MutatorTree<E, M>`
 
@@ -202,16 +216,31 @@ rest alone. This is the seam custom mutations
 ([§4](#4-the-mutation-framework)) ride on.
 
 Also in `lib/baumhard/src/engine/tree.rs`. Minimal — an
-`Arena<Mutator<E, M>>` and a `root: NodeId`. No derived state:
-mutators are pure deltas, they do not render. The root of an empty
-mutator tree is a channel-0 `Mutator::Void`, which pads the mutator's
-shape to match the target's when channels do not line up.
-`MutatorTree::apply_to(&mut target, &seed)` is the whole entry point;
-it calls `walk_tree_from` under the hood.
+`Arena<Mutator<E, M>>` and a `root: NodeId`, its children kept in key
+order like a `Tree`'s and added the same way (`insert_child`). No
+derived state: mutators are pure deltas, they do not render. The root
+of an empty mutator tree is a channel-0 `Mutator::Void`, which pads
+the mutator's shape to match the target's when keys do not line up.
+
+Two entry points, both over the walker. `apply_at(&mut target,
+&anchors, seed_for)` walks from **anchors** — typically the
+selection: `Anchors::Nodes`, `ParentOf` (the distinct parents) or
+`SiblingsOf` (each node's same-kind siblings). The anchors resolve to
+a de-duplicated set, of which only the nodes of the mutator root's
+**kind** stay anchors (channels not compared): a mutator's shape is
+relative to its root, so at a node of another kind it applies nothing,
+there or below. Among those, when the mutator reaches below its root,
+an anchor inside another anchor's subtree is dropped, so a subtree
+mutation reaches each element once; the rest are walked in tree order.
+Every anchor's seed is taken before any anchor is walked, and a stale
+anchor refuses the whole call with nothing applied. The resolution
+costs work in the anchors and their rows, never in the rest of the
+tree. `apply_to(&mut target, &seed)` is `apply_at` anchored at the
+root.
 
 **Inherited state.** Some mutations need a value their element
 inherits rather than stores. The walker carries `E::Inherited` down
-every walk: `seed` is the state of the walk root's parent, a mutation
+every walk: the seed is the state of the walk root's parent, a mutation
 receives its target's *parent's* state, and each element hands its
 children `inherit(parent's state)` computed after its own mutations
 in the same walk. The state lives on the walker's call stack — never
@@ -271,8 +300,11 @@ All visual things — every text region, every composed-glyph
 shape, every structural padding node — is one variant of this
 enum. Shared metadata rides on every variant: a `channel` for
 mutation routing, a `unique_id` assigned by the host app (Mandala
-uses it for the mindmap node id), a `flags` set, an
-`event_subscribers` list, and a cached `subtree_aabb`.
+uses it for the mindmap node id), a `flags` set, and an
+`event_subscribers` list. What a glyph tree derives from its
+elements — the AABB memo and each node's subtree AABB for the BVH
+hit-test — lives in the tree's `GlyphTreeCache`, keyed by `NodeId`,
+never on an element.
 
 `lib/baumhard/src/gfx_structs/element.rs`.
 `GlyphArea` and `GlyphModel` each box their payload (one heap
@@ -422,9 +454,10 @@ far-right region into a far-left one.
 
 ### `Channel`
 
-An integer routing tag on every node. The tree walker
-matches mutator nodes to target nodes by equal channel within a
-sibling group.
+An integer routing tag on every node. With the node's kind it forms
+the node's `BranchKey`, and the tree walker matches mutator nodes to
+target nodes by equal key — kind and channel — within a sibling
+group.
 
 Without channels, every mutation applied to a
 parent would broadcast to *every* child; with channels, the author
@@ -435,20 +468,22 @@ is within-sibling only. Siblings on the same channel form a
 primitive that makes a single mutation selective without naming
 child indices.
 
-An element type answers `TreeElement::channel`
-(`lib/baumhard/src/engine/element.rs`), and every `Mutator` carries
-its own `channel` field; the walker reads both to align children.
-In the mindmap domain, `MindNode.channel` is where this surfaces to
-end users; see [§3: Channels](#channels-mindmap-level).
+An element type answers `TreeElement::kind` and
+`TreeElement::channel`, and so `TreeElement::key`
+(`lib/baumhard/src/engine/element.rs`, `engine/key.rs`); every
+`Mutator` carries its own `key`. The kind keeps one parent's children
+of different kinds apart: a mutator for one kind's channel 0 cannot
+land on another kind's channel 0. The glyph trees have a single kind
+(`()`), so for them the key is the channel. In the mindmap domain,
+`MindNode.channel` is where this surfaces to end users; see
+[§3: Channels](#channels-mindmap-level).
 
-Children arrive at the walker in **Dewey-id order**
-(`id_sort_key`), not in channel order — the tree builder sorts
-by id, not by channel. Channel matching happens within whatever
-sibling order the map defines. Authoring custom mutations that
-target specific channels therefore means arranging children so
-that channel order and id order agree, or reaching for the
-[`MapChildren`](#instruction) instruction to pair strictly by
-sibling position instead.
+Every parent's children are stored in key order (the sorted-children
+invariant of [`Tree<E>`](#treee)); siblings with an equal key keep the
+order the builder added them in, which for mind-nodes is **Dewey-id
+order** (`id_sort_key`). [`MapChildren`](#instruction) pairs strictly
+by sibling position instead, for a layout where index matters more
+than tag.
 
 ### `Flag` / `Flaggable` / `AnchorBox`
 
@@ -562,14 +597,15 @@ hand-listing every target.
 `lib/baumhard/src/engine/mutator.rs`.
 - `RepeatWhile(Predicate)` — iterates children, applies mutator
   children while predicate holds, stops on failure. Aligns by
-  channel (broadcast semantics).
+  key (broadcast semantics), and below that descends into the
+  children of the repeated mutator's kind only, on every channel.
 - `SpatialDescend(OrderedVec2)` — finds the smallest descendant
   whose own box (`TreeElement::spatial_bounds`) contains the given
-  point, applies the mutation there. Bypasses channel alignment.
+  point, applies the mutation there. Bypasses key alignment.
   Only for an element type with geometry — the glyph trees; the
   builder refuses it for any other.
 - `MapChildren` — zips mutator children to target children
-  **strictly by sibling position**, ignoring channels. The
+  **strictly by sibling position**, ignoring keys. The
   right shape for size-aware layouts where index matters more
   than tag.
 
@@ -590,7 +626,8 @@ cover "one field change here",
 [`Predicate`](#predicate-and-comparator) they form a small but
 complete mutation language.
 
-`lib/baumhard/src/engine/mutator.rs`. A `Macro` carries a `Vec<M>`
+`lib/baumhard/src/engine/mutator.rs`. Every variant carries the
+`key: BranchKey` it routes on. A `Macro` carries a `Vec<M>`
 applied in order to the same target, plus optional `children` for
 descendant instruction nodes. A mutator that carries no payload says
 so structurally — a `Void`, or an `Instruction` whose `mutation` is
@@ -857,21 +894,25 @@ inside the matched tree.
 The recursive dispatch engine (a set of functions, not a type) that walks a
 `MutatorTree` against a `Tree` and applies matched mutations.
 
-Every mutation that ever lands on an element
-goes through the walker — `MutatorTree::apply_to` just calls
-`walk_tree_from`. The walker aligns children by channel (or by
-position, depending on instruction), recurses, and dispatches each
-payload to `Mutation::apply_to` with the target's parent's
-[inherited state](#mutatortreee-m). Cost is `O(sum of matching
+Every mutation that a mutator tree delivers goes through the
+walker. The walker aligns children by key (or by position, depending
+on instruction): both rows are sorted by key, so it walks the two
+sibling lists in step — the lower key advances, equal keys walk — with
+no `Vec` and no sort. It recurses, and dispatches each payload to
+`Mutation::apply_to` with the target's parent's
+[inherited state](#mutatortreee-m). A target whose key a mutation
+changed is recorded and moved to its sorted place when the walk is
+over, so no walk sees a half-sorted row. Cost is `O(sum of matching
 pairs)` — pruned branches are free.
 
 `lib/baumhard/src/engine/walker.rs`, generic over the element type
 and the payload — no `dyn`, no `Any`, no runtime type checks.
-Key functions: `walk_tree_from` (the entry), `align_child_walks`
-(the channel-based pairing), `process_instruction_node` (the
-loop/spatial/map dispatch), `default_terminator` (the continuation
-that resumes normal channel alignment after a `RepeatWhile`
-exits). Branchless enough that matching-pair cost dominates.
+Key functions: `walk_tree_from` (the pair entry), `align_child_walks`
+and `merge_rows` (the key-based pairing), `process_instruction_node`
+(the loop/spatial/map dispatch), `default_terminator` (the
+continuation that resumes key alignment after a `RepeatWhile` exits),
+and `Rekeyed` (the children whose key the walk changed). Branchless
+enough that matching-pair cost dominates.
 
 ### Mutator builder DSL — `MutatorNode`, `BuildContext`, `Repeat`, runtime holes
 
@@ -890,15 +931,17 @@ dynamically-chosen mutations) into a concrete tree ready for
 [custom mutations](#4-the-mutation-framework) attach to.
 
 `lib/baumhard/src/engine/builder/`. The AST:
-`MutatorNode::{Void, Single, Macro, Instruction, Repeat}`. The
+`MutatorNode::{Void, Single, Macro, Instruction, Repeat}`, each naming
+the `kind` half of its key beside its channel. The
 indirection enums `ChannelSrc` and `CountSrc` have a `Literal`
 variant (inline) and a `SectionIndex` or `Runtime(String)` variant;
 `MutationSrc` is a payload `Template` resolved per `Repeat`
 iteration, a `Runtime(String)` mutation, or `None`; the runtime
 ones consult the `BuildContext` trait at build time.
-`build(ast, context)` returns a `MutatorTree<E, M>` with `Repeat`
-expanded to N children on consecutive channels, or a `BuildError`
-for a shape no mutator tree can express (a root `Repeat`, a
+`build(ast, context)` returns a `MutatorTree<E, M>` — children inserted
+in key order — with `Repeat` expanded to N children of its kind on
+consecutive channels, or a `BuildError` for a shape no mutator tree
+can express (a root `Repeat`, a `Repeat` template of another kind, a
 `SpatialDescend` for an element type with no geometry, …).
 
 ### Font system — `FONT_SYSTEM`, `AppFont`, `attrs_list_from_regions`, `RegionFamilies`, `rich_text_spans_from_regions`
@@ -1377,9 +1420,9 @@ or each can be unique (per-sibling targeting). All existing maps
 default to channel 0 and behave as if the field did not exist.
 
 Stored as `usize` on `MindNode`; preserved
-through tree builder onto the corresponding `GfxElement.channel`;
-consulted by the walker's [channel alignment](#channel) at walk
-time. Full reference:
+through tree builder onto the corresponding `GfxElement.channel`,
+which orders a node's children in the glyph tree; consulted by the
+walker's [key alignment](#channel) at walk time. Full reference:
 [`format/channels.md`](./format/channels.md).
 
 A `TargetScope::ChildrenOnChannel(n)` variant is the

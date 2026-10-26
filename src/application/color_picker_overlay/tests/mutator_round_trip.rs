@@ -31,15 +31,15 @@ fn picker_mutator_output_matches_spec_shape() {
 
     // Root must be a Void on channel 0 (the root_channel the JSON
     // declares).
-    match mt.arena.get(mt.root).unwrap().get() {
-        GfxMutator::Void { channel: 0 } => {}
+    match mt.arena().get(mt.root).unwrap().get() {
+        GfxMutator::Void { key } if key.channel == 0 => {}
         other => panic!("picker mutator root must be Void(0), got {other:?}"),
     }
 
     let children: Vec<&GfxMutator> = mt
         .root
-        .children(&mt.arena)
-        .map(|id| mt.arena.get(id).unwrap().get())
+        .children(mt.arena())
+        .map(|id| mt.arena().get(id).unwrap().get())
         .collect();
     assert_eq!(children.len(), 58, "picker emits 58 live cells");
 
@@ -87,8 +87,8 @@ fn picker_overlay_mutator_round_trips_across_paired_tree() {
 
     let expected = picker_glyph_areas(&g_b, &layout_b);
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
-    for descendant_id in tree.root().descendants(&tree.arena) {
-        let node = tree.arena.get(descendant_id).expect("arena node");
+    for descendant_id in tree.root().descendants(tree.arena()) {
+        let node = tree.arena().get(descendant_id).expect("arena node");
         let element = node.get();
         if let Some(area) = element.glyph_area() {
             got.push((element.channel(), area.clone()));
@@ -131,8 +131,8 @@ fn picker_mutator_round_trips_to_fresh_build() {
     let expected = picker_glyph_areas(&g_b, &layout_b);
 
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
-    for descendant_id in tree.root().descendants(&tree.arena) {
-        let node = tree.arena.get(descendant_id).expect("arena node");
+    for descendant_id in tree.root().descendants(tree.arena()) {
+        let node = tree.arena().get(descendant_id).expect("arena node");
         let element = node.get();
         if let Some(area) = element.glyph_area() {
             got.push((element.channel(), area.clone()));

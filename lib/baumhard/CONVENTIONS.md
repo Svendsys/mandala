@@ -52,7 +52,8 @@ it should almost never mean allocating a new arena.
   `MutatorTree` describing the delta (`GfxMutatorTree` for a glyph
   tree), then call its `apply_to` method with the target `Tree` as
   `&mut` argument and the walk's inherited-state seed (`&()` for a
-  glyph tree). Both live in `lib/baumhard/src/engine/tree.rs`, generic
+  glyph tree) — or `apply_at` to start the walk at anchors such as the
+  selection. Both live in `lib/baumhard/src/engine/tree.rs`, generic
   over the element type and the payload; the walk itself is
   `walk_tree_from` in `lib/baumhard/src/engine/walker.rs`. The field
   deltas a glyph payload carries apply through the `Applicable`
@@ -104,7 +105,18 @@ concept; "number of grapheme clusters" is, and it is what users see.
 node access via `NodeId`. The arena is what makes Baumhard fast; treat
 it with respect.
 
-- **Iterate with `NodeId::children(&arena)` and `descendants(&arena)`.**
+- **Every parent's children are sorted by key.** A node's
+  `BranchKey` is its kind and channel, and both `Tree` and
+  `MutatorTree` keep each row in ascending key order, equal keys in the
+  order they were placed in; the walker merges rows in step on the
+  strength of it. The arena is private to `engine`, so the invariant
+  is kept by construction: add with `insert_child` (the key picks the
+  run, the `Placement` the spot in it), change an element outside a
+  walk with `update` (which moves it if its key changed), remove with
+  `remove_subtree`, read with `arena()`. There is no `&mut` access to
+  an element or the arena outside the engine, and `check_sorted`
+  verifies the invariant.
+- **Iterate with `NodeId::children(tree.arena())` and `descendants(tree.arena())`.**
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if
   you can.

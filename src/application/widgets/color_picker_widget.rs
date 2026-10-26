@@ -186,7 +186,10 @@ mod tests {
     fn spec_mutator_spec_shape_matches_expectations() {
         use baumhard::engine::builder::{CountSrc, MutatorNode};
         let spec = load_spec();
-        let MutatorNode::Void { channel, children } = &spec.mutator_spec else {
+        let MutatorNode::Void {
+            channel, children, ..
+        } = &spec.mutator_spec
+        else {
             panic!("mutator_spec root must be a Void");
         };
         assert_eq!(*channel, 0, "picker overlay root channel must be 0");
@@ -224,10 +227,10 @@ mod tests {
     /// relies on.
     #[test]
     fn spec_mutator_spec_total_live_cells_is_58() {
-        use baumhard::engine::builder::{iter_section_channels, NoRuntime};
+        use baumhard::engine::builder::{iter_section_keys, NoRuntime};
         let spec = load_spec();
         let mut out = Vec::new();
-        iter_section_channels(&spec.mutator_spec, &NoRuntime, &mut out);
+        iter_section_keys(&spec.mutator_spec, &NoRuntime, &mut out);
         assert_eq!(out.len(), 58);
     }
 
@@ -240,12 +243,12 @@ mod tests {
     /// in-place update.
     #[test]
     fn spec_dynamic_mutator_spec_channel_layout_mirrors_layout_spec() {
-        use baumhard::engine::builder::{iter_section_channels, NoRuntime};
+        use baumhard::engine::builder::{iter_section_keys, NoRuntime};
         let spec = load_spec();
         let mut layout_out = Vec::new();
-        iter_section_channels(&spec.mutator_spec, &NoRuntime, &mut layout_out);
+        iter_section_keys(&spec.mutator_spec, &NoRuntime, &mut layout_out);
         let mut dynamic_out = Vec::new();
-        iter_section_channels(&spec.dynamic_mutator_spec, &NoRuntime, &mut dynamic_out);
+        iter_section_keys(&spec.dynamic_mutator_spec, &NoRuntime, &mut dynamic_out);
         assert_eq!(
             layout_out, dynamic_out,
             "dynamic spec channel layout must match layout spec"

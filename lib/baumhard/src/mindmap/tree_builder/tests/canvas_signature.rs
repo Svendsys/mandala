@@ -58,14 +58,14 @@ use super::fixtures::{sized_node, synthetic_map, synthetic_node, synthetic_porta
 /// is `hitbox`, which both builders leave empty — pinned by
 /// `test_border_and_portal_areas_carry_no_hitbox`.
 fn trees_draw_identically(a: &GfxTree, b: &GfxTree) -> bool {
-    let a_nodes: Vec<_> = a.root.descendants(&a.arena).collect();
-    let b_nodes: Vec<_> = b.root.descendants(&b.arena).collect();
+    let a_nodes: Vec<_> = a.root.descendants(a.arena()).collect();
+    let b_nodes: Vec<_> = b.root.descendants(b.arena()).collect();
     if a_nodes.len() != b_nodes.len() {
         return false;
     }
     for (a_id, b_id) in a_nodes.iter().zip(b_nodes.iter()) {
-        let a_el = a.arena.get(*a_id).unwrap().get();
-        let b_el = b.arena.get(*b_id).unwrap().get();
+        let a_el = a.arena().get(*a_id).unwrap().get();
+        let b_el = b.arena().get(*b_id).unwrap().get();
         if a_el.channel() != b_el.channel() {
             return false;
         }
@@ -1133,8 +1133,8 @@ fn test_border_and_portal_areas_carry_no_hitbox() {
 
     for (role, tree) in [("border", &border_tree), ("portal", &portal_tree)] {
         let mut areas = 0;
-        for id in tree.root.descendants(&tree.arena) {
-            if let Some(area) = tree.arena.get(id).unwrap().get().glyph_area() {
+        for id in tree.root.descendants(tree.arena()) {
+            if let Some(area) = tree.arena().get(id).unwrap().get().glyph_area() {
                 areas += 1;
                 assert!(
                     area.hitbox().rectangles.is_empty(),

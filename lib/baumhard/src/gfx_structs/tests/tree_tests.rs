@@ -17,6 +17,7 @@ use strum::IntoEnumIterator;
 
 use crate::engine::element::TreeElement;
 use crate::engine::mutator::Instruction::RepeatWhile;
+use crate::engine::tree::Placement;
 use crate::engine::walker::walk_tree_from;
 use crate::font::fonts;
 use crate::font::fonts::AppFont::{
@@ -1156,30 +1157,32 @@ pub fn do_event_propagation_complex_symmetric() {
         // Create the target node
         let mut model_node = GfxElement::new_void_with_id(entry.1, entry.2);
         model_node.subscribers_mut().push(subscriber.clone());
-        let model_node_id = model.arena.new_node(model_node);
 
         // Create the mutator node
         let mutator_node = GfxMutator::new(
             GfxMutation::Event(GlyphTreeEventInstance::new(entry.0.clone(), 0)),
             entry.1,
         );
-        let mutator_node_id = mutator.arena.new_node(mutator_node);
 
-        // Join to ancestor
+        // The first entry is the root of both trees; every other one
+        // joins its ancestor.
         let ancestor_path = entry.3.to_string();
         if ancestor_path == "root" {
-            model_index.insert("0".to_string(), model_node_id);
-            mutator_index.insert("0".to_string(), mutator_node_id);
+            let root = model.root;
+            model.update(root, |element| *element = model_node).unwrap();
+            mutator = GfxMutatorTree::new_with(mutator_node);
+            model_index.insert("0".to_string(), model.root);
+            mutator_index.insert("0".to_string(), mutator.root);
         } else {
-            model_index
-                .get(&ancestor_path)
-                .unwrap()
-                .append(model_node_id, &mut model.arena);
+            let model_parent = *model_index.get(&ancestor_path).unwrap();
+            let model_node_id = model
+                .insert_child(model_parent, model_node, Placement::Last)
+                .unwrap();
             model_index.insert(current_node_address.clone(), model_node_id);
-            mutator_index
-                .get(&ancestor_path)
-                .unwrap()
-                .append(mutator_node_id, &mut mutator.arena);
+            let mutator_parent = *mutator_index.get(&ancestor_path).unwrap();
+            let mutator_node_id = mutator
+                .insert_child(mutator_parent, mutator_node, Placement::Last)
+                .unwrap();
             mutator_index.insert(current_node_address.clone(), mutator_node_id);
         }
     }
@@ -1202,8 +1205,6 @@ pub fn test_event_propagation_simple() {
 pub fn do_event_propagation_simple() {
     // This is necessary to initialize lazy statics
     fonts::init();
-    let mut model: GfxTree = GfxTree::new_non_indexed();
-    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     let mut id_head: usize = 0;
     let mut model_root = GfxElement::new_void_with_id(0, incr(&mut id_head));
     let mut model_baby = GfxElement::new_void_with_id(0, incr(&mut id_head));
@@ -1223,9 +1224,11 @@ pub fn do_event_propagation_simple() {
     model_root.subscribers_mut().push(subscriber.clone());
     model_baby.subscribers_mut().push(subscriber);
 
-    let model_root_id = model.arena.new_node(model_root);
-    let model_baby_id = model.arena.new_node(model_baby);
-    model_root_id.append(model_baby_id, &mut model.arena);
+    let mut model: GfxTree = GfxTree::new_non_indexed_with(model_root);
+    let model_root_id = model.root;
+    model
+        .insert_child(model_root_id, model_baby, Placement::Last)
+        .unwrap();
 
     let event = GfxMutator::new(
         GfxMutation::Event(GlyphTreeEventInstance {
@@ -1243,9 +1246,11 @@ pub fn do_event_propagation_simple() {
         0,
     );
 
-    let event_id = mutator.arena.new_node(event);
-    let event_baby_id = mutator.arena.new_node(event_baby);
-    event_id.append(event_baby_id, &mut mutator.arena);
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(event);
+    let event_id = mutator.root;
+    mutator
+        .insert_child(event_id, event_baby, Placement::Last)
+        .unwrap();
     walk_tree_from(&mut model, &mutator, model_root_id, event_id, &());
 }
 
@@ -1257,71 +1262,69 @@ pub fn test_complex_tree_mutation() {
 pub fn do_complex_tree_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
-    let mut mutator_c: GfxMutatorTree = GfxMutatorTree::new();
-    let mut model: GfxTree = GfxTree::new_non_indexed();
-
     // Create the tree-model nodes
-    let root_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let mut model: GfxTree = GfxTree::new_non_indexed_with(GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("root", 1.0, 10.0, Vec2::new(50.0, 50.0), Vec2::new(500.0, 500.0)),
         0,
         0,
     ));
+    let root_id = model.root;
 
-    let node_a_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_a = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("A", 1.0, 10.0, Vec2::new(30.0, 70.0), Vec2::new(500.0, 500.0)),
         1,
         1,
-    ));
+    );
 
-    let node_b_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_b = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("B", 1.0, 10.0, Vec2::new(70.0, 70.0), Vec2::new(500.0, 500.0)),
         2,
         2,
-    ));
+    );
 
-    let node_c_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_c = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("C", 1.0, 10.0, Vec2::new(50.0, 70.0), Vec2::new(500.0, 500.0)),
         0,
         3,
-    ));
+    );
 
-    let node_aa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_aa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Aa", 1.0, 10.0, Vec2::new(20.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         4,
-    ));
+    );
 
-    let node_ab_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_ab = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Ab", 1.0, 10.0, Vec2::new(40.0, 80.0), Vec2::new(500.0, 500.0)),
         2,
         5,
-    ));
+    );
 
-    let node_aaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_aaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Aaa", 1.0, 10.0, Vec2::new(20.0, 90.0), Vec2::new(500.0, 500.0)),
         1,
         6,
-    ));
+    );
 
-    let node_aba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_aba = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Aba", 1.0, 10.0, Vec2::new(40.0, 90.0), Vec2::new(500.0, 500.0)),
         2,
         7,
-    ));
+    );
 
-    let node_aaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_aaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Aaaa", 1.0, 10.0, Vec2::new(20.0, 100.0), Vec2::new(500.0, 500.0)),
         1,
         8,
-    ));
+    );
 
-    let node_abaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_abaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Abaa", 1.0, 10.0, Vec2::new(40.0, 100.0), Vec2::new(500.0, 500.0)),
         2,
         9,
-    ));
+    );
 
-    let node_aaaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_aaaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str(
             "Aaaaa",
             1.0,
@@ -1331,9 +1334,9 @@ pub fn do_complex_tree_mutation() {
         ),
         1,
         10,
-    ));
+    );
 
-    let node_abaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_abaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str(
             "Abaaa",
             1.0,
@@ -1343,27 +1346,27 @@ pub fn do_complex_tree_mutation() {
         ),
         2,
         11,
-    ));
+    );
 
-    let node_ca_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_ca = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Ca", 1.0, 10.0, Vec2::new(50.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         12,
-    ));
+    );
 
-    let node_caa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_caa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Caa", 1.0, 10.0, Vec2::new(50.0, 90.0), Vec2::new(500.0, 500.0)),
         0,
         13,
-    ));
+    );
 
-    let node_caaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_caaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Caaa", 1.0, 10.0, Vec2::new(50.0, 100.0), Vec2::new(500.0, 500.0)),
         0,
         14,
-    ));
+    );
 
-    let node_caaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_caaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str(
             "Caaaa",
             1.0,
@@ -1373,9 +1376,9 @@ pub fn do_complex_tree_mutation() {
         ),
         0,
         15,
-    ));
+    );
 
-    let node_caaaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_caaaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str(
             "Caaaaa",
             1.0,
@@ -1385,9 +1388,9 @@ pub fn do_complex_tree_mutation() {
         ),
         0,
         16,
-    ));
+    );
 
-    let node_caaaaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_caaaaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str(
             "Caaaaaa",
             1.0,
@@ -1397,45 +1400,45 @@ pub fn do_complex_tree_mutation() {
         ),
         0,
         17,
-    ));
+    );
 
-    let node_ba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_ba = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Ba", 1.0, 10.0, Vec2::new(60.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         18,
-    ));
+    );
 
-    let node_bb_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_bb = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Bb", 1.0, 10.0, Vec2::new(80.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         19,
-    ));
+    );
 
-    let node_baa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_baa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Baa", 1.0, 10.0, Vec2::new(60.0, 90.0), Vec2::new(500.0, 500.0)),
         0,
         20,
-    ));
+    );
 
-    let node_bba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_bba = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Bba", 1.0, 10.0, Vec2::new(80.0, 90.0), Vec2::new(500.0, 500.0)),
         0,
         21,
-    ));
+    );
 
-    let node_baaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_baaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Baaa", 1.0, 10.0, Vec2::new(60.0, 100.0), Vec2::new(500.0, 500.0)),
         0,
         22,
-    ));
+    );
 
-    let node_bbaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_bbaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Bbaa", 1.0, 10.0, Vec2::new(80.0, 100.0), Vec2::new(500.0, 500.0)),
         0,
         23,
-    ));
+    );
 
-    let node_baaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_baaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str(
             "Baaaa",
             1.0,
@@ -1445,9 +1448,9 @@ pub fn do_complex_tree_mutation() {
         ),
         0,
         24,
-    ));
+    );
 
-    let node_bbaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_bbaaa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str(
             "Bbaaa",
             1.0,
@@ -1457,60 +1460,88 @@ pub fn do_complex_tree_mutation() {
         ),
         0,
         25,
-    ));
+    );
 
     // Set the relationships
-    root_id.append(node_c_id, &mut model.arena);
-    root_id.append(node_a_id, &mut model.arena);
-    root_id.append(node_b_id, &mut model.arena);
+    let node_c_id = model.insert_child(root_id, node_c, Placement::Last).unwrap();
+    let node_a_id = model.insert_child(root_id, node_a, Placement::Last).unwrap();
+    let node_b_id = model.insert_child(root_id, node_b, Placement::Last).unwrap();
 
-    node_a_id.append(node_aa_id, &mut model.arena);
-    node_a_id.append(node_ab_id, &mut model.arena);
-    node_aa_id.append(node_aaa_id, &mut model.arena);
-    node_aaa_id.append(node_aaaa_id, &mut model.arena);
-    node_aaaa_id.append(node_aaaaa_id, &mut model.arena);
-    node_ab_id.append(node_aba_id, &mut model.arena);
-    node_aba_id.append(node_abaa_id, &mut model.arena);
-    node_abaa_id.append(node_abaaa_id, &mut model.arena);
+    let node_aa_id = model.insert_child(node_a_id, node_aa, Placement::Last).unwrap();
+    let node_ab_id = model.insert_child(node_a_id, node_ab, Placement::Last).unwrap();
+    let node_aaa_id = model.insert_child(node_aa_id, node_aaa, Placement::Last).unwrap();
+    let node_aaaa_id = model
+        .insert_child(node_aaa_id, node_aaaa, Placement::Last)
+        .unwrap();
+    let node_aaaaa_id = model
+        .insert_child(node_aaaa_id, node_aaaaa, Placement::Last)
+        .unwrap();
+    let node_aba_id = model.insert_child(node_ab_id, node_aba, Placement::Last).unwrap();
+    let node_abaa_id = model
+        .insert_child(node_aba_id, node_abaa, Placement::Last)
+        .unwrap();
+    let node_abaaa_id = model
+        .insert_child(node_abaa_id, node_abaaa, Placement::Last)
+        .unwrap();
 
-    node_b_id.append(node_ba_id, &mut model.arena);
-    node_b_id.append(node_bb_id, &mut model.arena);
-    node_ba_id.append(node_baa_id, &mut model.arena);
-    node_baa_id.append(node_baaa_id, &mut model.arena);
-    node_baaa_id.append(node_baaaa_id, &mut model.arena);
-    node_bb_id.append(node_bba_id, &mut model.arena);
-    node_bba_id.append(node_bbaa_id, &mut model.arena);
-    node_bbaa_id.append(node_bbaaa_id, &mut model.arena);
+    let node_ba_id = model.insert_child(node_b_id, node_ba, Placement::Last).unwrap();
+    let node_bb_id = model.insert_child(node_b_id, node_bb, Placement::Last).unwrap();
+    let node_baa_id = model.insert_child(node_ba_id, node_baa, Placement::Last).unwrap();
+    let node_baaa_id = model
+        .insert_child(node_baa_id, node_baaa, Placement::Last)
+        .unwrap();
+    let node_baaaa_id = model
+        .insert_child(node_baaa_id, node_baaaa, Placement::Last)
+        .unwrap();
+    let node_bba_id = model.insert_child(node_bb_id, node_bba, Placement::Last).unwrap();
+    let node_bbaa_id = model
+        .insert_child(node_bba_id, node_bbaa, Placement::Last)
+        .unwrap();
+    let node_bbaaa_id = model
+        .insert_child(node_bbaa_id, node_bbaaa, Placement::Last)
+        .unwrap();
 
-    node_c_id.append(node_ca_id, &mut model.arena);
-    node_ca_id.append(node_caa_id, &mut model.arena);
-    node_caa_id.append(node_caaa_id, &mut model.arena);
-    node_caaa_id.append(node_caaaa_id, &mut model.arena);
-    node_caaaa_id.append(node_caaaaa_id, &mut model.arena);
-    node_caaaaa_id.append(node_caaaaaa_id, &mut model.arena);
+    let node_ca_id = model.insert_child(node_c_id, node_ca, Placement::Last).unwrap();
+    let node_caa_id = model.insert_child(node_ca_id, node_caa, Placement::Last).unwrap();
+    let node_caaa_id = model
+        .insert_child(node_caa_id, node_caaa, Placement::Last)
+        .unwrap();
+    let node_caaaa_id = model
+        .insert_child(node_caaa_id, node_caaaa, Placement::Last)
+        .unwrap();
+    let node_caaaaa_id = model
+        .insert_child(node_caaaa_id, node_caaaaa, Placement::Last)
+        .unwrap();
+    let node_caaaaaa_id = model
+        .insert_child(node_caaaaa_id, node_caaaaaa, Placement::Last)
+        .unwrap();
 
     let mut c_predicate = Predicate::new();
     c_predicate
         .fields
         .push((GfxElementField::Channel(0), Comparator::equals()));
     // Create mutator-tree
-    let c_instruction = mutator_c
-        .arena
-        .new_node(GfxMutator::new_instruction(RepeatWhile(c_predicate)));
+    let mut mutator_c: GfxMutatorTree =
+        GfxMutatorTree::new_with(GfxMutator::new_instruction(RepeatWhile(c_predicate), 0));
+    let c_instruction = mutator_c.root;
 
-    let mutator_child_c = mutator_c.arena.new_node(GfxMutator::new_macro(
-        vec![
-            GfxMutation::area_command(GlyphAreaCommand::SetRegionFont(
-                Range::new(0, 1),
-                AppFont::CarnivaleeFreakshow,
-            )),
-            GfxMutation::area_command(GlyphAreaCommand::GrowFont(20.0)),
-            GfxMutation::area_command(GlyphAreaCommand::NudgeDown(200.0)),
-        ],
-        0,
-    ));
-
-    c_instruction.append(mutator_child_c, &mut mutator_c.arena);
+    mutator_c
+        .insert_child(
+            c_instruction,
+            GfxMutator::new_macro(
+                vec![
+                    GfxMutation::area_command(GlyphAreaCommand::SetRegionFont(
+                        Range::new(0, 1),
+                        AppFont::CarnivaleeFreakshow,
+                    )),
+                    GfxMutation::area_command(GlyphAreaCommand::GrowFont(20.0)),
+                    GfxMutation::area_command(GlyphAreaCommand::NudgeDown(200.0)),
+                ],
+                0,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
 
     // Apply mutation
     walk_tree_from(&mut model, &mutator_c, root_id, c_instruction, &());
@@ -1716,26 +1747,32 @@ pub fn do_complex_tree_mutation() {
     assert_eq!(bbaaa.get().position(), Vec2::new(80.0, 110.0));
     assert_eq!(bbaaa.get().glyph_area().unwrap().scale, 1.0);
 
-    let mut mutator_a: GfxMutatorTree = GfxMutatorTree::new();
     let mut a_predicate = Predicate::new();
     a_predicate
         .fields
         .push((GfxElementField::Channel(1), Comparator::equals()));
 
-    let a_instruction = mutator_a
-        .arena
-        .new_node(GfxMutator::new_instruction(RepeatWhile(a_predicate)));
+    let mut mutator_a: GfxMutatorTree =
+        GfxMutatorTree::new_with(GfxMutator::new_instruction(RepeatWhile(a_predicate), 0));
+    let a_instruction = mutator_a.root;
 
-    let mutator_child_a = mutator_a.arena.new_node(GfxMutator::new_macro(
-        vec![
-            GfxMutation::area_command(GlyphAreaCommand::SetRegionFont(Range::new(0, 1), AppFont::Norse)),
-            GfxMutation::area_command(GlyphAreaCommand::GrowFont(10.0)),
-            GfxMutation::area_command(GlyphAreaCommand::NudgeDown(100.0)),
-        ],
-        1,
-    ));
-
-    a_instruction.append(mutator_child_a, &mut mutator_a.arena);
+    mutator_a
+        .insert_child(
+            a_instruction,
+            GfxMutator::new_macro(
+                vec![
+                    GfxMutation::area_command(GlyphAreaCommand::SetRegionFont(
+                        Range::new(0, 1),
+                        AppFont::Norse,
+                    )),
+                    GfxMutation::area_command(GlyphAreaCommand::GrowFont(10.0)),
+                    GfxMutation::area_command(GlyphAreaCommand::NudgeDown(100.0)),
+                ],
+                1,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
     assert!(mutator_a.get(a_instruction).is_some());
 
     walk_tree_from(&mut model, &mutator_a, root_id, a_instruction, &());
@@ -1904,79 +1941,77 @@ pub fn test_simple_tree_mutation() {
 pub fn do_simple_tree_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
-    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
-    let mut model: GfxTree = GfxTree::new_non_indexed();
-
     // Create the tree-model nodes
-    let root_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let mut model: GfxTree = GfxTree::new_non_indexed_with(GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("root", 1.0, 10.0, Vec2::new(50.0, 50.0), Vec2::new(500.0, 500.0)),
         0,
         0,
     ));
+    let root_id = model.root;
 
-    let node_a_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_a = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("A", 1.0, 10.0, Vec2::new(30.0, 70.0), Vec2::new(500.0, 500.0)),
         1,
         1,
-    ));
+    );
 
-    let node_b_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_b = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("B", 1.0, 10.0, Vec2::new(70.0, 70.0), Vec2::new(500.0, 500.0)),
         2,
         2,
-    ));
+    );
 
-    let node_c_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_c = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("C", 1.0, 10.0, Vec2::new(50.0, 70.0), Vec2::new(500.0, 500.0)),
         0,
         3,
-    ));
+    );
 
-    let node_aa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_aa = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Aa", 1.0, 10.0, Vec2::new(20.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         4,
-    ));
+    );
 
-    let node_ab_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_ab = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Ab", 1.0, 10.0, Vec2::new(40.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         5,
-    ));
+    );
 
-    let node_ca_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_ca = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Ca", 1.0, 10.0, Vec2::new(50.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         6,
-    ));
+    );
 
-    let node_ba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_ba = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Ba", 1.0, 10.0, Vec2::new(60.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         7,
-    ));
+    );
 
-    let node_bb_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let node_bb = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("Bb", 1.0, 10.0, Vec2::new(80.0, 80.0), Vec2::new(500.0, 500.0)),
         2,
         8,
-    ));
+    );
 
     // Set the relationships
-    root_id.append(node_c_id, &mut model.arena);
-    root_id.append(node_a_id, &mut model.arena);
-    root_id.append(node_b_id, &mut model.arena);
+    let node_c_id = model.insert_child(root_id, node_c, Placement::Last).unwrap();
+    let node_a_id = model.insert_child(root_id, node_a, Placement::Last).unwrap();
+    let node_b_id = model.insert_child(root_id, node_b, Placement::Last).unwrap();
 
-    node_a_id.append(node_aa_id, &mut model.arena);
-    node_a_id.append(node_ab_id, &mut model.arena);
+    model.insert_child(node_a_id, node_aa, Placement::Last).unwrap();
+    model.insert_child(node_a_id, node_ab, Placement::Last).unwrap();
 
-    node_b_id.append(node_ba_id, &mut model.arena);
-    node_b_id.append(node_bb_id, &mut model.arena);
+    let node_ba_id = model.insert_child(node_b_id, node_ba, Placement::Last).unwrap();
+    let node_bb_id = model.insert_child(node_b_id, node_bb, Placement::Last).unwrap();
 
-    node_c_id.append(node_ca_id, &mut model.arena);
+    let node_ca_id = model.insert_child(node_c_id, node_ca, Placement::Last).unwrap();
 
     // Create mutator-tree
-    let mutator_root = mutator.arena.new_node(GfxMutator::new(
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new(
         GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
@@ -1987,46 +2022,71 @@ pub fn do_simple_tree_mutation() {
         ])),
         0,
     ));
-
-    let mutator_a = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(-1.0, -5.0))),
-        1,
-    ));
-
-    let mutator_b = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_delta(make_mutator(Some(NorseBold), None, Vec2::new(-1.0, -5.0))),
-        2,
-    ));
-
-    let mutator_c = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(0.0, -4.0))),
-        0,
-    ));
-
-    let mutator_ca = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_delta(make_mutator(Some(Casanova), None, Vec2::new(0.0, -4.0))),
-        0,
-    ));
-
-    let mutator_ba = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(-25.0, 25.0))),
-        1,
-    ));
-
-    let mutator_bb = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(25.0, 25.0))),
-        2,
-    ));
+    let mutator_root = mutator.root;
 
     // Set mutator relationships
-    mutator_root.append(mutator_c, &mut mutator.arena);
-    mutator_root.append(mutator_a, &mut mutator.arena);
-    mutator_root.append(mutator_b, &mut mutator.arena);
+    let mutator_c = mutator
+        .insert_child(
+            mutator_root,
+            GfxMutator::new(
+                GfxMutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(0.0, -4.0))),
+                0,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
+    mutator
+        .insert_child(
+            mutator_root,
+            GfxMutator::new(
+                GfxMutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(-1.0, -5.0))),
+                1,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
+    let mutator_b = mutator
+        .insert_child(
+            mutator_root,
+            GfxMutator::new(
+                GfxMutation::area_delta(make_mutator(Some(NorseBold), None, Vec2::new(-1.0, -5.0))),
+                2,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
 
-    mutator_b.append(mutator_ba, &mut mutator.arena);
-    mutator_b.append(mutator_bb, &mut mutator.arena);
+    mutator
+        .insert_child(
+            mutator_b,
+            GfxMutator::new(
+                GfxMutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(-25.0, 25.0))),
+                1,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
+    mutator
+        .insert_child(
+            mutator_b,
+            GfxMutator::new(
+                GfxMutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(25.0, 25.0))),
+                2,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
 
-    mutator_c.append(mutator_ca, &mut mutator.arena);
+    mutator
+        .insert_child(
+            mutator_c,
+            GfxMutator::new(
+                GfxMutation::area_delta(make_mutator(Some(Casanova), None, Vec2::new(0.0, -4.0))),
+                0,
+            ),
+            Placement::Last,
+        )
+        .unwrap();
 
     // Do mutation
     walk_tree_from(&mut model, &mutator, root_id, mutator_root, &());

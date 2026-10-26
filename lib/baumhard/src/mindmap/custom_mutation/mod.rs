@@ -420,7 +420,9 @@ fn extract(
         // Pure structural grouping — no payload of its own. Channel
         // 0 only: off channel 0 a `Void` is a routing gate the flat
         // path cannot honor, so it falls through and declines.
-        N::Void { channel: 0, children } => (None, children.as_slice()),
+        N::Void {
+            channel: 0, children, ..
+        } => (None, children.as_slice()),
         // The literal list is this node's payload; the children below
         // must agree with it.
         N::Macro {

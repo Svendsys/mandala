@@ -13,7 +13,7 @@
 use crate::engine::builder::{
     build, BuildContext, BuildError, ChannelSrc, CountSrc, MutationSrc, MutatorNode, NoRuntime,
 };
-use crate::engine::tests::test_element::{add, value, TestElement, TestMutation};
+use crate::engine::tests::test_element::{add, value, TestElement, TestKind, TestMutation};
 use crate::engine::tree::Tree;
 
 /// The AST over the test instantiation.
@@ -35,6 +35,7 @@ impl BuildContext<TestElement, TestMutation> for IndexContext {
             TestMutation::Add(n) => TestMutation::Add(n + index as i64),
             TestMutation::Set(n) => TestMutation::Set(n + index as i64),
             TestMutation::SetToInherited => TestMutation::SetToInherited,
+            TestMutation::SetChannel(n) => TestMutation::SetChannel(n + index),
         }
     }
 }
@@ -50,19 +51,23 @@ fn test_engine_build_resolves_templates_and_runtime_payloads() {
 /// the runtime one — and nothing to the channel the `Repeat` skipped.
 pub fn do_engine_build_resolves_templates_and_runtime_payloads() {
     let node: Node = MutatorNode::Void {
+        kind: TestKind::Plain,
         channel: 0,
         children: vec![
             MutatorNode::Repeat {
+                kind: TestKind::Plain,
                 section: "cells".into(),
                 channel_base: 1,
                 count: CountSrc::Literal(4),
                 skip_indices: vec![2],
                 template: Box::new(MutatorNode::Single {
+                    kind: TestKind::Plain,
                     channel: ChannelSrc::SectionIndex,
                     mutation: MutationSrc::Template(TestMutation::Add(10)),
                 }),
             },
             MutatorNode::Single {
+                kind: TestKind::Plain,
                 channel: ChannelSrc::Literal(9),
                 mutation: MutationSrc::Runtime("double".into()),
             },
@@ -90,11 +95,13 @@ fn test_engine_build_refuses_a_root_repeat() {
 /// not panicked; the same `Repeat` under a `Void` builds.
 pub fn do_engine_build_refuses_a_root_repeat() {
     let repeat: Node = MutatorNode::Repeat {
+        kind: TestKind::Plain,
         section: "cells".into(),
         channel_base: 0,
         count: CountSrc::Literal(2),
         skip_indices: vec![],
         template: Box::new(MutatorNode::Single {
+            kind: TestKind::Plain,
             channel: ChannelSrc::SectionIndex,
             mutation: MutationSrc::Template(TestMutation::Add(1)),
         }),
@@ -102,6 +109,7 @@ pub fn do_engine_build_refuses_a_root_repeat() {
     assert_eq!(build(&repeat, &IndexContext).err(), Some(BuildError::RootRepeat));
 
     let wrapped: Node = MutatorNode::Void {
+        kind: TestKind::Plain,
         channel: 0,
         children: vec![repeat],
     };
@@ -125,8 +133,10 @@ pub fn do_engine_build_refuses_spatial_descend_without_geometry() {
     use crate::util::ordered_vec2::OrderedVec2;
     let with = |instruction: InstructionSpec<TestElement>| -> Node {
         MutatorNode::Void {
+            kind: TestKind::Plain,
             channel: 0,
             children: vec![MutatorNode::Instruction {
+                kind: TestKind::Plain,
                 channel: 0,
                 instruction,
                 mutation: MutationSrc::None,

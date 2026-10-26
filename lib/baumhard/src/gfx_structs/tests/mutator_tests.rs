@@ -18,6 +18,7 @@ use crate::core::primitives::ApplyOperation;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Instruction;
 use crate::engine::predicate::Predicate;
+use crate::engine::tree::Placement;
 use crate::font::fonts;
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField};
 use crate::gfx_structs::element::GfxElement;
@@ -131,7 +132,7 @@ pub fn do_mutation_noop_leaves_tree_unchanged() {
     let pos_before = element.position();
     let text_before = element.glyph_area().unwrap().text.clone();
 
-    let empty = GfxMutator::new_instruction(Instruction::MapChildren);
+    let empty = GfxMutator::new_instruction(Instruction::MapChildren, 0);
     assert!(
         matches!(empty, GfxMutator::Instruction { mutation: None, .. }),
         "precondition: new_instruction carries no payload"
@@ -143,7 +144,7 @@ pub fn do_mutation_noop_leaves_tree_unchanged() {
 
     let carrying = GfxMutator::Instruction {
         instruction: Instruction::MapChildren,
-        channel: 0,
+        key: 0.into(),
         mutation: Some(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0))),
     };
     carrying.apply_to(&mut element, &());
@@ -229,18 +230,18 @@ pub fn do_instruction_repeat_while_always_true() {
 
     // -- target tree: root (Void, ch 0) -> child_a (ch 0) -> child_b (ch 0)
     let mut model: GfxTree = GfxTree::new_non_indexed();
-    let child_a_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let child_a = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("a", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(50.0, 50.0)),
         0,
         1,
-    ));
-    let child_b_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    );
+    let child_b = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("b", 1.0, 10.0, Vec2::new(100.0, 100.0), Vec2::new(50.0, 50.0)),
         0,
         2,
-    ));
-    child_a_id.append(child_b_id, &mut model.arena);
-    model.root.append(child_a_id, &mut model.arena);
+    );
+    let child_a_id = model.insert_child(model.root, child_a, Placement::Last).unwrap();
+    let child_b_id = model.insert_child(child_a_id, child_b, Placement::Last).unwrap();
 
     // -- mutator tree: root (Instruction RepeatWhile always_true, ch 0)
     //                    -> child mutator (Single: position += (5, 7), ch 0)
@@ -248,14 +249,12 @@ pub fn do_instruction_repeat_while_always_true() {
     // child, applies the child mutator to matching children, then
     // recurses into their descendants.
     let predicate = Predicate::always_true();
-    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
-
     let instruction_mutator = GfxMutator::Instruction {
         instruction: Instruction::RepeatWhile(predicate),
-        channel: 0,
+        key: 0.into(),
         mutation: None,
     };
-    *mutator.arena.get_mut(mutator.root).unwrap().get_mut() = instruction_mutator;
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(instruction_mutator);
 
     // Child mutator: shifts position by (5, 7).
     let child_mutator = GfxMutator::new(
@@ -265,14 +264,16 @@ pub fn do_instruction_repeat_while_always_true() {
         ])),
         0,
     );
-    let child_mut_id = mutator.arena.new_node(child_mutator);
-    mutator.root.append(child_mut_id, &mut mutator.arena);
+    let child_mut = child_mutator;
+    mutator
+        .insert_child(mutator.root, child_mut, Placement::Last)
+        .unwrap();
 
     // Apply.
     mutator.apply_to(&mut model, &());
 
     // child_a should have been mutated (position += (5, 7)).
-    let child_a = model.arena.get(child_a_id).unwrap().get();
+    let child_a = model.arena().get(child_a_id).unwrap().get();
     assert!(
         almost_equal(child_a.position().x, 5.0),
         "child_a x: expected 5.0, got {}",
@@ -286,7 +287,7 @@ pub fn do_instruction_repeat_while_always_true() {
 
     // child_b (descendant of child_a) should also have been reached
     // by the repeat-while walk and received the same delta.
-    let child_b = model.arena.get(child_b_id).unwrap().get();
+    let child_b = model.arena().get(child_b_id).unwrap().get();
     assert!(
         almost_equal(child_b.position().x, 105.0),
         "child_b x: expected 105.0, got {}",
@@ -320,7 +321,7 @@ pub fn do_instruction_mutator_applies_its_attached_mutation() {
 
     let mutator = GfxMutator::Instruction {
         instruction: Instruction::RepeatWhile(Predicate::always_true()),
-        channel: 0,
+        key: 0.into(),
         mutation: Some(GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::position(10.0, 10.0),
@@ -355,28 +356,25 @@ fn test_mutator_tree_applies_to_target() {
 pub fn do_mutator_tree_applies_to_target() {
     fonts::init();
 
-    // -- target tree: root (ch 0) -> child (ch 0)
-    let mut model: GfxTree = GfxTree::new_non_indexed();
-
-    // Replace the default void root with an area element.
+    // -- target tree: root (ch 0) -> child (ch 0), the root an area
+    // element rather than the default void.
     let root_element = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("root", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(200.0, 200.0)),
         0,
         1,
     );
-    *model.arena.get_mut(model.root).unwrap().get_mut() = root_element;
+    let mut model: GfxTree = GfxTree::new_non_indexed_with(root_element);
 
-    let child_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let child = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("child", 1.0, 10.0, Vec2::new(50.0, 60.0), Vec2::new(100.0, 100.0)),
         0,
         2,
-    ));
-    model.root.append(child_id, &mut model.arena);
+    );
+    let child_id = model.insert_child(model.root, child, Placement::Last).unwrap();
 
     // -- mutator tree: root (NudgeRight 7.0, ch 0) -> child (position += (0, 11), ch 0)
-    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     let root_mut = GfxMutator::new(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(7.0)), 0);
-    *mutator.arena.get_mut(mutator.root).unwrap().get_mut() = root_mut;
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(root_mut);
 
     let child_mut = GfxMutator::new(
         GfxMutation::area_delta(DeltaGlyphArea::new(vec![
@@ -385,14 +383,15 @@ pub fn do_mutator_tree_applies_to_target() {
         ])),
         0,
     );
-    let child_mut_id = mutator.arena.new_node(child_mut);
-    mutator.root.append(child_mut_id, &mut mutator.arena);
+    mutator
+        .insert_child(mutator.root, child_mut, Placement::Last)
+        .unwrap();
 
     // Apply.
     mutator.apply_to(&mut model, &());
 
     // Root: x should have shifted right by 7.
-    let root = model.arena.get(model.root).unwrap().get();
+    let root = model.arena().get(model.root).unwrap().get();
     assert!(
         almost_equal(root.position().x, 7.0),
         "root x: expected 7.0, got {}",
@@ -405,7 +404,7 @@ pub fn do_mutator_tree_applies_to_target() {
     );
 
     // Child: y should have shifted by 11.
-    let child = model.arena.get(child_id).unwrap().get();
+    let child = model.arena().get(child_id).unwrap().get();
     assert!(
         almost_equal(child.position().x, 50.0),
         "child x: expected 50.0, got {}",
@@ -517,38 +516,42 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
 
     // -- target tree: root (ch 0) -> child_1 (ch 1) -> child_2 (ch 2)
     let mut model: GfxTree = GfxTree::new_non_indexed();
-    let child_1_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    let child_1 = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("ch1", 1.0, 10.0, Vec2::new(10.0, 10.0), Vec2::new(50.0, 50.0)),
         1,
         1,
-    ));
-    let child_2_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
+    );
+    let child_2 = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("ch2", 1.0, 10.0, Vec2::new(20.0, 20.0), Vec2::new(50.0, 50.0)),
         2,
         2,
-    ));
-    model.root.append(child_1_id, &mut model.arena);
-    model.root.append(child_2_id, &mut model.arena);
+    );
+    let child_1_id = model.insert_child(model.root, child_1, Placement::Last).unwrap();
+    let child_2_id = model.insert_child(model.root, child_2, Placement::Last).unwrap();
 
-    let child_1_before = model.arena.get(child_1_id).unwrap().get().position();
+    let child_1_before = model.arena().get(child_1_id).unwrap().get().position();
 
     // -- mutator tree: root (Void ch 0) -> Void (ch 1), Single (ch 2, add (3, 4))
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
-    let void_mut_id = mutator.arena.new_node(GfxMutator::new_void(1));
-    let single_mut_id = mutator.arena.new_node(GfxMutator::new(
+    let void_mut = GfxMutator::new_void(1);
+    let single_mut = GfxMutator::new(
         GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::position(3.0, 4.0),
         ])),
         2,
-    ));
-    mutator.root.append(void_mut_id, &mut mutator.arena);
-    mutator.root.append(single_mut_id, &mut mutator.arena);
+    );
+    mutator
+        .insert_child(mutator.root, void_mut, Placement::Last)
+        .unwrap();
+    mutator
+        .insert_child(mutator.root, single_mut, Placement::Last)
+        .unwrap();
 
     mutator.apply_to(&mut model, &());
 
     // child_1 unchanged (the Void aligned to it).
-    let child_1 = model.arena.get(child_1_id).unwrap().get();
+    let child_1 = model.arena().get(child_1_id).unwrap().get();
     assert_eq!(
         child_1.position(),
         child_1_before,
@@ -556,7 +559,7 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
     );
 
     // child_2 shifted by (3, 4).
-    let child_2 = model.arena.get(child_2_id).unwrap().get();
+    let child_2 = model.arena().get(child_2_id).unwrap().get();
     assert!(
         almost_equal(child_2.position().x, 23.0),
         "child_2 x: expected 23.0 (20 + 3), got {}",

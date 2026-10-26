@@ -15,24 +15,37 @@
 //! build trees with.
 
 use crate::engine::element::{TreeCache, TreeElement};
+use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
 use crate::engine::predicate::{Comparator, Inspect};
-use crate::engine::tree::{MutatorTree, Tree};
+use crate::engine::tree::{MutatorTree, Placement, Tree};
 use glam::Vec2;
 use indextree::NodeId;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 
-/// The kinds a [`TestElement`] can have. Carried and inspectable;
-/// the walker does not route on it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// The kinds a [`TestElement`] can have. The walker routes on kind and
+/// channel together, so two kinds are what it takes to show a mutator
+/// for one kind missing the other; predicates can filter on it too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TestKind {
     /// The kind of every element the fixtures build unless told
-    /// otherwise.
+    /// otherwise, and the kind of [`MutatorTree::new`]'s `Void` root.
+    #[default]
     Plain,
-    /// A second kind, for predicates that filter on kind.
+    /// A second kind. Keys of this kind sort after every `Plain` key.
     Marked,
+}
+
+/// The key of a [`TestKind::Plain`] element on `channel`.
+pub fn plain(channel: usize) -> BranchKey<TestKind> {
+    BranchKey::new(TestKind::Plain, channel)
+}
+
+/// The key of a [`TestKind::Marked`] element on `channel`.
+pub fn marked(channel: usize) -> BranchKey<TestKind> {
+    BranchKey::new(TestKind::Marked, channel)
 }
 
 /// An element that is one integer.
@@ -87,8 +100,6 @@ impl TreeCache for TestCache {
 pub enum TestField {
     /// The element's value, compared numerically.
     Value(i64),
-    /// The element's kind; only `Equals` and `Exists` are meaningful.
-    Kind(TestKind),
 }
 
 impl Inspect for TestElement {
@@ -99,9 +110,7 @@ impl Inspect for TestElement {
             (TestField::Value(v), Comparator::Equals(neg)) => Some((self.value == *v) != *neg),
             (TestField::Value(v), Comparator::GreaterThan(neg)) => Some((self.value > *v) != *neg),
             (TestField::Value(v), Comparator::LessThan(neg)) => Some((self.value < *v) != *neg),
-            (TestField::Kind(k), Comparator::Equals(neg)) => Some((self.kind == *k) != *neg),
-            (_, Comparator::Exists(neg)) => Some(!neg),
-            (TestField::Kind(_), _) => None,
+            (TestField::Value(_), Comparator::Exists(neg)) => Some(!neg),
         }
     }
 }
@@ -139,6 +148,9 @@ pub enum TestMutation {
     /// `value = inherited` — the state the target's parent handed
     /// down, which is what makes inherited state observable.
     SetToInherited,
+    /// `channel = n` — a mutation that changes its target's key, which
+    /// is what moves the target among its siblings once the walk ends.
+    SetChannel(usize),
 }
 
 impl Mutation<TestElement> for TestMutation {
@@ -151,6 +163,7 @@ impl Mutation<TestElement> for TestMutation {
             TestMutation::Add(n) => target.value += n,
             TestMutation::Set(n) => target.value = *n,
             TestMutation::SetToInherited => target.value = *inherited,
+            TestMutation::SetChannel(n) => target.channel = *n,
         }
     }
 }
@@ -158,27 +171,30 @@ impl Mutation<TestElement> for TestMutation {
 /// The engine's mutator over the test instantiation.
 pub type TestMutator = Mutator<TestElement, TestMutation>;
 
-/// Append `element` under `parent` in `tree`; returns its id.
+/// Add `element` under `parent` in `tree`, at the end of the run of
+/// its key ([`Placement::Last`]); returns its id.
 pub fn add(tree: &mut Tree<TestElement>, parent: NodeId, element: TestElement) -> NodeId {
-    let id = tree.arena.new_node(element);
-    parent.append(id, &mut tree.arena);
-    id
+    tree.insert_child(parent, element, Placement::Last).unwrap()
 }
 
-/// Append `mutator` under `parent` in `mutators`; returns its id.
+/// Add `mutator` under `parent` in `mutators`, at the end of the run
+/// of its key ([`Placement::Last`]); returns its id.
 pub fn add_mutator(
     mutators: &mut MutatorTree<TestElement, TestMutation>,
     parent: NodeId,
     mutator: TestMutator,
 ) -> NodeId {
-    let id = mutators.arena.new_node(mutator);
-    parent.append(id, &mut mutators.arena);
-    id
+    mutators.insert_child(parent, mutator, Placement::Last).unwrap()
+}
+
+/// The values of `parent`'s children, in sibling order.
+pub fn row(tree: &Tree<TestElement>, parent: NodeId) -> Vec<i64> {
+    parent.children(tree.arena()).map(|id| value(tree, id)).collect()
 }
 
 /// The value of the element at `id`.
 pub fn value(tree: &Tree<TestElement>, id: NodeId) -> i64 {
-    tree.arena
+    tree.arena()
         .get(id)
         .expect("fixture id belongs to the tree")
         .get()
@@ -228,14 +244,13 @@ impl SpatialTestElement {
 impl Inspect for SpatialTestElement {
     type Field = TestField;
 
-    /// Only [`TestField::Value`] applies; this element has no kind.
+    /// The same answers as [`TestElement`]'s, from this element's value.
     fn test_field(&self, field: &TestField, comparator: &Comparator) -> Option<bool> {
         match (field, comparator) {
             (TestField::Value(v), Comparator::Equals(neg)) => Some((self.value == *v) != *neg),
             (TestField::Value(v), Comparator::GreaterThan(neg)) => Some((self.value > *v) != *neg),
             (TestField::Value(v), Comparator::LessThan(neg)) => Some((self.value < *v) != *neg),
             (TestField::Value(_), Comparator::Exists(neg)) => Some(!neg),
-            (TestField::Kind(_), _) => None,
         }
     }
 }
@@ -268,12 +283,13 @@ impl TreeElement for SpatialTestElement {
 impl Mutation<SpatialTestElement> for TestMutation {
     type Template = TestMutation;
 
-    /// The same three operations as on [`TestElement`].
+    /// The same operations as on [`TestElement`].
     fn apply_to(&self, target: &mut SpatialTestElement, inherited: &i64) {
         match self {
             TestMutation::Add(n) => target.value += n,
             TestMutation::Set(n) => target.value = *n,
             TestMutation::SetToInherited => target.value = *inherited,
+            TestMutation::SetChannel(n) => target.channel = *n,
         }
     }
 }

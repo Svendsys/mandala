@@ -12,7 +12,7 @@ fn test_build_tree_scale_1000_node_chain() {
     assert_eq!(result.node_count(), 1000);
     // The spine root is the only root, so the tree's root has one
     // child (the Void -> first chain node).
-    let roots: Vec<_> = result.tree.root.children(&result.tree.arena).collect();
+    let roots: Vec<_> = result.tree.root.children(result.tree.arena()).collect();
     assert_eq!(roots.len(), 1);
     // Every chain node is reachable via the node_map.
     for i in 0..1000 {
@@ -39,7 +39,7 @@ fn test_build_tree_wide_fan_out_500() {
     let containers_in_node_map: std::collections::HashSet<indextree::NodeId> =
         result.node_ids().map(|(_, id)| id).collect();
     let child_node_count = root_tree_id
-        .children(&result.tree.arena)
+        .children(result.tree.arena())
         .filter(|cid| containers_in_node_map.contains(cid))
         .count();
     assert_eq!(child_node_count, 499);
@@ -64,7 +64,7 @@ fn test_build_tree_deep_chain_no_stack_overflow() {
     let mut depth = 1;
     loop {
         let next_container = current
-            .children(&result.tree.arena)
+            .children(result.tree.arena())
             .find(|cid| containers_in_node_map.contains(cid));
         match next_container {
             Some(c) => {

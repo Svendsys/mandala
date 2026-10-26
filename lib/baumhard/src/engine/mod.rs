@@ -6,10 +6,15 @@
 //! A [`Tree<E>`](crate::engine::tree::Tree) is an arena of elements; a
 //! [`MutatorTree<E, M>`](crate::engine::tree::MutatorTree) is an arena of
 //! [`Mutator`](crate::engine::mutator::Mutator)s that carry payloads `M`. The
-//! [walk](crate::engine::walker) aligns the two by channel and applies each
-//! payload through [`Mutation::apply_to`](crate::engine::mutation::Mutation::apply_to),
+//! [walk](crate::engine::walker) aligns the two by
+//! [key](crate::engine::key::BranchKey) — an element's kind and channel —
+//! and applies each payload through
+//! [`Mutation::apply_to`](crate::engine::mutation::Mutation::apply_to),
 //! carrying the element type's [inherited state](crate::engine::element::TreeElement::Inherited)
-//! down the walk on its own call stack. [`Predicate`](crate::engine::predicate::Predicate)s
+//! down the walk on its own call stack. Both arenas keep every parent's
+//! children sorted by key, so the walk merges sibling rows in step, and a
+//! walk can start at [anchors](crate::engine::anchor::Anchors) — the
+//! selection — rather than at the root. [`Predicate`](crate::engine::predicate::Predicate)s
 //! steer conditional walks through an element's
 //! [`Inspect`](crate::engine::predicate::Inspect) surface, and the
 //! [builder DSL](crate::engine::builder) compiles a serde-friendly
@@ -26,6 +31,9 @@
 //! allocation per visited node) live in `lib/baumhard/CONVENTIONS.md`
 //! §B2 and §B7.
 
+/// [`Anchors`](anchor::Anchors) — where an anchored walk
+/// ([`MutatorTree::apply_at`](tree::MutatorTree::apply_at)) starts.
+pub mod anchor;
 /// Builder DSL: the [`MutatorNode`](builder::MutatorNode) AST, the
 /// [`BuildContext`](builder::BuildContext) runtime look-up and
 /// [`build`](builder::build()).
@@ -34,6 +42,9 @@ pub mod builder;
 /// provides to the engine — and its per-tree derived state,
 /// [`TreeCache`](element::TreeCache).
 pub mod element;
+/// [`BranchKey`](key::BranchKey) — the kind and channel the walker
+/// routes on, and every parent's children are sorted by.
+pub mod key;
 /// [`Mutation`](mutation::Mutation) — the payload trait a mutator
 /// carries to an element.
 pub mod mutation;
@@ -46,6 +57,9 @@ pub mod mutator;
 /// evaluated through an element's [`Inspect`](predicate::Inspect)
 /// surface.
 pub mod predicate;
+/// The sorted-children invariant as arena operations: sorted insert,
+/// single-node repair, batch re-attach and the check.
+mod siblings;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8), plus
 /// the `TestElement` instantiation that proves the engine is not

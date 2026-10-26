@@ -89,14 +89,14 @@ fn picker_overlay_tree_emits_flat_glyph_area_children() {
     let tree = build_color_picker_overlay_tree(&g, &layout);
 
     let mut area_count = 0usize;
-    for area_id in tree.root.children(&tree.arena) {
-        let area_elem = tree.arena.get(area_id).expect("area node in arena").get();
+    for area_id in tree.root.children(tree.arena()) {
+        let area_elem = tree.arena().get(area_id).expect("area node in arena").get();
         assert!(
             matches!(area_elem.variant(), GfxElementType::GlyphArea),
             "every direct child of root must be a GlyphArea"
         );
         assert_eq!(
-            area_id.children(&tree.arena).count(),
+            area_id.children(tree.arena()).count(),
             0,
             "picker GlyphAreas are leaves",
         );

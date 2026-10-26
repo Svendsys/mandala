@@ -489,9 +489,11 @@ pub fn build_border_mutator_tree_from_nodes(
 
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for node in nodes {
-        let parent_node = mt
-            .root
-            .append_value(GfxMutator::new_void(node.parent_channel), &mut mt.arena);
+        let root = mt.root;
+        let Some(parent_node) = super::push_mutator(&mut mt, root, GfxMutator::new_void(node.parent_channel))
+        else {
+            continue;
+        };
 
         let specs = crate::mindmap::border::border_run_specs(
             &node.border_style,
@@ -515,9 +517,10 @@ pub fn build_border_mutator_tree_from_nodes(
             area.regions = regions;
             area.zoom_visibility = node.zoom_visibility;
             let delta = DeltaGlyphArea::full_assign_from(&area);
-            parent_node.append_value(
+            super::push_mutator(
+                &mut mt,
+                parent_node,
                 GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), spec.channel),
-                &mut mt.arena,
             );
         }
     }
@@ -539,10 +542,14 @@ fn append_border_sub_tree(tree: &mut GfxTree, node: &BorderNodeData, unique_id: 
     // Per-node Void parent — groups the eight runs for targeted
     // mutation. The parent's channel is the stable sorted-index
     // value so distinct nodes never collide across rebuilds.
-    let parent_id = tree.root.append_value(
+    let root = tree.root;
+    let Some(parent_id) = super::push_element(
+        tree,
+        root,
         GfxElement::new_void_with_id(node.parent_channel, *unique_id),
-        &mut tree.arena,
-    );
+    ) else {
+        return;
+    };
     *unique_id += 1;
 
     // Stable channels 1..=8 inside each border sub-tree. The
@@ -607,5 +614,5 @@ pub(super) fn append_border_run(
     area.regions = build_border_regions(cluster_count, palette_cycle, color_rgba, palette_offset);
 
     let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
-    parent_id.append_value(element, &mut tree.arena);
+    super::push_element(tree, parent_id, element);
 }

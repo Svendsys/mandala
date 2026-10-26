@@ -28,8 +28,8 @@ pub(crate) const FIT_PADDING_FRACTION: f32 = 0.05;
 /// O(tree elements), no allocation.
 pub(crate) fn content_bounds(tree: &GfxTree) -> Option<(Vec2, Vec2)> {
     let mut bounds: Option<(Vec2, Vec2)> = None;
-    for descendant_id in tree.root().descendants(&tree.arena) {
-        let Some(area) = tree.arena.get(descendant_id).and_then(|n| n.get().glyph_area()) else {
+    for descendant_id in tree.root().descendants(tree.arena()) {
+        let Some(area) = tree.arena().get(descendant_id).and_then(|n| n.get().glyph_area()) else {
             continue;
         };
         let min = Vec2::new(area.position.x.0, area.position.y.0);

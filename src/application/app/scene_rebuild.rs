@@ -1782,7 +1782,7 @@ mod tests {
     fn first_alpha(tree: &baumhard::mindmap::tree_builder::MindMapTree, mind_id: &str) -> f32 {
         let sid = tree.section_arena_id(mind_id, 0).expect("section area");
         tree.tree
-            .arena
+            .arena()
             .get(sid)
             .unwrap()
             .get()
@@ -2428,16 +2428,24 @@ mod content_signature_dispatch {
         let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
         let mut parent = mt.root;
         for channel in void_channels {
-            parent = parent.append_value(GfxMutator::new_void(*channel), &mut mt.arena);
+            parent = mt
+                .insert_child(
+                    parent,
+                    GfxMutator::new_void(*channel),
+                    baumhard::engine::tree::Placement::Last,
+                )
+                .unwrap();
         }
         let delta = DeltaGlyphArea::new(vec![
             GlyphAreaField::Text(SENTINEL.to_string()),
             GlyphAreaField::Operation(ApplyOperation::Assign),
         ]);
-        parent.append_value(
+        mt.insert_child(
+            parent,
             GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), *leaf_channel),
-            &mut mt.arena,
-        );
+            baumhard::engine::tree::Placement::Last,
+        )
+        .unwrap();
         mt
     }
 
@@ -2451,8 +2459,8 @@ mod content_signature_dispatch {
             .canvas_scene()
             .tree(id)
             .expect("a registered role has a tree");
-        tree.root.descendants(&tree.arena).any(|node| {
-            tree.arena
+        tree.root.descendants(tree.arena()).any(|node| {
+            tree.arena()
                 .get(node)
                 .and_then(|n| n.get().glyph_area())
                 .is_some_and(|area| area.text == SENTINEL)

@@ -15,7 +15,7 @@ use baumhard::core::primitives::{Flag, Flaggable, Range};
 use baumhard::engine::walker::walk_tree_from;
 use baumhard::gfx_structs::area::GlyphAreaCommand;
 use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
-use baumhard::gfx_structs::tree::GfxMutatorTree;
+use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use baumhard::mindmap::connection;
 use baumhard::mindmap::model::MindMap;
 use baumhard::mindmap::tree_builder::MindMapTree;
@@ -103,7 +103,7 @@ pub fn hit_test_target(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<HitTa
             mind_id = Some(id.to_string());
             break;
         }
-        match tree.tree.arena.get(probe).and_then(|n| n.parent()) {
+        match tree.tree.arena().get(probe).and_then(|n| n.parent()) {
             Some(p) => probe = p,
             None => break,
         }
@@ -153,7 +153,7 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
     let Some(arena_id) = tree.arena_id_for(node_id) else {
         return false;
     };
-    let Some(arena_node) = tree.tree.arena.get(arena_id) else {
+    let Some(arena_node) = tree.tree.arena().get(arena_id) else {
         return false;
     };
     let element = arena_node.get();
@@ -168,7 +168,7 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
         return area.shape.contains_local(canvas_pos - min, bounds);
     }
 
-    if let Some((tl, br)) = element.subtree_aabb() {
+    if let Some((tl, br)) = tree.tree.subtree_aabb(arena_id) {
         return aabb_contains(canvas_pos, tl, br);
     }
     false
@@ -243,7 +243,7 @@ pub fn rect_select(corner_a: Vec2, corner_b: Vec2, tree: &MindMapTree) -> Vec<St
 
     let mut hits = Vec::new();
     for (mind_id, node_id) in tree.node_ids() {
-        let area = match tree.tree.arena.get(node_id).and_then(|n| n.get().glyph_area()) {
+        let area = match tree.tree.arena().get(node_id).and_then(|n| n.get().glyph_area()) {
             Some(a) => a,
             None => continue,
         };
@@ -308,10 +308,10 @@ pub fn apply_inactive_node_dimming(tree: &mut MindMapTree, active_node_id: Optio
     for mind_id in inactive {
         let Some(node_id) = tree.arena_id_for(&mind_id) else { continue };
         let section_ids: Vec<indextree::NodeId> = node_id
-            .children(&tree.tree.arena)
+            .children(tree.tree.arena())
             .filter(|cid| {
                 tree.tree
-                    .arena
+                    .arena()
                     .get(*cid)
                     .map(|n| n.get().flag_is_set(Flag::SectionRoot))
                     .unwrap_or(false)
@@ -320,7 +320,7 @@ pub fn apply_inactive_node_dimming(tree: &mut MindMapTree, active_node_id: Optio
 
         for section_node_id in section_ids {
             let (dimmed, target_channel): (Vec<(Range, [f32; 4])>, usize) = {
-                let Some(node) = tree.tree.arena.get(section_node_id) else { continue };
+                let Some(node) = tree.tree.arena().get(section_node_id) else { continue };
                 let element = node.get();
                 let Some(area) = element.glyph_area() else { continue };
                 let dimmed = area
@@ -395,7 +395,7 @@ where
         //
         // §B7 borrow-split note: collecting into a `Vec<NodeId>`
         // here is the smallest correct shape, not laziness.
-        // `node_id.children(&tree.tree.arena)` borrows the arena
+        // `node_id.children(tree.tree.arena())` borrows the arena
         // immutably; the loop body needs `&mut tree.tree` to call
         // `walk_tree_from`. Holding the iterator across the mutable
         // borrow won't compile, so the fix is to materialize the
@@ -405,10 +405,10 @@ where
         // node), and per-mind-id-per-call, so allocation cost is
         // negligible relative to the highlight macro itself.
         let section_ids: Vec<indextree::NodeId> = node_id
-            .children(&tree.tree.arena)
+            .children(tree.tree.arena())
             .filter(|cid| {
                 tree.tree
-                    .arena
+                    .arena()
                     .get(*cid)
                     .map(|n| n.get().flag_is_set(Flag::SectionRoot))
                     .unwrap_or(false)
@@ -432,7 +432,7 @@ where
 
         for section_node_id in section_ids {
             let (ranges, target_channel): (Vec<Range>, usize) = {
-                let Some(node) = tree.tree.arena.get(section_node_id) else { continue };
+                let Some(node) = tree.tree.arena().get(section_node_id) else { continue };
                 let element = node.get();
                 let Some(area) = element.glyph_area() else { continue };
                 let ranges = area.regions.all_regions().iter().map(|r| r.range).collect();
@@ -527,16 +527,15 @@ fn apply_drag_delta_inner(
     };
 
     if include_descendants {
-        walk_drag_subtree(&mut tree.tree.arena, tree_node_id, dx, dy, patches.as_deref_mut());
+        walk_drag_subtree(&mut tree.tree, tree_node_id, dx, dy, patches.as_deref_mut());
     } else {
         // Container plus every section sub-element (`Flag::SectionRoot`).
         // Sections store absolute canvas positions and must move
         // with the node container or they'll visibly detach. Child
         // mind-nodes (without `Flag::SectionRoot`) are skipped —
         // the historical `include_descendants=false` semantic.
-        walk_drag_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy, patches);
+        walk_drag_node_and_sections(&mut tree.tree, tree_node_id, dx, dy, patches);
     }
-    tree.tree.invalidate_caches();
 }
 
 /// Per-frame tree mutation for the section-drag gesture: move only
@@ -567,8 +566,7 @@ pub fn apply_section_drag_delta_and_collect_patches(
         Some(id) => id,
         None => return,
     };
-    walk_drag_subtree(&mut tree.tree.arena, section_root, dx, dy, Some(patches));
-    tree.tree.invalidate_caches();
+    walk_drag_subtree(&mut tree.tree, section_root, dx, dy, Some(patches));
 }
 
 /// Per-frame tree mutation for the section-resize gesture: write
@@ -599,13 +597,12 @@ pub fn apply_section_resize_to_tree(
     new_size: Vec2,
 ) -> Option<indextree::NodeId> {
     let section_root = tree.section_arena_id(node_id, section_idx)?;
-    if let Some(node) = tree.tree.arena.get_mut(section_root) {
-        if let Some(area) = node.get_mut().glyph_area_mut() {
+    let _ = tree.tree.update(section_root, |element| {
+        if let Some(area) = element.glyph_area_mut() {
             area.set_position((new_position.x, new_position.y));
             area.set_bounds((new_size.x, new_size.y));
         }
-    }
-    tree.tree.invalidate_caches();
+    });
     Some(section_root)
 }
 
@@ -701,12 +698,12 @@ pub fn apply_node_resize_to_tree(
 ) -> Option<indextree::NodeId> {
     patches.clear();
     let container_id = tree.arena_id_for(node_id)?;
-    if let Some(node) = tree.tree.arena.get_mut(container_id) {
-        if let Some(area) = node.get_mut().glyph_area_mut() {
+    let _ = tree.tree.update(container_id, |element| {
+        if let Some(area) = element.glyph_area_mut() {
             area.set_position((new_position.x, new_position.y));
             area.set_bounds((new_size.x, new_size.y));
         }
-    }
+    });
     // Sections-only walk — the existing helper filters by
     // `Flag::SectionRoot`, so child mind-node containers stay
     // put. Move-this-node-only semantics, same primitive
@@ -716,18 +713,18 @@ pub fn apply_node_resize_to_tree(
         // position was already written above via `set_position`,
         // so we walk children directly rather than calling the
         // sibling helper that would re-shift the container.
-        let mut child = tree.tree.arena.get(container_id).and_then(|n| n.first_child());
+        let mut child = tree.tree.arena().get(container_id).and_then(|n| n.first_child());
         while let Some(cid) = child {
-            child = tree.tree.arena.get(cid).and_then(|n| n.next_sibling());
+            child = tree.tree.arena().get(cid).and_then(|n| n.next_sibling());
             let is_section = tree
                 .tree
-                .arena
+                .arena()
                 .get(cid)
                 .map(|n| n.get().flag_is_set(Flag::SectionRoot))
                 .unwrap_or(false);
             if is_section {
                 walk_drag_subtree(
-                    &mut tree.tree.arena,
+                    &mut tree.tree,
                     cid,
                     position_delta.x,
                     position_delta.y,
@@ -736,7 +733,6 @@ pub fn apply_node_resize_to_tree(
             }
         }
     }
-    tree.tree.invalidate_caches();
     Some(container_id)
 }
 
@@ -781,14 +777,13 @@ pub fn hit_test_section_resize_handle(
 /// child mind-nodes are skipped. The container itself is moved
 /// unconditionally (and patched, if `patches` is `Some`).
 fn walk_drag_node_and_sections(
-    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
+    tree: &mut GfxTree,
     node_id: indextree::NodeId,
     dx: f32,
     dy: f32,
     mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
 ) {
-    if let Some(node) = arena.get_mut(node_id) {
-        let elem = node.get_mut();
+    let _ = tree.update(node_id, |elem| {
         if let Some(area) = elem.glyph_area_mut() {
             area.move_position(dx, dy);
         }
@@ -796,16 +791,17 @@ fn walk_drag_node_and_sections(
             let pos = elem.position();
             p.push((elem.unique_id(), (pos.x, pos.y)));
         }
-    }
-    let mut child = arena.get(node_id).and_then(|n| n.first_child());
+    });
+    let mut child = tree.arena().get(node_id).and_then(|n| n.first_child());
     while let Some(cid) = child {
-        child = arena.get(cid).and_then(|n| n.next_sibling());
-        let is_section = arena
+        child = tree.arena().get(cid).and_then(|n| n.next_sibling());
+        let is_section = tree
+            .arena()
             .get(cid)
             .map(|n| n.get().flag_is_set(Flag::SectionRoot))
             .unwrap_or(false);
         if is_section {
-            walk_drag_subtree(arena, cid, dx, dy, patches.as_deref_mut());
+            walk_drag_subtree(tree, cid, dx, dy, patches.as_deref_mut());
         }
     }
 }
@@ -843,7 +839,7 @@ fn walk_drag_node_and_sections(
 /// then claimed a branching width, which is what a *breadth*-first
 /// frontier would hold rather than this one.
 fn walk_drag_subtree(
-    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
+    tree: &mut GfxTree,
     node_id: indextree::NodeId,
     dx: f32,
     dy: f32,
@@ -851,8 +847,7 @@ fn walk_drag_subtree(
 ) {
     let mut frontier = vec![node_id];
     while let Some(id) = frontier.pop() {
-        if let Some(node) = arena.get_mut(id) {
-            let elem = node.get_mut();
+        let _ = tree.update(id, |elem| {
             if let Some(area) = elem.glyph_area_mut() {
                 area.move_position(dx, dy);
                 if let Some(p) = patches.as_deref_mut() {
@@ -860,12 +855,12 @@ fn walk_drag_subtree(
                     p.push((elem.unique_id(), (pos.x, pos.y)));
                 }
             }
-        }
+        });
         let mark = frontier.len();
-        let mut child = arena.get(id).and_then(|n| n.first_child());
+        let mut child = tree.arena().get(id).and_then(|n| n.first_child());
         while let Some(cid) = child {
             frontier.push(cid);
-            child = arena.get(cid).and_then(|n| n.next_sibling());
+            child = tree.arena().get(cid).and_then(|n| n.next_sibling());
         }
         frontier[mark..].reverse();
     }

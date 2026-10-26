@@ -4,6 +4,58 @@
 
 use super::super::*;
 
+/// Several handle sets — two selected sections here, eight handles
+/// each on channels `1..=8` — build in channel order, and every
+/// handle is added at the end of the row. The arena hands out ids
+/// in creation order and the build removes nothing, so ids that
+/// ascend along the row are exactly "every insert was the append";
+/// added in slice order, the second section's handles would each
+/// have scanned back past the first's higher channels. Both trees
+/// hold the same cells: the order is the key's, and only the cost
+/// of reaching it changed.
+#[test]
+fn handle_tree_adds_every_handle_at_the_end_of_its_row() {
+    use crate::engine::element::TreeElement;
+    use glam::Vec2;
+    let mut handles = build_section_resize_handles("0", 0, Vec2::ZERO, Some(Vec2::new(100.0, 40.0)));
+    handles.extend(build_section_resize_handles(
+        "1",
+        0,
+        Vec2::new(0.0, 100.0),
+        Some(Vec2::new(100.0, 40.0)),
+    ));
+    assert_eq!(handles.len(), 16, "precondition: two full handle sets");
+
+    let tree = build_handle_tree(&handles);
+    let row: Vec<_> = tree.root.children(tree.arena()).collect();
+    assert_eq!(row.len(), 16);
+    for pair in row.windows(2) {
+        assert!(
+            pair[0] < pair[1],
+            "a handle was inserted ahead of one already in the row ({} before {})",
+            pair[1],
+            pair[0]
+        );
+    }
+    let channels: Vec<usize> = row
+        .iter()
+        .map(|&id| tree.arena().get(id).unwrap().get().channel())
+        .collect();
+    let mut sorted = channels.clone();
+    sorted.sort_unstable();
+    assert_eq!(channels, sorted, "the row is in channel order");
+    // Slice order breaks the tie: the first section's handle first.
+    let first_ids: Vec<usize> = row[..2]
+        .iter()
+        .map(|&id| tree.arena().get(id).unwrap().get().unique_id())
+        .collect();
+    assert_eq!(
+        first_ids,
+        vec![1, 9],
+        "equal channels keep slice order and their ids"
+    );
+}
+
 #[test]
 fn edge_handle_channels_preserve_ordering_and_distinctness() {
     use crate::mindmap::tree_builder::EdgeHandleKind;
@@ -64,12 +116,12 @@ fn edge_handle_mutator_round_trip_matches_full_rebuild() {
     mutator.apply_to(&mut tree_a, &());
 
     let expected = build_handle_tree(&set_b);
-    let actual_leaves: Vec<NodeId> = tree_a.root.children(&tree_a.arena).collect();
-    let expected_leaves: Vec<NodeId> = expected.root.children(&expected.arena).collect();
+    let actual_leaves: Vec<NodeId> = tree_a.root.children(tree_a.arena()).collect();
+    let expected_leaves: Vec<NodeId> = expected.root.children(expected.arena()).collect();
     assert_eq!(actual_leaves.len(), expected_leaves.len());
     for (a, e) in actual_leaves.iter().zip(expected_leaves.iter()) {
-        let a_area = tree_a.arena.get(*a).unwrap().get().glyph_area().unwrap();
-        let e_area = expected.arena.get(*e).unwrap().get().glyph_area().unwrap();
+        let a_area = tree_a.arena().get(*a).unwrap().get().glyph_area().unwrap();
+        let e_area = expected.arena().get(*e).unwrap().get().glyph_area().unwrap();
         assert_eq!(a_area.text, e_area.text);
         assert_eq!(a_area.position, e_area.position);
         assert_eq!(a_area.render_bounds, e_area.render_bounds);
@@ -137,8 +189,8 @@ fn edge_handle_region_sized_by_grapheme_cluster_count_not_codepoints() {
         font_size_pt: 14.0,
     };
     let tree = build_handle_tree(&[elem]);
-    let handle = tree.root.children(&tree.arena).next().unwrap();
-    let area = tree.arena.get(handle).unwrap().get().glyph_area().unwrap();
+    let handle = tree.root.children(tree.arena()).next().unwrap();
+    let area = tree.arena().get(handle).unwrap().get().glyph_area().unwrap();
     let regions = area.regions.all_regions();
     assert_eq!(regions.len(), 1);
     assert_eq!(

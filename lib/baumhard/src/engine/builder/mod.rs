@@ -18,5 +18,5 @@ mod build;
 mod context;
 
 pub use ast::{ChannelSrc, CountSrc, InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
-pub use build::{build, iter_section_channels, BuildError};
+pub use build::{build, iter_section_keys, BuildError};
 pub use context::{BuildContext, NoRuntime};

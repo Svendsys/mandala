@@ -164,7 +164,7 @@ pub(in crate::application::app) fn read_section_regions(
 ) -> Option<baumhard::core::primitives::ColorFontRegions> {
     let tree = mindmap_tree?;
     let nid = section_arena_id(tree, node_id, section_idx)?;
-    let element = tree.tree.arena.get(nid)?.get();
+    let element = tree.tree.arena().get(nid)?.get();
     element.glyph_area().map(|a| a.regions.clone())
 }
 
@@ -179,7 +179,7 @@ pub(in crate::application::app) fn read_section_text(
 ) -> Option<String> {
     let tree = mindmap_tree?;
     let nid = section_arena_id(tree, node_id, section_idx)?;
-    let element = tree.tree.arena.get(nid)?.get();
+    let element = tree.tree.arena().get(nid)?.get();
     element.glyph_area().map(|a| a.text.clone())
 }
 
@@ -208,22 +208,20 @@ pub(in crate::application::app) fn apply_text_and_regions_delta(
         Some(id) => id,
         None => return false,
     };
-    let element = match tree.tree.arena.get_mut(indextree_node_id) {
-        Some(n) => n.get_mut(),
-        None => return false,
-    };
-    let area = match element.glyph_area_mut() {
-        Some(a) => a,
-        None => return false,
-    };
-
     let delta = DeltaGlyphArea::new(vec![
         GlyphAreaField::Text(text),
         GlyphAreaField::ColorFontRegions(regions),
         GlyphAreaField::Operation(ApplyOperation::Assign),
     ]);
-    delta.apply_to(area);
-    true
+    tree.tree
+        .update(indextree_node_id, |element| match element.glyph_area_mut() {
+            Some(area) => {
+                delta.apply_to(area);
+                true
+            }
+            None => false,
+        })
+        .unwrap_or(false)
 }
 
 /// Apply a snapshot of `(text, regions)` back to the live tree's
@@ -469,17 +467,6 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
         Some(id) => id,
         None => return,
     };
-    // Grab a mutable handle to the target section's GlyphArea.
-    let element = tree.tree.arena.get_mut(indextree_node_id);
-    let element = match element {
-        Some(n) => n.get_mut(),
-        None => return,
-    };
-    let area = match element.glyph_area_mut() {
-        Some(a) => a,
-        None => return,
-    };
-
     // Compose display-text regions from the canonical buffer regions
     // via Baumhard's `insert_regions_at` primitive: the caret glyph
     // is a one-char structural insertion at `cursor_grapheme_pos`
@@ -507,7 +494,21 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
         GlyphAreaField::ColorFontRegions(display_regions),
         GlyphAreaField::Operation(ApplyOperation::Assign),
     ]);
-    delta.apply_to(area);
+    // Write the target section's GlyphArea through the tree's one
+    // element-mutation entry point. A section that is gone, or that is
+    // not an area, has nothing to show the edit on.
+    let applied = tree
+        .tree
+        .update(indextree_node_id, |element| match element.glyph_area_mut() {
+            Some(area) => {
+                delta.apply_to(area);
+                true
+            }
+            None => false,
+        });
+    if applied != Ok(true) {
+        return;
+    }
 
     // No `Flag::Focused` write: the section-frame pass takes the
     // edited section from `SectionFrameElement::focused`, so the
@@ -804,7 +805,7 @@ mod tests {
                 *idx == 0
                     && tree
                         .tree
-                        .arena
+                        .arena()
                         .get(*nid)
                         .and_then(|n| n.get().glyph_area())
                         .map(|a| !a.text.is_empty())

@@ -6,6 +6,7 @@
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
+use crate::engine::tree::Placement;
 use crate::font::fonts;
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
 use crate::gfx_structs::element::GfxElement;
@@ -23,8 +24,7 @@ fn tree_with_area(position: Vec2, bounds: Vec2, channel: usize) -> (GfxTree, Nod
     let mut tree = GfxTree::new_non_indexed();
     let area = GlyphArea::new_with_str("x", 1.0, 10.0, position, bounds);
     let element = GfxElement::new_area_non_indexed_with_id(area, channel, channel);
-    let leaf = tree.arena.new_node(element);
-    tree.root.append(leaf, &mut tree.arena);
+    let leaf = tree.insert_child(tree.root, element, Placement::Last).unwrap();
     (tree, leaf)
 }
 
@@ -36,14 +36,10 @@ fn tree_outer_inner() -> (GfxTree, NodeId, NodeId) {
     let mut tree = GfxTree::new_non_indexed();
     let outer = GlyphArea::new_with_str("outer", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0));
     let inner = GlyphArea::new_with_str("inner", 1.0, 10.0, Vec2::new(40.0, 40.0), Vec2::new(20.0, 20.0));
-    let outer_id = tree
-        .arena
-        .new_node(GfxElement::new_area_non_indexed_with_id(outer, 0, 1));
-    let inner_id = tree
-        .arena
-        .new_node(GfxElement::new_area_non_indexed_with_id(inner, 0, 2));
-    tree.root.append(outer_id, &mut tree.arena);
-    outer_id.append(inner_id, &mut tree.arena);
+    let outer = GfxElement::new_area_non_indexed_with_id(outer, 0, 1);
+    let inner = GfxElement::new_area_non_indexed_with_id(inner, 0, 2);
+    let outer_id = tree.insert_child(tree.root, outer, Placement::Last).unwrap();
+    let inner_id = tree.insert_child(outer_id, inner, Placement::Last).unwrap();
     (tree, outer_id, inner_id)
 }
 
@@ -189,25 +185,30 @@ pub fn do_scene_component_in_resolves_overlap_by_smallest_area() {
     // single tree, an overlap resolves to the smallest area, not to
     // insertion order and not to anything hash-derived. Registered
     // large-first here and small-first below to show the answer does
-    // not move.
+    // not move. Both are on one channel, so the two registrations
+    // really are two sibling orders: children with equal keys keep the
+    // order they were inserted in.
     fonts::init();
     let build = |small_first: bool| {
         let mut tree: GfxTree = GfxTree::new_non_indexed();
         let big = GlyphArea::new_with_str("big", 1.0, 10.0, Vec2::ZERO, Vec2::new(100.0, 100.0));
         let small = GlyphArea::new_with_str("small", 1.0, 10.0, Vec2::new(40.0, 40.0), Vec2::new(10.0, 10.0));
-        let big_id = tree
-            .arena
-            .new_node(GfxElement::new_area_non_indexed_with_id(big, 1, 1));
-        let small_id = tree
-            .arena
-            .new_node(GfxElement::new_area_non_indexed_with_id(small, 2, 2));
-        if small_first {
-            tree.root.append(small_id, &mut tree.arena);
-            tree.root.append(big_id, &mut tree.arena);
+        let big = GfxElement::new_area_non_indexed_with_id(big, 1, 1);
+        let small = GfxElement::new_area_non_indexed_with_id(small, 1, 2);
+        let small_id = if small_first {
+            let small_id = tree.insert_child(tree.root, small, Placement::Last).unwrap();
+            tree.insert_child(tree.root, big, Placement::Last).unwrap();
+            small_id
         } else {
-            tree.root.append(big_id, &mut tree.arena);
-            tree.root.append(small_id, &mut tree.arena);
-        }
+            tree.insert_child(tree.root, big, Placement::Last).unwrap();
+            tree.insert_child(tree.root, small, Placement::Last).unwrap()
+        };
+        let first = tree.root.children(tree.arena()).next().unwrap();
+        assert_eq!(
+            first == small_id,
+            small_first,
+            "precondition: the registration order is the sibling order"
+        );
         (tree, small_id)
     };
 
@@ -358,10 +359,13 @@ pub fn do_descendants_aabb_cache_invalidated_by_mutator() {
         GlyphAreaField::position(100.0, 100.0),
         GlyphAreaField::Operation(crate::core::primitives::ApplyOperation::Assign),
     ]);
-    let mutator_node = mutator
-        .arena
-        .new_node(GfxMutator::new(GfxMutation::area_delta(area_delta), 1));
-    mutator.root.append(mutator_node, &mut mutator.arena);
+    mutator
+        .insert_child(
+            mutator.root,
+            GfxMutator::new(GfxMutation::area_delta(area_delta), 1),
+            Placement::Last,
+        )
+        .unwrap();
 
     mutator.apply_to(&mut tree, &());
 

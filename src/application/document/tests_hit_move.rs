@@ -18,7 +18,14 @@ fn test_hit_test_direct_hit() {
     let mut tree = load_test_tree();
     // "Lord God" node (id: 0) — get its position from the tree
     let node_id = tree.arena_id_for("0").unwrap();
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    let area = tree
+        .tree
+        .arena()
+        .get(node_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let center = aabb_center(
         Vec2::new(area.position.x.0, area.position.y.0),
         Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
@@ -35,7 +42,14 @@ fn test_hit_test_direct_hit() {
 fn test_hit_test_target_single_section_collapses_to_node() {
     let mut tree = load_test_tree();
     let node_id = tree.arena_id_for("0").unwrap();
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    let area = tree
+        .tree
+        .arena()
+        .get(node_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let center = aabb_center(
         Vec2::new(area.position.x.0, area.position.y.0),
         Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
@@ -64,7 +78,7 @@ fn test_hit_test_returns_smallest_on_overlap() {
     let parent_id_str = "0";
     let parent_size = {
         let nid = tree.arena_id_for(parent_id_str).unwrap();
-        let area = tree.tree.arena.get(nid).unwrap().get().glyph_area().unwrap();
+        let area = tree.tree.arena().get(nid).unwrap().get().glyph_area().unwrap();
         area.render_bounds.x.0 * area.render_bounds.y.0
     };
 
@@ -75,7 +89,7 @@ fn test_hit_test_returns_smallest_on_overlap() {
         tree.node_ids()
             .filter(|(id, _)| *id != parent_id_str)
             .find_map(|(mind_id, nid)| {
-                let a = tree.tree.arena.get(nid)?.get().glyph_area()?;
+                let a = tree.tree.arena().get(nid)?.get().glyph_area()?;
                 let child_size = a.render_bounds.x.0 * a.render_bounds.y.0;
                 let child_center = aabb_center(
                     Vec2::new(a.position.x.0, a.position.y.0),
@@ -109,7 +123,7 @@ fn test_apply_tree_highlights_via_walker() {
     // Before highlight: original color (white).
     let area = tree
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -127,7 +141,7 @@ fn test_apply_tree_highlights_via_walker() {
     // After highlight: cyan on section-area's regions.
     let area = tree
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -145,7 +159,7 @@ fn first_section_alpha(tree: &MindMapTree, mind_id: &str) -> f32 {
         .section_arena_id(mind_id, 0)
         .unwrap_or_else(|| panic!("{mind_id} must have a section area"));
     tree.tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -238,7 +252,7 @@ fn test_selection_highlight_wins_over_dimming_when_applied_after() {
     let section_id = tree.section_arena_id(&other, 0).unwrap();
     let color = tree
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -269,7 +283,7 @@ fn test_apply_tree_highlights_does_not_affect_others() {
     let other_node_id = tree.arena_id_for(&other_id).unwrap();
     let before = tree
         .tree
-        .arena
+        .arena()
         .get(other_node_id)
         .unwrap()
         .get()
@@ -282,7 +296,7 @@ fn test_apply_tree_highlights_does_not_affect_others() {
 
     let after = tree
         .tree
-        .arena
+        .arena()
         .get(other_node_id)
         .unwrap()
         .get()
@@ -309,7 +323,7 @@ fn test_apply_tree_highlights_later_pair_overrides_earlier() {
 
     let area = tree
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -677,7 +691,7 @@ fn test_apply_drag_delta() {
     let tree_nid = tree.arena_id_for(node_id).unwrap();
     let orig_x = tree
         .tree
-        .arena
+        .arena()
         .get(tree_nid)
         .unwrap()
         .get()
@@ -688,7 +702,7 @@ fn test_apply_drag_delta() {
         .0;
     let orig_y = tree
         .tree
-        .arena
+        .arena()
         .get(tree_nid)
         .unwrap()
         .get()
@@ -702,7 +716,7 @@ fn test_apply_drag_delta() {
 
     let new_x = tree
         .tree
-        .arena
+        .arena()
         .get(tree_nid)
         .unwrap()
         .get()
@@ -713,7 +727,7 @@ fn test_apply_drag_delta() {
         .0;
     let new_y = tree
         .tree
-        .arena
+        .arena()
         .get(tree_nid)
         .unwrap()
         .get()
@@ -739,7 +753,7 @@ fn test_apply_drag_delta_with_descendants() {
     let child_tree_nid = tree.arena_id_for(child_id).unwrap();
     let child_orig_x = tree
         .tree
-        .arena
+        .arena()
         .get(child_tree_nid)
         .unwrap()
         .get()
@@ -753,7 +767,7 @@ fn test_apply_drag_delta_with_descendants() {
 
     let child_new_x = tree
         .tree
-        .arena
+        .arena()
         .get(child_tree_nid)
         .unwrap()
         .get()
@@ -785,7 +799,7 @@ fn test_apply_section_drag_delta_moves_only_target_section() {
     let s1_nid = tree.section_arena_id(&id, 1).unwrap();
     let container_x = tree
         .tree
-        .arena
+        .arena()
         .get(container_nid)
         .unwrap()
         .get()
@@ -796,7 +810,7 @@ fn test_apply_section_drag_delta_moves_only_target_section() {
         .0;
     let s0_x = tree
         .tree
-        .arena
+        .arena()
         .get(s0_nid)
         .unwrap()
         .get()
@@ -807,7 +821,7 @@ fn test_apply_section_drag_delta_moves_only_target_section() {
         .0;
     let s1_x = tree
         .tree
-        .arena
+        .arena()
         .get(s1_nid)
         .unwrap()
         .get()
@@ -823,7 +837,7 @@ fn test_apply_section_drag_delta_moves_only_target_section() {
     // Target section moved by +17 on x.
     let s1_new_x = tree
         .tree
-        .arena
+        .arena()
         .get(s1_nid)
         .unwrap()
         .get()
@@ -840,7 +854,7 @@ fn test_apply_section_drag_delta_moves_only_target_section() {
     // Container untouched.
     let container_new_x = tree
         .tree
-        .arena
+        .arena()
         .get(container_nid)
         .unwrap()
         .get()
@@ -857,7 +871,7 @@ fn test_apply_section_drag_delta_moves_only_target_section() {
     // Sibling section[0] untouched.
     let s0_new_x = tree
         .tree
-        .arena
+        .arena()
         .get(s0_nid)
         .unwrap()
         .get()
@@ -895,7 +909,7 @@ fn test_apply_section_resize_to_tree_writes_position_and_bounds() {
     assert_eq!(written, Some(arena_id));
     let area = tree
         .tree
-        .arena
+        .arena()
         .get(arena_id)
         .and_then(|n| n.get().glyph_area())
         .unwrap();
@@ -918,7 +932,7 @@ fn test_apply_section_resize_to_tree_unknown_section_no_op() {
     let arena_id = tree.section_arena_id(&id, 1).unwrap();
     let area_before = tree
         .tree
-        .arena
+        .arena()
         .get(arena_id)
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
@@ -931,7 +945,7 @@ fn test_apply_section_resize_to_tree_unknown_section_no_op() {
     );
     let area_after = tree
         .tree
-        .arena
+        .arena()
         .get(arena_id)
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
@@ -999,7 +1013,7 @@ fn test_section_drag_release_aabb_overflow_rejects_and_preserves_model() {
     let s1_root = tree.section_arena_id(&id, 1).unwrap();
     let original_section_pos = tree
         .tree
-        .arena
+        .arena()
         .get(s1_root)
         .unwrap()
         .get()
@@ -1014,7 +1028,7 @@ fn test_section_drag_release_aabb_overflow_rejects_and_preserves_model() {
     apply_section_drag_delta_and_collect_patches(&mut tree, &id, 1, 200.0, 0.0, &mut patches);
     let dragged_pos = tree
         .tree
-        .arena
+        .arena()
         .get(s1_root)
         .unwrap()
         .get()
@@ -1054,7 +1068,7 @@ fn test_section_drag_release_aabb_overflow_rejects_and_preserves_model() {
     let s1_restored = restored_tree.section_arena_id(&id, 1).unwrap();
     let restored_pos = restored_tree
         .tree
-        .arena
+        .arena()
         .get(s1_restored)
         .unwrap()
         .get()
@@ -1111,7 +1125,14 @@ fn test_rect_select_finds_nodes_in_region() {
     let tree = load_test_tree();
     // Get position/bounds of "Lord God" to build a rect that contains it
     let node_id = tree.arena_id_for("0").unwrap();
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    let area = tree
+        .tree
+        .arena()
+        .get(node_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let x = area.position.x.0;
     let y = area.position.y.0;
     let w = area.render_bounds.x.0;
@@ -1150,14 +1171,16 @@ fn test_rect_select_misses_distant_nodes() {
 fn set_node_shape_ellipse(tree: &mut baumhard::mindmap::tree_builder::MindMapTree, node_id: &str) {
     use baumhard::gfx_structs::shape::NodeShape;
     let nid = tree.arena_id_for(node_id).expect("node exists");
-    let node = tree.tree.arena.get_mut(nid).expect("arena has node");
-    let area = node.get_mut().glyph_area_mut().expect("node is a GlyphArea");
-    area.shape = NodeShape::Ellipse;
+    tree.tree
+        .update(nid, |element| {
+            element.glyph_area_mut().expect("node is a GlyphArea").shape = NodeShape::Ellipse;
+        })
+        .expect("arena has node");
 }
 
 fn node_bounds(tree: &baumhard::mindmap::tree_builder::MindMapTree, node_id: &str) -> (Vec2, Vec2) {
     let nid = tree.arena_id_for(node_id).unwrap();
-    let area = tree.tree.arena.get(nid).unwrap().get().glyph_area().unwrap();
+    let area = tree.tree.arena().get(nid).unwrap().get().glyph_area().unwrap();
     (
         Vec2::new(area.position.x.0, area.position.y.0),
         Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
@@ -1321,7 +1344,7 @@ fn test_collect_patches_recursive_skips_glyph_model_children() {
     for (uid, _pos) in &patches {
         let element = tree
             .tree
-            .arena
+            .arena()
             .iter()
             .find(|n| n.get().unique_id() == *uid)
             .map(|n| n.get())
@@ -1553,7 +1576,7 @@ fn test_apply_node_resize_to_tree_writes_position_and_bounds() {
     );
     let area = tree
         .tree
-        .arena
+        .arena()
         .get(arena_id)
         .and_then(|n| n.get().glyph_area())
         .unwrap();
@@ -1589,7 +1612,7 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
     let child_arena_id = tree.arena_id_for(&child_id).unwrap();
     let child_pos_before = tree
         .tree
-        .arena
+        .arena()
         .get(child_arena_id)
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
@@ -1606,7 +1629,7 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
     // its arena entry. Pin the invariant.
     let child_pos_after = tree
         .tree
-        .arena
+        .arena()
         .get(child_arena_id)
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
@@ -1620,7 +1643,7 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
     let resized_arena_id = tree.arena_id_for(&id).unwrap();
     let resized_pos = tree
         .tree
-        .arena
+        .arena()
         .get(resized_arena_id)
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
@@ -1672,8 +1695,8 @@ fn test_node_resize_reports_every_element_it_moved() {
     let described = |area: &GlyphArea| format!("{area:?}");
     let areas = |tree: &baumhard::mindmap::tree_builder::MindMapTree| {
         let mut out: HashMap<usize, GlyphArea> = HashMap::new();
-        for arena_id in tree.tree.root().descendants(&tree.tree.arena) {
-            let Some(element) = tree.tree.arena.get(arena_id).map(|n| n.get()) else {
+        for arena_id in tree.tree.root().descendants(tree.tree.arena()) {
+            let Some(element) = tree.tree.arena().get(arena_id).map(|n| n.get()) else {
                 continue;
             };
             if let Some(area) = element.glyph_area() {
@@ -1692,7 +1715,7 @@ fn test_node_resize_reports_every_element_it_moved() {
     let before_areas = areas(&tree);
     let container_uid = tree
         .tree
-        .arena
+        .arena()
         .get(tree.arena_id_for(&id).unwrap())
         .map(|n| n.get().unique_id())
         .unwrap();
@@ -1863,7 +1886,7 @@ fn test_deep_chain_drag_does_not_exhaust_the_stack() {
         .stack_size(SMALL_STACK)
         .spawn(move || {
             let mut tree = baumhard::mindmap::tree_builder::build_mindmap_tree(&map);
-            let arena_nodes = tree.tree.arena.len();
+            let arena_nodes = tree.tree.arena().len();
             // `include_descendants = true` is the whole point: it is
             // what routes into `walk_drag_subtree` and inherits the
             // chain's depth. The patch-collecting variant shares that
@@ -1896,14 +1919,13 @@ fn test_deep_chain_drag_does_not_exhaust_the_stack() {
 /// its depth is a handful of levels. Do not call it on a
 /// caller-supplied map.
 fn reference_recursive_walk(
-    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
+    tree: &mut baumhard::gfx_structs::tree::GfxTree,
     node_id: indextree::NodeId,
     dx: f32,
     dy: f32,
     mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
 ) {
-    if let Some(node) = arena.get_mut(node_id) {
-        let elem = node.get_mut();
+    let _ = tree.update(node_id, |elem| {
         if let Some(area) = elem.glyph_area_mut() {
             area.move_position(dx, dy);
             if let Some(p) = patches.as_deref_mut() {
@@ -1911,11 +1933,11 @@ fn reference_recursive_walk(
                 p.push((elem.unique_id(), (pos.x, pos.y)));
             }
         }
-    }
-    let mut child = arena.get(node_id).and_then(|n| n.first_child());
+    });
+    let mut child = tree.arena().get(node_id).and_then(|n| n.first_child());
     while let Some(cid) = child {
-        child = arena.get(cid).and_then(|n| n.next_sibling());
-        reference_recursive_walk(arena, cid, dx, dy, patches.as_deref_mut());
+        child = tree.arena().get(cid).and_then(|n| n.next_sibling());
+        reference_recursive_walk(tree, cid, dx, dy, patches.as_deref_mut());
     }
 }
 
@@ -1953,7 +1975,7 @@ fn test_iterative_drag_matches_the_recursive_order() {
             apply_drag_delta_and_collect_patches(&mut iterative_tree, id, dx, dy, true, &mut got);
 
             let mut want = Vec::new();
-            reference_recursive_walk(&mut reference_tree.tree.arena, root, dx, dy, Some(&mut want));
+            reference_recursive_walk(&mut reference_tree.tree, root, dx, dy, Some(&mut want));
 
             assert_eq!(
                 got, want,

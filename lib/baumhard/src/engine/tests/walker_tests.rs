@@ -14,7 +14,7 @@
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::{Comparator, Predicate};
 use crate::engine::tests::test_element::{
-    add, add_mutator, value, TestElement, TestField, TestKind, TestMutation, TestMutator,
+    add, add_mutator, plain, value, TestElement, TestField, TestMutation, TestMutator,
 };
 use crate::engine::tree::{MutatorTree, Tree};
 use crate::engine::walker::walk_tree;
@@ -55,9 +55,9 @@ fn test_engine_walk_aligns_mutators_by_channel() {
 pub fn do_engine_walk_aligns_mutators_by_channel() {
     let (mut tree, t) = flat_tree(&[(3, 30), (1, 10), (2, 20)]);
     let (mt, _) = mutators(vec![
-        Mutator::new(TestMutation::Add(5), 2),
-        Mutator::new(TestMutation::Add(500), 9),
-        Mutator::new(TestMutation::Add(1), 1),
+        Mutator::new(TestMutation::Add(5), plain(2)),
+        Mutator::new(TestMutation::Add(500), plain(9)),
+        Mutator::new(TestMutation::Add(1), plain(1)),
     ]);
     walk_tree(&mut tree, &mt, &0);
     assert_eq!(value(&tree, t[0]), 30, "channel 3 has no mutator");
@@ -69,7 +69,7 @@ pub fn do_engine_walk_aligns_mutators_by_channel() {
     // so the channel check there is the only thing standing between a
     // mutator and a target on another channel.
     let (mut tree, t) = flat_tree(&[(0, 10)]);
-    let off_channel = MutatorTree::new_with(Mutator::new(TestMutation::Add(7), 7));
+    let off_channel = MutatorTree::new_with(Mutator::new(TestMutation::Add(7), plain(7)));
     walk_tree(&mut tree, &off_channel, &0);
     assert_eq!(
         value(&tree, tree.root),
@@ -77,7 +77,7 @@ pub fn do_engine_walk_aligns_mutators_by_channel() {
         "a channel-7 root mutator misses a channel-0 root"
     );
     assert_eq!(value(&tree, t[0]), 10);
-    let on_channel = MutatorTree::new_with(Mutator::new(TestMutation::Add(7), 0));
+    let on_channel = MutatorTree::new_with(Mutator::new(TestMutation::Add(7), plain(0)));
     walk_tree(&mut tree, &on_channel, &0);
     assert_eq!(
         value(&tree, tree.root),
@@ -93,16 +93,16 @@ fn test_engine_walk_broadcasts_to_equal_channels() {
     do_engine_walk_broadcasts_to_equal_channels();
 }
 
-/// One mutator reaches every target sharing its channel. The merge
-/// consumes those targets as it goes, so a *second* mutator on the
-/// same channel finds none left and reaches nothing — pinned here as
-/// the walk does it, because this issue keeps the merge's semantics
-/// exactly (routing keys replace it in a later sub-issue).
+/// One mutator reaches every target sharing its key — a broadcast. The
+/// merge consumes those targets as it goes, so a *second* mutator on
+/// the same key finds none left and reaches nothing: the first mutator
+/// on a key wins. Routing keys kept this rule from the channel-only
+/// merge; it is pinned here as the walk does it.
 pub fn do_engine_walk_broadcasts_to_equal_channels() {
     let (mut tree, t) = flat_tree(&[(1, 10), (2, 20), (1, 30)]);
     let (mt, _) = mutators(vec![
-        Mutator::new(TestMutation::Add(5), 1),
-        Mutator::new(TestMutation::Add(100), 1),
+        Mutator::new(TestMutation::Add(5), plain(1)),
+        Mutator::new(TestMutation::Add(100), plain(1)),
     ]);
     walk_tree(&mut tree, &mt, &0);
     assert_eq!(
@@ -134,10 +134,10 @@ pub fn do_engine_walk_void_gates_descent_without_applying() {
 
     let mut mt = MutatorTree::new();
     let mroot = mt.root;
-    let open_void = add_mutator(&mut mt, mroot, Mutator::new_void(1));
-    add_mutator(&mut mt, open_void, Mutator::new(TestMutation::Add(1), 0));
-    let shut_void = add_mutator(&mut mt, mroot, Mutator::new_void(7));
-    add_mutator(&mut mt, shut_void, Mutator::new(TestMutation::Add(1), 0));
+    let open_void = add_mutator(&mut mt, mroot, Mutator::new_void(plain(1)));
+    add_mutator(&mut mt, open_void, Mutator::new(TestMutation::Add(1), plain(0)));
+    let shut_void = add_mutator(&mut mt, mroot, Mutator::new_void(plain(7)));
+    add_mutator(&mut mt, shut_void, Mutator::new(TestMutation::Add(1), plain(0)));
 
     walk_tree(&mut tree, &mt, &0);
     assert_eq!(value(&tree, gate), 10, "a Void applies nothing to its own target");
@@ -173,12 +173,12 @@ pub fn do_engine_walk_nested_macros_apply_in_order() {
     let m_outer = add_mutator(
         &mut mt,
         mroot,
-        Mutator::new_macro(vec![TestMutation::Add(1), TestMutation::Add(2)], 1),
+        Mutator::new_macro(vec![TestMutation::Add(1), TestMutation::Add(2)], plain(1)),
     );
     add_mutator(
         &mut mt,
         m_outer,
-        Mutator::new_macro(vec![TestMutation::Set(7), TestMutation::Add(1)], 0),
+        Mutator::new_macro(vec![TestMutation::Set(7), TestMutation::Add(1)], plain(0)),
     );
 
     walk_tree(&mut tree, &mt, &0);
@@ -222,12 +222,12 @@ pub fn do_engine_repeat_while_stops_where_the_predicate_fails() {
         always_match: false,
     };
     let mut mt = MutatorTree::new_with(Mutator::Instruction {
-        channel: 0,
+        key: plain(0),
         instruction: Instruction::RepeatWhile(predicate),
         mutation: None,
     });
     let mroot = mt.root;
-    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1000), 0));
+    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1000), plain(0)));
 
     walk_tree(&mut tree, &mt, &0);
     assert_eq!(value(&tree, c[0]), 1001);
@@ -237,38 +237,83 @@ pub fn do_engine_repeat_while_stops_where_the_predicate_fails() {
 }
 
 #[test]
-fn test_engine_repeat_while_filters_on_kind() {
-    do_engine_repeat_while_filters_on_kind();
+fn test_engine_repeat_while_judges_each_branch_on_its_own() {
+    do_engine_repeat_while_judges_each_branch_on_its_own();
 }
 
-/// The predicate is the element type's own vocabulary: filtering on
-/// [`TestKind`] stops at the first `Marked` element of each branch,
-/// and a sibling branch is judged on its own.
-pub fn do_engine_repeat_while_filters_on_kind() {
+/// A failure ends only the branch it is found in: below the first
+/// level, the first branch fails at its top, and the sibling branch
+/// after it is still walked to its own end. The predicate filters on
+/// value, not kind: the descent is routed by kind at every level
+/// (#232 R2), so a kind predicate only ever meets elements of the
+/// repeated mutator's kind.
+pub fn do_engine_repeat_while_judges_each_branch_on_its_own() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
     let root = tree.root;
-    let plain = add(&mut tree, root, TestElement::new(0, 1));
-    let plain_below = add(&mut tree, plain, TestElement::new(0, 2));
-    let marked = add(&mut tree, root, TestElement::marked(0, 3));
-    let below_marked = add(&mut tree, marked, TestElement::new(0, 4));
+    let top = add(&mut tree, root, TestElement::new(0, 1));
+    let failing = add(&mut tree, top, TestElement::new(0, 300));
+    let below_failing = add(&mut tree, failing, TestElement::new(0, 3));
+    let passing = add(&mut tree, top, TestElement::new(0, 2));
+    let below_passing = add(&mut tree, passing, TestElement::new(0, 4));
 
     let predicate = Predicate::<TestElement> {
-        fields: vec![(TestField::Kind(TestKind::Plain), Comparator::equals())],
+        fields: vec![(TestField::Value(100), Comparator::less())],
         always_match: false,
     };
     let mut mt = MutatorTree::new_with(Mutator::Instruction {
-        channel: 0,
+        key: plain(0),
         instruction: Instruction::RepeatWhile(predicate),
         mutation: None,
     });
     let mroot = mt.root;
-    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(10), 0));
+    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(10), plain(0)));
 
     walk_tree(&mut tree, &mt, &0);
-    assert_eq!(value(&tree, plain), 11);
-    assert_eq!(value(&tree, plain_below), 12);
-    assert_eq!(value(&tree, marked), 3, "Marked fails the predicate");
-    assert_eq!(value(&tree, below_marked), 4);
+    assert_eq!(value(&tree, top), 11);
+    assert_eq!(value(&tree, failing), 300, "the first branch fails the predicate");
+    assert_eq!(value(&tree, below_failing), 3, "and nothing below it is reached");
+    assert_eq!(
+        value(&tree, passing),
+        12,
+        "the sibling branch is judged on its own"
+    );
+    assert_eq!(value(&tree, below_passing), 14);
+}
+
+#[test]
+fn test_engine_repeat_while_descends_by_kind() {
+    do_engine_repeat_while_descends_by_kind();
+}
+
+/// Below its first level, `RepeatWhile` visits only children of the
+/// repeated mutator's kind, on every channel: a `Plain` child on
+/// channel 5 is reached, a `Marked` child is not tested, not mutated
+/// and not descended into — the `Plain` element below it stays as it
+/// was, though the always-true predicate would have passed it.
+pub fn do_engine_repeat_while_descends_by_kind() {
+    let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
+    let root = tree.root;
+    let top = add(&mut tree, root, TestElement::new(0, 1));
+    let marked = add(&mut tree, top, TestElement::marked(0, 2));
+    let below_marked = add(&mut tree, marked, TestElement::new(0, 3));
+    let other_channel = add(&mut tree, top, TestElement::new(5, 4));
+
+    let mut mt = MutatorTree::new_with(Mutator::new_instruction(
+        Instruction::RepeatWhile(Predicate::always_true()),
+        plain(0),
+    ));
+    let mroot = mt.root;
+    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(10), plain(0)));
+
+    walk_tree(&mut tree, &mt, &0);
+    assert_eq!(value(&tree, top), 11);
+    assert_eq!(
+        value(&tree, other_channel),
+        14,
+        "the descent broadcasts across channels"
+    );
+    assert_eq!(value(&tree, marked), 2, "a child of another kind is not reached");
+    assert_eq!(value(&tree, below_marked), 3, "nor is anything below it");
 }
 
 #[test]
@@ -286,14 +331,14 @@ pub fn do_engine_repeat_while_resumes_with_the_terminator() {
         always_match: false,
     };
     let mut mt = MutatorTree::new_with(Mutator::Instruction {
-        channel: 0,
+        key: plain(0),
         instruction: Instruction::RepeatWhile(predicate),
         mutation: None,
     });
     let mroot = mt.root;
-    let repeated = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1000), 0));
-    add_mutator(&mut mt, repeated, Mutator::new(TestMutation::Set(-1), 0));
-    add_mutator(&mut mt, repeated, Mutator::new(TestMutation::Set(-2), 5));
+    let repeated = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1000), plain(0)));
+    add_mutator(&mut mt, repeated, Mutator::new(TestMutation::Set(-1), plain(0)));
+    add_mutator(&mut mt, repeated, Mutator::new(TestMutation::Set(-2), plain(5)));
 
     walk_tree(&mut tree, &mt, &0);
     assert_eq!(value(&tree, c[0]), 1001);
@@ -317,10 +362,10 @@ fn test_engine_map_children_pairs_by_position() {
 /// child is left alone.
 pub fn do_engine_map_children_pairs_by_position() {
     let (mut tree, t) = flat_tree(&[(3, 30), (7, 70), (9, 90)]);
-    let mut mt = MutatorTree::new_with(Mutator::new_instruction(Instruction::MapChildren));
+    let mut mt = MutatorTree::new_with(Mutator::new_instruction(Instruction::MapChildren, plain(0)));
     let mroot = mt.root;
-    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), 0));
-    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(2), 0));
+    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
+    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(2), plain(0)));
 
     walk_tree(&mut tree, &mt, &0);
     assert_eq!(value(&tree, t[0]), 31);
@@ -338,21 +383,25 @@ fn test_engine_apply_invalidates_the_cache_per_mutation_and_once_more() {
 /// `MutatorTree::apply_to` invalidates the tree's cache once for every
 /// mutator node the walker applies to a target and once when it ends — so a walk that
 /// applied nothing still invalidates, exactly once, and the count
-/// tells applied mutations from aligned-but-skipped ones.
+/// tells applied mutations from aligned-but-skipped ones. Building the
+/// fixture invalidates too (every `insert_child` does), so the counts
+/// are taken from where the fixture leaves off.
 pub fn do_engine_apply_invalidates_the_cache_per_mutation_and_once_more() {
     let (mut tree, _) = flat_tree(&[(1, 10), (1, 11), (2, 20)]);
-    let (mt, _) = mutators(vec![Mutator::new(TestMutation::Add(1), 1)]);
+    let (mt, _) = mutators(vec![Mutator::new(TestMutation::Add(1), plain(1))]);
+    let built = tree.cache.invalidations.get();
     mt.apply_to(&mut tree, &0);
     assert_eq!(
-        tree.cache.invalidations.get(),
+        tree.cache.invalidations.get() - built,
         3,
         "two channel-1 targets applied, plus the end of the walk"
     );
 
     let (mut untouched, _) = flat_tree(&[(2, 20)]);
+    let built = untouched.cache.invalidations.get();
     mt.apply_to(&mut untouched, &0);
     assert_eq!(
-        untouched.cache.invalidations.get(),
+        untouched.cache.invalidations.get() - built,
         1,
         "nothing applied: only the end of the walk"
     );
@@ -381,8 +430,12 @@ pub fn do_engine_walk_wide_and_deep_tree() {
     }
     let mut mt = MutatorTree::new();
     let mroot = mt.root;
-    let level_one = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), 1));
-    add_mutator(&mut mt, level_one, Mutator::new(TestMutation::SetToInherited, 1));
+    let level_one = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), plain(1)));
+    add_mutator(
+        &mut mt,
+        level_one,
+        Mutator::new(TestMutation::SetToInherited, plain(1)),
+    );
 
     walk_tree(&mut tree, &mt, &0);
     // 4 level-one targets on channel 1 → value 2; under each, 4
@@ -390,14 +443,14 @@ pub fn do_engine_walk_wide_and_deep_tree() {
     // seed 0 + root 0 + parent 2 = 2.
     let reached_children = tree
         .root
-        .children(&tree.arena)
+        .children(tree.arena())
         .filter(|id| value(&tree, *id) == 2)
         .count();
     assert_eq!(reached_children, 4);
     let grandchildren_set: usize = tree
         .root
-        .children(&tree.arena)
-        .map(|c| c.children(&tree.arena).filter(|g| value(&tree, *g) == 2).count())
+        .children(tree.arena())
+        .map(|c| c.children(tree.arena()).filter(|g| value(&tree, *g) == 2).count())
         .sum();
     assert_eq!(grandchildren_set, 16);
 }

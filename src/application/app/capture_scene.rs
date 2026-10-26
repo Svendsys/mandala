@@ -276,7 +276,9 @@ mod tests {
         let mut out = Vec::new();
         for role in CanvasRole::ALL {
             let id = app_scene.canvas_id(role);
-            let elements = app_scene.canvas_entry(role).map(|entry| entry.tree().arena.len());
+            let elements = app_scene
+                .canvas_entry(role)
+                .map(|entry| entry.tree().arena().len());
             out.push(format!(
                 "{role:?}: id={id:?} structure={:?} content={:?} elements={elements:?}",
                 app_scene.canvas_signature(role),
@@ -316,10 +318,10 @@ mod tests {
         // each edge's child is found through one of its own glyphs.
         let edge_node = tree
             .root()
-            .children(&tree.arena)
+            .children(tree.arena())
             .find(|child| {
                 child
-                    .children(&tree.arena)
+                    .children(tree.arena())
                     .next()
                     .and_then(|glyph| index.resolve(tree, glyph))
                     .as_ref()
@@ -327,8 +329,8 @@ mod tests {
             })
             .expect("the edge is drawn");
         edge_node
-            .descendants(&tree.arena)
-            .filter_map(|id| tree.arena.get(id).and_then(|node| node.get().glyph_area()))
+            .descendants(tree.arena())
+            .filter_map(|id| tree.arena().get(id).and_then(|node| node.get().glyph_area()))
             .map(|area| Vec2::new(area.position.x.0, area.position.y.0) + entry.offset())
             .collect()
     }

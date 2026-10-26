@@ -40,10 +40,13 @@ rise and fall together.
   offset when the offset comes from user input; you land mid-grapheme on
   the first emoji.
 - **Tree mutation** through `MutatorTree::apply_to`. Build a
-  `GfxMutatorTree` and apply it with `apply_to(&mut tree, &())`
+  `GfxMutatorTree` and apply it with `apply_to(&mut tree, &())`, or
+  with `apply_at` from anchors
   (`lib/baumhard/src/engine/tree.rs`; the walk is
   `lib/baumhard/src/engine/walker.rs`). Never clone-edit-reinsert a
-  subtree to change one field.
+  subtree to change one field. Outside a walk a tree changes only
+  through `insert_child`, `update` and `remove_subtree`, which keep
+  its children sorted by key.
 - **Font** through `baumhard::font::fonts`. `fonts::init()` once at
   startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`
   (or its `try_` / `_read` siblings — there is no other way in);

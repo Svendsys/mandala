@@ -11,7 +11,7 @@
 
 use crate::core::primitives::{ApplyOperation, ColorFontRegions, Discriminated};
 use crate::engine::builder::{
-    build, iter_section_channels, BuildContext, BuildError, ChannelSrc, CountSrc, InstructionSpec,
+    build, iter_section_keys, BuildContext, BuildError, ChannelSrc, CountSrc, InstructionSpec,
     MutationListSrc, MutationSrc, MutatorNode, NoRuntime,
 };
 use crate::engine::element::TreeElement;
@@ -68,6 +68,7 @@ impl BuildContext<GfxElement, GfxMutation> for StubCtx {
 
 fn single_with_text() -> Box<Node> {
     Box::new(MutatorNode::Single {
+        kind: (),
         channel: ChannelSrc::SectionIndex,
         mutation: MutationSrc::Template(vec![
             CellField::Text,
@@ -85,8 +86,10 @@ fn test_repeat_literal_expands_to_consecutive_channels() {
 /// at consecutive channels in declaration order.
 pub fn do_repeat_literal_expands_to_consecutive_channels() {
     let node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "cells".into(),
             channel_base: 100,
             count: CountSrc::Literal(5),
@@ -98,8 +101,8 @@ pub fn do_repeat_literal_expands_to_consecutive_channels() {
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
-        .children(&mt.arena)
-        .map(|id| mt.arena.get(id).unwrap().get().channel())
+        .children(mt.arena())
+        .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
     assert_eq!(channels, vec![100, 101, 102, 103, 104]);
 }
@@ -113,8 +116,10 @@ fn test_repeat_skip_indices_stride_channels() {
 /// strided (skipped channels are absent, not renumbered).
 pub fn do_repeat_skip_indices_stride_channels() {
     let node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "cells".into(),
             channel_base: 300,
             count: CountSrc::Literal(5),
@@ -126,8 +131,8 @@ pub fn do_repeat_skip_indices_stride_channels() {
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
-        .children(&mt.arena)
-        .map(|id| mt.arena.get(id).unwrap().get().channel())
+        .children(mt.arena())
+        .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
     assert_eq!(channels, vec![300, 301, 303, 304]);
 }
@@ -141,9 +146,11 @@ fn test_multiple_sections_concatenate_in_declaration_order() {
 /// disjoint.
 pub fn do_multiple_sections_concatenate_in_declaration_order() {
     let node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![
             MutatorNode::Repeat {
+                kind: (),
                 section: "a".into(),
                 channel_base: 1,
                 count: CountSrc::Literal(1),
@@ -151,6 +158,7 @@ pub fn do_multiple_sections_concatenate_in_declaration_order() {
                 template: single_with_text(),
             },
             MutatorNode::Repeat {
+                kind: (),
                 section: "b".into(),
                 channel_base: 100,
                 count: CountSrc::Literal(3),
@@ -158,6 +166,7 @@ pub fn do_multiple_sections_concatenate_in_declaration_order() {
                 template: single_with_text(),
             },
             MutatorNode::Repeat {
+                kind: (),
                 section: "c".into(),
                 channel_base: 200,
                 count: CountSrc::Literal(1),
@@ -170,8 +179,8 @@ pub fn do_multiple_sections_concatenate_in_declaration_order() {
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
-        .children(&mt.arena)
-        .map(|id| mt.arena.get(id).unwrap().get().channel())
+        .children(mt.arena())
+        .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
     assert_eq!(channels, vec![1, 100, 101, 102, 200]);
 }
@@ -189,13 +198,16 @@ fn test_template_resolves_against_each_iterations_area() {
 pub fn do_template_resolves_against_each_iterations_area() {
     use crate::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
     let node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "cells".into(),
             channel_base: 10,
             count: CountSrc::Literal(2),
             skip_indices: vec![],
             template: Box::new(MutatorNode::Single {
+                kind: (),
                 channel: ChannelSrc::SectionIndex,
                 mutation: MutationSrc::Template(vec![
                     CellField::Text,
@@ -208,8 +220,8 @@ pub fn do_template_resolves_against_each_iterations_area() {
     let mt = build(&node, &StubCtx::with_areas(2)).unwrap();
     let built: Vec<GfxMutation> = mt
         .root
-        .children(&mt.arena)
-        .map(|id| match mt.arena.get(id).unwrap().get() {
+        .children(mt.arena())
+        .map(|id| match mt.arena().get(id).unwrap().get() {
             crate::gfx_structs::mutator::GfxMutator::Single { mutation, .. } => mutation.clone(),
             other => panic!("expected Single, got {other:?}"),
         })
@@ -225,18 +237,20 @@ pub fn do_template_resolves_against_each_iterations_area() {
 }
 
 #[test]
-fn test_iter_section_channels_walks_in_order() {
-    do_iter_section_channels_walks_in_order();
+fn test_iter_section_keys_walks_in_order() {
+    do_iter_section_keys_walks_in_order();
 }
 
-/// `iter_section_channels` emits every `(section, index, channel)`
+/// `iter_section_keys` emits every `(section, index, key)`
 /// tuple in tree-insertion order; used by the initial-build path so
-/// the channel set stays aligned with the mutator path.
-pub fn do_iter_section_channels_walks_in_order() {
+/// the key set stays aligned with the mutator path.
+pub fn do_iter_section_keys_walks_in_order() {
     let node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![
             MutatorNode::Repeat {
+                kind: (),
                 section: "a".into(),
                 channel_base: 1,
                 count: CountSrc::Literal(1),
@@ -244,6 +258,7 @@ pub fn do_iter_section_channels_walks_in_order() {
                 template: single_with_text(),
             },
             MutatorNode::Repeat {
+                kind: (),
                 section: "b".into(),
                 channel_base: 300,
                 count: CountSrc::Literal(3),
@@ -254,13 +269,13 @@ pub fn do_iter_section_channels_walks_in_order() {
     };
     let ctx = StubCtx::with_areas(0);
     let mut out = Vec::new();
-    iter_section_channels(&node, &ctx, &mut out);
+    iter_section_keys(&node, &ctx, &mut out);
     assert_eq!(
         out,
         vec![
-            ("a".to_string(), 0, 1),
-            ("b".to_string(), 0, 300),
-            ("b".to_string(), 2, 302),
+            ("a".to_string(), 0, 1.into()),
+            ("b".to_string(), 0, 300.into()),
+            ("b".to_string(), 2, 302.into()),
         ]
     );
 }
@@ -275,8 +290,10 @@ fn test_repeat_runtime_count_consults_context() {
 /// console overlay's `scrollback_rows`-style use case.
 pub fn do_repeat_runtime_count_consults_context() {
     let node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "rows".into(),
             channel_base: 1000,
             count: CountSrc::Runtime("row_count".into()),
@@ -289,8 +306,8 @@ pub fn do_repeat_runtime_count_consults_context() {
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
-        .children(&mt.arena)
-        .map(|id| mt.arena.get(id).unwrap().get().channel())
+        .children(mt.arena())
+        .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
     assert_eq!(channels, vec![1000, 1001, 1002]);
 }
@@ -310,14 +327,15 @@ fn test_void_root_with_no_children() {
 /// Tree rooted at a `Void` with no children produces an empty root.
 pub fn do_void_root_with_no_children() {
     let node: Node = MutatorNode::Void {
+        kind: (),
         channel: 42,
         children: vec![],
     };
     let ctx = StubCtx::with_areas(0);
     let mt = build(&node, &ctx).unwrap();
-    let root = mt.arena.get(mt.root).unwrap().get();
-    assert!(matches!(root, GfxMutator::Void { channel: 42 }));
-    assert_eq!(mt.root.children(&mt.arena).count(), 0);
+    let root = mt.arena().get(mt.root).unwrap().get();
+    assert!(matches!(root, GfxMutator::Void { key } if key.channel == 42));
+    assert_eq!(mt.root.children(mt.arena()).count(), 0);
 }
 
 #[test]
@@ -332,14 +350,15 @@ fn test_single_as_tree_root_with_literal_channel() {
 /// channel.
 pub fn do_single_as_tree_root_with_literal_channel() {
     let node: Node = MutatorNode::Single {
+        kind: (),
         channel: ChannelSrc::Literal(7),
         mutation: MutationSrc::None,
     };
     // No-op context — Single with MutationSrc::None needs nothing.
     let mt = build(&node, &NoRuntime).unwrap();
-    let root = mt.arena.get(mt.root).unwrap().get();
+    let root = mt.arena().get(mt.root).unwrap().get();
     assert!(
-        matches!(root, GfxMutator::Void { channel: 7 }),
+        matches!(root, GfxMutator::Void { key } if key.channel == 7),
         "expected Void on channel 7, got {root:?}"
     );
 }
@@ -368,18 +387,22 @@ pub fn do_mutation_src_runtime_consults_context() {
         }
     }
     let node: Node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![
             MutatorNode::Single {
+                kind: (),
                 channel: ChannelSrc::Literal(5),
                 mutation: MutationSrc::Runtime("nudge".into()),
             },
             MutatorNode::Repeat {
+                kind: (),
                 section: "cells".into(),
                 channel_base: 10,
                 count: CountSrc::Literal(1),
                 skip_indices: vec![],
                 template: Box::new(MutatorNode::Single {
+                    kind: (),
                     channel: ChannelSrc::SectionIndex,
                     mutation: MutationSrc::Runtime("per_cell".into()),
                 }),
@@ -394,10 +417,10 @@ pub fn do_mutation_src_runtime_consults_context() {
         ctx.asked_with.borrow().as_slice(),
         &["nudge".to_string(), "per_cell".to_string()]
     );
-    let first = mt.root.children(&mt.arena).next().unwrap();
-    match mt.arena.get(first).unwrap().get() {
-        GfxMutator::Single { channel, mutation } => {
-            assert_eq!(*channel, 5);
+    let first = mt.root.children(mt.arena()).next().unwrap();
+    match mt.arena().get(first).unwrap().get() {
+        GfxMutator::Single { key, mutation } => {
+            assert_eq!(key.channel, 5);
             assert_eq!(
                 *mutation,
                 GfxMutation::area_command(GlyphAreaCommand::NudgeRight(4.0))
@@ -430,15 +453,16 @@ pub fn do_macro_pulls_mutation_list_from_runtime_context() {
         }
     }
     let node: Node = MutatorNode::Macro {
+        kind: (),
         channel: 0,
         mutations: MutationListSrc::Runtime("scope_mutations".into()),
         children: vec![],
     };
     let mt = build(&node, &MacroCtx).unwrap();
-    let root = mt.arena.get(mt.root).unwrap().get();
+    let root = mt.arena().get(mt.root).unwrap().get();
     match root {
-        GfxMutator::Macro { channel, mutations } => {
-            assert_eq!(*channel, 0);
+        GfxMutator::Macro { key, mutations } => {
+            assert_eq!(key.channel, 0);
             assert_eq!(mutations.len(), 2);
         }
         other => panic!("expected Macro root, got {other:?}"),
@@ -465,25 +489,27 @@ pub fn do_instruction_with_children_mirrors_scope_topology() {
         }
     }
     let node: Node = MutatorNode::Instruction {
+        kind: (),
         channel: 0,
         instruction: InstructionSpec::RepeatWhileAlwaysTrue,
         mutation: MutationSrc::None,
         children: vec![MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Runtime("leaf".into()),
             children: vec![],
         }],
     };
     let mt = build(&node, &ScopeCtx).unwrap();
-    let root = mt.arena.get(mt.root).unwrap().get();
+    let root = mt.arena().get(mt.root).unwrap().get();
     assert!(matches!(root.variant(), MutatorType::Instruction));
     assert!(
         matches!(root, GfxMutator::Instruction { mutation: None, .. }),
         "MutationSrc::None on an Instruction builds with no payload"
     );
-    let child_ids: Vec<_> = mt.root.children(&mt.arena).collect();
+    let child_ids: Vec<_> = mt.root.children(mt.arena()).collect();
     assert_eq!(child_ids.len(), 1);
-    let child = mt.arena.get(child_ids[0]).unwrap().get();
+    let child = mt.arena().get(child_ids[0]).unwrap().get();
     assert!(matches!(child.variant(), MutatorType::Macro));
 }
 
@@ -497,19 +523,20 @@ fn test_instruction_spec_repeat_while_always_true_materializes_predicate() {
 /// consumer to spell the predicate out.
 pub fn do_instruction_spec_repeat_while_always_true_materializes_predicate() {
     let node: Node = MutatorNode::Instruction {
+        kind: (),
         channel: 5,
         instruction: InstructionSpec::RepeatWhileAlwaysTrue,
         mutation: MutationSrc::None,
         children: vec![],
     };
     let mt = build(&node, &NoRuntime).unwrap();
-    match mt.arena.get(mt.root).unwrap().get() {
+    match mt.arena().get(mt.root).unwrap().get() {
         GfxMutator::Instruction {
             instruction: Instruction::RepeatWhile(predicate),
-            channel,
+            key,
             ..
         } => {
-            assert_eq!(*channel, 5);
+            assert_eq!(key.channel, 5);
             assert!(predicate.always_match);
         }
         other => panic!("expected Instruction::RepeatWhile, got {other:?}"),
@@ -528,13 +555,14 @@ fn test_instruction_spec_spatial_descend_carries_its_point() {
 pub fn do_instruction_spec_spatial_descend_carries_its_point() {
     use crate::util::ordered_vec2::OrderedVec2;
     let node: Node = MutatorNode::Instruction {
+        kind: (),
         channel: 0,
         instruction: InstructionSpec::SpatialDescend(OrderedVec2::new_f32(3.0, 4.0)),
         mutation: MutationSrc::None,
         children: vec![],
     };
     let mt = build(&node, &NoRuntime).unwrap();
-    match mt.arena.get(mt.root).unwrap().get() {
+    match mt.arena().get(mt.root).unwrap().get() {
         GfxMutator::Instruction {
             instruction: Instruction::SpatialDescend(point),
             ..
@@ -556,15 +584,19 @@ fn test_repeat_template_wrapping_void_threads_iter_channel() {
 /// for future per-cell decorations).
 pub fn do_repeat_template_wrapping_void_threads_iter_channel() {
     let node: Node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "wrapped".into(),
             channel_base: 50,
             count: CountSrc::Literal(3),
             skip_indices: vec![],
             template: Box::new(MutatorNode::Void {
+                kind: (),
                 channel: 999, // Void's own channel — literal, not iterated.
                 children: vec![MutatorNode::Single {
+                    kind: (),
                     channel: ChannelSrc::SectionIndex,
                     mutation: MutationSrc::Runtime("inner".into()),
                 }],
@@ -582,17 +614,17 @@ pub fn do_repeat_template_wrapping_void_threads_iter_channel() {
     }
     let mt = build(&node, &InnerCtx).unwrap();
     // Root Void → 3 wrapper Voids → each wrapper Void has 1 Single child.
-    let wrapper_ids: Vec<_> = mt.root.children(&mt.arena).collect();
+    let wrapper_ids: Vec<_> = mt.root.children(mt.arena()).collect();
     assert_eq!(wrapper_ids.len(), 3);
     for (expected_inner_ch, wrapper_id) in (50..).zip(wrapper_ids.iter()) {
-        let wrapper = mt.arena.get(*wrapper_id).unwrap().get();
-        assert!(matches!(wrapper, GfxMutator::Void { channel: 999 }));
-        let inner_ids: Vec<_> = wrapper_id.children(&mt.arena).collect();
+        let wrapper = mt.arena().get(*wrapper_id).unwrap().get();
+        assert!(matches!(wrapper, GfxMutator::Void { key } if key.channel == 999));
+        let inner_ids: Vec<_> = wrapper_id.children(mt.arena()).collect();
         assert_eq!(inner_ids.len(), 1);
-        let inner = mt.arena.get(inner_ids[0]).unwrap().get();
+        let inner = mt.arena().get(inner_ids[0]).unwrap().get();
         match inner {
-            GfxMutator::Single { channel, .. } => {
-                assert_eq!(*channel, expected_inner_ch);
+            GfxMutator::Single { key, .. } => {
+                assert_eq!(key.channel, expected_inner_ch);
             }
             other => panic!("expected Single inner, got {other:?}"),
         }
@@ -618,6 +650,7 @@ fn test_repeat_at_tree_root_is_a_build_error() {
 /// malformed tree; the same `Repeat` one level down builds.
 pub fn do_repeat_at_tree_root_is_a_build_error() {
     let repeat = MutatorNode::Repeat {
+        kind: (),
         section: "x".into(),
         channel_base: 0,
         count: CountSrc::Literal(1),
@@ -628,6 +661,7 @@ pub fn do_repeat_at_tree_root_is_a_build_error() {
     assert_eq!(build(&repeat, &ctx).err(), Some(BuildError::RootRepeat));
 
     let wrapped: Node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![repeat],
     };
@@ -644,6 +678,7 @@ fn test_channel_src_section_index_outside_repeat_is_a_build_error() {
 /// position) is refused; inside a `Repeat` the same node builds.
 pub fn do_channel_src_section_index_outside_repeat_is_a_build_error() {
     let single = MutatorNode::Single {
+        kind: (),
         channel: ChannelSrc::SectionIndex,
         mutation: MutationSrc::None,
     };
@@ -653,8 +688,10 @@ pub fn do_channel_src_section_index_outside_repeat_is_a_build_error() {
     );
 
     let inside: Node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "x".into(),
             channel_base: 0,
             count: CountSrc::Literal(1),
@@ -678,6 +715,7 @@ fn test_template_outside_repeat_is_a_build_error() {
 /// template builds.
 pub fn do_template_outside_repeat_is_a_build_error() {
     let node: Node = MutatorNode::Single {
+        kind: (),
         channel: ChannelSrc::Literal(0),
         mutation: MutationSrc::Template(vec![CellField::Text]),
     };
@@ -685,8 +723,10 @@ pub fn do_template_outside_repeat_is_a_build_error() {
     assert_eq!(build(&node, &ctx).err(), Some(BuildError::TemplateOutsideRepeat));
 
     let inside: Node = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "x".into(),
             channel_base: 0,
             count: CountSrc::Literal(1),
@@ -710,6 +750,7 @@ fn test_repeat_as_template_is_a_build_error() {
 /// node (one level further down) is a child expansion and builds.
 pub fn do_repeat_as_template_is_a_build_error() {
     let inner = MutatorNode::Repeat {
+        kind: (),
         section: "inner".into(),
         channel_base: 0,
         count: CountSrc::Literal(1),
@@ -718,8 +759,10 @@ pub fn do_repeat_as_template_is_a_build_error() {
     };
     let outer = |template: Node| -> Node {
         MutatorNode::Void {
+            kind: (),
             channel: 0,
             children: vec![MutatorNode::Repeat {
+                kind: (),
                 section: "outer".into(),
                 channel_base: 0,
                 count: CountSrc::Literal(1),
@@ -735,6 +778,7 @@ pub fn do_repeat_as_template_is_a_build_error() {
     );
 
     let grouped = MutatorNode::Void {
+        kind: (),
         channel: 0,
         children: vec![inner],
     };
@@ -751,17 +795,23 @@ fn test_spatial_descend_builds_only_for_a_spatial_element() {
 
 /// The engine refuses `SpatialDescend` for an element type with no
 /// geometry when the mutator tree is built, so its walker never meets
-/// one. The **same JSON** builds for the glyph instantiation, which is
+/// one. The **same JSON**, but for the `kind` each element type names
+/// its kinds with, builds for the glyph instantiation, which is
 /// spatial — the negative control that pins the refusal to the
 /// element type and not to the AST.
 pub fn do_spatial_descend_builds_only_for_a_spatial_element() {
     use crate::engine::tests::test_element::{TestElement, TestMutation};
-    const SRC: &str = r#"{
-        "Instruction": {
-            "channel": 0,
-            "instruction": { "SpatialDescend": { "x": 1.0, "y": 2.0 } }
-        }
-    }"#;
+    let src = |kind: &str| {
+        format!(
+            r#"{{
+                "Instruction": {{
+                    "kind": {kind},
+                    "channel": 0,
+                    "instruction": {{ "SpatialDescend": {{ "x": 1.0, "y": 2.0 }} }}
+                }}
+            }}"#
+        )
+    };
     // Checked at compile time: the precondition is a property of the
     // two types, not of a value.
     const {
@@ -772,16 +822,16 @@ pub fn do_spatial_descend_builds_only_for_a_spatial_element() {
     };
 
     let for_test: MutatorNode<TestElement, TestMutation> =
-        serde_json::from_str(SRC).expect("parse for TestElement");
+        serde_json::from_str(&src(r#""Plain""#)).expect("parse for TestElement");
     assert_eq!(
         build(&for_test, &NoRuntime).err(),
         Some(BuildError::SpatialOnNonSpatial)
     );
 
-    let for_glyph: Node = serde_json::from_str(SRC).expect("parse for GfxElement");
+    let for_glyph: Node = serde_json::from_str(&src("null")).expect("parse for GfxElement");
     let mt = build(&for_glyph, &NoRuntime).expect("the same AST builds for a spatial element");
     assert!(matches!(
-        mt.arena.get(mt.root).unwrap().get(),
+        mt.arena().get(mt.root).unwrap().get(),
         GfxMutator::Instruction {
             instruction: Instruction::SpatialDescend(_),
             ..
@@ -808,16 +858,16 @@ fn test_json_roundtrip_minimal_repeat_tree() {
 pub fn do_json_roundtrip_minimal_repeat_tree() {
     let src = r#"{
         "Void": {
-            "channel": 0,
+            "kind": null, "channel": 0,
             "children": [
                 {
                     "Repeat": {
-                        "section": "cells",
+                        "kind": null, "section": "cells",
                         "channel_base": 100,
                         "count": { "Literal": 3 },
                         "template": {
                             "Single": {
-                                "channel": "SectionIndex",
+                                "kind": null, "channel": "SectionIndex",
                                 "mutation": { "Template": ["Text", { "Operation": "Assign" }] }
                             }
                         }
@@ -828,7 +878,10 @@ pub fn do_json_roundtrip_minimal_repeat_tree() {
     }"#;
     let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
     // Shape assertions — same structure as a hand-built AST.
-    let MutatorNode::Void { channel, children } = &node else {
+    let MutatorNode::Void {
+        channel, children, ..
+    } = &node
+    else {
         panic!("root must be Void");
     };
     assert_eq!(*channel, 0);
@@ -839,6 +892,7 @@ pub fn do_json_roundtrip_minimal_repeat_tree() {
         count,
         skip_indices,
         template,
+        ..
     } = &children[0]
     else {
         panic!("child must be Repeat");
@@ -847,7 +901,10 @@ pub fn do_json_roundtrip_minimal_repeat_tree() {
     assert_eq!(*channel_base, 100);
     assert!(matches!(count, CountSrc::Literal(3)));
     assert!(skip_indices.is_empty());
-    let MutatorNode::Single { channel, mutation } = template.as_ref() else {
+    let MutatorNode::Single {
+        channel, mutation, ..
+    } = template.as_ref()
+    else {
         panic!("template must be Single");
     };
     assert!(matches!(channel, ChannelSrc::SectionIndex));
@@ -870,10 +927,10 @@ fn test_json_skip_indices_defaults_to_empty() {
 pub fn do_json_skip_indices_defaults_to_empty() {
     let src = r#"{
         "Repeat": {
-            "section": "cells",
+            "kind": null, "section": "cells",
             "channel_base": 0,
             "count": { "Literal": 1 },
-            "template": { "Single": { "channel": "SectionIndex", "mutation": "None" } }
+            "template": { "Single": { "kind": null, "channel": "SectionIndex", "mutation": "None" } }
         }
     }"#;
     let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
@@ -895,7 +952,7 @@ fn test_json_instruction_mutation_defaults_to_none() {
 pub fn do_json_instruction_mutation_defaults_to_none() {
     let src = r#"{
         "Instruction": {
-            "channel": 0,
+            "kind": null, "channel": 0,
             "instruction": "RepeatWhileAlwaysTrue"
         }
     }"#;
@@ -915,7 +972,8 @@ fn test_json_mutation_src_runtime_carries_its_label() {
 /// `{ "Runtime": "<label>" }`, the same spelling as
 /// `MutationListSrc::Runtime`.
 pub fn do_json_mutation_src_runtime_carries_its_label() {
-    let src = r#"{ "Single": { "channel": { "Literal": 2 }, "mutation": { "Runtime": "nudge" } } }"#;
+    let src =
+        r#"{ "Single": { "kind": null, "channel": { "Literal": 2 }, "mutation": { "Runtime": "nudge" } } }"#;
     let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
     let MutatorNode::Single {
         mutation: MutationSrc::Runtime(label),
@@ -940,7 +998,7 @@ fn test_json_instruction_spec_map_children_materializes_correctly() {
 pub fn do_json_instruction_spec_map_children_materializes_correctly() {
     let src = r#"{
         "Instruction": {
-            "channel": 3,
+            "kind": null, "channel": 3,
             "instruction": "MapChildren"
         }
     }"#;
@@ -987,6 +1045,7 @@ pub fn do_json_round_trip_macro_with_literal_mutations_preserves_shape() {
     // The pure-data shape that scope::self_only produces — a Macro
     // on channel 0 carrying a `MutationListSrc::Literal` list.
     let node = MutatorNode::Macro {
+        kind: (),
         channel: 0,
         mutations: MutationListSrc::Literal(vec![
             GfxMutation::area_command(GlyphAreaCommand::NudgeRight(3.0)),
@@ -1004,10 +1063,12 @@ fn test_json_round_trip_instruction_map_children_preserves_shape() {
 
 pub fn do_json_round_trip_instruction_map_children_preserves_shape() {
     let node = MutatorNode::Instruction {
+        kind: (),
         channel: 7,
         instruction: InstructionSpec::MapChildren,
         mutation: MutationSrc::None,
         children: vec![MutatorNode::Single {
+            kind: (),
             channel: ChannelSrc::Literal(3),
             mutation: MutationSrc::None,
         }],
@@ -1025,15 +1086,18 @@ pub fn do_json_round_trip_repeat_inside_map_children_preserves_shape() {
     // under MapChildren, with SectionIndex channels and a template.
     // The Repeat-composition test relies on this exact serde layout.
     let node = MutatorNode::Instruction {
+        kind: (),
         channel: 0,
         instruction: InstructionSpec::MapChildren,
         mutation: MutationSrc::None,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "children".into(),
             channel_base: 0,
             count: CountSrc::Runtime("children".into()),
             skip_indices: vec![],
             template: Box::new(MutatorNode::Single {
+                kind: (),
                 channel: ChannelSrc::SectionIndex,
                 mutation: MutationSrc::Template(vec![CellField::position]),
             }),
@@ -1054,6 +1118,7 @@ pub fn do_json_round_trip_repeat_while_predicate_preserves_shape() {
     use crate::engine::predicate::Comparator;
     use crate::gfx_structs::element::GfxElementField;
     let node: Node = MutatorNode::Instruction {
+        kind: (),
         channel: 0,
         instruction: InstructionSpec::RepeatWhile(Predicate {
             fields: vec![(GfxElementField::Channel(4), Comparator::equals())],

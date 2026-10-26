@@ -2592,7 +2592,7 @@ mod tests {
             r#""edges": []"#,
             r#""edges": [], "custom_mutations": [{
                 "id": "m", "name": "m", "target_scope": "SelfOnly",
-                "mutator": {"Void": {"channel": 0, "children": [], "afterglow": 0.5}}
+                "mutator": {"Void": {"kind": null, "channel": 0, "children": [], "afterglow": 0.5}}
             }]"#,
         );
         let map = load_from_str(&json).expect("an unrecognized key must not fail the load");
@@ -3396,7 +3396,9 @@ mod tests {
                     "",
                     &plain_node,
                     "",
-                    &custom_mutation_tail(r#", "mutator": {"Void": {"channel": 0, "surprise": 7}}"#),
+                    &custom_mutation_tail(
+                        r#", "mutator": {"Void": {"kind": null, "channel": 0, "surprise": 7}}"#,
+                    ),
                 ),
             ),
             (
@@ -3405,7 +3407,9 @@ mod tests {
                     "",
                     &plain_node,
                     "",
-                    &custom_mutation_tail(r#", "mutator": {"Void": {"channel": 0, "Void": 99}}"#),
+                    &custom_mutation_tail(
+                        r#", "mutator": {"Void": {"kind": null, "channel": 0, "Void": 99}}"#,
+                    ),
                 ),
             ),
             (
@@ -4263,7 +4267,7 @@ mod tests {
                 let hidden = map.fold_hidden_set().len();
                 let descendants = map.all_descendants("n0").len();
                 let mut tree = crate::mindmap::tree_builder::build_mindmap_tree(&map);
-                let arena_nodes = tree.tree.arena.len();
+                let arena_nodes = tree.tree.arena().len();
                 // The scene build alone does not reach the two
                 // walkers that made this crash land on a *mouse
                 // move*: `compute_subtree_aabbs` is gated behind the

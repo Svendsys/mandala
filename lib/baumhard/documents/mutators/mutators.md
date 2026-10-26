@@ -75,12 +75,16 @@ target nodes using predicates. As far as tree-mutation goes, we have now covered
 
 ```Rust
 pub enum Mutator<E: TreeElement, M: Mutation<E>> {
-    Void { channel: usize },
-    Single { channel: usize, mutation: M },
-    Macro { channel: usize, mutations: Vec<M> },
-    Instruction { channel: usize, instruction: Instruction<E>, mutation: Option<M> },
+    Void { key: BranchKey<E::Kind> },
+    Single { key: BranchKey<E::Kind>, mutation: M },
+    Macro { key: BranchKey<E::Kind>, mutations: Vec<M> },
+    Instruction { key: BranchKey<E::Kind>, instruction: Instruction<E>, mutation: Option<M> },
 }
 ```
+Every variant carries the key it routes on: a `BranchKey` is an element *kind* and a *channel*
+(`lib/baumhard/src/engine/key.rs`), and a mutator reaches a target only when the two keys are equal.
+The glyph elements have a single kind, `()`, so for them the key is just the channel described above;
+a `GfxMutator` is built from a channel alone (`GfxMutator::new(mutation, 3)`).
 The payload-free `MutatorType` tag used for cheap variant checks is
 *derived* from this enum with strum's `EnumDiscriminants`, so it can
 never list a kind the mutator does not have. Reach it with

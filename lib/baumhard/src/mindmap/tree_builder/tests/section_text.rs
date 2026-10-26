@@ -35,7 +35,7 @@ fn section_areas(
         .map(|((mind_id, idx), arena_id)| {
             let area = tree
                 .tree
-                .arena
+                .arena()
                 .get(arena_id)
                 .and_then(|n| n.get().glyph_area())
                 .expect("section arena id must resolve to a GlyphArea");

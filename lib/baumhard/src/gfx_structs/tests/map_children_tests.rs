@@ -16,6 +16,7 @@
 use indextree::NodeId;
 
 use crate::engine::mutator::Instruction;
+use crate::engine::tree::Placement;
 use crate::engine::walker::walk_tree_from;
 use crate::font::fonts;
 use crate::gfx_structs::area::GlyphAreaCommand;
@@ -56,19 +57,20 @@ fn build_map_children_mutator(
     assert_eq!(mutator_channels.len(), nudges.len());
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::Instruction {
         instruction: Instruction::MapChildren,
-        channel: root_channel,
+        key: root_channel.into(),
         mutation: attached,
     });
     for (ch, dx) in mutator_channels.iter().zip(nudges.iter()) {
         let m = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(*dx));
-        let child = mutator.arena.new_node(GfxMutator::new(m, *ch));
-        mutator.root.append(child, &mut mutator.arena);
+        mutator
+            .insert_child(mutator.root, GfxMutator::new(m, *ch), Placement::Last)
+            .unwrap();
     }
     mutator
 }
 
 fn position_x(tree: &GfxTree, id: NodeId) -> f32 {
-    tree.arena.get(id).unwrap().get().position().x
+    tree.arena().get(id).unwrap().get().position().x
 }
 
 // ---------------------------------------------------------------------------
@@ -214,40 +216,56 @@ pub fn do_nested_map_children_descends_recursively() {
     // children, each carrying a Single leaf mutator per grandchild.
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::Instruction {
         instruction: Instruction::MapChildren,
-        channel: 0,
+        key: 0.into(),
         mutation: None,
     });
 
     // Build a MapChildren child with two leaf Singles nudging x by 1 and 2.
-    let inner_a = mutator.arena.new_node(GfxMutator::Instruction {
-        instruction: Instruction::MapChildren,
-        channel: 0,
-        mutation: None,
-    });
-    mutator.root.append(inner_a, &mut mutator.arena);
-    let a0_leaf = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
-        0,
-    ));
-    inner_a.append(a0_leaf, &mut mutator.arena);
-    let a1_leaf = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(2.0)),
-        0,
-    ));
-    inner_a.append(a1_leaf, &mut mutator.arena);
+    let inner_a = mutator
+        .insert_child(
+            mutator.root,
+            GfxMutator::Instruction {
+                instruction: Instruction::MapChildren,
+                key: 0.into(),
+                mutation: None,
+            },
+            Placement::Last,
+        )
+        .unwrap();
+    mutator
+        .insert_child(
+            inner_a,
+            GfxMutator::new(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0)), 0),
+            Placement::Last,
+        )
+        .unwrap();
+    mutator
+        .insert_child(
+            inner_a,
+            GfxMutator::new(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(2.0)), 0),
+            Placement::Last,
+        )
+        .unwrap();
 
     // Build a second MapChildren child with one leaf Single nudging by 7.
-    let inner_b = mutator.arena.new_node(GfxMutator::Instruction {
-        instruction: Instruction::MapChildren,
-        channel: 0,
-        mutation: None,
-    });
-    mutator.root.append(inner_b, &mut mutator.arena);
-    let b0_leaf = mutator.arena.new_node(GfxMutator::new(
-        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(7.0)),
-        0,
-    ));
-    inner_b.append(b0_leaf, &mut mutator.arena);
+    let inner_b = mutator
+        .insert_child(
+            mutator.root,
+            GfxMutator::Instruction {
+                instruction: Instruction::MapChildren,
+                key: 0.into(),
+                mutation: None,
+            },
+            Placement::Last,
+        )
+        .unwrap();
+    mutator
+        .insert_child(
+            inner_b,
+            GfxMutator::new(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(7.0)), 0),
+            Placement::Last,
+        )
+        .unwrap();
 
     walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
@@ -354,15 +372,18 @@ pub fn do_compose_repeat_inside_map_children() {
     // template is a Single with an AreaDelta(position) — the exact
     // shape flower-layout would author declaratively.
     let node = MutatorNode::Instruction {
+        kind: (),
         channel: 0,
         instruction: InstructionSpec::MapChildren,
         mutation: MutationSrc::None,
         children: vec![MutatorNode::Repeat {
+            kind: (),
             section: "children".into(),
             channel_base: 0,
             count: CountSrc::Runtime("children".into()),
             skip_indices: vec![],
             template: Box::new(MutatorNode::Single {
+                kind: (),
                 channel: ChannelSrc::SectionIndex,
                 mutation: MutationSrc::Template(vec![
                     CellField::position,
