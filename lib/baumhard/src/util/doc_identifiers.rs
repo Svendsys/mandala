@@ -2607,7 +2607,11 @@ fn user() {}
             Vec::<String>::new(),
             "the struct after the broken derive is harvested"
         );
-        assert_eq!(scan.resolved.get("s.rs"), Some(&1));
+        assert_eq!(
+            scan.resolved.get("s.rs"),
+            Some(&1),
+            "`After::after_field` resolves only if `After` was harvested"
+        );
 
         // Stopped only by the cap: every gathered line could continue
         // a derive list, and the field past the cap is still read.
