@@ -718,21 +718,28 @@ impl WorkspaceIndex {
         let mut pending: Option<Frame> = None;
         let mut derives: Vec<String> = Vec::new();
         // A `#[derive(` rustfmt wrapped over several lines, gathered
-        // until its `)]` so it reads as the one line it is.
-        let mut open_derive: Option<String> = None;
+        // until its `)]` so it reads as the one line it is, with the
+        // count of lines gathered so far.
+        let mut open_derive: Option<(String, usize)> = None;
         for line in text.lines() {
             let trimmed = line.trim();
-            if let Some(gathered) = &mut open_derive {
-                gathered.push(' ');
-                gathered.push_str(trimmed);
-                if trimmed.ends_with(")]") {
-                    derives.extend(derive_line(gathered).unwrap_or_default());
-                    open_derive = None;
+            if let Some((gathered, gathered_lines)) = &mut open_derive {
+                if *gathered_lines < MAX_WRAPPED_DERIVE_LINES && can_continue_derive(trimmed) {
+                    gathered.push(' ');
+                    gathered.push_str(trimmed);
+                    *gathered_lines += 1;
+                    if trimmed.ends_with(")]") {
+                        derives.extend(derive_line(gathered).unwrap_or_default());
+                        open_derive = None;
+                    }
+                    continue;
                 }
-                continue;
+                // A derive that never closes grants nothing, and this
+                // line is read as the text it is.
+                open_derive = None;
             }
             if is_derive_opening(trimmed) && !trimmed.ends_with(")]") {
-                open_derive = Some(trimmed.to_string());
+                open_derive = Some((trimmed.to_string(), 1));
                 continue;
             }
             if let Some(traits) = derive_line(trimmed) {
@@ -1119,6 +1126,18 @@ fn skip_angle_group(rest: &str) -> &str {
         }
     }
     rest
+}
+
+/// The most lines a wrapped `#[derive(` is gathered over before it is
+/// given up as never closing — far past any list rustfmt writes — so a
+/// malformed macro body cannot swallow the rest of its file's harvest.
+const MAX_WRAPPED_DERIVE_LINES: usize = 32;
+
+/// Whether a line can be part of a wrapped derive list: one holding a
+/// brace or a semicolon is code past the attribute, so the gather
+/// stops there rather than reading it as more traits.
+fn can_continue_derive(line: &str) -> bool {
+    !line.contains(['{', '}', ';'])
 }
 
 /// Whether a line opens a `#[derive(…)]` or `#[derivative(…)]`
@@ -2556,6 +2575,73 @@ fn user() {{}}
         assert!(is_derive_opening("#[derive("));
         assert!(is_derive_opening("#[derivative(Debug)]"));
         assert!(!is_derive_opening("#[cfg(test)]"));
+    }
+
+    /// A wrapped derive that never closes stops gathering, and the text
+    /// after it is still harvested: at the first line that cannot
+    /// continue a derive list, or at `MAX_WRAPPED_DERIVE_LINES` when
+    /// every line could. Before the cap the gather ran to the end of
+    /// the file, so nothing after a malformed derive was declared.
+    /// "Never closes" is the gather's view — no line ends in `)]` —
+    /// since the fixtures must still tokenize as Rust.
+    #[test]
+    fn test_a_never_closing_wrapped_derive_stops_and_the_rest_is_harvested() {
+        // Stopped by a line a derive list cannot hold.
+        let stopped = "\
+macro_rules! make {
+    () => {
+        #[derive(
+            Clone)] pub struct Broken;
+        pub struct After {
+            pub after_field: u8,
+        }
+    };
+}
+make!();
+/// `After::after_field` is declared after the broken derive.
+fn user() {}
+";
+        let scan = scan_sources(&[("s.rs", stopped)]);
+        assert_eq!(
+            scan.unresolved,
+            Vec::<String>::new(),
+            "the struct after the broken derive is harvested"
+        );
+        assert_eq!(scan.resolved.get("s.rs"), Some(&1));
+
+        // Stopped only by the cap: every gathered line could continue
+        // a derive list, and the field past the cap is still read.
+        let filler = "            Clone,\n".repeat(MAX_WRAPPED_DERIVE_LINES + 4);
+        let capped = format!(
+            "\
+macro_rules! make {{
+    () => {{
+        pub struct Capped {{
+            #[derive(
+{filler}            pub capped_field: u8,
+            ) ]
+            pub other_field: u8,
+        }}
+    }};
+}}
+make!();
+/// `Capped::capped_field` is past the cap.
+fn user() {{}}
+"
+        );
+        assert!(
+            capped
+                .lines()
+                .all(|line| !line.contains("capped_field:") || can_continue_derive(line.trim())),
+            "the field line must be one the shape check alone would keep gathering"
+        );
+        let scan = scan_sources(&[("c.rs", &capped)]);
+        assert_eq!(
+            scan.unresolved,
+            Vec::<String>::new(),
+            "the field past the cap is harvested"
+        );
+        assert_eq!(scan.resolved.get("c.rs"), Some(&1));
     }
 
     /// strum's `EnumDiscriminants` writes a mirror enum the parse never
