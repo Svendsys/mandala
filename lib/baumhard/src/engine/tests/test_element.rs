@@ -335,6 +335,25 @@ impl TreeElement for SpatialTestElement {
     fn spatial_bounds(&self) -> Option<(Vec2, Vec2)> {
         self.bounds
     }
+
+    /// Breaks `TreeElement::split`'s contract on purpose: the second
+    /// part lands on the next channel. The engine must refuse it, which
+    /// `structure_tests` checks with this element.
+    fn split(&self, _at: &()) -> Option<(Self, Self)> {
+        let mut second = self.clone();
+        second.channel += 1;
+        Some((self.clone(), second))
+    }
+
+    /// Breaks `TreeElement::merge`'s contract on purpose: the merged
+    /// element is on the next channel. See [`Self::split`].
+    fn merge(&self, next: &Self) -> Option<Self> {
+        Some(SpatialTestElement {
+            channel: self.channel + 1,
+            value: self.value + next.value,
+            bounds: self.bounds,
+        })
+    }
 }
 
 impl Mutation<SpatialTestElement> for TestMutation {

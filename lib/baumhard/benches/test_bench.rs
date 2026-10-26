@@ -2038,6 +2038,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("structure_discard_frees_exactly_what_the_journal_holds", |b| {
         b.iter(do_structure_discard_frees_exactly_what_the_journal_holds)
     });
+    c.bench_function("structure_discard_frees_only_what_is_still_detached", |b| {
+        b.iter(do_structure_discard_frees_only_what_is_still_detached)
+    });
+    c.bench_function("structure_refuses_a_split_or_merge_that_changes_the_key", |b| {
+        b.iter(do_structure_refuses_a_split_or_merge_that_changes_the_key)
+    });
     c.bench_function(
         "gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges",
         |b| b.iter(do_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges),

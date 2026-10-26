@@ -14,6 +14,7 @@
 //! has a bench entry in `benches/test_bench.rs`.
 
 use crate::engine::anchor::Anchors;
+use crate::engine::element::TreeElement;
 use crate::engine::interpolate::Snap;
 use crate::engine::journal::{Journal, JournalBuilder, Touch};
 use crate::engine::mutator::Mutator;
@@ -22,7 +23,7 @@ use crate::engine::tests::journal_fixtures::{
     run_structural, snapshot, state_above, StructuralRun, StructuralStats, SEEDS,
 };
 use crate::engine::tests::test_element::{
-    add, add_mutator, marked, plain, value, TestElement, TestKind, TestMutation,
+    add, add_mutator, marked, plain, value, SpatialTestElement, TestElement, TestKind, TestMutation,
 };
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
 use indextree::NodeId;
@@ -957,6 +958,79 @@ pub fn do_structure_discard_leaves_a_subtree_a_later_journal_removed() {
     undo.replay(&mut tree).unwrap();
     j2.discard(&mut tree);
     assert!(tree.get(s).is_none(), "j2 detached s, and frees it");
+}
+
+#[test]
+fn test_structure_discard_frees_only_what_is_still_detached() {
+    do_structure_discard_frees_only_what_is_still_detached();
+}
+
+/// A journal removes `r` and is discarded as it closed, so `r` is what
+/// it holds — but a copy of the journal has been reverted in the
+/// meantime, which put `r` back. `discard` frees only a subtree that is
+/// still detached, so `r`, attached again, stays in the tree. The
+/// control: once the copy is replayed and `r` is detached again,
+/// discarding frees it.
+pub fn do_structure_discard_frees_only_what_is_still_detached() {
+    let (mut tree, t) = flat_tree(&[(0, 1), (0, 2)]);
+    let r = t[1];
+    let mut builder = JournalBuilder::new();
+    run(&mut tree, &command(StructOp::Remove), vec![r], &mut builder).unwrap();
+    let journal = builder.close(&tree);
+    let copy = journal.clone();
+    copy.revert(&mut tree).unwrap();
+    assert!(tree.contains(r), "the copy put r back");
+    journal.clone().discard(&mut tree);
+    assert!(tree.contains(r), "r, attached again, is not freed");
+    copy.replay(&mut tree).unwrap();
+    journal.discard(&mut tree);
+    assert!(tree.get(r).is_none(), "detached again, r is freed");
+}
+
+#[test]
+fn test_structure_refuses_a_split_or_merge_that_changes_the_key() {
+    do_structure_refuses_a_split_or_merge_that_changes_the_key();
+}
+
+/// An element type that breaks `split`'s and `merge`'s contract — its
+/// parts or its merged element on another channel — is refused with
+/// `PlacementCrossesKey`, and the tree is unchanged: the second part
+/// would land outside the run of the first's key. `SpatialTestElement`
+/// misbehaves this way on purpose. The control: the merge's target has
+/// a childless next sibling of its key, so only the key check refuses
+/// it.
+pub fn do_structure_refuses_a_split_or_merge_that_changes_the_key() {
+    let mut tree = Tree::new_non_indexed_with(SpatialTestElement::unboxed(0, 0));
+    let root = tree.root;
+    let a = tree
+        .insert_child(root, SpatialTestElement::unboxed(0, 1), Placement::Last)
+        .unwrap();
+    let b = tree
+        .insert_child(root, SpatialTestElement::unboxed(0, 2), Placement::Last)
+        .unwrap();
+    let before: Vec<(NodeId, SpatialTestElement)> = tree
+        .descendants()
+        .map(|id| (id, tree.arena()[id].get().clone()))
+        .collect();
+    let snapshot = |tree: &Tree<SpatialTestElement>| -> Vec<(NodeId, SpatialTestElement)> {
+        tree.descendants()
+            .map(|id| (id, tree.arena()[id].get().clone()))
+            .collect()
+    };
+    assert_eq!(tree.arena()[b].get().key(), tree.arena()[a].get().key());
+    assert!(tree.arena()[b].first_child().is_none());
+    for op in [StructOp::Split { at: () }, StructOp::Merge] {
+        let mutators: MutatorTree<SpatialTestElement, TestMutation> =
+            MutatorTree::new_with(Mutator::new_structure(op, 0));
+        let result = mutators.apply_at_journaled(
+            &mut tree,
+            &Anchors::Nodes(vec![a]),
+            |_, _| 0,
+            &mut JournalBuilder::new(),
+        );
+        assert_eq!(result, Err(TreeError::PlacementCrossesKey));
+        assert_eq!(snapshot(&tree), before);
+    }
 }
 
 // ── structure part-way ────────────────────────────────────────────
