@@ -3111,7 +3111,8 @@ The remainder are deferred here:
       `validate::room_for_another_section` (`model/validate.rs`), and
       `test_every_section_growth_checks_the_cap` holds every shipped
       growth of `node.sections` to it; regression
-      `test_split_section_refuses_a_node_at_the_cap`. The second half is closed: `maptool verify` no longer hardcodes
+      `test_split_section_refuses_a_node_at_the_cap`. The second
+      half is closed: `maptool verify` no longer hardcodes
       1024 — `verify/sections.rs` calls `validate::section_count`
       (`lib/baumhard/src/mindmap/model/validate.rs`), which reads the
       const.

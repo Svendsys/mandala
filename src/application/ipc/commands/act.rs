@@ -454,6 +454,10 @@ mod tests {
 
         let message = console_output(outcome).expect_err("the refusal is an error reply");
         assert!(
+            message.starts_with("section split: "),
+            "the verb names itself: {message}"
+        );
+        assert!(
             message.contains(&format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}")),
             "the error names the cap: {message}"
         );

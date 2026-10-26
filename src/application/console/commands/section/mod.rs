@@ -1574,12 +1574,6 @@ mod tests {
         assert_eq!(sections[2].text, "def");
     }
 
-    /// Pre-fix `section split` defaulted to end-of-text (empty
-    /// suffix), creating a useless empty section the user
-    /// almost never wanted (Full-Nelson API/UX reviewer B2 —
-    /// foot-gun finding). Post-fix `at=` is required; the bare
-    /// `section split` form errors with a hint pointing at
-    /// `section show` for the grapheme count.
     /// #208 at the console: a `section split` on a node already at
     /// `MAX_SECTIONS_PER_NODE` reaches the user as the named refusal,
     /// not as a success that writes an unloadable map. The console is
@@ -1599,14 +1593,28 @@ mod tests {
             node_id: id.clone(),
             section_idx: 1,
         });
-        let result = run("section split at=3", &mut doc);
-        assert_exec_err_contains(
-            result,
-            &format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}"),
-        );
+        match run("section split at=3", &mut doc) {
+            ExecResult::Err(message) => {
+                assert!(
+                    message.starts_with("section split: "),
+                    "the verb names itself: {message}"
+                );
+                assert!(
+                    message.contains(&format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}")),
+                    "the refusal names the cap: {message}"
+                );
+            }
+            other => panic!("a split at the cap must be refused, got {other:?}"),
+        }
         assert_eq!(doc.mindmap.nodes[&id].sections.len(), MAX_SECTIONS_PER_NODE);
     }
 
+    /// Pre-fix `section split` defaulted to end-of-text (empty
+    /// suffix), creating a useless empty section the user
+    /// almost never wanted (Full-Nelson API/UX reviewer B2 —
+    /// foot-gun finding). Post-fix `at=` is required; the bare
+    /// `section split` form errors with a hint pointing at
+    /// `section show` for the grapheme count.
     #[test]
     fn section_split_no_at_rejects_with_hint() {
         let (mut doc, id) = pinned_two_section_node();

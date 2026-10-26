@@ -596,14 +596,18 @@ mod tests {
     /// (`detect_section_count_cap`) then refused to reopen.
     ///
     /// The refusal must leave the document exactly as it was: no
-    /// section added, nothing on the undo stack.
+    /// section added, and the undo stack at the depth it had.
     ///
     /// Fails when: the guard in `split_section` goes — the split then
     /// succeeds and the node holds one more than the cap.
     #[test]
     fn test_split_section_refuses_a_node_at_the_cap() {
         let (mut doc, id) = doc_with_sections(MAX_SECTIONS_PER_NODE);
-        doc.undo_stack.clear();
+        // A real undoable edit first, so the stack is non-empty: a
+        // refusal that *cleared* it would pass an `is_empty` check.
+        assert!(doc.set_section_text(&id, 1, "before the split".to_string()));
+        let depth = doc.undo_stack.len();
+        assert!(depth > 0, "precondition: the edit above pushed an undo entry");
 
         let result = doc.split_section(&id, 0, Some(0));
 
@@ -618,7 +622,11 @@ mod tests {
             MAX_SECTIONS_PER_NODE,
             "a refused split adds nothing"
         );
-        assert!(doc.undo_stack.is_empty(), "a refused split pushes no undo entry");
+        assert_eq!(
+            doc.undo_stack.len(),
+            depth,
+            "a refused split neither pushes an undo entry nor drops one"
+        );
     }
 
     /// The cap's refusal is one message with one source: both writers

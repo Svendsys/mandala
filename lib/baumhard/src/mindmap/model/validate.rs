@@ -1141,7 +1141,7 @@ mod section_cap_writer_tests {
     /// `section_growth_sites` for the approximation it makes.
     #[test]
     fn test_every_section_growth_checks_the_cap() {
-        use crate::util::source_scan::section_growth_sites;
+        use crate::util::source_scan::{section_growth_sites, GrowthKind};
 
         let sites = section_growth_sites();
 
@@ -1151,27 +1151,59 @@ mod section_cap_writer_tests {
         // pass on two wrong sites.
         for writer in ["add_section", "split_section"] {
             assert!(
-                sites.iter().any(|site| site.function == writer),
+                sites
+                    .iter()
+                    .any(|site| site.function == writer && site.kind == GrowthKind::Method),
                 "the scan did not find `{writer}`, a known writer of node.sections — the \
                  scan is what broke, not the writer:\n{sites:#?}"
             );
         }
 
-        let unguarded: Vec<_> = sites.iter().filter(|site| !site.guarded).collect();
+        let (assigns, growths): (Vec<_>, Vec<_>) =
+            sites.iter().partition(|site| site.kind == GrowthKind::Assign);
+
+        let unguarded: Vec<_> = growths.iter().filter(|site| !site.guarded).collect();
         assert!(
             unguarded.is_empty(),
-            "these lines grow `node.sections` without first calling \
-             `validate::room_for_another_section`:\n{}\n\nCall it before the vector grows. \
-             The loader refuses a node past MAX_SECTIONS_PER_NODE, so an unguarded writer \
-             saves a map that will not reopen (#208).",
+            "these lines grow `node.sections` without first propagating \
+             `validate::room_for_another_section`'s refusal:\n{}\n\nCall it, with `?`, before \
+             the vector grows. The loader refuses a node past MAX_SECTIONS_PER_NODE, so an \
+             unguarded writer saves a map that will not reopen (#208).",
             unguarded
                 .iter()
-                .map(|site| format!(
-                    "  {}:{}   {} (in fn {})",
-                    site.file, site.line, site.code, site.function
-                ))
+                .map(|site| format!("  {}:{} (in fn {})", site.file, site.line, site.function))
                 .collect::<Vec<_>>()
                 .join("\n")
+        );
+
+        // A wholesale `node.sections = …` cannot be guarded by "is there
+        // room for one more" — it says nothing about the new length. The
+        // ones that ship are undo restores: they put back a snapshot taken
+        // from the same node, which the guard already held to the cap
+        // when it was live. Any other replacement is a new writer whose
+        // length bound has to be argued, so it fails here until it is
+        // added with its reason.
+        const SNAPSHOT_RESTORES: &[&str] = &["undo", "mutate_node_with_undo"];
+        let unexplained: Vec<_> = assigns
+            .iter()
+            .filter(|site| !SNAPSHOT_RESTORES.contains(&site.function.as_str()))
+            .collect();
+        assert!(
+            unexplained.is_empty(),
+            "these lines replace `node.sections` wholesale outside the known snapshot \
+             restores ({SNAPSHOT_RESTORES:?}):\n{}\n\nA replacement has no length bound of \
+             its own. Bound it against MAX_SECTIONS_PER_NODE and add the fn here with the \
+             reason, or route it through a guarded writer.",
+            unexplained
+                .iter()
+                .map(|site| format!("  {}:{} (in fn {})", site.file, site.line, site.function))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(
+            !assigns.is_empty(),
+            "precondition: the undo restores replace node.sections, so the scan must see \
+             at least one assignment — if it sees none, its assignment arm is what broke"
         );
     }
 
@@ -1181,7 +1213,7 @@ mod section_cap_writer_tests {
     /// Each fn below is one case; its name says which.
     #[test]
     fn test_the_section_growth_scan_tells_guarded_from_unguarded() {
-        use crate::util::source_scan::section_growths_in;
+        use crate::util::source_scan::{section_growths_in, GrowthKind};
 
         let planted = r#"
 impl Doc {
@@ -1191,22 +1223,70 @@ impl Doc {
         Ok(())
     }
 
-    pub fn unguarded_insert(&mut self, node: &mut MindNode) {
-        node.sections.insert(0, MindSection::default());
+    pub fn guarded_wrapped_chain(&mut self, node: &mut MindNode) -> Result<(), String> {
+        validate::room_for_another_section(node).map_err(|e| format!("verb: {e}"))?;
+        node.sections
+            .push(MindSection::default());
+        Ok(())
     }
 
-    pub fn guarded_in_a_closure(&mut self, id: &str) -> Option<usize> {
+    pub fn guarded_by_let_else(&mut self, node: &mut MindNode) -> Result<(), String> {
+        let Ok(()) = validate::room_for_another_section(node) else {
+            return Err("full".into());
+        };
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn guarded_in_a_closure(&mut self, id: &str) -> Result<usize, String> {
         let node = self.node(id)?;
-        validate::room_for_another_section(node).ok()?;
+        validate::room_for_another_section(node)?;
         self.mutate(id, move |node| {
             node.sections.extend([MindSection::default()]);
             Some(0)
         })
     }
 
-    pub fn guard_too_late(&mut self, node: &mut MindNode) {
-        node.sections.splice(0..0, [MindSection::default()]);
+    pub fn unguarded_insert(&mut self, node: &mut MindNode) {
+        node.sections.insert(0, MindSection::default());
+    }
+
+    pub fn unguarded_wrapped_chain(&mut self, node: &mut MindNode) {
+        node.sections
+            .push(MindSection::default());
+    }
+
+    pub fn unguarded_ufcs(&mut self, node: &mut MindNode) {
+        Vec::push(&mut node.sections, MindSection::default());
+    }
+
+    pub fn discarded_result(&mut self, node: &mut MindNode) {
         let _ = validate::room_for_another_section(node);
+        node.sections.push(MindSection::default());
+    }
+
+    pub fn guard_in_a_closure_called_later(&mut self, node: &mut MindNode) -> Result<(), String> {
+        let check = |n: &MindNode| validate::room_for_another_section(n);
+        node.sections.push(MindSection::default());
+        check(node)
+    }
+
+    pub fn guard_on_a_branch(&mut self, node: &mut MindNode, careful: bool) -> Result<(), String> {
+        if careful {
+            validate::room_for_another_section(node)?;
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn guard_too_late(&mut self, node: &mut MindNode) -> Result<(), String> {
+        node.sections.splice(0..0, [MindSection::default()]);
+        validate::room_for_another_section(node)?;
+        Ok(())
+    }
+
+    pub fn replaces(&mut self, node: &mut MindNode, snapshot: Vec<MindSection>) {
+        node.sections = snapshot;
     }
 
     pub fn reads_only(&self, node: &MindNode) -> usize {
@@ -1215,20 +1295,31 @@ impl Doc {
     }
 }
 "#;
-        let found: Vec<(String, bool)> = section_growths_in(planted)
-            .into_iter()
-            .map(|site| (site.function, site.guarded))
+        let sites = section_growths_in(planted);
+        let found: Vec<(&str, GrowthKind, bool)> = sites
+            .iter()
+            .map(|site| (site.function.as_str(), site.kind, site.guarded))
             .collect();
+        use GrowthKind::*;
         assert_eq!(
             found,
-            vec![
-                ("guarded_push".to_string(), true),
-                ("unguarded_insert".to_string(), false),
-                ("guarded_in_a_closure".to_string(), true),
-                ("guard_too_late".to_string(), false),
+            [
+                ("guarded_push", Method, true),
+                ("guarded_wrapped_chain", Method, true),
+                ("guarded_by_let_else", Method, true),
+                ("guarded_in_a_closure", Method, true),
+                ("unguarded_insert", Method, false),
+                ("unguarded_wrapped_chain", Method, false),
+                ("unguarded_ufcs", Ufcs, false),
+                ("discarded_result", Method, false),
+                ("guard_in_a_closure_called_later", Method, false),
+                ("guard_on_a_branch", Method, false),
+                ("guard_too_late", Method, false),
+                ("replaces", Assign, false),
             ],
-            "each planted writer must be found once, in its own fn, guarded only when the \
-             guard runs before the growth; a read and a comment are not growths"
+            "each planted site must be found once, in its own fn, with its kind, and guarded \
+             only where a top-level statement before it propagates the guard's refusal; a \
+             read and a comment are not sites"
         );
     }
 }
