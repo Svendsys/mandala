@@ -77,17 +77,26 @@
 //!   std::cell::Cell;` makes a `set` on `Cell` in that file std's,
 //!   whatever else is called `Cell` here), and where `Type` is a
 //!   generic parameter (`T::void()`).
-//! - A member a macro emits belongs to a type no parse of the source
-//!   can name, so it is harvested from the text — the word after `fn`,
-//!   a `pub name:` field line. A type the parse saw that carries a
-//!   custom derive (`Action`'s `ActionClassify`) resolves such a
-//!   macro-emitted name; a type the parse never saw, because a macro
-//!   wrote it (`KeybindConfig`, written by `keybind_surface!`),
-//!   resolves any name declared anywhere, since nothing about its
-//!   members can be known. The methods the known derives and traits
-//!   supply (`clone`, `default`, `fmt`, `to_string`, strum's `iter`,
-//!   …) resolve on a type that derives or implements the trait that
-//!   supplies them, and on no other.
+//! - A member a macro emits is invisible to the parse, so it is
+//!   harvested from the text — the word after `fn`, a `pub name:`
+//!   field line — and attributed by the braces to the type whose
+//!   literal header encloses it: `impl Config {` written inside a
+//!   `macro_rules!` body puts its methods on `Config`, parsed or not.
+//!   A member written under `impl $name {`, or at a macro body's top
+//!   level, belongs to a type the text cannot name; such a name
+//!   resolves where a macro can have put it — on a type the parse saw
+//!   that carries a custom derive (`Action`'s `ActionClassify`), and
+//!   on a type a macro wrote — and on no plainly parsed type. A
+//!   macro-written type is held to its literal headers that way,
+//!   unless one of its members is itself a macro parameter
+//!   (`KeybindConfig`'s `pub $simple_field:`, written by
+//!   `keybind_surface!`), when its member list is unknowable and any
+//!   name the workspace declares or writes resolves on it. The
+//!   methods the known derives and traits supply (`clone`, `default`,
+//!   `fmt`, `to_string`, strum's `iter`, …) resolve on a type that
+//!   derives or implements the trait that supplies them, and on no
+//!   other; a derive written in a macro body counts when it stands
+//!   over a literal header.
 //!
 //! **The opt-out is written where the name is.** This project writes
 //! past-tense prose that names things which no longer exist, and that
@@ -150,9 +159,12 @@
 //!   not `snake_case`; intra-doc link *targets*, which `cargo doc`
 //!   already checks on live code.
 //! - A private field a macro emits (no `pub` to read the line by), a
-//!   type a macro emits without writing its name (`strum`'s
-//!   `EnumDiscriminants` output), and a declaration a macro builds
-//!   from pieces, which no text harvest can see.
+//!   type a macro emits without writing its name, and a declaration a
+//!   macro builds from pieces, which no text harvest can see. The one
+//!   exception is strum's `EnumDiscriminants` mirror, whose variants
+//!   and traits the attribute on the parsed enum determines in full,
+//!   so `ActionKind::iter()` is held to `Action`'s variants and to the
+//!   `derive(EnumIter)` its `strum_discriminants` attribute lists.
 //! - A sentence whose every identifier still exists but whose claim
 //!   went false. That needs reading.
 //!
@@ -386,8 +398,11 @@ pub(crate) struct WorkspaceIndex {
     /// Names declared as a `struct`, `enum`, `trait`, `type` or
     /// `union` — the qualifiers the sharp rule applies to.
     types: BTreeSet<String>,
-    /// The subset of [`Self::types`] the parse itself saw. A type in
-    /// `types` and not here was written by a macro.
+    /// The subset of [`Self::types`] whose declaration is fully known:
+    /// the parse saw it, or a known derive writes it from a declaration
+    /// the parse saw (strum's `EnumDiscriminants` mirror, whose
+    /// variants are the enum's and whose traits its attribute lists).
+    /// A type in `types` and not here was written by a macro.
     parsed_types: BTreeSet<String>,
     /// Names declared as a `mod`, plus file stems and directory
     /// names under the source roots.
@@ -404,9 +419,27 @@ pub(crate) struct WorkspaceIndex {
     /// derive, whose output may hold members the parse cannot see.
     custom_derived: BTreeSet<String>,
     /// Names the text harvest declares and no parse of any file does:
-    /// the members a `macro_rules!` body or a derive's `quote!` emits,
-    /// which belong to a type no parse of the source can name.
+    /// the members a `macro_rules!` body or a derive's `quote!` emits.
     macro_declared: BTreeSet<String>,
+    /// The subset of [`Self::macro_declared`] written under no literal
+    /// type header — at a macro body's top level, or inside an
+    /// `impl $name {` whose type is a macro parameter. These belong to
+    /// a type the text cannot name, so a type a macro can have written
+    /// them onto resolves them: one a macro wrote, or one with a custom
+    /// derive.
+    macro_unscoped: BTreeSet<String>,
+    /// Type name → the members the text harvest read under that
+    /// type's own literal header, `impl Config {`, `impl Default for
+    /// Config {` or `pub struct Config {`, wherever the header stands
+    /// — a `macro_rules!` body included, where it is the one place a
+    /// macro-emitted member is attributable to its type.
+    text_members: BTreeMap<String, BTreeSet<String>>,
+    /// Types whose literal header encloses a member written as a macro
+    /// parameter (`pub $field:`, `fn $method`): the parse never saw
+    /// them, and the text cannot finish listing their members — the
+    /// names come from the invocation's tokens — so any name the
+    /// workspace declares or writes resolves on them.
+    open_members: BTreeSet<String>,
     /// Every identifier token any file's code writes, comments
     /// stripped and string literals kept. A bare name is held to this
     /// rather than to a declaration: a file's code writes every
@@ -461,6 +494,9 @@ impl WorkspaceIndex {
             implements: BTreeMap::new(),
             custom_derived: BTreeSet::new(),
             macro_declared: BTreeSet::new(),
+            macro_unscoped: BTreeSet::new(),
+            text_members: BTreeMap::new(),
+            open_members: BTreeSet::new(),
             code: BTreeSet::new(),
             crates: crates.clone(),
             external_crates: external.clone(),
@@ -482,10 +518,19 @@ impl WorkspaceIndex {
         }
         let parsed_declared = index.declared.clone();
         let mut text_declared = BTreeSet::new();
+        let mut text_unscoped = BTreeSet::new();
         for code in &stripped {
-            index.harvest_text(&blank_string_literals(code), &mut text_declared);
+            index.harvest_text(
+                &blank_string_literals(code),
+                &mut text_declared,
+                &mut text_unscoped,
+            );
         }
         index.macro_declared = text_declared.difference(&parsed_declared).cloned().collect();
+        index.macro_unscoped = text_unscoped
+            .intersection(&index.macro_declared)
+            .cloned()
+            .collect();
         index
     }
 
@@ -518,6 +563,22 @@ impl WorkspaceIndex {
                     for variant in &item.variants {
                         self.declare_member(&name, &variant.ident.to_string());
                         self.harvest_fields(&name, &variant.fields);
+                    }
+                    if let Some(mirror) = discriminants_mirror(&item.attrs) {
+                        self.declare_parsed_type(&mirror.name, &[]);
+                        // A custom derive on the enum (`ActionClassify`)
+                        // writes onto the mirror too, since the mirror is
+                        // the type its output names.
+                        if self.custom_derived.contains(&name) {
+                            self.custom_derived.insert(mirror.name.clone());
+                        }
+                        for variant in &item.variants {
+                            self.declare_member(&mirror.name, &variant.ident.to_string());
+                        }
+                        self.implements
+                            .entry(mirror.name)
+                            .or_default()
+                            .extend(mirror.derives);
                     }
                 }
                 Item::Union(item) => {
@@ -613,7 +674,21 @@ impl WorkspaceIndex {
     /// been parsed; each name it reads goes into `text_declared` too,
     /// and the names there that no parse declared are the
     /// macro-emitted set.
-    fn harvest_text(&mut self, text: &str, text_declared: &mut BTreeSet<String>) {
+    ///
+    /// Each declaration is also attributed to the type whose literal
+    /// header encloses it, by the braces: `impl Config {` opens a frame
+    /// `Config` owns, `impl Default for Config {` one that also records
+    /// the trait, a `fn` body one nobody owns that is read through to
+    /// the frame around it, and `impl $name {` one owned by a type the
+    /// text cannot name, under which a member goes to
+    /// `text_unscoped`. A `#[derive(…)]` line immediately above a
+    /// header is read as the header's traits.
+    fn harvest_text(
+        &mut self,
+        text: &str,
+        text_declared: &mut BTreeSet<String>,
+        text_unscoped: &mut BTreeSet<String>,
+    ) {
         const DECLARING: &[&str] = &[
             "fn",
             "mod",
@@ -627,15 +702,50 @@ impl WorkspaceIndex {
             "macro_rules",
         ];
         const TYPE_LIKE: &[&str] = &["struct", "enum", "trait", "type", "union"];
+        let mut frames: Vec<Frame> = Vec::new();
+        let mut pending: Option<Frame> = None;
+        let mut derives: Vec<String> = Vec::new();
         for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(traits) = derive_line(trimmed) {
+                derives.extend(traits);
+            } else if let Some(header) = header_frame(trimmed) {
+                if let Frame::Owned(name) = &header {
+                    self.implements
+                        .entry(name.clone())
+                        .or_default()
+                        .extend(derives.drain(..));
+                } else {
+                    derives.clear();
+                }
+                pending = Some(header);
+            } else if !(trimmed.is_empty() || trimmed.starts_with('#')) {
+                derives.clear();
+            }
+            let owner = frames.iter().rev().find_map(|frame| match frame {
+                Frame::Owned(name) => Some(Some(name.clone())),
+                Frame::Parameter => Some(None),
+                Frame::Body => None,
+            });
+            let mut attribute = |name: &str, text_unscoped: &mut BTreeSet<String>| match &owner {
+                Some(Some(ty)) => {
+                    self.text_members
+                        .entry(ty.clone())
+                        .or_default()
+                        .insert(name.to_string());
+                }
+                _ => {
+                    text_unscoped.insert(name.to_string());
+                }
+            };
             // `pub name: Type` is a field declaration and nothing
             // else: a struct literal's fields and a `let` binding's
             // type ascription never carry `pub`. Read so a field a
-            // macro emits (`KeybindConfig`'s bindings tables are
-            // written by `keybind_surface!`) counts as declared.
+            // macro emits counts as declared.
             if let Some(field) = pub_field_name(line) {
                 text_declared.insert(field.to_string());
                 self.declared.insert(field.to_string());
+                attribute(field, text_unscoped);
             }
             let mut previous = "";
             for word in line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
@@ -645,6 +755,7 @@ impl WorkspaceIndex {
                 if DECLARING.contains(&previous) && is_identifier(word) {
                     text_declared.insert(word.to_string());
                     self.declared.insert(word.to_string());
+                    attribute(word, text_unscoped);
                     if TYPE_LIKE.contains(&previous) {
                         self.types.insert(word.to_string());
                     }
@@ -654,30 +765,61 @@ impl WorkspaceIndex {
                 }
                 previous = word;
             }
+            if let Some(Some(ty)) = &owner {
+                if declares_a_parameter(trimmed) {
+                    self.open_members.insert(ty.clone());
+                }
+            }
+            for c in trimmed.chars() {
+                match c {
+                    '{' => frames.push(pending.take().unwrap_or(Frame::Body)),
+                    '}' => {
+                        frames.pop();
+                    }
+                    _ => {}
+                }
+            }
+            if trimmed.ends_with(';') {
+                pending = None;
+            }
         }
     }
 
     /// Whether `owner` declares `name`: itself, through a workspace
     /// trait it implements, through a known trait it derives or
-    /// implements that supplies the method, or through a macro. A type
-    /// the parse saw with a custom derive resolves a name declared only
-    /// inside a macro body, since the derive is where it can have come
-    /// from; a type the parse never saw — a macro wrote it — resolves
-    /// any declared name, since nothing about its members is knowable.
+    /// implements that supplies the method, or through a macro. A
+    /// macro-emitted name resolves where a macro can have put it: on
+    /// the type whose literal header the text harvest read it under,
+    /// on a type with a custom derive when the name was written under
+    /// no literal header, and on a type a macro wrote. A macro-written
+    /// type is held to the members its literal headers list, the
+    /// traits they implement and the unscoped set — unless one of its
+    /// members is itself a macro parameter, when its member list is
+    /// unknowable and any name the workspace declares or writes
+    /// resolves on it.
     fn has_member(&self, owner: &str, name: &str) -> bool {
         let declares = |ty: &str| self.members.get(ty).is_some_and(|members| members.contains(name));
         let traits = self.implements.get(owner);
-        if !self.parsed_types.contains(owner) {
-            return self.declared.contains(name);
-        }
-        declares(owner)
-            || traits.is_some_and(|traits| traits.iter().any(|t| declares(t)))
-            || traits.is_some_and(|traits| {
-                TRAIT_METHODS
+        let supplied_by_trait = traits.is_some_and(|traits| {
+            traits.iter().any(|t| declares(t))
+                || TRAIT_METHODS
                     .iter()
                     .any(|(trait_name, methods)| traits.contains(*trait_name) && methods.contains(&name))
-            })
-            || (self.macro_declared.contains(name) && self.custom_derived.contains(owner))
+        });
+        let written_under_own_header = self
+            .text_members
+            .get(owner)
+            .is_some_and(|members| members.contains(name));
+        if !self.parsed_types.contains(owner) {
+            if self.open_members.contains(owner) {
+                return self.exists(name);
+            }
+            return written_under_own_header || supplied_by_trait || self.macro_unscoped.contains(name);
+        }
+        declares(owner)
+            || supplied_by_trait
+            || (self.macro_declared.contains(name) && written_under_own_header)
+            || (self.macro_unscoped.contains(name) && self.custom_derived.contains(owner))
     }
 
     /// Whether `name` exists somewhere: declared as an item, or
@@ -761,6 +903,52 @@ fn derived_traits(attrs: &[Attribute], attribute: &str) -> Vec<String> {
     out
 }
 
+/// The enum strum's `EnumDiscriminants` writes beside an enum that
+/// derives it: named by `#[strum_discriminants(name(X))]`, with the
+/// enum's variants as unit variants, and implementing the traits the
+/// attribute's `derive(…)` lists over strum's own `Clone`, `Copy`,
+/// `Debug`, `PartialEq` and `Eq`. `None` when the attribute names no
+/// mirror. The one macro-written type whose declaration is known in
+/// full, since the derive's output is a function of the input.
+struct DiscriminantsMirror {
+    name: String,
+    derives: Vec<String>,
+}
+
+fn discriminants_mirror(attrs: &[Attribute]) -> Option<DiscriminantsMirror> {
+    let mut name = None;
+    let mut derives: Vec<String> = ["Clone", "Copy", "Debug", "PartialEq", "Eq"]
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+    for attr in attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("strum_discriminants"))
+    {
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("name") {
+                meta.parse_nested_meta(|inner| {
+                    name = inner.path.get_ident().map(ToString::to_string);
+                    Ok(())
+                })?;
+            } else if meta.path.is_ident("derive") {
+                meta.parse_nested_meta(|inner| {
+                    if let Some(last) = inner.path.segments.last() {
+                        derives.push(last.ident.to_string());
+                    }
+                    Ok(())
+                })?;
+            } else if meta.input.peek(syn::Token![=]) {
+                let _: syn::Expr = meta.value()?.parse()?;
+            } else if meta.input.peek(syn::token::Paren) {
+                meta.parse_nested_meta(|_| Ok(()))?;
+            }
+            Ok(())
+        });
+    }
+    name.map(|name| DiscriminantsMirror { name, derives })
+}
+
 /// The last segment of a type path — `SceneConnectionCache` for
 /// `impl<'a> crate::mindmap::scene_cache::SceneConnectionCache<'a>`.
 /// `None` for a self type that is not a path (a reference, a tuple,
@@ -805,6 +993,133 @@ fn pub_field_name(line: &str) -> Option<&str> {
     let name = &rest[..end];
     let after = rest[end..].trim_start();
     (is_identifier(name) && after.starts_with(':') && !after.starts_with("::")).then_some(name)
+}
+
+/// What a brace opened, for attributing the declarations inside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Frame {
+    /// An `impl`, `struct`, `enum`, `union` or `trait` header naming
+    /// a type literally: the declarations inside belong to it.
+    Owned(String),
+    /// Such a header whose type is a macro parameter (`impl $name {`,
+    /// `struct #ident {`): the declarations inside belong to a type the
+    /// text cannot name, and to no enclosing one.
+    Parameter,
+    /// Anything else — a `fn` body, a `mod`, a `macro_rules!` arm, a
+    /// block — which is read through to the frame around it.
+    Body,
+}
+
+/// The frame a line opens when it is a type header: `impl Config {`,
+/// `impl<T> Trait<T> for Config<T> where …`, `pub(crate) struct
+/// Config {`, `trait Describe {`. `None` for every other line. The
+/// type is the header's self type by its last path segment, with
+/// visibility, `unsafe`, generics, `for`, references and lifetimes
+/// read past.
+fn header_frame(line: &str) -> Option<Frame> {
+    let mut rest = line;
+    if let Some(after) = rest.strip_prefix("pub") {
+        rest = match after.strip_prefix('(') {
+            Some(after) => after.split_once(')')?.1,
+            None => after,
+        };
+        rest = rest.strip_prefix(char::is_whitespace)?.trim_start();
+    }
+    for modifier in ["unsafe", "default"] {
+        if let Some(after) = rest.strip_prefix(modifier) {
+            if let Some(after) = after.strip_prefix(char::is_whitespace) {
+                rest = after.trim_start();
+            }
+        }
+    }
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let keyword = &rest[..end];
+    if !["impl", "struct", "enum", "union", "trait"].contains(&keyword) {
+        return None;
+    }
+    let rest = &rest[end..];
+    if !(rest.starts_with(char::is_whitespace) || rest.starts_with('<')) {
+        return None;
+    }
+    let rest = skip_angle_group(rest.trim_start()).trim_start();
+    let rest = if keyword == "impl" {
+        match rest.find(" for ") {
+            Some(at) => &rest[at + " for ".len()..],
+            None => rest,
+        }
+    } else {
+        rest
+    };
+    let rest = rest.trim_start_matches(|c: char| c == '&' || c.is_whitespace());
+    let rest = match rest.strip_prefix('\'') {
+        Some(after) => after.split_once(char::is_whitespace)?.1.trim_start(),
+        None => rest,
+    };
+    let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    if rest.starts_with('$') || rest.starts_with('#') {
+        return Some(Frame::Parameter);
+    }
+    let path_end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+        .unwrap_or(rest.len());
+    let name = rest[..path_end].rsplit("::").next().unwrap_or("");
+    is_identifier(name).then(|| Frame::Owned(name.to_string()))
+}
+
+/// `rest` past a balanced `<…>` group at its start, or `rest` itself.
+fn skip_angle_group(rest: &str) -> &str {
+    if !rest.starts_with('<') {
+        return rest;
+    }
+    let mut depth = 0usize;
+    for (at, c) in rest.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &rest[at + 1..];
+                }
+            }
+            _ => {}
+        }
+    }
+    rest
+}
+
+/// The traits a `#[derive(…)]` or `#[derivative(…)]` line lists, by
+/// their last path segment and with a `derivative` entry's `= "…"`
+/// option read past; `None` for any other line.
+fn derive_line(line: &str) -> Option<Vec<String>> {
+    let inner = ["#[derive(", "#[derivative("]
+        .iter()
+        .find_map(|prefix| line.strip_prefix(prefix))?;
+    let inner = inner.rsplit_once(")]").map_or(inner, |(inner, _)| inner);
+    Some(
+        inner
+            .split(',')
+            .map(|entry| entry.split(['=', '(']).next().unwrap_or("").trim())
+            .map(|path| path.rsplit("::").next().unwrap_or("").to_string())
+            .filter(|name| is_identifier(name))
+            .collect(),
+    )
+}
+
+/// Whether a line declares a member whose name is a macro parameter:
+/// `pub $field: Ty`, `fn $method(…)`, `const $NAME: …`.
+fn declares_a_parameter(line: &str) -> bool {
+    let mut previous = "";
+    for word in line.split_whitespace() {
+        let declaring =
+            ["pub", "fn", "const", "type", "static"].contains(&previous) || previous.starts_with("pub(");
+        if declaring && (word.starts_with('$') || word.starts_with('#')) {
+            return true;
+        }
+        previous = word;
+    }
+    false
 }
 
 /// A single uppercase letter, optionally numbered — `T`, `F`, `T2` —
@@ -1934,10 +2249,11 @@ make!();
         );
         assert_eq!(scan.resolved.get("user.rs"), Some(&2));
 
-        // A type a macro wrote has no knowable members, so any name
-        // declared anywhere resolves on it — `default` from a `Default`
-        // impl inside the macro included — while a name declared
-        // nowhere still does not.
+        // A type a macro wrote is held to what its literal headers
+        // list: `default` from the `impl Default for Config` inside the
+        // macro, `made_by_macro` as a name written under no header that
+        // a macro can have put anywhere, and nothing the parse declared
+        // elsewhere — `elsewhere` is a plain function, not a member.
         let derived_in_macro = "\
 macro_rules! make {
     () => {
@@ -1947,46 +2263,167 @@ macro_rules! make {
                 Config
             }
         }
+        fn made_by_macro() {}
     };
 }
 make!();
-/// `Config::default()` is the macro's impl; `Config::never_declared` is nobody's.
+fn elsewhere() {}
+/// `Config::default()` is the macro's impl and `Config::made_by_macro` may be;
+/// `Config::elsewhere` and `Config::never_declared` are nobody's.
 fn user() {}
 ";
         let scan = scan_sources(&[("m.rs", derived_in_macro)]);
         assert_eq!(
             scan.unresolved,
-            vec!["m.rs:12: `Config::never_declared` — `Config` declares no `never_declared`".to_string()]
+            vec![
+                "m.rs:15: `Config::elsewhere` — `Config` declares no `elsewhere`".to_string(),
+                "m.rs:15: `Config::never_declared` — `Config` declares no `never_declared`".to_string(),
+            ]
         );
-        assert_eq!(scan.resolved.get("m.rs"), Some(&1));
+        assert_eq!(scan.resolved.get("m.rs"), Some(&2));
+
+        // A macro-written type with a member that is itself a macro
+        // parameter has no listable members — `bindings` is a token at
+        // the invocation — so any name the workspace declares or writes
+        // resolves on it, and a name written nowhere still does not.
+        let open = "\
+macro_rules! make_open {
+    ($field:ident) => {
+        pub struct Open {
+            pub $field: u8,
+        }
+    };
+}
+make_open!(bindings);
+fn elsewhere() {}
+/// `Open::bindings` and `Open::elsewhere` cannot be ruled out; `Open::never_declared` can.
+fn user() {}
+";
+        let scan = scan_sources(&[("o.rs", open)]);
+        assert_eq!(
+            scan.unresolved,
+            vec!["o.rs:10: `Open::never_declared` — `Open` declares no `never_declared`".to_string()]
+        );
+        assert_eq!(scan.resolved.get("o.rs"), Some(&2));
     }
 
     /// A macro-emitted name resolves only where a macro can have put
-    /// it: on a type a macro wrote, or on a type with a custom derive.
-    /// On a plainly parsed type without one, `Type::name` is held to
-    /// what the parse saw, so a macro elsewhere cannot vouch for a
-    /// member every type would then be granted.
+    /// it: on the type whose literal header the text read it under, on
+    /// a type with a custom derive when it was written under no header,
+    /// or on a type a macro wrote. On a plainly parsed type without a
+    /// custom derive, `Type::name` is held to what the parse saw plus
+    /// what a macro body writes under that type's own header, so a
+    /// macro elsewhere cannot vouch for a member every type would then
+    /// be granted.
     #[test]
     fn test_a_macro_emitted_member_resolves_only_on_a_macro_written_or_custom_derived_type() {
         let source = "\
 macro_rules! make {
     () => {
         fn probe_emitted_fn() {}
+        impl Host {
+            pub fn emitted_on_host() {}
+        }
     };
 }
 make!();
-/// `Plain::probe_emitted_fn` is nobody's; `Classified::probe_emitted_fn`
-/// may be the derive's.
+/// `Plain::probe_emitted_fn` and `Plain::emitted_on_host` are nobody's;
+/// `Classified::probe_emitted_fn` may be the derive's, and
+/// `Host::emitted_on_host` is the macro's; `Classified::emitted_on_host`
+/// is nobody's, since the macro wrote it under `Host`.
 struct Plain;
 #[derive(Clone, ActionClassify)]
 struct Classified;
+struct Host;
 ";
         let scan = scan_sources(&[("m.rs", source)]);
         assert_eq!(
             scan.unresolved,
-            vec!["m.rs:7: `Plain::probe_emitted_fn` — `Plain` declares no `probe_emitted_fn`".to_string()]
+            vec![
+                "m.rs:10: `Plain::probe_emitted_fn` — `Plain` declares no `probe_emitted_fn`".to_string(),
+                "m.rs:10: `Plain::emitted_on_host` — `Plain` declares no `emitted_on_host`".to_string(),
+                "m.rs:12: `Classified::emitted_on_host` — `Classified` declares no `emitted_on_host`"
+                    .to_string(),
+            ]
         );
-        assert_eq!(scan.resolved.get("m.rs"), Some(&1));
+        assert_eq!(scan.resolved.get("m.rs"), Some(&2));
+
+        // The header reader behind the attribution, line by line.
+        assert_eq!(header_frame("impl Config {"), Some(Frame::Owned("Config".into())));
+        assert_eq!(
+            header_frame("impl<'a, T: Clone> Describe<T> for &'a mut a::b::Config<T> where T: Copy {"),
+            Some(Frame::Owned("Config".into()))
+        );
+        assert_eq!(
+            header_frame("pub(crate) struct Config {"),
+            Some(Frame::Owned("Config".into()))
+        );
+        assert_eq!(
+            header_frame("pub unsafe trait Describe {"),
+            Some(Frame::Owned("Describe".into()))
+        );
+        assert_eq!(header_frame("impl $name {"), Some(Frame::Parameter));
+        assert_eq!(header_frame("impl Default for #ident {"), Some(Frame::Parameter));
+        assert_eq!(header_frame("impl_marker!(Config);"), None);
+        assert_eq!(header_frame("let s = Config {"), None);
+        assert_eq!(header_frame("fn config() {"), None);
+        assert_eq!(
+            derive_line("#[derive(Clone, strum::EnumIter)]"),
+            Some(vec!["Clone".into(), "EnumIter".into()])
+        );
+        assert_eq!(
+            derive_line("#[derivative(PartialEq, Debug = \"transparent\")]"),
+            Some(vec!["PartialEq".into(), "Debug".into()])
+        );
+        assert_eq!(derive_line("#[cfg(test)]"), None);
+        assert!(declares_a_parameter("pub $field: Vec<u8>,"));
+        assert!(declares_a_parameter("fn $method(&self) {}"));
+        assert!(declares_a_parameter("pub(crate) const #name: u8 = 1;"));
+        assert!(!declares_a_parameter("pub field: Vec<$ty>,"));
+        assert!(!declares_a_parameter("let $x = 1;"));
+    }
+
+    /// strum's `EnumDiscriminants` writes a mirror enum the parse never
+    /// sees, but its declaration is a function of the parsed one: the
+    /// variants are the enum's, the traits are strum's defaults plus
+    /// the attribute's `derive(…)`, and a custom derive on the enum
+    /// writes onto the mirror. So the mirror is held like a parsed
+    /// type, not like a macro-written one.
+    #[test]
+    fn test_strums_discriminants_mirror_is_held_to_the_enums_variants_and_listed_derives() {
+        let source = "\
+/// `Kind::iter()`, `Kind::clone()` and `Kind::classify` are the mirror's;
+/// `Kind::next` and `Kind::nothing` are nobody's, and `Plain::iter()` has
+/// no `EnumIter` to come from.
+#[derive(EnumDiscriminants, ActionClassify)]
+#[strum_discriminants(name(Kind), derive(Hash, EnumIter), doc = \"mirror\")]
+enum Action {
+    Alpha,
+    Beta(u8),
+}
+#[derive(EnumDiscriminants)]
+#[strum_discriminants(name(Plain))]
+enum Other {
+    Gamma,
+}
+macro_rules! write_classifier {
+    () => {
+        impl ActionClassify for #name {
+            fn classify(&self) {}
+        }
+    };
+}
+";
+        let scan = scan_sources(&[("k.rs", source)]);
+        assert_eq!(
+            scan.unresolved,
+            vec![
+                "k.rs:2: `Kind::next` — `Kind` declares no `next`".to_string(),
+                "k.rs:2: `Kind::nothing` — `Kind` declares no `nothing`".to_string(),
+                "k.rs:2: `Plain::iter()` — `Plain` declares no `iter`".to_string(),
+            ]
+        );
+        assert_eq!(scan.resolved.get("k.rs"), Some(&3));
     }
 
     /// A name `syn` declares in a later file is not macro-emitted just
