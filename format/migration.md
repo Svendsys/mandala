@@ -201,10 +201,16 @@ path and move the result into place yourself.
 1. **Assigns Dewey-decimal IDs** by walking the tree (using `parent_id` +
    the old `index` field for sibling order, ties broken by numeric
    Dewey order on the old ID). A map whose IDs are all Dewey paths
-   already, and which carries no `index` field anywhere, keeps every
-   ID exactly as it is — gaps left by deletions and IDs that drifted
-   under a reparent ([ids.md](./ids.md)) included; any other map is
-   renumbered throughout. Rewrites every reference —
+   already, and which carries **no legacy marker** — no shape any
+   step below migrates: a node `index`, a top-level `portals` key, an
+   integer enum, a `color_schema` `groups` / `theme_id` / `variant`,
+   or node `text` / `text_runs` — keeps every ID exactly as it is,
+   gaps left by deletions and IDs that drifted under a reparent
+   ([ids.md](./ids.md)) included. Any other map is renumbered
+   throughout. The markers matter because miMind's heap-pointer IDs
+   (`"348068464"`) are runs of digits, which is a well-formed Dewey
+   root: the IDs alone cannot tell a legacy file from a current one.
+   Rewrites every reference —
    edge `from_id`/`to_id` (covers both line-mode and portal-mode edges;
    post-refactor portals live in the edges array), legacy
    `portals[].endpoint_a`/`endpoint_b`, and the HashMap keys.
@@ -231,7 +237,9 @@ path and move the result into place yourself.
    a file this tool could not read back.
 
    **Only level-0 schemas with a non-empty `groups` array define a
-   palette** (`collect_palettes`). A palette that appears in the input
+   palette** (`collect_palettes`). Hoisted palettes are merged into
+   any `palettes` table the input already has: every existing palette
+   is kept, and an existing name is not redefined by a hoisted one. A palette that appears in the input
    only on deeper nodes is never hoisted, and those nodes are left
    referencing a name the output does not define — which
    `maptool verify` reports under `palettes`. The rewritten
@@ -340,14 +348,25 @@ legacy key means *the file is older than the format* — the name is
 taken, the migration exists, and preserving it would only carry a
 contradiction forward.
 
-The conversion is idempotent on a file that is already current: run
-over a map the app saved, `convert --legacy` writes the same map back.
-Already-Dewey IDs survive unchanged (step 1), already-string enums pass
-through, already-hoisted palettes don't double-hoist, and a node's
-`color_schema.overrides` rides through the palette pass (step 4).
+The conversion is idempotent on a file that is already current —
+every ID a Dewey path and no legacy marker anywhere, the condition
+step 1 checks — and that the app saved: `convert --legacy` writes the
+same map back. Already-Dewey IDs survive unchanged (step 1),
+already-string enums pass through, already-hoisted palettes don't
+double-hoist (step 4 merges into the table), and a node's
+`color_schema.overrides` rides through the palette pass. A map that
+fails the condition is renumbered throughout, which changes IDs even
+where the map was otherwise current: one symbolic ID (`"title"`), or
+an `index` key left on a node, is enough. (A map the app saved meets
+it: the app writes Dewey IDs and none of the legacy shapes. "Saved"
+matters only for a key the app writes and a hand-written file may
+omit, such as a node's `channel`, which step 6 fills in.)
 `test_run_convert_legacy_leaves_a_current_map_unchanged` holds that
 against testament with a ten-plus sibling group, a deletion gap, a
-drifted ID and an override. `convert --portals` and
+drifted ID and an override; a map on the renumbering path keeps its
+Dewey sibling order and its palettes, which
+`test_run_convert_legacy_renumbering_keeps_dewey_order_and_palettes`
+holds. `convert --portals` and
 `convert --sections` likewise change no value in a file that has
 nothing for them to migrate (the file is still rewritten). But the
 converter is intended as a one-shot migration, not an always-on

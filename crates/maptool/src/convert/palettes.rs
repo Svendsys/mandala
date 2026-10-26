@@ -68,14 +68,27 @@ fn palette_key(schema: &serde_json::Map<String, Value>) -> String {
     }
 }
 
+/// Add the hoisted palettes to `root.palettes`, keeping every palette
+/// already there.
+///
+/// A merge, not a replacement. A map that already has a `palettes`
+/// table keeps all of it: a key already defined wins over a hoisted
+/// one of the same name, the same first-writer-wins rule
+/// `collect_palettes` applies between nodes, because a defined palette
+/// is the authored one. This used to overwrite the table with the
+/// hoisted set, so one stray `color_schema.groups` on a current map
+/// replaced its palettes with the single one hoisted from it.
 fn inject_palettes(root: &mut Value, palettes: &HashMap<String, Value>) {
     if palettes.is_empty() {
         return;
     }
-    let palette_obj: serde_json::Map<String, Value> =
-        palettes.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    if let Some(obj) = root.as_object_mut() {
-        obj.insert("palettes".to_string(), Value::Object(palette_obj));
+    let Some(obj) = root.as_object_mut() else { return };
+    let table = obj
+        .entry("palettes")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Some(table) = table.as_object_mut() else { return };
+    for (key, palette) in palettes {
+        table.entry(key.clone()).or_insert_with(|| palette.clone());
     }
 }
 
@@ -218,6 +231,35 @@ mod tests {
                 "connections_colored": true,
                 "overrides": { "background": "#123456" },
                 "future_key": [1, 2]
+            })
+        );
+    }
+
+    /// Hoisting merges into an existing `palettes` table: every
+    /// palette already there survives, a hoisted palette with a new
+    /// name is added, and one whose name is already defined does not
+    /// replace the definition (#211 review).
+    #[test]
+    fn test_hoist_palettes_merges_into_an_existing_table() {
+        let mut root = legacy_map_with_level(json!(0));
+        root["palettes"] = json!({
+            "coral": { "groups": [{ "background": "#defined" }] },
+            "other": { "groups": [{ "background": "#other" }] },
+        });
+        root["nodes"]["1"] = json!({
+            "color_schema": {
+                "palette": "fresh",
+                "level": 0,
+                "groups": [{ "background": "#fresh" }]
+            }
+        });
+        hoist_palettes(&mut root);
+        assert_eq!(
+            root["palettes"],
+            json!({
+                "coral": { "groups": [{ "background": "#defined" }] },
+                "other": { "groups": [{ "background": "#other" }] },
+                "fresh": { "groups": [{ "background": "#fresh" }] },
             })
         );
     }
