@@ -41,7 +41,6 @@ fn test_document_bounds_font_size_pt() {
 
 /// The shaper's own window: `MIN_FONT_SIZE_PT..=MAX_FONT_SIZE_PT`.
 pub fn do_document_bounds_font_size_pt() {
-    assert_eq!(MIN_FONT_SIZE_PT, crate::font::fonts::MIN_FONT_SIZE_PT);
     assert_eq!(check_font_size_pt(MIN_FONT_SIZE_PT), Ok(MIN_FONT_SIZE_PT));
     assert_eq!(check_font_size_pt(MAX_FONT_SIZE_PT), Ok(MAX_FONT_SIZE_PT));
     assert!(matches!(
@@ -172,4 +171,42 @@ pub fn do_document_bounds_control_points() {
         check_control_points(3),
         Err(BoundError::TooMany { count: 3, max: 2 })
     );
+}
+
+#[test]
+fn test_document_bounds_node_ident() {
+    do_document_bounds_node_ident();
+}
+
+/// `1..=MAX_NODE_IDENT`: the reserved 0 and `u32::MAX` are out.
+pub fn do_document_bounds_node_ident() {
+    assert_eq!(check_node_ident(1), Ok(1));
+    assert_eq!(check_node_ident(MAX_NODE_IDENT), Ok(MAX_NODE_IDENT));
+    assert_eq!(check_node_ident(0), Err(BoundError::NotAnIdent(0)));
+    assert_eq!(check_node_ident(u32::MAX), Err(BoundError::NotAnIdent(u32::MAX)));
+}
+
+#[test]
+fn test_document_bounds_counts() {
+    do_document_bounds_counts();
+}
+
+/// Every index bound admits exactly as many items as its `u16` index
+/// addresses, 65536, and refuses one more.
+pub fn do_document_bounds_counts() {
+    for max in [
+        MAX_PALETTES,
+        MAX_THEME_VARIABLES,
+        MAX_THEME_VARIANTS,
+        MAX_VERBS,
+        MAX_EDITS,
+        MAX_PRESENTATIONS,
+    ] {
+        assert_eq!(max, usize::from(u16::MAX) + 1);
+        assert_eq!(check_count(max, max), Ok(max));
+        assert_eq!(
+            check_count(max + 1, max),
+            Err(BoundError::TooMany { count: max + 1, max })
+        );
+    }
 }

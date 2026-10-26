@@ -30,6 +30,7 @@
 //! (V1-B2) and, for tests,
 //! [`DocumentBuilder`](crate::document::tests::test_support::DocumentBuilder).
 
+use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
 use crate::document::shape::{validate_shape, ShapeError};
 use crate::document::values::PaletteId;
@@ -105,6 +106,20 @@ pub enum DocumentError {
     DuplicateIdent(NodeIdent),
     /// A node carries [`NodeIdent::UNASSIGNED`].
     UnassignedIdent(NodeId),
+    /// The highest ident is
+    /// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT): the
+    /// counter has no ident left to issue, and issuing one would reuse
+    /// an ident.
+    IdentSpaceExhausted,
+    /// A number is out of its bound: a node ident, or a count an index
+    /// type cannot address — palettes, theme variables or variants,
+    /// verbs, edits or presentations.
+    Bound {
+        /// What was counted or read.
+        what: &'static str,
+        /// The bound it broke.
+        error: BoundError,
+    },
 }
 
 impl std::fmt::Display for DocumentError {
@@ -113,6 +128,8 @@ impl std::fmt::Display for DocumentError {
             DocumentError::Shape(error) => write!(f, "{error}"),
             DocumentError::DuplicateIdent(ident) => write!(f, "two nodes carry the id {}", ident.0),
             DocumentError::UnassignedIdent(node) => write!(f, "node {node} has no id"),
+            DocumentError::IdentSpaceExhausted => f.write_str("no node id is left to issue"),
+            DocumentError::Bound { what, error } => write!(f, "{what}: {error}"),
         }
     }
 }
@@ -133,8 +150,12 @@ pub struct Document {
 impl Document {
     /// Make `tree` a document: check the map row
     /// ([`validate_shape`] at the root, so the theme and the defaults
-    /// are there), index every node's ident, and start the ident counter
-    /// one past the highest ident (at least `1`).
+    /// are there), check every index bound (`bounds::MAX_PALETTES` and
+    /// its siblings), index every node's ident, and start the ident
+    /// counter one past the highest ident (at least `1`). A tree whose
+    /// counter would have no ident left to issue is refused
+    /// ([`DocumentError::IdentSpaceExhausted`]), so the counter never
+    /// issues an ident twice.
     ///
     /// Only the root row is checked; whoever built the tree checks the
     /// rest — the loader calls [`validate_shape`] for every element as it
@@ -144,6 +165,7 @@ impl Document {
     /// Cost: one pass over the tree, one hash insert per node.
     pub(crate) fn from_tree(tree: Tree<DocElement>, definitions: Definitions) -> Result<Self, DocumentError> {
         validate_shape(&tree, tree.root()).map_err(DocumentError::Shape)?;
+        check_indexes(&tree, &definitions)?;
         let mut ident_index = FxHashMap::default();
         let mut highest = 0;
         for id in tree.descendants() {
@@ -153,15 +175,24 @@ impl Document {
             if node.ident == NodeIdent::UNASSIGNED {
                 return Err(DocumentError::UnassignedIdent(id));
             }
+            bounds::check_node_ident(node.ident.0).map_err(|error| DocumentError::Bound {
+                what: "node id",
+                error,
+            })?;
             if ident_index.insert(node.ident, id).is_some() {
                 return Err(DocumentError::DuplicateIdent(node.ident));
             }
             highest = highest.max(node.ident.0);
         }
+        // `highest <= MAX_NODE_IDENT < u32::MAX`, so this cannot wrap.
+        let next_ident = highest + 1;
+        if next_ident > bounds::MAX_NODE_IDENT {
+            return Err(DocumentError::IdentSpaceExhausted);
+        }
         Ok(Document {
             tree,
             ident_index,
-            next_ident: highest.saturating_add(1),
+            next_ident,
             definitions,
         })
     }
@@ -311,7 +342,10 @@ pub fn defaults(tree: &Tree<DocElement>) -> Option<(NodeId, &DefaultsData)> {
         })
 }
 
-/// The palettes of `tree`, in tree order, numbered. No allocation.
+/// The palettes of `tree`, in tree order, numbered. Only the first
+/// [`MAX_PALETTES`](crate::document::bounds::MAX_PALETTES) have an id:
+/// past them the iteration ends rather than alias an id (a `Document`
+/// refuses such a tree). No allocation.
 pub fn palettes(tree: &Tree<DocElement>) -> impl Iterator<Item = (PaletteId, &PaletteData)> + '_ {
     tree.root()
         .children(tree.arena())
@@ -321,7 +355,37 @@ pub fn palettes(tree: &Tree<DocElement>) -> impl Iterator<Item = (PaletteId, &Pa
             _ => None,
         })
         .enumerate()
-        .map(|(n, palette)| (PaletteId(u16::try_from(n).unwrap_or(u16::MAX)), palette))
+        .map_while(|(n, palette)| Some((PaletteId(u16::try_from(n).ok()?), palette)))
+}
+
+/// Refuse a tree or definitions with more of something than its index
+/// type addresses: past the bound an id would alias another.
+fn check_indexes(tree: &Tree<DocElement>, definitions: &Definitions) -> Result<(), DocumentError> {
+    let bound = |what: &'static str, count: usize, max: usize| {
+        bounds::check_count(count, max).map_err(|error| DocumentError::Bound { what, error })
+    };
+    let palettes = tree
+        .root()
+        .children(tree.arena())
+        .filter(|&c| tree.arena()[c].get().kind() == DocKind::Palette)
+        .count();
+    bound("palettes", palettes, bounds::MAX_PALETTES)?;
+    if let Some((_, theme)) = theme(tree) {
+        bound(
+            "theme variables",
+            theme.variables.len(),
+            bounds::MAX_THEME_VARIABLES,
+        )?;
+        bound("theme variants", theme.variants.len(), bounds::MAX_THEME_VARIANTS)?;
+    }
+    bound("verbs", definitions.verbs.len(), bounds::MAX_VERBS)?;
+    bound("edits", definitions.edits.len(), bounds::MAX_EDITS)?;
+    bound(
+        "presentations",
+        definitions.presentations.len(),
+        bounds::MAX_PRESENTATIONS,
+    )?;
+    Ok(())
 }
 
 /// The palette `id` names in `tree`. O(palettes).

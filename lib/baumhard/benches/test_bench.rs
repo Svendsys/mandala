@@ -1754,6 +1754,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_shape_map_row", |b| b.iter(do_document_shape_map_row));
     c.bench_function("document_shape_node_row", |b| b.iter(do_document_shape_node_row));
+    c.bench_function("document_bounds_node_ident", |b| {
+        b.iter(do_document_bounds_node_ident)
+    });
+    c.bench_function("document_bounds_counts", |b| b.iter(do_document_bounds_counts));
+    c.bench_function("document_never_reissues_an_ident", |b| {
+        b.iter(do_document_never_reissues_an_ident)
+    });
+    c.bench_function("document_refuses_more_than_an_index_addresses", |b| {
+        b.iter(do_document_refuses_more_than_an_index_addresses)
+    });
     c.bench_function(
         "document_validate_row_is_order_independent_and_names_no_id",
         |b| b.iter(do_document_validate_row_is_order_independent_and_names_no_id),

@@ -36,6 +36,38 @@ pub const MAX_PERCENT: u8 = 100;
 /// and 2 a cubic Bézier.
 pub const MAX_CONTROL_POINTS: usize = 2;
 
+/// The largest ident a node may carry. One below `u32::MAX`, so the
+/// counter — one past the highest ident — always fits: a document whose
+/// counter has passed this bound has no ident left to issue, and is
+/// refused rather than issuing one twice
+/// ([`DocumentError::IdentSpaceExhausted`](crate::document::ids::DocumentError::IdentSpaceExhausted)).
+pub const MAX_NODE_IDENT: u32 = u32::MAX - 1;
+
+/// The most palettes a map may have: a
+/// [`PaletteId`](crate::document::values::PaletteId) is a `u16`.
+pub const MAX_PALETTES: usize = 1 << 16;
+
+/// The most theme variables a map may have: a
+/// [`VarId`](crate::document::values::VarId) is a `u16`.
+pub const MAX_THEME_VARIABLES: usize = 1 << 16;
+
+/// The most theme variants a map may have: the active one is named by a
+/// `u16`.
+pub const MAX_THEME_VARIANTS: usize = 1 << 16;
+
+/// The most verbs a map may define: a
+/// [`VerbId`](crate::document::values::VerbId) is a `u16`.
+pub const MAX_VERBS: usize = 1 << 16;
+
+/// The most edits a map may define: an
+/// [`EditId`](crate::document::values::EditId) is a `u16`.
+pub const MAX_EDITS: usize = 1 << 16;
+
+/// The most presentations a map may define: a
+/// [`PresentationId`](crate::document::values::PresentationId) is a
+/// `u16`.
+pub const MAX_PRESENTATIONS: usize = 1 << 16;
+
 /// The lightest [`Weight`](crate::document::values::Weight).
 pub const MIN_WEIGHT: u16 = 100;
 
@@ -77,6 +109,9 @@ pub enum BoundError {
     },
     /// A weight that is not one of `100, 200, …, 900`.
     NotAWeight(u16),
+    /// A node ident outside `1..=`[`MAX_NODE_IDENT`]; `0` is reserved
+    /// for "not yet assigned".
+    NotAnIdent(u32),
     /// More items than the bound allows.
     TooMany {
         /// How many there are.
@@ -102,6 +137,9 @@ impl std::fmt::Display for BoundError {
             } => write!(f, "{value} is not above {min}"),
             BoundError::Above { value, max } => write!(f, "{value} is above the maximum {max}"),
             BoundError::Inverted { min, max } => write!(f, "the range {min}..={max} is empty"),
+            BoundError::NotAnIdent(value) => {
+                write!(f, "{value} is not a node id: 1..={MAX_NODE_IDENT}")
+            }
             BoundError::NotAWeight(value) => write!(
                 f,
                 "{value} is not a weight: {MIN_WEIGHT}..={MAX_WEIGHT} in steps of {WEIGHT_STEP}"
@@ -250,6 +288,26 @@ pub fn check_control_points(count: usize) -> Result<usize, BoundError> {
             count,
             max: MAX_CONTROL_POINTS,
         })
+    } else {
+        Ok(count)
+    }
+}
+
+/// A node ident if it is in `1..=`[`MAX_NODE_IDENT`]. O(1).
+pub fn check_node_ident(value: u32) -> Result<u32, BoundError> {
+    if (1..=MAX_NODE_IDENT).contains(&value) {
+        Ok(value)
+    } else {
+        Err(BoundError::NotAnIdent(value))
+    }
+}
+
+/// A count if it is at most `max`: the index bounds
+/// ([`MAX_PALETTES`], [`MAX_THEME_VARIABLES`], [`MAX_THEME_VARIANTS`],
+/// [`MAX_VERBS`], [`MAX_EDITS`], [`MAX_PRESENTATIONS`]). O(1).
+pub fn check_count(count: usize, max: usize) -> Result<usize, BoundError> {
+    if count > max {
+        Err(BoundError::TooMany { count, max })
     } else {
         Ok(count)
     }

@@ -181,3 +181,111 @@ pub fn do_document_map_reads() {
     );
     assert!(doc.definitions().verbs.is_empty());
 }
+
+#[test]
+fn test_document_never_reissues_an_ident() {
+    do_document_never_reissues_an_ident();
+}
+
+/// A map whose highest ident is `MAX_NODE_IDENT` has no ident left to
+/// issue and is refused, rather than given a counter that would reissue
+/// one; an ident past the bound is refused outright. Control: one below
+/// the bound leaves the counter `MAX_NODE_IDENT`.
+pub fn do_document_never_reissues_an_ident() {
+    use crate::document::bounds::{BoundError, MAX_NODE_IDENT};
+    let with_ident = |ident| {
+        let mut builder = DocumentBuilder::new();
+        let root = builder.root();
+        builder.node_with(root, node_data(ident));
+        builder.build_unchecked()
+    };
+    assert_eq!(
+        with_ident(MAX_NODE_IDENT - 1).unwrap().next_ident(),
+        NodeIdent(MAX_NODE_IDENT)
+    );
+    assert_eq!(
+        with_ident(MAX_NODE_IDENT).unwrap_err(),
+        DocumentError::IdentSpaceExhausted
+    );
+    assert_eq!(
+        with_ident(u32::MAX).unwrap_err(),
+        DocumentError::Bound {
+            what: "node id",
+            error: BoundError::NotAnIdent(u32::MAX),
+        }
+    );
+}
+
+#[test]
+fn test_document_refuses_more_than_an_index_addresses() {
+    do_document_refuses_more_than_an_index_addresses();
+}
+
+/// One palette, theme variable or verb past its bound is refused, and
+/// the palettes past the bound are never numbered with an id another
+/// palette has. Controls: exactly the bound is a document.
+pub fn do_document_refuses_more_than_an_index_addresses() {
+    use crate::document::bounds::{BoundError, MAX_PALETTES, MAX_THEME_VARIABLES, MAX_VERBS};
+    use crate::document::element::{PaletteData, ThemeData};
+    use crate::document::ids::{palettes, Definitions, VerbDef};
+
+    let with_palettes = |n: usize| {
+        let mut builder = DocumentBuilder::new();
+        for _ in 0..n {
+            builder.palette(PaletteData::default());
+        }
+        builder
+    };
+    let at_bound = with_palettes(MAX_PALETTES);
+    assert!(at_bound.build_unchecked().is_ok());
+    let past = with_palettes(MAX_PALETTES + 1);
+    let numbered: Vec<PaletteId> = palettes(past.tree()).map(|(id, _)| id).collect();
+    assert_eq!(numbered.len(), MAX_PALETTES, "the one past the bound gets no id");
+    assert_eq!(numbered.last(), Some(&PaletteId(u16::MAX)));
+    assert_eq!(
+        past.build_unchecked().unwrap_err(),
+        DocumentError::Bound {
+            what: "palettes",
+            error: BoundError::TooMany {
+                count: MAX_PALETTES + 1,
+                max: MAX_PALETTES,
+            },
+        }
+    );
+
+    let with_variables = |n: usize| {
+        let mut builder = DocumentBuilder::new();
+        builder.theme(ThemeData {
+            variables: vec![String::new(); n],
+            variants: Vec::new(),
+            active: 0,
+        });
+        builder.build_unchecked()
+    };
+    assert!(with_variables(MAX_THEME_VARIABLES).is_ok());
+    assert!(matches!(
+        with_variables(MAX_THEME_VARIABLES + 1),
+        Err(DocumentError::Bound {
+            what: "theme variables",
+            ..
+        })
+    ));
+
+    let with_verbs = |n: usize| {
+        let mut builder = DocumentBuilder::new();
+        let verb = VerbDef {
+            id: String::new(),
+            name: String::new(),
+        };
+        builder.definitions(Definitions {
+            verbs: vec![verb; n],
+            ..Definitions::default()
+        });
+        builder.build_unchecked()
+    };
+    assert!(with_verbs(MAX_VERBS).is_ok());
+    assert!(matches!(
+        with_verbs(MAX_VERBS + 1),
+        Err(DocumentError::Bound { what: "verbs", .. })
+    ));
+}

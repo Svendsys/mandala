@@ -74,6 +74,7 @@ pub struct DocumentBuilder {
     defaults: NodeId,
     palettes: u16,
     next_ident: u32,
+    definitions: Definitions,
 }
 
 impl Default for DocumentBuilder {
@@ -101,6 +102,7 @@ impl DocumentBuilder {
             defaults,
             palettes: 0,
             next_ident: 1,
+            definitions: Definitions::default(),
         }
     }
 
@@ -131,12 +133,19 @@ impl DocumentBuilder {
         self
     }
 
-    /// Add a palette after the others; returns its id.
+    /// Replace the definitions.
+    pub fn definitions(&mut self, definitions: Definitions) -> &mut Self {
+        self.definitions = definitions;
+        self
+    }
+
+    /// Add a palette after the others; returns its id, or the last id
+    /// once past the bound (which the document then refuses).
     pub fn palette(&mut self, palette: PaletteData) -> PaletteId {
         let root = self.root();
         self.add(root, DocElement::Palette(palette));
         let id = PaletteId(self.palettes);
-        self.palettes += 1;
+        self.palettes = self.palettes.saturating_add(1);
         id
     }
 
@@ -240,13 +249,13 @@ impl DocumentBuilder {
         for id in self.tree.descendants() {
             validate_shape(&self.tree, id).map_err(BuildFailure::Shape)?;
         }
-        Document::from_tree(self.tree, Definitions::default()).map_err(BuildFailure::Document)
+        Document::from_tree(self.tree, self.definitions).map_err(BuildFailure::Document)
     }
 
     /// The document, checking only the map row: for tests of the shape
     /// rules themselves.
     pub fn build_unchecked(self) -> Result<Document, DocumentError> {
-        Document::from_tree(self.tree, Definitions::default())
+        Document::from_tree(self.tree, self.definitions)
     }
 }
 
