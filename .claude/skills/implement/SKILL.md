@@ -25,7 +25,8 @@ to contribute to the development of that larger whole, on its terms.
 
 ### 3. Clarify the possible paths forward
 There may be several ways that this task can be solved. If so, make them explicit for yourself, and then evaluate which
-path forward best suits the project philosophies and conventions. 
+path forward best suits the project philosophies and conventions. But do not stray from the issue specifics: whatever is
+specified in the issue is there for a reason.
 
 ### 4. Create a plan 
 Create a concrete plan for how to proceed with your chosen path forward, including how to thoroughly test your solution.
