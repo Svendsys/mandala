@@ -1,0 +1,131 @@
+{
+  "format": 1,
+  "name": "Fits",
+  "theme": {
+    "active": "default",
+    "variants": {
+      "default": {}
+    }
+  },
+  "defaults": {
+    "frame": {
+      "fit": "spread"
+    },
+    "ring": {
+      "fit": "fit"
+    },
+    "connector": {
+      "fit": {
+        "once": {
+          "filler": "─"
+        }
+      }
+    },
+    "link": {
+      "fit": "fit"
+    }
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "position": [
+        0.0,
+        0.0
+      ],
+      "frame": {
+        "fit": "repeat",
+        "rings": [
+          {
+            "fit": "spread"
+          },
+          {
+            "channel": 1,
+            "fit": "once"
+          },
+          {
+            "channel": 2,
+            "fit": {
+              "once": {
+                "filler": "·-"
+              }
+            }
+          },
+          {
+            "channel": 3,
+            "fit": "fit"
+          },
+          {
+            "channel": 4,
+            "fit": {
+              "fit": {
+                "min": 0.25,
+                "max": 4.0
+              }
+            }
+          },
+          {
+            "channel": 5,
+            "fit": {
+              "once": {
+                "filler": ""
+              }
+            }
+          }
+        ]
+      },
+      "links": [
+        {
+          "to": 2,
+          "kind": "line",
+          "fit": "repeat"
+        },
+        {
+          "to": 2,
+          "kind": "line",
+          "fit": "spread"
+        },
+        {
+          "to": 2,
+          "kind": "line",
+          "fit": "once"
+        },
+        {
+          "to": 2,
+          "kind": "line",
+          "fit": {
+            "once": {
+              "filler": "*"
+            }
+          }
+        },
+        {
+          "to": 2,
+          "kind": "line",
+          "fit": "fit"
+        },
+        {
+          "to": 2,
+          "kind": "line",
+          "fit": {
+            "fit": {
+              "min": 1.0,
+              "max": 1.0
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "id": 2,
+          "position": [
+            300.0,
+            0.0
+          ],
+          "connector": {
+            "fit": "fit"
+          }
+        }
+      ]
+    }
+  ]
+}

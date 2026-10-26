@@ -1,0 +1,149 @@
+{
+  "format": 1,
+  "name": "Frames",
+  "theme": {
+    "active": "default",
+    "variants": {
+      "default": {
+        "gold": "#d4a24c"
+      }
+    }
+  },
+  "defaults": {
+    "frame": {
+      "start": {
+        "edge": "top",
+        "at": 0.25
+      },
+      "fit": {
+        "fit": {
+          "min": 0.25,
+          "max": 3.0
+        }
+      },
+      "size": 0.05
+    },
+    "ring": {
+      "size": 0.07
+    }
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "position": [
+        0.0,
+        0.0
+      ],
+      "sections": [
+        {
+          "spans": [
+            {
+              "text": "an empty frame still draws"
+            }
+          ]
+        }
+      ],
+      "frame": {}
+    },
+    {
+      "id": 2,
+      "position": [
+        400.0,
+        0.0
+      ],
+      "shape": {
+        "rectangle": {
+          "radius": 100
+        }
+      },
+      "sections": [
+        {
+          "spans": [
+            {
+              "text": "four rings"
+            }
+          ]
+        }
+      ],
+      "frame": {
+        "visible": false,
+        "direction": "counterclockwise",
+        "gap": 1.5,
+        "inset": 6.0,
+        "rings": [
+          {
+            "spans": [
+              {
+                "text": "innermost ring "
+              }
+            ]
+          },
+          {
+            "channel": 1,
+            "size": 0.03,
+            "color": "var(gold)",
+            "spans": [
+              {
+                "text": "second ring ",
+                "italic": true
+              },
+              {
+                "text": "bold",
+                "weight": "bold"
+              }
+            ]
+          },
+          {
+            "channel": 1,
+            "fit": "once",
+            "spans": [
+              {
+                "text": "same channel, file order"
+              }
+            ]
+          },
+          {
+            "channel": 5,
+            "fit": {
+              "once": {
+                "filler": "·"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "position": [
+        800.0,
+        0.0
+      ],
+      "shape": "ellipse",
+      "sections": [
+        {
+          "spans": [
+            {
+              "text": "ellipse frame"
+            }
+          ]
+        }
+      ],
+      "frame": {
+        "start": "bottom",
+        "fit": "repeat",
+        "font": "Public Pixel",
+        "weight": 900,
+        "rings": [
+          {
+            "spans": [
+              {
+                "text": "ellipse "
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

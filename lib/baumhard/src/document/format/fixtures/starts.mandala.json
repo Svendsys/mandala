@@ -1,0 +1,159 @@
+{
+  "format": 1,
+  "name": "Starts",
+  "theme": {
+    "active": "default",
+    "variants": {
+      "default": {}
+    }
+  },
+  "defaults": {
+    "frame": {
+      "start": "left"
+    }
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "position": [
+        0.0,
+        0.0
+      ],
+      "frame": {
+        "start": "top-left"
+      }
+    },
+    {
+      "id": 2,
+      "position": [
+        0.0,
+        100.0
+      ],
+      "frame": {
+        "start": "top"
+      }
+    },
+    {
+      "id": 3,
+      "position": [
+        0.0,
+        200.0
+      ],
+      "frame": {
+        "start": "top-right"
+      }
+    },
+    {
+      "id": 4,
+      "position": [
+        0.0,
+        300.0
+      ],
+      "frame": {
+        "start": "right"
+      }
+    },
+    {
+      "id": 5,
+      "position": [
+        0.0,
+        400.0
+      ],
+      "frame": {
+        "start": "bottom-right"
+      }
+    },
+    {
+      "id": 6,
+      "position": [
+        0.0,
+        500.0
+      ],
+      "frame": {
+        "start": "bottom"
+      }
+    },
+    {
+      "id": 7,
+      "position": [
+        0.0,
+        600.0
+      ],
+      "frame": {
+        "start": "bottom-left"
+      }
+    },
+    {
+      "id": 8,
+      "position": [
+        0.0,
+        700.0
+      ],
+      "frame": {
+        "start": "left"
+      }
+    },
+    {
+      "id": 9,
+      "position": [
+        0.0,
+        800.0
+      ],
+      "frame": {
+        "start": {
+          "edge": "top",
+          "at": 0.25
+        }
+      }
+    },
+    {
+      "id": 10,
+      "position": [
+        0.0,
+        900.0
+      ],
+      "frame": {
+        "start": {
+          "edge": "right",
+          "at": 0.75
+        }
+      }
+    },
+    {
+      "id": 11,
+      "position": [
+        0.0,
+        1000.0
+      ],
+      "frame": {
+        "start": {
+          "edge": "bottom",
+          "at": 0.1
+        }
+      }
+    },
+    {
+      "id": 12,
+      "position": [
+        0.0,
+        1100.0
+      ],
+      "frame": {
+        "start": {
+          "edge": "left",
+          "at": 1.0
+        }
+      }
+    },
+    {
+      "id": 13,
+      "position": [
+        0.0,
+        1200.0
+      ],
+      "frame": {
+        "start": "top"
+      }
+    }
+  ]
+}

@@ -9,6 +9,26 @@
 pub mod bounds_tests;
 pub mod deps_tests;
 pub mod element_tests;
+#[cfg(test)]
+mod format_order_tests;
+#[cfg(test)]
+mod format_read_tests;
+#[cfg(test)]
+mod format_reject_tests;
+#[cfg(test)]
+mod format_robust_tests;
+#[cfg(test)]
+mod format_save_tests;
+#[cfg(test)]
+mod format_strict_tests;
+/// What the format's tests share: the fixture corpus and ways to read
+/// a loaded document.
+pub(crate) mod format_support;
+#[cfg(test)]
+mod format_sweep_tests;
+pub mod format_tests;
+#[cfg(test)]
+mod format_text;
 pub mod ids_tests;
 pub mod inspect_tests;
 pub mod journal_tests;

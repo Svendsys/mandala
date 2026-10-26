@@ -1,0 +1,495 @@
+{
+  "format": 1,
+  "name": "Testament",
+  "theme": {
+    "active": "dark",
+    "variants": {
+      "dark": {
+        "accent": "#d4a24c",
+        "bg": "#101014",
+        "fg": "#e0e0e0"
+      },
+      "light": {
+        "accent": "#8a5a00",
+        "bg": "#f6f3ec",
+        "fg": "#202024"
+      }
+    }
+  },
+  "palettes": {
+    "mono": [
+      {
+        "fill": "#000000",
+        "frame": "#808080",
+        "text": "#ffffff80"
+      }
+    ],
+    "rainbow": [
+      {
+        "fill": "#2a1b3d",
+        "frame": "#a239ca",
+        "text": "#e0e0e0",
+        "title": "#ffffff"
+      },
+      {
+        "fill": "var(bg)",
+        "frame": "var(accent)",
+        "text": "var(fg)"
+      }
+    ]
+  },
+  "defaults": {
+    "node": {
+      "shape": {
+        "rectangle": {
+          "radius": 10
+        }
+      },
+      "fill": "var(bg)",
+      "fill_fade": 4.0,
+      "font": "Public Pixel",
+      "size": 20.0,
+      "color": "var(fg)",
+      "weight": "normal",
+      "italic": false
+    },
+    "section": {
+      "font": "Novem",
+      "size": 18.0,
+      "color": "#dddddd",
+      "weight": 500,
+      "italic": false
+    },
+    "frame": {
+      "visible": true,
+      "start": "top-left",
+      "direction": "clockwise",
+      "fit": "fit",
+      "gap": 2.0,
+      "inset": 4.0,
+      "font": "Public Pixel",
+      "size": 0.05,
+      "color": "var(accent)",
+      "weight": "bold",
+      "italic": true
+    },
+    "ring": {
+      "fit": "repeat",
+      "font": "Novem",
+      "size": 0.06,
+      "color": "#30b082",
+      "weight": "normal",
+      "italic": false
+    },
+    "connector": {
+      "fit": "repeat",
+      "spacing": 1.0,
+      "size": 12.0,
+      "color": "#888888",
+      "content": "─"
+    },
+    "link": {
+      "fit": "spread",
+      "spacing": 2.0,
+      "size": 13.0,
+      "color": "#aa88cc",
+      "content": "·"
+    },
+    "label": {
+      "t": 0.5,
+      "offset": 6.0,
+      "font": "Public Pixel",
+      "size": 13.2,
+      "color": "var(fg)",
+      "weight": "normal",
+      "italic": true
+    },
+    "portal_end": {
+      "border_t": 0.25,
+      "offset": 3.0,
+      "color": "#aa88cc",
+      "size": 40.0,
+      "content": "◈"
+    },
+    "span": {
+      "font": "Public Pixel",
+      "size": 16.0,
+      "color": "#cccccc",
+      "weight": "normal",
+      "italic": false
+    }
+  },
+  "edits": [
+    {
+      "id": "grow",
+      "name": "Grow the text"
+    }
+  ],
+  "presentations": [
+    {
+      "id": "intro",
+      "name": "Introduction"
+    }
+  ],
+  "verbs": [
+    {
+      "id": "glow",
+      "name": "Glow"
+    },
+    {
+      "id": "reveal",
+      "name": "Reveal chapter two"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "position": [
+        0.0,
+        0.0
+      ],
+      "min_size": [
+        320.0,
+        200.0
+      ],
+      "shape": {
+        "rectangle": {
+          "radius": 25
+        }
+      },
+      "fill": "var(bg)",
+      "fill_fade": 6.5,
+      "palette": "rainbow",
+      "zoom": {
+        "min": 0.25,
+        "max": 8.0
+      },
+      "folded": true,
+      "opacity": 0.75,
+      "on": {
+        "click": "reveal",
+        "hover": "glow"
+      },
+      "font": "Public Pixel",
+      "size": 28.0,
+      "color": "palette(text)",
+      "weight": "bold",
+      "italic": false,
+      "sections": [
+        {
+          "offset": [
+            8.0,
+            8.0
+          ],
+          "min_size": [
+            200.0,
+            60.0
+          ],
+          "align": "center",
+          "font": "Novem",
+          "size": 20.0,
+          "color": "#ffcc00",
+          "weight": 300,
+          "italic": true,
+          "spans": [
+            {
+              "text": "In the beginning",
+              "size": 24.0,
+              "weight": "bold"
+            },
+            {
+              "text": " God created",
+              "font": "Novem",
+              "color": "var(accent)",
+              "italic": true
+            },
+            {
+              "text": " the heaven",
+              "link": {
+                "url": "https://example.com/a?b=c&d=e"
+              }
+            },
+            {
+              "text": " and the earth",
+              "link": {
+                "verb": "glow"
+              }
+            }
+          ]
+        },
+        {
+          "channel": 1,
+          "align": "right",
+          "spans": [
+            {
+              "text": "second section\nwith a line break"
+            }
+          ]
+        },
+        {
+          "channel": 2,
+          "align": "left"
+        }
+      ],
+      "frame": {
+        "visible": true,
+        "start": "top-left",
+        "direction": "clockwise",
+        "fit": "fit",
+        "gap": 2.0,
+        "inset": 4.0,
+        "font": "Public Pixel",
+        "size": 0.05,
+        "color": "palette(frame)",
+        "weight": "normal",
+        "italic": false,
+        "rings": [
+          {
+            "spans": [
+              {
+                "text": "And the earth was without form, and void; ",
+                "color": "#00ff00",
+                "weight": "bold"
+              }
+            ]
+          },
+          {
+            "channel": 1,
+            "fit": "spread",
+            "font": "Novem",
+            "size": 0.04,
+            "color": "var(accent)",
+            "weight": "bold",
+            "italic": true,
+            "spans": [
+              {
+                "text": "darkness "
+              }
+            ]
+          }
+        ]
+      },
+      "links": [
+        {
+          "to": 3,
+          "kind": "line",
+          "fit": "repeat",
+          "spacing": 1.5,
+          "size": 14.0,
+          "color": "palette(frame)",
+          "content": "~",
+          "anchors": [
+            "right",
+            "left"
+          ],
+          "control_points": [
+            [
+              40.0,
+              -20.0
+            ],
+            [
+              80.0,
+              20.0
+            ]
+          ],
+          "visible": false,
+          "zoom": {
+            "min": 1.0
+          },
+          "spans": [
+            {
+              "text": "~"
+            }
+          ],
+          "cap_start": {
+            "font": "Novem",
+            "size": 16.0,
+            "color": "#ff0000",
+            "weight": "bold",
+            "italic": true,
+            "spans": [
+              {
+                "text": "<"
+              }
+            ]
+          },
+          "cap_end": {
+            "spans": [
+              {
+                "text": ">"
+              }
+            ]
+          },
+          "label": {
+            "t": 0.25,
+            "offset": -6.0,
+            "font": "Public Pixel",
+            "size": 13.0,
+            "color": "var(fg)",
+            "weight": 600,
+            "italic": false,
+            "spans": [
+              {
+                "text": "see also"
+              }
+            ]
+          }
+        },
+        {
+          "to": 5,
+          "kind": "portal",
+          "ends": [
+            {
+              "border_t": 0.25,
+              "offset": 3.0,
+              "color": "#aa88cc",
+              "size": 40.0,
+              "content": "◆",
+              "spans": [
+                {
+                  "text": "A"
+                }
+              ],
+              "label": {
+                "spans": [
+                  {
+                    "text": "out"
+                  }
+                ]
+              }
+            },
+            {
+              "border_t": 0.75,
+              "spans": [
+                {
+                  "text": "B"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": 2,
+          "position": [
+            320.0,
+            40.0
+          ],
+          "shape": "ellipse",
+          "hidden": true,
+          "sections": [
+            {
+              "spans": [
+                {
+                  "text": "the heaven and the earth"
+                }
+              ]
+            }
+          ],
+          "connector": {
+            "fit": "once",
+            "spacing": 0.0,
+            "size": 12.0,
+            "color": "#888888",
+            "content": "·",
+            "anchors": [
+              "bottom",
+              "top"
+            ],
+            "control_points": [
+              [
+                10.0,
+                10.0
+              ]
+            ],
+            "visible": false,
+            "zoom": {
+              "max": 4.0
+            },
+            "spans": [
+              {
+                "text": "─"
+              }
+            ],
+            "cap_start": {
+              "spans": [
+                {
+                  "text": "("
+                }
+              ]
+            },
+            "cap_end": {
+              "spans": [
+                {
+                  "text": ")"
+                }
+              ]
+            },
+            "label": {
+              "t": 0.5,
+              "spans": [
+                {
+                  "text": "child of"
+                }
+              ]
+            }
+          },
+          "children": [
+            {
+              "id": 4,
+              "channel": 3,
+              "position": [
+                0.0,
+                160.0
+              ],
+              "sections": [
+                {
+                  "spans": [
+                    {
+                      "text": "deep"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "position": [
+            320.0,
+            240.0
+          ],
+          "sections": [
+            {
+              "spans": [
+                {
+                  "text": "and the earth was without form"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "channel": 2,
+      "position": [
+        900.0,
+        0.0
+      ],
+      "palette": "mono",
+      "sections": [
+        {
+          "spans": [
+            {
+              "text": "elsewhere"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
