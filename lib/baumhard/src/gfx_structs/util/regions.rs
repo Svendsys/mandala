@@ -33,7 +33,7 @@ pub use super::region_indexer::RegionIndexer;
 ///
 /// **Removed:** an earlier `Updating` variant signalled
 /// "lock-would-block" from the per-field `RwLock::try_read` shape. After the
-/// 6-locks → 1-lock collapse (Batch 6 §6.4a), reads use a blocking
+/// 6-locks → 1-lock collapse, reads use a blocking
 /// `RwLock::read` that always succeeds (or returns `Poisoned`), so
 /// there is no longer a non-blocking failure mode to surface. Zero
 /// external callers matched on `Updating` at the time of removal.

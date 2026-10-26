@@ -1644,7 +1644,7 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// per-field set-or-keep, side / corner edits force preset to
 /// `"custom"`, the `glyphs` slot materializes on first edit. A
 /// parity regression here means the preview lies about what
-/// commit will produce — Risk #1 in the plan.
+/// commit will produce.
 ///
 /// `view.clear == true` empties the slot and short-circuits.
 /// Otherwise the helper materializes a fresh
