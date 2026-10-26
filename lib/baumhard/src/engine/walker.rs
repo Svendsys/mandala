@@ -33,9 +33,9 @@
 //!
 //! A mutation may change its target's key. The walker compares the key
 //! before and after every apply; when it changed, it records the
-//! target in a [`Rekeyed`](crate::engine::walker::Rekeyed) and carries on over the row **as it was**:
+//! target in a `Rekeyed` and carries on over the row **as it was**:
 //! no row is re-sorted while the walk is still merging over it. When
-//! the walk is over, [`Rekeyed::settle`](crate::engine::walker::Rekeyed::settle) moves exactly the recorded
+//! the walk is over, `Rekeyed::settle` moves exactly the recorded
 //! children to their sorted places. A walk that changes no key records
 //! nothing and allocates nothing for it.
 //!
@@ -199,7 +199,7 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 /// of `target_id`'s parent.
 ///
 /// Children whose key the walk changed are moved to their sorted places
-/// when it returns ([`Rekeyed::settle`]).
+/// when it returns (`Rekeyed::settle`).
 ///
 /// Cost: O(sum of matching (target, mutator) pairs) — every pairwise
 /// match is one apply; pruned branches are free.
