@@ -887,8 +887,13 @@ a `console_error` warning.
 
 ### `act.action`
 
-Dispatch one `Action` through `dispatch_action`, exactly as a key
-binding fires it.
+Dispatch one `Action` through `dispatch_action`, as a key binding
+fires it — with one difference, which only `PanCanvas` shows. A key
+is a held input and this command is not, so a `PanCanvas` from a key
+is momentary and ends on that key's release, while one from here is
+modal: `query.mode` reports its `drag_state.owner` as `"toggled"`, no
+button or key release ends it, and the next `PanCanvas` (from here, a
+key, a macro or the console) does.
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1512,7 +1517,7 @@ selected label, and the macro and custom-mutation fall-through.
 | param | type | required | meaning |
 |---|---|---|---|
 | `key` | string | yes | One typed character (`"a"`, `"/"`, `"é"`, `"👋"`), or a named key spelled as winit's `NamedKey` spells it, case-exact: `"Enter"`, `"Tab"`, `"Escape"`, `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"F2"`. These are the names a keybind matches, but a keybind compares them lowercased and the wire does not: `"enter"` is `invalid_params`, `"Enter"` presses the key a `"enter"` binding names. A space is the `Space` key, as winit delivers the space bar. A control character, and a modifier key (`"Shift"`, `"Control"`, `"Alt"`, `"AltGraph"`, `"Super"`, `"Meta"`, `"Hyper"`), are `invalid_params`: winit reports a modifier through a separate modifier-state event rather than as this key, so a modifier press would change nothing a later event reads. Hold modifiers with `mods`. |
-| `state` | string | no | `"tap"` (default: a press, then a release), `"press"` or `"release"`. The app acts on presses; a release reaches the same arm a real one does, which does nothing. |
+| `state` | string | no | `"tap"` (default: a press, then a release), `"press"` or `"release"`. The app acts on presses; a release reaches the same arm a real one does, which does one thing: it ends a pan the released key holds (`query.mode`'s `drag_state.owner` `"key"`, with this `key`). With no such pan it does nothing. |
 | `mods` | array | no | Modifiers held for the events: `"key": "z", "mods": ["ctrl"]` is Ctrl+Z. |
 
 ### `input.text`

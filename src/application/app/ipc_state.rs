@@ -40,7 +40,6 @@ use super::single_line_edit::{SingleLineEditTarget, SingleLineEditor};
 use super::text_edit::TextEditState;
 use super::throttled_interaction::ThrottledDrag;
 use super::{DragState, Grab, HeldInput, InteractionMode, PanOwner};
-use crate::application::platform::input::MouseButton;
 
 /// How many scrollback lines `query.editors` reports for an open
 /// console: the tail, which is what is on screen. The total is
@@ -50,22 +49,6 @@ pub(super) const CONSOLE_SCROLLBACK_TAIL: usize = 50;
 /// `{"x", "y"}`.
 fn xy(x: Value, y: Value) -> Value {
     json!({ "x": x, "y": y })
-}
-
-/// A mouse button as `input.mouse_button` spells it, so a pan's
-/// `button` reads back in the vocabulary that pressed it. The three
-/// buttons IPC cannot press are named all the same rather than
-/// collapsed: a pan held by one is a real state, if no gesture arms
-/// it today.
-fn button_word(button: MouseButton) -> &'static str {
-    match button {
-        MouseButton::Left => "left",
-        MouseButton::Right => "right",
-        MouseButton::Middle => "middle",
-        MouseButton::Back => "back",
-        MouseButton::Forward => "forward",
-        MouseButton::Other(_) => "other",
-    }
 }
 
 fn xy_f64(point: (f64, f64)) -> Value {
@@ -203,7 +186,7 @@ impl DragState {
                 PanOwner::Held(HeldInput::Button(button)) => json!({
                     "kind": "Panning",
                     "owner": "button",
-                    "button": button_word(*button),
+                    "button": crate::application::ipc::injected::button_word(*button),
                 }),
                 PanOwner::Held(HeldInput::Key(key)) => json!({
                     "kind": "Panning",
@@ -528,6 +511,7 @@ mod tests {
     use crate::application::app::PendingPress;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::EdgeRef;
+    use crate::application::platform::input::MouseButton;
     use baumhard::mindmap::model::{Position, Size};
     use std::collections::HashSet;
 

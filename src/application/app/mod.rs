@@ -767,9 +767,14 @@ impl PendingPress {
 enum HeldInput {
     /// A mouse button.
     Button(crate::application::platform::input::MouseButton),
-    /// A key, by the name `keybinds::key_to_name` gives it — the
-    /// same normalized spelling on the press and on the release, so
-    /// a Shift lifted before the key still matches.
+    /// A key, by the name `keybinds::key_to_name` gives it on the
+    /// press, which the release must spell the same way to end the
+    /// pan. `key_to_name` only lowercases, so for a letter a Shift
+    /// lifted first still matches; for a key whose shifted character
+    /// differs (`!` over `1`) it does not, and that pan lasts until a
+    /// left press or focus loss. Narrow in practice — key lookups have
+    /// no modifier fallback, so a shifted-punctuation binding is
+    /// mostly unreachable — but it is why the claim stops at letters.
     Key(String),
 }
 
@@ -779,8 +784,15 @@ enum HeldInput {
 /// that is held ends the pan on its own release — momentary, the
 /// mouse's posture and the Space-to-pan posture of most canvas
 /// tools. An input that has no release — a macro step, a console
-/// line, an IPC `act.action` — cannot be momentary, so its pan is
+/// line, an IPC `act.action`, and a touch `LongPress`, since
+/// [`HeldInput`] has no finger — cannot be momentary, so its pan is
 /// modal: it toggles.
+///
+/// Whichever owner a pan has, a left *press* still re-arms `Pending`
+/// over it (`DragState::would_abandon_gesture` keeps `Panning` out of
+/// the class a press may not overwrite): `Panning` owes the model
+/// nothing, and the ownership rule is about which *release* ends a
+/// pan, not about presses.
 ///
 /// The Action cannot see which input reached it: `dispatch_action`
 /// strips the gesture down to an [`Action`](crate::application::keybinds::Action).
@@ -792,8 +804,8 @@ enum HeldInput {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PanOwner {
-    /// Momentary: ends on this input's release, and on nothing
-    /// else's. A release of any other button or key leaves it
+    /// Momentary: ends on this input's release, and on no other
+    /// release. A release of any other button or key leaves it
     /// running.
     Held(HeldInput),
     /// Modal: armed by an input with no release. Ends on the next
@@ -885,7 +897,8 @@ enum DragState {
     /// decree directly. Unthrottled, no tree or model mutation
     /// involved.
     ///
-    /// `owner` is what ends it — see [`PanOwner`]. Before #153 the
+    /// `owner` is which release ends it — see [`PanOwner`]; a left
+    /// press re-arms over it whoever owns it. Before #153 the
     /// variant carried nothing, so a middle release ended a
     /// left-drag pan, a left release ended a middle-started one, and
     /// a key-armed pan had no release that belonged to it at all.

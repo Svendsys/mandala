@@ -23,9 +23,10 @@ use super::HeldInput;
 /// it runs ahead of every modal steal, because a pan the key armed
 /// before a modal opened is still that key's to end.
 ///
-/// The name is `key_to_name`'s, as on the press, which is what lets
-/// a Shift lifted before its key still match: both spellings
-/// normalize to the same lowercase name.
+/// The name is `key_to_name`'s, as on the press. For a letter that
+/// lets a Shift lifted before its key still match, since both
+/// spellings lowercase to the same name; for a key whose shifted
+/// character differs it does not (see `HeldInput::Key`).
 pub(super) fn handle_key_release(logical_key: &Key, ctx: &mut InputHandlerContext<'_>) {
     if let Some(name) = crate::application::keybinds::key_to_name(logical_key) {
         ctx.drag_state.end_pan_held_by(&HeldInput::Key(name));

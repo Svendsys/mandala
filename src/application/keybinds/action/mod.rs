@@ -528,8 +528,9 @@ pub enum Action {
     /// input — a mouse gesture, or a key — it is momentary: it ends on
     /// that button's or that key's release, and no other release ends
     /// it. From an input with no release — a macro step, a console
-    /// line, IPC `act.action` — it is modal: it toggles, and the next
-    /// `pan_canvas` ends it. Losing window focus ends either kind.
+    /// line, IPC `act.action`, a touch long-press — it is modal: it
+    /// toggles, and the next `pan_canvas` ends it. Losing window focus
+    /// ends either kind, and a left press re-arms over either.
     #[action(context = Document, wasm = NativeOnly)]
     PanCanvas,
 

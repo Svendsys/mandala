@@ -2684,8 +2684,14 @@ reads — and it makes a key's auto-repeat harmless, where a toggle
 would flip the pan off and on while the key is down. An input
 with no release — a macro step, a console line, IPC `act.action`
 — cannot be momentary, so its pan is **modal**: `Toggled`, ended
-by the next `pan_canvas` from anywhere. One rule covers both
-halves: *held inputs hold, the rest toggle.*
+by the next `pan_canvas` from a key, a macro, the console or IPC.
+(Not from the mouse: a middle press arms only from `None`, so it
+cannot reach the arm while a pan runs.) One rule covers both
+halves: *held inputs hold, the rest toggle.* A touch `LongPress`
+bound to `pan_canvas` is one of the rest — `HeldInput` has no
+finger — so its pan toggles too. Whatever owns a pan, a left
+*press* re-arms `Pending` over it, as it always has: `Panning` owes
+the model nothing, and the release rule is about releases.
 
 The Action cannot see which input reached it — the funnel hands it
 only an `Action` — so the arm arms every pan `Toggled`, and a held

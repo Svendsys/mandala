@@ -25,7 +25,7 @@ use baumhard::util::grapheme_chad::{count_grapheme_clusters, split_graphemes_own
 use serde_json::{json, Value};
 
 use crate::application::ipc::envelope::{code, Reply};
-use crate::application::ipc::injected::{InputEvent, Pacing, Sample, INJECTED_QUEUE_CAP};
+use crate::application::ipc::injected::{button_from_word, InputEvent, Pacing, Sample, INJECTED_QUEUE_CAP};
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
 use crate::application::ipc::space::{Point, Space};
 use crate::application::ipc::Injected;
@@ -646,13 +646,13 @@ fn move_to(at: Option<Point>, mods: Option<Modifiers>) -> Vec<Sample> {
 /// The `button` parameter; `left` when omitted.
 fn parse_button(call: &Call<'_>) -> Result<MouseButton, Reply> {
     match call.str_param("button") {
-        None | Some("left") => Ok(MouseButton::Left),
-        Some("right") => Ok(MouseButton::Right),
-        Some("middle") => Ok(MouseButton::Middle),
-        Some(other) => Err(call.invalid_params(
-            "button",
-            format!("`button` must be \"left\", \"right\" or \"middle\", got {other:?}"),
-        )),
+        None => Ok(MouseButton::Left),
+        Some(word) => button_from_word(word).ok_or_else(|| {
+            call.invalid_params(
+                "button",
+                format!("`button` must be \"left\", \"right\" or \"middle\", got {word:?}"),
+            )
+        }),
     }
 }
 
