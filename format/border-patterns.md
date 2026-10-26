@@ -141,6 +141,13 @@ naturally across the corners.
 is cycled — `"frame"` (default), `"background"`, `"text"`, or
 `"title"`. Unknown values warn and fall back to `"frame"`.
 
+This is a different field from a node's theme,
+`color_schema.palette` ([palettes.md](./palettes.md)), even when both
+name the same palette. `border show` reports it on its own
+`border palette:` row — named after the verb that sets it — and
+reports the theme, under its field name, only as the `# source:` of
+the frame color in `verbose`.
+
 ## Section frames
 
 Section frames — the cyan rectangles drawn around each section
