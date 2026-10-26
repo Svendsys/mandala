@@ -571,16 +571,17 @@ pub fn do_repeat_while_without_children_is_noop() {
 }
 
 #[test]
-pub fn test_repeat_while_aligns_non_ascending_target_channels() {
-    do_repeat_while_aligns_non_ascending_target_channels();
+pub fn test_repeat_while_aligns_targets_whatever_their_insertion_order() {
+    do_repeat_while_aligns_targets_whatever_their_insertion_order();
 }
 
-/// Regression for P1-08: the `RepeatWhile` merge once walked siblings in
-/// the order they were added and dropped matches when that order was not
-/// channel-ascending. Target children added on channels `[2,0,1]` — which
-/// the tree stores sorted — and a single ch-0 mutator must still match the
-/// ch-0 child.
-pub fn do_repeat_while_aligns_non_ascending_target_channels() {
+/// The order targets are added in does not matter to `RepeatWhile`'s
+/// pairing. Target children added on channels `[2,0,1]` are stored sorted,
+/// and a single ch-0 mutator matches the ch-0 child. Born as the regression
+/// for P1-08, when the merge walked siblings in the order they were added
+/// and dropped matches unless that order was channel-ascending; no tree can
+/// hold such a row any more.
+pub fn do_repeat_while_aligns_targets_whatever_their_insertion_order() {
     fonts::init();
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
@@ -679,16 +680,17 @@ pub fn do_repeat_while_merge_advance_does_not_drop_mutator_without_target() {
 }
 
 #[test]
-pub fn test_default_terminator_resumes_over_non_ascending_after_mutators() {
-    do_default_terminator_resumes_over_non_ascending_after_mutators();
+pub fn test_default_terminator_resumes_whatever_the_insertion_order() {
+    do_default_terminator_resumes_whatever_the_insertion_order();
 }
 
-/// Regression for P1-08: `default_terminator` once scanned after-mutations in
-/// the order they were added and broke on the first channel above the
-/// target's. When the after-mutations are added as [ch 2, ch 0, ch 1] — which
-/// the mutator tree stores sorted — and the failing target is ch 0, the
-/// terminator must still find the ch-0 after-mutation.
-pub fn do_default_terminator_resumes_over_non_ascending_after_mutators() {
+/// The order after-mutations are added in does not matter to
+/// `default_terminator`. Added as [ch 2, ch 0, ch 1], they are stored sorted,
+/// and when the failing target is ch 0 the terminator finds the ch-0
+/// after-mutation. Born as the regression for P1-08, when the terminator
+/// scanned after-mutations in the order they were added and broke on the
+/// first channel above the target's; no tree can hold such a row any more.
+pub fn do_default_terminator_resumes_whatever_the_insertion_order() {
     fonts::init();
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));

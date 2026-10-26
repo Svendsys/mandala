@@ -572,17 +572,17 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("clone_preserves_unique_id_and_channel", |b| {
         b.iter(do_clone_preserves_unique_id_and_channel)
     });
-    c.bench_function("repeat_while_aligns_non_ascending_target_channels", |b| {
-        b.iter(do_repeat_while_aligns_non_ascending_target_channels)
-    });
+    c.bench_function(
+        "repeat_while_aligns_targets_whatever_their_insertion_order",
+        |b| b.iter(do_repeat_while_aligns_targets_whatever_their_insertion_order),
+    );
     c.bench_function(
         "repeat_while_merge_advance_does_not_drop_mutator_without_target",
         |b| b.iter(do_repeat_while_merge_advance_does_not_drop_mutator_without_target),
     );
-    c.bench_function(
-        "default_terminator_resumes_over_non_ascending_after_mutators",
-        |b| b.iter(do_default_terminator_resumes_over_non_ascending_after_mutators),
-    );
+    c.bench_function("default_terminator_resumes_whatever_the_insertion_order", |b| {
+        b.iter(do_default_terminator_resumes_whatever_the_insertion_order)
+    });
     // `Mutation` and `Instruction` at the single-node scale —
     // AreaDelta / AreaCommand / None, both `Instruction` variants,
     // `MutatorTree::apply_to`, and the `writes_the_same` predicate
