@@ -330,9 +330,15 @@ pub enum Action {
     /// run on WASM today), but WASM has no `DragState`, no
     /// throttled-drag pipeline, and no handle hit-test in
     /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
-    /// render handles the user can't use.    /// (no half-features), the Action is `NativeOnly` until Batches
+    /// render handles the user can't use. Rather than ship that
+    /// (no half-features), the Action is `NativeOnly` until Batches
     /// 4 / 7 land the WASM gesture pipeline. Reclassification is a
     /// one-line change at that point.
+    ///
+    /// **This is the touch route to a resize.** Default-bound to
+    /// `LongPress` as well as `r`; on native a finger that then lands
+    /// on a handle drags it (`app::touch_handle`, #160), which is why
+    /// [`Self::FastResizeStart`] needs no touch binding.
     ///
     /// Non-destructive — flips a mode bit and triggers a scene
     /// rebuild, no document mutation. The actual resize commit
@@ -340,17 +346,19 @@ pub enum Action {
     /// drag release; that path is gated separately.
     #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
-    /// Start a corner-anchored fast-resize gesture from the
-    /// active right-button press. Threshold-cross arm in
-    /// `event_cursor_moved.rs` dispatches this Action when the
-    /// `DragState::PendingRight` press has moved past the drag
-    /// threshold; the dispatch arm reads the press-time hit
-    /// from a `DispatchHit` payload, computes the corner anchor
-    /// via `infer_resize_anchor`, and transitions
-    /// `DragState::PendingRight → Throttled(NodeResize |
-    /// SectionResize)` with the chosen `ResizeHandleSide`. The
-    /// release path on the right-button (Commit 3) finalizes
-    /// via `set_node_aabb` / `set_section_aabb`.
+    /// Start a corner-anchored fast-resize gesture from a held
+    /// mouse button's drag. The drag gesture's threshold cross in
+    /// `event_cursor_moved.rs` dispatches this Action with a
+    /// `DispatchHit` built from the press — the press-time body
+    /// hit, the press-time canvas position and the button holding
+    /// the gesture (#194). The arm infers the corner anchor from
+    /// that position via `infer_resize_anchor`, and arms
+    /// `Throttled(NodeResize | SectionResize)` owned by that
+    /// button, whose release finalizes via `set_node_aabb` /
+    /// `set_section_aabb`. Default-bound to `Ctrl+RightDrag`, so
+    /// the right button owns it. A hit no button holds (IPC
+    /// `act.action` with a target) is refused, since no release
+    /// could end the drag.
     ///
     /// **Destructive on commit** (the release at the end of the
     /// drag writes through), but the *Action itself* is just a
@@ -368,6 +376,10 @@ pub enum Action {
     /// two fingers on a canvas now drive the camera directly. WASM
     /// gets fast-resize when the browser gains a drag-state
     /// machine.
+    ///
+    /// **A mouse accelerator by design** (#160). Touch reaches the
+    /// same resize through [`Self::EnterResizeMode`]: long-press a
+    /// node, then drag one of its handles with a finger.
     ///
     /// Marked `destructive` so the macro privilege gate
     /// (`SourceTier::allows_action`) blocks System / Plugin /

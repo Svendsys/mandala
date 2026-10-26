@@ -179,10 +179,24 @@ the parity trajectory (or why none is owed):
   observable. Parity unblocks `Action::DoubleClickActivate` and
   `Action::EditSelection*` flipping to `Compatible`; tracked in
   `work_plans/WASM_CONVERGENCE.md`.
-- **`LongPress` → `EnterResizeMode`** (`src/application/keybinds/config.rs`,
-  `src/application/app/run_wasm/event_touch.rs`) — the one touch
-  gesture that resolves through the keybind table, and the one that
-  is native-only. Its default `Action` is `NativeOnly`, so on the
+- **`LongPress` → `EnterResizeMode`, and a finger on a resize
+  handle** (`src/application/keybinds/config.rs`,
+  `src/application/app/run_wasm/event_touch.rs`,
+  `src/application/app/touch_handle.rs`) — the touch route to a
+  resize, and native-only end to end. **On native** a long-press
+  enters `InteractionMode::Resize` on the selection, and a finger
+  that then starts a gesture on one of its handles drives the
+  handle drag as the left button would (`touch_handle`, #160) —
+  captured, promoted to the `Throttled` resize and committed with
+  its undo entry on lift — without reaching the gesture recognizer,
+  so it cannot also pan. Before #160 this entry implied that route
+  existed while every finger drag panned the camera; a touch-only
+  user could not resize at all. `FastResizeStart`
+  (`Ctrl+RightDrag`) is the mouse's accelerator for the same resize,
+  by design: it has no touch binding, because this is its touch
+  route. **On the browser** neither half exists. `LongPress` is the
+  one touch gesture that resolves through the keybind table, and the
+  one that is native-only. Its default `Action` is `NativeOnly`, so on the
   browser the dispatch returns `Unhandled` and a one-shot `warn!`
   names the remedy; the gesture is *recognized* identically on both
   targets, and only the `Action` it reaches is not. Deliberate rather
@@ -195,10 +209,11 @@ the parity trajectory (or why none is owed):
   resolve to no `Action` at all and run on both targets through
   `dispatch::apply_touch_effect`, which is what makes the browser
   usable by finger without this entry being closed. Parity is the
-  `InteractionMode::Resize` chrome plus its handle-drag reaching the
+  `InteractionMode::Resize` chrome plus its handle drag reaching the
   browser — the same drag-state machine **Rubber-band select** below
-  is parked on — and flips this `Action` to `Compatible` when it
-  lands.
+  is parked on, with `touch_handle`'s routing ported beside it so a
+  finger can hold a handle there too — and flips this `Action` to
+  `Compatible` when it lands.
 - **Rubber-band select** (`DragState::SelectingRect`,
   `src/application/app/drain_frame.rs`,
   `scene_rebuild::rebuild_selection_highlight`,

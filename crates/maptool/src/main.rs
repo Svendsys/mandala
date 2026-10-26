@@ -1010,6 +1010,217 @@ mod tests {
         );
     }
 
+    /// **`convert --legacy` over a map that is already current changes
+    /// nothing** — `format/migration.md` §"Why a separate tool?" makes
+    /// that promise, and #198 found it broken twice: every sibling
+    /// group of ten or more was renumbered (`"x.10"` sorted before
+    /// `"x.2"`, so content moved between ids), and every
+    /// `color_schema` was rebuilt from four keys, deleting
+    /// `overrides`.
+    ///
+    /// The input is testament, saved by the app, with the shapes a
+    /// current map legitimately carries and a renumber would rewrite:
+    /// a sibling group past ten, a gap where a child was deleted, a
+    /// node reparented without its id cascading (`format/ids.md`),
+    /// and a per-node color override. The output is compared with
+    /// **the input** — never with a second converter run, which would
+    /// agree with a first run that was wrong in the same way.
+    #[test]
+    fn test_run_convert_legacy_leaves_a_current_map_unchanged() {
+        let text = fs::read_to_string(repo_path("maps/testament.mindmap.json")).unwrap();
+        let mut input: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let group = "1.2.0.0.0.0.0.0.0.0.0.2.0.0.0";
+        let gap = format!("{group}.3");
+        let drifted = "1.2.0.0.0.0.0.0.0.0.1.3.8";
+        {
+            let nodes = input["nodes"].as_object_mut().unwrap();
+            // A gap: delete a leaf from the middle of the group.
+            assert!(
+                !nodes.values().any(|n| n["parent_id"] == gap.as_str()),
+                "{gap} must be a leaf so deleting it leaves nothing dangling"
+            );
+            nodes.remove(&gap);
+            // Drift: reparent without renaming, as the app does.
+            nodes[drifted]["parent_id"] = serde_json::json!("0");
+            // A per-node override on a themed node.
+            nodes["0.0"]["color_schema"]["overrides"] = serde_json::json!({ "background": "#123456" });
+        }
+        input["edges"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|e| e["from_id"] != gap.as_str() && e["to_id"] != gap.as_str());
+
+        // Preconditions: each shape the test exists for is present, or
+        // it proves nothing about that shape (TEST_CONVENTIONS §T13.3).
+        let nodes = input["nodes"].as_object().unwrap();
+        for sibling in ["2", "10"] {
+            assert!(
+                nodes.contains_key(&format!("{group}.{sibling}")),
+                "the fixture needs {group}.{sibling}: any renumber of this group moves content \\
+                 (the tie-break itself is held by the renumbering test below)"
+            );
+        }
+        assert!(!nodes.contains_key(&gap), "the fixture needs a gap at {gap}");
+        assert_eq!(nodes[drifted]["parent_id"], "0", "the fixture needs a drifted id");
+        assert!(
+            nodes["0.0"]["color_schema"]["overrides"]["background"].is_string(),
+            "the fixture needs an override on a node the palette pass rewrites"
+        );
+
+        let dir = TempDir::new("convert-legacy-current");
+        let in_path = dir.join("current.mindmap.json");
+        let out_path = dir.join("converted.mindmap.json");
+        fs::write(&in_path, serde_json::to_string_pretty(&input).unwrap()).unwrap();
+        let args = as_strings(&[
+            "convert",
+            "--legacy",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ]);
+        run(&args).expect("convert --legacy must succeed on a current map");
+        let output: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&out_path).unwrap()).unwrap();
+
+        // Node by node first, so a failure names the id that moved
+        // instead of printing the whole map twice (§T5).
+        let (in_nodes, out_nodes) = (
+            input["nodes"].as_object().unwrap(),
+            output["nodes"].as_object().unwrap(),
+        );
+        let lost: Vec<_> = in_nodes
+            .keys()
+            .filter(|id| !out_nodes.contains_key(*id))
+            .collect();
+        let gained: Vec<_> = out_nodes
+            .keys()
+            .filter(|id| !in_nodes.contains_key(*id))
+            .collect();
+        assert!(
+            lost.is_empty() && gained.is_empty(),
+            "convert --legacy must keep every id of a current map; lost {lost:?}, gained {gained:?}"
+        );
+        for (id, node) in in_nodes {
+            assert_eq!(&out_nodes[id], node, "convert --legacy changed node {id}");
+        }
+        assert_eq!(
+            output, input,
+            "convert --legacy changed a current map outside its nodes"
+        );
+    }
+
+    /// A legacy export whose nodes carry no `index` is still a legacy
+    /// export. miMind's heap-pointer ids are runs of digits, which is a
+    /// well-formed Dewey root, so a converter that judged "already
+    /// current" by the ids and `index` alone kept them and wrote a tree
+    /// `verify` rejects (#211 review). The other legacy markers — the
+    /// `portals` key, integer enums, node `text`, `theme_id` — are what
+    /// send it down the renumbering path, and the one-hop promise holds.
+    #[test]
+    fn test_run_convert_legacy_renumbers_a_legacy_map_without_index() {
+        let text = fs::read_to_string(legacy_with_portals_path()).unwrap();
+        let mut legacy: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let nodes = legacy["nodes"].as_object_mut().unwrap();
+        for node in nodes.values_mut() {
+            node.as_object_mut().unwrap().remove("index");
+        }
+        assert!(
+            nodes.keys().all(|id| id.bytes().all(|b| b.is_ascii_digit())),
+            "the fixture's ids must be digit runs, the shape that passes for Dewey"
+        );
+
+        let dir = TempDir::new("convert-legacy-no-index");
+        let in_path = dir.join("legacy.mindmap.json");
+        let out_path = dir.join("converted.mindmap.json");
+        fs::write(&in_path, serde_json::to_string_pretty(&legacy).unwrap()).unwrap();
+        let args = as_strings(&[
+            "convert",
+            "--legacy",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ]);
+        run(&args).expect("convert --legacy must succeed");
+
+        let map = load_from_file(&out_path).expect("the converted map must load");
+        let mut ids: Vec<_> = map.nodes.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["0", "0.0", "0.1"], "heap-pointer ids must be renumbered");
+        let verify_args = as_strings(&["verify", out_path.to_str().unwrap()]);
+        assert!(
+            run(&verify_args).is_ok(),
+            "the converted map must verify in one hop"
+        );
+    }
+
+    /// A map that does go through the renumbering path keeps its
+    /// sibling order, and the palette pass keeps its palettes.
+    ///
+    /// Testament is contiguous and consistent, so renumbering it in
+    /// Dewey order gives every node back its own id; two planted
+    /// legacy markers send it down that path — an empty top-level
+    /// `portals`, and a stray `groups` and `variant` on the root's
+    /// `color_schema`, whose palette is the already-folded `coral-v3`.
+    /// Both passes remove their marker, so the output must be
+    /// testament exactly. Fails when sibling ties fall back to map
+    /// order (`"x.10"` before `"x.2"` moves content between ids in the
+    /// 11-, 12- and 13-child groups), when hoisting the stray `groups`
+    /// replaces the `palettes` table instead of merging, and when the
+    /// stray `variant` folds a second time (`coral-v3-v3`).
+    #[test]
+    fn test_run_convert_legacy_renumbering_keeps_dewey_order_and_palettes() {
+        let text = fs::read_to_string(repo_path("maps/testament.mindmap.json")).unwrap();
+        let testament: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let mut marked = testament.clone();
+        marked["portals"] = serde_json::json!([]);
+        marked["nodes"]["0"]["color_schema"]["groups"] = serde_json::json!([{ "background": "#stray" }]);
+        marked["nodes"]["0"]["color_schema"]["variant"] = serde_json::json!(3);
+        assert_eq!(
+            marked["nodes"]["0"]["color_schema"]["palette"], "coral-v3",
+            "the stray variant must sit on an already-folded name"
+        );
+        assert_eq!(
+            marked["nodes"]["0"]["color_schema"]["level"], 0,
+            "the stray groups must be hoistable"
+        );
+        assert!(
+            testament["palettes"].as_object().unwrap().len() > 1,
+            "testament must define more than the one palette the stray groups would hoist"
+        );
+        let group = "1.2.0.0.0.0.0.0.0.0.0.2.0.0.0";
+        for sibling in ["2", "10"] {
+            assert!(
+                testament["nodes"].get(format!("{group}.{sibling}")).is_some(),
+                "the fixture needs {group}.{sibling}: map order sorts .10 before .2"
+            );
+        }
+
+        let dir = TempDir::new("convert-legacy-renumber-order");
+        let in_path = dir.join("marked.mindmap.json");
+        let out_path = dir.join("converted.mindmap.json");
+        fs::write(&in_path, serde_json::to_string_pretty(&marked).unwrap()).unwrap();
+        let args = as_strings(&[
+            "convert",
+            "--legacy",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ]);
+        run(&args).expect("convert --legacy must succeed");
+        let output: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&out_path).unwrap()).unwrap();
+
+        let (want, got) = (
+            testament["nodes"].as_object().unwrap(),
+            output["nodes"].as_object().unwrap(),
+        );
+        for (id, node) in want {
+            assert_eq!(got.get(id), Some(node), "renumbering moved or changed node {id}");
+        }
+        assert_eq!(
+            output["palettes"], testament["palettes"],
+            "the palettes table must survive the hoist"
+        );
+        assert_eq!(output, testament, "the renumbered map must be testament exactly");
+    }
+
     /// **`verify` must diagnose exactly the maps the editor
     /// refuses.** The fixture carries three violations, and one of
     /// them — a `nodes` key that disagrees with its node's `id` — is

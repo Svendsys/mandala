@@ -1575,6 +1575,47 @@ fn test_dewey_cmp_orders_segments_numerically_not_lexicographically() {
     assert_eq!(dewey_cmp("edge[2]", "edge[10]"), "edge[2]".cmp("edge[10]"));
 }
 
+/// `dewey_cmp` is a total order on arbitrary strings, not only on
+/// Dewey ids: `delete_nodes` and `maptool convert --legacy` both sort
+/// with it, the second over legacy ids that need not be Dewey.
+///
+/// Fails when: a numeric segment compared with a non-numeric one
+/// falls back to string order — the `"9"` / `"10"` / `"1a"` triple
+/// is then a cycle (`9 < 10` by value, `"10" < "1a"` and
+/// `"1a" < "9"` as strings), which the transitivity check catches —
+/// or when value-equal spellings (`"01"`, `"1"`) compare `Equal`.
+#[test]
+fn test_dewey_cmp_is_a_total_order_on_mixed_segments() {
+    use std::cmp::Ordering;
+
+    let ids = ["9", "10", "1a", "01", "1", "0.2", "0.10", "0.x", "x", "x.1"];
+    for a in ids {
+        for b in ids {
+            let ab = dewey_cmp(a, b);
+            assert_eq!(ab, dewey_cmp(b, a).reverse(), "{a} vs {b} must be antisymmetric");
+            assert_eq!(
+                ab == Ordering::Equal,
+                a == b,
+                "{a} vs {b}: Equal must mean the same id"
+            );
+            for c in ids {
+                if ab == Ordering::Less && dewey_cmp(b, c) == Ordering::Less {
+                    assert_eq!(
+                        dewey_cmp(a, c),
+                        Ordering::Less,
+                        "{a} < {b} < {c} must be transitive"
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(
+        dewey_cmp("10", "1a"),
+        Ordering::Less,
+        "a numeric segment sorts before a non-numeric one"
+    );
+}
+
 /// Sorting a shuffled list is the property the two call sites
 /// actually depend on, and it is not implied by the pairwise rows
 /// above: a comparator can be right on every pair a test names and

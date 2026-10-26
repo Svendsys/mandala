@@ -199,7 +199,18 @@ path and move the result into place yourself.
 ## What it does
 
 1. **Assigns Dewey-decimal IDs** by walking the tree (using `parent_id` +
-   the old `index` field for sibling order). Rewrites every reference —
+   the old `index` field for sibling order, ties broken by numeric
+   Dewey order on the old ID). A map whose IDs are all Dewey paths
+   already, and which carries **no legacy marker** — no shape any
+   step below migrates: a node `index`, a top-level `portals` key, an
+   integer enum, a `color_schema` `groups` / `theme_id` / `variant`,
+   or node `text` / `text_runs` — keeps every ID exactly as it is,
+   gaps left by deletions and IDs that drifted under a reparent
+   ([ids.md](./ids.md)) included. Any other map is renumbered
+   throughout. The markers matter because miMind's heap-pointer IDs
+   (`"348068464"`) are runs of digits, which is a well-formed Dewey
+   root: the IDs alone cannot tell a legacy file from a current one.
+   Rewrites every reference —
    edge `from_id`/`to_id` (covers both line-mode and portal-mode edges;
    post-refactor portals live in the edges array), legacy
    `portals[].endpoint_a`/`endpoint_b`, and the HashMap keys.
@@ -217,21 +228,33 @@ path and move the result into place yourself.
    reason given at the end of that section.
 4. **Hoists color schemas to top-level palettes**. Each unique palette is
    defined once; per-node `color_schema` becomes a lightweight reference.
-   The `theme_id` and `variant` fields are dropped; `variant` != 2 gets
+   The `groups`, `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
-   `"coral-v3"`). A schema with no `palette` name is keyed
+   `"coral-v3"`) — unless `palette` already ends in that `-vN`, or the
+   schema carries no `groups` of its own, `palette` names a palette
+   the input's `palettes` table defines, and the folded name is
+   neither defined there nor hoisted from another node; either is
+   taken to mean the fold happened on an earlier pass (see
+   [Known limitations](#known-limitations)). The decision is per
+   palette-and-variant pair, so a legacy subtree whose deeper nodes
+   carry no `groups` follows its root's fold. A schema
+   with no `palette` name is keyed
    `"default"`, and missing `starts_at_root` / `connections_colored`
    default to `true`. A negative `level` is floored to 0 with a
    message — the model types it `usize`, so emitting one would produce
    a file this tool could not read back.
 
    **Only level-0 schemas with a non-empty `groups` array define a
-   palette** (`collect_palettes`). A palette that appears in the input
+   palette** (`collect_palettes`). Hoisted palettes are merged into
+   any `palettes` table the input already has: every existing palette
+   is kept, and an existing name is not redefined by a hoisted one. A palette that appears in the input
    only on deeper nodes is never hoisted, and those nodes are left
    referencing a name the output does not define — which
    `maptool verify` reports under `palettes`. The rewritten
-   `color_schema` carries exactly `palette`, `level`, `starts_at_root`
-   and `connections_colored`; any other key on it is dropped (#198).
+   `color_schema` is edited in place: `palette`, `level`,
+   `starts_at_root` and `connections_colored` are set as above,
+   `groups`, `theme_id` and `variant` are removed, and every other
+   key — `overrides` first among them — is carried through unchanged.
 
    **The hoisted palette is authoritative at render time.** The
    converter leaves each node's `style` colors where it found them,
@@ -306,9 +329,17 @@ change.
 - **Unknown enum values** fall silently to defaults. If you had a custom
   shape code that meant something specific, it becomes `"rectangle"`.
 - **Palette collisions** (two level-0 nodes with the same palette name +
-  variant but different `groups`): first-writer-wins. Rare in practice
+  variant but different `groups`): first-writer-wins, where first is
+  the node met first in outline order (Dewey order on the converted
+  ID, so `x.2` before `x.10`). Rare in practice
   because miMind produces consistent palettes across nodes in the same
   theme.
+- **A palette name that already ends in its own variant suffix** is
+  not folded again (step 4), because that is what an already-hoisted
+  name looks like. A legacy palette literally named `foo-v3` with
+  `variant: 3` therefore keys as `foo-v3`, and collides with another
+  node's `foo` + `variant: 3` under first-writer-wins. miMind's
+  palette names (`coral`, `navy`, …) never end in `-vN`.
 
 ## After conversion
 
@@ -333,14 +364,32 @@ legacy key means *the file is older than the format* — the name is
 taken, the migration exists, and preserving it would only carry a
 contradiction forward.
 
-The converter is a one-shot migration, not an always-on pipeline, and
-**it is not idempotent on a file that is already current** — do not
-run `convert --legacy` over a map that does not need it. Two passes
-change such a file (#198): sibling order is rebuilt from the legacy
-`index` field, and with that field gone the fallback order is
-lexicographic, so a sibling group of ten or more is renumbered
-(`"x.10"` sorts before `"x.2"`); and every `color_schema` is rebuilt
-from four keys, which drops `overrides`. Already-string enums do pass
-through unchanged. `convert --portals` and `convert --sections` change
-no value in a file that has nothing for them to migrate (the file is
-still rewritten).
+The conversion is idempotent on a file that is already current —
+every ID a Dewey path and no legacy marker anywhere, the condition
+step 1 checks — and that the app saved: `convert --legacy` writes the
+same map back. Already-Dewey IDs survive unchanged (step 1),
+already-string enums pass through, already-hoisted palettes don't
+double-hoist (step 4 merges into the table), and a node's
+`color_schema.overrides` rides through the palette pass. A map that
+fails the condition is renumbered throughout, which changes IDs even
+where the map was otherwise current: one symbolic ID (`"title"`), or
+an `index` key left on a node, is enough. (A map the app wrote from
+scratch meets it. A map it loaded carrying one of the legacy keys the
+loader tolerates — node `index`, `style.shape_type`, or
+`color_schema.groups` / `theme_id` / `variant` — keeps that key across
+saves, as every unknown key is kept, and is renumbered on purpose:
+`maptool verify` rejects each of those keys, reporting it under
+`unknown_keys`. The other markers the
+loader refuses outright, so no saved map carries them. Separately, a
+key the app always writes and a hand-written file may omit, such as a
+node's `channel`, is filled in by step 6.)
+`test_run_convert_legacy_leaves_a_current_map_unchanged` holds that
+against testament with a ten-plus sibling group, a deletion gap, a
+drifted ID and an override; a map on the renumbering path keeps its
+Dewey sibling order and its palettes, which
+`test_run_convert_legacy_renumbering_keeps_dewey_order_and_palettes`
+holds. `convert --portals` and
+`convert --sections` likewise change no value in a file that has
+nothing for them to migrate (the file is still rewritten). But the
+converter is intended as a one-shot migration, not an always-on
+pipeline.
