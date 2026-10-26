@@ -55,6 +55,7 @@ pub(crate) mod dispatch;
 
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
+mod animation_drain;
 #[cfg(not(target_arch = "wasm32"))]
 mod capture_flow;
 #[cfg(not(target_arch = "wasm32"))]
@@ -76,6 +77,7 @@ mod event_cursor_moved;
 mod event_keyboard;
 #[cfg(not(target_arch = "wasm32"))]
 mod event_mouse_click;
+pub(crate) mod fire_custom_mutation;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]

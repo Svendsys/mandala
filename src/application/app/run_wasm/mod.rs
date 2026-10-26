@@ -14,13 +14,14 @@
 //!
 //! The [`ApplicationHandler::window_event`] callback funnels into
 //! [`WasmApp::handle_window_event`], which owns the dispatch
-//! match: six arms fan out to per-arm `handle_*` inherent methods
-//! defined in sibling `event_*.rs` files (Resized, ModifiersChanged,
-//! KeyboardInput, CursorMoved, MouseInput, MouseWheel) plus an
-//! inline `CloseRequested` no-op and a catch-all that drops the
-//! arms WASM doesn't currently consume. Mirrors native's per-arm
-//! split under `app/event_*.rs` so cross-target convergence
-//! reviews can diff the two layouts side by side.
+//! match: the arms fan out to per-arm `handle_*` inherent methods
+//! defined in sibling `event_*.rs` files (RedrawRequested — the
+//! browser's frame — Resized, ModifiersChanged, KeyboardInput,
+//! CursorMoved, MouseInput, MouseWheel, Touch) plus an inline
+//! `CloseRequested` no-op and a catch-all that drops the arms WASM
+//! doesn't currently consume. Mirrors native's per-arm split under
+//! `app/event_*.rs` so cross-target convergence reviews can diff
+//! the two layouts side by side.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -29,6 +30,7 @@ mod event_keyboard;
 mod event_modifiers;
 mod event_mouse_click;
 mod event_mouse_wheel;
+mod event_redraw_requested;
 mod event_resized;
 mod event_touch;
 
@@ -149,9 +151,12 @@ pub(super) struct WasmInputState {
     /// `WindowEvent::Touch` instead).
     pub touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
     /// The app clock (`crate::application::clock`), the peer of native's
-    /// `InitState.clock`. Always real here: what moves a virtual clock is
-    /// the per-frame drain, which the browser does not have yet
-    /// (`CLAUDE.md` "Per-frame animation drain").
+    /// `InitState.clock`. Always real here: what switches it is a
+    /// `clock` command, and only IPC carries one (`CLAUDE.md`
+    /// "Virtual-clock stepping"). The browser's frame
+    /// (`event_redraw_requested`) already reads it the way native's
+    /// loop frame does, so a step driver is what a virtual clock here
+    /// still lacks.
     pub clock: crate::application::clock::AppClock,
 }
 
@@ -293,36 +298,32 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
             return false;
         };
         let now = self.input.clock.now_whole_ms();
-        let applied = super::dispatch::apply_keybind_custom_mutation(
+        // A macro step names a node, not a section, so the target is
+        // whole-node — as native's macro target passes it.
+        super::fire_custom_mutation::fire_custom_mutation(
             &mut self.input.document,
             &mut self.input.mindmap_tree,
             &mut self.input.scene_cache,
             &cm,
             node_id,
+            None,
             now,
         );
-        if applied {
-            // Match native pre-Track-B: rebuild via plain
-            // `rebuild_all` (no extra `scene_cache.clear()`).
-            // `apply_keybind_custom_mutation` already cleared the
-            // cache on the non-animated branch; the animated
-            // branch deliberately leaves it for the animation
-            // envelope to invalidate. Going through
-            // `rebuild_after_geometry_change` here would clear
-            // again on non-animated and add an unwanted clear on
-            // animated.
-            super::scene_rebuild::rebuild_all(
-                &self.input.document,
-                &self.input.interaction_mode,
-                &mut self.input.mindmap_tree,
-                &mut self.input.app_scene,
-                self.renderer,
-                &mut self.input.scene_cache,
-            );
-            true
-        } else {
-            false
-        }
+        // Plain `rebuild_all`, no extra `scene_cache.clear()`:
+        // `fire_custom_mutation` already cleared the cache on the
+        // instant branch, and the animated branch deliberately
+        // leaves it for the animation envelope to invalidate. Going
+        // through `rebuild_after_geometry_change` here would clear
+        // again on instant and add an unwanted clear on animated.
+        super::scene_rebuild::rebuild_all(
+            &self.input.document,
+            &self.input.interaction_mode,
+            &mut self.input.mindmap_tree,
+            &mut self.input.app_scene,
+            self.renderer,
+            &mut self.input.scene_cache,
+        );
+        true
     }
 
     fn execute_console_line(&mut self, line: &str) -> bool {
@@ -433,35 +434,27 @@ impl ApplicationHandler for WasmApp {
 }
 
 impl WasmApp {
-    /// Per-event dispatch — seven arms fan out into per-arm
-    /// methods defined in sibling `event_*.rs` files, plus an
-    /// inline `RedrawRequested` arm that runs the renderer's
-    /// `process()` (the sole entry to render on web), an inline
-    /// `CloseRequested` no-op (browser tabs don't really close)
-    /// and a `_ => {}` catch-all that silently drops the arms
-    /// winit fires that WASM doesn't currently consume (touch
-    /// events, IME composition, focus changes). Each fan-out
-    /// arm extracts only the fields that arm needs.
+    /// Per-event dispatch — the arms fan out into per-arm methods
+    /// defined in sibling `event_*.rs` files: the `RedrawRequested`
+    /// arm is the browser's frame (the animation tick, then the
+    /// renderer's `process()`, the sole entry to render on web),
+    /// the rest are input. Plus an inline `CloseRequested` no-op
+    /// (browser tabs don't really close) and a `_ => {}` catch-all
+    /// that silently drops the arms winit fires that WASM doesn't
+    /// currently consume (IME composition, focus changes). Each
+    /// fan-out arm extracts only the fields that arm needs.
     ///
     /// Mutating arms set `redraw_after = true`; the trailing
     /// `Renderer::request_redraw` call hands a redraw request
     /// to winit-web, which translates to an internal rAF
     /// dispatch. The browser only paints when the canvas
-    /// actually changed.
+    /// actually changed — and, while an animation runs, on every
+    /// frame, because the frame itself asks for the next one.
     fn handle_window_event(&mut self, event: WindowEvent) {
         let mut redraw_after = false;
         match event {
             WindowEvent::RedrawRequested => {
-                // Sole entry to the render path on web. Coalesced
-                // by winit-web from any number of `request_redraw`
-                // calls in the prior event chain.
-                // A transient skip asks again, as native's does: no
-                // input may follow to ask for it.
-                if let Some(r) = self.renderer.borrow_mut().as_mut() {
-                    if r.process().is_err_and(|skip| skip.is_transient()) {
-                        r.request_redraw();
-                    }
-                }
+                self.handle_redraw_requested();
             }
             WindowEvent::Resized(s) => {
                 self.handle_resized(s);
@@ -848,7 +841,10 @@ pub(super) fn run(mut app: Application) {
         // renders. Mutating event handlers call
         // `Renderer::request_redraw` after their work, which
         // winit-web translates to an internal rAF dispatch — so the
-        // browser only paints when the canvas actually changed.
+        // browser only paints when the canvas actually changed. The
+        // one self-rescheduling case is the frame itself, while an
+        // animation runs (`event_redraw_requested`): it stops asking
+        // the frame the animation completes.
         if let Some(r) = renderer_for_init.borrow().as_ref() {
             r.request_redraw();
         }

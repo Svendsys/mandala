@@ -47,10 +47,10 @@ pub(in crate::application::app) trait MacroDispatchTarget {
 
     /// Apply the custom mutation identified by `id` to the node
     /// `node_id`. Looks up the mutation in the impl's document,
-    /// applies it via the platform's existing keybind-trigger
-    /// helper, and rebuilds the scene when the mutation lands.
-    /// Warn-logs unknown ids; returns `true` only when a mutation
-    /// was actually applied.
+    /// fires it through `app::fire_custom_mutation` (the body the
+    /// keystroke tier and the click-trigger loop land through too),
+    /// and rebuilds the scene. Warn-logs unknown ids; returns `true`
+    /// only when a mutation was found and fired.
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool;
 
     /// Execute a free-form console line. Reaches the loop ONLY

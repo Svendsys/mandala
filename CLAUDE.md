@@ -213,41 +213,52 @@ the parity trajectory (or why none is owed):
   repaint takes the `cfg` off it. Parity for the gesture itself
   rides on the browser gaining a drag-state machine — a press
   needs somewhere to be pending before it can promote — and is
-  not yet scheduled. **That is not the same prerequisite the
-  per-frame animation drain below names**, which is a rAF-driven
-  tick pump; this sentence claimed it was until #35's registry
-  work read the two entries side by side. What the two do share
-  is the *shape*: a per-frame mechanism native has and the
-  browser does not, so either one landing makes the other
-  cheaper without supplying it.
-- **Per-frame animation drain**
-  (`src/application/app/drain_frame.rs`) — native-only, so
-  *animated* `CustomMutation`s (`timing.duration_ms > 0`) start on
-  the browser and never tick: `drain_animation_tick` is the only
-  advance site and there is no browser rAF-driven equivalent
-  wired to it. Instant mutations are unaffected and work on both
-  targets. Two browser entry points stall, through **two
-  different bodies**: the `custom_mutation_bindings` keystroke
-  tier (`run_wasm/event_keyboard.rs`) reaches
-  `apply_keybind_custom_mutation`'s `start_animation` branch,
-  while `click_triggers::fire_onclick_triggers` carries its own
-  copy of the animated-vs-instant routing and calls
-  `start_animation_at`. That duplication predates this work and
-  is named at both sites; unifying it is a behavior decision
-  rather than a refactor, because the two copies disagree about
-  the no-tree case. Parity for the stall itself is a browser
-  drain loop hung off the existing rAF render loop, pumping the
-  same `drain_animation_tick` body; not yet scheduled.
+  not yet scheduled. What the browser lacks for it is the
+  *input-driven* half of a frame — native's `heartbeat::drain_inputs`
+  draining a drag state — not a frame: the browser's frame exists
+  (`run_wasm/event_redraw_requested.rs`) and runs the time-driven
+  half, the animation tick, since #144. (Until then a per-frame
+  animation drain was listed beside this entry as a second
+  per-frame mechanism the browser lacked, and this sentence
+  claimed the two shared a prerequisite until #35's registry work
+  read them side by side.)
+- **Animation pause during a drag** (`heartbeat::drain_inputs`'s
+  `anim_pause_start_ms`; `MindMapDocument::shift_active_animations_start_ms`)
+  — native-only because the tree-mutating drags it is keyed to
+  (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`)
+  are: the tick is skipped while one runs and every instance's
+  `start_ms` is shifted past the pause on release, so an animation
+  resumes where it froze instead of snapping to its end. **The
+  tick itself is not gated, since #144.**
+  `animation_drain::drain_animation_tick`
+  (`src/application/app/animation_drain.rs`) is one body both
+  targets' frames run — native's heartbeat from `about_to_wait`
+  and from a clock step, the browser's from
+  `WindowEvent::RedrawRequested`, which asks for the next frame
+  while `animation_drain::keeps_ticking` says an animation owes
+  one — so an animated `CustomMutation` (`timing.duration_ms > 0`)
+  started on the browser, from the `custom_mutation_bindings`
+  keystroke tier or a node's `OnClick` trigger, lerps, completes
+  and pushes its undo entry as on native. The two routes land
+  through one body, `app::fire_custom_mutation`, whose no-tree
+  semantics are decided on #144. Parity for the pause rides with
+  the browser's drag-state machine (**Rubber-band select** above):
+  there is no drag to pause for until there is a drag.
 - **Virtual-clock stepping** (`src/application/app/heartbeat.rs`;
   IPC-09/#69) — `clock.step` and the `clock step` console verb run
-  the per-frame drain at virtual instants, so they are native for the
-  reason the drain is (the entry above). **The clock is not gated**:
-  `AppClock` (`src/application/clock.rs`) and its two modes compile for
-  both targets, the browser holds one (`WasmInputState.clock`) and
-  every browser reader of app time — double-click, touch, an `OnClick`
-  trigger's start — reads it, so a virtual clock there needs only a
-  driver. Parity rides on the browser drain loop the entry above names,
-  plus the IPC-15 transport (#75) to command it.
+  the frame at virtual instants through a step driver
+  (`heartbeat::step` / `run_step`) that lives on native's
+  `InputHandlerContext` and is commanded over IPC and the console,
+  both native. **Neither the clock nor the tick is gated**:
+  `AppClock` (`src/application/clock.rs`) and its two modes compile
+  for both targets, the browser holds one (`WasmInputState.clock`),
+  every browser reader of app time — double-click, touch, an
+  `OnClick` trigger's start — reads it, and since #144 the
+  browser's frame stands still under a virtual clock the way
+  native's loop frame does (`event_redraw_requested` ticks on a
+  real clock only). What a virtual clock there still lacks is a
+  driver — the step loop over the browser's state — and the IPC-15
+  transport (#75) to command it.
 
 ## Common tasks
 
