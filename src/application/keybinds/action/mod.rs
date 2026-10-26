@@ -125,6 +125,7 @@ pub enum ZoomBound {
 /// would silently bypass the gate from non-User macro tiers. The
 /// `#[non_exhaustive]` is the structural signal that "review the
 /// gate when extending."
+///
 /// Some variants carry payload (e.g. `String` paths, kv-shaped
 /// `(field, value)` tuples) so `Copy` is impossible — payload-bearing
 /// variants are cloned at lookup time in
@@ -384,7 +385,7 @@ pub enum Action {
     /// Marked `destructive` so the macro privilege gate
     /// (`SourceTier::allows_action`) blocks System / Plugin /
     /// Project tiers; only User-tier macros (the user's keybind
-    /// config + interactive console) can fire it.   
+    /// config + interactive console) can fire it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     FastResizeStart,
 
@@ -741,7 +742,7 @@ pub enum Action {
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
     ///
-    ///calls for replacing this with per-field
+    /// The intended follow-up replaces this with per-field
     /// variants (`SetBorderPreset` / `SetBorderColor` / ...)
     /// for keybind ergonomics — `SetBorderField` stays as the
     /// generic catch-all for the kv form and for callers that

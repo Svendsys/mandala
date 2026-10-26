@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(target_section(&sel), Some(("n".into(), 3)));
     }
 
-    /// `Single(id)` is rejected — verb-path rule 3
+    /// `Single(id)` is rejected — the verb path's rule-3
     /// auto-resolve to `(id, 0)` lives at the verb layer (it
     /// has the document to count sections); this helper does
     /// not.

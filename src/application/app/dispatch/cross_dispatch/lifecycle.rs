@@ -540,6 +540,14 @@ pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
     }
 }
 
+/// True when a paste must clear the structured section buffer:
+/// fragments couldn't be split per-target AND there's more than
+/// one target. Without the clear, a stale single-section payload
+/// would broadcast its non-text fields to every target.
+fn is_broadcast_paste(fragments_is_none: bool, target_count: usize) -> bool {
+    fragments_is_none && target_count > 1
+}
+
 /// Decide whether the OS clipboard text should be split 1:1 with
 /// the paste targets (round-trip from a Mandala multi-target copy)
 /// or broadcast verbatim to every target (cross-app paste / count
@@ -552,14 +560,6 @@ pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
 /// happens to match by coincidence will round-trip; that's
 /// indistinguishable from a Mandala copy by content alone, so the
 /// behavior matches what the user typed on the source side.
-/// True when a paste must clear the structured section buffer:
-/// fragments couldn't be split per-target AND there's more than
-/// one target. Without the clear, a stale single-section payload
-/// would broadcast its non-text fields to every target.
-fn is_broadcast_paste(fragments_is_none: bool, target_count: usize) -> bool {
-    fragments_is_none && target_count > 1
-}
-
 fn split_paste_for_targets(text: &str, target_count: usize) -> Option<Vec<&str>> {
     if target_count <= 1 {
         return None;

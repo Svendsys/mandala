@@ -454,7 +454,7 @@ fn test_insert_caret_after_emoji() {
 
 // -----------------------------------------------------------------
 // `apply_text_edit_action` — pure dispatcher, called from every
-// TextEdit keystroke. Cross-platform per the §2 module-boundary
+// TextEdit keystroke. Cross-platform per the §4 module-boundary
 // gating; tests run on native (cfg(test)).
 // -----------------------------------------------------------------
 

@@ -382,7 +382,7 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
 ///   (so the new text inherits the section's effective color /
 ///   font / size). Backed by `set_section_text`.
 ///
-///§9.8: closes the "console paths can't change a
+/// Plan §9.8: closes the "console paths can't change a
 /// section's text" gap. Pre-fix `runs=preserve` was a phantom
 /// kv — both branches called `set_section_text` (which collapses
 /// runs unconditionally), so preserve and clear produced
@@ -444,7 +444,7 @@ fn execute_text(
 }
 
 /// `section edit [section=<idx>]` — open the section text
-/// editor on the resolved target.Routes through
+/// editor on the resolved target. Routes through
 /// `ConsoleSideEffect::OpenSectionEdit`; closes the console
 /// (modal handoff to the editor).
 fn execute_edit(eff: &mut ConsoleEffects, node_id: &str, idx: usize) -> ExecResult {
@@ -489,7 +489,7 @@ fn execute_add(pairs: &[Pair], doc: &mut MindMapDocument, node_id: &str) -> Exec
 }
 
 /// `section delete [section=<idx>]` — remove a section. Routes
-/// through `MindMapDocument::delete_section`.Errors
+/// through `MindMapDocument::delete_section`. Errors
 /// when the node has only one section (model invariant) or the
 /// idx is out of range.
 fn execute_delete(doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
@@ -501,7 +501,7 @@ fn execute_delete(doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecR
 
 /// `section split section=<idx> at=<grapheme>` — split a
 /// section in two at the given grapheme boundary. Routes through
-/// `MindMapDocument::split_section`.`at=` is now
+/// `MindMapDocument::split_section`. `at=` is now
 /// **required** (per the Full-Nelson API/UX reviewer's foot-gun
 /// finding): pre-fix the default was end-of-text, which created
 /// an empty suffix section the user almost never wanted, and
@@ -540,18 +540,10 @@ fn execute_split(pairs: &[Pair], doc: &mut MindMapDocument, node_id: &str, idx: 
     }
 }
 
-/// `section move dx=<f64> dy=<f64>` (delta) or `section move
-/// x=<f64> y=<f64>` (absolute).kv form replaces the
-/// pre-Batch-5 positional `<dx> <dy>`/// — no compatibility shim, users update muscle memory.
-///
-/// `dx`/`dy` and `x`/`y` are mutually exclusive: passing both
-/// (`dx=1 x=2 dy=0 y=0`) is rejected at parse time so the user
-/// gets a clear "pick one form" error rather than a silent
-/// last-write-wins.
 /// `section move dx=X dy=Y` against a `MultiSection` selection:
 /// fan out the same `(dx, dy)` delta across every targeted
-/// `(node_id, section_idx)` pair.rule 4 / §9.1.3 —
-/// the only form where multi-target makes semantic sense
+/// `(node_id, section_idx)` pair. Per rule 4 of the plan's §9.1.3,
+/// this is the only form where multi-target makes semantic sense
 /// (every section shifts by the same delta; absolute coords
 /// would collide).
 ///
@@ -559,7 +551,7 @@ fn execute_split(pairs: &[Pair], doc: &mut MindMapDocument, node_id: &str, idx: 
 /// pair's would-be AABB via
 /// `MindMapDocument::validate_section_offset_change`; if any
 /// fails, abort the whole fan-out before mutating. Mirrors
-/// `section/frame.rs::apply_edits`. On success, an N-section
+/// `section/frame/mod.rs`'s `apply_edits`. On success, an N-section
 /// fan-out produces N `EditNodeStyle` undo entries (same as
 /// the per-pair setter — undo unwinds one section at a time).
 fn execute_move_fan_out_multisection(
@@ -638,6 +630,15 @@ fn execute_move_fan_out_multisection(
     ))
 }
 
+/// `section move dx=<f64> dy=<f64>` (delta) or `section move
+/// x=<f64> y=<f64>` (absolute). The kv form replaces the
+/// pre-Batch-5 positional `<dx> <dy>` — no compatibility shim;
+/// users update muscle memory.
+///
+/// `dx`/`dy` and `x`/`y` are mutually exclusive: passing both
+/// (`dx=1 x=2 dy=0 y=0`) is rejected at parse time so the user
+/// gets a clear "pick one form" error rather than a silent
+/// last-write-wins.
 fn execute_move(
     descent: &Descent,
     pairs: &[Pair],
@@ -740,7 +741,7 @@ fn parse_move_kvs(descent: &Descent, pairs: &[Pair]) -> Result<MoveTarget, Strin
 }
 
 /// `section resize w=<f64> h=<f64>` or `section resize fill`.
-///kv form replaces the pre-Batch-5 positional `<w>
+/// The kv form replaces the pre-Batch-5 positional `<w>
 /// <h>`; the `fill` literal replaces `none` ("none" reads as
 /// "remove the section" rather than "fill the parent" — `fill`
 /// is the clearer rename).
@@ -855,7 +856,7 @@ mod tests {
 
     #[test]
     fn section_move_rejects_when_single_selection_lacks_section_kv() {
-        //rule 3: `Single(id)` on a multi-section node
+        // Plan rule 3: `Single(id)` on a multi-section node
         // requires explicit `section=K`. A single-section node
         // would auto-resolve to (id, 0); the fixture here is
         // multi-section so the rejection branch runs.
@@ -864,7 +865,7 @@ mod tests {
         assert_exec_err_contains(run("section move dx=3 dy=4", &mut doc), "has 2 sections");
     }
 
-    ///rule 3: `Single(id)` on a single-section node
+    /// Plan rule 3: `Single(id)` on a single-section node
     /// implicitly resolves to `(id, 0)` — closes the §5.7
     /// "hostile error" the plan flagged.
     #[test]
@@ -1175,7 +1176,7 @@ mod tests {
         }
     }
 
-    ///NEW: absolute-move form via `x=` / `y=`.
+    /// The absolute-move form via `x=` / `y=`.
     #[test]
     fn section_move_absolute_form_writes_offset_directly() {
         let (mut doc, id) = pinned_two_section_node();
@@ -1826,7 +1827,7 @@ mod tests {
         assert!(labels.contains(&"clear"));
     }
 
-    // ───rule 4: MultiSection fan-out for `move dx/dy` ─
+    // ─── Plan rule 4: MultiSection fan-out for `move dx/dy` ───────
 
     /// `section move dx=X dy=Y` against a `MultiSection`
     /// selection shifts each targeted section by the same

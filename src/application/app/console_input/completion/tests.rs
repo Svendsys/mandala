@@ -102,3 +102,36 @@ fn test_accept_completion_no_popup_is_noop() {
         panic!("state closed");
     }
 }
+
+/// With candidates but no highlight, accepting takes the first row,
+/// the one a recompute highlights (#52). It took the last row, a
+/// leftover of a bottom-row default the recompute had already left,
+/// so Tab could insert a different candidate than the popup shows by
+/// default.
+///
+/// Control: with the highlight on the last row, accepting takes that
+/// row, so the fallback is what chose the first.
+#[test]
+fn test_accept_completion_without_a_highlight_takes_the_first_row() {
+    let mut state = open_state("co", 2, &["color", "connect", "copy"]);
+    if let ConsoleState::Open { completion_idx, .. } = &mut state {
+        *completion_idx = None;
+    }
+    accept_console_completion(&mut state);
+    if let ConsoleState::Open { input, .. } = &state {
+        assert_eq!(input, "color ");
+    } else {
+        panic!("state closed");
+    }
+
+    let mut state = open_state("co", 2, &["color", "connect", "copy"]);
+    if let ConsoleState::Open { completion_idx, .. } = &mut state {
+        *completion_idx = Some(2);
+    }
+    accept_console_completion(&mut state);
+    if let ConsoleState::Open { input, .. } = &state {
+        assert_eq!(input, "copy ", "control: an explicit highlight is honored");
+    } else {
+        panic!("state closed");
+    }
+}

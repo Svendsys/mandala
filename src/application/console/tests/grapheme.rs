@@ -5,7 +5,7 @@
 //! The `ConsoleState::cursor` is a grapheme-cluster index, not a
 //! byte offset. These tests lock in the invariant that cursor-
 //! manipulating operations stay correct across multi-byte and
-//! multi-codepoint characters — CODE_CONVENTIONS §2.
+//! multi-codepoint characters — CODE_CONVENTIONS §1.
 
 #[test]
 fn test_grapheme_space_insertion_via_helper() {

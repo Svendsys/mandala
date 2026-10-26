@@ -420,7 +420,7 @@ fn console_signature_shifts_on_scrollback_grow() {
 /// than panicking when a caller violates the
 /// `scrollback_rows = min(scrollback.len(), MAX)` (or
 /// `completion_rows` mirror) invariant — interactive paths never
-/// abort (§7). Pin the degraded behavior: artificially shorten the
+/// abort (§9). Pin the degraded behavior: artificially shorten the
 /// geometry's scrollback vec AFTER computing the layout so
 /// `scrollback_rows` (baked into the layout) exceeds
 /// `geometry.scrollback.len()`, then call `console_overlay_areas`
