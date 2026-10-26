@@ -11,10 +11,16 @@
 
 use crate::application::platform::window::PhysicalPosition;
 
-impl super::WasmApp {
-    pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
-        if let Some(input) = self.input.borrow_mut().as_mut() {
-            input.cursor_pos = (position.x, position.y);
-        }
+use super::PendingClick;
+
+impl super::Borrowed<'_> {
+    /// Returns whether to request a redraw. WASM doesn't yet have
+    /// full drag/picker state (see `WasmInputState` field comments),
+    /// so the CursorMoved redraw conditions native checks for
+    /// collapse to "yes" for any in-progress click: conservative, a
+    /// redraw on every move that arrives while a click is pending.
+    pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
+        self.input.cursor_pos = (position.x, position.y);
+        !matches!(self.input.pending_click, PendingClick::None)
     }
 }

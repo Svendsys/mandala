@@ -24,15 +24,15 @@ use std::sync::atomic::AtomicBool;
 /// [`crate::application::app::warn_unhandled_native_only_once`].
 static WARNED_NATIVE_ONLY_WHEEL: AtomicBool = AtomicBool::new(false);
 
-impl super::WasmApp {
-    pub(super) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
+impl super::Borrowed<'_> {
+    /// Returns whether to request a redraw: always, as native does —
+    /// a wheel either runs its binding or does nothing, and a frame
+    /// after nothing costs one idle paint.
+    pub(super) fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) -> bool {
         let lines = wheel_lines(delta);
         let gesture_name = wheel_gesture(lines).key_name();
-        let mut input_borrow = self.input.borrow_mut();
-        let mut renderer_borrow = self.renderer.borrow_mut();
-        let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) else {
-            return;
-        };
+        let input = &mut *self.input;
+        let renderer = &mut *self.renderer;
         // A scroll mid-click invalidates the pending selection: the
         // canvas coord the user pressed over has shifted to a new
         // screen position, so committing the pending click on the
@@ -55,10 +55,10 @@ impl super::WasmApp {
             input.modifiers.alt_key(),
         );
         let Some(a) = action else {
-            return;
+            return true;
         };
         let outcome = {
-            let mut core = input.input_context_core(renderer, &self.keybinds);
+            let mut core = input.input_context_core(renderer, self.keybinds);
             dispatch::action_core::dispatch_compatible(&a, &mut core, None)
         };
         // The wheel has no sanctioned carve-out — every wheel
@@ -83,5 +83,6 @@ impl super::WasmApp {
         // `WasmInputState::reproject_after_camera_change` for the
         // three ways it is *not* identical to native's drain.
         input.reproject_after_camera_change(renderer);
+        true
     }
 }

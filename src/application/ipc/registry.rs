@@ -177,6 +177,32 @@ impl ResultSpec {
 /// Never panics. Every failure is an error [`Reply`] (§9).
 pub(crate) type Handler = fn(&mut Call<'_>) -> Reply;
 
+/// Where a command runs. The registry refuses a command on a target it
+/// does not serve with `unsupported` and the reason, before its
+/// parameters are looked at, and `describe` reports both — so the
+/// browser's table is honest about its surface, and an agent that
+/// reads it never meets silence (`format/ipc.md` §Transport "Browser").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Support {
+    /// Native and browser alike.
+    Everywhere,
+    /// Native only, for the reason given: what the browser lacks and
+    /// what to use instead.
+    NativeOnly(&'static str),
+}
+
+impl Support {
+    /// The reason the command is refused on the browser target, or
+    /// `None` where it runs. `browser` names the target asked about,
+    /// so the refusal is pinned by a native test.
+    pub(crate) fn refused_on(self, browser: bool) -> Option<&'static str> {
+        match self {
+            Support::Everywhere => None,
+            Support::NativeOnly(reason) => browser.then_some(reason),
+        }
+    }
+}
+
 /// One registered command.
 #[derive(Debug)]
 pub(crate) struct CommandSpec {
@@ -185,6 +211,8 @@ pub(crate) struct CommandSpec {
     pub(crate) summary: &'static str,
     pub(crate) params: &'static [ParamSpec],
     pub(crate) result: &'static [ResultSpec],
+    /// Which targets serve the command.
+    pub(crate) support: Support,
     pub(crate) run: Handler,
 }
 
@@ -215,8 +243,15 @@ pub(crate) fn lookup(name: &str) -> Option<(&'static Family, &'static CommandSpe
 }
 
 impl CommandSpec {
-    /// The command's `describe` entry.
+    /// The command's `describe` entry, for the target this build runs
+    /// on.
     pub(crate) fn describe(&self, family: &Family) -> Value {
+        self.describe_on(family, cfg!(target_arch = "wasm32"))
+    }
+
+    /// [`Self::describe`] for the target `browser` names, so the
+    /// browser's entry is pinned by a native test.
+    pub(crate) fn describe_on(&self, family: &Family, browser: bool) -> Value {
         let params: Vec<Value> = self
             .params
             .iter()
@@ -227,13 +262,18 @@ impl CommandSpec {
             .iter()
             .map(|f| json!({ "name": f.name, "type": f.ty.word(), "doc": f.doc }))
             .collect();
-        json!({
+        let mut entry = json!({
             "name": self.name,
             "family": family.name,
             "summary": self.summary,
             "params": params,
             "result": result,
-        })
+            "supported": self.support.refused_on(browser).is_none(),
+        });
+        if let Some(reason) = self.support.refused_on(browser) {
+            entry["unsupported_reason"] = json!(reason);
+        }
+        entry
     }
 }
 
@@ -375,6 +415,15 @@ pub(crate) fn execute(
             repaint: false,
         };
     };
+    // Before the parameters: a command this target does not serve is
+    // refused whole, whatever it was sent with, with the reason the
+    // registry publishes for it.
+    if let Some(reply) = refuse_unsupported(request, spec, cfg!(target_arch = "wasm32")) {
+        return Executed {
+            reply: Some(reply),
+            repaint: false,
+        };
+    }
     if let Some(reply) = check_params(request, spec) {
         return Executed {
             reply: Some(reply),
@@ -421,6 +470,22 @@ pub(crate) fn execute(
         }),
         repaint,
     }
+}
+
+/// The `unsupported` reply for a command the target `browser` names
+/// does not serve, or `None` where it does. Pure over the flag so a
+/// native test pins the browser's refusal.
+fn refuse_unsupported(request: &IpcRequest, spec: &CommandSpec, browser: bool) -> Option<Reply> {
+    let reason = spec.support.refused_on(browser)?;
+    Some(Reply::error(
+        request.id.clone(),
+        code::UNSUPPORTED,
+        format!(
+            "`{}` is not served on this target: {reason}. `describe` reports `supported` per command",
+            spec.name
+        ),
+        None,
+    ))
 }
 
 /// The `invalid_params` reply for the first way `request` departs
@@ -642,6 +707,96 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    /// The three commands the browser does not serve, by name. The
+    /// list is the spec's (`format/ipc.md` §Transport "Browser"), so a
+    /// command that goes native-only or comes back must change both.
+    const BROWSER_UNSUPPORTED: [&str; 3] = ["act.console", "capture.record_start", "capture.record_stop"];
+
+    /// `support` is honest on both targets: native serves everything,
+    /// and the browser refuses exactly the documented three, each with
+    /// a reason that says what to use instead. `describe_on` is the
+    /// rendering `describe` uses, asked about each target in turn.
+    #[test]
+    fn test_describe_reports_support_per_target_and_the_browser_refuses_exactly_the_documented_set() {
+        let mut browser_refused: Vec<&str> = Vec::new();
+        for (family, command) in commands() {
+            let native = command.describe_on(family, false);
+            assert_eq!(native["supported"], json!(true), "{} on native", command.name);
+            assert!(
+                native.get("unsupported_reason").is_none(),
+                "{} carries no reason on native",
+                command.name
+            );
+            let browser = command.describe_on(family, true);
+            match command.support.refused_on(true) {
+                None => {
+                    assert_eq!(
+                        browser["supported"],
+                        json!(true),
+                        "{} on the browser",
+                        command.name
+                    );
+                    assert!(browser.get("unsupported_reason").is_none(), "{}", command.name);
+                }
+                Some(reason) => {
+                    browser_refused.push(command.name);
+                    assert_eq!(
+                        browser["supported"],
+                        json!(false),
+                        "{} on the browser",
+                        command.name
+                    );
+                    assert_eq!(browser["unsupported_reason"], json!(reason), "{}", command.name);
+                    assert!(
+                        reason.contains("browser") && reason.contains('`'),
+                        "{}'s reason names the target and what to use instead: {reason}",
+                        command.name
+                    );
+                }
+            }
+        }
+        browser_refused.sort_unstable();
+        assert_eq!(browser_refused, BROWSER_UNSUPPORTED);
+    }
+
+    /// A native-only command sent to the browser is `unsupported`,
+    /// with the reason, **before** its parameters are checked: the
+    /// request below is also malformed (`line` is missing), and the
+    /// browser answers the target's refusal rather than the
+    /// parameter's. Native answers the parameter's.
+    #[test]
+    fn test_a_native_only_command_is_refused_unsupported_on_the_browser_before_its_params() {
+        let Decoded::Request(request) = decode_line(br#"{"id":9,"cmd":"act.console"}"#, 0, 1) else {
+            panic!("decodes");
+        };
+        let (_, spec) = lookup("act.console").expect("registered");
+        let refused = refuse_unsupported(&request, spec, true).expect("the browser refuses it");
+        let bytes = Frame::Reply(refused).encode(OUTBOUND_FRAME_CAP).expect("encodes");
+        let wire: Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(wire["id"], json!(9));
+        assert_eq!(wire["error"]["code"], json!("unsupported"));
+        let message = wire["error"]["message"].as_str().expect("message");
+        assert!(
+            message.contains("act.console")
+                && message.contains("console runtime")
+                && message.contains("describe"),
+            "{message}"
+        );
+        assert!(
+            refuse_unsupported(&request, spec, false).is_none(),
+            "native serves it, so the parameter check gets its turn"
+        );
+        let (_, ping) = lookup("ping").expect("registered");
+        assert!(
+            refuse_unsupported(&request, ping, true).is_none(),
+            "a command served everywhere is never refused this way"
+        );
+        // Through `execute` on this (native) build: the parameter is
+        // what is refused.
+        let (reply, _) = run_detached(r#"{"id":9,"cmd":"act.console"}"#);
+        assert_eq!(reply["error"]["code"], json!("invalid_params"));
     }
 
     #[test]

@@ -31,6 +31,9 @@ const MIN_TIMEOUT: Duration = Duration::from_millis(1);
 pub struct Options {
     /// `--ipc`; the environment variable is [`crate::run()`]'s to consult.
     pub ipc: Option<String>,
+    /// `--ws`: the controller URL of a `mandalactl bridge` a browser
+    /// app is behind, instead of a socket. Exclusive with `--ipc`.
+    pub ws: Option<String>,
     /// Print the server's reply envelope as received, not a summary.
     pub json: bool,
     /// After a command that succeeds, wait for the app to settle.
@@ -48,6 +51,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             ipc: None,
+            ws: None,
             json: false,
             wait_settled: false,
             timeout: DEFAULT_TIMEOUT,
@@ -109,6 +113,16 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
                     }
                     options.ipc = Some(path);
                 }
+                "ws" => {
+                    let url = value_of("--ws", inline, &mut args)?;
+                    if url.is_empty() {
+                        return Err(
+                            "`--ws` needs the relay's controller URL, e.g. --ws ws://127.0.0.1:41816/controller/<token>"
+                                .to_string(),
+                        );
+                    }
+                    options.ws = Some(url);
+                }
                 "timeout" => options.timeout = parse_timeout(&value_of("--timeout", inline, &mut args)?)?,
                 "json" => options.json = flag_only("--json", inline)?,
                 "wait-settled" => options.wait_settled = flag_only("--wait-settled", inline)?,
@@ -118,8 +132,8 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
                 "version" => version = flag_only("--version", inline)?,
                 _ => {
                     return Err(format!(
-                        "unknown flag `--{name}`. Flags: --ipc, --json, --wait-settled, --timeout, --count, --force, \
-                         --help, --version. To send a value that starts with `--`, put it after a bare `--`"
+                        "unknown flag `--{name}`. Flags: --ipc, --ws, --json, --wait-settled, --timeout, --count, \
+                         --force, --help, --version. To send a value that starts with `--`, put it after a bare `--`"
                     ))
                 }
             }
@@ -130,6 +144,9 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
         } else {
             words.push(arg.clone());
         }
+    }
+    if options.ipc.is_some() && options.ws.is_some() {
+        return Err("`--ipc` and `--ws` name two different apps; pass one".to_string());
     }
     if help {
         return Ok(Parsed::Help(command));
@@ -277,6 +294,21 @@ mod tests {
             assert!(err.contains("--count"), "{bad}: {err}");
         }
         assert!(parse(&args(&["events.subscribe", "--count"])).is_err());
+    }
+
+    #[test]
+    fn test_ws_names_the_relay_and_excludes_ipc() {
+        let call = invocation(&["ping", "--ws", "ws://127.0.0.1:41816/controller/t"]);
+        assert_eq!(
+            call.options.ws.as_deref(),
+            Some("ws://127.0.0.1:41816/controller/t")
+        );
+        assert_eq!(call.options.ipc, None);
+        let err =
+            parse(&args(&["ping", "--ipc", "/s", "--ws", "ws://h/controller/t"])).expect_err("two apps");
+        assert!(err.contains("--ipc") && err.contains("--ws"), "{err}");
+        assert!(parse(&args(&["ping", "--ws="])).is_err());
+        assert!(parse(&args(&["ping", "--ws"])).is_err());
     }
 
     #[test]

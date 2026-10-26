@@ -5,7 +5,7 @@
 //!
 //! **A thin surface over one engine.** `capture.screenshot` checks the
 //! shape of its request, hands it to the screenshot engine through
-//! [`CommandTarget::capture`](crate::application::ipc::CommandTarget::capture)
+//! `CommandTarget::capture` (native; `capture_canvas` on the browser)
 //! — the function the `screenshot` console verb calls too — and words
 //! what came back. Planning the camera, drawing offscreen, writing the
 //! PNG and its geometry sidecar and keeping the artifacts dir within
@@ -21,20 +21,35 @@
 //! says whether the app needed no further frame when the capture was
 //! taken.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
-use serde_json::{json, Map, Value};
+#[cfg(not(target_arch = "wasm32"))]
+use serde_json::Map;
+use serde_json::{json, Value};
 
 use crate::application::capture::geometry::CameraInfo;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::capture::plan::{CaptureRequest, Framing, Region};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::capture::record::{fps_of, max_frames_of, RecordDestination, Summary};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::capture::{CaptureError, CaptureOutcome, Destination};
 use crate::application::ipc::envelope::Reply;
-use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
+use crate::application::ipc::registry::{
+    Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support,
+};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::ipc::space::Space;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::ipc::Screenshot;
+#[cfg(target_arch = "wasm32")]
+use crate::application::ipc::{CanvasCapture, CanvasOutcome};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::renderer::ModalLayer;
 
+#[cfg(target_arch = "wasm32")]
+use super::refusal::unsupported_on_browser;
 use super::refusal::{no_loaded_document, refuse, Refusal};
 
 /// The image formats `format` names. One at pin time; the parameter
@@ -42,15 +57,39 @@ use super::refusal::{no_loaded_document, refuse, Refusal};
 const FORMATS: [&str; 1] = ["png"];
 
 /// The keys a `region` object carries, all numbers.
+#[cfg(not(target_arch = "wasm32"))]
 const REGION_KEYS: [&str; 4] = ["x", "y", "w", "h"];
+
+/// What `capture.screenshot` does, per target. The browser cannot draw
+/// offscreen, so its capture is the canvas as drawn — the live view at
+/// its own size — read back and returned inline (`format/ipc.md`
+/// §Transport "Browser").
+#[cfg(not(target_arch = "wasm32"))]
+const SCREENSHOT_SUMMARY: &str = "Render the current document state offscreen — never a window grab — and \
+                                  write it as a PNG, with a geometry sidecar mapping its pixels to node ids.";
+#[cfg(target_arch = "wasm32")]
+const SCREENSHOT_SUMMARY: &str = "Draw the live view into the canvas and read it back as a PNG, returned \
+                                  inline as base64 with a geometry sidecar mapping its pixels to node ids.";
+
+/// Why the two recording commands are refused on the browser: a
+/// recording is frames on disk, taken by a recorder the browser's loop
+/// does not run. The screenshot is served there, inline.
+const RECORD_NATIVE_ONLY: &str = "the browser has no filesystem and no frame recorder; recording is \
+                                  native-only. `capture.screenshot` on the browser returns the canvas \
+                                  inline (`png_base64`), which `mandalactl --ws` writes to a file";
 
 pub(super) const FAMILY: Family = Family {
     name: "capture",
     commands: &[CommandSpec {
         name: "capture.screenshot",
-        summary: "Render the current document state offscreen — never a window grab — and write it as a \
-                  PNG, with a geometry sidecar mapping its pixels to node ids.",
+        summary: SCREENSHOT_SUMMARY,
+        // The framing parameters and the file destination are native's:
+        // the browser draws the live view into its canvas and returns
+        // it inline, so it declares neither (`format/ipc.md`
+        // §Transport "Browser"), and a request naming one there is a
+        // stray parameter.
         params: &[
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "path",
                 ParamType::String,
@@ -58,6 +97,7 @@ pub(super) const FAMILY: Family = Family {
                 "Absolute path for the PNG; its parent must exist, and a symlink there is never followed. \
                  Default: a fresh file in the per-session artifacts dir.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "overwrite",
                 ParamType::Boolean,
@@ -65,18 +105,21 @@ pub(super) const FAMILY: Family = Family {
                 "Allow `path` to replace an existing file. Default false; only valid with `path`. Inside \
                  the artifacts dir, overwriting is always allowed.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "width",
                 ParamType::Integer,
                 false,
                 "Target width in view pixels, 1..=16384; sent with `height`. Default: the window's.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "height",
                 ParamType::Integer,
                 false,
                 "Target height in view pixels, 1..=16384; sent with `width`. Default: the window's.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "region",
                 ParamType::Object,
@@ -84,6 +127,7 @@ pub(super) const FAMILY: Family = Family {
                 "{x, y, w, h} in `space`: frame the smallest aspect-matching view that contains this \
                  rect instead of the current camera's.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "space",
                 ParamType::String,
@@ -91,12 +135,14 @@ pub(super) const FAMILY: Family = Family {
                 "Coordinate space of `region`: \"canvas\" (default) or \"surface\" (the live window). \
                  Only valid with `region`.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "fit",
                 ParamType::Boolean,
                 false,
                 "Frame the whole drawn document, as the load-time fit does. Not with `region`.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ParamSpec::new(
                 "scale",
                 ParamType::Number,
@@ -128,15 +174,31 @@ pub(super) const FAMILY: Family = Family {
                 ParamType::String,
                 "When not rendered: \"not_started\", \"font_system_contended\" or \"prepare_failed\".",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ResultSpec::new(
                 "path",
                 ParamType::String,
                 "When rendered: the absolute path of the PNG.",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
             ResultSpec::new(
                 "sidecar_path",
                 ParamType::String,
                 "When rendered with `sidecar`: the absolute path of the geometry sidecar.",
+            ),
+            #[cfg(target_arch = "wasm32")]
+            ResultSpec::new(
+                "png_base64",
+                ParamType::String,
+                "When rendered: the PNG, base64-encoded. `mandalactl --ws capture.screenshot <path>` \
+                 writes it to the file.",
+            ),
+            #[cfg(target_arch = "wasm32")]
+            ResultSpec::new(
+                "sidecar",
+                ParamType::Object,
+                "When rendered with `sidecar`: the geometry sidecar, inline (the object native writes \
+                 to `<path>.geometry.json`).",
             ),
             ResultSpec::new("width", ParamType::Integer, "The image's width in pixels."),
             ResultSpec::new("height", ParamType::Integer, "The image's height in pixels."),
@@ -154,6 +216,7 @@ pub(super) const FAMILY: Family = Family {
                  pending drag or queued input.",
             ),
         ],
+        support: Support::Everywhere,
         run: screenshot,
     },
     CommandSpec {
@@ -243,7 +306,11 @@ pub(super) const FAMILY: Family = Family {
                  failed. Starting a recording discards it, so it is handed back here.",
             ),
         ],
+        support: Support::NativeOnly(RECORD_NATIVE_ONLY),
+        #[cfg(not(target_arch = "wasm32"))]
         run: record_start,
+        #[cfg(target_arch = "wasm32")]
+        run: unsupported_on_browser,
     },
     CommandSpec {
         name: "capture.record_stop",
@@ -270,11 +337,79 @@ pub(super) const FAMILY: Family = Family {
             ResultSpec::new("height", ParamType::Integer, "Every frame's height in pixels."),
             ResultSpec::new("fps", ParamType::Integer, "Frames per second, as asked."),
         ],
+        support: Support::NativeOnly(RECORD_NATIVE_ONLY),
+        #[cfg(not(target_arch = "wasm32"))]
         run: record_stop,
+        #[cfg(target_arch = "wasm32")]
+        run: unsupported_on_browser,
     }],
 };
 
+/// The two parameters both targets' screenshots take: `format`, which
+/// must be the one format, and `sidecar`, which defaults on. Returns
+/// whether a sidecar was asked for.
+fn parse_format_and_sidecar(call: &Call<'_>) -> Result<bool, Refusal> {
+    let format = call.str_param("format").unwrap_or(FORMATS[0]);
+    if !FORMATS.contains(&format) {
+        return Err(Refusal::Invalid(
+            "format",
+            format!("`format` must be \"png\", got \"{format}\""),
+        ));
+    }
+    Ok(call.param("sidecar").and_then(Value::as_bool).unwrap_or(true))
+}
+
+/// `capture.screenshot` on the browser: the canvas, read back and
+/// returned inline (`format/ipc.md` §Transport "Browser").
+#[cfg(target_arch = "wasm32")]
+fn screenshot(call: &mut Call<'_>) -> Reply {
+    let sidecar = match parse_format_and_sidecar(call) {
+        Ok(sidecar) => sidecar,
+        Err(refusal) => return refuse(call, refusal),
+    };
+    let Some(app) = call.drive() else {
+        return call.no_document();
+    };
+    match app.capture_canvas(sidecar) {
+        None => no_loaded_document(call),
+        Some(Ok(capture)) => call.ok(canvas_result_of(&capture)),
+        Some(Err(message)) => refuse(call, Refusal::Internal(message)),
+    }
+}
+
+/// The reply's `result` for what the browser's capture did.
+#[cfg(target_arch = "wasm32")]
+fn canvas_result_of(capture: &CanvasCapture) -> Value {
+    let camera = match &capture.outcome {
+        CanvasOutcome::Drawn { camera, .. } | CanvasOutcome::Skipped { camera, .. } => camera,
+    };
+    let mut result = json!({
+        "rendered": matches!(capture.outcome, CanvasOutcome::Drawn { .. }),
+        "width": camera.viewport_size.0,
+        "height": camera.viewport_size.1,
+        "scale": crate::application::document::f32_json(camera.pixel_ratio),
+        "camera": CameraInfo::of(camera),
+        "settled": capture.settled,
+    });
+    let object = result.as_object_mut().expect("built as an object just above");
+    match &capture.outcome {
+        CanvasOutcome::Drawn {
+            png_base64, sidecar, ..
+        } => {
+            object.insert("png_base64".into(), json!(png_base64));
+            if let Some(sidecar) = sidecar {
+                object.insert("sidecar".into(), json!(sidecar));
+            }
+        }
+        CanvasOutcome::Skipped { skip, .. } => {
+            object.insert("skipped".into(), json!(skip.word()));
+        }
+    }
+    result
+}
+
 /// The request, as the engine takes it.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, PartialEq)]
 struct Parsed {
     request: CaptureRequest,
@@ -282,6 +417,7 @@ struct Parsed {
     sidecar: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn screenshot(call: &mut Call<'_>) -> Reply {
     let parsed = match parse(call) {
         Ok(parsed) => parsed,
@@ -297,6 +433,7 @@ fn screenshot(call: &mut Call<'_>) -> Reply {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// How the engine's refusal is worded on the wire.
 fn refusal_of(error: CaptureError) -> Refusal {
     match error {
@@ -305,6 +442,7 @@ fn refusal_of(error: CaptureError) -> Refusal {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// `capture.record_start`.
 fn record_start(call: &mut Call<'_>) -> Reply {
     let parsed = match parse_recording(call) {
@@ -340,6 +478,7 @@ fn record_start(call: &mut Call<'_>) -> Reply {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// `capture.record_stop`.
 fn record_stop(call: &mut Call<'_>) -> Reply {
     let Some(app) = call.drive() else {
@@ -351,6 +490,7 @@ fn record_stop(call: &mut Call<'_>) -> Reply {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A finished recording, as `capture.record_stop` reports it.
 fn summary_json(summary: &Summary) -> Value {
     json!({
@@ -367,6 +507,7 @@ fn summary_json(summary: &Summary) -> Value {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A recording's request, as the engine takes it.
 #[derive(Debug, PartialEq)]
 struct ParsedRecording {
@@ -376,6 +517,7 @@ struct ParsedRecording {
     max_frames: u32,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Check a recording's shape: the view it frames is a screenshot's, its
 /// cadence and length are bounded here, and its directory is vetted by
 /// the engine, which has the disk.
@@ -409,6 +551,7 @@ fn parse_recording(call: &Call<'_>) -> Result<ParsedRecording, Refusal> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The reply's `result` for what the engine did.
 fn result_of(screenshot: &Screenshot) -> Value {
     let (camera, files) = match &screenshot.outcome {
@@ -442,19 +585,13 @@ fn result_of(screenshot: &Screenshot) -> Value {
     result
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Check the request's shape: everything about it that does not need
 /// the app. Bounds that do — the window's size, the GPU's texture
 /// limit, what `fit` has to frame — are the engine's plan.
 fn parse(call: &Call<'_>) -> Result<Parsed, Refusal> {
     let invalid = |param: &'static str, message: String| Refusal::Invalid(param, message);
-
-    let format = call.str_param("format").unwrap_or(FORMATS[0]);
-    if !FORMATS.contains(&format) {
-        return Err(invalid(
-            "format",
-            format!("`format` must be \"png\", got \"{format}\""),
-        ));
-    }
+    let sidecar = parse_format_and_sidecar(call)?;
 
     let destination = match (
         call.str_param("path"),
@@ -476,10 +613,11 @@ fn parse(call: &Call<'_>) -> Result<Parsed, Refusal> {
     Ok(Parsed {
         request: request_of(call)?,
         destination,
-        sidecar: call.param("sidecar").and_then(Value::as_bool).unwrap_or(true),
+        sidecar,
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The view a capture or a recording frames: its size, its framing and
 /// its scale. The same parameters, bounds and refusals for both, so a
 /// recording's frames are the screenshots the same words would take.
@@ -539,6 +677,7 @@ fn request_of(call: &Call<'_>) -> Result<CaptureRequest, Refusal> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A `region` object: exactly `x`, `y`, `w`, `h`, each a number. Whether
 /// the rect can be framed is the plan's to say.
 fn parse_region(region: &Map<String, Value>, space: Space) -> Result<Region, Refusal> {
@@ -564,7 +703,7 @@ fn parse_region(region: &Map<String, Value>, space: Space) -> Result<Region, Ref
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use baumhard::gfx_structs::camera::Camera2D;

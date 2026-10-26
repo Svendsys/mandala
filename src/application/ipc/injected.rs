@@ -71,7 +71,10 @@ pub(crate) fn button_from_word(word: &str) -> Option<MouseButton> {
 
 /// The word the wire names `button` with — `None` for the buttons it
 /// does not name (back, forward, other), which no `input.*` command
-/// can press and no native handler acts on.
+/// can press and no native handler acts on. Read by `query.mode`'s pan
+/// projection, which names the button a held pan is owned by; the
+/// browser has no drag state yet, so no reader there.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn button_word(button: MouseButton) -> Option<&'static str> {
     BUTTON_WORDS.iter().find(|(_, b)| *b == button).map(|(w, _)| *w)
 }

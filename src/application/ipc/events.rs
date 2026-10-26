@@ -529,7 +529,7 @@ impl Session {
 
     /// The pending wait's reply, when it is due at `now` given `app`,
     /// which also ends the wait.
-    pub(crate) fn resolve_wait(&mut self, now: std::time::Instant, app: Settling) -> Option<Reply> {
+    pub(crate) fn resolve_wait(&mut self, now: web_time::Instant, app: Settling) -> Option<Reply> {
         let reply = self.wait.as_ref()?.resolve(now, app)?;
         self.wait = None;
         Some(reply)

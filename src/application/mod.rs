@@ -62,9 +62,10 @@
 
 pub(crate) mod app;
 // Screenshot engine: request planning, PNG, the artifacts dir and the
-// geometry sidecar. Native-only: the readback blocks on a buffer map,
-// which a browser cannot do; see CLAUDE.md "Dual-target status".
-#[cfg(not(target_arch = "wasm32"))]
+// geometry sidecar. The sidecar (`capture::geometry`) is both targets':
+// the browser's canvas capture carries it inline. The rest is native:
+// the readback blocks on a buffer map, which a browser cannot do; see
+// CLAUDE.md "Dual-target status".
 pub(crate) mod capture;
 pub(crate) mod clipboard;
 // The app clock. The browser reads it (double-click, touch, triggers);
@@ -91,10 +92,10 @@ pub(crate) mod document;
 // consumers, the IPC file sidecar and the screenshot engine.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod guarded_file;
-// Local socket control surface for agents and tooling. Native-only by
-// transport nature — browsers cannot serve local sockets; see
-// CLAUDE.md "Dual-target status".
-#[cfg(not(target_arch = "wasm32"))]
+// The control surface for agents and tooling: envelope, registry and
+// commands on both targets; the Unix socket on native and a WebSocket
+// toward `mandalactl bridge` in the browser (`format/ipc.md`
+// §Transport; CLAUDE.md "Dual-target status").
 pub(crate) mod ipc;
 // Adaptive drain-rate math. Driver: `app::throttled_interaction`,
 // native-gated with the drag state machine it paces.

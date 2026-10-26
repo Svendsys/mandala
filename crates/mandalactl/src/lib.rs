@@ -21,10 +21,16 @@
 //! `record assemble <dir>` (the `assemble` module) reads a *recording's* frames
 //! and manifest — never a map, and never the socket.
 //!
-//! Native only in effect: the transport is a Unix socket, or the app's
-//! named pipe on Windows (#169), and the crate compiles elsewhere (the
-//! workspace is type-checked for `wasm32-unknown-unknown`) with the
-//! connection stubbed to fail naming the gap.
+//! **Two apps, one client.** A native app is reached over its `--ipc`
+//! Unix socket, or its named pipe on Windows (#169); a browser app over
+//! a WebSocket, through the relay this crate also is — `mandalactl
+//! bridge` (the `bridge` module), which a page opened with `?ipc=<its
+//! app URL>` connects to and `--ws <its controller URL>` drives
+//! (`format/ipc.md` §Transport "Browser"). The commands are the same;
+//! what differs is written in `--help`. The crate compiles for
+//! `wasm32-unknown-unknown` too (the workspace is type-checked for it)
+//! with every transport and the relay stubbed or absent, since the
+//! browser is the app's side of the relay, never the controller's.
 //!
 //! The lints below are CODE_CONVENTIONS §9's `unwrap()` rule in its
 //! editor-time form; `baumhard::util::unwrap_posture` is the gate.
@@ -32,11 +38,14 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod assemble;
+#[cfg(not(target_arch = "wasm32"))]
+mod bridge;
 mod cli;
 // The frame reader, the greeting check and the connection's constants
-// are read only by the Unix and Windows clients. Elsewhere (the wasm32
-// type-check) the modules compile with nothing draining them, scoped so
-// the native lint stays fully armed.
+// are read by the native clients — the Unix socket, the Windows pipe
+// and the WebSocket. Elsewhere (the wasm32 type-check) the modules
+// compile with nothing draining them, scoped so the native lint stays
+// fully armed.
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 mod client;
 mod help;
@@ -53,7 +62,9 @@ mod loopback_tests;
 mod testing;
 #[cfg(test)]
 mod words;
+#[cfg(all(test, unix))]
+mod ws_tests;
 
 pub use client::pipe_path;
-pub use run::{run, Exit, Io};
-pub use wire::{FRAME_CAP, PROTOCOL, REQUEST_CAP};
+pub use run::{run, Env, Exit, Io};
+pub use wire::{redacted, BRIDGE_ATTACHED, BRIDGE_DETACHED, BRIDGE_KEY, FRAME_CAP, PROTOCOL, REQUEST_CAP};
