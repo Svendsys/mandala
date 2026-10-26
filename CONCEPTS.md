@@ -182,9 +182,16 @@ engine, so the invariant is kept by the only ways to change a tree:
 run of its key (`First`, `Last`, or `Before` / `After` an equal-key
 sibling), `update(id, f)` — the one way to change an element outside
 a walk — moves an element whose key `f` changed, `remove_subtree`
-removes, and a walk moves the elements whose key it changed once it
-is over. `check_sorted` verifies it. `update_journaled(id, journal, f)`
+removes (freeing, for building trees), a walk moves the elements whose
+key it changed once it is over, and its
+[structural commands](#structural-commands--structop-subtree) place
+every node they insert or move within the run of its key.
+`check_sorted` verifies it. `update_journaled(id, journal, f)`
 is `update` recorded in a [journal](#journals--journalbuilder-journal-touch).
+`contains(id)` says whether a node is in the tree — under the root —
+rather than merely in the arena, which also holds the subtrees a
+structural command detached and a journal still owns; `update` refuses
+those.
 
 Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
 `indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,
@@ -241,7 +248,9 @@ root. `apply_at_journaled(&mut target, &anchors, seed_for, &mut
 journal)` is `apply_at` recorded in a
 [journal](#journals--journalbuilder-journal-touch), for a tree that
 keeps history; the plain entry points are for trees that need none
-(glyph layers that are rebuilt).
+(glyph layers that are rebuilt). A `Mutator::Structure` node carries a
+[structural command](#structural-commands--structop-subtree), which
+either entry point runs after its walk.
 
 **Inherited state.** Some mutations need a value their element
 inherits rather than stores. The walker carries `E::Inherited` down
@@ -956,9 +965,51 @@ nothing: a journaled call that fails reverts everything the builder
 recorded before returning its error, and `JournalBuilder::abandon` is
 the same step for a failure its caller detects.
 
-`lib/baumhard/src/engine/journal.rs`. `Touch::{Inserted, Removed,
-Moved}` are reserved for structural commands; today every entry is a
-`Touch::Field`.
+Structural commands record into the same builder and restore the same
+way: an inserted node has only a close position, a removed one only a
+start position, a re-parented one a position in each parent, and a
+restore puts back arrangements, not a history of moves — which is what
+lets structure and key changes mix in one builder. `touched()` reads
+each node's change from where it is before and after: `Field` (state,
+or place in its row), `Moved` (another parent), `Inserted` / `Removed`
+(in the tree at one end only — a subtree's every node, in pre-order).
+A journal **owns** the subtrees it holds out of the tree — what it
+removed while applied, what it inserted while reverted — and
+`Journal::discard` frees them when the journal leaves the history;
+nothing else frees them, and a revert never does.
+
+`lib/baumhard/src/engine/journal.rs`.
+
+### Structural commands — `StructOp`, `Subtree`
+
+A mutator that changes the shape of a tree rather than a field.
+
+Creating, deleting and re-parenting nodes, adding sections and
+splitting text spans are edits like any other, so they are mutators
+like any other: a `Mutator::Structure { key, op }` reaches its target
+by key from the walk's anchors and carries a `StructOp` —
+`Insert { subtree, at }` (a `Subtree` of new elements as a child of the
+target, at a `Placement` within its key's run), `Remove`, `Move { to,
+at }` (re-parent under a concrete `NodeId`; resolving persistent ids to
+`NodeId`s is the instantiation's), `Split { at }` and `Merge` (cut an
+element in two at its `TreeElement::SplitPoint`, or absorb the next
+equal-key sibling — the element says how through `TreeElement::split`
+/ `merge`, and by default it cannot; the glyph elements cannot).
+
+The walk applies them in a **second phase**: it collects `(target,
+command)` pairs in walk order and changes no structure, so it never
+iterates a row a command is changing; the commands then run in that
+order, journaled. All or nothing: a failing command (`Cycle`,
+`PlacementCrossesKey`, `StaleNode`, `Unsplittable`, `Unmergeable`,
+`RemoveRoot`, `TargetRemovedEarlier`, …) undoes the whole call through
+the journal, the walk's field changes included. A removed subtree is
+**detached, not freed** — the journal owns it, so undo re-attaches the
+same `NodeId`s and every id held elsewhere stays valid. A walk without
+a journal journals into one of its own when it has a command, and
+discards it after, which frees what it removed. Structure is never
+authored as JSON: the variant is skipped by serde.
+
+`lib/baumhard/src/engine/structure.rs`.
 
 ### Interpolation — `Interpolate`, `Snap`, `Interpolable`
 
