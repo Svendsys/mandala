@@ -320,7 +320,7 @@ untouched and never reported as unrecognized. See
 | Field | Type | Notes |
 |---|---|---|
 | `background_color` | string | `#RRGGBB` or `var(--name)`. **Required** — the one `Canvas` key with no default; every other key below may be absent |
-| `default_border` | object\|null | Fallback `GlyphBorderConfig` for every node |
+| `default_border` | object\|null | Fallback `GlyphBorderConfig` for every node with no `style.border` of its own. A node's own `border` replaces it whole, except for `color` (see [`canvas.md`](./canvas.md#cascade-resolution)) |
 | `default_connection` | object\|null | Fallback `GlyphConnectionConfig` for every edge |
 | `default_section_frame_border` | object\|null | Fallback `GlyphBorderConfig` for unfocused section frames in NodeEdit mode. `null` → hardcoded `light`-preset thin line. See [`border-patterns.md`](./border-patterns.md#section-frames). |
 | `default_focused_section_frame_border` | object\|null | Fallback for the focused section's frame (the section whose text editor is open). `null` → hardcoded `heavy`-preset thick line. |
@@ -621,7 +621,7 @@ see [`border-patterns.md`](./border-patterns.md) for the grammar.
 | `preset` | string | One of `"light"` (default), `"heavy"`, `"double"`, `"rounded"`, `"custom"`. The default's corner glyphs (`┌┐└┘`) extend to the cell edges so they connect cleanly with the side glyphs in monospace fonts; `"rounded"` (`╭╮╰╯`) curves inward and leaves a small visible gap at every corner — pick it deliberately if that's the intended look. |
 | `font` | string\|null | Font family |
 | `font_size_pt` | number | Glyph size |
-| `color` | string\|null | `#RRGGBB`, falls back to `style.frame_color` |
+| `color` | string\|null | `#RRGGBB`. Unset: on a node border, the node's theme frame color, then `canvas.default_border.color`, then `style.frame_color`; on a section frame, the selection-highlight cyan, with no theme or canvas tier (see [Section frames](./border-patterns.md#section-frames)) |
 | `glyphs` | object\|null | Custom glyphs when `preset == "custom"`. Sides (`top`, `bottom`, `left`, `right`) accept the [side-pattern grammar](./border-patterns.md); corners (`top_left`, `top_right`, `bottom_left`, `bottom_right`) are static glyph strings. |
 | `padding` | number | Border-to-content padding in pixels |
 | `color_palette` | string\|null | Optional palette name (key in top-level `palettes`) whose colors cycle per glyph around the border. When unset, every glyph paints in `color`. A missing palette name warns and falls back to the single-color path. |

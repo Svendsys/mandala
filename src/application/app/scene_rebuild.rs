@@ -1688,7 +1688,7 @@ mod tests {
     /// NodeEdit on a multi-section node with a `Single` selection
     /// (the user entered NodeEdit but hasn't picked a section yet)
     /// renders `[- of N]` rather than the misleading `[1 of N]`
-    /// fabricated index. Pin from the Opus review TIER2.
+    /// fabricated index.
     #[test]
     fn test_mode_status_line_node_edit_single_no_section_picked_renders_dash() {
         use crate::application::app::InteractionMode;

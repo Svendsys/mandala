@@ -2063,7 +2063,7 @@ fn test_distance_to_path_within_agrees_with_the_unbounded_form() {
     );
 }
 
-/// The contract holds over non-finite geometry too, which is the one/// The contract holds over non-finite geometry too, which is the one
+/// The contract holds over non-finite geometry too, which is the one
 /// place the early-out and the full computation could plausibly
 /// disagree by construction rather than by rounding.
 ///

@@ -25,15 +25,27 @@ the same table in brief.
 
 ## Cascade resolution
 
-Every renderable property cascades:
+A border or section frame resolves by **slot**, not field by field:
+the most specific config that is present is chosen whole.
 
 ```
 per-node / per-section override   ← authored via `border …` / `section frame …`
-  ↓ (if unset)
+  ↓ (if absent)
 canvas default                    ← authored via `canvas border …` / `canvas section-frame …`
-  ↓ (if unset)
+  ↓ (if absent)
 hardcoded floor                   ← `light` preset for borders, `heavy` for focused section frames
 ```
+
+So a node with a `border` object of its own draws that object alone:
+a field it leaves unset (`font`, `glyphs`, `color_palette`) takes the
+hardcoded default, not the canvas default's value. `preset`,
+`font_size_pt` and `padding` always carry a value, so the resolver
+could not tell an unset one from a chosen default even if it wanted
+to. The one field-level exception is a node border's `color`: the
+node's own `border.color`, then its theme's frame color, then the
+canvas default's `color`, then `style.frame_color`. The first console
+edit to a node's border creates its `border` object from the
+hardcoded defaults rather than from the canvas default (issue #223).
 
 The same cascade discipline applies to `theme_variables` /
 `palettes` lookups: a `var(--accent)` reference fails through to a

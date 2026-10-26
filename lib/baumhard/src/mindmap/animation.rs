@@ -75,7 +75,7 @@ pub struct AnimationTiming {
     /// in-memory so the eventual dispatcher lands without a
     /// wire-format migration, but `#[serde(skip)]` keeps the
     /// field out of `.mindmap.json` until the tick loop reads
-    /// it. Shipping it as a silent half-feature (§4) — the map
+    /// it. Shipping it as a silent half-feature (§5) — the map
     /// loads, the animation runs once, nothing ever loops — is
     /// what the skip prevents.
     ///

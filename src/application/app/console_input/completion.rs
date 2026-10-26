@@ -10,8 +10,8 @@ use crate::application::document::MindMapDocument;
 
 /// Re-run the completion engine against the current input and
 /// cursor, populating `completions` and defaulting `completion_idx`
-/// to the bottom row (row closest to the prompt — which is what
-/// Down-then-Tab muscle memory expects to land on first).
+/// to the first (top) row — the candidate the engine ranks most
+/// likely.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn recompute_console_completions(
     console_state: &mut ConsoleState,
@@ -91,7 +91,10 @@ pub(in crate::application::app) fn accept_console_completion(console_state: &mut
     if completions.is_empty() {
         return;
     }
-    let idx = completion_idx.unwrap_or(completions.len() - 1);
+    // No highlight falls back to the row a recompute highlights, the
+    // first; this fell back to the last row until #52, the
+    // convention the recompute had already left.
+    let idx = completion_idx.unwrap_or(0);
     let Some(cand) = completions.get(idx).cloned() else {
         return;
     };

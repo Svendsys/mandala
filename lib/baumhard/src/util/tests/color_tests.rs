@@ -337,8 +337,8 @@ fn test_hex_with_alpha_scaled_halves_opaque_input() {
 
 /// Round-trip: a 6-char `#RRGGBB` with alpha=1.0 multiplied by
 /// 0.5 lands at `#RRGGBB80` (alpha=128/255 ≈ 0.502). Locks the
-/// dimming pass's per-element use case (Plan §B.2 — inactive
-/// nodes render at 50% alpha when NodeEdit is open).
+/// dimming pass's per-element use case (inactive nodes render
+/// at 50% alpha when NodeEdit is open).
 pub fn do_hex_with_alpha_scaled_halves_opaque_input() {
     let got = hex_with_alpha_scaled("#ff0000", 0.5);
     // `rgba_to_hex` emits 8-char form whenever alpha < 1.0.

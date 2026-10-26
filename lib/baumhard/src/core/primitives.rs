@@ -286,7 +286,7 @@ impl ColorFontRegions {
     /// key. An inverted range (`start > end`) is dropped with a
     /// warning rather than panicking — `submit_region` is reachable
     /// from interactive text-edit paths (the `Type` action in the
-    /// app-level `text_edit` module), and CODE_CONVENTIONS.md §4 says
+    /// app-level `text_edit` module), and CODE_CONVENTIONS.md §9 says
     /// those must not abort the editor over a single bad mutation.
     pub fn submit_region(&mut self, region: ColorFontRegion) {
         if region.range.start > region.range.end {
@@ -688,7 +688,7 @@ impl ColorFontRegions {
     /// out and panics if the range is not present, with the full region
     /// table dumped to `debug!` first to ease assertion debugging. **Not for
     /// interactive paths** — production callers must use [`Self::get`]
-    /// and handle the `None` arm; CODE_CONVENTIONS §7 forbids panics
+    /// and handle the `None` arm; CODE_CONVENTIONS §9 forbids panics
     /// after the first frame.
     ///
     /// Hidden from public docs because it is a test helper, not part of the

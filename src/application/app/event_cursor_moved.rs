@@ -649,8 +649,8 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
             }
             // The hit carries the **press-time** canvas position and
             // body hit, not the cursor's at the cross, so a fast-resize
-            // anchors at "where the user pressed" — plan §6.3:
-            // "Quadrant determined at press time, not continuously".
+            // anchors at "where the user pressed": the quadrant is
+            // determined at press time, not continuously.
             let Some(dispatch_hit) = ctx.drag_state.right_drag_hit() else {
                 return;
             };
@@ -818,7 +818,7 @@ fn cursor_icon_for_resize_side(side: baumhard::mindmap::tree_builder::ResizeHand
 /// 3. **`InteractionMode::NodeEdit { matching_id }`** — outside
 ///    NodeEdit, drags on a section's area move the whole node
 ///    (consistent with click-on-section folding to `Single` per
-///    `click_resolves_to_section`). Plan §4.1.
+///    `click_resolves_to_section`).
 pub(super) fn resolve_section_drag_target(
     doc: Option<&crate::application::document::MindMapDocument>,
     interaction_mode: &super::InteractionMode,
@@ -1142,8 +1142,7 @@ mod tests {
     /// matching winit `CursorIcon` for direction-appropriate
     /// resize feedback. Pinned per-side so a future refactor that
     /// (e.g.) swaps NW and SW silently leaves users with the
-    /// wrong cursor on every diagonal grab. Test agent flagged
-    /// this as the most important coverage gap in Batch 4.
+    /// wrong cursor on every diagonal grab.
     #[test]
     fn cursor_icon_for_resize_side_pin_per_side() {
         // Diagonals share an axis: NW/SE = `\` = NwseResize.
@@ -1217,10 +1216,10 @@ mod tests {
         assert!(result.is_some(), "section_idx=0 on multi-section must promote");
     }
 
-    /// **NEW: Default mode never promotes.** Plan §4.1 — outside
-    /// NodeEdit, drag-on-section behaves identically to drag-on-
-    /// node-body (whole-node drag). Same Multi-section node, same
-    /// hit, but mode is `Default` instead of `NodeEdit`.
+    /// **Default mode never promotes.** Outside NodeEdit,
+    /// drag-on-section behaves identically to drag-on-node-body
+    /// (whole-node drag). Same Multi-section node, same hit, but
+    /// mode is `Default` instead of `NodeEdit`.
     #[test]
     fn test_resolve_section_drag_target_default_mode_returns_none() {
         let (doc, id) = pinned_two_section_node();

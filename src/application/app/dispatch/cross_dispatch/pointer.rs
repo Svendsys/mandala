@@ -738,8 +738,8 @@ fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
 /// (or in NodeEdit on a different node) every click on a multi-section
 /// node folds to whole-node `Single` / `Multi`. Single-section nodes
 /// always fold via `hit_test_target`'s short-circuit (they never
-/// produce `hit_section = Some(_)`), so their click behavior is
-/// unchanged from pre-Batch-3.
+/// produce `hit_section = Some(_)`), so their click behavior does
+/// not depend on the mode.
 ///
 /// Plain click:
 /// - `routed_section` `Some` → `Section { node_id, section_idx }`.

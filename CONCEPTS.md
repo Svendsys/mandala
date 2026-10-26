@@ -1522,8 +1522,12 @@ parametric positions along the border perimeter.
 - `font: Option<String>` — font family override; `None` =
   system default.
 - `font_size_pt: f32` — glyph size.
-- `color: Option<String>` — `#RRGGBB` override; `None` =
-  inherit from `style.frame_color`.
+- `color: Option<String>` — `#RRGGBB` override. `None` on a
+  node border falls through the node's theme frame color, then
+  `canvas.default_border.color`, then `style.frame_color` (the one
+  field-level tier of an otherwise slot-level cascade); `None` on
+  a section frame is the selection-highlight cyan, with no theme
+  or canvas tier.
 - `glyphs: Option<CustomBorderGlyphs>` — per-side glyph
   overrides (top / bottom / left / right / four corners); only
   consulted when `preset = "custom"`.

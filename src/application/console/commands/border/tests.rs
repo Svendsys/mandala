@@ -650,9 +650,8 @@ fn border_side_top_positional_writes_through() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    // Have to land preset=custom first; per the new posture, side
-    // overrides on non-custom presets fall under the auto-promote
-    // path until B6.7 lands the explicit error replacement.
+    // Land preset=custom first: the verb refuses a side override
+    // on a non-custom preset.
     assert_exec_ok(run("border preset custom", &mut doc));
     assert_exec_ok(run("border side top \"=##=\"", &mut doc));
     let cfg = doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().unwrap();
@@ -888,11 +887,10 @@ fn border_show_verbose_surfaces_dual_color_surface() {
     );
 }
 
-// ─── Opus review T2 pins ─────────────────────────────────────────
+// ─── Selection-shape and argument pins ───────────────────────────
 
-/// Predicate now includes `Multi(_)` — discoverability fix for
-/// users who shift-select two nodes and look for `border` in
-/// completion / help.
+/// The predicate includes `Multi(_)`, so users who shift-select
+/// two nodes find `border` in completion / help.
 #[test]
 fn border_verb_applicable_on_multi_selection() {
     use crate::application::console::predicates::node_or_section_selected;
@@ -994,7 +992,7 @@ fn border_reset_with_extras_errors() {
     );
 }
 
-// ─── Opus review T5 (API/UX) pins ────────────────────────────────
+// ─── Success-message and UX pins ─────────────────────────────────
 
 /// `border preset cycle` success message includes
 /// the resolved preset name so the user knows what they got
@@ -1329,8 +1327,7 @@ fn border_preset_cycle_falls_through_to_canvas_default() {
     );
 }
 
-/// **Verb-strict vs Action-permissive contract** (Plan §5.4 #3 +
-/// Architecture A5 from the Batch-6 opus review): the verb
+/// **Verb-strict vs Action-permissive contract**: the verb
 /// path (`border side`/`corner`) errors with the explicit
 /// "preset custom first" hint when the resolved preset isn't
 /// custom. The keybind / macro path (`Action::SetBorderField {

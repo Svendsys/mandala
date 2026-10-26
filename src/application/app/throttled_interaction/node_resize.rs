@@ -324,7 +324,7 @@ mod tests {
         },
     }
 
-    /// Whole-PR opus review T2: pin the origin-button gate.
+    /// Pin the origin-button gate.
     /// A stray right-click during a left-button resize must not
     /// terminate the resize prematurely (gated in
     /// `event_mouse_click.rs`'s right-release path).

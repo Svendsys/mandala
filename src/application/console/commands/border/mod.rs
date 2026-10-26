@@ -88,7 +88,7 @@ pub const COMMAND: Command = Command {
     name: "border",
     aliases: &[],
     summary: "Configure the node border (preset, font, color, custom glyphs, palette)",
-    //borders are node-only, so the verb hides on
+    // Borders are node-only, so the verb hides on
     // edge / edge-label / portal selections in completion +
     // help. Pre-fix the predicate was `always` which surfaced
     // the verb and then errored at execute-time on the wrong

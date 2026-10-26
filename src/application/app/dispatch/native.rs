@@ -439,8 +439,8 @@ fn dispatch_action_arms(
             // NodeEdit-mode entry. Single-section nodes
             // short-circuit to the editor; multi-section nodes
             // stop at NodeEdit and the user selects a section.
-            // `wasm = NativeOnly` because the editor depends on
-            // `TextEditState` (modal-stealer cascade is native).
+            // `wasm = NativeOnly` for the section half of NodeEdit the
+            // browser lacks, not for the editor (#229).
             let clean = matches!(action, Action::EnterNodeEditClean);
             let (mut core, _ext) = ctx.split_borrow();
             if let Some(doc) = core.document.as_deref_mut() {

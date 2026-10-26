@@ -633,8 +633,9 @@ pub(in crate::application) use interaction_mode::{
 // (the resolver returns it); production consumers pattern-match
 // the result without naming the type. Tests assert on the variant
 // shape, so the re-export is `#[cfg(test)]`-gated to avoid an
-// unused-import warning on non-test builds. When Batch 4 (fast
-// resize) lands a non-test consumer, the gate moves.
+// unused-import warning on non-test builds. Production code
+// (`ipc_state.rs`) imports it from `interaction_mode` directly; the
+// gate moves when a non-test consumer needs this path.
 #[cfg(test)]
 pub(in crate::application) use interaction_mode::ResizeTarget;
 
@@ -908,9 +909,9 @@ enum DragState {
         /// converted via `Renderer::screen_to_canvas`). Carried
         /// through to `Action::FastResizeStart` so the corner
         /// anchor is computed from where the user *pressed*, not
-        /// from where the cursor sat at threshold-cross — plan
-        /// §6.3: "Quadrant determined at press time, not
-        /// continuously". Without this snapshot the user gets
+        /// from where the cursor sat at threshold-cross: the
+        /// quadrant is determined at press time, not continuously.
+        /// Without this snapshot the user gets
         /// whichever corner they happened to drag *toward*, which
         /// inverts the gesture's intent on small nodes.
         start_canvas: glam::Vec2,

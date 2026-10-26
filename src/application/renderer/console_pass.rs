@@ -215,7 +215,7 @@ pub(super) fn console_overlay_areas(
         // is in-bounds for every iteration. An out-of-bounds read
         // would mean a caller violated that invariant; skip the slot
         // and log rather than panicking — interactive paths never
-        // abort (§7).
+        // abort (§9).
         let Some(line) = geometry.scrollback.get(skip + slot) else {
             log::warn!(
                 "console_pass: scrollback slot {} out of range \

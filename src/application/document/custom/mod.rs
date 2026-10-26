@@ -591,8 +591,9 @@ impl MindMapDocument {
         // container + sibling mind-nodes (anything with
         // `SectionRoot` *clear*).
         //
-        // **§9 footgun guard.** A bare `Predicate::new()` (`fields=[]`,
-        // `always_match=false`) matches nothing; pairing it as
+        // **Footgun guard (CODE_CONVENTIONS §9, degrade and log).** A
+        // bare `Predicate::new()` (`fields=[]`, `always_match=false`)
+        // matches nothing; pairing it as
         // `predicate: Some(Predicate::new())` silently filters every
         // candidate out, the apply path runs but no element changes.
         // Warn so authors notice the typo at apply time. Same warn

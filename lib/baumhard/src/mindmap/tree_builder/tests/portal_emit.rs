@@ -425,16 +425,18 @@ fn portal_text_font_size_inherits_icon_default_when_absent() {
 
 #[test]
 fn portal_text_aabb_never_overlaps_icon_aabb() {
-    // Regression for the diagonal-normal AABB overlap bug: the
-    // icon and text AABBs are both world-axis-aligned, so pushing
-    // the text `center` outward by `icon_half + padding + text_half`
-    // along a ~45° normal still let the text AABB slip back into
-    // the icon's bounds for long text. The `layout_portal_text`
-    // support-function fix guarantees non-overlap for every
-    // `border_t` the user can reach. Exercise several positions
-    // around the border — including the cardinal-corner
-    // transitions in `border_outward_normal` — and every text
-    // length from 1 char to a realistic long label.
+    // Guards `layout_portal_text`'s support-function placement:
+    // the icon and text AABBs are both world-axis-aligned, so the
+    // text must be pushed out along the outward normal by the
+    // AABB's support distance, not by a radius, or a long text
+    // could slip back into the icon's bounds along any non-cardinal
+    // normal. `border_outward_normal` returns only the four cardinal
+    // normals today, so the general form is not load-bearing yet;
+    // this pins non-overlap for every `border_t` the user can
+    // reach. Exercise several positions around the border —
+    // including the cardinal-corner transitions in
+    // `border_outward_normal` — and every text length from 1 char
+    // to a realistic long label.
     use super::super::portal_style::{layout_portal_label, layout_portal_text};
     use crate::mindmap::model::PortalEndpointState;
 

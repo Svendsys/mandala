@@ -14,7 +14,7 @@ use glam::Vec2;
 /// Typographic + decoration parameters for a picker glyph area.
 /// Grouped into one struct so the builder takes four arguments
 /// (text, position, bounds, style) instead of nine; the former was
-/// a §6 smell that had to be silenced with
+/// a smell that had to be silenced with
 /// `#[allow(clippy::too_many_arguments)]`.
 pub(super) struct PickerAreaStyle {
     /// Fill color for the single color region covering the whole

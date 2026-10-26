@@ -405,8 +405,10 @@ Common idioms:
   when authoring intent is "sections, never the chrome".
 - `Predicate { fields: [(Flag(SectionRoot), Equals(true))], … }`
   — the inverse: "land on the container only, skip every
-  section." Useful for chrome-only mutations (background,
-  border) that shouldn't touch the section glyphs.
+  section." Useful for container-only mutations that shouldn't
+  touch the section glyphs. (No mutation reaches a node's
+  background fill: it is set when the scene is built and changes
+  through a rebuild.)
 
 `predicate` is `null` (or absent) by default — every candidate
 element passes through unfiltered. The field round-trips through

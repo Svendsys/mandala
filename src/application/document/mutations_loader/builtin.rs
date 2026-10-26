@@ -8,7 +8,7 @@
 //! The bundle lives at `assets/mutations/application.json` in the
 //! repo root (sibling to `maps/`). A malformed bundle is a build-time
 //! invariant failure, so parsing uses `expect()` per CODE_CONVENTIONS
-//! §7's startup-path rule — a broken bundle needs a fix in the
+//! §9's startup-path rule — a broken bundle needs a fix in the
 //! source file, not a degraded runtime.
 
 use baumhard::mindmap::custom_mutation::CustomMutation;

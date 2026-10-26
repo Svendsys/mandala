@@ -7,11 +7,15 @@
 //! alignment, `Instruction::RepeatWhile` loop expansion (with the
 //! [`Predicate`](crate::gfx_structs::predicate::Predicate) language),
 //! and the event-propagation side channel that `GlyphTreeEvent`s
-//! ride on. The single entry point is
-//! [`walk_tree_from`](crate::gfx_structs::tree_walker::walk_tree_from);
-//! everything else in this module is internal scaffolding kept
-//! `pub` so mutator-DSL authors
-//! can compose custom terminators without forking the walker.
+//! ride on. The entry points are
+//! [`walk_tree`](crate::gfx_structs::tree_walker::walk_tree) and
+//! [`walk_tree_from`](crate::gfx_structs::tree_walker::walk_tree_from).
+//! [`repeat_while`](crate::gfx_structs::tree_walker::repeat_while)
+//! and
+//! [`DEFAULT_TERMINATOR`](crate::gfx_structs::tree_walker::DEFAULT_TERMINATOR)
+//! are `pub` too, so mutator-DSL authors can compose custom
+//! terminators without forking the walker; everything else in this
+//! module is crate-internal scaffolding.
 
 use crate::core::primitives::Applicable;
 use crate::gfx_structs::element::GfxElement;
@@ -239,7 +243,7 @@ fn compare_apply_repeat_while(
 /// bug at the call site, not user-recoverable input.
 ///
 /// The remaining `expect` is *not* an interactive-path violation under
-/// CODE_CONVENTIONS.md §4: it asserts a tight internal invariant that,
+/// CODE_CONVENTIONS.md §9: it asserts a tight internal invariant that,
 /// if broken, means the walker is operating on inconsistent state and
 /// continuing would silently corrupt the user's mindmap. We prefer a
 /// clean panic over a corrupt save.
