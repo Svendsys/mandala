@@ -1,8 +1,8 @@
 # Unified Architecture — one mutation engine for data and view
 
 **Status:** design, under review. Nothing here is implemented yet.
-**Epics:** V1 (this design) and V2 (deferred features) — drafted in
-[`UNIFIED_ARCHITECTURE_ISSUES.md`](./UNIFIED_ARCHITECTURE_ISSUES.md).
+**Epics:** V1 (this design), #230, and V2 (deferred features), #258 —
+indexed in [`UNIFIED_ARCHITECTURE_ISSUES.md`](./UNIFIED_ARCHITECTURE_ISSUES.md).
 **Delivery:** an integration branch, `epic/unified-mutations`; `main`
 receives one switch-over merge when V1 is complete (§17).
 **Compatibility:** none. The app has no users. The file format, the
@@ -46,6 +46,8 @@ develops it.
 | D19 | The file extension is `.mandala.json`. | §7.2 |
 | D20 | Keys bound to map verbs wait for the V2 trigger design. | §11.2 |
 | D21 | The theme stores its variants and the *name* of the active one; the live values are read from the active variant, never stored as a second copy. | §5.3, §7 |
+| D22 | A Connector (the line to the parent) is always a line. A parent-child relation shown as a portal is a hidden connector plus a portal link. `edge_type` no longer exists. | §5.6 |
+| D23 | Neither pan nor zoom re-projects anything; screen-space min/max connection font sizes are dropped from V1 (V2-13). | §12.4 |
 
 ---
 
@@ -215,13 +217,18 @@ second. Neither is special-cased in the engine.
 ```rust
 pub trait TreeElement: Clone {
     type Kind: Copy + Ord + Eq + Hash + Debug;
+    type Inherited: Clone + Debug;          // carried down every walk (§4.2)
     fn key(&self) -> BranchKey<Self::Kind>;
+    fn inherit(&self, parent: &Self::Inherited) -> Self::Inherited;
     fn void() -> Self;
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct BranchKey<K> { pub kind: K, pub channel: u32 }
+pub struct BranchKey<K> { pub kind: K, pub channel: usize }
 ```
+
+(The full trait, with caches, spatial bounds, state comparison and
+split / merge, is specified in V1-A1 to A4.)
 
 The walker routes on `(kind, channel)`, not on channel alone. A
 mutator addressed to `(Section, 0)` cannot land on `(Node, 0)` or
@@ -243,8 +250,9 @@ and sorts both rows at every visited node (`collect_sorted_children`).
 pub trait Mutation<E: TreeElement>: Clone {
     /// Apply to one element. Mutations know nothing about journals:
     /// the walker records the element's before-image the first time
-    /// it touches the element within a journal (§4.5).
-    fn apply_to(&self, target: &mut E);
+    /// it touches the element within a journal (§4.5). `inherited`
+    /// is the target's parent's inherited state (below).
+    fn apply_to(&self, target: &mut E, inherited: &E::Inherited);
 }
 
 pub enum Mutator<E: TreeElement, M: Mutation<E>> {
@@ -256,6 +264,16 @@ pub enum Mutator<E: TreeElement, M: Mutation<E>> {
 }
 pub type MutatorTree<E, M> = /* arena of Mutator<E, M> + root */;
 ```
+
+**Inherited state.** Some mutations need a value their element
+inherits rather than stores — "grow font by 2 pt" on a span with no
+size of its own must grow the size it displays. The walker therefore
+carries `E::Inherited` down every walk: a mutation receives its
+target's parent's state (after the parent's own mutations in the same
+walk), and the walker computes `inherit` for the children. The state
+lives on the walker's stack — no allocation per visited node. Glyph
+trees use `()`; the document uses the resolved text size and whether
+the walk is inside a frame (V1-B3).
 
 `GfxMutator` becomes `Mutator<GfxElement, GfxMutation>` (today's
 `Mutation` enum is renamed `GfxMutation`); the document uses
@@ -287,11 +305,15 @@ impl<E, M> MutatorTree<E, M> {
 ```
 
 A walk starts at its anchors — typically the selection — and the
-mutator's root matches the anchor element. Work is proportional to
-the reached subtree, never to the whole tree. Relative anchors
-(`Parent`, `Siblings`) resolve to concrete anchors before the walk;
-`Siblings` anchors at the parent with an `IsOrigin` predicate field
-excluding the origin.
+mutator's root applies to each anchor whose **kind** matches (the
+root's channel is not compared). Work is proportional to the reached
+subtree, never to the whole tree. Relative anchors resolve to
+concrete anchors before the walk: `ParentOf` to the distinct parents,
+`SiblingsOf` to each node's same-kind siblings excluding itself. When
+a mutator reaches below its root, an anchor whose ancestor is also an
+anchor is dropped, so a subtree mutation reaches every element exactly
+once. Each anchor's inherited-state seed is computed before any anchor
+is walked.
 
 **Structural commands** are a first-class mutator variant:
 
@@ -426,6 +448,8 @@ bindings (triggers are node-level, D14).
   reference nodes in the file, and so the console, IPC and
   `mandalactl` can name a node. One `id → NodeId` index serves those
   external callers and the loader; no internal path consults it.
+- A node inserted by a mutation carries the reserved ident `0`
+  (unassigned); `Document::apply` assigns `max_id + 1` in tree order.
 - New nodes take `max_id + 1`. Ids do not encode structure, so moving
   a node never renames anything.
 
@@ -500,10 +524,13 @@ V1); this is the shape.
   frame's), text defaults.
 - **Span:** `text`, `font?`, `size?`, `color?`, `weight?`, `italic?`,
   `link?`.
-- **Connector / Link (line):** `anchors`, `control_points` (all of
-  them drawn), `fit`, `spacing?`, `size?`, `color?`, `visible`,
-  `zoom?`; a Link also has `to: NodeRef` and `kind`.
-- **PortalEnd:** `border_t?`, `offset?`, `color?`, `size?`.
+- **Connector / Link (line):** `anchors`, `control_points` (0, 1 or
+  2: a line, a quadratic or a cubic Bézier), `fit`, `spacing?`,
+  `size?`, `color?`, `content?` (drawn when the path has no spans),
+  `visible`, `zoom?`; a Link also has `to: NodeRef` and `kind`. A
+  Connector is always a line (D22).
+- **PortalEnd:** `border_t?`, `offset?`, `color?`, `size?`,
+  `content?` (the marker drawn when the end has no spans).
 - **Label:** `t` (position along the path), `offset`, text defaults.
 
 ### §5.7 Definitions the document carries but does not mutate in V1
@@ -804,7 +831,7 @@ not a preview painted over it.
 | Section move, node / section resize | `offset += Δ`, `min_size = s` |
 | Connector / link handle drag | control point, anchor |
 | Label / portal-label drag | `t`, `offset`, `border_t` |
-| Text editing (sections, labels, single-line editors) | span text edits, splits, merges for the edit session — one undo entry per session, as today |
+| Text editing (sections, rings, labels, path content, single-line editors) | `replace_spans` from the editor's span buffer, once per change — one undo entry per session, as today |
 | Color picker hover, frame/border preview | the previewed field |
 | Animated edit (§10) | the edit's journal interpolated at `t` |
 
@@ -853,11 +880,15 @@ on the console. "Persistent", "Toggle" and `target_scope` are gone.
 { "id": "flower-layout", "name": "Flower arrangement", "handler": "flower", "animate": { "ms": 400 } }
 ```
 
-- **Declarative edits** carry a document mutator AST (§4.3), run by
-  the walker from their anchors. Where an edit reaches is its
-  mutator's shape alone — standard shapes (`self`, `children`,
-  `descendants`, `subtree`, `parent`, `siblings`) are provided as
-  named AST shapes.
+- **Declarative edits** declare a **reach** (`self`, `children`,
+  `descendants`, `subtree`, `parent`, `siblings` — node sets relative
+  to the anchors), a **target** (`node`, `sections`, `spans`,
+  `frame`, `rings`, `connector`, `links`, `labels` — elements within
+  those nodes) and an optional predicate `filter`. The resolved
+  elements become the request's anchors, and the edit's mutations
+  apply once to each. An advanced form carries a full mutator AST
+  (§4.3) instead. Authored edits cannot move nodes or insert links;
+  those need arena ids and belong to handlers.
 - **Handler edits** name a Rust handler for algorithms the AST cannot
   express (radial and cascade layouts). A handler is
   `fn(&Document, &Anchors) -> DocMutatorTree`: it **reads** the
@@ -917,7 +948,8 @@ built from two verbs and one presentation, with no special mechanism:
 
 `begin` conceals every channel-1 node; each `next-*` verb stops the
 presentation on one node, which plays its `return` — `hidden`
-switches off at the start of the return (`snap: start`) and `opacity`
+switches off as soon as the return begins (`snap: end`: hidden only
+while fully concealed) and `opacity`
 animates back to 1. The saved map always shows every node; the
 concealment exists only while it is being performed.
 
@@ -1079,10 +1111,11 @@ Typical chains:
 
 ### §12.4 Zoom and pan
 
-Pan changes only the camera transform; no tree is touched. Zoom
-re-projects only elements that declared a zoom-dependent property
-when they were projected (zoom-visibility windows, screen-space
-minimum font sizes); the projector keeps them in a zoom index.
+Neither pan nor zoom touches a tree or calls the projector: the
+camera transform and zoom-visibility windows are applied by the
+renderer at draw time. To keep this true, V1 drops the old
+screen-space minimum and maximum font sizes of connections (D23); a
+version that preserves the property is V2-13 (#271).
 
 ### §12.5 View-only glyph mutators
 
@@ -1263,8 +1296,8 @@ gap.
 ### §17.2 Sub-issues and order
 
 The V1 epic's sub-issues, with what each is blocked by. The epic
-issue carries the same graph with issue numbers; where they differ,
-the epic is updated, then this table.
+issue, #230, carries the same graph with issue numbers, models and
+levels; where they differ, the epic is updated, then this table.
 
 | Id | Sub-issue | Blocked by |
 |---|---|---|
@@ -1357,7 +1390,9 @@ draw (hexagon, diamond, parallelogram), with frames following their
 outlines; `RotateWhile`; a create-child-node action (today only orphan
 creation exists); fold / unfold actions (fold has no production
 writer); section merge and reorder; the `Touch` platform context for
-triggers. Each is drafted as a V2 sub-issue so it is ready to pick up.
+triggers; per-glyph function effects in glyph presentations;
+screen-space text-size clamps (D23). Each is a sub-issue of the V2
+epic, #258, ready to pick up.
 
 ---
 
