@@ -281,7 +281,10 @@ Well-known tags (defined in
 
 Plugins reserve the `plugin.<name>.<kind>` namespace. `mutation list`
 filters to entries whose contexts include anything starting with
-`map`; `mutation list --all` drops that filter.
+`map`; `mutation list --all` drops that filter. `--all` is matched
+case-insensitively (`--ALL` works) and may sit before or after the
+substring filter; any other word starting with `--` is refused by name
+rather than taken as a filter, so a filter cannot begin with `--`.
 
 ## `target_scope`
 

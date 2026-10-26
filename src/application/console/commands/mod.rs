@@ -27,8 +27,12 @@
 //!   `color=ACCENT`, `side=TOP`); a document-derived one is
 //!   matched the way its own rows are found, which is how a
 //!   palette name is stored verbatim and still found by
-//!   `palette=CO`. One flag survives outside the rule —
-//!   `mutation list --all` is a slot *value*, not a subverb (#135).
+//!   `palette=CO`. A positional *slot word* from a closed vocabulary
+//!   follows the same rule as a closed kv value: `border show
+//!   VERBOSE` and `mutation list --ALL` both run. The console has
+//!   no flag grammar; `--all` is one such word, spelled with `--` so
+//!   it cannot be mistaken for the free filter in the slot beside it,
+//!   and `mutation list` refuses any other `--` word by name (#135).
 //! - **A refusal reports the token as typed.** Matching
 //!   case-insensitively and *reporting* the normalized form are
 //!   separate decisions, and only the first is intended: a user
