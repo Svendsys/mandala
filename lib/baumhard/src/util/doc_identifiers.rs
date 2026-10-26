@@ -21,14 +21,24 @@
 //! round. The first run of this scan over the tree found over a
 //! hundred more, many in test modules, where `cargo doc` never looks.
 //!
+//! **What is read.** Every `///` and `//!` the item walk reaches, in
+//! every `.rs` file under the source roots, test modules and
+//! target-gated modules included: a file's or inline module's header,
+//! every item, the members of `impl` and `trait` blocks, struct
+//! fields, enum variants and their fields. Not read: `//` comments
+//! that are not doc comments, Markdown files, and doc comments on
+//! statements inside a function body.
+//!
 //! **Scope is the whole design.** A scan for "an identifier in a doc
 //! comment that does not resolve" drowns at once: `insert`, `get`,
 //! `color` and `font` are English words, stdlib and third-party names
 //! cannot be resolved from here, and a hypothetical ("if a future
 //! method on the cache did X") is legitimate prose. So a span is a
 //! candidate only when it is written in backticks, parses as a path of
-//! identifiers, and ends in a `snake_case` segment; and it is held to
-//! a different authority by how it is qualified:
+//! identifiers (a call group, a macro's `!`, a `?`, a leading `&` or
+//! `*` and any `<…>` generic arguments are dropped first), and ends in
+//! a `snake_case` segment; and it is held to a different authority by
+//! how it is qualified:
 //!
 //! - **`Type::name`** where `Type` is declared in the workspace: the
 //!   name must be a field, method, associated item or variant that
@@ -43,30 +53,41 @@
 //! - **`module::name`** where `module` is declared in the workspace:
 //!   the name must exist somewhere — declared as an item, or written
 //!   in some file's code.
-//! - **bare** (`` `pre_clip_positions` ``): the name must exist somewhere in
-//!   the same sense, and is read only when it has an underscore. A
-//!   single word is where English, tools, crates and stdlib methods
-//!   live; a two-word name that no file writes and nothing declares is
-//!   a name that has left. The authority is the whole workspace's code
-//!   rather than the one file's, because a doc routinely names a field
-//!   of a struct in another module that its own file never touches.
+//! - **bare** (`` `pre_clip_positions` ``): the name must exist
+//!   somewhere in the same sense, and is read only when it has an
+//!   underscore. A single word is where English, tools, crates and
+//!   stdlib methods live; a two-word name that no file writes and
+//!   nothing declares is a name that has left. The authority is the
+//!   whole workspace's code rather than the one file's, because a doc
+//!   routinely names a field of a struct in another module that its
+//!   own file never touches.
 //! - A **family** written with a trailing `_` or `_*`
 //!   (`` `select_sibling_*` ``) exists when anything it prefixes does,
 //!   the reading the citation scan gives the same spelling.
-//! - A path rooted in a crate the manifests depend on, in `std`, or in
-//!   a type or module the workspace does not declare —
-//!   `HashMap::entry`, `serde_json::from_str`, `str::chars`,
-//!   `std::sync::mpsc` — is external, and the span is not a candidate
-//!   at all. So is `Type::name` where the file imports `Type` from
-//!   outside the workspace (`use std::cell::Cell;` makes a `set` on
-//!   `Cell` in that file std's, whatever else is called `Cell` here), and
-//!   where `Type` is a generic parameter (`T::void()`).
-//! - A member a macro emits — a derive's `is_destructive`, a
-//!   `macro_rules!` body's `pub known_keys:` field — belongs to a type
-//!   no parse of the source can name, so `Type::name` resolves for any
-//!   type when `name` is declared only inside a macro body. The
-//!   methods std's derivable traits supply (`clone`, `default`, `fmt`,
-//!   …) are allowed on every type for the same reason.
+//! - A path **rooted** in `crate::`, `super::`, `self::` or a
+//!   workspace package is the workspace's whatever else it names: a
+//!   module or type under such a root that the workspace does not
+//!   declare is reported, since the path can mean nothing else. A
+//!   path rooted in a crate the manifests depend on or in `std`, and a
+//!   two-segment path whose qualifier is no type or module the
+//!   workspace declares — `HashMap::entry`, `serde_json::from_str`,
+//!   `str::chars`, `std::sync::mpsc` — is external, and the span is
+//!   not a candidate at all. So is an unrooted `Type::name` where the
+//!   file imports `Type` from outside the workspace (`use
+//!   std::cell::Cell;` makes a `set` on `Cell` in that file std's,
+//!   whatever else is called `Cell` here), and where `Type` is a
+//!   generic parameter (`T::void()`).
+//! - A member a macro emits belongs to a type no parse of the source
+//!   can name, so it is harvested from the text — the word after `fn`,
+//!   a `pub name:` field line. A type the parse saw that carries a
+//!   custom derive (`Action`'s `ActionClassify`) resolves such a
+//!   macro-emitted name; a type the parse never saw, because a macro
+//!   wrote it (`KeybindConfig`, written by `keybind_surface!`),
+//!   resolves any name declared anywhere, since nothing about its
+//!   members can be known. The methods the known derives and traits
+//!   supply (`clone`, `default`, `fmt`, `to_string`, strum's `iter`,
+//!   …) resolve on a type that derives or implements the trait that
+//!   supplies them, and on no other.
 //!
 //! **The opt-out is written where the name is.** This project writes
 //! past-tense prose that names things which no longer exist, and that
@@ -100,25 +121,38 @@
 //! - A name moved to another module: the authority for bare and
 //!   module-qualified names is "exists somewhere", so a reference
 //!   whose target moved still resolves.
+//! - A name that exists and is the wrong one: `bvh_find` named where
+//!   `spatial_descend_best` was meant resolves, because both exist.
+//!   The review of this gate's own landing found two such
+//!   substitutions among the names it had corrected.
 //! - A bare multi-word name of an external API that no file in the
 //!   workspace calls — serde's `Serializer::serialize_tuple_struct`
 //!   written without its type. It reads as a name that left, and the
 //!   fix is to root it as shown; the handful of spans rooted when the
 //!   gate landed is the price of the bare rule catching the many stale
 //!   names it did.
+//! - A two-segment path whose qualifier the workspace does not
+//!   declare: `probe_module::probe_fn` is indistinguishable from a
+//!   dependency's path, so only the rooted spelling is held to the
+//!   workspace.
+//! - An external import's shadowing is read file-wide: `use
+//!   std::cell::Cell;` in one inline module makes every unrooted
+//!   `Cell::…` in the file external, including one in a sibling
+//!   module that meant the workspace's `Cell`.
 //! - Dotted forms (`` `node.position` ``, `` `clock.wait` ``,
 //!   `` `test.sh` ``): in this tree they are mostly JSON paths, IPC
-//!   verbs and file names, and the scan does not read them.
-//! - `CamelCase` types and `SCREAMING_SNAKE` constants, which are
-//!   not `snake_case`; intra-doc link *targets*, which `cargo doc`
-//!   already checks on live code; `//` comments that are not doc
-//!   comments; Markdown files; doc comments on statements inside a
-//!   function body, which the item walk does not descend into; a
+//!   verbs and file names, and the scan does not read them. Nor is a
+//!   turbofish (`` `parse::<u8>` `` leaves no segment to read), a
+//!   possessive or any other punctuation inside the backticks, or a
 //!   span rustfmt broke across two doc lines, whose halves are not
 //!   read.
-//! - A private field a macro emits (no `pub` to read the line by), and
-//!   a declaration a macro builds from pieces, which no text harvest
-//!   can see.
+//! - `CamelCase` types and `SCREAMING_SNAKE` constants, which are
+//!   not `snake_case`; intra-doc link *targets*, which `cargo doc`
+//!   already checks on live code.
+//! - A private field a macro emits (no `pub` to read the line by), a
+//!   type a macro emits without writing its name (`strum`'s
+//!   `EnumDiscriminants` output), and a declaration a macro builds
+//!   from pieces, which no text harvest can see.
 //! - A sentence whose every identifier still exists but whose claim
 //!   went false. That needs reading.
 //!
@@ -215,9 +249,128 @@ const NOT_AN_IDENTIFIER: &[&str] = &[
     "null",
 ];
 
+/// The methods the traits a derive or an `impl` can name supply —
+/// std's derivable and operator traits, serde's, strum's — by trait,
+/// so `Type::clone` resolves on a type that derives `Clone`,
+/// `Type::to_string` on one that implements `Display`, `Type::iter`
+/// on one that derives `EnumIter` — and on no other. Deliberately not
+/// a flat list: an `::iter` on a type that iterates nothing must not
+/// pass because *some* type somewhere does.
+const TRAIT_METHODS: &[(&str, &[&str])] = &[
+    ("Default", &["default"]),
+    ("Clone", &["clone", "clone_from"]),
+    ("Debug", &["fmt"]),
+    ("Display", &["fmt", "to_string"]),
+    ("PartialEq", &["eq", "ne"]),
+    ("Hash", &["hash"]),
+    ("PartialOrd", &["partial_cmp", "lt", "le", "gt", "ge"]),
+    ("Ord", &["cmp", "max", "min", "clamp"]),
+    ("Serialize", &["serialize"]),
+    ("Deserialize", &["deserialize"]),
+    ("FromStr", &["from_str"]),
+    ("From", &["from"]),
+    ("TryFrom", &["try_from"]),
+    ("Into", &["into"]),
+    ("TryInto", &["try_into"]),
+    ("AsRef", &["as_ref"]),
+    ("AsMut", &["as_mut"]),
+    ("Deref", &["deref"]),
+    ("DerefMut", &["deref_mut"]),
+    ("Drop", &["drop"]),
+    ("Iterator", &["next"]),
+    ("IntoIterator", &["into_iter"]),
+    ("Index", &["index"]),
+    ("IndexMut", &["index_mut"]),
+    ("Borrow", &["borrow"]),
+    ("BorrowMut", &["borrow_mut"]),
+    ("ToOwned", &["to_owned"]),
+    ("Add", &["add"]),
+    ("Sub", &["sub"]),
+    ("Mul", &["mul"]),
+    ("Div", &["div"]),
+    ("Neg", &["neg"]),
+    ("AddAssign", &["add_assign"]),
+    ("SubAssign", &["sub_assign"]),
+    ("MulAssign", &["mul_assign"]),
+    ("DivAssign", &["div_assign"]),
+    ("EnumIter", &["iter"]),
+    ("EnumString", &["from_str"]),
+    ("AsRefStr", &["as_ref"]),
+    ("IntoStaticStr", &["into"]),
+];
+
+/// The derives whose output is known: std's, serde's and strum's,
+/// whose members [`TRAIT_METHODS`] lists. A derive of anything else is
+/// a custom derive, which may have emitted members the parse cannot
+/// see.
+const KNOWN_DERIVES: &[&str] = &[
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "PartialEq",
+    "Eq",
+    "PartialOrd",
+    "Ord",
+    "Hash",
+    "Serialize",
+    "Deserialize",
+    "EnumIter",
+    "EnumString",
+    "EnumCount",
+    "EnumDiscriminants",
+    "AsRefStr",
+    "IntoStaticStr",
+    "Display",
+    "VariantNames",
+    // `derivative`'s umbrella derive; the traits it implements are
+    // listed in its own `#[derivative(…)]` attribute, read alongside.
+    "Derivative",
+];
+
+/// One source file, read and parsed once, for both the index and the
+/// scan to consume.
+pub(crate) struct Source {
+    /// Repo-relative path, as the reports name it.
+    pub rel: String,
+    /// The file's text.
+    pub text: String,
+    /// The file's items.
+    pub parsed: syn::File,
+}
+
+impl Source {
+    /// Parse `text` as `rel`. Panics naming the file on text `syn`
+    /// cannot parse: a source that does not parse is not a source
+    /// this scan can be trusted on, and dropping it would shrink the
+    /// declared set in silence.
+    pub(crate) fn parse(rel: &str, text: &str) -> Self {
+        let parsed = syn::parse_file(text).unwrap_or_else(|e| panic!("{rel} must parse as Rust: {e}"));
+        Self {
+            rel: rel.to_string(),
+            text: text.to_string(),
+            parsed,
+        }
+    }
+}
+
+/// Every `.rs` file under the source roots, read and parsed once.
+///
+/// Cost: one read and one `syn` parse per file.
+pub(crate) fn read_workspace_sources() -> Vec<Source> {
+    workspace_rust_sources()
+        .iter()
+        .map(|file| {
+            let text = std::fs::read_to_string(file)
+                .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+            Source::parse(&relative_to_repo(file), &text)
+        })
+        .collect()
+}
+
 /// What the workspace declares, read once and consulted per span.
 ///
-/// Built from a `syn` parse of every file — which is what knows a
+/// Built from the `syn` parse of every file — which is what knows a
 /// struct's fields, an `impl` block's methods and a `trait`'s items —
 /// plus a text harvest of the word after each declaring keyword, so
 /// that a declaration a `macro_rules!` body emits still counts.
@@ -225,14 +378,17 @@ const NOT_AN_IDENTIFIER: &[&str] = &[
 /// under-reading one fails a run over prose that is correct, which is
 /// the worse of the two.
 pub(crate) struct WorkspaceIndex {
-    /// Every `snake_case`-or-otherwise name declared as an item,
-    /// field, variant or associated item anywhere, plus every module
-    /// name and every source file stem and directory, since a
-    /// `mod x;` names one.
+    /// Every name declared as an item, field, variant or associated
+    /// item anywhere, by parse or by text, plus every module name and
+    /// every source file stem and directory, since a `mod x;` names
+    /// one.
     declared: BTreeSet<String>,
     /// Names declared as a `struct`, `enum`, `trait`, `type` or
     /// `union` — the qualifiers the sharp rule applies to.
     types: BTreeSet<String>,
+    /// The subset of [`Self::types`] the parse itself saw. A type in
+    /// `types` and not here was written by a macro.
+    parsed_types: BTreeSet<String>,
     /// Names declared as a `mod`, plus file stems and directory
     /// names under the source roots.
     modules: BTreeSet<String>,
@@ -240,13 +396,16 @@ pub(crate) struct WorkspaceIndex {
     /// associated items its definition, `impl` blocks and `trait`
     /// body declare, across the whole workspace.
     members: BTreeMap<String, BTreeSet<String>>,
-    /// Type name → the traits it has an `impl Trait for Type` for, so
-    /// a default method the trait body declares resolves on the type.
+    /// Type name → the traits it has an `impl Trait for Type` for or
+    /// derives, so a default method a workspace trait body declares,
+    /// and a method a std trait supplies, resolve on the type.
     implements: BTreeMap<String, BTreeSet<String>>,
+    /// Types that derive a trait outside [`KNOWN_DERIVES`]: a custom
+    /// derive, whose output may hold members the parse cannot see.
+    custom_derived: BTreeSet<String>,
     /// Names the text harvest declares and no parse of any file does:
     /// the members a `macro_rules!` body or a derive's `quote!` emits,
-    /// which belong to a type no parse of the source can name. A
-    /// `Type::name` whose `name` is here resolves on any type.
+    /// which belong to a type no parse of the source can name.
     macro_declared: BTreeSet<String>,
     /// Every identifier token any file's code writes, comments
     /// stripped and string literals kept. A bare name is held to this
@@ -263,21 +422,12 @@ pub(crate) struct WorkspaceIndex {
 }
 
 impl WorkspaceIndex {
-    /// The index of every `.rs` file under the source roots, with the
-    /// workspace's package and dependency names read from its
-    /// manifests.
+    /// The index of `sources`, with the workspace's package and
+    /// dependency names read from its manifests.
     ///
-    /// Cost: one read and one `syn` parse per file, one comment strip
-    /// and one string blanking per file, and one read per manifest.
-    pub(crate) fn of_workspace() -> Self {
-        let sources: Vec<(String, String)> = workspace_rust_sources()
-            .iter()
-            .map(|file| {
-                let text = std::fs::read_to_string(file)
-                    .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-                (relative_to_repo(file), text)
-            })
-            .collect();
+    /// Cost: one comment strip and one string blanking per source, one
+    /// walk of each parse, and one read per manifest.
+    pub(crate) fn of_workspace(sources: &[Source]) -> Self {
         let crates: BTreeSet<String> = manifests::member_manifests()
             .iter()
             .map(|path| {
@@ -292,26 +442,24 @@ impl WorkspaceIndex {
             .filter(|dep| !dep.is_path)
             .map(|dep| dep.crate_name().replace('-', "_"))
             .collect();
-        Self::from_sources(&sources, &crates, &external)
+        Self::from_sources(sources, &crates, &external)
     }
 
-    /// The index of `sources`, each a `(repo-relative path, text)`
-    /// pair, for a workspace whose packages are `crates` and whose
-    /// dependencies are `external`. Panics naming the file on text
-    /// `syn` cannot parse: a source that does not parse is not a
-    /// source this scan can be trusted on, and dropping it would
-    /// shrink the declared set in silence.
+    /// The index of `sources`, for a workspace whose packages are
+    /// `crates` and whose dependencies are `external`.
     pub(crate) fn from_sources(
-        sources: &[(String, String)],
+        sources: &[Source],
         crates: &BTreeSet<String>,
         external: &BTreeSet<String>,
     ) -> Self {
         let mut index = Self {
             declared: BTreeSet::new(),
             types: BTreeSet::new(),
+            parsed_types: BTreeSet::new(),
             modules: BTreeSet::new(),
             members: BTreeMap::new(),
             implements: BTreeMap::new(),
+            custom_derived: BTreeSet::new(),
             macro_declared: BTreeSet::new(),
             code: BTreeSet::new(),
             crates: crates.clone(),
@@ -325,11 +473,10 @@ impl WorkspaceIndex {
         // in a later file must not be mistaken for one a macro emits
         // because the text saw it first.
         let mut stripped = Vec::with_capacity(sources.len());
-        for (rel, text) in sources {
-            index.harvest_path(rel);
-            let parsed = syn::parse_file(text).unwrap_or_else(|e| panic!("{rel} must parse as Rust: {e}"));
-            index.harvest_items(&parsed.items);
-            let code = strip_comments(text);
+        for source in sources {
+            index.harvest_path(&source.rel);
+            index.harvest_items(&source.parsed.items);
+            let code = strip_comments(&source.text);
             index.code.extend(identifier_tokens(&code).map(str::to_string));
             stripped.push(code);
         }
@@ -362,12 +509,12 @@ impl WorkspaceIndex {
                 }
                 Item::Struct(item) => {
                     let name = item.ident.to_string();
-                    self.declare_type(&name);
+                    self.declare_parsed_type(&name, &item.attrs);
                     self.harvest_fields(&name, &item.fields);
                 }
                 Item::Enum(item) => {
                     let name = item.ident.to_string();
-                    self.declare_type(&name);
+                    self.declare_parsed_type(&name, &item.attrs);
                     for variant in &item.variants {
                         self.declare_member(&name, &variant.ident.to_string());
                         self.harvest_fields(&name, &variant.fields);
@@ -375,7 +522,7 @@ impl WorkspaceIndex {
                 }
                 Item::Union(item) => {
                     let name = item.ident.to_string();
-                    self.declare_type(&name);
+                    self.declare_parsed_type(&name, &item.attrs);
                     for field in &item.fields.named {
                         if let Some(ident) = &field.ident {
                             self.declare_member(&name, &ident.to_string());
@@ -384,7 +531,7 @@ impl WorkspaceIndex {
                 }
                 Item::Trait(item) => {
                     let name = item.ident.to_string();
-                    self.declare_type(&name);
+                    self.declare_parsed_type(&name, &item.attrs);
                     for inner in &item.items {
                         let member = match inner {
                             syn::TraitItem::Const(c) => Some(c.ident.to_string()),
@@ -434,10 +581,10 @@ impl WorkspaceIndex {
                     self.declared.insert(item.ident.to_string());
                 }
                 Item::Type(item) => {
-                    self.declare_type(&item.ident.to_string());
+                    self.declare_parsed_type(&item.ident.to_string(), &item.attrs);
                 }
                 Item::TraitAlias(item) => {
-                    self.declare_type(&item.ident.to_string());
+                    self.declare_parsed_type(&item.ident.to_string(), &item.attrs);
                 }
                 Item::Macro(item) => {
                     if let Some(ident) = &item.ident {
@@ -510,18 +657,27 @@ impl WorkspaceIndex {
         }
     }
 
-    /// Whether `owner` declares `name` itself, through a workspace
-    /// trait it implements, or through a macro — whose output no
-    /// parse attributes to a type, so a macro-emitted name is allowed
-    /// on every type rather than refused on all of them.
+    /// Whether `owner` declares `name`: itself, through a workspace
+    /// trait it implements, through a known trait it derives or
+    /// implements that supplies the method, or through a macro. A type
+    /// the parse saw with a custom derive resolves a name declared only
+    /// inside a macro body, since the derive is where it can have come
+    /// from; a type the parse never saw — a macro wrote it — resolves
+    /// any declared name, since nothing about its members is knowable.
     fn has_member(&self, owner: &str, name: &str) -> bool {
         let declares = |ty: &str| self.members.get(ty).is_some_and(|members| members.contains(name));
+        let traits = self.implements.get(owner);
+        if !self.parsed_types.contains(owner) {
+            return self.declared.contains(name);
+        }
         declares(owner)
-            || self
-                .implements
-                .get(owner)
-                .is_some_and(|traits| traits.iter().any(|t| declares(t)))
-            || self.macro_declared.contains(name)
+            || traits.is_some_and(|traits| traits.iter().any(|t| declares(t)))
+            || traits.is_some_and(|traits| {
+                TRAIT_METHODS
+                    .iter()
+                    .any(|(trait_name, methods)| traits.contains(*trait_name) && methods.contains(&name))
+            })
+            || (self.macro_declared.contains(name) && self.custom_derived.contains(owner))
     }
 
     /// Whether `name` exists somewhere: declared as an item, or
@@ -555,9 +711,25 @@ impl WorkspaceIndex {
         }
     }
 
-    fn declare_type(&mut self, name: &str) {
+    /// A type the parse saw, with its derives recorded: the known ones
+    /// as implemented traits, any other as a custom derive.
+    fn declare_parsed_type(&mut self, name: &str, attrs: &[Attribute]) {
         self.types.insert(name.to_string());
+        self.parsed_types.insert(name.to_string());
         self.declared.insert(name.to_string());
+        for derived in derived_traits(attrs, "derive")
+            .into_iter()
+            .chain(derived_traits(attrs, "derivative"))
+        {
+            if KNOWN_DERIVES.contains(&derived.as_str()) {
+                self.implements
+                    .entry(name.to_string())
+                    .or_default()
+                    .insert(derived);
+            } else {
+                self.custom_derived.insert(name.to_string());
+            }
+        }
     }
 
     fn declare_member(&mut self, owner: &str, member: &str) {
@@ -567,6 +739,26 @@ impl WorkspaceIndex {
             .insert(member.to_string());
         self.declared.insert(member.to_string());
     }
+}
+
+/// The trait names a `#[<attribute>(…)]` on `attrs` lists, by their
+/// last path segment (`serde::Serialize` is `Serialize`), for
+/// `derive` and for `derivative`, whose entries may carry an `=
+/// "option"` that is read past.
+fn derived_traits(attrs: &[Attribute], attribute: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident(attribute)) {
+        let _ = attr.parse_nested_meta(|meta| {
+            if let Some(last) = meta.path.segments.last() {
+                out.push(last.ident.to_string());
+            }
+            if meta.input.peek(syn::Token![=]) {
+                let _: syn::Expr = meta.value()?.parse()?;
+            }
+            Ok(())
+        });
+    }
+    out
 }
 
 /// The last segment of a type path — `SceneConnectionCache` for
@@ -624,7 +816,7 @@ fn is_generic_parameter(name: &str) -> bool {
 }
 
 /// Where a multi-segment path's first segment places it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Root {
     Internal,
     External,
@@ -651,59 +843,6 @@ fn package_name(path: &str, text: &str) -> String {
         })
         .unwrap_or_else(|| panic!("{path} must declare a package name"))
 }
-
-/// Method names the standard library's derivable and blanket traits
-/// supply, so `Type::clone` or `Type::default` on a type that derives
-/// them resolves without the workspace declaring either. A bounded
-/// weakening: none of these is the shape of a deleted helper.
-const STD_TRAIT_METHODS: &[&str] = &[
-    "default",
-    "clone",
-    "clone_from",
-    "fmt",
-    "eq",
-    "ne",
-    "hash",
-    "cmp",
-    "partial_cmp",
-    "lt",
-    "le",
-    "gt",
-    "ge",
-    "max",
-    "min",
-    "clamp",
-    "to_owned",
-    "to_string",
-    "from",
-    "into",
-    "try_from",
-    "try_into",
-    "as_ref",
-    "as_mut",
-    "deref",
-    "deref_mut",
-    "drop",
-    "serialize",
-    "deserialize",
-    "iter",
-    "into_iter",
-    "next",
-    "from_str",
-    "borrow",
-    "borrow_mut",
-    "index",
-    "index_mut",
-    "add",
-    "sub",
-    "mul",
-    "div",
-    "neg",
-    "add_assign",
-    "sub_assign",
-    "mul_assign",
-    "div_assign",
-];
 
 /// What [`scan_doc_identifiers`] found.
 pub(crate) struct DocIdentifierScan {
@@ -733,47 +872,46 @@ impl DocIdentifierScan {
 /// Every backticked identifier path in a doc comment of every `.rs`
 /// file under the source roots, held against [`WorkspaceIndex`].
 ///
-/// Cost: two reads and two `syn` parses per file — one pass builds
-/// the index, the second reads the docs — plus one comment strip per
-/// file for the "written in this file's code" rule.
+/// Cost: one read and one `syn` parse per file, shared by the index
+/// and the scan; the index adds one comment strip and one string
+/// blanking per file and one read per manifest.
 pub(crate) fn scan_doc_identifiers() -> DocIdentifierScan {
-    let index = WorkspaceIndex::of_workspace();
+    let sources = read_workspace_sources();
+    let index = WorkspaceIndex::of_workspace(&sources);
     let mut scan = DocIdentifierScan::new();
-    for file in workspace_rust_sources() {
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-        scan_file(&relative_to_repo(&file), &text, &index, &mut scan);
+    for source in &sources {
+        scan_file(source, &index, &mut scan);
     }
     scan
 }
 
-/// Read every doc comment in `text` — the file's own `//!` header,
+/// Read every doc comment in `source` — the file's own `//!` header,
 /// every item's `///`, the members of `impl` and `trait` blocks, the
 /// fields of structs and the variants of enums, into inline modules
 /// — and record each candidate span in `scan`.
 ///
 /// Doc comments on statements inside a function body are not
 /// visited; the walk is over items.
-pub(crate) fn scan_file(rel: &str, text: &str, index: &WorkspaceIndex, scan: &mut DocIdentifierScan) {
-    let parsed = syn::parse_file(text).unwrap_or_else(|e| panic!("{rel} must parse as Rust: {e}"));
+pub(crate) fn scan_file(source: &Source, index: &WorkspaceIndex, scan: &mut DocIdentifierScan) {
     let mut external_imports = BTreeSet::new();
-    collect_external_imports(&parsed.items, index, &mut external_imports);
+    collect_external_imports(&source.parsed.items, index, &mut external_imports);
     let mut file = FileScan {
-        rel,
+        rel: &source.rel,
         external_imports,
         index,
         scan,
     };
-    file.attrs(&parsed.attrs, None);
-    file.items(&parsed.items, None);
+    file.attrs(&source.parsed.attrs, None);
+    file.items(&source.parsed.items, None);
 }
 
 /// The names a file brings in from outside the workspace — `use
 /// std::cell::Cell;`, `use cosmic_text::{Buffer, Metrics};` — so a
 /// `std::cell::Cell::set` written without its path in that file is
 /// read as the external type's even when some workspace type is also
-/// called `Cell`. Descends into inline modules, whose `use` items
-/// scope the same way for this purpose.
+/// called `Cell`. Read file-wide, inline modules included: a `use` in
+/// one module shadows for the whole file, which the module header
+/// lists among the things not caught.
 fn collect_external_imports(items: &[Item], index: &WorkspaceIndex, out: &mut BTreeSet<String>) {
     for item in items {
         match item {
@@ -850,7 +988,8 @@ struct Candidate {
     qualifier: Qualifier,
     /// The first segment of a path of three or more — the crate or
     /// module that roots it — which decides whether the path is the
-    /// workspace's to judge at all.
+    /// workspace's to judge at all, and whether an unknown qualifier
+    /// under it is a vanished name rather than an external one.
     root: Option<String>,
     /// The segment before the qualifier, when there is one: the enum
     /// in `GfxElement::GlyphArea::subtree_aabb`, whose variant the
@@ -860,8 +999,9 @@ struct Candidate {
 
 enum Resolution {
     Resolved,
-    /// Qualified by a type or module the workspace does not declare:
-    /// not this scan's to judge.
+    /// Qualified by a type or module the workspace does not declare,
+    /// under no root that makes it the workspace's: not this scan's
+    /// to judge.
     External,
     Unresolved(String),
 }
@@ -994,13 +1134,16 @@ impl FileScan<'_> {
 
     fn resolve(&self, candidate: &Candidate, self_type: Option<&str>) -> Resolution {
         let name = candidate.name.as_str();
-        if candidate
-            .root
-            .as_deref()
-            .is_some_and(|root| self.index.root_of(root) == Root::External)
-        {
+        // A path of three or more segments is placed by its root. Under
+        // an external root nothing is judged; under an internal one
+        // (`crate::`, `super::`, a workspace package) every segment is
+        // the workspace's, so an unknown qualifier is a vanished name,
+        // not a foreign one.
+        let root = candidate.root.as_deref().map(|root| self.index.root_of(root));
+        if root == Some(Root::External) {
             return Resolution::External;
         }
+        let rooted = root == Some(Root::Internal);
         match &candidate.qualifier {
             Qualifier::Bare => {
                 // A single word is where English, tools, crates and
@@ -1017,7 +1160,7 @@ impl FileScan<'_> {
                 }
             }
             Qualifier::SelfType => match self_type {
-                Some(owner) => self.resolve_member(owner, name),
+                Some(owner) => self.resolve_member(owner, name, true),
                 None => self.resolve(
                     &Candidate {
                         name: name.to_string(),
@@ -1037,25 +1180,36 @@ impl FileScan<'_> {
                 let variant_of = candidate.enclosing.as_deref().filter(|enclosing| {
                     self.index.types.contains(*enclosing) && self.index.has_member(enclosing, owner)
                 });
-                let on_owner = self.resolve_member(owner, name);
-                match (on_owner, variant_of) {
-                    (Resolution::Resolved, _) => Resolution::Resolved,
-                    (on_owner, None) => on_owner,
-                    (on_owner, Some(enclosing)) => match (self.resolve_member(enclosing, name), on_owner) {
-                        (Resolution::Resolved, _) => Resolution::Resolved,
-                        // The variant is no type of its own: the
-                        // enum's answer is the only one there is.
-                        (on_enclosing, Resolution::External) => on_enclosing,
-                        // The variant shares a type's name and neither
-                        // declares the member: the type's answer names
-                        // what the reader most likely meant.
-                        (_, on_owner) => on_owner,
+                match variant_of {
+                    None => self.resolve_member(owner, name, rooted),
+                    // The variant is no type of its own: the enum's
+                    // answer is the only one there is.
+                    Some(enclosing) if !self.index.types.contains(owner) => {
+                        self.resolve_member(enclosing, name, rooted)
+                    }
+                    // The variant shares a type's name: the type is
+                    // asked first, the enum second, and when neither
+                    // declares the member the type's answer names what
+                    // the reader most likely meant.
+                    Some(enclosing) => match self.resolve_member(owner, name, rooted) {
+                        Resolution::Resolved => Resolution::Resolved,
+                        on_owner => match self.resolve_member(enclosing, name, rooted) {
+                            Resolution::Resolved => Resolution::Resolved,
+                            _ => on_owner,
+                        },
                     },
                 }
             }
             Qualifier::Module(module) => {
-                if self.index.root_of(module) == Root::External {
-                    Resolution::External
+                let known = ["crate", "super", "self"].contains(&module.as_str())
+                    || self.index.modules.contains(module)
+                    || self.index.types.contains(module);
+                if !known {
+                    if rooted {
+                        Resolution::Unresolved(format!("`{module}` is declared nowhere in the workspace"))
+                    } else {
+                        Resolution::External
+                    }
                 } else if self.index.exists(name) {
                     Resolution::Resolved
                 } else {
@@ -1067,14 +1221,22 @@ impl FileScan<'_> {
         }
     }
 
-    fn resolve_member(&self, owner: &str, name: &str) -> Resolution {
-        if is_generic_parameter(owner)
-            || self.external_imports.contains(owner)
-            || !self.index.types.contains(owner)
-        {
+    /// `owner::name` held to what `owner` declares. `rooted` says the
+    /// path came under an internal root, where a generic parameter or
+    /// an external import cannot be meant and an unknown type is a
+    /// vanished one.
+    fn resolve_member(&self, owner: &str, name: &str, rooted: bool) -> Resolution {
+        if !rooted && (is_generic_parameter(owner) || self.external_imports.contains(owner)) {
             return Resolution::External;
         }
-        if self.index.has_member(owner, name) || STD_TRAIT_METHODS.contains(&name) {
+        if !self.index.types.contains(owner) {
+            return if rooted {
+                Resolution::Unresolved(format!("`{owner}` is declared nowhere in the workspace"))
+            } else {
+                Resolution::External
+            };
+        }
+        if self.index.has_member(owner, name) {
             Resolution::Resolved
         } else {
             Resolution::Unresolved(format!("`{owner}` declares no `{name}`"))
@@ -1106,8 +1268,10 @@ fn doc_text(attr: &Attribute) -> Option<(String, usize)> {
 /// `SCREAMING_SNAKE` name, a keyword, a primitive.
 ///
 /// A trailing call group is dropped — `` `refill(&key, params)` ``
-/// names `refill` — as are a macro's `!`, a `?`, and a leading `&`,
-/// `&mut` or `*`.
+/// names `refill` — as are a macro's `!`, a `?`, a leading `&`,
+/// `&mut` or `*`, and any `<…>` generic arguments
+/// (`` `Tree<GfxElement, GfxMutator>::descendant_at` `` names
+/// `Tree::descendant_at`).
 fn classify(span: &str) -> Option<Candidate> {
     let mut s = span.trim();
     for prefix in ["&mut ", "&", "*"] {
@@ -1128,6 +1292,8 @@ fn classify(span: &str) -> Option<Candidate> {
     // `select_sibling_*` is the glob a comment writes for a family;
     // dropping the `*` leaves the trailing `_` that reads as one.
     s = s.strip_suffix('*').unwrap_or(s);
+    let without_generics = strip_angle_groups(s)?;
+    let s = without_generics.as_str();
     if s.is_empty()
         || !s
             .chars()
@@ -1159,6 +1325,43 @@ fn classify(span: &str) -> Option<Candidate> {
         root,
         enclosing,
     })
+}
+
+/// `s` with every balanced `<…>` group that stands where generic
+/// arguments stand — directly before a `::` or at the end — removed,
+/// or `None` when the angle brackets do not balance (an `a < b`
+/// snippet). A group anywhere else, as in the placeholder shape
+/// `test_<short>_<and_more>`, is left in place and fails the identifier
+/// check, which is what keeps a shape from being read as a name.
+fn strip_angle_groups(s: &str) -> Option<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    let mut group = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '<' => {
+                if depth == 0 {
+                    group.clear();
+                }
+                depth += 1;
+                group.push(c);
+            }
+            '>' => {
+                depth = depth.checked_sub(1)?;
+                group.push(c);
+                if depth == 0 {
+                    let generic_position = chars.get(i + 1).is_none() || s[i + 1..].starts_with("::");
+                    if !generic_position {
+                        out.push_str(&group);
+                    }
+                }
+            }
+            _ if depth == 0 => out.push(c),
+            _ => group.push(c),
+        }
+    }
+    (depth == 0).then_some(out)
 }
 
 /// The index of the `(` that balances the `)` ending `s`, or `None`
@@ -1194,15 +1397,15 @@ mod tests {
     /// workspace with no packages named and `ext_crate` as its one
     /// dependency; the index is built from the same sources.
     fn scan_sources(sources: &[(&str, &str)]) -> DocIdentifierScan {
-        let owned: Vec<(String, String)> = sources
+        let parsed: Vec<Source> = sources
             .iter()
-            .map(|(rel, text)| (rel.to_string(), text.to_string()))
+            .map(|(rel, text)| Source::parse(rel, text))
             .collect();
         let external: BTreeSet<String> = ["ext_crate".to_string()].into_iter().collect();
-        let index = WorkspaceIndex::from_sources(&owned, &BTreeSet::new(), &external);
+        let index = WorkspaceIndex::from_sources(&parsed, &BTreeSet::new(), &external);
         let mut scan = DocIdentifierScan::new();
-        for (rel, text) in &owned {
-            scan_file(rel, text, &index, &mut scan);
+        for source in &parsed {
+            scan_file(source, &index, &mut scan);
         }
         scan
     }
@@ -1459,6 +1662,102 @@ enum Element {
         assert_eq!(scan.resolved.get("w.rs"), Some(&2));
     }
 
+    /// A path under `crate::`, `super::`, `self::` or a workspace
+    /// package can mean nothing but the workspace, so a module or type
+    /// in it that the workspace does not declare is a vanished name,
+    /// not a foreign one — the renamed-type half of #163.
+    #[test]
+    fn test_an_internal_root_holds_every_segment_to_the_workspace() {
+        let probe = "\
+/// `crate::util::probe_gone_module::probe_gone_fn`,
+/// `crate::gfx_structs::ProbeGoneType::probe_gone_method`,
+/// `super::probe_gone_module::probe_gone_fn` and `baumhard::ProbeGoneType::probe_gone_method`;
+/// `crate::gfx_structs::Shape::corner_count` and `crate::util::geometry::almost_equal` are
+/// controls, and `std::probe_gone::probe_gone_fn` is external.
+fn probe() {}
+";
+        let real = "\
+pub struct Shape;
+impl Shape {
+    pub fn corner_count(&self) -> u8 {
+        4
+    }
+}
+pub fn almost_equal() {}
+";
+        let parsed: Vec<Source> = [
+            ("lib/baumhard/src/util/probe.rs", probe),
+            ("lib/baumhard/src/gfx_structs/geometry.rs", real),
+        ]
+        .iter()
+        .map(|(rel, text)| Source::parse(rel, text))
+        .collect();
+        let crates: BTreeSet<String> = ["baumhard".to_string()].into_iter().collect();
+        let index = WorkspaceIndex::from_sources(&parsed, &crates, &BTreeSet::new());
+        let mut scan = DocIdentifierScan::new();
+        for source in &parsed {
+            scan_file(source, &index, &mut scan);
+        }
+        assert_eq!(
+            scan.unresolved,
+            vec![
+                "lib/baumhard/src/util/probe.rs:1: `crate::util::probe_gone_module::probe_gone_fn` — \
+                 `probe_gone_module` is declared nowhere in the workspace"
+                    .to_string(),
+                "lib/baumhard/src/util/probe.rs:2: `crate::gfx_structs::ProbeGoneType::probe_gone_method` — \
+                 `ProbeGoneType` is declared nowhere in the workspace"
+                    .to_string(),
+                "lib/baumhard/src/util/probe.rs:3: `super::probe_gone_module::probe_gone_fn` — \
+                 `probe_gone_module` is declared nowhere in the workspace"
+                    .to_string(),
+                "lib/baumhard/src/util/probe.rs:3: `baumhard::ProbeGoneType::probe_gone_method` — \
+                 `ProbeGoneType` is declared nowhere in the workspace"
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            scan.resolved.get("lib/baumhard/src/util/probe.rs"),
+            Some(&2),
+            "the two controls resolve and the std-rooted probe is not judged"
+        );
+    }
+
+    /// Generic arguments are dropped before the path is read, so
+    /// `Tree<GfxElement, GfxMutator>::descendant_at` is held to `Tree`;
+    /// a turbofish leaves no segment and is not read.
+    #[test]
+    fn test_generic_arguments_are_dropped_and_a_turbofish_is_not_read() {
+        let source = "\
+/// `Tree<Elem, Mut>::descendant_at` and `Tree<Elem>::probe_gone` and `parse::<u8>`.
+struct Tree<E, M>(E, M);
+impl<E, M> Tree<E, M> {
+    fn descendant_at(&self) {}
+}
+";
+        let scan = scan_sources(&[("t.rs", source)]);
+        assert_eq!(
+            scan.unresolved,
+            vec!["t.rs:1: `Tree<Elem>::probe_gone` — `Tree` declares no `probe_gone`".to_string()]
+        );
+        assert_eq!(scan.resolved.get("t.rs"), Some(&1));
+        assert_eq!(classify("parse::<u8>"), None);
+        assert_eq!(
+            classify("Tree<GfxElement, GfxMutator>::descendant_at"),
+            Some(Candidate {
+                name: "descendant_at".into(),
+                qualifier: Qualifier::Type("Tree".into()),
+                root: None,
+                enclosing: None,
+            })
+        );
+        assert_eq!(classify("a < b"), None);
+        assert_eq!(
+            classify("test_<short>_<and_more>"),
+            None,
+            "a placeholder shape is not a name, however its angle brackets balance"
+        );
+    }
+
     /// `T::void()` names a generic parameter's associated function,
     /// which belongs to no type the workspace declares.
     #[test]
@@ -1550,36 +1849,73 @@ struct Config {
         assert_eq!(scan.resolved.get("c.rs"), Some(&1));
     }
 
-    /// A method a derive supplies, and a default method a workspace
-    /// trait supplies, both resolve on the implementing type.
+    /// A method a std trait supplies resolves on the type that derives
+    /// or implements that trait, and on no other; a default method a
+    /// workspace trait supplies resolves on its implementors.
     #[test]
-    fn test_derived_and_trait_default_methods_resolve_on_the_implementing_type() {
+    fn test_std_and_trait_default_methods_resolve_only_on_the_implementing_type() {
         let source = "\
-/// `Cache::default` comes from the derive, `Cache::describe` from the trait body.
+/// `Cache::default` is the derive's, `Cache::to_string` the `Display` impl's,
+/// `Cache::describe` the trait body's; `Cache::iter` and `Cache::clone` are
+/// nobody's, and `Bare::default` has no derive to come from.
 #[derive(Default)]
 struct Cache;
+impl std::fmt::Display for Cache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, \"\")
+    }
+}
 trait Describe {
     fn describe(&self) -> &'static str {
         \"\"
     }
 }
 impl Describe for Cache {}
+struct Bare;
 ";
         let scan = scan_sources(&[("c.rs", source)]);
-        assert!(scan.unresolved.is_empty(), "{:?}", scan.unresolved);
-        assert_eq!(scan.resolved.get("c.rs"), Some(&2));
+        assert_eq!(
+            scan.unresolved,
+            vec![
+                "c.rs:2: `Cache::iter` — `Cache` declares no `iter`".to_string(),
+                "c.rs:2: `Cache::clone` — `Cache` declares no `clone`".to_string(),
+                "c.rs:3: `Bare::default` — `Bare` declares no `default`".to_string(),
+            ]
+        );
+        assert_eq!(scan.resolved.get("c.rs"), Some(&3));
+
+        // strum's `EnumIter` supplies `iter`; `derivative` lists the
+        // traits it implements in its own attribute, options included.
+        let derived = "\
+/// `Kind::iter`, `Area::eq` and `Area::fmt`; `Kind::eq` is nobody's.
+#[derive(EnumIter)]
+enum Kind {
+    A,
+}
+#[derive(Derivative)]
+#[derivative(PartialEq, Debug = \"transparent\")]
+struct Area;
+";
+        let scan = scan_sources(&[("d.rs", derived)]);
+        assert_eq!(
+            scan.unresolved,
+            vec!["d.rs:1: `Kind::eq` — `Kind` declares no `eq`".to_string()]
+        );
+        assert_eq!(scan.resolved.get("d.rs"), Some(&3));
     }
 
     /// A `macro_rules!` body is opaque to `syn`; the text harvest is
     /// what lets a declaration written inside one count — as a bare
-    /// name, and as a member of whichever type the doc attributes it
-    /// to, since the parse cannot say which type the macro meant.
+    /// name, and as a member of a type the macro also wrote, since the
+    /// parse cannot say which type the macro meant and a type the
+    /// macro wrote is where it can have put the member.
     #[test]
     fn test_a_declaration_a_macro_body_emits_still_counts() {
         let maker = "\
 macro_rules! make {
     () => {
         fn made_by_macro() {}
+        pub struct Config;
         impl Config {
             pub fn known_keys() -> Vec<&'static str> {
                 Vec::new()
@@ -1587,7 +1923,6 @@ macro_rules! make {
         }
     };
 }
-struct Config;
 make!();
 ";
         let user =
@@ -1598,6 +1933,60 @@ make!();
             vec!["user.rs:1: `Config::lost_keys` — `Config` declares no `lost_keys`".to_string()]
         );
         assert_eq!(scan.resolved.get("user.rs"), Some(&2));
+
+        // A type a macro wrote has no knowable members, so any name
+        // declared anywhere resolves on it — `default` from a `Default`
+        // impl inside the macro included — while a name declared
+        // nowhere still does not.
+        let derived_in_macro = "\
+macro_rules! make {
+    () => {
+        pub struct Config;
+        impl Default for Config {
+            fn default() -> Self {
+                Config
+            }
+        }
+    };
+}
+make!();
+/// `Config::default()` is the macro's impl; `Config::never_declared` is nobody's.
+fn user() {}
+";
+        let scan = scan_sources(&[("m.rs", derived_in_macro)]);
+        assert_eq!(
+            scan.unresolved,
+            vec!["m.rs:12: `Config::never_declared` — `Config` declares no `never_declared`".to_string()]
+        );
+        assert_eq!(scan.resolved.get("m.rs"), Some(&1));
+    }
+
+    /// A macro-emitted name resolves only where a macro can have put
+    /// it: on a type a macro wrote, or on a type with a custom derive.
+    /// On a plainly parsed type without one, `Type::name` is held to
+    /// what the parse saw, so a macro elsewhere cannot vouch for a
+    /// member every type would then be granted.
+    #[test]
+    fn test_a_macro_emitted_member_resolves_only_on_a_macro_written_or_custom_derived_type() {
+        let source = "\
+macro_rules! make {
+    () => {
+        fn probe_emitted_fn() {}
+    };
+}
+make!();
+/// `Plain::probe_emitted_fn` is nobody's; `Classified::probe_emitted_fn`
+/// may be the derive's.
+struct Plain;
+#[derive(Clone, ActionClassify)]
+struct Classified;
+";
+        let scan = scan_sources(&[("m.rs", source)]);
+        assert_eq!(
+            scan.unresolved,
+            vec!["m.rs:7: `Plain::probe_emitted_fn` — `Plain` declares no `probe_emitted_fn`".to_string()]
+        );
+        assert_eq!(scan.resolved.get("m.rs"), Some(&1));
     }
 
     /// A name `syn` declares in a later file is not macro-emitted just
@@ -1612,10 +2001,18 @@ macro_rules! make {
     };
 }
 make!();
-/// `Widget::shared_name` is not the macro's to grant.
+/// `Widget::shared_name` may be the derive's only while no parse declares it.
+#[derive(ActionClassify)]
 struct Widget;
 ";
         let late = "fn shared_name() {}\n";
+        let alone = scan_sources(&[("a_early.rs", early)]);
+        assert!(
+            alone.unresolved.is_empty(),
+            "precondition: with the name declared only in the macro body, the custom derive vouches \
+             for it: {:?}",
+            alone.unresolved
+        );
         let scan = scan_sources(&[("a_early.rs", early), ("b_late.rs", late)]);
         assert_eq!(
             scan.unresolved,

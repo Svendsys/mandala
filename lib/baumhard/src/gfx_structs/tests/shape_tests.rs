@@ -7,7 +7,7 @@
 //! [`TEST_CONVENTIONS.md §T2.2`] so the criterion bench harness at
 //! `lib/baumhard/benches/test_bench.rs` can reuse each body as a
 //! micro-benchmark. The shape math sits on the BVH hot path
-//! (`spatial_descend`), so the rect-pipeline SDF in the renderer and
+//! (`bvh_find`), so the rect-pipeline SDF in the renderer and
 //! the lasso / editor hit-tests all pay for it every interaction
 //! frame — benching is §B8-mandatory, not optional.
 

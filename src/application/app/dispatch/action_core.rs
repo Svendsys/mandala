@@ -26,7 +26,7 @@
 //!   `WasmInputState::input_context_core`.
 //!
 //! Track C from `work_plans/WASM_CONVERGENCE.md`. Sibling to
-//! `dispatch_macro` (Track B precedent). The arm coverage
+//! `macro_core` (Track B precedent). The arm coverage
 //! matches what `dispatch_compatible_action_wasm` (gone) wired
 //! when this was written; that function went in C3 once the WASM
 //! caller moved over.
