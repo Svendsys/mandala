@@ -202,7 +202,7 @@ pub enum Action {
     /// the native-only residual (clearing `hovered_node` for the
     /// Reparent/Connect overlay rebuild) runs in the native arm.
     /// Replaces the pre-Batch-2 `CancelMode` per
-    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
+    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
     /// (rename rather than alias).
     #[action(context = Document, wasm = Compatible)]
     ExitMode,
@@ -297,7 +297,7 @@ pub enum Action {
     /// log-and-no-op stub today (async-clipboard integration
     /// pending). The Action is classified `Compatible` because it
     /// doesn't crash, but the user-visible behavior is "nothing
-    /// happens." Tracked in `WASM_CONVERGENCE.md`.
+    /// happens." Tracked in `work_plans/WASM_CONVERGENCE.md`.
     #[action(context = Document, wasm = Compatible, destructive)]
     Copy,
     /// Paste the system clipboard's text content into the focused component.
@@ -521,9 +521,16 @@ pub enum Action {
     /// which only creates and selects (no editor). Default unbound.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNodeAndEdit,
-    /// Continuous left-button drag on empty canvas → camera pan.
-    /// Default-bound to `LeftDrag` and `MiddleClick`. The dispatcher
-    /// enters `DragState::Panning` on press and exits on release.
+    /// Camera pan: while it runs, the canvas follows the pointer.
+    /// Default-bound to `LeftDrag` and `MiddleClick`.
+    ///
+    /// A pan belongs to the input that armed it (#153). From a held
+    /// input — a mouse gesture, or a key — it is momentary: it ends on
+    /// that button's or that key's release, and no other release ends
+    /// it. From an input with no release — a macro step, a console
+    /// line, IPC `act.action`, a touch long-press — it is modal: it
+    /// toggles, and the next `pan_canvas` ends it. Losing window focus
+    /// ends either kind, and a left press re-arms over either.
     #[action(context = Document, wasm = NativeOnly)]
     PanCanvas,
 
@@ -951,7 +958,7 @@ pub enum Action {
 /// bound to e.g. `Action::OpenConsole` silently no-ops in the
 /// browser instead of triggering a panic
 /// at the dispatch site. As WASM gains its own version of the
-/// missing modals (see `WASM_CONVERGENCE.md`), variants migrate
+/// missing modals (see `work_plans/WASM_CONVERGENCE.md`), variants migrate
 /// from `NativeOnly` to `Compatible` one at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WasmCompatibility {
@@ -969,7 +976,7 @@ pub enum WasmCompatibility {
     /// Currently a no-op on WASM; the convergence path is to
     /// either port the underlying system or surface a WASM-
     /// specific equivalent and flip the classification to
-    /// `Compatible`. Tracked in `WASM_CONVERGENCE.md`.
+    /// `Compatible`. Tracked in `work_plans/WASM_CONVERGENCE.md`.
     NativeOnly,
 }
 

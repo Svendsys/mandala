@@ -319,7 +319,7 @@ untouched and never reported as unrecognized. See
 
 | Field | Type | Notes |
 |---|---|---|
-| `background_color` | string | `#RRGGBB` or `var(--name)` |
+| `background_color` | string | `#RRGGBB` or `var(--name)`. **Required** — the one `Canvas` key with no default; every other key below may be absent |
 | `default_border` | object\|null | Fallback `GlyphBorderConfig` for every node |
 | `default_connection` | object\|null | Fallback `GlyphConnectionConfig` for every edge |
 | `default_section_frame_border` | object\|null | Fallback `GlyphBorderConfig` for unfocused section frames in NodeEdit mode. `null` → hardcoded `light`-preset thin line. See [`border-patterns.md`](./border-patterns.md#section-frames). |
@@ -466,7 +466,7 @@ See [sections.md](./sections.md) for the section concept and
 | `end` | integer | yes | One past the last covered cluster (exclusive) |
 | `bold` / `italic` / `underline` | bool | no | Default `false` |
 | `font` | string | no | Family name; empty (the default) = no pin |
-| `size_pt` | number | no | Fractional sizes valid; defaults to `14`, the run-less section scale |
+| `size_pt` | number | no | Fractional sizes valid; defaults to `DEFAULT_TEXT_RUN_SIZE_PT`, the run-less section scale |
 | `color` | string | no | `#RRGGBB` or `var(--name)`; empty (the default) defers to the node's effective text color |
 | `hyperlink` | string\|null | no | Absent / `null` = no link |
 
@@ -576,9 +576,11 @@ supposed to be shadowing.
 | `label_config` | object\|null | Per-edge label position, color, and size-clamp overrides — see [`EdgeLabelConfig`](#edgelabelconfig) |
 | `anchor_from` | string | Which side of the source node — see [enums.md](./enums.md) |
 | `anchor_to` | string | Which side of the target node |
-| `control_points` | array | Bezier offsets for curved edges |
+| `control_points` | array | Bezier control points for curved edges, each `{ "x", "y" }` an **offset in canvas units from a node's center**, not an absolute position: one point is relative to the source node's center (quadratic curve); with two, the first is relative to the source and the second to the target. Points past the second are not read. Empty = straight line |
 | `glyph_connection` | object\|null | Per-edge glyph rendering override |
 | `display_mode` | string\|null | `"line"` (default, absent) or `"portal"`. Portal-mode edges render as two glyph markers above each endpoint instead of a line; double-click a marker to jump to the other endpoint. |
+| `portal_from` | object\|null | Per-endpoint state for the `from_id` portal label — icon color, text with its own color and size clamps, position on the border, zoom bounds. Only meaningful when `display_mode = "portal"`; absent / `null` = no overrides. Full reference: [`portal-labels.md`](./portal-labels.md) |
+| `portal_to` | object\|null | Same shape as `portal_from`, for the `to_id` endpoint |
 | `min_zoom_to_render` | number\|null | Lower bound on `camera.zoom` at which this edge (body, caps, label, and portal endpoints unless overridden) renders — see [zoom-bounds.md](./zoom-bounds.md). Inclusive; absent / `null` = unbounded below |
 | `max_zoom_to_render` | number\|null | Upper bound on `camera.zoom` at which this edge renders. Inclusive; absent / `null` = unbounded above |
 

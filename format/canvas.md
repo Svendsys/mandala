@@ -7,10 +7,18 @@ console verb; the data model lives at
 
 ## Field reference
 
+Every field of `Canvas` is listed here, plus `palettes`, which is
+map-wide but lives beside `canvas` rather than inside it. The
+struct is the authority; [schema.md](./schema.md#canvas) carries
+the same table in brief.
+
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `theme_variables` | object | `{}` | Map-wide CSS-variable-style color palette. Every `var(--name)` reference in node / edge / section styles resolves through this table. Authoring via `theme set <name> <value>`. |
-| `palettes` | object | `{}` | Named color palettes, serving two consumers: a node's `color_schema` resolves its fill / frame / text / title through one (see [palettes.md](./palettes.md)), and every `color_palette = "…"` reference (on a node / section / border) cycles one per glyph. Authoring via `palette …` console verbs. Note this key lives on the **map**, not inside `canvas` — it is listed here because it is map-wide shared state. |
+| `background_color` | string | **required** | Whole-canvas fill, `#RRGGBB` or `var(--name)`, resolved against `theme_variables` at render time. The one `Canvas` key with no serde default: a `canvas` object without it fails the typed load. No console verb sets it; author it in the file. |
+| `default_connection` | object\|null | `null` | The map-wide `GlyphConnectionConfig` every edge falls back to when it carries no `glyph_connection` of its own. Same shape as an edge's `glyph_connection`. |
+| `theme_variables` | object | `{}` | The **live** CSS-variable-style color table. Every `var(--name)` reference in node / edge / section styles resolves through it. No console verb edits it today; author it in the file, or switch it wholesale from `theme_variants` (next row). |
+| `theme_variants` | object | `{}` | Named presets, each a whole variable map. Inert until activated: a `CustomMutation` carrying the `SetThemeVariant` document action copies the named preset into `theme_variables` (see [mutations.md](./mutations.md)). Editing a variant changes nothing on screen until then. |
+| `palettes` | object | `{}` | Named color palettes, serving two consumers: a node's `color_schema` resolves its fill / frame / text / title through one (see [palettes.md](./palettes.md)), and every `color_palette = "…"` reference (on a node / section / border) cycles one per glyph. No console verb defines or edits a palette today; `border palette …` only *references* one by name. Note this key lives on the **map**, not inside `canvas` — it is listed here because it is map-wide shared state. |
 | `default_border` | object\|null | `null` | The map-wide border every framed node falls back to. Same shape as `MindNode.style.border`. Authoring via `canvas border …`. |
 | `default_section_frame_border` | object\|null | `null` | The map-wide default for the cyan rectangle drawn around an unfocused section in NodeEdit mode. Same shape as `MindNode.style.border`. Authoring via `canvas section-frame …`. |
 | `default_focused_section_frame_border` | object\|null | `null` | The map-wide default for the focused section's frame (the section currently being text-edited). Same shape; falls back to `default_section_frame_border` then to a hardcoded heavy floor. Authoring via `canvas section-frame focused …`. |

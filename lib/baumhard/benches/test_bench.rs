@@ -1950,7 +1950,7 @@ fn section_tree_build_benchmark(c: &mut Criterion) {
 /// override configuration. Compares the cost of the three regimes:
 ///
 /// - **Default mode** — `selected_section: None`, `selected_node_for_resize: None`.
-///   Pre-Batch-2 of `SECTIONS_BORDERS_RESIZE_PLAN.md`, this would have
+///   Pre-Batch-2 of `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`, this would have
 ///   been any selection that wasn't `Single`/`Section`. Today it's the
 ///   only thing emitting zero handles.
 /// - **Resize { Node }** — `selected_node_for_resize = Some(id)`.

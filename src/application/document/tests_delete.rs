@@ -5,6 +5,7 @@
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
 use super::tests_common::{first_testament_node_id, load_test_doc, pick_test_edge, two_testament_node_ids};
+use super::undo_action::OrphanedChild;
 use super::*;
 
 use baumhard::mindmap::model::MindEdge;
@@ -410,6 +411,12 @@ fn test_undo_delete_edge_restores_at_original_index() {
 // Node deletion
 // ---------------------------------------------------------------
 
+/// `delete_nodes` on a one-element set: the shape the single-node
+/// tests below exercise, spelled once.
+fn delete_one(doc: &mut MindMapDocument, id: &str) -> Option<UndoAction> {
+    doc.delete_nodes(&[id.to_string()])
+}
+
 /// Pick a node from the testament map that has at least one child
 /// and at least one parent_child edge pointing at it. The "Lord
 /// God" node has plenty of children and is a root, so we walk one
@@ -430,31 +437,31 @@ fn test_delete_node_orphans_children() {
     let child_count = doc.mindmap.children_of(&target).len();
     assert!(child_count > 0, "target should have at least one child");
 
-    let undo = doc.delete_node(&target).expect("delete should succeed");
+    let undo = delete_one(&mut doc, &target).expect("delete should succeed");
 
     // The node itself is gone.
     assert!(!doc.mindmap.nodes.contains_key(&target));
     // Orphaned children got new root-level IDs and are now roots.
-    if let UndoAction::DeleteNode {
+    if let UndoAction::DeleteNodes {
         ref orphaned_children,
         ..
     } = undo
     {
         assert_eq!(orphaned_children.len(), child_count);
-        for (_old_id, new_root_id) in orphaned_children {
+        for orphan in orphaned_children {
             let child = doc
                 .mindmap
                 .nodes
-                .get(new_root_id)
+                .get(&orphan.root_id)
                 .expect("orphaned child should exist under its new root ID");
             assert!(
                 child.parent_id.is_none(),
                 "child {} should be orphaned",
-                new_root_id
+                orphan.root_id
             );
         }
     } else {
-        panic!("expected DeleteNode undo action");
+        panic!("expected DeleteNodes undo action");
     }
     // No parent_child edges touch the deleted id anymore.
     assert!(
@@ -482,7 +489,7 @@ fn test_delete_node_removes_all_touching_edges() {
         "testament target should have at least one incident edge (parent_child)"
     );
 
-    doc.delete_node(&target).unwrap();
+    delete_one(&mut doc, &target).unwrap();
 
     let touching_after = doc
         .mindmap
@@ -508,7 +515,7 @@ fn test_delete_node_undo_restores_node_edges_and_children() {
         .map(|n| (n.id.clone(), n.parent_id.clone()))
         .collect();
 
-    let undo = doc.delete_node(&target).unwrap();
+    let undo = delete_one(&mut doc, &target).unwrap();
     doc.undo_stack.push(undo);
     doc.dirty = true;
 
@@ -519,7 +526,7 @@ fn test_delete_node_undo_restores_node_edges_and_children() {
     assert_eq!(restored.id, orig_node.id);
     assert_eq!(restored.display_text(), orig_node.display_text());
     // Edges are fully restored — same count AND same order.
-    // Ordering matters: earlier versions of `delete_node` stored
+    // Ordering matters: an earlier version of the delete stored
     // post-removal indices, which silently reordered edges that
     // shared the deleted node's neighborhood. Compare each slot
     // by the (from, to, edge_type) triple since edges have no
@@ -572,7 +579,7 @@ fn test_delete_node_undo_preserves_edge_order_with_gaps() {
     // Pick any node with at least one incident edge.
     let target = find_node_with_children_and_parent(&doc);
 
-    // Exclude both the target *and* its subtree: `delete_node`
+    // Exclude both the target *and* its subtree: `delete_nodes`
     // cascade-renames descendants to fresh root ids, and rewrites
     // every edge that references those descendants. If any of the
     // picked ids is a descendant, the captured `a`/`b`/`c`/`d`
@@ -631,7 +638,7 @@ fn test_delete_node_undo_preserves_edge_order_with_gaps() {
     ];
     let orig_edges = doc.mindmap.edges.clone();
 
-    let undo = doc.delete_node(&target).unwrap();
+    let undo = delete_one(&mut doc, &target).unwrap();
     // Sanity: the two touching edges are gone, bystanders remain.
     assert_eq!(doc.mindmap.edges.len(), 3);
     assert_eq!(doc.mindmap.edges[0].to_id, b);
@@ -657,7 +664,7 @@ fn test_delete_node_undo_preserves_edge_order_with_gaps() {
 #[test]
 fn test_delete_node_missing_returns_none() {
     let mut doc = load_test_doc();
-    assert!(doc.delete_node("no_such_node_id_exists").is_none());
+    assert!(delete_one(&mut doc, "no_such_node_id_exists").is_none());
 }
 
 #[test]
@@ -672,18 +679,26 @@ fn test_delete_root_node_works() {
     let child_count = doc.mindmap.children_of(&target).len();
     assert!(child_count > 0);
 
-    let undo = doc.delete_node(&target).unwrap();
+    let undo = delete_one(&mut doc, &target).unwrap();
     assert!(!doc.mindmap.nodes.contains_key(&target));
     // Orphaned children should have new root-level IDs and be roots.
-    if let UndoAction::DeleteNode {
+    if let UndoAction::DeleteNodes {
         ref orphaned_children,
         ..
     } = undo
     {
         assert_eq!(orphaned_children.len(), child_count);
-        for (_old_id, new_root_id) in orphaned_children {
-            assert!(doc.mindmap.nodes.get(new_root_id).unwrap().parent_id.is_none());
+        for orphan in orphaned_children {
+            assert!(doc
+                .mindmap
+                .nodes
+                .get(&orphan.root_id)
+                .unwrap()
+                .parent_id
+                .is_none());
         }
+    } else {
+        panic!("expected DeleteNodes undo action");
     }
 }
 
@@ -763,46 +778,77 @@ fn assert_no_dangling_parents(doc: &MindMapDocument) {
     }
 }
 
-/// Delete `victim`, push the undo, undo it, and assert the whole model
-/// round-trips byte-for-byte: node payloads + parent_ids (order-
-/// independent snapshot) and edges (order *and* payload). Also asserts
-/// the node is gone mid-way and that neither state dangles. Returns the
-/// `orphaned_children` mapping so callers can additionally assert
-/// properties of the fresh-root assignment. Single source of truth for
-/// the delete+undo contract so the scenario tests can't silently
-/// diverge from it.
-fn assert_delete_undo_roundtrip(doc: &mut MindMapDocument, victim: &str) -> Vec<(String, String)> {
+/// The bytes a save would write: `to_json_value` rendered the way
+/// `save_to_file` renders it. `serde_json`'s `Value::Object` is a
+/// `BTreeMap`, so the rendering is one string per model state, and
+/// two renderings are equal exactly when the saved files would be.
+fn saved_bytes(doc: &MindMapDocument) -> String {
+    let value = baumhard::mindmap::loader::to_json_value(&doc.mindmap).expect("the model serializes");
+    serde_json::to_string_pretty(&value).expect("the value renders")
+}
+
+/// Delete `victims` as one set, push the undo, undo it, and assert the
+/// whole model round-trips byte-for-byte: node payloads + parent_ids
+/// (order-independent snapshot), edges (order *and* payload), and the
+/// bytes a save would write. Also asserts every victim is gone mid-way,
+/// that one undo entry was pushed, and that neither state dangles.
+/// Returns the `orphaned_children` mapping so callers can additionally
+/// assert properties of the fresh-root assignment. Single source of
+/// truth for the delete+undo contract so the scenario tests can't
+/// silently diverge from it.
+fn assert_delete_nodes_undo_roundtrip(doc: &mut MindMapDocument, victims: &[&str]) -> Vec<OrphanedChild> {
     let before_nodes = node_debug_snapshot(doc);
     let before_edges = doc.mindmap.edges.clone();
+    let before_bytes = saved_bytes(doc);
+    let depth_before = doc.undo_stack.len();
 
-    let undo = doc.delete_node(victim).expect("delete should succeed");
+    let ids: Vec<String> = victims.iter().map(|v| v.to_string()).collect();
+    let undo = doc.delete_nodes(&ids).expect("delete should succeed");
     let orphaned = match &undo {
-        UndoAction::DeleteNode {
+        UndoAction::DeleteNodes {
             orphaned_children, ..
         } => orphaned_children.clone(),
-        _ => panic!("expected DeleteNode undo action"),
+        _ => panic!("expected DeleteNodes undo action"),
     };
-    assert!(
-        !doc.mindmap.nodes.contains_key(victim),
-        "{victim} should be gone after delete"
-    );
+    for victim in victims {
+        assert!(
+            !doc.mindmap.nodes.contains_key(*victim),
+            "{victim} should be gone after delete"
+        );
+    }
     assert_no_dangling_parents(doc);
 
     doc.undo_stack.push(undo);
     doc.dirty = true;
-    assert!(doc.undo(), "undo of delete({victim}) should succeed");
+    assert_eq!(doc.undo_stack.len(), depth_before + 1, "one delete, one entry");
+    assert!(doc.undo(), "undo of delete({victims:?}) should succeed");
+    assert_eq!(
+        doc.undo_stack.len(),
+        depth_before,
+        "one undo consumes the one entry"
+    );
 
     assert_eq!(
         node_debug_snapshot(doc),
         before_nodes,
-        "delete+undo of {victim}: node set + payloads must be byte-equal"
+        "delete+undo of {victims:?}: node set + payloads must be byte-equal"
     );
     assert_eq!(
         doc.mindmap.edges, before_edges,
-        "delete+undo of {victim}: edges must be restored exactly (order + payload)"
+        "delete+undo of {victims:?}: edges must be restored exactly (order + payload)"
+    );
+    assert_eq!(
+        saved_bytes(doc),
+        before_bytes,
+        "delete+undo of {victims:?}: the saved map must be byte-identical"
     );
     assert_no_dangling_parents(doc);
     orphaned
+}
+
+/// [`assert_delete_nodes_undo_roundtrip`] on a one-element set.
+fn assert_delete_undo_roundtrip(doc: &mut MindMapDocument, victim: &str) -> Vec<OrphanedChild> {
+    assert_delete_nodes_undo_roundtrip(doc, &[victim])
 }
 
 #[test]
@@ -811,22 +857,23 @@ fn test_delete_max_root_does_not_reuse_deleted_id() {
     // child must not be handed the just-deleted "3" (forward-delete
     // invariant, no undo).
     let mut doc = build_roots_with_deep_subtree(&["0", "1", "2", "3"], "3");
-    let undo = doc.delete_node("3").expect("delete should succeed");
+    let undo = delete_one(&mut doc, "3").expect("delete should succeed");
 
-    if let UndoAction::DeleteNode {
+    if let UndoAction::DeleteNodes {
         ref orphaned_children,
         ..
     } = undo
     {
         assert_eq!(orphaned_children.len(), 1, "root \"3\" has exactly one child");
-        let (old_id, new_root_id) = &orphaned_children[0];
-        assert_eq!(old_id, "3.0");
+        let orphan = &orphaned_children[0];
+        assert_eq!(orphan.original_id, "3.0");
+        assert_eq!(orphan.parent_id, "3");
         assert_ne!(
-            new_root_id, "3",
+            orphan.root_id, "3",
             "orphaned child must not reuse the just-deleted root id"
         );
     } else {
-        panic!("expected DeleteNode undo action");
+        panic!("expected DeleteNodes undo action");
     }
     assert!(!doc.mindmap.nodes.contains_key("3"), "\"3\" was deleted");
     assert_no_dangling_parents(&doc);
@@ -931,12 +978,12 @@ fn test_delete_node_grandchild_would_reclaim_deleted_id() {
 
     // The re-rooted child must not have reclaimed the deleted id "2.0"
     // (nor a Dewey prefix of it — else a descendant would).
-    for (_old, new_root) in &orphaned {
-        assert_ne!(new_root, "2.0", "orphan must not reclaim the deleted id");
+    for orphan in &orphaned {
+        assert_ne!(orphan.root_id, "2.0", "orphan must not reclaim the deleted id");
         assert!(
-            !"2.0".starts_with(&format!("{}.", new_root)),
+            !"2.0".starts_with(&format!("{}.", orphan.root_id)),
             "orphan root {} must not be a Dewey prefix of the deleted id",
-            new_root
+            orphan.root_id
         );
     }
 }
@@ -1214,4 +1261,451 @@ fn test_orphan_selection_on_root_is_noop() {
     assert_eq!(doc.mindmap.edges.len(), orig_edges_len);
     // undo.entries may be non-empty but the restoration is a no-op.
     let _ = undo;
+}
+
+// ---------------------------------------------------------------
+// Multi-node deletion as one set (#172). `delete_nodes` resolves
+// the whole selection before it removes anything, so a parent and
+// its child selected together are both deleted, and the one undo
+// entry it pushes restores the whole set in one `Undo`. The loop of
+// single-node deletes it replaced lost every selected node whose id
+// an earlier removal had renamed, and took one Ctrl+Z per node.
+// ---------------------------------------------------------------
+
+/// The selection `SelectAll` builds: every node not hidden by a
+/// fold. Spelled here rather than called because `select_all_in`
+/// lives in the app's dispatch layer, which these document tests do
+/// not reach into; the filter is the one it applies.
+fn select_all_visible(doc: &mut MindMapDocument) -> usize {
+    let ids: Vec<String> = doc
+        .mindmap
+        .nodes
+        .values()
+        .filter(|n| !doc.mindmap.is_hidden_by_fold(n))
+        .map(|n| n.id.clone())
+        .collect();
+    let count = ids.len();
+    doc.selection = SelectionState::from_ids(ids);
+    count
+}
+
+/// A non-root node and one of its children that itself has
+/// children: deleting the pair orphans both the parent's other
+/// children and the child's own, so the two re-rooting sources a
+/// set delete has to reconcile are both exercised. Lowest Dewey
+/// pair wins, so the pick does not move with the hash seed.
+fn parent_and_child_with_grandchildren(doc: &MindMapDocument) -> (String, String) {
+    let mut ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+    ids.sort_by(|a, b| baumhard::mindmap::model::dewey_cmp(a, b));
+    for id in ids {
+        if doc.mindmap.nodes[id].parent_id.is_none() {
+            continue;
+        }
+        for child in doc.mindmap.children_of(id) {
+            if !doc.mindmap.children_of(&child.id).is_empty() {
+                return (id.clone(), child.id.clone());
+            }
+        }
+    }
+    panic!("testament should hold a non-root parent whose child has children");
+}
+
+/// Acceptance criterion 1 of #172, verbatim: SelectAll then Delete
+/// on the fixture leaves an empty map, and one Undo restores it
+/// byte-identically. The loop this replaced left 223 of 252 nodes
+/// standing, and its first Undo brought back one.
+#[test]
+fn test_delete_selection_select_all_then_delete_empties_the_map_and_one_undo_restores_it() {
+    let mut doc = load_test_doc();
+    doc.undo_stack.clear();
+    doc.dirty = false;
+    let before = saved_bytes(&doc);
+    let node_count = doc.mindmap.nodes.len();
+    let selected = select_all_visible(&mut doc);
+    // Precondition: nothing in the fixture is folded, so the
+    // selection is the whole map and "empty" is the only right
+    // answer — a folded fixture would make a survivor legitimate.
+    assert_eq!(selected, node_count, "the fixture must have no folded nodes");
+    assert!(
+        node_count > 100,
+        "the fixture must be big enough to mean something"
+    );
+    assert!(!doc.mindmap.edges.is_empty(), "the fixture must carry edges");
+
+    assert!(doc.apply_delete_selection());
+    assert!(doc.mindmap.nodes.is_empty(), "every selected node is deleted");
+    assert!(doc.mindmap.edges.is_empty(), "no edge survives its endpoints");
+    assert_eq!(doc.undo_stack.len(), 1, "one keystroke, one undo entry");
+    assert!(matches!(doc.selection, SelectionState::None));
+    assert!(doc.dirty);
+
+    assert!(doc.undo(), "the one Undo applies");
+    assert_eq!(doc.undo_stack.len(), 0);
+    assert_eq!(doc.mindmap.nodes.len(), node_count);
+    assert_eq!(
+        saved_bytes(&doc),
+        before,
+        "one Undo restores the map byte-identically"
+    );
+}
+
+/// Acceptance criterion 2 of #172: a parent and its child in one
+/// multi-selection are both deleted, in one undo entry. "Both" is
+/// the set, not the subtree — the child's own children, which were
+/// not selected, survive as fresh roots exactly as they would under
+/// a single delete of the child, and so do the parent's other
+/// children.
+#[test]
+fn test_delete_selection_parent_and_child_are_both_deleted_in_one_entry() {
+    let mut doc = load_test_doc();
+    doc.undo_stack.clear();
+    let (parent, child) = parent_and_child_with_grandchildren(&doc);
+    let other_children: Vec<String> = doc
+        .mindmap
+        .children_of(&parent)
+        .iter()
+        .filter(|n| n.id != child)
+        .map(|n| n.id.clone())
+        .collect();
+    let grandchildren: Vec<String> = doc
+        .mindmap
+        .children_of(&child)
+        .iter()
+        .map(|n| n.id.clone())
+        .collect();
+    assert!(!grandchildren.is_empty(), "the pick guarantees grandchildren");
+    let node_count = doc.mindmap.nodes.len();
+    let before = saved_bytes(&doc);
+
+    doc.selection = SelectionState::Multi(vec![parent.clone(), child.clone()]);
+    assert!(doc.apply_delete_selection());
+
+    assert!(!doc.mindmap.nodes.contains_key(&parent), "the parent is deleted");
+    assert!(
+        !doc.mindmap.nodes.contains_key(&child),
+        "the child is deleted too"
+    );
+    assert_eq!(doc.mindmap.nodes.len(), node_count - 2, "exactly the set is gone");
+    assert_eq!(doc.undo_stack.len(), 1, "one entry for the pair");
+    let Some(UndoAction::DeleteNodes {
+        nodes,
+        orphaned_children,
+        ..
+    }) = doc.undo_stack.last()
+    else {
+        panic!("expected one DeleteNodes entry");
+    };
+    assert_eq!(nodes.len(), 2);
+    // Every unselected child of either victim is now a root under a
+    // fresh id, and the entry knows which victim each hung under.
+    let mut expected: Vec<(String, String)> = other_children
+        .iter()
+        .map(|id| (id.clone(), parent.clone()))
+        .chain(grandchildren.iter().map(|id| (id.clone(), child.clone())))
+        .collect();
+    expected.sort();
+    let mut recorded: Vec<(String, String)> = orphaned_children
+        .iter()
+        .map(|o| (o.original_id.clone(), o.parent_id.clone()))
+        .collect();
+    recorded.sort();
+    assert_eq!(
+        recorded, expected,
+        "orphans are the unselected children of both victims"
+    );
+    for orphan in orphaned_children {
+        let node = doc
+            .mindmap
+            .nodes
+            .get(&orphan.root_id)
+            .expect("each orphan lives under its fresh root id");
+        assert!(node.parent_id.is_none(), "{} is a root now", orphan.root_id);
+    }
+    assert_no_dangling_parents(&doc);
+
+    assert!(doc.undo());
+    assert_eq!(
+        saved_bytes(&doc),
+        before,
+        "one Undo restores both and their children"
+    );
+}
+
+/// The same pair selected as sections rather than nodes: a
+/// `MultiSection` across a parent and its child deletes both owning
+/// nodes in one entry, through the same set.
+#[test]
+fn test_delete_selection_multi_section_across_parent_and_child_deletes_both_in_one_entry() {
+    let mut doc = load_test_doc();
+    doc.undo_stack.clear();
+    let (parent, child) = parent_and_child_with_grandchildren(&doc);
+    let node_count = doc.mindmap.nodes.len();
+    let before = saved_bytes(&doc);
+    doc.selection =
+        SelectionState::MultiSection(vec![SectionSel::new(&parent, 0), SectionSel::new(&child, 0)]);
+
+    assert!(doc.apply_delete_selection());
+    // The count is the assertion that bites: a delete that renamed
+    // the child out from under its own removal also leaves its old
+    // id absent, so absence alone would pass on the defect.
+    assert_eq!(
+        doc.mindmap.nodes.len(),
+        node_count - 2,
+        "exactly the pair is gone"
+    );
+    assert_eq!(doc.undo_stack.len(), 1, "one entry for the pair");
+    let Some(UndoAction::DeleteNodes { nodes, .. }) = doc.undo_stack.last() else {
+        panic!("expected one DeleteNodes entry");
+    };
+    let mut deleted: Vec<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+    deleted.sort();
+    let mut pair = [parent.as_str(), child.as_str()];
+    pair.sort();
+    assert_eq!(deleted, pair, "the entry deletes both owning nodes");
+    assert!(doc.undo());
+    assert_eq!(saved_bytes(&doc), before);
+}
+
+/// The result of a set delete is a function of the set: the ids
+/// listed child-first, parent-first, or with a duplicate all leave
+/// the same map and push the same entry. The loop this replaced
+/// gave a different answer per order — parent-first renamed the
+/// child out from under its own deletion.
+#[test]
+fn test_delete_nodes_result_is_a_function_of_the_set_not_its_order() {
+    let (parent, child) = parent_and_child_with_grandchildren(&load_test_doc());
+    let orders: [Vec<String>; 3] = [
+        vec![parent.clone(), child.clone()],
+        vec![child.clone(), parent.clone()],
+        vec![child.clone(), parent.clone(), child.clone()],
+    ];
+    let mut outcomes: Vec<(String, String)> = Vec::new();
+    for ids in &orders {
+        let mut doc = load_test_doc();
+        let undo = doc.delete_nodes(ids).expect("the pair exists");
+        assert!(!doc.mindmap.nodes.contains_key(&parent));
+        assert!(!doc.mindmap.nodes.contains_key(&child));
+        outcomes.push((saved_bytes(&doc), format!("{undo:?}")));
+    }
+    for (index, outcome) in outcomes.iter().enumerate().skip(1) {
+        assert_eq!(outcome.0, outcomes[0].0, "order {index} leaves a different map");
+        assert_eq!(outcome.1, outcomes[0].1, "order {index} pushes a different entry");
+    }
+}
+
+/// Redo, in this codebase, is replay: delete → undo → delete the
+/// same set again must land on the same map and push the same
+/// entry, and the second undo must restore the original again. A
+/// delete whose outcome depended on leftover state (a stale fresh-
+/// root counter, an edge index shifted by the first round) would
+/// show up as a difference between the two rounds.
+#[test]
+fn test_delete_nodes_replay_after_undo_is_identical() {
+    let mut doc = load_test_doc();
+    doc.undo_stack.clear();
+    let (parent, child) = parent_and_child_with_grandchildren(&doc);
+    let ids = vec![parent, child];
+    let original = saved_bytes(&doc);
+
+    let first = doc.delete_nodes(&ids).expect("first delete");
+    let first_debug = format!("{first:?}");
+    let after_first = saved_bytes(&doc);
+    doc.undo_stack.push(first);
+    assert!(doc.undo());
+    assert_eq!(saved_bytes(&doc), original, "first undo restores the original");
+
+    let second = doc.delete_nodes(&ids).expect("replayed delete");
+    assert_eq!(
+        format!("{second:?}"),
+        first_debug,
+        "the replay pushes the same entry"
+    );
+    assert_eq!(saved_bytes(&doc), after_first, "the replay lands on the same map");
+    doc.undo_stack.push(second);
+    assert!(doc.undo());
+    assert_eq!(
+        saved_bytes(&doc),
+        original,
+        "second undo restores the original again"
+    );
+}
+
+/// Ids that name nothing are dropped from the set, and a set that
+/// names nothing live is a no-op that pushes nothing: `None`, the
+/// map untouched, `dirty` untouched.
+#[test]
+fn test_delete_nodes_drops_missing_ids_and_is_a_no_op_when_none_exist() {
+    let mut doc = MindMapDocument::with_orphan("0", Vec2::ZERO);
+    doc.mindmap
+        .nodes
+        .insert("1".to_string(), default_orphan_node("1", Vec2::ZERO));
+    doc.dirty = false;
+    let before = saved_bytes(&doc);
+
+    assert!(doc
+        .delete_nodes(&["nope".to_string(), "also nope".to_string()])
+        .is_none());
+    assert_eq!(saved_bytes(&doc), before, "a set of missing ids changes nothing");
+    assert!(!doc.dirty, "and dirties nothing");
+
+    let undo = doc
+        .delete_nodes(&["nope".to_string(), "1".to_string(), "1".to_string()])
+        .expect("one live id is enough");
+    let UndoAction::DeleteNodes { nodes, .. } = &undo else {
+        panic!("expected DeleteNodes");
+    };
+    assert_eq!(nodes.len(), 1, "the duplicate and the missing id are dropped");
+    assert_eq!(nodes[0].id, "1");
+    assert!(doc.mindmap.nodes.contains_key("0"));
+    assert!(!doc.mindmap.nodes.contains_key("1"));
+    assert!(doc.dirty);
+}
+
+/// An edge between two deleted nodes is removed once and restored
+/// once, at its index, beside the edges each endpoint had on its
+/// own. Layout: [0→1 (parent_child), 2→0, 1→2, 2→3] with 2 and 3
+/// bystanders; deleting {0, 1} removes indices 0, 1 and 2 and keeps
+/// the bystander edge, and undo puts all three back in place.
+#[test]
+fn test_delete_nodes_removes_an_edge_between_two_victims_once() {
+    let mut doc = MindMapDocument::with_orphan("0", Vec2::ZERO);
+    for id in ["1", "2", "3"] {
+        doc.mindmap
+            .nodes
+            .insert(id.to_string(), default_orphan_node(id, Vec2::ZERO));
+    }
+    doc.mindmap.nodes.get_mut("1").unwrap().parent_id = Some("0".to_string());
+    doc.mindmap.edges = vec![
+        default_parent_child_edge("0", "1"),
+        default_cross_link_edge("2", "0"),
+        default_cross_link_edge("1", "2"),
+        default_cross_link_edge("2", "3"),
+    ];
+    doc.undo_stack.clear();
+    doc.dirty = false;
+    let before = saved_bytes(&doc);
+
+    let undo = doc
+        .delete_nodes(&["0".to_string(), "1".to_string()])
+        .expect("delete");
+    let UndoAction::DeleteNodes {
+        removed_edges,
+        orphaned_children,
+        ..
+    } = &undo
+    else {
+        panic!("expected DeleteNodes");
+    };
+    let indices: Vec<usize> = removed_edges.iter().map(|(i, _)| *i).collect();
+    assert_eq!(
+        indices,
+        vec![0, 1, 2],
+        "each touching edge once, pre-removal index"
+    );
+    assert_eq!(doc.mindmap.edges.len(), 1, "the bystander edge stays");
+    assert_eq!(doc.mindmap.edges[0].from_id, "2");
+    assert_eq!(doc.mindmap.edges[0].to_id, "3");
+    assert!(
+        orphaned_children.is_empty(),
+        "1 was a child of 0 and is deleted too, so nothing is orphaned"
+    );
+
+    doc.undo_stack.push(undo);
+    assert!(doc.undo());
+    assert_eq!(saved_bytes(&doc), before);
+}
+
+/// Two orphans of one delete where one's id is a Dewey prefix of the
+/// other's — "1.0.2" and "1.0.2.5", both structural children of the
+/// deleted "1.0" because "1.0.2.5" was reparented up a level. Ids
+/// and structure diverge like this through `apply_reparent`, which
+/// re-points `parent_id` without re-keying. Re-rooting "1.0.2" first
+/// sweeps "1.0.2.5" along by prefix, so the loop's own turn for
+/// "1.0.2.5" finds nothing under that name and leaves the swept
+/// node pointing at the deleted parent. `delete_nodes` re-roots the
+/// longer id first; both end up roots, and undo is byte-exact.
+#[test]
+fn test_delete_nodes_re_roots_an_orphan_whose_id_a_sibling_orphan_prefixes() {
+    let mut doc = MindMapDocument::with_orphan("1.0", Vec2::ZERO);
+    for (id, parent) in [("1.0.2", "1.0"), ("1.0.2.5", "1.0"), ("1.0.2.5.0", "1.0.2.5")] {
+        let mut node = default_orphan_node(id, Vec2::ZERO);
+        node.parent_id = Some(parent.to_string());
+        doc.mindmap.nodes.insert(id.to_string(), node);
+    }
+    doc.mindmap.edges = vec![
+        default_parent_child_edge("1.0", "1.0.2"),
+        default_parent_child_edge("1.0", "1.0.2.5"),
+        default_parent_child_edge("1.0.2.5", "1.0.2.5.0"),
+        default_cross_link_edge("1.0.2", "1.0.2.5.0"),
+    ];
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    let orphaned = assert_delete_nodes_undo_roundtrip(&mut doc, &["1.0"]);
+    let mapping: Vec<(&str, &str)> = orphaned
+        .iter()
+        .map(|o| (o.original_id.as_str(), o.root_id.as_str()))
+        .collect();
+    // Fresh roots in Dewey order of the original ids, above the
+    // leading segment "1" every id here starts with.
+    assert_eq!(mapping, vec![("1.0.2", "2"), ("1.0.2.5", "3")]);
+}
+
+/// Fresh root ids are handed out in the full Dewey order of the
+/// orphans' ids, not by their last segment alone: "2.5" and "3.5",
+/// both structural children of the deleted "0" through a reparent,
+/// share the last segment, and a last-segment sort would leave their
+/// order to the hash seed. Twenty-four fresh documents must all
+/// agree, and agree with the literal.
+#[test]
+fn test_delete_nodes_assigns_fresh_roots_in_dewey_order_regardless_of_hash_seed() {
+    for _ in 0..24 {
+        let mut doc = MindMapDocument::with_orphan("0", Vec2::ZERO);
+        for id in ["1", "2", "3"] {
+            doc.mindmap
+                .nodes
+                .insert(id.to_string(), default_orphan_node(id, Vec2::ZERO));
+        }
+        for (id, parent) in [("2.5", "0"), ("3.5", "0")] {
+            let mut node = default_orphan_node(id, Vec2::ZERO);
+            node.parent_id = Some(parent.to_string());
+            doc.mindmap.nodes.insert(id.to_string(), node);
+        }
+        doc.mindmap.edges = vec![
+            default_parent_child_edge("0", "2.5"),
+            default_parent_child_edge("0", "3.5"),
+        ];
+        doc.undo_stack.clear();
+        doc.dirty = false;
+
+        let orphaned = assert_delete_nodes_undo_roundtrip(&mut doc, &["0"]);
+        let mapping: Vec<(&str, &str)> = orphaned
+            .iter()
+            .map(|o| (o.original_id.as_str(), o.root_id.as_str()))
+            .collect();
+        assert_eq!(mapping, vec![("2.5", "4"), ("3.5", "5")]);
+    }
+}
+
+/// The guard that keeps undo from overwriting a live node reads
+/// every id the entry restores, not the first. The set {"0", "1"}
+/// is deleted, a new node takes "1", and the undo is refused by the
+/// `debug_assert!` the guard carries — which a guard that looked at
+/// "0" alone would never reach.
+#[test]
+#[should_panic(expected = "undo DeleteNodes landed on an occupied id")]
+fn test_undo_delete_nodes_refuses_when_any_restored_id_is_occupied() {
+    let mut doc = MindMapDocument::with_orphan("0", Vec2::ZERO);
+    doc.mindmap
+        .nodes
+        .insert("1".to_string(), default_orphan_node("1", Vec2::ZERO));
+    let undo = doc
+        .delete_nodes(&["0".to_string(), "1".to_string()])
+        .expect("delete");
+    doc.undo_stack.push(undo);
+    // "0" stays free; only the second restored id is taken.
+    doc.mindmap
+        .nodes
+        .insert("1".to_string(), default_orphan_node("1", Vec2::ZERO));
+    let _ = doc.undo();
 }

@@ -460,8 +460,8 @@ mod tests {
 
     const SOURCE: &str = "/home/user/maps/broken.mindmap.json";
     const MESSAGE: &str = "node \"0.3\" ships zero sections — every renderable node needs at \
-                           least one. Run `maptool convert --sections <file>` to migrate, or \
-                           add an explicit `sections` array.";
+                           least one. Run `maptool convert --sections <file> <file>` to migrate \
+                           in place, or add an explicit `sections` array.";
 
     /// The whole reason the placard exists: the reader has to be
     /// able to find the loader's own words on it. Every non-blank

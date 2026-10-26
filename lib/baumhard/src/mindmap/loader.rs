@@ -213,9 +213,11 @@ fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result<(), String
 /// user asked *what is wrong with it*.
 ///
 /// So this keeps everything that decides what the document *is* —
-/// serde's typed parse, the closed-object rejection, the
-/// legacy-shape migration pointers — and drops only the checks
-/// about whether it is safe to render. The returned model may
+/// serde's typed parse, the unknown-key and skipped-construct
+/// capture, the legacy-shape migration pointers — plus the two
+/// ceilings on what reading it costs ([`MAX_MAP_BYTES`],
+/// [`crate::mindmap::unknown_keys::MAX_UNKNOWN_KEYS`]), and drops
+/// only the checks about whether it is safe to render. The returned model may
 /// therefore hold a cycle, non-finite geometry, or a zero font
 /// size: **do not build a scene from it.** `maptool verify` is the
 /// intended caller.
@@ -681,8 +683,8 @@ fn detect_legacy_shape(raw: &Value) -> Option<String> {
     // `convert --portals` is what removes it.
     if raw.get("portals").is_some() {
         return Some(
-            "legacy `portals` field present; run `maptool convert --portals <file>` \
-             to migrate to portal-mode edges"
+            "legacy `portals` field present; run `maptool convert --portals <file> <file>` \
+             to migrate to portal-mode edges in place"
                 .to_string(),
         );
     }
@@ -696,8 +698,8 @@ fn detect_legacy_shape(raw: &Value) -> Option<String> {
     {
         return Some(format!(
             "legacy `text` / `text_runs` on node {:?}; run \
-             `maptool convert --sections <file>` to migrate node \
-             text into `sections[]`",
+             `maptool convert --sections <file> <file>` to migrate node \
+             text into `sections[]` in place",
             id
         ));
     }

@@ -203,9 +203,10 @@ impl UndoAction {
             UndoAction::EditNodeAabb { node_id, .. } => {
                 json!({ "kind": "EditNodeAabb", "node_ids": [node_id] })
             }
-            UndoAction::DeleteNode { node, .. } => {
-                json!({ "kind": "DeleteNode", "node_ids": [node.id] })
-            }
+            UndoAction::DeleteNodes { nodes, .. } => json!({
+                "kind": "DeleteNodes",
+                "node_ids": nodes.iter().map(|n| &n.id).collect::<Vec<_>>(),
+            }),
         }
     }
 }
@@ -699,6 +700,13 @@ mod tests {
             .next()
             .expect("fixture has nodes")
             .clone();
+        let second_node: MindNode = doc
+            .mindmap
+            .nodes
+            .values()
+            .find(|n| n.id != node.id)
+            .expect("fixture has a second node")
+            .clone();
         let edge: MindEdge = doc.mindmap.edges.first().expect("fixture has edges").clone();
         let all = vec![
             UndoAction::MoveNodes {
@@ -759,8 +767,8 @@ mod tests {
                     height: 1.0,
                 },
             },
-            UndoAction::DeleteNode {
-                node,
+            UndoAction::DeleteNodes {
+                nodes: vec![node, second_node],
                 removed_edges: vec![],
                 orphaned_children: vec![],
             },
@@ -779,7 +787,7 @@ mod tests {
                 | UndoAction::EditNodeZoom { .. }
                 | UndoAction::CanvasSnapshot { .. }
                 | UndoAction::EditNodeAabb { .. }
-                | UndoAction::DeleteNode { .. } => {}
+                | UndoAction::DeleteNodes { .. } => {}
             }
         }
         all
@@ -802,6 +810,25 @@ mod tests {
                 "{kind} names what it touches: {json}"
             );
         }
+    }
+
+    /// A `DeleteNodes` entry names *every* node it deleted, in the
+    /// order the entry holds them: a multi-node delete is one entry
+    /// (#172), and a reader of `query.undo` learns the whole set from
+    /// it. The one-id form `[node.id]` would pass the per-variant
+    /// test above and lose the rest.
+    #[test]
+    fn test_delete_nodes_entry_reports_every_deleted_id() {
+        let entry = every_undo_action()
+            .into_iter()
+            .find(|a| matches!(a, UndoAction::DeleteNodes { .. }))
+            .expect("the fixture carries a DeleteNodes entry");
+        let UndoAction::DeleteNodes { nodes, .. } = &entry else {
+            unreachable!("filtered on the variant");
+        };
+        assert_eq!(nodes.len(), 2, "the fixture entry deletes two nodes");
+        let expected: Vec<Value> = nodes.iter().map(|n| json!(n.id)).collect();
+        assert_eq!(entry.to_ipc_json()["node_ids"], json!(expected));
     }
 
     #[test]

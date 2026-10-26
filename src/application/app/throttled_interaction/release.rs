@@ -66,7 +66,21 @@ pub(in crate::application::app) enum ReleaseRefresh {
     All,
 }
 
-/// What a pointer release does with the throttled drag it found.
+/// The event that ends — or may end — a throttled drag: a button
+/// coming up, or the window losing the focus that would have
+/// delivered one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum Release {
+    /// `button` came up.
+    Button(MouseButton),
+    /// The window lost focus mid-drag (`DragState::end_on_focus_loss`).
+    /// The owning release may never arrive — focus moved elsewhere,
+    /// the window is going away, or the OS ate it — so this is the
+    /// last event the gesture is guaranteed to see.
+    FocusLost,
+}
+
+/// What a release does with the throttled drag it found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::application::app) enum ThrottledRelease {
     /// Run the gesture's commit and let the drag state stay `None`.
@@ -77,7 +91,7 @@ pub(in crate::application::app) enum ThrottledRelease {
     PutBack,
 }
 
-/// Resolve a release against the button that produced it.
+/// Resolve a release against the gesture's owning button.
 ///
 /// Pure, and separated from the two dispatchers for exactly the
 /// reason PR #91 in this epic needed: unit tests on the interactions
@@ -115,10 +129,23 @@ pub(in crate::application::app) enum ThrottledRelease {
 /// never reaches here — `route_middle_button` answers `Keep` — but a
 /// button that could not have started the gesture has no business
 /// ending it, whichever button it is.
+///
+/// **Focus loss commits, whoever owns the gesture** (#153). Putting
+/// the drag back there would hand it to a release that may never
+/// come, and nothing else finalizes a throttled drag — the gesture
+/// would sit in `DragState` owing its write until the next press
+/// found it and was refused. Committing rather than discarding is
+/// the reversible choice: the model takes what the user was looking
+/// at, with an undo entry, so one undo restores the pre-drag state;
+/// a discard would snap the canvas back and leave nothing to redo.
 pub(in crate::application::app) fn resolve_release(
-    released: MouseButton,
+    release: Release,
     started_with_right: bool,
 ) -> ThrottledRelease {
+    let released = match release {
+        Release::Button(button) => button,
+        Release::FocusLost => return ThrottledRelease::Commit,
+    };
     let owner = if started_with_right {
         MouseButton::Right
     } else {
@@ -131,8 +158,9 @@ pub(in crate::application::app) fn resolve_release(
     }
 }
 
-/// Run `released` against an in-flight throttled drag, renderer-free:
-/// commit the gesture iff `released` is the button that owns it.
+/// Run `release` against an in-flight throttled drag, renderer-free:
+/// commit the gesture iff [`resolve_release`] says `release` ends it
+/// — the button that owns it, or focus loss.
 ///
 /// `Some(refresh)` is "committed, and the caller owes the canvas this
 /// decree"; `None` is "put the drag state back — this button did not
@@ -148,11 +176,11 @@ pub(in crate::application::app) fn resolve_release(
 /// InputHandlerContext`, i.e. a live wgpu device, which
 /// TEST_CONVENTIONS §T8 keeps out of the tests.
 pub(in crate::application::app) fn commit_if_resolved(
-    released: MouseButton,
+    release: Release,
     drag: &mut ThrottledDrag,
     commit: ReleaseCommit<'_>,
 ) -> Option<ReleaseRefresh> {
-    match resolve_release(released, drag.as_dyn().started_with_right()) {
+    match resolve_release(release, drag.as_dyn().started_with_right()) {
         ThrottledRelease::Commit => Some(drag.as_dyn_mut().commit_on_release_core(commit)),
         ThrottledRelease::PutBack => None,
     }
@@ -208,25 +236,49 @@ mod tests {
     #[test]
     fn test_resolve_release_covers_both_buttons_and_both_origins() {
         assert_eq!(
-            resolve_release(MouseButton::Left, false),
+            resolve_release(Release::Button(MouseButton::Left), false),
             ThrottledRelease::Commit,
             "a left release finalizes a left-started drag"
         );
         assert_eq!(
-            resolve_release(MouseButton::Left, true),
+            resolve_release(Release::Button(MouseButton::Left), true),
             ThrottledRelease::PutBack,
             "a left release must not end a right-started fast-resize: the \
              right button is still down and its release will commit"
         );
         assert_eq!(
-            resolve_release(MouseButton::Right, true),
+            resolve_release(Release::Button(MouseButton::Right), true),
             ThrottledRelease::Commit,
             "a right release finalizes the fast-resize it started"
         );
         assert_eq!(
-            resolve_release(MouseButton::Right, false),
+            resolve_release(Release::Button(MouseButton::Right), false),
             ThrottledRelease::PutBack,
             "a stray right-click must not end a left-button drag"
+        );
+    }
+
+    /// Focus loss is the one release that commits *both* origins —
+    /// the left-started drag a right release puts back, and the
+    /// right-started fast-resize a left release puts back. The two
+    /// `PutBack` rows above are its negative control: the same
+    /// `started_with_right` values, answered differently by a button.
+    ///
+    /// Fails on a resolver that maps focus loss onto either button
+    /// (one of the two rows answers `PutBack`), and on the pre-#153
+    /// shape, where there was no focus-loss release at all and the
+    /// drag waited for a button that might never come up.
+    #[test]
+    fn test_focus_loss_commits_a_drag_whichever_button_started_it() {
+        assert_eq!(
+            resolve_release(Release::FocusLost, false),
+            ThrottledRelease::Commit,
+            "focus loss must finalize a left-started drag"
+        );
+        assert_eq!(
+            resolve_release(Release::FocusLost, true),
+            ThrottledRelease::Commit,
+            "focus loss must finalize a right-started fast-resize"
         );
     }
 
@@ -240,11 +292,11 @@ mod tests {
     #[test]
     fn test_resolve_release_finalizes_only_the_button_that_started_the_gesture() {
         assert_eq!(
-            resolve_release(MouseButton::Middle, false),
+            resolve_release(Release::Button(MouseButton::Middle), false),
             ThrottledRelease::PutBack
         );
         assert_eq!(
-            resolve_release(MouseButton::Middle, true),
+            resolve_release(Release::Button(MouseButton::Middle), true),
             ThrottledRelease::PutBack
         );
     }

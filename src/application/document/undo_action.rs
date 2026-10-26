@@ -147,18 +147,48 @@ pub enum UndoAction {
         before_position: Position,
         before_size: Size,
     },
-    /// A node was deleted. Restored by re-inserting the node, re-inserting
-    /// every edge that touched it at its original `mindmap.edges` index,
-    /// and restoring the `parent_id` of every child that was orphaned by
-    /// the delete.
-    DeleteNode {
-        node: MindNode,
-        /// Edges that referenced the deleted node (parent_child, cross_link,
-        /// etc.), paired with their original index in `mindmap.edges`.
+    /// A set of nodes was deleted as one operation — the bare Delete
+    /// keystroke on a single node is the one-element case, a Delete on
+    /// a multi-selection the general one. Restored in one step by
+    /// re-inserting every node, re-inserting every edge that touched
+    /// one of them at its original `mindmap.edges` index, and giving
+    /// every child orphaned by the delete its original id and
+    /// `parent_id` back.
+    ///
+    /// One entry for the whole set is the point (#172): a Delete on N
+    /// selected nodes is one keystroke and takes one `Undo`, and the
+    /// set is resolved up front so no node in it is lost to the rename
+    /// an earlier removal's re-rooting would otherwise give it.
+    DeleteNodes {
+        /// The deleted nodes, in
+        /// [`dewey_cmp`](baumhard::mindmap::model::dewey_cmp) order of
+        /// their ids.
+        nodes: Vec<MindNode>,
+        /// Edges that referenced a deleted node (parent_child,
+        /// cross_link, etc.), paired with their original index in
+        /// `mindmap.edges`, ascending. An edge between two deleted
+        /// nodes is here once.
         removed_edges: Vec<(usize, MindEdge)>,
-        /// For each child that was orphaned: its original id (before
-        /// orphaning assigned it a root-level id) and the root-level id
-        /// it was given. Undo restores the original id and parent_id.
-        orphaned_children: Vec<(String, String)>,
+        /// Every child of a deleted node that was not itself deleted,
+        /// in the order its fresh root id was assigned. Undo walks the
+        /// list in this order, which is the reverse of the order the
+        /// re-rooting ran in (see `MindMapDocument::delete_nodes`).
+        orphaned_children: Vec<OrphanedChild>,
     },
+}
+
+/// One child re-rooted by a [`UndoAction::DeleteNodes`]: the id it
+/// had under its deleted parent, the root-level id the delete gave
+/// it, and which deleted node it hung under — the three facts undo
+/// needs to put it back. The parent is recorded per child because a
+/// multi-node delete orphans children of several nodes at once.
+#[derive(Clone, Debug)]
+pub struct OrphanedChild {
+    /// The child's id before the delete, restored by undo.
+    pub original_id: String,
+    /// The fresh root-level id the delete handed the child.
+    pub root_id: String,
+    /// The deleted node the child was a structural child of —
+    /// restored as its `parent_id` by undo.
+    pub parent_id: String,
 }
