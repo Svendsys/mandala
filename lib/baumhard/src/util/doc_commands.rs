@@ -16,7 +16,7 @@
 //! been copied across.
 //!
 //! The other was quieter and cost more. Five documents, `CLAUDE.md`
-//! §7 and `AGENTS.md` among them, published a `--benches` check as
+//! §6 and `AGENTS.md` among them, published a `--benches` check as
 //! the proof that a bench target still compiles — the only proof an
 //! agent is allowed, since running the benchmarks is forbidden — and
 //! wrote it with no package selection. Cargo then takes the root

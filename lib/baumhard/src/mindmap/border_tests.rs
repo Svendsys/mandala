@@ -531,6 +531,69 @@ mod tests {
         // And the documented floor.
         assert!((resolve_border_font_size_pt(None, None) - 14.0).abs() < f32::EPSILON);
     }
+
+    /// **The border cascade is slot-level** (`resolve_border_style`'s
+    /// doc): a per-node config, once present, replaces the canvas
+    /// default whole. A node config whose `font` and `color_palette`
+    /// are `None` draws no font and no palette even under a canvas
+    /// default that sets both, and its own `preset` wins. Pinned so a
+    /// move to a field-level cascade is a deliberate change rather
+    /// than a drift (#52; the first-edit consequence is #223).
+    ///
+    /// Control: with no per-node config the same canvas default does
+    /// reach the node, so the canvas fields are live and the first
+    /// half is the per-node slot's doing. `color` is the one
+    /// field-level exception and is pinned elsewhere
+    /// (`theme.rs`'s canvas-default test).
+    #[test]
+    fn test_a_per_node_border_config_replaces_the_canvas_default_whole() {
+        use crate::mindmap::border::BorderGlyphSet;
+        use crate::mindmap::model::GlyphBorderConfig;
+
+        let canvas = GlyphBorderConfig {
+            preset: "heavy".to_string(),
+            font: Some("Canvas Face".to_string()),
+            color_palette: Some("coral".to_string()),
+            ..Default::default()
+        };
+        let node = GlyphBorderConfig {
+            padding: 8.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            node.font, None,
+            "precondition: the node config leaves `font` unset"
+        );
+
+        let style = resolve_border_style(Some(&node), Some(&canvas), None, "#ffffff");
+        assert_eq!(
+            style.font_name, None,
+            "the canvas font must not reach a node with a config"
+        );
+        assert_eq!(style.color_palette, None, "nor the canvas palette");
+        assert_eq!(
+            style.glyph_set.top,
+            BorderGlyphSet::box_drawing_light().top,
+            "the node config's own preset (`light`, its default) wins over the canvas `heavy`"
+        );
+
+        let style = resolve_border_style(None, Some(&canvas), None, "#ffffff");
+        assert_eq!(
+            style.font_name.as_deref(),
+            Some("Canvas Face"),
+            "control: canvas font"
+        );
+        assert_eq!(
+            style.color_palette.as_deref(),
+            Some("coral"),
+            "control: canvas palette"
+        );
+        assert_eq!(
+            style.glyph_set.top,
+            BorderGlyphSet::box_drawing_heavy().top,
+            "control: canvas preset"
+        );
+    }
 }
 
 /// **The border side caps, which are the sampler's twin.** Both take

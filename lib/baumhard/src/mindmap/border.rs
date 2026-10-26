@@ -1208,11 +1208,22 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 /// goes through this so preset / font / size / color / pattern
 /// resolution can't drift between them.
 ///
-/// Cascade for each field, most-specific wins:
-/// 1. Per-node `GlyphBorderConfig` (the `cfg` arg).
-/// 2. Canvas-level default (the `canvas_default` arg).
-/// 3. Hardcoded preset / font / size defaults (light, system,
-///    14 pt, the resolved frame color).
+/// The cascade is **slot-level**: one config is chosen whole, the
+/// most specific present one, and every field but `color` is read
+/// from it alone:
+/// 1. Per-node `GlyphBorderConfig` (the `cfg` arg), if present.
+/// 2. Otherwise the canvas-level default (the `canvas_default` arg).
+/// 3. Otherwise the hardcoded preset / font / size defaults (light,
+///    system, 14 pt).
+///
+/// So a per-node config replaces the canvas default wholesale: a
+/// node config whose `font` is `None` draws no font even under a
+/// canvas default that sets one. A field-level cascade cannot be
+/// read off the model, because `preset`, `font_size_pt` and
+/// `padding` are not `Option` — the resolver cannot tell "author
+/// chose light" from "author left it unset". The first edit to a
+/// node's border materializes `GlyphBorderConfig::default()`, which
+/// therefore drops the canvas default's fields; that is #223.
 ///
 /// **The `color` field has one more tier than the others**, and it
 /// sits between 1 and 2. A node's *own* frame color — its palette
@@ -1239,14 +1250,13 @@ pub fn resolve_border_style(
     themed: Option<&str>,
     style_frame_color: &str,
 ) -> BorderStyle {
-    // Field-by-field cascade. `cfg` takes precedence; if a key
-    // sits at a meaningful default in `cfg` (e.g. the
-    // `default_border_preset` literal "light"), the cascade
-    // can't tell the difference between "author chose light"
-    // and "author left the field unset". We accept that: the
-    // canvas default only contributes when the per-node cfg is
-    // absent entirely, mirroring the existing `style.frame_color`
-    // cascade.
+    // Slot-level, not field-by-field: if a key sits at a
+    // meaningful default in `cfg` (e.g. the `default_border_preset`
+    // literal "light"), the cascade can't tell the difference
+    // between "author chose light" and "author left the field
+    // unset". So the canvas default only contributes when the
+    // per-node cfg is absent entirely; `color` below is the one
+    // field-level exception.
     let chosen = cfg.or(canvas_default);
 
     let preset_name = chosen.map(|c| c.preset.as_str()).unwrap_or("light");
@@ -1362,8 +1372,8 @@ pub fn resolve_section_frame_border(
     focused: bool,
     frame_color_resolved: &str,
 ) -> BorderStyle {
-    // Field-by-field cascade — same shape as `resolve_border_style`.
-    // Per-section override wins; otherwise the canvas-level default
+    // Slot-level cascade — same shape as `resolve_border_style`.
+    // The per-section override wins whole; otherwise the canvas-level default
     // for the focused / unfocused state. When neither is set we
     // synthesize a hardcoded floor `GlyphBorderConfig` so the
     // returned `BorderStyle` flows through the same resolver every
@@ -1602,12 +1612,12 @@ fn parse_side_or_fallback(s: &str, fallback: char, side: &str) -> SidePattern {
     }
 }
 
+/// The glyphs a `preset = "custom"` border draws when its `glyphs`
+/// is absent, mirroring the `default_*_glyph` defaults on the
+/// data-model type. Corners are the light preset's `┌┐└┘` rather
+/// than the rounded `╭╮╰╯` so the fallback joins cleanly with the
+/// side glyphs at cell boundaries.
 pub fn default_custom_glyphs() -> CustomBorderGlyphs {
-    // Mirrors the `default_*_glyph` defaults on the data-model
-    // type. Used when `preset = "custom"` but `glyphs` is absent.
-    // Corners are the light preset's `┌┐└┘` rather than the
-    // rounded `╭╮╰╯` so the fallback joins cleanly with the
-    // side glyphs at cell boundaries.
     CustomBorderGlyphs {
         top: "\u{2500}".to_string(),
         bottom: "\u{2500}".to_string(),

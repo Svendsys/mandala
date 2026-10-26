@@ -113,7 +113,7 @@ pub fn attrs_list_from_regions(
 
         // Resolve the font family. Both miss paths (compiled-id map
         // miss, fontdb face miss) fall back to Monospace with a
-        // warning — consistent with §4's "degrade the frame, not
+        // warning — consistent with §9's "degrade the frame, not
         // abort the process" rule.
         let family = resolve_font_family(region.font.as_ref(), font_system);
         attrs = match family {

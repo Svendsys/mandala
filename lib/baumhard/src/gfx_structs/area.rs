@@ -126,9 +126,20 @@ pub struct GlyphArea {
     /// Solid background fill drawn behind the text glyphs by the
     /// renderer. `None` means no fill — the element draws as text
     /// only, letting the canvas show through. Stored as 4×u8 RGBA
-    /// so it's cheap to hash, copy, and ship to the GPU. Mutations
-    /// can modify this directly through the tree walker; per-frame
+    /// so it's cheap to hash, copy, and ship to the GPU. Per-frame
     /// rendering reads it during `rebuild_buffers_from_tree`.
+    ///
+    /// **Rebuild-only**, like `background_padding` and `align_center`
+    /// below: set when the scene is built (`tree_builder`'s node
+    /// emitter, the color picker's area factory) and reached by no
+    /// `GlyphAreaField` or `GlyphAreaCommand`, so no mutation or tree
+    /// walk changes it; a new value means a rebuild. The consumer that
+    /// would earn a `GlyphAreaField` variant for it is the color
+    /// picker's live node-background preview, which its commit path
+    /// records as not yet wired. That variant also needs a reverse
+    /// converter in `sync_node_from_tree` (or an
+    /// `unsupported_fields_of_mutation` entry), or a mutation of it
+    /// reverts on the next `rebuild_all`.
     #[serde(default)]
     pub background_color: Option<[u8; 4]>,
     /// Asymmetric outward expansion of the background fill rect

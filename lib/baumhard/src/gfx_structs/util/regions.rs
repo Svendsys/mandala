@@ -20,7 +20,7 @@ pub use super::region_indexer::RegionIndexer;
 /// Failure modes returned by [`RegionParams`] accessors and computation
 /// methods.
 ///
-/// Per `CODE_CONVENTIONS.md` §7, baumhard does not implement `Display` or
+/// Per `CODE_CONVENTIONS.md` §9, baumhard does not implement `Display` or
 /// `std::error::Error` for its own enums — call sites match on the
 /// variant directly. Variants:
 ///

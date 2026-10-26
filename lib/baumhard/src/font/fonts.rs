@@ -790,8 +790,6 @@ where
 // nobody will ever read is the other thing. `do_for_all_sources`
 // above is the live way to reach [`FONT_SOURCES`].
 
-/// Opaque black. The default foreground color for newly-built
-/// `AttrsList`s.
 /// Ink bounding box of a shaped glyph string, measured at a specific
 /// font size. Sibling of the `measure_max_glyph_advance` scalar
 /// measurement (currently in the app-level renderer as pre-existing
