@@ -422,11 +422,12 @@ fn test_ipc_loopback_refuses_a_second_client_immediately() {
 }
 
 /// A refused client that writes without ever reading its refusal is
-/// cut off, not left blocked once the connection's buffer is full. The
-/// failing input is a refusal that lets go of the connection without
-/// ending it — on the pipe, a drop with the frame's write still queued
-/// in the driver, which keeps the instance connected and nobody reading
-/// it; on the socket, one kept open.
+/// cut off — its writes fail within the deadline — not left blocked
+/// once the connection's buffer is full. The failing input is a refusal
+/// that lets go of the connection without ending it: on the pipe, a drop
+/// with the frame's write still queued in the driver, which keeps the
+/// instance connected and nobody reading it; on the socket, one kept
+/// open.
 #[test]
 fn test_ipc_loopback_a_refused_client_that_only_writes_is_cut_off() {
     let harness = Harness::running("ipc-busy-writer");
@@ -438,18 +439,13 @@ fn test_ipc_loopback_a_refused_client_that_only_writes_is_cut_off() {
             "{{\"id\":1,\"cmd\":\"ping\",\"pad\":\"{}\"}}\n",
             "x".repeat(1 << 10)
         );
-        // Far past any buffer either transport keeps for one connection.
-        for _ in 0..(1 << 14) {
-            if writer.write_all(request.as_bytes()).is_err() {
-                return true;
-            }
-        }
-        false
+        // Until the server ends it. Not a fixed amount: the pipe reads
+        // and drops what a refused client sends for its whole grace, so
+        // any volume can go in without an error until the grace is up.
+        // `join_within` is the bound.
+        while writer.write_all(request.as_bytes()).is_ok() {}
     });
-    assert!(
-        join_within(sender, "the refused client's writes"),
-        "16 MiB went into a refused connection without an error"
-    );
+    join_within(sender, "the refused client's writes");
     drop(second);
     first.send(r#"{"id":1,"cmd":"ping"}"#);
     assert_eq!(first.next()["id"], json!(1), "the controller is undisturbed");
