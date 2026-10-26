@@ -65,7 +65,10 @@ const _: () = assert!(READER_PAUSE.as_millis() * 8 <= STALLED_WRITE_TIMEOUT.as_m
 fn join_within<T>(thread: JoinHandle<T>, what: &str) -> T {
     let deadline = Instant::now() + FRAME_TIMEOUT;
     while !thread.is_finished() {
-        assert!(Instant::now() < deadline, "{what} did not finish within {FRAME_TIMEOUT:?}");
+        assert!(
+            Instant::now() < deadline,
+            "{what} did not finish within {FRAME_TIMEOUT:?}"
+        );
         thread::sleep(Duration::from_millis(5));
     }
     thread.join().unwrap_or_else(|_| panic!("{what} panicked"))

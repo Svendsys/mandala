@@ -504,6 +504,9 @@ mod tests {
         let stopped = done
             .recv_timeout(Duration::from_secs(10))
             .expect("the acceptor returned after the endpoint closed");
-        assert!(matches!(stopped, Ok(true)), "a closed endpoint accepts nothing: {stopped:?}");
+        assert!(
+            matches!(stopped, Ok(true)),
+            "a closed endpoint accepts nothing: {stopped:?}"
+        );
     }
 }
