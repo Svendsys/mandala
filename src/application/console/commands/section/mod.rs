@@ -81,10 +81,10 @@ pub const COMMAND: Command = Command {
 };
 
 /// Which handler each of `section`'s own subverbs runs
-/// (`spec::route`). `add` resolves its own target; every other
-/// subverb runs against the one section the selection and
-/// `section=` resolve to, which is why it is a variant of its own.
-/// `frame` opens a level, so it is not a row.
+/// (`spec::route`). `add` resolves its own target, so it is a variant
+/// of its own; every other subverb runs against the one section the
+/// selection and `section=` resolve to, and shares `Each`. `frame`
+/// opens a level, so it is not a row.
 #[derive(Clone, Copy)]
 enum Route {
     Add,

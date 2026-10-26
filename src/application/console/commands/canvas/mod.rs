@@ -40,7 +40,7 @@ use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::route::{self, Routes};
+use crate::application::console::spec::route::{self, Delegates, Routes};
 use crate::application::console::spec::{kvs, usage, Descent, Grammar};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
@@ -126,27 +126,28 @@ pub fn execute_canvas(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 }
 
-/// Which handler each subject level's own subverbs run
-/// (`spec::route`) — the same two on all three levels. The per-field
-/// subverbs are routed by the shared set's table in
-/// `border::positional`; `preview` and `focused` open levels, so
-/// neither is a row.
+/// Which handler each subject level's subverbs run (`spec::route`)
+/// — the same on all three levels. The per-field subverbs are handed
+/// to the shared set's own table in `border::positional` by one
+/// [`DELEGATES`] row; `preview` and `focused` open levels, so neither
+/// is a row.
 #[derive(Clone, Copy)]
 enum Route {
     Show,
     Reset,
+    PerField,
 }
 
 const ROUTES: &Routes<Route> = &[("show", Route::Show), ("reset", Route::Reset)];
 
+const DELEGATES: &Delegates<Route> = &[(POSITIONAL_SUBVERBS, Route::PerField)];
+
 /// The names this dispatcher routes, for the registry test in
-/// `console::spec::tests`: [`ROUTES`] plus the shared per-field set,
-/// mirroring the `route::declares` arm that hands those on.
+/// `console::spec::tests`: [`ROUTES`] plus every name [`DELEGATES`]
+/// hands on, read off the same rows the dispatch reads.
 #[cfg(test)]
 pub(crate) fn routed_names() -> Vec<&'static str> {
-    let mut names = route::names(ROUTES);
-    names.extend(super::border::positional_routed_names());
-    names
+    route::names_with(ROUTES, DELEGATES)
 }
 
 /// One subject level — `canvas border`, `canvas section-frame`, or
@@ -160,7 +161,7 @@ fn execute_subject(
     surface: BorderSurface,
 ) -> ExecResult {
     match descent.stop {
-        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+        Stop::Matched(subverb) => match route::lookup_or_delegate(ROUTES, DELEGATES, subverb) {
             Some(Route::Show) => match kvs::read_strict(descent, args) {
                 Ok(_) => execute_show(eff, surface),
                 Err(msg) => ExecResult::err(msg),
@@ -169,9 +170,7 @@ fn execute_subject(
                 Ok(_) => apply_canvas_edits(eff, surface, clear_edits()),
                 Err(msg) => ExecResult::err(msg),
             },
-            None if route::declares(POSITIONAL_SUBVERBS, subverb) => {
-                apply_positional(descent, args, surface, eff)
-            }
+            Some(Route::PerField) => apply_positional(descent, args, surface, eff),
             None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::KvForm => ExecResult::err(descent.quoting_hint(args)),

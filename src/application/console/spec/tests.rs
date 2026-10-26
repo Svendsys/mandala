@@ -1113,6 +1113,47 @@ fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)
     ]
 }
 
+/// Every shared subverb set a dispatcher hands on through a
+/// `route::Delegates` row, with the names the set's own table routes.
+/// A dispatcher reports a delegated set's names as routed, so the set's
+/// table has to be held against the set here — a new `Delegates` set
+/// owes an entry.
+fn shared_sets() -> Vec<(&'static str, &'static [Subverb], Vec<&'static str>)> {
+    use crate::application::console::commands::border;
+    vec![(
+        "border per-field",
+        border::grammar::POSITIONAL_SUBVERBS,
+        border::positional_routed_names(),
+    )]
+}
+
+/// A shared set's own table routes exactly the set.
+///
+/// The failing input is a row added to a shared set — `border`'s
+/// per-field subverbs, composed by four levels — with no row in the
+/// set's table. Every composing dispatcher reports the name as routed,
+/// because it hands the whole set on, so the exactness test over the
+/// levels stays green and the subverb reaches `route::miss` on all
+/// four. This holds the set's table instead.
+#[test]
+fn test_every_shared_set_table_routes_exactly_its_set() {
+    for (site, set, routed) in shared_sets() {
+        let declared: Vec<&'static str> = set.iter().map(|s| s.name).collect();
+        for name in &declared {
+            assert!(
+                routed.contains(name),
+                "{site}: the shared set declares subverb '{name}' but its table does not route it"
+            );
+        }
+        for name in &routed {
+            assert!(
+                declared.contains(name),
+                "{site}: routes subverb '{name}', which the shared set does not declare"
+            );
+        }
+    }
+}
+
 /// A route table handles exactly the subverbs its levels declare.
 ///
 /// The failing input is the one #155 names: a `Subverb` row added to

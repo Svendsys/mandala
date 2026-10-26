@@ -29,13 +29,18 @@ const SUBVERBS: &[Subverb] = &[
     Subverb::bare("debug", "overlay", "show the rolling per-frame average"),
 ];
 
-/// One mode per declared subverb; see `spec::route` for why this is
-/// a table rather than a `match` with a catch-all.
-const ROUTES: &Routes<FpsDisplayMode> = &[
-    ("on", FpsDisplayMode::Snapshot),
-    ("off", FpsDisplayMode::Off),
-    ("debug", FpsDisplayMode::Debug),
-];
+/// Which mode each declared subverb sets (`spec::route`). A private
+/// enum rather than [`FpsDisplayMode`] itself: the renderer constructs
+/// every display mode, so a row deleted from a table of those would
+/// leave no variant dead and clippy quiet.
+#[derive(Clone, Copy)]
+enum Route {
+    On,
+    Off,
+    Debug,
+}
+
+const ROUTES: &Routes<Route> = &[("on", Route::On), ("off", Route::Off), ("debug", Route::Debug)];
 
 /// The names [`ROUTES`] handles, for the registry test in
 /// `console::spec::tests`.
@@ -70,7 +75,9 @@ fn execute_fps(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
     let mode = match descent.stop {
         Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
-            Some(mode) => mode,
+            Some(Route::On) => FpsDisplayMode::Snapshot,
+            Some(Route::Off) => FpsDisplayMode::Off,
+            Some(Route::Debug) => FpsDisplayMode::Debug,
             None => return ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::Bare => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),

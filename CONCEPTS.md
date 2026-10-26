@@ -4095,10 +4095,15 @@ matches on the variant. Before it, dispatchers matched
 `Subverb` row was right on every derived surface and ran the
 catch-all's behavior: `fps snapshot` would have toggled the
 rolling average (#155). The match is now exhaustive without a
-catch-all (a variant no row constructs is dead code, which the
-clippy gate refuses), and a registry test holds every table
-against the subverbs its levels declare, in both directions, so
-a row with no handler fails the suite naming the subverb.
+catch-all, and because every route enum is private to its
+dispatcher with one payload-free variant per row, a variant whose
+row is deleted is dead code, which the clippy gate refuses. A
+registry test holds every table against the subverbs its levels
+declare, in both directions, so a row with no handler fails the
+suite naming the subverb. A level composing a shared set — the
+border family's per-field subverbs — hands it on through a
+`Delegates` row, which is data the registry test reads too, and
+the shared set's own table is held against the set.
 
 `console::spec`'s own tests hold the declaration against itself
 over the whole registry, in both directions: a form naming a

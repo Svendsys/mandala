@@ -14,7 +14,7 @@ use baumhard::mindmap::border_pattern::SidePattern;
 
 use crate::application::console::parser::Args;
 use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::route::{self, Routes};
+use crate::application::console::spec::route::{self, Delegates, Routes};
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::traits::ColorValue;
 use crate::application::console::{ConsoleEffects, ExecResult};
@@ -27,11 +27,12 @@ use super::grammar::{BORDER, POSITIONAL_SUBVERBS};
 use super::positional::{positional_subverb_to_edits, BorderSurface};
 use super::show::execute_border_show;
 
-/// Which handler each of `border`'s own subverbs runs
-/// (`spec::route`). The seven per-field subverbs are not rows here:
-/// they belong to the shared set every border surface composes, and
-/// that set's own table in `positional` routes them. `preview` is not
-/// a row either — it opens a level, so it never arrives matched.
+/// Which handler each of `border`'s subverbs runs (`spec::route`).
+/// The seven per-field subverbs are not [`ROUTES`] rows: they belong
+/// to the shared set every border surface composes, so one
+/// [`DELEGATES`] row hands the set to its own table in `positional`.
+/// `preview` is not a row either — it opens a level, so it never
+/// arrives matched.
 #[derive(Clone, Copy)]
 enum Route {
     On,
@@ -39,6 +40,7 @@ enum Route {
     Toggle,
     Reset,
     Show,
+    PerField,
 }
 
 const ROUTES: &Routes<Route> = &[
@@ -49,14 +51,14 @@ const ROUTES: &Routes<Route> = &[
     ("show", Route::Show),
 ];
 
+const DELEGATES: &Delegates<Route> = &[(POSITIONAL_SUBVERBS, Route::PerField)];
+
 /// The names this dispatcher routes, for the registry test in
-/// `console::spec::tests`: [`ROUTES`] plus the shared per-field set,
-/// mirroring the `route::declares` arm that hands those on.
+/// `console::spec::tests`: [`ROUTES`] plus every name [`DELEGATES`]
+/// hands on, read off the same rows the dispatch reads.
 #[cfg(test)]
 pub(crate) fn routed_names() -> Vec<&'static str> {
-    let mut names = route::names(ROUTES);
-    names.extend(super::positional::routed_names());
-    names
+    route::names_with(ROUTES, DELEGATES)
 }
 
 pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -68,13 +70,13 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         return super::preview::execute_border_preview(&descent, args, eff);
     }
     match descent.stop {
-        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+        Stop::Matched(subverb) => match route::lookup_or_delegate(ROUTES, DELEGATES, subverb) {
             Some(Route::On) => bare_subverb(&descent, args, eff, true, apply_set_visible),
             Some(Route::Off) => bare_subverb(&descent, args, eff, false, apply_set_visible),
             Some(Route::Toggle) => bare_subverb(&descent, args, eff, (), |eff, ()| apply_toggle_visible(eff)),
             Some(Route::Reset) => bare_subverb(&descent, args, eff, (), |eff, ()| apply_reset(eff)),
             Some(Route::Show) => execute_border_show(&descent, args, eff),
-            None if route::declares(POSITIONAL_SUBVERBS, subverb) => apply_positional(&descent, args, eff),
+            Some(Route::PerField) => apply_positional(&descent, args, eff),
             None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         // A bare positional at a slot a kv already made kv-form

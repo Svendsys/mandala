@@ -18,9 +18,14 @@
 //! both sides:
 //!
 //! - **The handler side is the compiler's.** The match is over an
-//!   enum, so it is exhaustive without a catch-all; a variant no
-//!   table row constructs is dead code, which the `-D warnings`
-//!   clippy gate refuses.
+//!   enum, so it is exhaustive without a catch-all. Every route enum
+//!   is private to its dispatcher and has one payload-free variant
+//!   per row, so a variant whose row is deleted is constructed
+//!   nowhere: dead code, which the `-D warnings` clippy gate refuses.
+//!   That holds only under those two rules; a public enum (another
+//!   module may construct it) or a variant carrying its distinction
+//!   in a payload (another row still constructs it) would leave
+//!   clippy quiet and the name side below the only check.
 //! - **The name side is a test's.** `console::spec::tests` holds
 //!   every dispatcher's table against the subverbs its levels
 //!   declare, in both directions, and fails on a declared subverb no
@@ -34,6 +39,14 @@
 //!
 //! A subverb that opens a child level is never routed: the descent
 //! steps through it, so it never arrives as `Stop::Matched`.
+//!
+//! A level that composes a shared subverb set routes the whole set
+//! to that set's own dispatcher through a [`Delegates`] row rather
+//! than through a hand-written arm, so the hand-off is data too: the
+//! names a dispatcher reports to the registry test are read off the
+//! same rows [`lookup_or_delegate`] reads, and deleting the row both
+//! drops those names from the report and leaves its variant
+//! unconstructed.
 
 use super::{Grammar, Subverb};
 
@@ -51,6 +64,25 @@ pub fn lookup<R: Copy>(routes: &Routes<R>, subverb: &Subverb) -> Option<R> {
         .iter()
         .find(|(name, _)| *name == subverb.name)
         .map(|(_, r)| *r)
+}
+
+/// One dispatcher's hand-offs: each shared subverb set it composes,
+/// paired with the variant that runs the set's own dispatcher.
+pub type Delegates<R> = [(&'static [Subverb], R)];
+
+/// [`lookup`], then the first [`Delegates`] row whose set declares
+/// `subverb` (by name, see [`declares`]).
+pub fn lookup_or_delegate<R: Copy>(
+    routes: &Routes<R>,
+    delegates: &Delegates<R>,
+    subverb: &Subverb,
+) -> Option<R> {
+    lookup(routes, subverb).or_else(|| {
+        delegates
+            .iter()
+            .find(|(set, _)| declares(set, subverb))
+            .map(|(_, r)| *r)
+    })
 }
 
 /// Whether `set` declares `subverb`'s name. For a level that
@@ -85,4 +117,13 @@ pub fn miss(level: &Grammar, subverb: &Subverb) -> String {
 #[cfg(test)]
 pub fn names<R>(routes: &Routes<R>) -> Vec<&'static str> {
     routes.iter().map(|(name, _)| *name).collect()
+}
+
+/// [`names`], plus every name a [`Delegates`] row hands on. The
+/// delegated set's own table is held against the set separately.
+#[cfg(test)]
+pub fn names_with<R>(routes: &Routes<R>, delegates: &Delegates<R>) -> Vec<&'static str> {
+    let mut out = names(routes);
+    out.extend(delegates.iter().flat_map(|(set, _)| set.iter().map(|s| s.name)));
+    out
 }

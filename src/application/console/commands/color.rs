@@ -61,19 +61,25 @@ const SUBVERBS: &[Subverb] = &[
 ];
 
 /// Which handler each declared subverb runs (`spec::route`). The
-/// four wheel subverbs differ only in the axis they hand the picker;
-/// `pick` is the axis-agnostic legacy flow.
+/// four wheel subverbs differ only in the axis they hand the picker,
+/// and `pick` is the axis-agnostic legacy flow — but each is a
+/// variant of its own rather than one variant with an axis payload,
+/// so a deleted row leaves its variant dead instead of quietly
+/// constructed by its siblings.
 #[derive(Clone, Copy)]
 enum Route {
-    Wheel(Option<NodeColorAxis>),
+    Bg,
+    Text,
+    Border,
+    Pick,
     Picker,
 }
 
 const ROUTES: &Routes<Route> = &[
-    ("bg", Route::Wheel(Some(NodeColorAxis::Bg))),
-    ("text", Route::Wheel(Some(NodeColorAxis::Text))),
-    ("border", Route::Wheel(Some(NodeColorAxis::Border))),
-    ("pick", Route::Wheel(None)),
+    ("bg", Route::Bg),
+    ("text", Route::Text),
+    ("border", Route::Border),
+    ("pick", Route::Pick),
     ("picker", Route::Picker),
 ];
 
@@ -115,7 +121,10 @@ fn execute_picker(
     route: Route,
 ) -> ExecResult {
     let axis = match route {
-        Route::Wheel(axis) => axis,
+        Route::Bg => Some(NodeColorAxis::Bg),
+        Route::Text => Some(NodeColorAxis::Text),
+        Route::Border => Some(NodeColorAxis::Border),
+        Route::Pick => None,
         Route::Picker => {
             return match descent
                 .slot_value(args)

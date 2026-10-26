@@ -131,7 +131,8 @@ pub(crate) struct PositionalEdits {
 
 /// Which parser each of [`super::grammar::POSITIONAL_SUBVERBS`]
 /// runs (`spec::route`). Every surface that composes the set hands
-/// its rows here by identity, so this table is the one place a new
+/// its rows here by name (a `route::Delegates` row, matched by
+/// `route::declares`), so this table is the one place a new
 /// per-field subverb needs a handler.
 #[derive(Clone, Copy)]
 enum Route {
@@ -173,9 +174,10 @@ pub(crate) fn routed_names() -> Vec<&'static str> {
 /// `help` prints for that form, derived from the same declaration.
 ///
 /// Returns `Ok(None)` when the descent matched no subverb at all, or
-/// one outside the shared set — the caller owns the "unknown subverb" message because each
-/// surface lists a different set of siblings. Errors are plain
-/// strings; the caller lifts them into its own `ExecResult::Err`.
+/// one outside the shared set — the caller owns the "unknown
+/// subverb" message because each surface lists a different set of
+/// siblings. Errors are plain strings; the caller lifts them into
+/// its own `ExecResult::Err`.
 pub(crate) fn positional_subverb_to_edits(
     descent: &Descent,
     args: &Args,
