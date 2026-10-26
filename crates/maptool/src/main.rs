@@ -104,12 +104,23 @@ Commands:
                                 an interrupted run leaves the original
                                 intact rather than truncated.
   verify <map.json>             Check the file against the format's
-                                structural invariants (parent_id
-                                consistency, Dewey IDs, edge and portal
-                                references, palette references, named
-                                enums, text-run bounds). Exit 0 if
-                                valid; nonzero with a list of
-                                violations otherwise.";
+                                invariants: the parent_id tree, Dewey
+                                IDs, edge and portal references,
+                                duplicate edges, palette references,
+                                named enums, section bounds and
+                                counts, the numeric domain the loader
+                                enforces (font sizes, extents,
+                                coordinates, glyph lengths, text-run
+                                bounds, zoom windows), and keys or
+                                constructs this build does not
+                                recognize. Exit 0 if clean or if only
+                                warnings are found; nonzero with a
+                                list of violations otherwise. Each
+                                violation is tagged with one of the
+                                categories: tree, ids, references,
+                                edges, palettes, enums, sections,
+                                numeric, unknown_keys,
+                                unknown_variant.";
 
 fn main() -> ExitCode {
     // maptool is a shipped release binary that walks the same

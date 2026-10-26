@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Cross-platform context-bundles for the unified `dispatch_action`
-//! funnel. Track C from `WASM_CONVERGENCE.md` (final WASM convergence
+//! funnel. Track C from `work_plans/WASM_CONVERGENCE.md` (final WASM convergence
 //! step after Tracks A + B):
 //!
 //! - [`InputContextCore`] holds the 13 fields **both** native's

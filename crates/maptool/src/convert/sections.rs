@@ -72,8 +72,9 @@ pub(super) fn migrate_one_node(node: &mut Value) -> bool {
 
     if already_has_sections {
         // Partial-migration case: keep the existing sections,
-        // drop any stray legacy fields. Fired silently — the
-        // summary line counts only fresh migrations.
+        // drop any stray legacy fields. No per-node message; the
+        // node still counts toward the summary total when it
+        // carried a legacy field, because the shape changed.
         return legacy_text.is_some() || legacy_runs.is_some();
     }
 

@@ -27,7 +27,7 @@
 //! no surface, no verb). Reparent / Connect transitions remain
 //! keybind-only (`Ctrl+P` / `Ctrl+D`).
 //!
-//! See `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.9 for the full target
+//! See `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §3.9 for the full target
 //! grammar.
 
 use super::Command;

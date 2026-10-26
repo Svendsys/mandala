@@ -3,7 +3,7 @@
 //! `dispatch_action` — the single entry point that runs `Action`
 //! bodies on native. Mouse handlers and the keyboard handler funnel
 //! through here. WASM has its own dispatch path today; the
-//! convergence track is documented in `WASM_CONVERGENCE.md`.
+//! convergence track is documented in `work_plans/WASM_CONVERGENCE.md`.
 //! Adding a new behavior
 //! is variant + default + arm, in that order; never inline a body in
 //! a handler.
@@ -236,7 +236,7 @@ fn take_rubber_band_for_target_picker(
 ///     fix on the other side of the seam, so the two targets now
 ///     answer identically for identical input.
 ///
-/// `WASM_CONVERGENCE.md` Track C records the architecture; calling
+/// `work_plans/WASM_CONVERGENCE.md` Track C records the architecture; calling
 /// `dispatch_compatible` from this fn is the seam.
 pub(in crate::application::app) fn dispatch_action(
     action: Action,
