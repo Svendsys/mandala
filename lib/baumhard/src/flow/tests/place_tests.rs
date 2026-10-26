@@ -9,7 +9,9 @@
 use glam::Vec2;
 
 use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
-use crate::flow::tests::support::{center, close, de_casteljau, real_run, style, synthetic, with_fonts};
+use crate::flow::tests::support::{
+    center, close, de_casteljau, positioned, real_run, style, synthetic, with_fonts,
+};
 use crate::flow::{
     offset, outline, place_at_point, place_on_closed, place_on_open, ring_offset, Curve, Outline, PlacedRun,
     Rect, ShapedRun,
@@ -274,6 +276,51 @@ pub fn do_flow_place_keeps_marks_with_their_letters() {
             );
         }
         assert_eq!(row + 1, clusters, "{text:?}: one row per cluster");
+    }
+}
+
+#[test]
+fn test_flow_place_sets_glyphs_at_their_pen_positions() {
+    do_flow_place_sets_glyphs_at_their_pen_positions();
+}
+
+/// Each glyph of a cluster sits in the cluster's box at its pen position
+/// as shaped, not at its predecessors' advances laid end to end (ruling
+/// R9.1). A letter of advance 8 at pen 0 with a mark after it that
+/// shares its pen position — as a right-to-left mark does — puts the
+/// mark at the letter's x, not 8 to its right; a mark at pen 8 sits 8
+/// to the right. Down a vertical line both share their letter's row.
+pub fn do_flow_place_sets_glyphs_at_their_pen_positions() {
+    let shared = positioned(&[(8.0, 0.0, true), (0.0, 0.0, false), (6.0, 8.0, true)], 10.0);
+    let after = positioned(&[(8.0, 0.0, true), (0.0, 8.0, false), (6.0, 8.0, true)], 10.0);
+    let down = Curve::Line(Vec2::ZERO, Vec2::new(0.0, 500.0));
+    let shared = open(&shared, down, &ONCE, 0.0);
+    let after = open(&after, down, &ONCE, 0.0);
+    close(
+        shared.glyphs[1].pos.x,
+        shared.glyphs[0].pos.x,
+        1e-3,
+        "a mark sharing its letter's pen",
+    );
+    close(
+        after.glyphs[1].pos.x,
+        after.glyphs[0].pos.x + 8.0,
+        1e-3,
+        "a mark after its letter",
+    );
+    for placed in [&shared, &after] {
+        close(
+            placed.glyphs[1].pos.y,
+            placed.glyphs[0].pos.y,
+            1e-3,
+            "the mark's row",
+        );
+        close(
+            placed.glyphs[2].pos.y - placed.glyphs[0].pos.y,
+            10.0,
+            1e-3,
+            "the next cluster's row",
+        );
     }
 }
 

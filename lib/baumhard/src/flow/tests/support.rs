@@ -72,19 +72,31 @@ pub(crate) fn synthetic(advances: &[f32], line_height: f32) -> ShapedRun {
     )
 }
 
-/// A run of glyphs `(advance, begins a grapheme cluster)`.
+/// A run of glyphs `(advance, begins a grapheme cluster)`, each at the
+/// pen position its predecessors' advances put it.
 pub(crate) fn clustered(glyphs: &[(f32, bool)], line_height: f32) -> ShapedRun {
+    let mut pen = 0.0_f32;
+    let positioned_glyphs: Vec<(f32, f32, bool)> = glyphs
+        .iter()
+        .map(|&(advance, grapheme_start)| {
+            let x = pen;
+            pen += advance;
+            (advance, x, grapheme_start)
+        })
+        .collect();
+    positioned(&positioned_glyphs, line_height)
+}
+
+/// A run of glyphs `(advance, pen position, begins a grapheme cluster)`:
+/// for a fixture whose pen positions are not its advances laid end to
+/// end, as a right-to-left mark's are not.
+pub(crate) fn positioned(glyphs: &[(f32, f32, bool)], line_height: f32) -> ShapedRun {
     ShapedRun {
         buffer: Arc::new(Buffer::new_empty(Metrics::new(line_height, line_height))),
         glyphs: glyphs
             .iter()
-            .scan(0.0_f32, |pen, &(advance, grapheme_start)| {
-                let x = *pen;
-                *pen += advance;
-                Some((x, advance, grapheme_start))
-            })
             .enumerate()
-            .map(|(i, (x, advance, grapheme_start))| GlyphMetrics {
+            .map(|(i, &(advance, x, grapheme_start))| GlyphMetrics {
                 span: 0,
                 bytes: i..i + 1,
                 advance,
