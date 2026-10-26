@@ -14,7 +14,7 @@
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::{Comparator, Predicate};
 use crate::engine::tests::test_element::{
-    add, add_mutator, plain, value, TestElement, TestField, TestKind, TestMutation, TestMutator,
+    add, add_mutator, plain, value, TestElement, TestField, TestMutation, TestMutator,
 };
 use crate::engine::tree::{MutatorTree, Tree};
 use crate::engine::walker::walk_tree;
@@ -237,26 +237,27 @@ pub fn do_engine_repeat_while_stops_where_the_predicate_fails() {
 }
 
 #[test]
-fn test_engine_repeat_while_filters_on_kind() {
-    do_engine_repeat_while_filters_on_kind();
+fn test_engine_repeat_while_judges_each_branch_on_its_own() {
+    do_engine_repeat_while_judges_each_branch_on_its_own();
 }
 
-/// The predicate is the element type's own vocabulary: filtering on
-/// [`TestKind`] stops at the first `Marked` element of each branch,
-/// and a sibling branch is judged on its own. The `Marked` element sits
-/// a level down, where `RepeatWhile` reaches every child whatever its
-/// key, so it is the predicate that stops there, not routing.
-pub fn do_engine_repeat_while_filters_on_kind() {
+/// A failure ends only the branch it is found in: below the first
+/// level, the first branch fails at its top, and the sibling branch
+/// after it is still walked to its own end. The predicate filters on
+/// value, not kind: the descent is routed by kind at every level
+/// (#232 R2), so a kind predicate only ever meets elements of the
+/// repeated mutator's kind.
+pub fn do_engine_repeat_while_judges_each_branch_on_its_own() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
     let root = tree.root;
-    let first = add(&mut tree, root, TestElement::new(0, 1));
-    let first_below = add(&mut tree, first, TestElement::new(0, 2));
-    let second = add(&mut tree, root, TestElement::new(0, 3));
-    let marked = add(&mut tree, second, TestElement::marked(0, 4));
-    let below_marked = add(&mut tree, marked, TestElement::new(0, 5));
+    let top = add(&mut tree, root, TestElement::new(0, 1));
+    let failing = add(&mut tree, top, TestElement::new(0, 300));
+    let below_failing = add(&mut tree, failing, TestElement::new(0, 3));
+    let passing = add(&mut tree, top, TestElement::new(0, 2));
+    let below_passing = add(&mut tree, passing, TestElement::new(0, 4));
 
     let predicate = Predicate::<TestElement> {
-        fields: vec![(TestField::Kind(TestKind::Plain), Comparator::equals())],
+        fields: vec![(TestField::Value(100), Comparator::less())],
         always_match: false,
     };
     let mut mt = MutatorTree::new_with(Mutator::Instruction {
@@ -268,11 +269,15 @@ pub fn do_engine_repeat_while_filters_on_kind() {
     add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(10), plain(0)));
 
     walk_tree(&mut tree, &mt, &0);
-    assert_eq!(value(&tree, first), 11);
-    assert_eq!(value(&tree, first_below), 12);
-    assert_eq!(value(&tree, second), 13);
-    assert_eq!(value(&tree, marked), 4, "Marked fails the predicate");
-    assert_eq!(value(&tree, below_marked), 5, "and nothing below it is reached");
+    assert_eq!(value(&tree, top), 11);
+    assert_eq!(value(&tree, failing), 300, "the first branch fails the predicate");
+    assert_eq!(value(&tree, below_failing), 3, "and nothing below it is reached");
+    assert_eq!(
+        value(&tree, passing),
+        12,
+        "the sibling branch is judged on its own"
+    );
+    assert_eq!(value(&tree, below_passing), 14);
 }
 
 #[test]

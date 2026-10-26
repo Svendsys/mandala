@@ -1621,8 +1621,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("engine_repeat_while_stops_where_the_predicate_fails", |b| {
         b.iter(do_engine_repeat_while_stops_where_the_predicate_fails)
     });
-    c.bench_function("engine_repeat_while_filters_on_kind", |b| {
-        b.iter(do_engine_repeat_while_filters_on_kind)
+    c.bench_function("engine_repeat_while_judges_each_branch_on_its_own", |b| {
+        b.iter(do_engine_repeat_while_judges_each_branch_on_its_own)
     });
     c.bench_function("engine_repeat_while_resumes_with_the_terminator", |b| {
         b.iter(do_engine_repeat_while_resumes_with_the_terminator)
