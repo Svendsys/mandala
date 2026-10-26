@@ -27,8 +27,9 @@ pub const HUE_SLOT_COUNT: usize = 24;
 // "the hue ring slot at index 7" without re-deriving an index from
 // tree position. Without stability, swapping the picker's full
 // rebuild for a mutator-driven update would silently misalign
-// (Baumhard's `align_child_walks` pairs mutator children with target
-// children by ascending channel — see `tree_walker.rs:226`).
+// (Baumhard's `align_child_walks` in
+// `lib/baumhard/src/gfx_structs/tree_walker.rs` pairs mutator
+// children with target children by ascending channel).
 //
 // The channel layout now lives in `widgets/color_picker.json` under
 // `mutator_spec.children[*].Repeat` — each `Repeat` declares a
