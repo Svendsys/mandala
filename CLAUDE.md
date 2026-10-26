@@ -58,9 +58,10 @@ borders, connection paths — is laid out as positioned font glyphs.
   validation invariants, portal labels, mutations, and migration from
   legacy. Read this before changing the data model.
 - **`crates/maptool/`** — CLI tool for working with `.mindmap.json`
-  files: `show`, `grep`, `apply`, `export`, `convert --legacy`
-  (migration from miMind-derived format), and `verify` (structural
-  validation).
+  files: `show`, `grep`, `apply`, `export`, `convert` (`--legacy`
+  migrates the miMind-derived format; `--portals` and `--sections`
+  migrate pre-refactor maps that are otherwise current), and `verify`
+  (structural and numeric validation).
 - **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
   socket: one invocation, one command, JSON or `path: value` lines on
   stdout, exit code `0` / `1` (the app said no) / `2` (could not reach
@@ -197,8 +198,8 @@ the parity trajectory (or why none is owed):
   than pending: long-press is the touch peer of the keyboard's `r`,
   so rebinding the browser's long-press to some unrelated
   `Compatible` Action would make one gesture mean two different
-  things on two targets — a worse §4 outcome than a gesture that is
-  honestly unavailable and says so. **The rest of the touch
+  things on two targets — a worse CODE_CONVENTIONS §4 outcome than
+  a gesture that is honestly unavailable and says so. **The rest of the touch
   vocabulary is not affected**: tap, one-finger pan and pinch-zoom
   resolve to no `Action` at all and run on both targets through
   `dispatch::apply_touch_effect`, which is what makes the browser
@@ -325,7 +326,7 @@ the parity trajectory (or why none is owed):
   pinned in `rust-toolchain.toml`: a new stable release cannot add a
   lint until the pin is bumped, and bumping it is a change of its own
   that fixes what the new lints report), `--bench` (runs the criterion
-  benches after tests — **maintainers only**; §7 and `AGENTS.md`
+  benches after tests — **maintainers only**; §6 and `AGENTS.md`
   forbid it to agents, who need the type-check above and nothing
   else).
 - **Build releases**: `./build.sh` builds both the native binary

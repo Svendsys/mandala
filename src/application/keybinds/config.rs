@@ -45,7 +45,7 @@ keybind_surface! {
         /// Enter connect mode on the current selection.
         EnterConnectMode => enter_connect_mode = ["Ctrl+D"],
         /// Enter resize mode on the current selection — Batch 2 of
-        /// `SECTIONS_BORDERS_RESIZE_PLAN.md`.
+        /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`.
         EnterResizeMode => enter_resize_mode = ["r", "LongPress"],
         /// Start a corner-anchored fast-resize gesture from a
         /// right-button drag. Lookup goes through
@@ -68,7 +68,7 @@ keybind_surface! {
         /// As `edit_selection`, but the editor opens empty.
         EditSelectionClean => edit_selection_clean = ["Backspace"],
         /// Enter NodeEdit mode (Batch 3 of
-        /// `SECTIONS_BORDERS_RESIZE_PLAN.md`). The umbrella `Enter`
+        /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`). The umbrella `Enter`
         /// keybind dispatches `edit_selection` first (which fans out
         /// here for node-bearing selections), so users normally
         /// don't rebind this — but the explicit hook is here for

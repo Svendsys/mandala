@@ -484,8 +484,8 @@ pub fn zero_section_node(node: &MindNode) -> Option<String> {
     node.sections.is_empty().then(|| {
         format!(
             "node {:?} ships zero sections — every renderable node \
-             needs at least one. Run `maptool convert --sections <file>` \
-             to migrate, or add an explicit `sections` array.",
+             needs at least one. Run `maptool convert --sections <file> <file>` \
+             to migrate in place, or add an explicit `sections` array.",
             node.id
         )
     })

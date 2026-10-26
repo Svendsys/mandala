@@ -118,7 +118,7 @@ turns the same loop into a short captioned GIF for a human to review;
   builders, and the tree bridge. Most interesting logic lives here.
 - [`crates/maptool/`](crates/maptool/) — CLI for working with
   `.mindmap.json` files: `show`, `grep`, `apply`, `export`,
-  `convert --legacy`, `verify`.
+  `convert --legacy | --portals | --sections`, `verify`.
 - [`crates/mandalactl/`](crates/mandalactl/) — CLI client for a running
   app's `--ipc` socket (see "Driving the app from a terminal").
 - [`lib/mandala_derive/`](lib/mandala_derive/) — proc-macro support.

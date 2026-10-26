@@ -656,7 +656,7 @@ pub(super) fn handle_mouse_input(
 }
 
 /// Right-button press / release handler — fast-resize gesture
-/// substrate (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+/// substrate (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
 ///
 /// Press: stash the press-time hit (body of any node / section,
 /// no edge-handle / portal-label / resize-handle precedence — the
