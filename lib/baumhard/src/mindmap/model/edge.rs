@@ -695,15 +695,25 @@ impl EdgeLabelConfig {
     }
 }
 
-/// One Bezier control point for an edge's connection curve. Stored
-/// in canvas-space coordinates (absolute, not relative to the
-/// endpoints). Plain data, zero allocation, `Copy`-free only because
-/// `f64` fields keep parity with the JSON precision of the source
-/// format.
+/// One Bezier control point for an edge's connection curve, stored
+/// as an **offset in canvas units from a node's center** — not as
+/// an absolute canvas position. Which node depends on the point's
+/// index in `MindEdge::control_points`, as
+/// [`crate::mindmap::connection::build_connection_path`] reads them:
+/// with one point it is relative to the source node's center (a
+/// quadratic curve, promoted to cubic); with two, the first is
+/// relative to the source's center and the second to the target's.
+/// Points past the second are not read. Moving a node therefore
+/// moves the handles measured from it, and only those.
+///
+/// Plain data, zero allocation. `f64` keeps parity with the JSON
+/// precision of the source format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ControlPoint {
-    /// Canvas-space x coordinate.
+    /// Horizontal offset from the owning node's center, in canvas
+    /// units.
     pub x: f64,
-    /// Canvas-space y coordinate.
+    /// Vertical offset from the owning node's center, in canvas
+    /// units.
     pub y: f64,
 }

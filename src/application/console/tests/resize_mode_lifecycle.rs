@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! End-to-end resize-mode lifecycle test (`SECTIONS_BORDERS_RESIZE_PLAN.md`
+//! End-to-end resize-mode lifecycle test (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`
 //! §7.2 scenario 4): drive the console verbs that flip
 //! `InteractionMode` and assert that the scene-builder gate
 //! responds — handles emit when Resize is active, vanish when

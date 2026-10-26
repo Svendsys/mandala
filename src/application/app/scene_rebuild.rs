@@ -352,7 +352,7 @@ pub(in crate::application::app) fn highlight_entries_for(
 /// — pulled into a helper so [`rebuild_all`] can pass the result
 /// straight to `Renderer::set_mode_status_text`.
 ///
-/// Format pinned in §3.5 of `SECTIONS_BORDERS_RESIZE_PLAN.md`.
+/// Format pinned in §3.5 of `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`.
 pub(in crate::application::app) fn mode_status_line(
     interaction_mode: &super::InteractionMode,
     doc: &MindMapDocument,
