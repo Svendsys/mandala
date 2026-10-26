@@ -122,6 +122,29 @@ the covered text as a clickable link styled with that URL. Runs without
 a hyperlink omit the field (an explicit `null` also reads as "none";
 the saver writes neither).
 
+## `section text … runs=preserve`
+
+`section text "<text>"` (and `Action::SetSectionText` with
+`runs_mode = "preserve"`) replaces a section's text and keeps its
+run table, positionally — runs keep their grapheme ranges, not the
+words they used to cover:
+
+- **Shorter text**: runs wholly inside the new text survive
+  unchanged; a run straddling the new end is clipped to it; runs
+  past it are dropped.
+- **Same length**: the table is untouched.
+- **Longer text**: the graphemes past the old end take the style of
+  the **last** run — the convention of a text editor, where typing
+  at the end of styled text continues that style. The last run is
+  extended when it reached the old end; when it ended short of it,
+  a copy of it covering just the appended graphemes is added.
+  Graphemes the old table left uncovered stay uncovered: the edit
+  covers only what it appended.
+
+A section with no runs stays run-less and draws its whole text.
+Without the longer-text rule the appended graphemes would sit in
+`text` covered by no run.
+
 ## `section split` run partitioning
 
 The `section split [section=<idx>] [at=<grapheme>]` console verb
