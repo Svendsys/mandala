@@ -48,7 +48,7 @@ pub(crate) use registry::execute;
 // way the socket would run it, minus the socket.
 #[cfg(test)]
 pub(crate) use registry::tests::run_attached;
-pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
+pub(crate) use target::{ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
 pub(crate) use wait::{Settling, Until};

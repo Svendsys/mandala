@@ -377,6 +377,7 @@ pub(super) fn handle_mouse_input(
                         let dispatch_hit = super::dispatch::DispatchHit {
                             click_hit: click_hit.clone(),
                             canvas_pos,
+                            held_by: None,
                         };
                         let _ = super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
                         return;

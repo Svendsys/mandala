@@ -22,6 +22,7 @@ use crate::application::console::{ExecResult, LineOutcome};
 use crate::application::ipc::envelope::{code, Reply};
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
 use crate::application::ipc::space::{Point, Space};
+use crate::application::ipc::ActionOutcome;
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 
@@ -63,12 +64,21 @@ pub(super) const FAMILY: Family = Family {
                     "Coordinate space of `x`/`y`: \"canvas\" (default) or \"surface\".",
                 ),
             ],
-            result: &[ResultSpec::new(
-                "outcome",
-                ParamType::String,
-                "\"handled\" or \"unhandled\": the funnel's DispatchOutcome. Unhandled means the \
-                 Action did not apply in the current context.",
-            )],
+            result: &[
+                ResultSpec::new(
+                    "outcome",
+                    ParamType::String,
+                    "\"handled\" or \"unhandled\": the funnel's DispatchOutcome. Unhandled means the \
+                     Action did not run.",
+                ),
+                ResultSpec::new(
+                    "reason",
+                    ParamType::String,
+                    "Why an unhandled Action did not run, when its arm declined for a stated reason \
+                     (a FastResizeStart no button holds; a PanCanvas while a drag or pan runs); \
+                     null otherwise.",
+                ),
+            ],
             run: action,
         },
         CommandSpec {
@@ -129,8 +139,18 @@ fn action(call: &mut Call<'_>) -> Reply {
     let Some(app) = call.drive() else {
         return call.no_document();
     };
-    let handled = app.dispatch_action(action, pointer);
-    call.ok(json!({ "outcome": if handled { "handled" } else { "unhandled" } }))
+    let outcome = app.dispatch_action(action, pointer);
+    call.ok(action_reply(outcome))
+}
+
+/// The `act.action` reply for what the funnel reported: `outcome`, and
+/// the `reason` a refusing arm gave, `null` otherwise (#194).
+fn action_reply(outcome: ActionOutcome) -> Value {
+    match outcome {
+        ActionOutcome::Handled => json!({ "outcome": "handled", "reason": null }),
+        ActionOutcome::Unhandled => json!({ "outcome": "unhandled", "reason": null }),
+        ActionOutcome::Refused(reason) => json!({ "outcome": "unhandled", "reason": reason }),
+    }
 }
 
 /// The `action` parameter as an [`Action`]. Deserialization is serde's,
@@ -292,6 +312,28 @@ mod tests {
     use crate::application::console::ConsoleEffects;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::ipc::registry::tests::run_detached;
+
+    /// **`act.action` says why a refused Action did not run** (#194): an
+    /// unhandled outcome, with the arm's reason. A `FastResizeStart`
+    /// dispatched with a target holds no button, so it is refused, and
+    /// this is how an agent learns that rather than only that nothing
+    /// happened. The controls: a plain `Unhandled` and a `Handled` carry
+    /// `reason: null`, so the field is not filled in for every reply.
+    #[test]
+    fn test_an_action_reply_carries_the_refusal_reason_and_only_that() {
+        assert_eq!(
+            action_reply(ActionOutcome::Refused("nothing holds this gesture")),
+            json!({ "outcome": "unhandled", "reason": "nothing holds this gesture" })
+        );
+        assert_eq!(
+            action_reply(ActionOutcome::Unhandled),
+            json!({ "outcome": "unhandled", "reason": null })
+        );
+        assert_eq!(
+            action_reply(ActionOutcome::Handled),
+            json!({ "outcome": "handled", "reason": null })
+        );
+    }
 
     /// Every refusal below happens before the app is touched, so it
     /// is the same reply whether or not the app has started; detached

@@ -912,9 +912,23 @@ those also carries a warning saying why: `console_error` for the
 file-path Actions, `save_unbound` or `save_failed` for `SaveDocument`.
 Treat an unrecognized value as `"unhandled"`.
 
+`reason` (string or `null`): why an `unhandled` Action did not run,
+when its arm declined for a stated reason; `null` otherwise, and
+always `null` with `"handled"`. `FastResizeStart` is one: the resize
+it starts is finalized by the release of the mouse button holding the
+gesture, and a synthetic pointer holds none, so with `x`/`y` it is
+refused with a reason saying nothing holds the gesture rather than
+start a drag no release could end (without `x`/`y` there is no
+gesture to anchor at, which is a reason too). Drive it as a hand
+does instead, with the button it is bound to: `input.drag` with
+`button: "right"` and `mods: ["ctrl"]` for the default
+`Ctrl+RightDrag`.
+`PanCanvas` is another, while a drag owed a commit or a held pan
+runs.
+
 ```jsonc
 {"id": 1, "cmd": "act.action", "action": "ZoomIn"}
-{"id": 1, "ok": true, "result": {"outcome": "handled"}}
+{"id": 1, "ok": true, "result": {"outcome": "handled", "reason": null}}
 {"id": 2, "cmd": "act.action", "action": "DoubleClickActivate", "x": 412, "y": 96, "space": "surface"}
 ```
 

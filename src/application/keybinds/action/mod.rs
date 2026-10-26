@@ -346,17 +346,19 @@ pub enum Action {
     /// drag release; that path is gated separately.
     #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
-    /// Start a corner-anchored fast-resize gesture from the
-    /// active right-button press. Threshold-cross arm in
-    /// `event_cursor_moved.rs` dispatches this Action when the
-    /// `DragState::PendingRight` press has moved past the drag
-    /// threshold; the dispatch arm reads the press-time hit
-    /// from a `DispatchHit` payload, computes the corner anchor
-    /// via `infer_resize_anchor`, and transitions
-    /// `DragState::PendingRight → Throttled(NodeResize |
-    /// SectionResize)` with the chosen `ResizeHandleSide`. The
-    /// release path on the right-button (Commit 3) finalizes
-    /// via `set_node_aabb` / `set_section_aabb`.
+    /// Start a corner-anchored fast-resize gesture from a held
+    /// mouse button's drag. The drag gesture's threshold cross in
+    /// `event_cursor_moved.rs` dispatches this Action with a
+    /// `DispatchHit` built from the press — the press-time body
+    /// hit, the press-time canvas position and the button holding
+    /// the gesture (#194). The arm infers the corner anchor from
+    /// that position via `infer_resize_anchor`, and arms
+    /// `Throttled(NodeResize | SectionResize)` owned by that
+    /// button, whose release finalizes via `set_node_aabb` /
+    /// `set_section_aabb`. Default-bound to `Ctrl+RightDrag`, so
+    /// the right button owns it. A hit no button holds (IPC
+    /// `act.action` with a target) is refused, since no release
+    /// could end the drag.
     ///
     /// **Destructive on commit** (the release at the end of the
     /// drag writes through), but the *Action itself* is just a

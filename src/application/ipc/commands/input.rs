@@ -948,7 +948,7 @@ mod tests {
     }
 
     impl CommandTarget for InputApp {
-        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> bool {
+        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> crate::application::ipc::ActionOutcome {
             panic!("raw input must not dispatch an Action itself");
         }
         fn run_console_line(&mut self, _: &str) -> Option<LineOutcome> {
