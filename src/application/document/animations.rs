@@ -424,8 +424,8 @@ impl MindMapDocument {
     /// model-sync + undo path an instant mutation would take.
     ///
     /// **Why the reset.** By the completing frame the *model* already
-    /// carries the last lerped position — `from + delta·t_prev`,
-    /// where `t_prev` is the easing value of the last advancing tick.
+    /// carries the last lerped position — `from + delta·t`,
+    /// where `t` is the easing value of the last advancing tick.
     /// Routing the full mutation through `apply_custom_mutation` from
     /// *that* state was wrong on two counts:
     ///

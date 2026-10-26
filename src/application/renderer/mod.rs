@@ -614,7 +614,7 @@ pub struct Renderer {
     /// palette backdrop, and any other solid-color fill that needs
     /// to sit in the render pipeline alongside text. See the
     /// `RECT_SHADER_WGSL` const above for the shader, and
-    /// `push_canvas_rect` / `push_screen_rect` for the CPU-side
+    /// `push_rect_ndc` for the CPU-side
     /// vertex layout.
     rect_pipeline: RenderPipeline,
     /// Persistent vertex buffer for the rect pipeline. Grows
@@ -650,7 +650,7 @@ pub struct Renderer {
     /// Clear color for the render pass, driven by the map's
     /// `Canvas.background_color`. Starts as opaque black so the
     /// app looks sensible before a map loads; the event loop
-    /// calls `set_clear_color` right after load.
+    /// calls `set_clear_color_from_hex` right after load.
     clear_color: Color,
 }
 

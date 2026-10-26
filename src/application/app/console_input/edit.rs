@@ -33,7 +33,7 @@ impl EditOutcome {
 }
 
 /// Direction + magnitude for a scrollback navigation step. Mapped
-/// from the `Action` set in `dispatch::map_scroll_action`. The unit
+/// from the `Action` set in `dispatch_console_action`'s scroll arm. The unit
 /// "page" matches `MAX_CONSOLE_SCROLLBACK_ROWS` so PgUp/PgDn move
 /// exactly one visible-window worth of lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

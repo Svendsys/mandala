@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Hoist per-node color_schema groups into a top-level `palettes`
-//! map; rewrite each node to reference its palette by key. `theme_id`
+//! map; rewrite each node to reference its palette by key. `"theme_id"`
 //! is dropped; `variant != 2` is folded into the key (`coral-v3`).
 
 use serde_json::{json, Value};

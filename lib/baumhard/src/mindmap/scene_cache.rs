@@ -441,13 +441,14 @@ impl SceneConnectionCache {
     /// the buffer empty, which is an edge that samples to nothing.
     ///
     /// **The whole write is one operation on purpose.** The earlier
-    /// shape was a `reclaim_sample_buffer` that evicted the entry to
-    /// hand its vector back, followed by an `insert` that put a new one
-    /// in; the eviction made the "already cached" branch of `insert`
+    /// shape was a `reclaim_sample_buffer` (gone) that evicted the
+    /// entry to hand its vector back, followed by a
+    /// `SceneConnectionCache::insert` (gone) that put a new one in;
+    /// the eviction made the "already cached" branch of that `insert`
     /// unreachable from the pass, so the allocation the reuse existed
-    /// to avoid was made on every resample after all. (Both of those
-    /// are gone — named here as the history this shape exists to
-    /// close, not as functions a reader will find.) Here the entry
+    /// to avoid was made on every resample after all. (Named here as
+    /// the history this shape exists to close, not as functions a
+    /// reader will find.) Here the entry
     /// and both its `by_node` memberships stay put, and **an edge that
     /// resamples while already cached allocates nothing at all**: no
     /// `EdgeKey` clone, no `String` for a bucket that exists, and no

@@ -33,7 +33,7 @@ use super::finish::BorderEdit;
 /// The descent has already stepped into the `border preview` level,
 /// so its `slot` is where the `commit` / `cancel` terminator sits
 /// and its `level.label` is the words every message here leads
-/// with. Both used to be hand-counted parameters — `subverb_pos`
+/// with. Both used to be hand-counted parameters — `subverb_pos` (gone)
 /// as a literal `1` / `2` / `3` per surface, and a `verb_label`
 /// string beside it.
 pub(crate) fn execute_border_preview(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {

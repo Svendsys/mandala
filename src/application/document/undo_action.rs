@@ -130,7 +130,7 @@ pub enum UndoAction {
     /// cheaper than tracking field-level diffs, and trivially correct.
     ///
     /// **Boxed.** Held inline, the canvas alone sized this enum at over
-    /// a kilobyte (clippy's `large_enum_variant` measured 1216 bytes),
+    /// a kilobyte (`clippy::large_enum_variant` measured 1216 bytes),
     /// and the undo stack is a `Vec<UndoAction>`, so every entry — a
     /// one-field zoom edit included — would occupy that much. Boxing
     /// leaves the cost with the snapshots that actually need it.

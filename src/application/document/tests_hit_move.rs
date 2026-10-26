@@ -1284,7 +1284,7 @@ fn test_point_in_node_aabb_includes_overflowing_section() {
     );
 }
 
-/// `collect_patches_recursive` (drag delta) only emits patches
+/// `apply_drag_delta_and_collect_patches` only emits patches
 /// for `GlyphArea`-bearing elements; `GlyphModel` siblings of
 /// section-areas (the structural seam children) are skipped so
 /// `patch_drag_positions` doesn't pay a cold hash miss per drag

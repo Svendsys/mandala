@@ -114,7 +114,7 @@ pub fn parse_map_macros(values: &[baumhard::format::json::Value]) -> Vec<Macro> 
 /// don't depend on which document is open. Called from:
 ///
 /// 1. `run_native_init::build` after the initial document load.
-/// 2. `execute_console_line` when `replace_document` swaps the
+/// 2. `execute_console_line` when `ConsoleSideEffect::ReplaceDocument` swaps the
 ///    document via `open` / `new`.
 pub fn rebuild_map_macros(
     registry: &mut super::MacroRegistry,

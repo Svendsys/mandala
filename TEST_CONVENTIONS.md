@@ -104,7 +104,14 @@ declared explicitly with `harness = false` to exist at all.
   citations had already rotted that way before the scan existed. Write
   a *shape* rather than a name when you mean a shape — the
   `test_<topic>_<case>` spelling above, or a trailing `*` for a family
-  (`test_delete_node_*prefix*`) — and the scan reads it as one.
+  (`test_delete_node_*prefix*`) — and the scan reads it as one. Its
+  sibling `test_no_doc_names_an_identifier_that_does_not_exist` holds
+  the names that are *not* tests to the same standard inside doc
+  comments — a backticked `Type::method`, `module::function` or
+  multi-word bare name that nothing declares or writes fails the
+  suite — with `(gone)` after the closing backtick as the explicit
+  opt-out for prose that names a vanished thing on purpose
+  (CODE_CONVENTIONS §8).
 
   **Where the case is a claim, name the claim.** A test whose subject
   is a property of the repository rather than a code path is allowed

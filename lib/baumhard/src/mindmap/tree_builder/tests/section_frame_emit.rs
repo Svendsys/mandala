@@ -649,7 +649,7 @@ fn test_border_preview_canvas_section_frame_focused_branch() {
 /// Parity is the minimum bar — without it, the preview branch
 /// would leak state into untargeted sections. The previous
 /// version of this test compared the same `None` input twice
-/// (`with_none` and `baseline` were identical inputs), proving
+/// (its `with_none` (gone) and `baseline` were identical inputs), proving
 /// nothing; this one compares an active preview that misses
 /// every target section against a `None` baseline.
 #[test]

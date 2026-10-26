@@ -1057,7 +1057,7 @@ mod completion_pins {
     //! `CompletionState`. The three canvas subjects and the
     //! `focused` modifier are levels of one declared grammar now, so
     //! what these pin is that the descent reaches the right level —
-    //! the hand-written completer had to re-derive `verb_at` per arm
+    //! the hand-written completer had to re-derive `verb_at` (gone) per arm
     //! and each arm written for one depth left the next depth
     //! answering with kv keys.
 

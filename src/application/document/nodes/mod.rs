@@ -714,7 +714,7 @@ impl MindMapDocument {
     ///
     /// Capture / undo: piggybacks on the existing
     /// `UndoAction::EditNodeStyle` envelope (which already includes
-    /// the full `text_runs` snapshot via `before_runs`), so a
+    /// the full `text_runs` snapshot via `before_sections`), so a
     /// `font set` on a node is reversed by the same `undo()` arm
     /// that reverses every other node-style edit. No new
     /// `UndoAction` variant.

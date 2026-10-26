@@ -192,7 +192,7 @@ impl Predicate {
 /// predicate's verdict, or `None` when the pair is inapplicable
 /// (e.g. a `GlyphAreaField::Outline` axis that the predicate
 /// language deliberately doesn't expose, or a `Region` axis whose
-/// `region_id` isn't present on the element). The outer loop in
+/// region isn't present on the element). The outer loop in
 /// [`Predicate::test`] continues to the next field on `None` and
 /// returns `false` if every field falls through.
 fn evaluate_field(element: &GfxElement, field: &GfxElementField, comparator: &Comparator) -> Option<bool> {

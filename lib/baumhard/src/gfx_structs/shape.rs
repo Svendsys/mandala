@@ -617,7 +617,7 @@ impl NodeShape {
     /// Degenerate bounds (zero or negative extent on either axis)
     /// report `false` even if the AABBs would overlap numerically.
     /// This matches [`Self::contains_local`] and the BVH's
-    /// `bounds.x > 0.0 && bounds.y > 0.0` guard in `bvh_descend`:
+    /// `bounds.x > 0.0 && bounds.y > 0.0` guard in `spatial_descend_best`:
     /// a zero-size node renders nothing, so selecting nothing for
     /// it is the internally consistent answer. Small behaviour
     /// change from the pre-shape `rect_select` (which would have

@@ -338,7 +338,7 @@ pub(super) fn project_with_offsets(
 }
 
 /// One portal endpoint's rendered marker, flattened out of the
-/// nested [`ProjectedRoles::portal_pairs`] shape.
+/// nested `PortalPairData` list `portal_pair_data` returns.
 ///
 /// The portal pass emits `pairs[i].endpoints[0..2]` (index 0 =
 /// `from_id`, index 1 = `to_id`), each carrying full `GlyphArea`s.

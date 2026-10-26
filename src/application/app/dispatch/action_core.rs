@@ -26,10 +26,10 @@
 //!   `WasmInputState::input_context_core`.
 //!
 //! Track C from `WASM_CONVERGENCE.md`. Sibling to
-//! `dispatch_macro_core` (Track B precedent). The arm coverage
-//! matches what `dispatch_compatible_action_wasm` already wires
-//! today — that function gets deleted in C3 once the WASM caller
-//! moves over.
+//! `dispatch_macro` (Track B precedent). The arm coverage
+//! matches what `dispatch_compatible_action_wasm` (gone) wired
+//! when this was written; that function went in C3 once the WASM
+//! caller moved over.
 
 use baumhard::util::geometry::is_positive_finite;
 

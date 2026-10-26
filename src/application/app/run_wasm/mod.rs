@@ -108,7 +108,7 @@ pub(super) enum PendingClick {
 /// event loop. Mirrors native's `InputHandlerContext` for the 9
 /// fields both targets share. Promoted to module-level (was
 /// closure-local in `run`) so the `cross_dispatch` /
-/// `dispatch_macro_core` helpers can take `&mut WasmInputState`
+/// `dispatch_macro` helpers can take `&mut WasmInputState`
 /// directly — closure-local types aren't reachable from sibling
 /// modules.
 pub(super) struct WasmInputState {
