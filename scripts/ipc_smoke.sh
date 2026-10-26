@@ -274,10 +274,11 @@ fi
 # ---- A pan ends on its own button's release ---------------------------
 
 # The left and right release arms end a pan behind a `mem::replace` with
-# no pure route in front of them, so the suite cannot reach them (#153,
-# TEST_CONVENTIONS §T8); this is the one place they run. A middle press
-# arms a pan the middle button holds; the left and right releases must
-# leave it, and the middle release must end it.
+# no pure route in front of them, so no renderer-free test can reach
+# them (#153, TEST_CONVENTIONS §T8), and no GPU-backed test drives them
+# through `input.*` yet; until one does, this is the one place they
+# run. A middle press arms a pan the middle button holds; the left and
+# right releases must leave it, and the middle release must end it.
 pan_state() { # the drag state's kind and owner, as `query.mode` reports them
     local mode
     mode="$("$CTL" query.mode)" || fail "query.mode failed"
