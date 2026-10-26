@@ -374,7 +374,7 @@ impl<E: TreeElement> JournalBuilder<E> {
             if !keep[i] {
                 continue;
             }
-            let position = out(i).then_some(Position {
+            let position = out(i).then_some(Positions {
                 before: recorded.at,
                 after: after_at,
             });
@@ -391,8 +391,8 @@ impl<E: TreeElement> JournalBuilder<E> {
             .enumerate()
             .filter_map(|(i, entry)| entry.position.map(|_| i))
             .collect();
-        let to_before = arrangement_order(&entries, Position::before);
-        let to_after = arrangement_order(&entries, Position::after);
+        let to_before = arrangement_order(&entries, Positions::before);
+        let to_after = arrangement_order(&entries, Positions::after);
         Journal {
             entries,
             index,
@@ -685,7 +685,7 @@ fn resolve(
 ///
 /// Cost: O(moved entries) with a hash map and a hash set over them;
 /// nothing when nothing moved.
-fn arrangement_order<E>(entries: &[Entry<E>], pick: fn(&Position) -> Option<At>) -> Vec<usize> {
+fn arrangement_order<E>(entries: &[Entry<E>], pick: fn(&Positions) -> Option<At>) -> Vec<usize> {
     let moved: Vec<(usize, At)> = entries
         .iter()
         .enumerate()
@@ -735,12 +735,12 @@ fn arrangement_order<E>(entries: &[Entry<E>], pick: fn(&Position) -> Option<At>)
 /// Where a moved element stands in the arrangement before the journal
 /// and in the one after it; `None` where it is out of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Position {
+struct Positions {
     before: Option<At>,
     after: Option<At>,
 }
 
-impl Position {
+impl Positions {
     /// The position before the journal.
     fn before(&self) -> Option<At> {
         self.before
@@ -761,7 +761,7 @@ struct Entry<E> {
     after: E,
     /// Its positions when its position changed; `None` when only its
     /// state did.
-    position: Option<Position>,
+    position: Option<Positions>,
 }
 
 /// Which of its two arrangements a journal last wrote to the tree.
@@ -895,7 +895,7 @@ impl<E: TreeElement> Journal<E> {
         for entry in self.entries.iter().rev() {
             write(&mut tree.arena, entry.node, entry.before.clone());
         }
-        self.arrange(&mut tree.arena, &self.to_before, Position::before);
+        self.arrange(&mut tree.arena, &self.to_before, Positions::before);
         tree.cache.invalidate();
         Ok(())
     }
@@ -916,7 +916,7 @@ impl<E: TreeElement> Journal<E> {
         for entry in &self.entries {
             write(&mut tree.arena, entry.node, entry.after.clone());
         }
-        self.arrange(&mut tree.arena, &self.to_after, Position::after);
+        self.arrange(&mut tree.arena, &self.to_after, Positions::after);
         tree.cache.invalidate();
         Ok(())
     }
@@ -1018,7 +1018,7 @@ impl<E: TreeElement> Journal<E> {
     /// after its recorded previous sibling, in `order` — the order that
     /// has each previous sibling in place first. Unmoved nodes never
     /// leave their rows. Nothing to do when nothing moved.
-    fn arrange(&self, arena: &mut Arena<E>, order: &[usize], pick: fn(&Position) -> Option<At>) {
+    fn arrange(&self, arena: &mut Arena<E>, order: &[usize], pick: fn(&Positions) -> Option<At>) {
         for &i in &self.out {
             self.entries[i].node.detach(arena);
         }
@@ -1067,9 +1067,9 @@ impl<E: Interpolable> Journal<E> {
             );
         }
         if after {
-            self.arrange(&mut tree.arena, &self.to_after, Position::after);
+            self.arrange(&mut tree.arena, &self.to_after, Positions::after);
         } else {
-            self.arrange(&mut tree.arena, &self.to_before, Position::before);
+            self.arrange(&mut tree.arena, &self.to_before, Positions::before);
         }
         tree.cache.invalidate();
         Ok(())
