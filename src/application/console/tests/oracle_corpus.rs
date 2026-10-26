@@ -13,6 +13,16 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "help color"),
     (Sel::Node, "help font"),
     (Sel::Node, "help nope"),
+    // `help` declares no keys and one slot. These four used to
+    // print as though the kv or the second word were not typed —
+    // the full listing, then `color`'s usage three times — because
+    // `help` was the one verb whose execute never called
+    // `kvs::read_strict` (#156). A kv in the slot, after it, ahead
+    // of it, and a second positional.
+    (Sel::Node, "help color=1"),
+    (Sel::Node, "help color section=2"),
+    (Sel::Node, "help bg=x color"),
+    (Sel::Node, "help color extra"),
     // anchor
     (Sel::Edge, "anchor"),
     (Sel::Edge, "anchor from=top"),
@@ -300,8 +310,9 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "mutation inspect no-such-mutation"),
     (Sel::Node, "mutation nope"),
     // A kv ahead of the sub-command slot leaves the slot
-    // positional, so this has always run — the popup is what
-    // did not know it (see `complete_mutation`).
+    // positional, so `list` is still the subverb here — and
+    // `list` reads no keys, so `x=1` is refused by name rather
+    // than dropped (#27).
     (Sel::Node, "mutation x=1 list"),
     // node
     (Sel::Node, "node"),
@@ -587,9 +598,12 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "mutation apply "),
     // The two lines the positional-slot switch moved on this
     // verb, and the two it moved on `help`. All four are the
-    // popup agreeing with the verb where it used not to; the
-    // comment that called the switch a no-op is corrected at
-    // both sites.
+    // popup agreeing with the verb about which *slot* the cursor
+    // is in, where it used not to; the comment that called the
+    // switch a no-op is corrected at both sites. The popup does
+    // not re-judge a kv already on the line: `mutation x=1 list`
+    // and `help bg=x color` both refuse the kv by name on
+    // execute, and the popup still offers the slot's words.
     (Sel::Node, "mutation x=1 "),
     (Sel::Node, "mutation ap=li"),
     (Sel::Node, "help bg=x "),
