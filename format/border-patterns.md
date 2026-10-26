@@ -283,7 +283,7 @@ small visible gap at every corner — pick it deliberately if that's
 the look you want.
 
 **`border side` / `border corner` against a non-custom preset
-errors** (Plan §5.4 #3) with a `run \`border preset custom\` first`
+errors** (Plan §5.4 #3) with a `` run `border preset custom` first ``
 hint. Pre-fix the verb silently auto-promoted the preset to
 `custom`, surprising users who picked an explicit preset and
 then set one side. The `reset` form skips the gate (restoring a

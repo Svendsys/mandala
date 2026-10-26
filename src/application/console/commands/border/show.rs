@@ -198,7 +198,7 @@ fn format_border_readout(
 
     // `style.border.color_palette`, the border's own per-glyph
     // cycling — not the node's theme, which the verbose cascade
-    // names as `color_schema.palette`. The row is labelled with the
+    // names as `color_schema.palette`. The row is labeled with the
     // verb that sets it so the two cannot be read as one field
     // (#137), and the unset case says what the field would do.
     let palette_summary = match style.color_palette.as_ref() {
@@ -276,6 +276,11 @@ fn format_border_readout(
     } else {
         lines.push(OutputLine::plain(format!("color:   {}", style.color)));
     }
+    // The one top-level label wider than the nine-character column
+    // the rows around it keep. Accepted rather than re-padded: the
+    // label names the verb that sets the field, which is what keeps
+    // it from reading as the theme, and widening every row to
+    // sixteen characters would move the whole readout for one label.
     lines.push(OutputLine::plain(format!("border palette: {}", palette_summary)));
     // Padding cascades per-node → canvas-default → 4px hardcoded
     // floor. Always print the resolved value so the readout is
@@ -444,7 +449,7 @@ mod tests {
     /// The verbose readout names two different palette fields three
     /// lines apart: the theme the frame color came from
     /// (`color_schema.palette`) and the border's own per-glyph
-    /// cycling (`style.border.color_palette`). Labelled with the same
+    /// cycling (`style.border.color_palette`). Labeled with the same
     /// bare word they read as *a palette set this color* followed by
     /// *palette: none* (#137), so each must say which field it is —
     /// including when the *same* palette fills both, the case where a
@@ -489,16 +494,16 @@ mod tests {
         );
         assert!(
             !lines.iter().any(|l| l.starts_with("palette:")),
-            "no row may be labelled with the bare word: {lines:?}"
+            "no row may be labeled with the bare word: {lines:?}"
         );
         assert!(
             !lines.iter().any(|l| l.contains("# source: palette")),
             "the source must not name the theme by the bare word: {lines:?}"
         );
 
-        // Negative control: cycle the *same* palette the theme uses.
-        // The cycling row reports it, under its own label, and the
-        // source row keeps naming the theme's field — so neither
+        // Same palette in both fields: cycle the palette the theme
+        // uses. The cycling row reports it, under its own label, and
+        // the source row keeps naming the theme's field — so neither
         // assertion above held only because a row was empty.
         let node = doc.mindmap.nodes.get_mut(&id).unwrap();
         node.style.border = Some(baumhard::mindmap::model::GlyphBorderConfig {
@@ -524,7 +529,7 @@ mod tests {
         );
         assert!(
             !lines.iter().any(|l| l.starts_with("palette:")),
-            "no row may be labelled with the bare word: {lines:?}"
+            "no row may be labeled with the bare word: {lines:?}"
         );
     }
 
