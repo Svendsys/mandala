@@ -8,12 +8,22 @@
 //! With one arg: print usage + summary for that command. Unknown
 //! names are reported as an `Err` result so the line shows up in the
 //! error color.
+//!
+//! `help` declares no keys, so any kv on the line is refused by name
+//! (`help: unknown key 'color'; help takes no keys`), and so is a
+//! second positional — the same [`kvs::read_strict`] every other verb
+//! opens with. It is the generic wording on purpose: a help-specific
+//! "expects a command name" would be a second answer to a question
+//! the engine already answers for every keyless level (`open`,
+//! `mutation`, `mode`, `new`, `node`, `fps`), and "takes no keys"
+//! already says that what `help` takes is positional.
 
 use super::{command_by_name, Command, COMMANDS};
 use crate::application::console::completion::Completion;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::{Bare, Form, Grammar, Slot, Vocabulary, Word};
+use crate::application::console::spec::descent::descend;
+use crate::application::console::spec::{kvs, Bare, Form, Grammar, Slot, Vocabulary, Word};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 
 /// `all` is not a command, which is why the registry walk below
@@ -67,6 +77,10 @@ pub const COMMAND: Command = Command {
 };
 
 fn execute_help(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
     let ctx = ConsoleContext::from_document(eff.document());
     match args.positional(0) {
         // `all` is the one argument that is not a command name, and
