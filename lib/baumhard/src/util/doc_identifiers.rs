@@ -18,8 +18,8 @@
 //! control instruction whose named line no longer fails the test it
 //! names — and no gate saw any of them. Two were found only because a
 //! human asked for a grep sweep after the review had approved the
-//! round. The first run of this scan over the tree found a hundred
-//! more, most of them in test modules, where `cargo doc` never looks.
+//! round. The first run of this scan over the tree found over a
+//! hundred more, many in test modules, where `cargo doc` never looks.
 //!
 //! **Scope is the whole design.** A scan for "an identifier in a doc
 //! comment that does not resolve" drowns at once: `insert`, `get`,
@@ -243,8 +243,8 @@ pub(crate) struct WorkspaceIndex {
     /// Type name → the traits it has an `impl Trait for Type` for, so
     /// a default method the trait body declares resolves on the type.
     implements: BTreeMap<String, BTreeSet<String>>,
-    /// Names the text harvest declares and `syn` does not: the
-    /// members a `macro_rules!` body or a derive's `quote!` emits,
+    /// Names the text harvest declares and no parse of any file does:
+    /// the members a `macro_rules!` body or a derive's `quote!` emits,
     /// which belong to a type no parse of the source can name. A
     /// `Type::name` whose `name` is here resolves on any type.
     macro_declared: BTreeSet<String>,
@@ -320,16 +320,25 @@ impl WorkspaceIndex {
         for name in ["std", "core", "alloc"] {
             index.external_crates.insert(name.to_string());
         }
+        // Two passes, so that what the text harvest adds beyond the
+        // parse is exactly the macro-emitted set: a name `syn` declares
+        // in a later file must not be mistaken for one a macro emits
+        // because the text saw it first.
+        let mut stripped = Vec::with_capacity(sources.len());
         for (rel, text) in sources {
             index.harvest_path(rel);
             let parsed = syn::parse_file(text).unwrap_or_else(|e| panic!("{rel} must parse as Rust: {e}"));
             index.harvest_items(&parsed.items);
-            let code = blank_string_literals(&strip_comments(text));
-            index.harvest_text(&code);
-            index
-                .code
-                .extend(identifier_tokens(&strip_comments(text)).map(str::to_string));
+            let code = strip_comments(text);
+            index.code.extend(identifier_tokens(&code).map(str::to_string));
+            stripped.push(code);
         }
+        let parsed_declared = index.declared.clone();
+        let mut text_declared = BTreeSet::new();
+        for code in &stripped {
+            index.harvest_text(&blank_string_literals(code), &mut text_declared);
+        }
+        index.macro_declared = text_declared.difference(&parsed_declared).cloned().collect();
         index
     }
 
@@ -452,11 +461,12 @@ impl WorkspaceIndex {
 
     /// The word after a declaring keyword, read as text so that a
     /// declaration a `macro_rules!` body or a `quote!` block emits —
-    /// which `syn` sees as opaque tokens — still counts. Runs after
-    /// [`Self::harvest_items`] on the same file's code, with strings
-    /// blanked, so what it adds beyond the parse is exactly the
+    /// which `syn` sees as opaque tokens — still counts. Runs over
+    /// every file's code with strings blanked, after every file has
+    /// been parsed; each name it reads goes into `text_declared` too,
+    /// and the names there that no parse declared are the
     /// macro-emitted set.
-    fn harvest_text(&mut self, text: &str) {
+    fn harvest_text(&mut self, text: &str, text_declared: &mut BTreeSet<String>) {
         const DECLARING: &[&str] = &[
             "fn",
             "mod",
@@ -477,9 +487,7 @@ impl WorkspaceIndex {
             // macro emits (`KeybindConfig`'s bindings tables are
             // written by `keybind_surface!`) counts as declared.
             if let Some(field) = pub_field_name(line) {
-                if !self.declared.contains(field) {
-                    self.macro_declared.insert(field.to_string());
-                }
+                text_declared.insert(field.to_string());
                 self.declared.insert(field.to_string());
             }
             let mut previous = "";
@@ -488,9 +496,7 @@ impl WorkspaceIndex {
                     continue;
                 }
                 if DECLARING.contains(&previous) && is_identifier(word) {
-                    if !self.declared.contains(word) {
-                        self.macro_declared.insert(word.to_string());
-                    }
+                    text_declared.insert(word.to_string());
                     self.declared.insert(word.to_string());
                     if TYPE_LIKE.contains(&previous) {
                         self.types.insert(word.to_string());
@@ -766,8 +772,8 @@ pub(crate) fn scan_file(rel: &str, text: &str, index: &WorkspaceIndex, scan: &mu
 /// std::cell::Cell;`, `use cosmic_text::{Buffer, Metrics};` — so a
 /// `std::cell::Cell::set` written without its path in that file is
 /// read as the external type's even when some workspace type is also
-/// called `Cell`. Descends into inline
-/// modules, whose `use` items scope the same way for this purpose.
+/// called `Cell`. Descends into inline modules, whose `use` items
+/// scope the same way for this purpose.
 fn collect_external_imports(items: &[Item], index: &WorkspaceIndex, out: &mut BTreeSet<String>) {
     for item in items {
         match item {
@@ -961,11 +967,12 @@ impl FileScan<'_> {
                 *self.scan.resolved.entry(self.rel.to_string()).or_default() += 1;
             }
             (Resolution::Resolved, true) => {
-                // A bare name resolves through any token the file's
-                // code writes, which is too loose an authority to
-                // contradict a reader who says the thing is gone. A
-                // qualified name resolved against a declaration, and
-                // that is sharp enough to hold the marker to.
+                // A bare name resolves through any token the
+                // workspace's code writes, which is too loose an
+                // authority to contradict a reader who says the thing
+                // is gone. A qualified name resolved against a
+                // declaration, and that is sharp enough to hold the
+                // marker to.
                 if candidate.qualifier == Qualifier::Bare {
                     self.scan.exempted.push(format!("{where_written}: `{spelled}`"));
                 } else {
@@ -1591,6 +1598,30 @@ make!();
             vec!["user.rs:1: `Config::lost_keys` — `Config` declares no `lost_keys`".to_string()]
         );
         assert_eq!(scan.resolved.get("user.rs"), Some(&2));
+    }
+
+    /// A name `syn` declares in a later file is not macro-emitted just
+    /// because an earlier file's macro body also spells it; the set is
+    /// the difference over the whole workspace, not a running one.
+    #[test]
+    fn test_the_macro_emitted_set_is_taken_over_the_whole_workspace() {
+        let early = "\
+macro_rules! make {
+    () => {
+        fn shared_name() {}
+    };
+}
+make!();
+/// `Widget::shared_name` is not the macro's to grant.
+struct Widget;
+";
+        let late = "fn shared_name() {}\n";
+        let scan = scan_sources(&[("a_early.rs", early), ("b_late.rs", late)]);
+        assert_eq!(
+            scan.unresolved,
+            vec!["a_early.rs:7: `Widget::shared_name` — `Widget` declares no `shared_name`".to_string()],
+            "a parsed declaration anywhere takes the name out of the macro-emitted set"
+        );
     }
 
     /// A `pub` field a macro writes belongs to a struct the parse never
