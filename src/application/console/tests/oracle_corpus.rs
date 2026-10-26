@@ -60,6 +60,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // there for why they are not, and what a prefix let through.
     (Sel::Node, "border show"),
     (Sel::Node, "border show verbose"),
+    (Sel::Node, "border show verbos"),
     (Sel::Node, "border show side=top"),
     (Sel::Node, "border reset"),
     (Sel::Node, "border nope"),
@@ -305,6 +306,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // A `--` word that is not the flag is refused by name, not taken
     // for a filter that matches nothing (#135).
     (Sel::Node, "mutation list --al"),
+    (Sel::Node, "mutation list sec dec"),
     (Sel::Node, "mutation apply"),
     (Sel::Node, "mutation apply no-such-mutation"),
     (Sel::Node, "mutation help"),

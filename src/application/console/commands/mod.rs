@@ -33,6 +33,11 @@
 //!   no flag grammar; `--all` is one such word, spelled with `--` so
 //!   it cannot be mistaken for the free filter in the slot beside it,
 //!   and `mutation list` refuses any other `--` word by name (#135).
+//!   (The refusal calls it a *flag*, the user's word for a `--`
+//!   token; there is no flag grammar behind the name.) Like a closed
+//!   kv value, a slot word outside its list is refused by name, never
+//!   read as the slot's absence — `border show verbos` is an error,
+//!   not the plain readout.
 //! - **A refusal reports the token as typed.** Matching
 //!   case-insensitively and *reporting* the normalized form are
 //!   separate decisions, and only the first is intended: a user

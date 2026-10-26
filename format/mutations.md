@@ -285,6 +285,8 @@ filters to entries whose contexts include anything starting with
 case-insensitively (`--ALL` works) and may sit before or after the
 substring filter; any other word starting with `--` is refused by name
 rather than taken as a filter, so a filter cannot begin with `--`.
+There is one filter: two unquoted words are refused by name, and a
+filter with a space is quoted.
 
 ## `target_scope`
 

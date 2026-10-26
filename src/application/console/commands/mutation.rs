@@ -161,15 +161,26 @@ fn list(descent: &Descent, args: &Args, eff: &ConsoleEffects) -> ExecResult {
     let mut filter: Option<&str> = None;
     for i in 0..2 {
         match slots.get(i) {
-            Some(s) if ALL_FLAG.iter().any(|w| w.name.eq_ignore_ascii_case(s)) => show_all = true,
+            Some(s) if Vocabulary::Words(ALL_FLAG).admits(s) => show_all = true,
             Some(s) if s.starts_with("--") => {
                 return ExecResult::err(format!(
                     "mutation list: unknown flag '{}'; the only flag is {}",
                     s, ALL_FLAG[0].name
                 ));
             }
-            Some(other) if filter.is_none() => filter = Some(other),
-            Some(_) | None => {}
+            Some(other) => match filter {
+                None => filter = Some(other),
+                // One filter only. Dropping the second word answered
+                // `mutation list sec dec` with "no mutations match
+                // 'sec'" — two words typed, one reported.
+                Some(first) => {
+                    return ExecResult::err(format!(
+                        "mutation list: one filter only; got '{}' and '{}' (quote a filter that has a space)",
+                        first, other
+                    ));
+                }
+            },
+            None => {}
         }
     }
 
@@ -507,6 +518,28 @@ mod tests {
         match run("mutation list sec", &mut doc) {
             ExecResult::Ok(msg) => assert_eq!(msg, "no mutations match 'sec'"),
             other => panic!("expected the empty-filter answer, got {other:?}"),
+        }
+    }
+
+    /// Two filter words are refused by name rather than the second
+    /// being dropped, which answered for the first word alone.
+    #[test]
+    fn list_refuses_a_second_filter_word() {
+        let mut doc = fixture_doc(
+            vec![("grow-font", make_cm("grow-font", vec!["map.node"], "d"))],
+            vec![],
+        );
+        match run("mutation list sec dec", &mut doc) {
+            ExecResult::Err(msg) => assert_eq!(
+                msg,
+                "mutation list: one filter only; got 'sec' and 'dec' (quote a filter that has a space)"
+            ),
+            other => panic!("two filter words must be refused, got {other:?}"),
+        }
+        // Control: the same two words quoted are one filter.
+        match run("mutation list \"grow font\"", &mut doc) {
+            ExecResult::Ok(msg) => assert_eq!(msg, "no mutations match 'grow font'"),
+            other => panic!("a quoted filter is one filter, got {other:?}"),
         }
     }
 
