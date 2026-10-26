@@ -246,10 +246,7 @@ mod tests {
     /// it.
     #[test]
     fn test_numeric_check_is_silent_on_the_canonical_fixture() {
-        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.pop();
-        p.pop();
-        p.push("maps/testament.mindmap.json");
+        let p = baumhard::util::doc_fixtures::repo_path("maps/testament.mindmap.json");
         let map = baumhard::mindmap::loader::load_from_file(&p)
             .expect("the canonical fixture must load through the strict door");
         let violations = check(&map);

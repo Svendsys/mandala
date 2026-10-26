@@ -644,15 +644,12 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use baumhard::util::doc_fixtures::repo_path;
     use baumhard::util::test_temp::TempDir;
     use std::path::PathBuf;
 
     fn testament() -> MindMap {
-        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.pop(); // crates/maptool -> crates
-        p.pop(); // crates -> root
-        p.push("maps/testament.mindmap.json");
-        load_from_file(&p).unwrap()
+        load_from_file(&repo_path("maps/testament.mindmap.json")).unwrap()
     }
 
     fn rx(pattern: &str, case_insensitive: bool) -> Regex {
@@ -872,10 +869,7 @@ mod tests {
 
     #[test]
     fn run_verify_on_testament_succeeds() {
-        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.pop();
-        p.pop();
-        p.push("maps/testament.mindmap.json");
+        let p = repo_path("maps/testament.mindmap.json");
         let args = as_strings(&["verify", p.to_str().unwrap()]);
         assert!(run(&args).is_ok(), "testament map must verify clean");
     }
