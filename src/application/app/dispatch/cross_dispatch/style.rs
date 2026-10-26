@@ -65,13 +65,17 @@ pub(in crate::application::app) fn apply_set_border_preview(
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
-        use crate::application::console::commands::border::stage_kv;
+        use crate::application::console::commands::border::{check_palette_ref, stage_kv};
         use crate::application::document::{BorderConfigEdits, BorderPreviewTarget};
         use crate::application::keybinds::BorderPreviewTargetKind;
 
         let mut edits = BorderConfigEdits::default();
         if let Err(msg) = stage_kv(&mut edits, field, value) {
             log::warn!("border: SetBorderPreview stage_kv error: {msg}");
+            return false;
+        }
+        if let Err(msg) = check_palette_ref(&edits, &doc.mindmap) {
+            log::warn!("border: SetBorderPreview {field}={value:?}: {msg}");
             return false;
         }
 

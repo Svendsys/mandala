@@ -33,7 +33,8 @@ use baumhard::mindmap::model::GlyphBorderConfig;
 use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 use super::border::{
-    edits_has_glyph_field, positional_subverb_to_edits, prepend_line, stage_kv, BorderEdit, BorderSurface,
+    check_palette_ref, edits_has_glyph_field, positional_subverb_to_edits, prepend_line, stage_kv,
+    BorderEdit, BorderSurface,
 };
 use super::Command;
 use crate::application::console::parser::Args;
@@ -162,7 +163,7 @@ fn execute_subject(
             let mut edits = BorderConfigEdits::default();
             for pair in &pairs {
                 if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
-                    return ExecResult::err(e);
+                    return ExecResult::err(format!("{}: {}", descent.level.label, e));
                 }
             }
             apply_canvas_edits(eff, surface, edits)
@@ -239,6 +240,9 @@ fn apply_canvas_edits(
     surface: BorderSurface,
     edits: BorderConfigEdits,
 ) -> ExecResult {
+    if let Err(why) = check_palette_ref(&edits, &eff.document().mindmap) {
+        return ExecResult::err(format!("{}: {}", surface.label(), why));
+    }
     let bare_custom = matches!(
         edits.preset,
         OptionEdit::Set(ref s) if s.eq_ignore_ascii_case("custom")

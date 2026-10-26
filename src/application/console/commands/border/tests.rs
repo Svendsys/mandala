@@ -1833,3 +1833,269 @@ mod completion {
         );
     }
 }
+
+/// Every border surface's slot a cycling palette can land in, plus
+/// the transient preview: what a refused `palette=` must leave alone.
+fn palette_slots(doc: &MindMapDocument, id: &str) -> Vec<Option<String>> {
+    let node = doc.mindmap.nodes.get(id).expect("fixture node");
+    let canvas = &doc.mindmap.canvas;
+    let of =
+        |c: Option<&baumhard::mindmap::model::GlyphBorderConfig>| c.and_then(|c| c.color_palette.clone());
+    let preview = doc
+        .border_preview
+        .as_ref()
+        .and_then(|p| match &p.edits.color_palette {
+            crate::application::document::OptionEdit::Set(name) => Some(name.clone()),
+            _ => None,
+        });
+    vec![
+        of(node.style.border.as_ref()),
+        of(node.sections.first().and_then(|s| s.frame_border.as_ref())),
+        of(canvas.default_border.as_ref()),
+        of(canvas.default_section_frame_border.as_ref()),
+        of(canvas.default_focused_section_frame_border.as_ref()),
+        preview,
+    ]
+}
+
+fn section_selected_doc() -> (MindMapDocument, String) {
+    use crate::application::document::SectionSel;
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Section(SectionSel {
+        node_id: id.clone(),
+        section_idx: 0,
+    });
+    (doc, id)
+}
+
+/// A rejected value reports the spelling the user typed, under the
+/// label of the surface that refused it, on every path that stages
+/// border edits — kv, positional and preview (#136). The value is
+/// matched case-insensitively and was reported lowercased, without
+/// the surface: `canvas section-frame color=Coral` answered
+/// `color: unknown color 'coral'`.
+#[test]
+fn test_border_rejections_echo_the_typed_value_under_their_surface() {
+    let cases: &[(bool, &str, &str)] = &[
+        (false, "border color=Coral", "border: unknown color 'Coral'"),
+        (false, "border color Coral", "border: unknown color 'Coral'"),
+        (
+            false,
+            "border preview color=Coral",
+            "border preview: unknown color 'Coral'",
+        ),
+        (
+            false,
+            "canvas border color=Coral",
+            "canvas border: unknown color 'Coral'",
+        ),
+        (
+            false,
+            "canvas border color Coral",
+            "canvas border: unknown color 'Coral'",
+        ),
+        (
+            false,
+            "canvas section-frame color=Coral",
+            "canvas section-frame: unknown color 'Coral'",
+        ),
+        (
+            false,
+            "canvas section-frame focused color Coral",
+            "canvas section-frame focused: unknown color 'Coral'",
+        ),
+        (
+            true,
+            "section frame color=Coral",
+            "section frame: unknown color 'Coral'",
+        ),
+        (
+            false,
+            "border show side=Middle",
+            "border show: side='Middle' unknown; pick top | bottom | left | right | all",
+        ),
+        (
+            false,
+            "border field=Nope",
+            "border: field 'Nope' unknown; pick one of frame | background | text | title",
+        ),
+    ];
+    for (section, line, want) in cases {
+        let mut doc = if *section {
+            section_selected_doc().0
+        } else {
+            let mut doc = fixture_doc();
+            doc.selection = SelectionState::Single(first_node_id(&doc));
+            doc
+        };
+        match run(line, &mut doc) {
+            ExecResult::Err(got) => assert_eq!(&got, want, "for {line:?}"),
+            other => panic!("{line:?} must be refused, got {other:?}"),
+        }
+    }
+}
+
+/// `palette=` names a palette the map must define. The console has
+/// no verb that adds one, so a forward reference could never come to
+/// resolve; accepting it is how `border palette=preset` reported
+/// success while `border show` admitted the palette did not exist
+/// (#136). Every surface refuses, before any write.
+#[test]
+fn test_border_palette_refuses_a_name_the_map_does_not_define() {
+    let lines: &[(bool, &str, &str)] = &[
+        (
+            false,
+            "border palette=preset",
+            "border: palette 'preset' not found in map",
+        ),
+        (
+            false,
+            "border palette preset",
+            "border: palette 'preset' not found in map",
+        ),
+        (
+            false,
+            "border preview palette=preset",
+            "border preview: palette 'preset' not found in map",
+        ),
+        (
+            false,
+            "canvas border palette=preset",
+            "canvas border: palette 'preset' not found in map",
+        ),
+        (
+            false,
+            "canvas section-frame palette preset",
+            "canvas section-frame: palette 'preset' not found in map",
+        ),
+        (
+            false,
+            "canvas section-frame focused palette=preset",
+            "canvas section-frame focused: palette 'preset' not found in map",
+        ),
+        (
+            true,
+            "section frame palette=preset",
+            "section frame: palette 'preset' not found in map",
+        ),
+        // Exact, as the renderer looks it up: `Coral` is not `coral`.
+        (
+            false,
+            "border palette=Coral",
+            "border: palette 'Coral' not found in map",
+        ),
+    ];
+    for (section, line, want) in lines {
+        let (mut doc, id) = if *section {
+            section_selected_doc()
+        } else {
+            let mut doc = fixture_doc();
+            let id = first_node_id(&doc);
+            doc.selection = SelectionState::Single(id.clone());
+            (doc, id)
+        };
+        let before = palette_slots(&doc, &id);
+        assert_exec_err_contains(run(line, &mut doc), want);
+        assert_eq!(palette_slots(&doc, &id), before, "{line:?} must write nothing");
+    }
+
+    // The refusal lists what the map does define, quoting the one
+    // name the tokenizer would split.
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border palette=preset", &mut doc),
+        "pick one of \"My Palette\" | autumn | coral",
+    );
+
+    // Control: the same lines with a palette the map defines write
+    // it, so the refusals above are about the name and nothing else.
+    let accepted: &[(bool, &str, usize)] = &[
+        (false, "border palette=coral", 0),
+        (false, "border palette coral", 0),
+        (false, "border preview palette=coral", 5),
+        (false, "canvas border palette=coral", 2),
+        (false, "canvas section-frame palette coral", 3),
+        (false, "canvas section-frame focused palette=coral", 4),
+        (true, "section frame palette=coral", 1),
+    ];
+    for (section, line, slot) in accepted {
+        let (mut doc, id) = if *section {
+            section_selected_doc()
+        } else {
+            let mut doc = fixture_doc();
+            let id = first_node_id(&doc);
+            doc.selection = SelectionState::Single(id.clone());
+            (doc, id)
+        };
+        assert_exec_ok(run(line, &mut doc));
+        assert_eq!(
+            palette_slots(&doc, &id)[*slot].as_deref(),
+            Some("coral"),
+            "{line:?} must write the palette it names"
+        );
+    }
+}
+
+/// The keybind path has no scrollback, so it refuses by returning
+/// `false` and writing nothing — the same refusal, minus the line.
+#[test]
+fn test_border_palette_binding_refuses_a_name_the_map_does_not_define() {
+    use super::apply_border_field_to_selection;
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    let before = palette_slots(&doc, &id);
+    assert!(!apply_border_field_to_selection(&mut doc, "palette", "preset"));
+    assert_eq!(palette_slots(&doc, &id), before);
+    // Control: a defined palette applies.
+    assert!(apply_border_field_to_selection(&mut doc, "palette", "coral"));
+    assert_eq!(palette_slots(&doc, &id)[0].as_deref(), Some("coral"));
+}
+
+/// `border font` reads its value as a run of positionals joined on a
+/// space, as `font set` does (#136). Read as one slot, `border font
+/// Unifont CSUR` first set `Unifont` — a real font, and not the one
+/// typed — and later refused the line `font set` accepts. The
+/// fixture loads both families, which is what makes a first-word
+/// reading a silent wrong answer rather than a refusal.
+#[test]
+fn test_border_font_reads_a_multi_word_family_whole() {
+    let families: Vec<&str> = baumhard::font::fonts::loaded_families_iter().collect();
+    assert!(
+        families.contains(&"Unifont") && families.contains(&"Unifont CSUR"),
+        "the case needs a family whose first word is also a family"
+    );
+    let font_of = |doc: &MindMapDocument, id: &str| {
+        doc.mindmap.nodes[id]
+            .style
+            .border
+            .as_ref()
+            .and_then(|c| c.font.clone())
+    };
+    for line in ["border font Unifont CSUR", "border font \"Unifont CSUR\""] {
+        let mut doc = fixture_doc();
+        let id = first_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run(line, &mut doc));
+        assert_eq!(
+            font_of(&doc, &id).as_deref(),
+            Some("Unifont CSUR"),
+            "for {line:?}"
+        );
+    }
+    // Control: the one-word family is still its own family.
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border font Unifont", &mut doc));
+    assert_eq!(font_of(&doc, &id).as_deref(), Some("Unifont"));
+    // A run that names no loaded family is refused whole, under the
+    // surface, rather than trimmed to a prefix that happens to load.
+    assert_exec_err_contains(
+        run("border font Unifont Nope", &mut doc),
+        "border: font 'Unifont Nope' is not a loaded font",
+    );
+    assert_eq!(font_of(&doc, &id).as_deref(), Some("Unifont"));
+}

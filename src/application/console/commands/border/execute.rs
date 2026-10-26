@@ -70,7 +70,7 @@ fn apply_composed(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> E
     let mut edits = BorderConfigEdits::default();
     for pair in &pairs {
         if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
-            return ExecResult::err(e);
+            return ExecResult::err(format!("{}: {}", descent.level.label, e));
         }
     }
     apply_edits(eff, edits)
@@ -307,6 +307,9 @@ pub(crate) fn prepend_line(result: ExecResult, header: String) -> ExecResult {
 }
 
 fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult {
+    if let Err(why) = check_palette_ref(&edits, &eff.document().mindmap) {
+        return ExecResult::err(format!("border: {}", why));
+    }
     let ids = match nodes_in_selection(&eff.document().selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
@@ -390,6 +393,16 @@ pub(crate) fn apply_border_field_to_selection(
     if let Err(why) = stage_kv(&mut edits, field, value) {
         log::warn!(
             "border: binding sets {}={:?}, which is not a valid border edit: {} \
+             (no scrollback on the keybind path; this binding cannot apply)",
+            field,
+            value,
+            why
+        );
+        return false;
+    }
+    if let Err(why) = check_palette_ref(&edits, &doc.mindmap) {
+        log::warn!(
+            "border: binding sets {}={:?}, which this map cannot apply: {} \
              (no scrollback on the keybind path; this binding cannot apply)",
             field,
             value,
@@ -499,10 +512,66 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState, verb_label: &str) -> Resu
     }
 }
 
+/// Refuse a staged cycling palette the map does not define.
+///
+/// `stage_kv` cannot ask — it sees one pair and no document — so
+/// every surface that writes staged edits asks this before its
+/// setter runs. The name is matched exactly, the way the renderer
+/// looks it up; a near miss in case is a different palette.
+///
+/// Validated rather than accepted as a forward reference: the
+/// console has no verb that adds a palette, so from the console a
+/// forward reference could never come to resolve, and accepting it
+/// is how `border palette=preset` reported success while `border
+/// show` admitted one command later that the palette did not exist
+/// (#136). A dangling name a *file* carries still loads, and the
+/// readout still says `(not found in map)` about it — the file
+/// format stays as permissive as it was.
+pub(crate) fn check_palette_ref(
+    edits: &BorderConfigEdits,
+    map: &baumhard::mindmap::model::MindMap,
+) -> Result<(), String> {
+    let OptionEdit::Set(name) = &edits.color_palette else {
+        return Ok(());
+    };
+    if map.palettes.contains_key(name) {
+        return Ok(());
+    }
+    if map.palettes.is_empty() {
+        return Err(format!(
+            "palette '{}' not found; this map defines no palettes",
+            name
+        ));
+    }
+    // Quoted where the tokenizer would split it, so `My Palette`
+    // reads as the one name it is and pastes back as one token.
+    let mut known: Vec<String> = map
+        .palettes
+        .keys()
+        .map(|k| {
+            if k.chars().any(char::is_whitespace) {
+                format!("\"{}\"", k)
+            } else {
+                k.clone()
+            }
+        })
+        .collect();
+    known.sort_unstable();
+    Err(format!(
+        "palette '{}' not found in map; pick one of {}",
+        name,
+        known.join(" | ")
+    ))
+}
+
 /// Parse one `key=value` pair into the appropriate slot on
-/// `edits`. Returns the same error string the user sees in the
-/// console — kept verbatim so `border top="a)"` reports the parser
-/// output ("unmatched ')'…") with a `top: ` prefix.
+/// `edits`. The error names the key or the value but not the
+/// surface: `stage_kv` is shared by all four border surfaces and
+/// the keybind path, so each caller prefixes its own label —
+/// `canvas section-frame: unknown color 'Coral'` — the way
+/// `border preview` always has. The parser output for a side
+/// pattern keeps its `top: ` prefix, so `border top="a)"` reads
+/// `border: top: unmatched ')'…`.
 pub(crate) fn stage_kv(edits: &mut BorderConfigEdits, key: &str, value: &str) -> Result<(), String> {
     match key {
         "preset" => stage_preset(edits, value),
@@ -573,7 +642,10 @@ fn stage_padding(edits: &mut BorderConfigEdits, value: &str) -> Result<(), Strin
 }
 
 fn stage_color(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
-    let cv = ColorValue::parse(value).map_err(|e| format!("color: {}", e))?;
+    // `ColorValue::parse` already says "color" ("unknown color",
+    // "invalid hex color"), so the caller's surface label is all
+    // this needs; a `color: ` prefix here read `color: unknown color`.
+    let cv = ColorValue::parse(value)?;
     edits.color = match cv {
         ColorValue::Reset => OptionEdit::Clear,
         other => OptionEdit::Set(
