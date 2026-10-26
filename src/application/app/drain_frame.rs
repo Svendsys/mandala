@@ -220,7 +220,7 @@ pub(super) fn end_rect_select_gesture(
     document: &mut Option<MindMapDocument>,
     renderer: &mut Renderer,
 ) -> bool {
-    renderer.clear_overlay_buffers();
+    renderer.clear_selection_rect_overlay();
     document
         .as_mut()
         .and_then(MindMapDocument::take_rect_select_preview)
@@ -365,7 +365,9 @@ mod tests {
     fn test_every_exit_from_a_rubber_band_ends_the_preview_it_left_behind() {
         for drag in [
             pending(),
-            super::super::DragState::Panning,
+            super::super::DragState::Panning {
+                owner: super::super::PanOwner::Toggled,
+            },
             super::super::DragState::None,
             super::super::DragState::PendingRight {
                 start_pos: (0.0, 0.0),

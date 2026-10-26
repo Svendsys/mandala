@@ -549,7 +549,7 @@ pub struct Renderer {
     /// The rubber-band selection rectangle's four shaped edges, and
     /// nothing else. Camera-transformed. Written only by
     /// [`Self::rebuild_selection_rect_overlay`] and dropped only by
-    /// [`Self::clear_overlay_buffers`]; the color picker, the FPS
+    /// [`Self::clear_selection_rect_overlay`]; the color picker, the FPS
     /// readout and the mode-status line each have their own store.
     ///
     /// The exclusivity is load-bearing rather than incidental:

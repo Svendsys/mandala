@@ -521,9 +521,15 @@ pub enum Action {
     /// which only creates and selects (no editor). Default unbound.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNodeAndEdit,
-    /// Continuous left-button drag on empty canvas → camera pan.
-    /// Default-bound to `LeftDrag` and `MiddleClick`. The dispatcher
-    /// enters `DragState::Panning` on press and exits on release.
+    /// Camera pan: while it runs, the canvas follows the pointer.
+    /// Default-bound to `LeftDrag` and `MiddleClick`.
+    ///
+    /// A pan belongs to the input that armed it (#153). From a held
+    /// input — a mouse gesture, or a key — it is momentary: it ends on
+    /// that button's or that key's release, and no other release ends
+    /// it. From an input with no release — a macro step, a console
+    /// line, IPC `act.action` — it is modal: it toggles, and the next
+    /// `pan_canvas` ends it. Losing window focus ends either kind.
     #[action(context = Document, wasm = NativeOnly)]
     PanCanvas,
 
