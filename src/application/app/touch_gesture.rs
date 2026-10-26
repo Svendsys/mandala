@@ -377,6 +377,17 @@ impl TouchGestureRecognizer {
         }
     }
 
+    /// True when no finger is tracked. A finger landing now would be
+    /// the first of a gesture, not the second finger of a pinch.
+    ///
+    /// Native-only because its one reader is: the native touch router
+    /// (`touch_handle`) lets a finger take a resize handle only when it
+    /// starts a gesture, and the browser has no handle drag yet.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn is_idle(&self) -> bool {
+        matches!(self.state, State::Idle)
+    }
+
     /// Frame-boundary tick. The runtime calls this once per frame
     /// (cheap when the state is `Idle` — one branch). Long-press
     /// fires here, not on the `Moved` / `Started` events, because
