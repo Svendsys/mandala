@@ -17,6 +17,7 @@ use crate::application::console::completion::Completion;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
     free, kvs, usage, Descent, Form, Grammar, Slot, Subverb, Vocabulary, Word,
 };
@@ -74,6 +75,29 @@ const SUBVERBS: &[Subverb] = &[
         .taking(&[Form::slots(&[Slot::req(ID_VOCAB)])]),
 ];
 
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    List,
+    Apply,
+    Help,
+    Inspect,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("list", Route::List),
+    ("apply", Route::Apply),
+    ("help", Route::Help),
+    ("inspect", Route::Inspect),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 pub static GRAMMAR: Grammar = Grammar {
     label: "mutation",
     subverb_sets: &[SUBVERBS],
@@ -101,11 +125,12 @@ fn execute_mutation(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         return ExecResult::err(msg);
     }
     match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "list" => list(&descent, args, eff),
-            "apply" => apply(&descent, args, eff),
-            "help" => help(&descent, args, eff),
-            _ => inspect(&descent, args, eff),
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(Route::List) => list(&descent, args, eff),
+            Some(Route::Apply) => apply(&descent, args, eff),
+            Some(Route::Help) => help(&descent, args, eff),
+            Some(Route::Inspect) => inspect(&descent, args, eff),
+            None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::Bare => ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
         _ => ExecResult::err(usage::unknown_subverb_message(

@@ -427,21 +427,16 @@ macro_rules! keybind_surface {
         /// side (see [`super::surface`]). Every action field is a
         /// list so users can assign several keys to the same action
         /// (e.g. `Ctrl+Z` and the `Undo` media key both mapped to
-        /// `Undo`). Fields default via serde, so a partial config
-        /// only has to mention what it overrides.
+        /// `Undo`). A key the file leaves out keeps its default, so a
+        /// partial config only has to mention what it overrides.
         ///
-        /// Unrecognized top-level keys are kept out of the type on
-        /// purpose: they are reported by
-        /// [`KeybindConfig::unknown_top_level_keys`] and warned about
-        /// at load, rather than rejected — one stale key must not
-        /// cost the user the rest of their config. That tolerance
-        /// covers stale *keys* only; a malformed *value* under a
-        /// recognized key still fails the whole parse and costs the
-        /// user the layer, which
-        /// [`KeybindConfig::unknown_top_level_keys`] names and issue
-        /// #129 tracks.
-        #[derive(Debug, Clone, Serialize, Deserialize)]
-        #[serde(default)]
+        /// Parsed one field at a time by [`KeybindConfig::from_json`]
+        /// through the generated `take_fields`, never in one serde
+        /// pass: a stale key is warned about and ignored, and a
+        /// malformed value under a recognized key costs that one field
+        /// its default and nothing else — one broken entry must not
+        /// cost the user the rest of their config.
+        #[derive(Debug, Clone, Serialize)]
         pub struct KeybindConfig {
             $( $(#[$smeta])* pub $simple_field: Vec<String>, )*
             $( $(#[$pmeta])* pub $param_field: Vec<ParametricBinding>, )*
@@ -462,6 +457,38 @@ macro_rules! keybind_surface {
         }
 
         impl KeybindConfig {
+            /// Build a config from a parsed `keybinds.json` object, one
+            /// field per table row: each recognized key is moved out of
+            /// `object` and deserialized on its own, so a malformed
+            /// value costs its field the default (with a warning naming
+            /// the key, from `salvage::take_field`) and leaves every
+            /// other field alone. A key the object does not carry keeps
+            /// its default silently. What remains in `object` afterwards
+            /// is exactly the keys no row claimed.
+            ///
+            /// Generated from the `keybind_surface!` table, so a row
+            /// cannot exist without being read here.
+            fn take_fields(object: &mut $crate::application::user_config::salvage::JsonObject) -> Self {
+                use $crate::application::user_config::salvage::take_field;
+                let mut config = Self::default();
+                $(
+                    if let Some(value) = take_field("keybinds", object, stringify!($simple_field)) {
+                        config.$simple_field = value;
+                    }
+                )*
+                $(
+                    if let Some(value) = take_field("keybinds", object, stringify!($param_field)) {
+                        config.$param_field = value;
+                    }
+                )*
+                $(
+                    if let Some(value) = take_field("keybinds", object, stringify!($extra_field)) {
+                        config.$extra_field = value;
+                    }
+                )*
+                config
+            }
+
             /// Parse every binding string in the table into concrete
             /// `(Action, KeyBind)` pairs, appending to `binds`.
             /// Generated from the `keybind_surface!` table; the

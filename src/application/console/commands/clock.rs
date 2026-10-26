@@ -16,6 +16,7 @@ use crate::application::clock::{ClockMode, StepRequest};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{free, kvs, usage, Form, Grammar, Key, Subverb};
 use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ExecResult};
 
@@ -53,6 +54,29 @@ const SUBVERBS: &[Subverb] = &[
     .taking(&[Form::opt(&["ms", "frames"])]),
 ];
 
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    Status,
+    Real,
+    Virtual,
+    Step,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("status", Route::Status),
+    ("real", Route::Real),
+    ("virtual", Route::Virtual),
+    ("step", Route::Step),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 pub static GRAMMAR: Grammar = Grammar {
     label: "clock",
     subverb_sets: &[SUBVERBS],
@@ -77,14 +101,15 @@ fn execute_clock(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Err(msg) => return ExecResult::err(msg),
     };
     let line = match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "status" => ClockLine::Status,
-            "real" => ClockLine::Mode(ClockMode::Real),
-            "virtual" => ClockLine::Mode(ClockMode::Virtual),
-            _ => match read_step(|name| kvs::value(&pairs, name)) {
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(Route::Status) => ClockLine::Status,
+            Some(Route::Real) => ClockLine::Mode(ClockMode::Real),
+            Some(Route::Virtual) => ClockLine::Mode(ClockMode::Virtual),
+            Some(Route::Step) => match read_step(|name| kvs::value(&pairs, name)) {
                 Ok(request) => ClockLine::Step(request),
                 Err(message) => return ExecResult::err(message),
             },
+            None => return ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::Bare => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
         _ => {

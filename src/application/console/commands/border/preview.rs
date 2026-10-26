@@ -21,6 +21,7 @@
 
 use crate::application::console::parser::Args;
 use crate::application::console::spec::descent::Stop;
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
@@ -40,6 +41,24 @@ pub(crate) fn execute_border_preview(descent: &Descent, args: &Args, eff: &mut C
     dispatch_border_preview(descent, args, eff, |sel| {
         super::nodes_in_selection(sel, "border preview").map(BorderPreviewTarget::Nodes)
     })
+}
+
+/// Which terminator each of [`super::grammar::PREVIEW_TERMINATORS`]
+/// runs (`spec::route`) — on every staging level, since all five
+/// compose the one set.
+#[derive(Clone, Copy)]
+enum Route {
+    Commit,
+    Cancel,
+}
+
+const ROUTES: &Routes<Route> = &[("commit", Route::Commit), ("cancel", Route::Cancel)];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
 }
 
 /// Shared dispatch for the four border-preview verbs. Caller
@@ -65,9 +84,10 @@ where
             if let Err(msg) = kvs::read_strict(descent, args) {
                 return ExecResult::err(msg);
             }
-            return match subverb.name {
-                "commit" => commit_border_preview_verb(eff, level.label),
-                _ => cancel_border_preview_verb(eff, level.label),
+            return match route::lookup(ROUTES, subverb) {
+                Some(Route::Commit) => commit_border_preview_verb(eff, level.label),
+                Some(Route::Cancel) => cancel_border_preview_verb(eff, level.label),
+                None => ExecResult::err(route::miss(level, subverb)),
             };
         }
         // Every rejection quotes what the user typed rather than the
