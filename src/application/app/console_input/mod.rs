@@ -177,7 +177,7 @@ pub(super) fn rebuild_console_overlay(
         scrollback: scrollback_lines,
         completions: completion_geo,
         selected_completion,
-        font_family: keybinds.console_font.clone(),
+        default_font: keybinds.console_font,
         font_size: keybinds.console_font_size,
     };
     renderer.rebuild_console_overlay_buffers(app_scene, Some(&geometry));

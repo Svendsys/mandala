@@ -101,70 +101,186 @@ fn test_apply_document_actions_noop_does_not_push_undo() {
     assert!(!doc.dirty);
 }
 
-/// Phase-7 parity regression: the keybind-side custom-mutation
-/// path previously skipped both `apply_document_actions` and the
-/// animation `timing` envelope. After the fix, the keybind path
-/// runs through `dispatch::apply_keybind_custom_mutation` which
-/// goes through both. This test pins the parity contract by
-/// calling the helper directly (no renderer needed) and asserting
-/// the document-actions side-effect lands.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn test_apply_keybind_custom_mutation_runs_document_actions() {
-    use crate::application::app::dispatch::apply_keybind_custom_mutation;
+/// The positions the testament fixture's first node holds before
+/// and after `fire_custom_mutation` lands `cm` on it, with the
+/// `--bg` theme variable and the undo depth read alongside — the
+/// four readings every no-tree decision test below compares.
+struct FiredReadings {
+    moved_by: f64,
+    bg: Option<String>,
+    undo_entries: usize,
+    animating: bool,
+}
+
+fn fire_on_first_node(
+    doc: &mut MindMapDocument,
+    tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    cm: &CM,
+    section_idx: Option<usize>,
+) -> FiredReadings {
+    use crate::application::app::fire_custom_mutation::fire_custom_mutation;
     use baumhard::mindmap::scene_cache::SceneConnectionCache;
-    use baumhard::mindmap::tree_builder::build_mindmap_tree;
 
-    let mut doc = load_test_doc();
-    let nid = first_testament_node_id(&doc);
+    let nid = first_testament_node_id(doc);
+    let before_x = doc.mindmap.nodes.get(&nid).unwrap().position.x;
+    doc.undo_stack.clear();
     let mut scene_cache = SceneConnectionCache::default();
-    let cm = make_set_bg_doc_mutation("#bada55");
+    fire_custom_mutation(doc, tree, &mut scene_cache, cm, &nid, section_idx, 0);
+    FiredReadings {
+        moved_by: doc.mindmap.nodes.get(&nid).unwrap().position.x - before_x,
+        bg: doc.mindmap.canvas.theme_variables.get("--bg").cloned(),
+        undo_entries: doc.undo_stack.len(),
+        animating: doc.has_active_animations(),
+    }
+}
 
-    // Without a tree the non-animated branch can't apply.
-    let mut no_tree: Option<baumhard::mindmap::tree_builder::MindMapTree> = None;
-    let applied = apply_keybind_custom_mutation(&mut doc, &mut no_tree, &mut scene_cache, &cm, &nid, 0);
-    assert!(!applied, "no tree + no animation: nothing to apply");
+/// A mutation carrying both halves: a `NudgeRight(10)` mutator and a
+/// `SetThemeVariables { --bg }` document action.
+fn make_nudge_and_set_bg_mutation(value: &str) -> CM {
+    let mut cm = make_test_mutation("nudge-and-set-bg", TS::SelfOnly);
+    cm.document_actions = make_set_bg_doc_mutation(value).document_actions;
+    cm
+}
 
-    // Build a tree so the non-animated branch can run.
-    let mut tree = Some(build_mindmap_tree(&doc.mindmap));
-    let applied = apply_keybind_custom_mutation(&mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0);
-    assert!(applied, "with a tree, non-animated mutation must apply");
-    // The load-bearing assertion: document actions ran.
+/// **The no-tree decision of #144, pinned.** An instant mutation
+/// fired with no tree installed lands exactly what it lands with
+/// one: the node moves by the nudge, the theme variable is written,
+/// and each half pushes its undo entry. Before the decision the
+/// keystroke route reported `false` and skipped both halves here,
+/// and the click route skipped the mutator and wrote the theme.
+///
+/// The with-tree row is the control: the two rows read the same, so
+/// a regression that makes the no-tree row apply less (or more)
+/// fails against a reading that the tree route proves correct.
+#[test]
+fn test_fire_custom_mutation_without_a_tree_lands_what_it_lands_with_one() {
+    let cm = make_nudge_and_set_bg_mutation("#bada55");
+
+    let mut with_tree = load_test_doc();
+    let mut tree = Some(with_tree.build_tree());
+    let control = fire_on_first_node(&mut with_tree, &mut tree, &cm, None);
+    assert!(
+        (control.moved_by - 10.0).abs() < 1e-3,
+        "control: an instant nudge through the installed tree moves the node by 10; moved {}",
+        control.moved_by
+    );
     assert_eq!(
-        doc.mindmap.canvas.theme_variables.get("--bg"),
-        Some(&"#bada55".to_string()),
-        "Phase-7 parity: apply_document_actions must run on the keybind path"
+        control.bg.as_deref(),
+        Some("#bada55"),
+        "control: the theme half lands"
+    );
+    assert_eq!(control.undo_entries, 2, "control: one undo entry per half");
+    assert!(!control.animating, "control: instant means no instance");
+
+    let mut without_tree = load_test_doc();
+    let mut no_tree = None;
+    let decided = fire_on_first_node(&mut without_tree, &mut no_tree, &cm, None);
+    assert!(
+        (decided.moved_by - control.moved_by).abs() < 1e-3,
+        "no tree: the mutator half lands through a scratch tree; moved {} against the control's {}",
+        decided.moved_by,
+        control.moved_by
+    );
+    assert_eq!(decided.bg, control.bg, "no tree: the theme half lands");
+    assert_eq!(
+        decided.undo_entries, control.undo_entries,
+        "no tree: both halves are undoable"
+    );
+    assert!(!decided.animating);
+    assert!(
+        no_tree.is_none(),
+        "the scratch tree is a medium for the call, not a tree installed behind the caller's back"
     );
 }
 
-/// Phase-7 parity regression for the animation branch. When a
-/// custom mutation has `timing.duration_ms > 0`, the keybind path
-/// must call `start_animation` (not the immediate apply).
-#[cfg(not(target_arch = "wasm32"))]
+/// A mutation whose only payload is a document action (`mutator:
+/// null`, valid per `format/mutations.md`) never needed a tree, so
+/// the no-tree window must not swallow it: this is the theme-switch
+/// keybind the keystroke route used to drop. Negative control on the
+/// mutator half — nothing moves, and the one undo entry is the
+/// canvas snapshot.
 #[test]
-fn test_apply_keybind_custom_mutation_with_timing_starts_animation() {
-    use crate::application::app::dispatch::apply_keybind_custom_mutation;
-    use baumhard::mindmap::scene_cache::SceneConnectionCache;
-
+fn test_fire_custom_mutation_without_a_tree_still_writes_a_document_action_only_mutation() {
+    let cm = make_set_bg_doc_mutation("#bada55");
     let mut doc = load_test_doc();
-    let nid = first_testament_node_id(&doc);
-    let mut tree = None;
-    let mut scene_cache = SceneConnectionCache::default();
-    let mut cm = TestNudgeMutation::new("animated-nudge", TS::SelfOnly)
-        .magnitude(10.0)
-        .build();
+    let mut no_tree = None;
+    let readings = fire_on_first_node(&mut doc, &mut no_tree, &cm, None);
+    assert_eq!(readings.bg.as_deref(), Some("#bada55"));
+    assert!(
+        readings.moved_by.abs() < 1e-9,
+        "a document-action-only mutation moves nothing; moved {}",
+        readings.moved_by
+    );
+    assert_eq!(readings.undo_entries, 1, "the canvas snapshot alone");
+    assert!(matches!(
+        doc.undo_stack.last(),
+        Some(UndoAction::CanvasSnapshot { .. })
+    ));
+}
+
+/// An animated mutation (`timing.duration_ms > 0`) starts its
+/// instance and writes its theme half at once, with or without a
+/// tree; the node has **not** moved yet (the negative control on
+/// "instant"), and no undo entry is pushed for the mutator half,
+/// whose commit — and whose undo entry — belongs to the completion
+/// the frame drives. The with-tree row is again the control.
+#[test]
+fn test_fire_custom_mutation_animated_starts_the_instance_and_writes_the_theme_before_moving() {
+    let mut cm = make_nudge_and_set_bg_mutation("#bada55");
     cm.timing = Some(AnimationTiming {
         duration_ms: 200,
         ..AnimationTiming::default()
     });
 
-    assert!(!doc.has_active_animations());
-    let applied = apply_keybind_custom_mutation(&mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0);
-    assert!(applied, "animated branch must succeed even without a tree");
-    assert!(
-        doc.has_active_animations(),
-        "Phase-7 parity: timing.duration_ms > 0 must call start_animation"
-    );
+    for (label, tree) in [("with a tree", true), ("without a tree", false)] {
+        let mut doc = load_test_doc();
+        let mut tree = tree.then(|| doc.build_tree());
+        let readings = fire_on_first_node(&mut doc, &mut tree, &cm, None);
+        assert!(
+            readings.animating,
+            "{label}: timing.duration_ms > 0 starts an instance"
+        );
+        assert!(
+            readings.moved_by.abs() < 1e-9,
+            "{label}: the animated node stays put until the frame ticks it; moved {}",
+            readings.moved_by
+        );
+        assert_eq!(
+            readings.bg.as_deref(),
+            Some("#bada55"),
+            "{label}: the theme half lands now"
+        );
+        assert_eq!(
+            readings.undo_entries, 1,
+            "{label}: the canvas snapshot alone — the mutator's entry is the completion's to push"
+        );
+    }
+}
+
+/// The target shape is section-aware end to end: the section the
+/// click route passes reaches the `AnimationInstance`, and the
+/// `None` the keystroke route passes stays `None` — the two are told
+/// apart on the instance, which is what lets two sections of one
+/// node run the same mutation at once (`start_animation_at`'s
+/// dedup key).
+#[test]
+fn test_fire_custom_mutation_carries_the_section_target_onto_the_instance() {
+    let mut cm = make_test_mutation("animated-nudge", TS::SelfOnly);
+    cm.timing = Some(AnimationTiming {
+        duration_ms: 200,
+        ..AnimationTiming::default()
+    });
+    for section_idx in [None, Some(0)] {
+        let mut doc = load_test_doc();
+        let mut tree = Some(doc.build_tree());
+        let readings = fire_on_first_node(&mut doc, &mut tree, &cm, section_idx);
+        assert!(readings.animating);
+        assert_eq!(doc.active_animations.len(), 1);
+        assert_eq!(
+            doc.active_animations[0].section_idx, section_idx,
+            "the section target a route passes is the one the instance carries"
+        );
+    }
 }
 
 #[test]
@@ -2127,7 +2243,7 @@ fn test_tick_completion_deleted_node_not_resurrected() {
     assert!(doc.tick_animations(500, Some(&mut tree)));
 
     // Delete the node mid-flight (model removal mirrors the
-    // `mindmap.nodes` side of `delete_node`); the animation stays
+    // `mindmap.nodes` side of `delete_nodes`); the animation stays
     // queued because the delete doesn't touch `active_animations`.
     doc.mindmap.nodes.remove(&node_id);
     assert!(doc.has_active_animations());

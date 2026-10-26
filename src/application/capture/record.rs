@@ -1338,15 +1338,28 @@ mod tests {
     /// under the margin over the measured cost, the oldest frames first
     /// when there is room, and what it writes is what a flush would —
     /// numbered files that decode to the pixels given.
+    ///
+    /// The prior is seeded far above anything one 10x10 frame costs, on
+    /// purpose. It used to be 100 ms, which made "the estimate follows
+    /// what it cost" a claim that a real encode and publish finish in
+    /// under 100 ms of wall time, and a busy CI runner took ~147 ms.
+    /// That assertion's failing input was a loaded machine, which is not
+    /// a defect (TEST_CONVENTIONS §T13: name the input that makes it
+    /// fail). The defect it exists for is an encode that does not fold
+    /// its cost into the estimate; with the prior this high, that is
+    /// the only way the estimate can stay at it.
     #[test]
     fn test_idle_encoding_stays_within_the_time_it_is_given() {
+        const PRIOR_MS: f64 = 10_000.0;
         let dir = scratch_dir("record-idle");
         let mut recording = Recording::begin(config(10, 10), dir.clone(), 0.0, None);
         for seed in 1..=3 {
             recording.push_frame(f64::from(seed) * 100.0, 1, camera(), pixels(seed as u8));
         }
-        recording.encode_ms = Some(100.0);
-        recording.encode_in_idle(149.0, 0.0, &mut || {}).expect("fine");
+        recording.encode_ms = Some(PRIOR_MS);
+        recording
+            .encode_in_idle(PRIOR_MS * IDLE_ENCODE_MARGIN - 1.0, 0.0, &mut || {})
+            .expect("fine");
         assert_eq!(
             recording.pending.len(),
             3,
@@ -1354,7 +1367,9 @@ mod tests {
         );
         assert_eq!(names_in(&dir), Vec::<String>::new());
 
-        recording.encode_in_idle(150.0, 0.0, &mut || {}).expect("fine");
+        recording
+            .encode_in_idle(PRIOR_MS * IDLE_ENCODE_MARGIN, 0.0, &mut || {})
+            .expect("fine");
         assert!(recording.pending.len() < 3, "room for one: the oldest went");
         assert!(dir.join("frame_00000.png").exists());
         // The estimate drops to what the first encode really cost, so
@@ -1364,7 +1379,10 @@ mod tests {
             assert_eq!(front.index, 3 - recording.pending.len() as u32, "oldest first");
         }
         let measured = recording.encode_ms.expect("measured");
-        assert!(measured < 100.0, "the estimate follows what it cost: {measured}");
+        assert!(
+            measured < PRIOR_MS,
+            "the estimate follows what it cost: {measured}"
+        );
 
         // Nothing is lost by encoding early: a flush finishes the rest
         // and the recording is whole.

@@ -1193,6 +1193,59 @@ mod tests {
         );
     }
 
+    /// A refill of an edge the cache already holds re-stamps
+    /// `base_from` / `base_to` from *this* call's arguments.
+    ///
+    /// `refill` writes the two endpoints twice: in the insert that
+    /// creates an entry, and at its tail on every call. Only the tail
+    /// write reaches an edge that is already cached, and it is that
+    /// write this test is about. Input that makes it fail: either tail
+    /// stamp deleted. The entry then keeps the endpoints of its
+    /// previous sample, and the translate path, which reads a drag
+    /// delta off them, shifts the resampled geometry by the wrong
+    /// amount on the next shared-delta frame;
+    /// `test_a_resample_of_a_cached_edge_restamps_the_endpoints_the_translate_path_reads`
+    /// in `tree_builder::tests::connection_cache` is that consequence
+    /// through the pass. Both deletions passed the whole crate before
+    /// these two tests existed (#146).
+    #[test]
+    fn test_refill_of_a_cached_edge_restamps_both_base_endpoints() {
+        let mut cache = SceneConnectionCache::new();
+        let key = EdgeKey::new("a", "b", "cross_link");
+        cache.refill(
+            &key,
+            mk_params(),
+            Vec2::new(1.0, 2.0),
+            Vec2::new(3.0, 4.0),
+            |out| out.push(Vec2::ZERO),
+        );
+        let first = cache.inspect(&key).expect("the first fill stores the entry");
+        assert_eq!(
+            (first.base_from, first.base_to),
+            (Vec2::new(1.0, 2.0), Vec2::new(3.0, 4.0)),
+            "precondition: the first fill records the endpoints it was given"
+        );
+
+        cache.refill(
+            &key,
+            mk_params(),
+            Vec2::new(10.0, 20.0),
+            Vec2::new(30.0, 40.0),
+            |out| out.push(Vec2::ZERO),
+        );
+        let second = cache.inspect(&key).expect("a refill keeps the entry");
+        assert_eq!(
+            second.base_from,
+            Vec2::new(10.0, 20.0),
+            "`base_from` must be this refill's, not the first fill's"
+        );
+        assert_eq!(
+            second.base_to,
+            Vec2::new(30.0, 40.0),
+            "`base_to` must be this refill's, not the first fill's"
+        );
+    }
+
     /// A door that refuses does not mark. The entry is about to be
     /// rewritten by the slow path either way, so the stamp would be
     /// redundant — and marking on refusal would keep an entry alive

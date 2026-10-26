@@ -9,6 +9,7 @@
 //! shaper consumes. Kept free of cosmic-text and wgpu so unit tests
 //! can construct geometries trivially.
 
+use baumhard::font::fonts::AppFont;
 use baumhard::font::metrics::monospace_advance;
 
 /// Pre-layout console data handed from the app event loop to the
@@ -16,7 +17,7 @@ use baumhard::font::metrics::monospace_advance;
 ///
 /// Layout shape: a bottom-anchored strip with (bottom → top)
 /// prompt line → completion popup → scrollback region.
-/// `font_family`/`font_size` come from user config; the renderer
+/// `default_font`/`font_size` come from user config; the renderer
 /// stays dumb about provenance.
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayGeometry {
@@ -37,21 +38,15 @@ pub struct ConsoleOverlayGeometry {
     /// Which completion is highlighted. `None` when `completions` is
     /// empty. Index into `completions` otherwise.
     pub selected_completion: Option<usize>,
-    /// Font family name from the user's `console_font` config.
-    ///
-    /// **Carried and not read — a defect, not a seam.** The console
-    /// pass resolves a face per line and per completion candidate
-    /// from the `Option<String>` on those rows, and falls back to
-    /// cosmic-text's default when a row carries `None`; it never
-    /// consults this overlay-level family, so a user who sets
-    /// `console_font` sees no change. The consumer is
-    /// `renderer::console_pass`'s `shape_line` closure, which needs
-    /// this as its `None` fallback. Held rather than deleted because
-    /// deleting it would drop the setting out of the model as well
-    /// as out of the render; reported out of #41 rather than fixed
-    /// there.
-    #[allow(dead_code)]
-    pub font_family: String,
+    /// The console's default face, from the user's `console_font`
+    /// config (resolved once, at `KeybindConfig::resolve`). The
+    /// frame, the gutter, the prompt and every completion hint shape
+    /// in it, and so does every scrollback line and completion
+    /// candidate that does not pin a face of its own — including one
+    /// whose pinned family is not loaded. The frame's column count is
+    /// measured in it too, since the border glyphs are drawn in it.
+    /// `None` is cosmic-text's default face.
+    pub default_font: Option<AppFont>,
     /// Font size in pixels. The whole overlay scales with this value;
     /// row height, frame extents, and border repetition counts are
     /// all derived from it.
@@ -62,9 +57,11 @@ pub struct ConsoleOverlayGeometry {
 /// color input echoes, normal output, and errors differently.
 ///
 /// `font_family` pins the shaped face for the line's text. `None`
-/// means "use the console default". Set by output-producing
+/// means "use the console default" (`ConsoleOverlayGeometry::default_font`),
+/// and so does a family that is not loaded. Set by output-producing
 /// commands like `font list` so each row shapes in its own face;
-/// input echoes and errors always set `None`.
+/// input echoes and errors always set `None`. The gutter glyph
+/// beside the line always shapes in the console default.
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayLine {
     pub text: String,
@@ -85,11 +82,13 @@ pub enum ConsoleOverlayLineKind {
 /// One completion candidate: the replacement text plus an optional
 /// dim hint printed to the right (e.g. the command's summary).
 ///
-/// `font_family` pins the shaped face for the candidate's `text`
-/// (the hint, if any, stays in the console default font). Set by
-/// the font-name completer so each candidate row renders in its own
-/// face — `font set A` shows every "A..." family pre-shaped in
-/// that family. `None` means "use the console's default font".
+/// `font_family` pins the shaped face for the candidate's `text`;
+/// the selection marker before it and the hint after it stay in the
+/// console default font, so a face that lacks those glyphs cannot
+/// turn them into tofu. Set by the font-name completer so each
+/// candidate row renders in its own face — `font set A` shows every
+/// "A..." family pre-shaped in that family. `None` (or a family that
+/// is not loaded) means "use the console's default font".
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayCompletion {
     pub text: String,

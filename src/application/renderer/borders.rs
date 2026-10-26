@@ -11,6 +11,7 @@
 //! `baumhard::font::hex::hex_to_cosmic_color` (§B5: cosmic-text
 //! usage stays inside `font/`).
 
+use baumhard::font::fonts::AppFont;
 use baumhard::font::metric_cache::glyph_advance_with;
 use baumhard::font::metrics::monospace_advance;
 use baumhard::font::{buffer, Attrs, FontSystem, SHAPING_ADVANCED};
@@ -32,8 +33,11 @@ use super::MindMapTextBuffer;
 /// mandatory here — every caller already holds the `FONT_SYSTEM`
 /// write guard, and a nested acquire is a self-deadlock (§B5).
 ///
-/// The face pin is `None`, matching the bare `Attrs::new()` this
-/// used to shape with: cosmic-text's default fallback face.
+/// `face` is the face the measured glyphs will be *drawn* in, and a
+/// measurement is only worth anything in that face: the console
+/// passes its configured `console_font`, the picker passes each
+/// arm's pin. `None` is cosmic-text's default fallback face, the
+/// same face an unpinned `GlyphArea` shapes in.
 ///
 /// One semantic correction rides along. Each entry of `glyphs` is a
 /// cluster, and a cluster can lay out as more than one glyph (a
@@ -47,10 +51,15 @@ use super::MindMapTextBuffer;
 /// because for them the sum and the max are the same number. The
 /// `max` in the name is the max *across* `glyphs`, which is
 /// unchanged.
-pub fn measure_max_glyph_advance(font_system: &mut FontSystem, glyphs: &[&str], font_size: f32) -> f32 {
+pub fn measure_max_glyph_advance(
+    font_system: &mut FontSystem,
+    face: Option<AppFont>,
+    glyphs: &[&str],
+    font_size: f32,
+) -> f32 {
     let mut max_w: f32 = 0.0;
     for g in glyphs {
-        let w = glyph_advance_with(font_system, None, font_size, g);
+        let w = glyph_advance_with(font_system, face, font_size, g);
         if w > max_w {
             max_w = w;
         }

@@ -39,7 +39,7 @@ pub(in crate::application::app) mod native;
 // callable without callers learning the sub-module split.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) use native::{
-    apply_label_edit_action_to_buffer, dispatch_action, dispatch_macro, run_macro_steps,
+    apply_label_edit_action_to_buffer, dispatch_action, dispatch_held_action, dispatch_macro, run_macro_steps,
 };
 
 // Cross-platform re-exports — both dispatchers and the
@@ -67,9 +67,3 @@ pub(in crate::application::app) use cross_dispatch::{
     classify_unhandled_pointer_dispatch, compute_node_click_selection, edge_label_target,
     UnhandledPointerDispatch,
 };
-// `pub(crate)` so `tests_mutations` (in `document/`) and the
-// WASM run loop (`run_wasm/mod.rs`) can both reach it through this
-// canonical re-export. Native sub-modules (`native.rs`) also call
-// here rather than the sibling path so the surface stays
-// uniform across targets.
-pub(crate) use cross_dispatch::apply_keybind_custom_mutation;

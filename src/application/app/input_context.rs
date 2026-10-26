@@ -401,14 +401,39 @@ impl InputHandlerContext<'_> {
         !matches!(*self.drag_state, DragState::None) || self.color_picker_state.is_open()
     }
 
-    /// `WindowEvent::KeyboardInput`. Only a press reaches the
-    /// handler; a release changes nothing. Returns whether to request
-    /// a redraw.
+    /// `WindowEvent::KeyboardInput`. A press reaches the full
+    /// handler; a release only ends a pan the key holds, which
+    /// changes no pixels. Returns whether to request a redraw.
     pub(super) fn on_keyboard_input(&mut self, logical_key: Key, state: ElementState) -> bool {
         if state != ElementState::Pressed {
+            event_keyboard::handle_key_release(&logical_key, self);
             return false;
         }
         event_keyboard::handle_keyboard_input(logical_key, self);
         true
+    }
+
+    /// `WindowEvent::Focused(false)`: the window may never deliver the
+    /// release any in-flight gesture is waiting for, so resolve them
+    /// all now (#153) rather than leave one unreachable.
+    ///
+    /// The drag state ends at `None` (`DragState::end_on_focus_loss`
+    /// says what each variant owes); a throttled drag is committed
+    /// through the same release gate a button release uses, with
+    /// `Release::FocusLost`, so it lands with its undo entry exactly
+    /// as the owning release would have landed it. A color-picker
+    /// wheel gesture ends the way its release ends it. Returns whether
+    /// to request a redraw.
+    pub(super) fn on_focus_lost(&mut self) -> bool {
+        let picker_gesture_ended =
+            super::color_picker_flow::end_color_picker_gesture(self.color_picker_state);
+        let was_idle = matches!(*self.drag_state, DragState::None);
+        if let Some(mut drag) = self.drag_state.end_on_focus_loss() {
+            use super::throttled_interaction::release::{commit_if_resolved, Release};
+            if let Some(refresh) = commit_if_resolved(Release::FocusLost, &mut drag, self.release_commit()) {
+                refresh.execute(self.drain_context());
+            }
+        }
+        picker_gesture_ended || !was_idle
     }
 }

@@ -985,7 +985,7 @@ are the other half of the same question.
 
 | reader | site | clock | why |
 |---|---|---|---|
-| animation tick | `drain_frame::drain_animation_tick` (from `heartbeat::drain_inputs`) | app | the behavior virtual time exists for |
+| animation tick | `animation_drain::drain_animation_tick` (from `heartbeat::drain_inputs`; the browser's frame runs it too) | app | the behavior virtual time exists for |
 | drag pause on the tick | `heartbeat::drain_inputs` (`anim_pause_start_ms`) | app | its stamp is subtracted from the tick's clock; two clocks would not cancel |
 | double-click window | `event_mouse_click.rs` (native), `run_wasm/event_mouse_click.rs` | app | an IPC-06 click pair must be schedulable on the axis a step advances |
 | `OnClick` trigger start | `click.rs` (via `ClickCore::now_ms`), `cross_dispatch/pointer.rs` (tap), `run_wasm/event_mouse_click.rs` | app | starts an animation, which the tick then measures |

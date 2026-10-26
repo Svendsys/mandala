@@ -35,8 +35,11 @@
 //! which is what makes a long step safe by construction: a step makes
 //! progress, so only a single stuck heartbeat can trip the threshold.
 //!
-//! Native-only, with the drain it runs (`CLAUDE.md` "Dual-target
-//! status", "Per-frame animation drain").
+//! Native-only: the input-driven half is made of native's drag state
+//! and picker, and the step driver below commands a clock only IPC can
+//! switch (`CLAUDE.md` "Dual-target status", "Virtual-clock
+//! stepping"). The animation tick it runs is not — `animation_drain`
+//! is the body the browser's frame runs too.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -49,7 +52,7 @@ use super::capture_flow::CaptureScene;
 use super::input_context::InputHandlerContext;
 use super::ipc_target::surface_of;
 use super::throttled_interaction::{ColorPickerHoverInteraction, ThrottledDrag, ThrottledInteraction};
-use super::{drain_frame, record_flow, DragState};
+use super::{animation_drain, drain_frame, record_flow, DragState};
 
 /// Which frame is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +102,9 @@ impl Beat {
 ///   input**: each needs the next heartbeat. Under a virtual clock the
 ///   heartbeats that advance them are the step's, so neither keeps the
 ///   loop awake: with time frozen there is nothing an iteration could
-///   do for them.
+///   do for them. The animation term is
+///   [`animation_drain::keeps_ticking`], which the browser's frame
+///   reads for the same decision.
 ///
 /// `None` / `Pending` / `Panning` / `SelectingRect` drag states are
 /// event-driven only. The FPS overlay is deliberately not a source: a
@@ -120,8 +125,8 @@ pub(super) fn needs_continuation(
         DragState::Throttled(d) if d.as_dyn().needs_continuation()
     );
     let input_driven = drag_pending || picker_hover.has_pending() || geometry_dirty;
-    let time_driven = document.is_some_and(MindMapDocument::has_active_animations) || !injected.is_empty();
-    input_driven || (time_driven && clock.mode() == ClockMode::Real)
+    let injected_pending = !injected.is_empty() && clock.mode() == ClockMode::Real;
+    input_driven || animation_drain::keeps_ticking(document, clock) || injected_pending
 }
 
 impl InputHandlerContext<'_> {
@@ -252,8 +257,9 @@ impl InputHandlerContext<'_> {
         } else if self.picker_hover.has_pending() {
             // Picker closed while a throttle-deferred hover drain
             // was still queued. The drain body's closed-picker
-            // branch (`color_picker_hover.rs:88-92`) is a no-op
-            // rebuild that just clears both flags — going through
+            // branch (`ColorPickerHoverInteraction::drain`, the
+            // `!is_open()` arm) is a no-op rebuild that just clears
+            // both flags — going through
             // the throttle would still strand them for the throttle
             // window's worth of frames, during which
             // `needs_continuation` reads `has_pending=true` and
@@ -308,9 +314,9 @@ impl InputHandlerContext<'_> {
         }
 
         if ticks && !is_drag_with_tree_mutation {
-            drain_frame::drain_animation_tick(
+            animation_drain::drain_animation_tick(
                 now,
-                self.document,
+                self.document.as_mut(),
                 self.interaction_mode,
                 self.mindmap_tree,
                 self.app_scene,

@@ -206,23 +206,17 @@ fn apply(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult
     };
 
     // Apply through the document's existing undo-pushing path. Both
-    // tree mutations (via `apply_custom_mutation`) and
-    // document-actions need to fire — a single custom mutation can
-    // carry both and users expect one `mutation apply` to do both.
+    // tree mutations and document-actions need to fire — a single
+    // custom mutation can carry both and users expect one
+    // `mutation apply` to do both.
     //
-    // The declarative (flat-apply) path needs a fresh MindMapTree;
-    // the imperative handler path mutates the model directly and
-    // doesn't touch the tree, so we skip the (expensive) build when
-    // dispatch will go to a handler. The tree is discarded after
-    // apply either way — the renderer rebuilds from the model on
-    // the next frame.
-    if eff.document().will_dispatch_to_handler(&cm.id) {
-        eff.document_mut().apply_custom_mutation(&cm, &target_id, None);
-    } else {
-        let mut tree = eff.document().build_tree();
-        eff.document_mut()
-            .apply_custom_mutation(&cm, &target_id, Some(&mut tree));
-    }
+    // The console holds no tree, and `apply_custom_mutation_instantly`
+    // is the one answer to that (the no-tree decision of #144): the
+    // declarative path runs through a scratch tree built for the call,
+    // the handler path through none. The renderer rebuilds from the
+    // model on the next frame either way.
+    eff.document_mut()
+        .apply_custom_mutation_instantly(&cm, &target_id, None);
     eff.document_mut().apply_document_actions(&cm);
 
     ExecResult::ok_msg(format!("applied '{}' to node '{}'", id, target_id))

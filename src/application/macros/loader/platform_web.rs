@@ -12,17 +12,17 @@
 //! open document — while `?map=` on the same URL was correctly
 //! treated as untrusted. See `user_config::web_storage::load_web_storage_only`.
 //!
-//! The query/storage reads, the size cap, and the fallback walk all
+//! The storage read, the size cap, and the fallback walk all
 //! belong to `crate::application::user_config::web_storage` — the
 //! keybinds and mutations web loaders name their layers against the
-//! same driver, so the three cannot drift. Never panics: missing or
-//! invalid sources are logged by the driver and the next layer is
-//! tried.
+//! same driver, so the three cannot drift. Never panics: a missing
+//! or invalid payload is logged by the driver and the registry gets
+//! no user macros.
 
 use super::Macro;
 use crate::application::user_config::web_storage::load_web_storage_only;
 
-/// Load user macros on WASM with layered fallback. Same shape
+/// Load user macros on WASM from `localStorage`. Same shape
 /// (and same name) as the native sibling so the platform-routed
 /// `pub use` at `super::load_user_macros` resolves on both targets.
 pub fn load_user_macros() -> Vec<Macro> {

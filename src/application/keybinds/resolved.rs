@@ -4,6 +4,8 @@
 //! into. Built once via `KeybindConfig::resolve`, then queried per
 //! input event.
 
+use baumhard::font::fonts::AppFont;
+
 use super::action::Action;
 use super::bind::KeyBind;
 use super::context::InputContext;
@@ -25,14 +27,15 @@ pub struct ResolvedKeybinds {
     /// mutations and AFTER built-in actions, so a key bound to both
     /// a macro and a custom mutation runs the macro.
     macro_binds: Vec<(KeyBind, String)>,
-    /// Console font family. Empty means "use cosmic-text default".
+    /// The console's default face, resolved from `console_font` by
+    /// `config::resolve_console_font`. `None` means cosmic-text's
+    /// default face: either nothing was configured, or the configured
+    /// family is not loaded (which warned at resolve time).
     // Native-driver-only, with `console_font_size`: both are read by
     // `app::console_input`, which is native-gated with the modal
-    // shell. (The family is then dropped on the floor even on
-    // native — see the note on
-    // `renderer::console_geometry::ConsoleOverlayGeometry::font_family`.)
+    // shell.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub console_font: String,
+    pub console_font: Option<AppFont>,
     /// Console overlay font size in pixels.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub console_font_size: f32,
@@ -45,7 +48,7 @@ impl ResolvedKeybinds {
         binds: Vec<(Action, KeyBind)>,
         custom_binds: Vec<(KeyBind, String)>,
         macro_binds: Vec<(KeyBind, String)>,
-        console_font: String,
+        console_font: Option<AppFont>,
         console_font_size: f32,
     ) -> Self {
         Self {

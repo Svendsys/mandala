@@ -27,8 +27,9 @@ same `id`):
    users can customize anything shipped by the app.
 2. **User file** — `$XDG_CONFIG_HOME/mandala/mutations.json` on
    native (falls back to `$HOME/.config/mandala/mutations.json`);
-   `?mutations=<url-encoded-json>` query or
-   `localStorage["mandala_mutations"]` on WASM.
+   `localStorage["mandala_mutations"]` on WASM. There is no
+   `?mutations=` URL parameter: a link is composed by whoever sent
+   it, not by the user, and this tier is trusted as the user's own.
 3. **Map-level** — the `custom_mutations: [...]` array in the
    `.mindmap.json` file itself.
 4. **Inline** — the `inline_mutations: [...]` array on a specific

@@ -1684,3 +1684,162 @@ fn test_caps_land_on_the_two_ends_of_the_path_on_every_cache_path() {
         after_y - before_y
     );
 }
+
+/// A resample of an edge the cache already holds must re-stamp the
+/// reference endpoints the translate path reads its delta off.
+///
+/// `SceneConnectionCache::refill` writes `base_from` / `base_to`
+/// twice: once in the insert that creates the entry, and once at its
+/// tail, on every call. Only the tail write reaches an edge that is
+/// *already cached*, which is every resample after an edge's first
+/// frame, and that write was exercised by nothing: deleting either
+/// stamp passed the whole crate (#146, the field sweep the issue
+/// asked for). The first-frame tests could not see it because the
+/// insert had already written the same values; the translate-path
+/// tests could not because their one planting refill hands the entry
+/// the very endpoints it already holds.
+///
+/// Shape: three builds of one edge. Build 1 fills the cache at rest.
+/// Build 2 drags both endpoints by +25 in `y` **and** edits the
+/// sampling config, so the translate door refuses on params and the
+/// slow path resamples the edge at the dragged position: the
+/// resample-while-cached route. Build 3 continues the drag to +50
+/// under the now-current config, so the translate door accepts and
+/// reads the delta off the entry's reference endpoints.
+///
+/// What a stale stamp does to build 3. With both endpoints stale the
+/// delta reads as 50 instead of 25, and geometry sampled at +25 is
+/// drawn at +75: the edge visibly leads its own nodes by the length
+/// of the previous drag step. With one endpoint stale the two deltas
+/// disagree, the door refuses, and the translate path never fires
+/// again for that edge: correct pixels, at the slow path's cost on
+/// every frame of every later drag. The cache-level assertions after
+/// build 2 catch either. The frame-level assertions after build 3 see
+/// both as well, because the entry is marked before build 3 through
+/// `reusable_mut`, the door that leaves the endpoints alone: a
+/// translate carries the mark into the frame shifted by the one drag
+/// step, a resample discards it, and a translate by a stale delta
+/// carries it the wrong distance. Without the mark a rigid translate
+/// of the +25 geometry and a fresh sample at +50 land on the same
+/// points, and the frame could not say which route it came from.
+#[test]
+fn test_a_resample_of_a_cached_edge_restamps_the_endpoints_the_translate_path_reads() {
+    use crate::util::geometry::{almost_equal, almost_equal_vec2};
+
+    let mut map = map_with_connection_config(baseline_connection_config());
+    let key = EdgeKey::from_edge(&map.edges[0]);
+    let mut cache = SceneConnectionCache::new();
+
+    // Build 1 — the slow path at rest. The insert writes the endpoints.
+    let _at_rest = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    let params_at_rest = cache
+        .inspect(&key)
+        .expect("build 1 fills the cache")
+        .sample_params;
+
+    // Build 2 — both endpoints dragged by one delta, under an edited
+    // sampling config: the resample-while-cached route.
+    edge_config_mut(&mut map).font_size_pt = 24.0;
+    let mut offsets = HashMap::new();
+    offsets.insert("a".to_string(), (0.0, 25.0));
+    offsets.insert("b".to_string(), (0.0, 25.0));
+    let dragged = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    let entry = cache.inspect(&key).expect("build 2 keeps the edge cached");
+    assert!(
+        !entry.sample_params.matches(&params_at_rest),
+        "precondition: the config edit must have moved the params, or build 2 translated \
+         instead of resampling and this test exercises nothing the translate tests do not"
+    );
+    // The fixture's nodes sit at (0, 0) and (400, 0); the pass stamps
+    // `model.pos + offset`, so these are literals rather than values
+    // read back through the code under test.
+    assert!(
+        almost_equal_vec2(entry.base_from, Vec2::new(0.0, 25.0)),
+        "a resample must re-stamp `base_from` with the endpoint it sampled at, got {:?}",
+        entry.base_from
+    );
+    assert!(
+        almost_equal_vec2(entry.base_to, Vec2::new(400.0, 25.0)),
+        "a resample must re-stamp `base_to` with the endpoint it sampled at, got {:?}",
+        entry.base_to
+    );
+
+    // Route guard for build 3: mark the entry's geometry without
+    // touching its endpoints, so build 3 can reproduce the mark only
+    // by translating it. The mark moves the path a hundred units
+    // below the nodes, which in build 3 span y in [50, 90], so
+    // clipping removes none of the marked points.
+    const MARK: f32 = 100.0;
+    let params = entry.sample_params;
+    for p in &mut cache
+        .reusable_mut(&key, &params)
+        .expect("precondition: the entry build 2 wrote is reusable under its own params")
+        .pre_clip_positions
+    {
+        *p += Vec2::new(0.0, MARK);
+    }
+
+    // Build 3 — the drag continues by another +25 under the same
+    // config, which is the translate door's shape.
+    offsets.insert("a".to_string(), (0.0, 50.0));
+    offsets.insert("b".to_string(), (0.0, 50.0));
+    let continued = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    let before = &dragged.connection_elements[0];
+    let after = &continued.connection_elements[0];
+    assert_eq!(
+        after.glyph_positions.len(),
+        before.glyph_positions.len(),
+        "a rigid translation of an unobstructed edge keeps every sample"
+    );
+    for (i, (&(bx, by), &(ax, ay))) in before
+        .glyph_positions
+        .iter()
+        .zip(&after.glyph_positions)
+        .enumerate()
+    {
+        assert!(
+            almost_equal(ax - bx, 0.0) && almost_equal(ay - by, 25.0 + MARK),
+            "sample {i}: the marked geometry must come back translated by the one drag step of +25 \
+             (+25 means the door refused and resampled, +50 means it translated by a stale delta); \
+             ({bx}, {by}) -> ({ax}, {ay})"
+        );
+    }
+    let start_cap_y = |elem: &ConnectionElement| {
+        elem.cap_start
+            .as_ref()
+            .map(|(_, (_, y))| *y)
+            .expect("the start cap survives clipping on an unframed source node")
+    };
+    assert!(
+        almost_equal(start_cap_y(after) - start_cap_y(before), 25.0 + MARK),
+        "the start cap rides the same translated mark as the body, got {}",
+        start_cap_y(after) - start_cap_y(before)
+    );
+}

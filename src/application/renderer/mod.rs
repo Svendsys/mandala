@@ -136,8 +136,11 @@ use console_geometry::{
 };
 #[cfg(test)]
 use console_pass::{
-    build_console_overlay_mutator, build_console_overlay_tree, console_overlay_areas,
-    console_overlay_signature,
+    build_console_overlay_mutator, build_console_overlay_tree, completion_row_regions, console_overlay_areas,
+    console_overlay_signature, CompletionRowSpans, CONSOLE_CHANNEL_BOTTOM_BORDER,
+    CONSOLE_CHANNEL_COMPLETION_BASE, CONSOLE_CHANNEL_LEFT_COL, CONSOLE_CHANNEL_PROMPT,
+    CONSOLE_CHANNEL_RIGHT_COL, CONSOLE_CHANNEL_SCROLLBACK_GUTTER_BASE, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE,
+    CONSOLE_CHANNEL_TOP_BORDER,
 };
 
 use std::borrow::Cow;
@@ -558,7 +561,7 @@ pub struct Renderer {
     /// The rubber-band selection rectangle's four shaped edges, and
     /// nothing else. Camera-transformed. Written only by
     /// [`Self::rebuild_selection_rect_overlay`] and dropped only by
-    /// [`Self::clear_overlay_buffers`]; the color picker, the FPS
+    /// [`Self::clear_selection_rect_overlay`]; the color picker, the FPS
     /// readout and the mode-status line each have their own store.
     ///
     /// The exclusivity is load-bearing rather than incidental:

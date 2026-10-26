@@ -849,7 +849,9 @@ mod abandonment_guard {
     fn test_left_press_still_rearms_from_every_state_that_owes_the_model_nothing() {
         for drag in [
             DragState::None,
-            DragState::Panning,
+            DragState::Panning {
+                owner: PanOwner::Toggled,
+            },
             DragState::SelectingRect {
                 start_canvas: glam::Vec2::ZERO,
                 current_canvas: glam::Vec2::new(10.0, 10.0),
@@ -869,6 +871,177 @@ mod abandonment_guard {
                 !drag.would_abandon_gesture(),
                 "a left press must still re-arm from {:?}",
                 std::mem::discriminant(&drag)
+            );
+        }
+    }
+
+    fn left() -> HeldInput {
+        HeldInput::Button(crate::application::platform::input::MouseButton::Left)
+    }
+
+    fn middle() -> HeldInput {
+        HeldInput::Button(crate::application::platform::input::MouseButton::Middle)
+    }
+
+    fn held_pan(input: HeldInput) -> DragState {
+        DragState::Panning {
+            owner: PanOwner::Held(input),
+        }
+    }
+
+    fn toggled_pan() -> DragState {
+        DragState::Panning {
+            owner: PanOwner::Toggled,
+        }
+    }
+
+    /// **A pan ends on the release of the input that holds it, and on
+    /// no other** (#153). The diagonal is the rule; each off-diagonal
+    /// row is a release that used to end the pan and must not —
+    /// pre-#153 the left release arm matched `Panning` outright, so a
+    /// left release ended a middle-started pan and a key-armed one.
+    ///
+    /// The first assertion of each pair is the negative control for
+    /// the second: the same release, the same variant, with the owner
+    /// that *does* match.
+    #[test]
+    fn test_a_release_ends_only_the_pan_its_own_input_holds() {
+        let space = HeldInput::Key("space".into());
+        let mut pan = held_pan(left());
+        pan.end_pan_held_by(&left());
+        assert!(
+            matches!(pan, DragState::None),
+            "left release ends the left-drag pan"
+        );
+
+        for (owner, released) in [
+            (middle(), left()),
+            (left(), middle()),
+            (space.clone(), left()),
+            (left(), space.clone()),
+            (HeldInput::Key("p".into()), space.clone()),
+        ] {
+            let mut pan = held_pan(owner.clone());
+            pan.end_pan_held_by(&released);
+            assert!(
+                pan.is_pan_held_by(&owner),
+                "a {released:?} release must leave the pan {owner:?} holds"
+            );
+        }
+    }
+
+    /// A toggled pan has no release at all: it was armed by an input
+    /// that has none, so no button and no key can be the one that
+    /// ends it. Only the next `pan_canvas` does
+    /// (`dispatch::native`'s `test_pan_canvas_ends_a_toggled_pan`).
+    #[test]
+    fn test_no_release_ends_a_toggled_pan() {
+        for released in [left(), middle(), HeldInput::Key("space".into())] {
+            let mut pan = toggled_pan();
+            pan.end_pan_held_by(&released);
+            assert!(
+                matches!(
+                    pan,
+                    DragState::Panning {
+                        owner: PanOwner::Toggled
+                    }
+                ),
+                "a {released:?} release must not end a toggled pan"
+            );
+        }
+    }
+
+    /// The held input that dispatched the arming `PanCanvas` claims
+    /// the pan; the negative control is the same call with
+    /// `was_panning` set, where the pan was already running before
+    /// the dispatch and the toggled owner must survive.
+    ///
+    /// The second half fails on a claim that ignored `was_panning`:
+    /// then a key bound to anything — `zoom_in`, say — pressed during
+    /// a macro-toggled pan would take it over, and that key's release
+    /// would end a pan the user toggled on and never toggled off.
+    #[test]
+    fn test_a_held_input_claims_only_the_pan_its_dispatch_armed() {
+        let mut pan = toggled_pan();
+        pan.hand_armed_pan_to(false, middle());
+        assert!(
+            pan.is_pan_held_by(&middle()),
+            "the middle press claims the pan it armed"
+        );
+
+        let mut pan = toggled_pan();
+        pan.hand_armed_pan_to(true, HeldInput::Key("z".into()));
+        assert!(
+            matches!(
+                pan,
+                DragState::Panning {
+                    owner: PanOwner::Toggled
+                }
+            ),
+            "a key whose dispatch armed nothing must not claim a running toggled pan"
+        );
+
+        let mut pan = held_pan(left());
+        pan.hand_armed_pan_to(false, middle());
+        assert!(pan.is_pan_held_by(&left()), "a held pan is never re-owned");
+
+        let mut idle = DragState::None;
+        idle.hand_armed_pan_to(false, middle());
+        assert!(matches!(idle, DragState::None), "nothing armed, nothing claimed");
+    }
+
+    /// **Focus loss leaves no gesture waiting for a release** (#153):
+    /// every state ends at `None`, and exactly the one that owes the
+    /// model a commit is handed back for it. The throttled rows are
+    /// the point — before #153 nothing ran on focus loss, so a drag
+    /// whose release never came held its write in `DragState` until a
+    /// press found it and was refused.
+    ///
+    /// The commit itself is the release gate's, and is pinned at the
+    /// model in `test_focus_loss_commits_either_origin_with_its_undo_entry`.
+    #[test]
+    fn test_focus_loss_ends_every_gesture_and_hands_back_what_owes_a_commit() {
+        for mut drag in [moving_node_drag(), fast_resize_drag()] {
+            assert!(
+                drag.end_on_focus_loss().is_some(),
+                "a throttled drag is owed its commit"
+            );
+            assert!(matches!(drag, DragState::None));
+        }
+        for mut drag in [
+            DragState::None,
+            toggled_pan(),
+            held_pan(middle()),
+            held_pan(HeldInput::Key("space".into())),
+            DragState::SelectingRect {
+                start_canvas: glam::Vec2::ZERO,
+                current_canvas: glam::Vec2::ONE,
+            },
+            DragState::PendingRight {
+                start_pos: (0.0, 0.0),
+                start_canvas: glam::Vec2::ZERO,
+                hit_node: None,
+                hit_section_idx: None,
+            },
+            DragState::Pending(Box::new(PendingPress {
+                start_pos: (0.0, 0.0),
+                hit_node: None,
+                hit_section_idx: None,
+                hit_edge_handle: None,
+                hit_portal_label: None,
+                hit_edge_label: None,
+                hit_section_resize_handle: None,
+                hit_node_resize_handle: None,
+            })),
+        ] {
+            let before = std::mem::discriminant(&drag);
+            assert!(
+                drag.end_on_focus_loss().is_none(),
+                "{before:?} owes the model nothing to commit"
+            );
+            assert!(
+                matches!(drag, DragState::None),
+                "{before:?} must not outlive focus loss"
             );
         }
     }
@@ -899,7 +1072,9 @@ mod abandonment_guard {
         assert_eq!(right.press_origin(), Some((7.0, 8.0)));
         for state in [
             DragState::None,
-            DragState::Panning,
+            DragState::Panning {
+                owner: PanOwner::Toggled,
+            },
             DragState::SelectingRect {
                 start_canvas: glam::Vec2::ZERO,
                 current_canvas: glam::Vec2::ONE,

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Web user-source plumbing for custom mutations: URL
-//! `?mutations=` query param > `localStorage` under the
-//! `mandala_mutations` key > empty. Not compiled on native.
+//! Web user-source plumbing for custom mutations: `localStorage`
+//! under the `mandala_mutations` key > empty. Not compiled on native.
 //!
-//! The query/storage reads, the size cap, and the fallback walk all
+//! The storage read, the size cap, and the fallback walk all
 //! belong to `crate::application::user_config::web_storage` — the
 //! keybinds and macros web loaders name their layers against the
 //! same driver, so the three cannot drift.
