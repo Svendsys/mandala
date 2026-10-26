@@ -139,24 +139,21 @@ pub fn do_repeat_while_skip_while() {
 // Focused tree-mutation regression tests
 // ===========================================================================
 //
-// The big test above is the original bespoke happy-path coverage of the
-// walker. The tests below target specific gaps a mutation-path audit turned
-// up — each one guards an invariant the existing hand-written tests did not
-// touch:
+// The big test above covers the walker's happy path. Each test below
+// guards one invariant it does not reach:
 //
-//   * `GfxMutator::Macro` had ZERO coverage prior to these tests
-//   * a mutator with no payload had no "applied to a live element"
-//     guard (formerly a `Mutation::None` payload, now `mutation: None`)
-//   * Channel-mismatch no-op path was untested in both
-//     `walk_tree_from`'s direct `apply_if_matching_channel` else branch
-//     AND `align_child_walks`' skip/break sibling-scan paths
-//   * Walker recursion depth was only exercised on the 16-node figure; a
-//     deep chain stresses the `walk_tree_from → align_child_walks →
-//     walk_tree_from` unrolling so a future refactor that inflated
-//     per-frame stack usage would trip a test
-//   * Wide fan-out at a single parent was only tested with 4 children
-//   * `GfxElement::clone`'s hand-rolled impl had no assertion that it
-//     preserves `unique_id` / `channel`
+//   * `GfxMutator::Macro` applies every mutation it carries
+//   * a mutator with no payload (`mutation: None`) leaves a live
+//     element unchanged
+//   * a channel mismatch is a no-op, both in `walk_tree_from`'s direct
+//     `apply_if_matching_channel` else branch and in
+//     `align_child_walks`' skip/break sibling-scan paths
+//   * a deep chain stresses the `walk_tree_from → align_child_walks →
+//     walk_tree_from` recursion, so a refactor that inflated per-level
+//     stack usage trips a test
+//   * a wide fan-out at a single parent is walked in full
+//   * `GfxElement::clone`'s hand-rolled impl preserves `unique_id` and
+//     `channel`
 //
 // Each test is self-contained and uses the `mk_area` / `append_area` /
 // `assert_pos` helpers at the top of the file to keep node construction
@@ -215,11 +212,11 @@ pub fn do_macro_with_empty_mutations_is_noop() {
 }
 
 #[test]
-pub fn test_mutation_none_is_noop() {
-    do_mutation_none_is_noop();
+pub fn test_mutator_without_payload_is_noop() {
+    do_mutator_without_payload_is_noop();
 }
 
-pub fn do_mutation_none_is_noop() {
+pub fn do_mutator_without_payload_is_noop() {
     fonts::init();
     // A mutator's "do nothing" is `mutation: None` on an instruction
     // node. The walker must align it to its target, apply nothing and
@@ -238,6 +235,23 @@ pub fn do_mutation_none_is_noop() {
     walk_tree(&mut model, &mutator, &());
 
     assert_pos(&model, target, 42.0, 42.0);
+
+    // The control: the same instruction carrying a payload reaches the
+    // same target, so the unchanged position above is the missing
+    // payload's doing, not a missed alignment.
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
+    let m = mutator.arena.new_node(GfxMutator::Instruction {
+        channel: 0,
+        instruction: Instruction::MapChildren,
+        mutation: Some(GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(
+            5.0,
+        )))),
+    });
+    mutator.root.append(m, &mut mutator.arena);
+
+    walk_tree(&mut model, &mutator, &());
+
+    assert_pos(&model, target, 42.0, 47.0);
 }
 
 #[test]

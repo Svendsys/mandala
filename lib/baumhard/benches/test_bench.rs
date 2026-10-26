@@ -544,7 +544,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("macro_with_empty_mutations_is_noop", |b| {
         b.iter(do_macro_with_empty_mutations_is_noop)
     });
-    c.bench_function("mutation_none_is_noop", |b| b.iter(do_mutation_none_is_noop));
+    c.bench_function("mutator_without_payload_is_noop", |b| {
+        b.iter(do_mutator_without_payload_is_noop)
+    });
     c.bench_function("single_mutator_channel_filter_in_align_child_walks", |b| {
         b.iter(do_single_mutator_channel_filter_in_align_child_walks)
     });

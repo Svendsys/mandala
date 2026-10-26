@@ -1,21 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Constructor helpers that produce a
-//! [`MutatorNode`] equivalent to
-//! each legacy `TargetScope` variant. A
-//! [`CustomMutation`]
-//! whose payload used to be a flat `Vec<GfxMutation>` + `target_scope`
-//! now carries a `mutator: MutatorNode` — these helpers bake a flat
-//! `Vec<GfxMutation>` into the AST shape that matches the scope the
-//! author intended.
+//! Constructor helpers that produce the [`MutatorNode`] for each
+//! `TargetScope` variant: each bakes a flat `Vec<GfxMutation>` into the
+//! AST shape that applies it where the scope says. A
+//! [`CustomMutation`] carries its payload as a `mutator: MutatorNode`;
+//! the backward-compat deserializer, tests and human authors reach for
+//! these named helpers rather than open-coding that shape each time.
 //!
-//! The shapes mirror the ones the
-//! `build_mutator_tree_for_scope` (gone) function emitted. Keeping the
-//! constructors as named helpers lets the backward-compat deserializer,
-//! tests, and human authors reach for them without open-coding the
-//! AST shape each time.
-//!
-//! Not every legacy scope is expressible as a single MutatorTree —
+//! Not every scope is expressible as a single MutatorTree —
 //! `Parent` and `Siblings` require explicit iteration over the
 //! application's structural index. The helpers for those produce a
 //! `SelfOnly`-shaped MutatorNode; the application layer is
@@ -63,9 +55,7 @@ pub fn descendants(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMu
 /// Shape: a `Macro` root carrying the mutations on channel 0 (applies
 /// to self), with one `Instruction(RepeatWhile(always_true))` child
 /// whose own `Macro` child carries the same mutations (applies to
-/// each descendant via the walker's repeat-while semantics). Mirrors
-/// the topology the `build_mutator_tree_for_scope` (gone)
-/// function emitted.
+/// each descendant via the walker's repeat-while semantics).
 ///
 /// The `mutations` list is cloned once into the root Macro and the
 /// ownership-moved original passes to the nested Macro. The two
