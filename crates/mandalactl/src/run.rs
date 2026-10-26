@@ -519,7 +519,7 @@ fn settle_request(id: Value, timeout: Duration) -> Result<Outgoing, String> {
 fn target(options: &Options, env: Env<'_>) -> Result<Target, String> {
     let given = |value: Option<&str>| value.filter(|v| !v.is_empty()).map(str::to_string);
     if let Some(path) = given(options.ipc.as_deref()) {
-        return Ok(Target::Unix(PathBuf::from(path)));
+        return Ok(Target::Ipc(PathBuf::from(path)));
     }
     if let Some(url) = given(options.ws.as_deref()) {
         return Ok(Target::Ws(url));
@@ -529,7 +529,7 @@ fn target(options: &Options, env: Env<'_>) -> Result<Target, String> {
             "both MANDALA_IPC and MANDALA_WS are set, naming two apps; pass --ipc <path> or --ws <url> to say which"
                 .to_string(),
         ),
-        (Some(path), None) => Ok(Target::Unix(PathBuf::from(path))),
+        (Some(path), None) => Ok(Target::Ipc(PathBuf::from(path))),
         (None, Some(url)) => Ok(Target::Ws(url)),
         (None, None) => Err(NO_SOCKET.to_string()),
     }

@@ -4,13 +4,14 @@
 //! requests and read their replies, each under a deadline
 //! (`format/ipc.md` §Transport).
 //!
-//! **Two transports, one connection.** The app's `--ipc` socket is a
-//! Unix socket speaking newline-delimited frames; a browser build
-//! speaks the same frames as WebSocket text messages through
-//! `mandalactl bridge` (`format/ipc.md` §Transport "Browser"). Both
-//! are a [`Link`]: a line out, a line in, under a deadline. Everything
-//! above that — the greeting, the `busy` retry, the exchange, the
-//! watch — is one body, so the two cannot drift.
+//! **Three transports, one connection.** A native app's `--ipc`
+//! endpoint is a Unix socket, or on Windows a named pipe (#169), each
+//! speaking newline-delimited frames; a browser build speaks the same
+//! frames as WebSocket text messages through `mandalactl bridge`
+//! (`format/ipc.md` §Transport "Browser"). Each is a [`Link`]: a line
+//! out, a line in, under a deadline. Everything above that — the
+//! greeting, the `busy` retry, the exchange, the watch — is one body,
+//! so they cannot drift.
 //!
 //! **Nothing here can hang the caller.** Every wait has a deadline: the
 //! connect (a thread, because `std` has no connect timeout), the
@@ -31,12 +32,14 @@
 //! `Unanswered` (it went out whole, so it may have), because that is what
 //! decides whether the caller may repeat it.
 //!
-//! Blocking `std` I/O and no runtime, the way the server's boundary
-//! threads are. Each transport exists where its platform does: the
-//! Unix socket on Unix, the WebSocket everywhere but the browser build
-//! of this crate (which the workspace type-checks and never runs); off
-//! those, [`Connection::open`] fails naming the gap, the shape `ipc`'s
-//! own non-Unix stub has. On the browser build both are stubs, so the
+//! Blocking I/O and no runtime, the way the server's boundary threads
+//! are. Each transport exists where its platform does: the Unix socket
+//! on Unix, with its own read and write timeouts; the named pipe on
+//! Windows, whose blocking reads and writes `pipe_wire` bounds with a
+//! reader and a writer thread, so the line-framed link above it is the
+//! same code on both; the WebSocket everywhere but the browser build of
+//! this crate (which the workspace type-checks and never runs). Off
+//! those, [`Connection::open`] fails naming the gap. On the browser build both are stubs, so the
 //! machinery between them — the line reader, the send classifier —
 //! has no caller there and is allowed to be dead on that target alone
 //! (`lib.rs`).
@@ -54,7 +57,13 @@ pub const BUSY_RETRY: Duration = Duration::from_secs(2);
 
 /// What to do when the socket cannot be reached, appended to the
 /// errors that mean "the app is not there".
+#[cfg(not(windows))]
 pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <socket-path>";
+
+/// What to do when the pipe cannot be reached, appended to the errors
+/// that mean "the app is not there".
+#[cfg(windows)]
+pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <name>";
 
 /// The Windows pipe an `--ipc` value names: `--ipc <name>` is
 /// `\\.\pipe\mandala-<name>` (`format/ipc.md` §Windows), the same value
@@ -137,8 +146,9 @@ pub struct Exchange {
 /// a connection exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
-    /// The `--ipc` socket of a native app.
-    Unix(PathBuf),
+    /// The `--ipc` endpoint of a native app: its socket path, or on
+    /// Windows its pipe name.
+    Ipc(PathBuf),
     /// The controller URL of a `mandalactl bridge` a browser app is
     /// connected to.
     Ws(String),
@@ -159,9 +169,10 @@ enum Line {
     TimedOut,
 }
 
-/// A transport: a line out and a line in, each under a deadline. Both
-/// implementations are private to this module; the connection above
-/// them is the one surface.
+/// A transport: a line out and a line in, each under a deadline. Every
+/// implementation is private to this module — the line-framed stream
+/// (a Unix socket, or the Windows pipe) and the WebSocket — and the
+/// connection above them is the one surface.
 trait Link {
     /// Write one frame. A failure is [`Outcome::NotSent`] only while the
     /// request cannot have reached the app whole, [`Outcome::Unanswered`]
@@ -413,29 +424,58 @@ fn send_error(command: &str, kind: std::io::ErrorKind, timeout: Duration) -> Str
 /// Open the transport `target` names, giving up after `timeout`.
 fn connect(target: &Target, timeout: Duration) -> Result<Box<dyn Link>, String> {
     match target {
-        Target::Unix(path) => unix::connect(path, timeout),
+        Target::Ipc(path) => stream::connect(path, timeout),
         Target::Ws(url) => ws::connect(url, timeout),
     }
 }
 
-#[cfg(unix)]
-mod unix {
+/// The line-framed transport of a native app's `--ipc` endpoint:
+/// newline-delimited frames over a byte stream that is the Unix socket
+/// on Unix and the named pipe on Windows (#169). One body for both:
+/// the pipe's `pipe_wire::PipeWire` (Windows-only, so not linked) gives
+/// the per-call read and write timeouts a socket has natively, and
+/// says, through [`stream::Wire`], how many bytes of a write that gave
+/// up may still reach the app.
+#[cfg(any(unix, windows))]
+mod stream {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
+    #[cfg(unix)]
+    use std::os::unix::net::UnixStream as Stream;
     use std::path::Path;
+    #[cfg(unix)]
     use std::sync::mpsc;
+    #[cfg(unix)]
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use super::{cap_error, send_error, send_failure, write_all_within, Line, Link, Outcome, LAUNCH_HINT};
+    #[cfg(windows)]
+    use super::pipe_wire::connect as connect_stream;
+    #[cfg(windows)]
+    use super::pipe_wire::PipeWire as Stream;
+    #[cfg(unix)]
+    use super::LAUNCH_HINT;
+    use super::{cap_error, send_error, send_failure, write_all_within, Line, Link, Outcome};
     use crate::wire::{Outgoing, FRAME_CAP};
 
-    /// The Unix-socket transport: newline-delimited frames.
-    struct UnixLink {
-        reader: BufReader<UnixStream>,
+    /// What a stream says beyond `Read` and `Write`: how many bytes of
+    /// a write that gave up may still reach the app. A socket write
+    /// that times out has written nothing more than it reported; the
+    /// Windows pipe's runs on a thread that may still finish it.
+    pub(super) trait Wire {
+        fn in_flight(&self) -> usize {
+            0
+        }
     }
 
-    impl Link for UnixLink {
+    #[cfg(unix)]
+    impl Wire for Stream {}
+
+    /// Newline-delimited frames over the endpoint's stream.
+    struct StreamLink {
+        reader: BufReader<Stream>,
+    }
+
+    impl Link for StreamLink {
         /// Write the request line and its terminator as one buffer, every
         /// chunk under whatever is left of `deadline`: a peer that accepts
         /// a few bytes at a time must not stretch one send past the
@@ -470,6 +510,10 @@ mod unix {
             let Err((written, kind)) = written else {
                 return Ok(());
             };
+            // Bytes a write gave up on may still land, so they count as
+            // sent: claiming `NotSent` for a request that then runs is the
+            // one answer this must never give.
+            let written = written + self.reader.get_ref().in_flight();
             // Boxed because an `Outcome` can hold a whole reply and this is
             // only ever a failure.
             Err(Box::new(send_failure(
@@ -546,22 +590,31 @@ mod unix {
         }
     }
 
-    /// Connect, giving up after `timeout`. `std` offers no connect
-    /// deadline, so the connect runs on a thread this one abandons when
-    /// the time is up — a connect that never finishes costs a thread
-    /// until the process exits, which a one-shot CLI does at once.
+    /// Connect to the endpoint `path` names, giving up after
+    /// `timeout`.
     pub(super) fn connect(path: &Path, timeout: Duration) -> Result<Box<dyn Link>, String> {
+        let stream = connect_stream(path, timeout)?;
+        Ok(Box::new(StreamLink {
+            reader: BufReader::new(stream),
+        }))
+    }
+
+    /// Connect to the socket, giving up after `timeout`. `std` offers
+    /// no connect deadline, so the connect runs on a thread this one
+    /// abandons when the time is up — a connect that never finishes
+    /// costs a thread until the process exits, which a one-shot CLI
+    /// does at once.
+    #[cfg(unix)]
+    fn connect_stream(path: &Path, timeout: Duration) -> Result<Stream, String> {
         let (sender, receiver) = mpsc::channel();
         let target = path.to_path_buf();
         thread::spawn(move || {
             // The receiver is gone when the deadline has passed; the
             // late stream is then dropped, which closes it.
-            let _ = sender.send(UnixStream::connect(target));
+            let _ = sender.send(Stream::connect(target));
         });
         match receiver.recv_timeout(timeout) {
-            Ok(Ok(stream)) => Ok(Box::new(UnixLink {
-                reader: BufReader::new(stream),
-            })),
+            Ok(Ok(stream)) => Ok(stream),
             Ok(Err(e)) => Err(unreachable(path, &e)),
             Err(_) => Err(format!(
                 "timed out after {:.1} s connecting to {}. App busy or frozen? A wedged app is aborted by its \
@@ -573,6 +626,7 @@ mod unix {
     }
 
     /// Why `connect` failed, in words that name the next step.
+    #[cfg(unix)]
     fn unreachable(path: &Path, error: &std::io::Error) -> String {
         use std::io::ErrorKind;
         let shown = path.display();
@@ -593,18 +647,237 @@ mod unix {
     }
 }
 
-#[cfg(not(unix))]
-mod unix {
+/// The app's named pipe as a byte stream with the per-call read and
+/// write timeouts a Unix socket has natively (#169).
+///
+/// `interprocess`'s blocking pipe client cannot bound a read or a write,
+/// and the connection above bounds every one. So each blocking call
+/// runs on a thread of its own — one reader, one writer — and this side
+/// waits for its result with the timeout the caller set, the way
+/// `connect` already does for the connect. A wait that times out leaves
+/// its call running: the reader's result is kept for the next read, and
+/// a write's bytes are reported by [`stream::Wire::in_flight`], because
+/// they may still reach the app.
+///
+/// The reader reads only when a read is asked for. One that drained the
+/// pipe ahead of the caller would buffer without bound, which is what
+/// the frame cap above exists to refuse.
+#[cfg(windows)]
+mod pipe_wire {
+    use std::cell::Cell;
+    use std::io::{self, ErrorKind, Read, Write};
+    use std::path::Path;
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+    use std::thread;
+    use std::time::Duration;
+
+    use interprocess::os::windows::named_pipe::{pipe_mode, DuplexPipeStream};
+    use interprocess::ConnectWaitMode;
+
+    use super::stream::Wire;
+    use super::{pipe_path, LAUNCH_HINT};
+
+    /// The most one read asks the reader thread for.
+    const READ_CHUNK: usize = 64 << 10;
+
+    #[derive(Debug)]
+    pub struct PipeWire {
+        read_timeout: Cell<Option<Duration>>,
+        write_timeout: Cell<Option<Duration>>,
+        reads: Sender<usize>,
+        chunks: Receiver<io::Result<Vec<u8>>>,
+        /// A read was asked for and its result has not been taken.
+        read_pending: bool,
+        /// Bytes a read returned beyond what its caller had room for.
+        leftover: Vec<u8>,
+        writes: Sender<Vec<u8>>,
+        written: Receiver<io::Result<usize>>,
+        /// The size of a write that timed out and may still finish.
+        in_flight: usize,
+    }
+
+    impl PipeWire {
+        fn new(stream: DuplexPipeStream<pipe_mode::Bytes>) -> PipeWire {
+            let (recv, send) = stream.split();
+            let (reads, wanted) = mpsc::channel::<usize>();
+            let (chunk_tx, chunks) = mpsc::channel();
+            thread::spawn(move || {
+                for size in wanted {
+                    let mut chunk = vec![0; size];
+                    let read = (&recv).read(&mut chunk).map(|n| {
+                        chunk.truncate(n);
+                        chunk
+                    });
+                    if chunk_tx.send(read).is_err() {
+                        return;
+                    }
+                }
+            });
+            let (writes, pending) = mpsc::channel::<Vec<u8>>();
+            let (written_tx, written) = mpsc::channel();
+            thread::spawn(move || {
+                for bytes in pending {
+                    if written_tx.send((&send).write(&bytes)).is_err() {
+                        return;
+                    }
+                }
+            });
+            PipeWire {
+                read_timeout: Cell::new(None),
+                write_timeout: Cell::new(None),
+                reads,
+                chunks,
+                read_pending: false,
+                leftover: Vec::new(),
+                writes,
+                written,
+                in_flight: 0,
+            }
+        }
+
+        /// How long each read waits; `UnixStream::set_read_timeout`'s
+        /// contract.
+        pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+            self.read_timeout.set(timeout);
+            Ok(())
+        }
+
+        /// How long each write waits; `UnixStream::set_write_timeout`'s
+        /// contract.
+        pub fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+            self.write_timeout.set(timeout);
+            Ok(())
+        }
+    }
+
+    impl Wire for PipeWire {
+        fn in_flight(&self) -> usize {
+            self.in_flight
+        }
+    }
+
+    /// Wait for one result from a helper thread, as long as `timeout`
+    /// allows: a timeout is `TimedOut`, a thread gone is a broken pipe.
+    fn wait<T>(
+        results: &Receiver<io::Result<T>>,
+        timeout: Option<Duration>,
+    ) -> Result<io::Result<T>, io::Error> {
+        let got = match timeout {
+            Some(timeout) => results.recv_timeout(timeout),
+            None => results.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match got {
+            Ok(result) => Ok(result),
+            Err(RecvTimeoutError::Timeout) => Err(io::Error::from(ErrorKind::TimedOut)),
+            Err(RecvTimeoutError::Disconnected) => Err(io::Error::from(ErrorKind::BrokenPipe)),
+        }
+    }
+
+    impl Read for PipeWire {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            if self.leftover.is_empty() {
+                if !self.read_pending {
+                    self.reads
+                        .send(buf.len().min(READ_CHUNK))
+                        .map_err(|_| io::Error::from(ErrorKind::BrokenPipe))?;
+                    self.read_pending = true;
+                }
+                // A timeout leaves the read pending; a result taken off
+                // the channel, error or not, ends it.
+                let read = wait(&self.chunks, self.read_timeout.get())?;
+                self.read_pending = false;
+                self.leftover = read?;
+                if self.leftover.is_empty() {
+                    return Ok(0);
+                }
+            }
+            let n = self.leftover.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.leftover[..n]);
+            self.leftover.drain(..n);
+            Ok(n)
+        }
+    }
+
+    impl Write for PipeWire {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.in_flight > 0 {
+                // An earlier write never reported back: whatever is sent
+                // now could overtake it.
+                return Err(io::Error::from(ErrorKind::TimedOut));
+            }
+            self.writes
+                .send(bytes.to_vec())
+                .map_err(|_| io::Error::from(ErrorKind::BrokenPipe))?;
+            match wait(&self.written, self.write_timeout.get()) {
+                Ok(result) => result,
+                Err(e) => {
+                    if e.kind() == ErrorKind::TimedOut {
+                        self.in_flight = bytes.len();
+                    }
+                    Err(e)
+                }
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Connect to the pipe `--ipc <name>` names, giving up after
+    /// `timeout`. Unlike a socket's, a pipe's connect takes a deadline
+    /// of its own: it waits for a free instance with `WaitNamedPipeW`,
+    /// which the server always has one of but for the instant between
+    /// handing one over and making the next.
+    pub fn connect(path: &Path, timeout: Duration) -> Result<PipeWire, String> {
+        let name = path
+            .to_str()
+            .ok_or_else(|| format!("`--ipc {}`: a pipe name must be valid Unicode", path.display()))?;
+        let pipe = pipe_path(name)?;
+        DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
+            pipe.as_str(),
+            ConnectWaitMode::Timeout(timeout),
+        )
+        .map(PipeWire::new)
+        .map_err(|e| unreachable(&pipe, &e, timeout))
+    }
+
+    /// Why `connect` failed, in words that name the next step.
+    fn unreachable(pipe: &str, error: &io::Error, timeout: Duration) -> String {
+        match error.kind() {
+            ErrorKind::TimedOut => format!(
+                "timed out after {:.1} s connecting to {pipe}. App busy or frozen? A wedged app is aborted by its \
+                 freeze watchdog after 10 s",
+                timeout.as_secs_f64()
+            ),
+            ErrorKind::NotFound => {
+                format!("no pipe {pipe}. App not running, or started without --ipc? {LAUNCH_HINT}")
+            }
+            ErrorKind::PermissionDenied => format!(
+                "permission denied on {pipe}: the pipe is owner-only; run as the user who launched the app"
+            ),
+            _ => format!("could not connect to {pipe}: {error}"),
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod stream {
     use std::path::Path;
     use std::time::Duration;
 
     use super::Link;
 
     pub(super) fn connect(_path: &Path, _timeout: Duration) -> Result<Box<dyn Link>, String> {
-        Err("mandalactl cannot reach a native app on this platform yet: Windows needs the named-pipe adapter, \
-             tracked in #169 (format/ipc.md \"Windows\"). A browser app is reachable through `mandalactl bridge` \
-             and --ws"
-            .to_string())
+        Err(
+            "mandalactl cannot reach a native app on this platform: the `--ipc` transport is a Unix socket, \
+             or a named pipe on Windows (format/ipc.md \"Transport\"). A browser app is reachable through \
+             `mandalactl bridge` and --ws"
+                .to_string(),
+        )
     }
 }
 
