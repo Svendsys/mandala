@@ -28,7 +28,7 @@ use super::super::scene_rebuild::rebuild_all;
 use super::super::single_line_edit::{
     close_single_line_edit, open_single_line_edit, resolve_single_line_target, SingleLineEditTarget,
 };
-use super::super::{DragState, InteractionMode};
+use super::super::{DragState, HeldInput, InteractionMode, PanOwner};
 use crate::application::console::ConsoleState;
 
 // `DispatchHit` lives in `cross_dispatch::pointer` — both targets'
@@ -71,9 +71,19 @@ fn quote_console_arg(s: &str) -> String {
 /// for the same reason, as `event_mouse_click::route_middle_button`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PanCanvasRoute {
-    /// Nothing is in flight that a pan would destroy — enter
-    /// `DragState::Panning` for the duration of the gesture.
+    /// Nothing is in flight that a pan would destroy — arm a
+    /// [`PanOwner::Toggled`] pan. A held input that dispatched this
+    /// claims it next ([`dispatch_held_action`]); anything else leaves
+    /// it toggled on.
     Arm,
+    /// A toggled pan is running: this dispatch is the toggle, and
+    /// ends it.
+    ToggleOff,
+    /// A pan some input is holding is running. It ends on that
+    /// input's release, so leave it exactly as it is — this includes
+    /// a key's own auto-repeat, which re-dispatches `PanCanvas` while
+    /// the key that holds the pan is down.
+    Held,
     /// Another gesture owns the drag state and owes the model a
     /// commit. Leave it exactly as it is, and do nothing else.
     Refuse,
@@ -104,11 +114,25 @@ enum PanCanvasRoute {
 /// `LeftDrag` threshold cross dispatches `PanCanvas` *from*
 /// `Pending`, so refusing there would leave the left button unable
 /// to pan at all.
+///
+/// **Toggle or hold is the input's, not the arm's** (#153,
+/// [`PanOwner`]). The arm arms one shape; whether that pan is
+/// momentary is decided by who dispatched it. That is why a running
+/// pan answers two different ways here: a toggled one was armed by an
+/// input with no release, so the next `pan_canvas` — from a key, a
+/// macro, the console or IPC — is the only dispatch that can end it,
+/// while a held one already has its end coming and a second dispatch
+/// must not pre-empt it.
 fn route_pan_canvas(drag_state: &DragState) -> PanCanvasRoute {
-    if drag_state.would_abandon_gesture() {
-        PanCanvasRoute::Refuse
-    } else {
-        PanCanvasRoute::Arm
+    match drag_state {
+        DragState::Panning {
+            owner: PanOwner::Toggled,
+        } => PanCanvasRoute::ToggleOff,
+        DragState::Panning {
+            owner: PanOwner::Held(_),
+        } => PanCanvasRoute::Held,
+        state if state.would_abandon_gesture() => PanCanvasRoute::Refuse,
+        _ => PanCanvasRoute::Arm,
     }
 }
 
@@ -138,7 +162,7 @@ fn end_target_picker_rubber_band(
     renderer: &mut crate::application::renderer::Renderer,
 ) {
     if take_rubber_band_for_target_picker(drag_state, document) {
-        renderer.clear_overlay_buffers();
+        renderer.clear_selection_rect_overlay();
     }
 }
 
@@ -224,6 +248,30 @@ pub(in crate::application::app) fn dispatch_action(
     driven_by(ctx, ChangeSource::Action, |ctx| {
         dispatch_action_arms(action, ctx, hit)
     })
+}
+
+/// [`dispatch_action`] on behalf of a *held* input — a mouse button
+/// or a key that is down now and will come up — so a pan the
+/// dispatch arms ends on `input`'s release (#153).
+///
+/// The mouse presses (middle press, the `LeftDrag` and `RightDrag`
+/// threshold crosses) and the key press go through here. A dispatch
+/// with no release behind it (a macro step, a console line, IPC
+/// `act.action`) calls [`dispatch_action`] and leaves its pan
+/// toggled, and so does the touch `LongPress`: [`HeldInput`] has no
+/// finger, so nothing could claim its pan. The arm cannot tell the
+/// two apart itself: the funnel hands it an `Action`, and the input
+/// is gone by then.
+pub(in crate::application::app) fn dispatch_held_action(
+    action: Action,
+    ctx: &mut InputHandlerContext<'_>,
+    hit: Option<&DispatchHit>,
+    input: HeldInput,
+) -> DispatchOutcome {
+    let was_panning = ctx.drag_state.is_panning();
+    let outcome = dispatch_action(action, ctx, hit);
+    ctx.drag_state.hand_armed_pan_to(was_panning, input);
+    outcome
 }
 
 /// Run `body` with `source` declared on the document `ctx` holds, and
@@ -633,18 +681,26 @@ fn dispatch_action_arms(
             }
         }
         Action::PanCanvas => match route_pan_canvas(ctx.drag_state) {
-            // Continuous gesture: enter pan mode for the duration of
-            // the press. Both release paths that can end it — the
-            // left button's `DragState::Panning | DragState::None`
-            // arm and `route_middle_button`'s `Clear` — reset
-            // `drag_state` to `None`, so this arm only needs to
-            // handle the press side.
+            // Armed toggled; a held input claims it on the way out of
+            // `dispatch_held_action`, and its release ends it there
+            // (`DragState::end_pan_held_by`). This arm handles only
+            // the two ends a dispatch can reach.
             PanCanvasRoute::Arm => {
-                *ctx.drag_state = DragState::Panning;
+                *ctx.drag_state = DragState::Panning {
+                    owner: PanOwner::Toggled,
+                };
+                DispatchOutcome::Handled
+            }
+            PanCanvasRoute::ToggleOff => {
+                *ctx.drag_state = DragState::None;
                 DispatchOutcome::Handled
             }
             // Nothing ran, and the caller — the native macro loop
             // reads this for `any_ran` — is told so.
+            PanCanvasRoute::Held => {
+                log::debug!("dispatch: PanCanvas ignored (a held input owns the pan); state stays put");
+                DispatchOutcome::Unhandled
+            }
             PanCanvasRoute::Refuse => {
                 log::debug!("dispatch: PanCanvas ignored (uncommitted gesture in flight); state stays put");
                 DispatchOutcome::Unhandled
@@ -1399,7 +1455,6 @@ mod tests {
     fn test_pan_canvas_still_arms_from_every_state_that_owes_the_model_nothing() {
         for drag in [
             DragState::None,
-            DragState::Panning,
             DragState::SelectingRect {
                 start_canvas: glam::Vec2::ZERO,
                 current_canvas: glam::Vec2::new(10.0, 10.0),
@@ -1420,6 +1475,49 @@ mod tests {
                 PanCanvasRoute::Arm,
                 "PanCanvas must still arm from {:?}",
                 std::mem::discriminant(&drag)
+            );
+        }
+    }
+
+    /// **A `pan_canvas` with no release behind it toggles** (#153). A
+    /// macro step, a console line or IPC `act.action` has nothing
+    /// that comes up, so the pan it arms is modal: the next
+    /// `pan_canvas` that finds it ends it. The `Arm` row from `None`
+    /// is the first half of the toggle; this is the second.
+    ///
+    /// Fails on the pre-#153 route, which answered `Arm` for any pan
+    /// and so could never end one: a macro-armed pan ran until a
+    /// button release happened to clear it.
+    #[test]
+    fn test_pan_canvas_ends_a_toggled_pan() {
+        assert_eq!(
+            route_pan_canvas(&DragState::Panning {
+                owner: PanOwner::Toggled,
+            }),
+            PanCanvasRoute::ToggleOff
+        );
+    }
+
+    /// **...but leaves a held pan to the input holding it.** The
+    /// negative control for the toggle above: the same variant,
+    /// owned by a held input, is *not* ended — its end is that
+    /// input's release, which is still coming. The key row is the one
+    /// that would bite: a key holding a pan auto-repeats, and each
+    /// repeat re-dispatches `PanCanvas`, so a toggle here would flip
+    /// the pan off and on for as long as the key is down.
+    #[test]
+    fn test_pan_canvas_leaves_a_held_pan_to_its_input() {
+        for input in [
+            HeldInput::Key("space".into()),
+            HeldInput::Button(crate::application::platform::input::MouseButton::Middle),
+            HeldInput::Button(crate::application::platform::input::MouseButton::Left),
+        ] {
+            assert_eq!(
+                route_pan_canvas(&DragState::Panning {
+                    owner: PanOwner::Held(input.clone()),
+                }),
+                PanCanvasRoute::Held,
+                "a pan held by {input:?} ends on its release, not on a dispatch"
             );
         }
     }
@@ -1475,7 +1573,9 @@ mod tests {
         for mut drag in [
             fast_resize_drag(),
             moving_node_drag(),
-            DragState::Panning,
+            DragState::Panning {
+                owner: PanOwner::Toggled,
+            },
             DragState::None,
         ] {
             let before = std::mem::discriminant(&drag);

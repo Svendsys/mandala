@@ -74,7 +74,7 @@ cascade (rename the subtree, rewrite all references in edges/portals/undo)
 is expensive and intrusive; we accept the drift in exchange for keeping
 reparent cheap and undo simple.
 
-**When IDs *do* cascade**: on `delete_node`, when children are orphaned
+**When IDs *do* cascade**: on `delete_nodes`, when children are orphaned
 (promoted to root), the subtree's IDs are rewritten to reflect their new
 position. Edges are updated (portal-mode edges cascade through the same
 path as line-mode edges — they're the same entity). Undo reverses the
