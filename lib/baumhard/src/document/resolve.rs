@@ -20,40 +20,57 @@
 //!    unset, from group `depth(node) − depth(binding)` clamped to the
 //!    last group: a node's fill from the group's `fill`, frame and ring
 //!    text from `frame`, section text from `text`, and the node's first
-//!    section (lowest channel) from `title`. Connectors, links, caps,
+//!    section (lowest channel) from `title` — or from `text` when the
+//!    group sets no `title` (ruling R5 on #235). Connectors, links, caps,
 //!    labels and portal ends are not palette-colored.
 //! 4. **`Defaults`**, the map's element: the struct matching each tier
 //!    of the owner chain, in the same order — `Defaults.span` for a
 //!    span, then the container's (`section`, `ring` then `frame`,
-//!    `label`, `connector`, `link` or `portal_end`), then `node.text`.
-//!    A cap has no struct of its own.
-//! 5. **[`BUILT_IN`](crate::document::defaults::BUILT_IN)**, keyed by where the text is drawn.
+//!    `label`, `connector`, `link` or `portal_end`; a cap reads its
+//!    path's), then `node.text`.
+//! 5. **[`BUILT_IN`](crate::document::defaults::BUILT_IN)**, keyed by
+//!    where the text is drawn — a label by its host.
 //!
-//! **One exception: a ring's size.** Inside a frame, `size` is read
-//! from the ring, its frame, `Defaults.ring`, `Defaults.frame` and
-//! `BUILT_IN` only — never from the span, the node, `Defaults.span` or
-//! `Defaults.node` — so it is always the ring's one
-//! [`Rel`](crate::document::values::FontSize::Rel) size and never a node's points. The
-//! projection turns it into points from the node's drawn size.
+//! **Size and color stay in their flow** (amendment 3 and ruling R4 on
+//! #235). For every flow but a section, `size` and `color` come only
+//! from that flow's own chain: the span, its container (a ring's frame
+//! included), the palette tier where it maps one (ring and frame text),
+//! the flow's own `Defaults` struct and `BUILT_IN`. They never read the
+//! owning node's `style.text`, `Defaults.span` or `Defaults.node.text`:
+//! a connector, a portal marker, a label or a frame lives at a scale and
+//! in a color of its own, and today none of them takes either from the
+//! node's text. Inside a frame the span's own size is not read either,
+//! so a ring's size is always its one
+//! [`Rel`](crate::document::values::FontSize::Rel) size; the projection
+//! turns it into points from the node's drawn size. The face, weight
+//! and slant keep the whole chain, so a map-wide font reaches every
+//! flow.
 //!
 //! A color tier holding a
-//! [`ColorRef`](crate::document::values::ColorRef) resolves it on the spot: an
-//! `Rgba` is final, a `Var` reads the theme's active variant, and a
-//! `Palette(field)` reads the owning node's binding. A `Var` the theme
-//! does not have, or a `Palette` with no binding, leaves the field unset
-//! and the chain goes on.
+//! [`ColorRef`](crate::document::values::ColorRef) resolves it on the
+//! spot: an `Rgba` is final, a `Var` reads the theme's active variant,
+//! and a `Palette(field)` reads the owning node's binding. A `Var` the
+//! theme does not have, or a `Palette` with no binding, leaves the field
+//! unset and the chain goes on.
 //!
 //! # Recording reads
 //!
 //! Every resolver takes a
-//! [`ReadRecorder`](crate::document::resolve::ReadRecorder) and reports to it every
-//! input it **looks at**: each element whose fields it reads (including
-//! tiers that turned out to say nothing), the theme, a palette, the
-//! defaults, and the depth of a node whose palette group it computed.
-//! What it does not look at, it does not report: a span whose own color
-//! is an `Rgba` reports itself and nothing else for its color. V1-B7
-//! builds its dependency index from these records (design §12.3), so a
-//! read that goes unreported is a projection that goes stale.
+//! [`ReadRecorder`](crate::document::resolve::ReadRecorder) and reports
+//! to it every input it **looks at**, named as narrowly as the read
+//! itself: an element's style fields
+//! ([`Input::Style`](crate::document::resolve::Input::Style)), a node's
+//! `palette` field on the binding walk (`PaletteBinding`), the structure
+//! of a children row (`Row`), the theme, a palette, the defaults, and the
+//! depth of a node whose palette group it computed. Tiers that turned
+//! out to say nothing are reported too. What it does not look at, it
+//! does not report: a span whose own color is an `Rgba` reports its own
+//! style and nothing else for its color, and nothing a resolver reads is
+//! a position or a size, so moving or resizing a node dirties no
+//! resolution. V1-B7 builds its dependency index from these records
+//! (design §12.3) and maps a journal entry onto them with
+//! [`inputs_changed`](crate::document::deps::inputs_changed); a read
+//! that goes unreported is a projection that goes stale.
 //!
 //! Resolvers work from the tree, not the `Document`, so a mutation's
 //! inherited-state seed can call them with the tree it is applying to.
@@ -72,12 +89,23 @@ use crate::engine::tree::Tree;
 use crate::font::fonts::AppFont;
 use indextree::NodeId;
 
-/// An input a resolution read.
+/// An input a resolution read. Each names as little as the read
+/// needed, so a change dirties only the resolutions that read what
+/// changed; [`inputs_changed`](crate::document::deps::inputs_changed)
+/// is the other half of the contract, mapping a change of an element
+/// onto these.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Input {
-    /// An element's own fields — and, for a node, which of its children
-    /// is its first section, and whether a path or portal end has spans.
-    Element(NodeId),
+    /// An element's style fields: a text style, a node's shape, fill and
+    /// fill fade, a path's flow style, a frame's, ring's, label's or
+    /// portal end's style. Never a position, a size, an ident or a flag.
+    Style(NodeId),
+    /// A node's `palette` field, read on the walk up to the nearest
+    /// binding — one per node the walk looks at.
+    PaletteBinding(NodeId),
+    /// The structure of an element's children row: which section is a
+    /// node's first, and whether a path or portal end has spans.
+    Row(NodeId),
     /// The theme: its active variant and that variant's values.
     Theme,
     /// A palette's groups.
@@ -244,10 +272,16 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
         }
     }
 
-    /// Report that the element `id` was read, and return it.
-    fn read(&mut self, id: NodeId) -> Option<&'t DocElement> {
-        self.rec.read(Input::Element(id));
+    /// Report that the style fields of the element `id` were read, and
+    /// return it.
+    fn style(&mut self, id: NodeId) -> Option<&'t DocElement> {
+        self.rec.read(Input::Style(id));
         element(self.tree, id)
+    }
+
+    /// Report that the children row of `id` was read.
+    fn row(&mut self, id: NodeId) {
+        self.rec.read(Input::Row(id));
     }
 
     /// The theme, reported on first use. O(1).
@@ -271,9 +305,9 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
     /// The palette group of the owning node, worked out on first use:
     /// the nearest node at or above it with a palette, and the group
     /// `depth(node) − depth(binding)` of that palette, clamped to the
-    /// last. Reports the owning node's depth, every node it looks at on
-    /// the way up, and, when it finds a binding, the binding's depth and
-    /// its palette. O(depth).
+    /// last. Reports the owning node's depth, the `palette` field of
+    /// every node it looks at on the way up, and, when it finds a
+    /// binding, the binding's depth and its palette. O(depth).
     fn binding(&mut self) -> Option<&'t PaletteGroup> {
         if let Some(found) = self.binding {
             return found;
@@ -290,7 +324,8 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
         let mut steps = 0usize;
         let mut at = start;
         loop {
-            let DocElement::Node(node) = self.read(at)? else {
+            self.rec.read(Input::PaletteBinding(at));
+            let DocElement::Node(node) = element(tree, at)? else {
                 return None;
             };
             if let Some(id) = node.palette {
@@ -342,13 +377,14 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
     }
 }
 
-/// The color `field` names in `group`. O(1).
+/// The color `field` names in `group`; a `title` the group does not set
+/// is its `text`, within the same tier (ruling R5 on #235). O(1).
 fn palette_color(group: &PaletteGroup, field: PaletteField) -> PlainColor {
     match field {
         PaletteField::Fill => group.fill,
         PaletteField::Frame => group.frame,
         PaletteField::Text => group.text,
-        PaletteField::Title => group.title,
+        PaletteField::Title => group.title.unwrap_or(group.text),
     }
 }
 
@@ -364,8 +400,9 @@ enum Flow {
     Frame,
     /// In a cap of a connector (`Connector`) or a link (`Link`).
     Cap(DocKind),
-    /// In a label.
-    Label,
+    /// In a label on a connector, a line link or a portal end — its
+    /// host's kind.
+    Label(DocKind),
     /// Along a connector (`Connector`) or a link (`Link`).
     Path(DocKind),
     /// In a portal marker.
@@ -378,23 +415,28 @@ enum Flow {
 }
 
 impl Flow {
-    /// The flow an element is the container of.
+    /// The flow an element is the container of. A cap's and a label's
+    /// flow depends on the kind of their parent, a structural fact a
+    /// field change cannot alter.
     fn of(tree: &Tree<DocElement>, container: &DocElement, container_id: NodeId) -> Flow {
+        let host = || {
+            parent(tree, container_id)
+                .and_then(|p| element(tree, p))
+                .map_or(DocKind::Connector, DocElement::kind)
+        };
         match container.kind() {
             DocKind::Section => Flow::Section,
             DocKind::Ring => Flow::Ring,
             DocKind::Frame => Flow::Frame,
-            DocKind::CapStart | DocKind::CapEnd => {
-                let path = parent(tree, container_id)
-                    .and_then(|p| element(tree, p))
-                    .map_or(DocKind::Connector, DocElement::kind);
-                Flow::Cap(if path == DocKind::Link {
-                    DocKind::Link
-                } else {
-                    DocKind::Connector
-                })
-            }
-            DocKind::Label => Flow::Label,
+            DocKind::CapStart | DocKind::CapEnd => Flow::Cap(match host() {
+                DocKind::Link => DocKind::Link,
+                _ => DocKind::Connector,
+            }),
+            DocKind::Label => Flow::Label(match host() {
+                DocKind::Link => DocKind::Link,
+                DocKind::PortalEnd => DocKind::PortalEnd,
+                _ => DocKind::Connector,
+            }),
             DocKind::Connector => Flow::Path(DocKind::Connector),
             DocKind::Link => Flow::Path(DocKind::Link),
             DocKind::PortalEnd => Flow::PortalEnd,
@@ -403,9 +445,17 @@ impl Flow {
         }
     }
 
-    /// Whether the size comes from the ring chain alone.
+    /// Whether the size comes from the ring chain alone, the span's own
+    /// size included.
     fn in_frame(self) -> bool {
         matches!(self, Flow::Ring | Flow::Frame)
+    }
+
+    /// Whether size and color stay in the flow's own chain (R4): every
+    /// flow but a section's — and a node's own, which is what its
+    /// sections inherit.
+    fn keeps_size_and_color(self) -> bool {
+        !matches!(self, Flow::Section | Flow::Node | Flow::Other)
     }
 
     /// The text `BUILT_IN` gives this flow.
@@ -415,10 +465,45 @@ impl Flow {
             Flow::Ring | Flow::Frame => BUILT_IN.ring.text,
             Flow::Cap(DocKind::Link) | Flow::Path(DocKind::Link) => BUILT_IN.link.text,
             Flow::Cap(_) | Flow::Path(_) => BUILT_IN.connector.text,
-            Flow::Label => BUILT_IN.label.text,
+            Flow::Label(DocKind::Link) => BUILT_IN.label.on_link,
+            Flow::Label(DocKind::PortalEnd) => BUILT_IN.label.on_portal_end,
+            Flow::Label(_) => BUILT_IN.label.on_connector,
             Flow::PortalEnd => BUILT_IN.portal_end.text,
         }
     }
+}
+
+/// Which text fields a tier may give.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Fields {
+    /// The size.
+    size: bool,
+    /// The color.
+    color: bool,
+    /// The face, weight and slant.
+    rest: bool,
+}
+
+impl Fields {
+    /// Every field.
+    const ALL: Fields = Fields {
+        size: true,
+        color: true,
+        rest: true,
+    };
+    /// The face, weight and slant: what a tier outside a flow's own
+    /// chain may still give it.
+    const REST: Fields = Fields {
+        size: false,
+        color: false,
+        rest: true,
+    };
+    /// Every field but the size.
+    const NOT_SIZE: Fields = Fields {
+        size: false,
+        color: true,
+        rest: true,
+    };
 }
 
 /// The text fields resolved so far.
@@ -432,26 +517,26 @@ struct Partial {
 }
 
 impl Partial {
-    /// Whether a tier still has anything to give: `size`, `color` and
-    /// `rest` say whether it may give the size, the color, and the
-    /// face, weight and slant.
-    fn wants(&self, size: bool, color: bool, rest: bool) -> bool {
-        (size && self.size.is_none())
-            || (color && self.color.is_none())
-            || (rest && (self.font.is_none() || self.weight.is_none() || self.italic.is_none()))
+    /// Whether a tier that may give `fields` still has anything to give.
+    fn wants(&self, fields: Fields) -> bool {
+        (fields.size && self.size.is_none())
+            || (fields.color && self.color.is_none())
+            || (fields.rest && (self.font.is_none() || self.weight.is_none() || self.italic.is_none()))
     }
 
-    /// Take every unset field `style` sets; the size only when `sizes`.
-    fn take_text<R: ReadRecorder>(&mut self, style: &TextStyle, sizes: bool, inputs: &mut Inputs<'_, R>) {
-        self.font = self.font.or(style.font);
-        if sizes {
+    /// Take every unset field among `fields` that `style` sets.
+    fn take_text<R: ReadRecorder>(&mut self, style: &TextStyle, fields: Fields, inputs: &mut Inputs<'_, R>) {
+        if fields.rest {
+            self.font = self.font.or(style.font);
+            self.weight = self.weight.or(style.weight);
+            self.italic = self.italic.or(style.italic);
+        }
+        if fields.size {
             self.size = self.size.or(style.size);
         }
-        if self.color.is_none() {
+        if fields.color && self.color.is_none() {
             self.color = style.color.and_then(|c| inputs.color(c));
         }
-        self.weight = self.weight.or(style.weight);
-        self.italic = self.italic.or(style.italic);
     }
 
     /// Take the size and color a path or portal end sets; its size is
@@ -505,46 +590,62 @@ pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadR
         (Some(id), Some(e)) => Flow::of(tree, e, id),
         _ => Flow::Other,
     };
-    let in_frame = flow.in_frame();
+    // What the span itself may give: inside a frame, not its size.
+    let own = if flow.in_frame() {
+        Fields::NOT_SIZE
+    } else {
+        Fields::ALL
+    };
+    // What tiers outside the flow's own chain may give it.
+    let outside = if flow.keeps_size_and_color() {
+        Fields::REST
+    } else {
+        Fields::ALL
+    };
     let owning = container.and_then(|c| crate::document::ids::owning_node(tree, c));
     let mut inputs = Inputs::new(tree, rec, owning);
     let mut got = Partial::default();
 
-    // 1. The span's own style; inside a frame, not its size.
+    // 1. The span's own style.
     if let Some(span) = span {
-        if let Some(style) = inputs.read(span).and_then(DocElement::text_style) {
-            got.take_text(style, !in_frame, &mut inputs);
+        if let Some(style) = inputs.style(span).and_then(DocElement::text_style) {
+            got.take_text(style, own, &mut inputs);
         }
     }
 
     // 2. The container, then a ring's frame.
+    let flow_fields = Fields {
+        size: true,
+        color: true,
+        rest: false,
+    };
     if let (Some(id), Some(container_element)) = (container, container_element) {
         match container_element {
             DocElement::Connector(_) | DocElement::Link(_) => {
-                if got.wants(true, true, false) {
-                    if let Some(path) = inputs.read(id).and_then(DocElement::as_path) {
+                if got.wants(flow_fields) {
+                    if let Some(path) = inputs.style(id).and_then(DocElement::as_path) {
                         got.take_flow(path.flow.size, path.flow.color, &mut inputs);
                     }
                 }
             }
             DocElement::PortalEnd(_) => {
-                if got.wants(true, true, false) {
-                    if let Some(DocElement::PortalEnd(end)) = inputs.read(id) {
+                if got.wants(flow_fields) {
+                    if let Some(DocElement::PortalEnd(end)) = inputs.style(id) {
                         got.take_flow(end.style.size, end.style.color, &mut inputs);
                     }
                 }
             }
             DocElement::Node(_) => {}
             _ => {
-                if got.wants(true, true, true) {
-                    if let Some(style) = inputs.read(id).and_then(DocElement::text_style) {
-                        got.take_text(style, true, &mut inputs);
+                if got.wants(Fields::ALL) {
+                    if let Some(style) = inputs.style(id).and_then(DocElement::text_style) {
+                        got.take_text(style, Fields::ALL, &mut inputs);
                     }
                 }
-                if flow == Flow::Ring && got.wants(true, true, true) {
+                if flow == Flow::Ring && got.wants(Fields::ALL) {
                     if let Some(frame) = parent(tree, id) {
-                        if let Some(style) = inputs.read(frame).and_then(DocElement::text_style) {
-                            got.take_text(style, true, &mut inputs);
+                        if let Some(style) = inputs.style(frame).and_then(DocElement::text_style) {
+                            got.take_text(style, Fields::ALL, &mut inputs);
                         }
                     }
                 }
@@ -552,11 +653,12 @@ pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadR
         }
     }
 
-    // 2b. The owning node; inside a frame, not its size.
+    // 2b. The owning node: outside every flow's own chain but a
+    // section's.
     if let Some(node) = owning {
-        if got.wants(!in_frame, true, true) {
-            if let Some(style) = inputs.read(node).and_then(DocElement::text_style) {
-                got.take_text(style, !in_frame, &mut inputs);
+        if got.wants(outside) {
+            if let Some(style) = inputs.style(node).and_then(DocElement::text_style) {
+                got.take_text(style, outside, &mut inputs);
             }
         }
     }
@@ -565,8 +667,13 @@ pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadR
     if got.color.is_none() {
         let field = match flow {
             Flow::Section => Some(match (owning, container) {
-                (Some(node), Some(section)) if node.children(tree.arena()).next() == Some(section) => {
-                    PaletteField::Title
+                (Some(node), Some(section)) => {
+                    inputs.row(node);
+                    if node.children(tree.arena()).next() == Some(section) {
+                        PaletteField::Title
+                    } else {
+                        PaletteField::Text
+                    }
                 }
                 _ => PaletteField::Text,
             }),
@@ -580,29 +687,34 @@ pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadR
     }
 
     // 4. Defaults: the structs matching the owner chain, in its order.
-    if got.wants(true, true, true) {
+    if got.wants(Fields::ALL) {
         if let Some(defaults) = inputs.defaults() {
             if span.is_some() {
-                got.take_text(&defaults.span, !in_frame, &mut inputs);
+                let span_fields = if flow.keeps_size_and_color() {
+                    Fields::REST
+                } else {
+                    own
+                };
+                got.take_text(&defaults.span, span_fields, &mut inputs);
             }
             match flow {
-                Flow::Section => got.take_text(&defaults.section, true, &mut inputs),
+                Flow::Section => got.take_text(&defaults.section, Fields::ALL, &mut inputs),
                 Flow::Ring => {
-                    got.take_text(&defaults.ring.text, true, &mut inputs);
-                    got.take_text(&defaults.frame.text, true, &mut inputs);
+                    got.take_text(&defaults.ring.text, Fields::ALL, &mut inputs);
+                    got.take_text(&defaults.frame.text, Fields::ALL, &mut inputs);
                 }
-                Flow::Frame => got.take_text(&defaults.frame.text, true, &mut inputs),
-                Flow::Label => got.take_text(&defaults.label.text, true, &mut inputs),
-                Flow::Path(kind) => {
+                Flow::Frame => got.take_text(&defaults.frame.text, Fields::ALL, &mut inputs),
+                Flow::Label(_) => got.take_text(&defaults.label.text, Fields::ALL, &mut inputs),
+                Flow::Path(kind) | Flow::Cap(kind) => {
                     let flow_style = path_defaults(defaults, kind);
                     got.take_flow(flow_style.size, flow_style.color, &mut inputs);
                 }
                 Flow::PortalEnd => {
                     got.take_flow(defaults.portal_end.size, defaults.portal_end.color, &mut inputs)
                 }
-                Flow::Cap(_) | Flow::Node | Flow::Other => {}
+                Flow::Node | Flow::Other => {}
             }
-            got.take_text(&defaults.node.text, !in_frame, &mut inputs);
+            got.take_text(&defaults.node.text, outside, &mut inputs);
         }
     }
 
@@ -640,7 +752,7 @@ pub fn resolve_node(tree: &Tree<DocElement>, node: NodeId, rec: &mut impl ReadRe
         .map(|_| node);
     let mut inputs = Inputs::new(tree, rec, owning);
     let own = owning
-        .and_then(|id| inputs.read(id))
+        .and_then(|id| inputs.style(id))
         .and_then(DocElement::as_node);
     let mut shape = own.and_then(|n| n.style.shape);
     let mut fill = own.and_then(|n| n.style.fill).and_then(|c| inputs.color(c));
@@ -670,7 +782,7 @@ pub fn resolve_node(tree: &Tree<DocElement>, node: NodeId, rec: &mut impl ReadRe
 /// Cost: O(1). No allocation beyond cloning a `FitMode::Once` filler.
 pub fn resolve_frame(tree: &Tree<DocElement>, frame: NodeId, rec: &mut impl ReadRecorder) -> ResolvedFrame {
     let mut inputs = Inputs::new(tree, rec, None);
-    let own = match inputs.read(frame) {
+    let own = match inputs.style(frame) {
         Some(DocElement::Frame(frame)) => Some(&frame.style),
         _ => None,
     };
@@ -715,13 +827,13 @@ pub fn resolve_frame(tree: &Tree<DocElement>, frame: NodeId, rec: &mut impl Read
 /// Cost: O(1). No allocation beyond cloning a `FitMode::Once` filler.
 pub fn resolve_ring(tree: &Tree<DocElement>, ring: NodeId, rec: &mut impl ReadRecorder) -> ResolvedRing {
     let mut inputs = Inputs::new(tree, rec, None);
-    let mut fit = match inputs.read(ring) {
+    let mut fit = match inputs.style(ring) {
         Some(DocElement::Ring(ring)) => ring.style.fit.as_ref(),
         _ => None,
     };
     if fit.is_none() {
         if let Some(frame) = parent(tree, ring) {
-            if let Some(DocElement::Frame(frame)) = inputs.read(frame) {
+            if let Some(DocElement::Frame(frame)) = inputs.style(frame) {
                 fit = frame.style.fit.as_ref();
             }
         }
@@ -738,8 +850,7 @@ pub fn resolve_ring(tree: &Tree<DocElement>, ring: NodeId, rec: &mut impl ReadRe
 
 /// Whether `id` has a span child: its row is sorted by kind, and a span
 /// sorts before a cap, a label and a portal end, so it is the first
-/// child when there is one. Reading the row is part of reading the
-/// element. O(1).
+/// child when there is one. The caller reports the row read. O(1).
 fn has_spans(tree: &Tree<DocElement>, id: NodeId) -> bool {
     tree.get(id).is_some()
         && id
@@ -767,9 +878,10 @@ fn content_text(tiers: [Option<&String>; 2], built_in: &str) -> Content {
 /// Cost: O(1). Allocates the content `String` when there are no spans.
 pub fn resolve_path(tree: &Tree<DocElement>, path: NodeId, rec: &mut impl ReadRecorder) -> ResolvedPath {
     let mut inputs = Inputs::new(tree, rec, None);
-    let own_element = inputs.read(path);
+    let own_element = inputs.style(path);
     let kind = own_element.map_or(DocKind::Connector, DocElement::kind);
     let own = own_element.and_then(DocElement::as_path).map(|p| &p.flow);
+    inputs.row(path);
     let has_spans = has_spans(tree, path);
     let mut fit = own.and_then(|f| f.fit.as_ref());
     let mut spacing = own.and_then(|f| f.spacing);
@@ -807,7 +919,7 @@ pub fn resolve_path(tree: &Tree<DocElement>, path: NodeId, rec: &mut impl ReadRe
 /// Cost: O(1). No allocation.
 pub fn resolve_label(tree: &Tree<DocElement>, label: NodeId, rec: &mut impl ReadRecorder) -> ResolvedLabel {
     let mut inputs = Inputs::new(tree, rec, None);
-    let own = match inputs.read(label) {
+    let own = match inputs.style(label) {
         Some(DocElement::Label(label)) => Some(&label.style),
         _ => None,
     };
@@ -837,10 +949,11 @@ pub fn resolve_portal_end(
     rec: &mut impl ReadRecorder,
 ) -> ResolvedPortalEnd {
     let mut inputs = Inputs::new(tree, rec, None);
-    let own = match inputs.read(end) {
+    let own = match inputs.style(end) {
         Some(DocElement::PortalEnd(end)) => Some(&end.style),
         _ => None,
     };
+    inputs.row(end);
     let has_spans = has_spans(tree, end);
     let mut border_t = own.and_then(|s| s.border_t);
     let mut offset = own.and_then(|s| s.offset);

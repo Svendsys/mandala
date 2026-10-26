@@ -191,8 +191,10 @@ pub struct PaletteGroup {
     pub frame: PlainColor,
     /// Section text.
     pub text: PlainColor,
-    /// The text of a node's first section.
-    pub title: PlainColor,
+    /// The text of a node's first section, when it differs from the
+    /// other sections': `None` gives the first section `text`, in the
+    /// same tier (ruling R5 on #235).
+    pub title: Option<PlainColor>,
 }
 
 /// The map's defaults: one struct per kind with style, consulted after

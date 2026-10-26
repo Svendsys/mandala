@@ -291,6 +291,10 @@ pub struct Example {
     pub b_cap: NodeId,
     /// The label on `b`'s connector.
     pub b_label: NodeId,
+    /// The label on the line link.
+    pub line_label: NodeId,
+    /// The label beside the portal's source end.
+    pub portal_label: NodeId,
     /// `b`'s child, ident 3.
     pub c: NodeId,
     /// `c`'s connector, with no spans.
@@ -373,16 +377,16 @@ pub fn example() -> (DocumentBuilder, Example) {
     builder.span(cap, "<");
     let cap = builder.add(line, DocElement::CapEnd(CapData::default()));
     builder.span(cap, ">");
-    let label = builder.add(line, DocElement::Label(LabelData::default()));
-    builder.span(label, "see also");
+    let line_label = builder.add(line, DocElement::Label(LabelData::default()));
+    builder.span(line_label, "see also");
 
     let portal = builder.link(a, d, LinkKind::Portal);
     let mut ends = portal.children(builder.tree().arena());
     let portal_source = ends.next().unwrap();
     let portal_target = ends.next().unwrap();
     builder.span(portal_source, "\u{25C6}");
-    let label = builder.add(portal_source, DocElement::Label(LabelData::default()));
-    builder.span(label, "to d");
+    let portal_label = builder.add(portal_source, DocElement::Label(LabelData::default()));
+    builder.span(portal_label, "to d");
 
     let ids = Example {
         a,
@@ -404,6 +408,8 @@ pub fn example() -> (DocumentBuilder, Example) {
         b_connector_span,
         b_cap,
         b_label,
+        line_label,
+        portal_label,
         c,
         c_connector,
         d,
@@ -420,7 +426,7 @@ pub fn palette_group(n: u8) -> crate::document::element::PaletteGroup {
         fill: PlainColor::Rgba(Rgba::opaque(n, 0, 0)),
         frame: PlainColor::Rgba(Rgba::opaque(0, n, 0)),
         text: PlainColor::Rgba(Rgba::opaque(0, 0, n)),
-        title: PlainColor::Rgba(Rgba::opaque(n, n, 0)),
+        title: Some(PlainColor::Rgba(Rgba::opaque(n, n, 0))),
     }
 }
 

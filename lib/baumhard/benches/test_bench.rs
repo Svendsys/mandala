@@ -2,6 +2,7 @@
 
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::document::tests::bounds_tests::*;
+use baumhard::document::tests::deps_tests::*;
 use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::ids_tests::*;
 use baumhard::document::tests::inspect_tests::*;
@@ -1753,6 +1754,24 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_shape_map_row", |b| b.iter(do_document_shape_map_row));
     c.bench_function("document_shape_node_row", |b| b.iter(do_document_shape_node_row));
+    c.bench_function("document_geometry_touches_no_input", |b| {
+        b.iter(do_document_geometry_touches_no_input)
+    });
+    c.bench_function("document_inputs_changed_by_kind", |b| {
+        b.iter(do_document_inputs_changed_by_kind)
+    });
+    c.bench_function("document_records_and_changes_agree", |b| {
+        b.iter(do_document_records_and_changes_agree)
+    });
+    c.bench_function("document_resolve_node_text_stays_out_of_other_flows", |b| {
+        b.iter(do_document_resolve_node_text_stays_out_of_other_flows)
+    });
+    c.bench_function("document_resolve_untitled_group_titles_with_text", |b| {
+        b.iter(do_document_resolve_untitled_group_titles_with_text)
+    });
+    c.bench_function("document_resolve_first_section_reads_the_row", |b| {
+        b.iter(do_document_resolve_first_section_reads_the_row)
+    });
     c.bench_function("document_shape_section_row", |b| {
         b.iter(do_document_shape_section_row)
     });

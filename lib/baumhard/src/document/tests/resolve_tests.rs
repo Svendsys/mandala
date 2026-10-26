@@ -131,19 +131,28 @@ fn test_document_resolve_ring_owner_chain() {
     do_document_resolve_ring_owner_chain();
 }
 
-/// A ring span's chain runs ring → frame → node. Controls as above.
+/// A ring span's color runs ring → frame → `Defaults.ring` →
+/// `Defaults.frame` → `BUILT_IN`, and never through the node's text
+/// (R4), which is set to blue throughout. Controls: each removed hands
+/// the color to the next.
 pub fn do_document_resolve_ring_owner_chain() {
     let (mut builder, ids) = example();
     builder.edit_node(ids.a, |n| n.palette = None);
     style(&mut builder, ids.ring, |s| s.color = rgba(RED));
     style(&mut builder, ids.frame, |s| s.color = rgba(GREEN));
     style(&mut builder, ids.a, |s| s.color = rgba(BLUE));
+    defaults(&mut builder, |d| {
+        d.ring.text.color = rgba(YELLOW);
+        d.frame.text.color = rgba(CYAN);
+    });
     assert_eq!(color(&builder, ids.ring_span), RED);
     style(&mut builder, ids.ring, |s| s.color = None);
     assert_eq!(color(&builder, ids.ring_span), GREEN);
     style(&mut builder, ids.frame, |s| s.color = None);
-    assert_eq!(color(&builder, ids.ring_span), BLUE);
-    style(&mut builder, ids.a, |s| s.color = None);
+    assert_eq!(color(&builder, ids.ring_span), YELLOW, "not the node's blue");
+    defaults(&mut builder, |d| d.ring.text.color = None);
+    assert_eq!(color(&builder, ids.ring_span), CYAN);
+    defaults(&mut builder, |d| d.frame.text.color = None);
     assert_eq!(color(&builder, ids.ring_span), BUILT_IN.ring.text.color);
 }
 
@@ -232,7 +241,8 @@ fn test_document_resolve_built_in_by_flow() {
 
 /// With nothing set and no palette, each flow falls back to its own
 /// `BUILT_IN` text: section, ring, connector, a connector's cap, line
-/// link, a link's cap, label and portal marker.
+/// link, a link's cap, portal marker, and a label by its host —
+/// connector, line link, portal end.
 pub fn do_document_resolve_built_in_by_flow() {
     let (mut builder, ids) = example();
     builder.edit_node(ids.a, |n| n.palette = None);
@@ -245,7 +255,9 @@ pub fn do_document_resolve_built_in_by_flow() {
         (ids.b_cap, BUILT_IN.connector.text),
         (line_span, BUILT_IN.link.text),
         (line_cap, BUILT_IN.link.text),
-        (ids.b_label, BUILT_IN.label.text),
+        (ids.b_label, BUILT_IN.label.on_connector),
+        (ids.line_label, BUILT_IN.label.on_link),
+        (ids.portal_label, BUILT_IN.label.on_portal_end),
         (ids.portal_source, BUILT_IN.portal_end.text),
     ];
     for (owner, expected) in cases {
@@ -262,7 +274,8 @@ pub fn do_document_resolve_built_in_by_flow() {
         BUILT_IN.ring.text,
         BUILT_IN.connector.text,
         BUILT_IN.link.text,
-        BUILT_IN.label.text,
+        BUILT_IN.label.on_connector,
+        BUILT_IN.label.on_link,
         BUILT_IN.portal_end.text,
     ];
     for (i, a) in distinct.iter().enumerate() {
@@ -270,6 +283,13 @@ pub fn do_document_resolve_built_in_by_flow() {
             assert_ne!(a, b);
         }
     }
+    // A portal label reads like its marker, 1:1 (today's
+    // `resolve_portal_endpoint_text_style`), and like no path label.
+    assert_eq!(BUILT_IN.label.on_portal_end, BUILT_IN.portal_end.text);
+    assert_ne!(BUILT_IN.label.on_portal_end, BUILT_IN.label.on_link);
+    assert_eq!(BUILT_IN.label.on_portal_end.size, FontSize::Pt(50.0));
+    assert_eq!(BUILT_IN.label.on_link.color, Rgba::opaque(0xaa, 0x88, 0xcc));
+    assert_eq!(BUILT_IN.label.on_connector.color, Rgba::opaque(0x88, 0x88, 0x88));
 }
 
 #[test]
@@ -277,10 +297,11 @@ fn test_document_resolve_path_and_portal_text_tiers() {
     do_document_resolve_path_and_portal_text_tiers();
 }
 
-/// A connector's span takes the connector's size and color, then the
-/// node's, then `Defaults.connector`'s; a portal marker takes the end's,
-/// then the node's, then `Defaults.portal_end`'s. Controls: each removed
-/// hands the field on.
+/// A connector's span takes the connector's size and color, then
+/// `Defaults.connector`'s; a portal marker takes the end's, then
+/// `Defaults.portal_end`'s — never the node's text (R4), which is set
+/// to green 40 pt throughout. Controls: each tier removed hands the
+/// field to the next.
 pub fn do_document_resolve_path_and_portal_text_tiers() {
     let (mut builder, ids) = example();
     builder.edit_node(ids.a, |n| n.palette = None);
@@ -290,11 +311,17 @@ pub fn do_document_resolve_path_and_portal_text_tiers() {
             c.path.flow.color = rgba(RED);
         }
     });
-    style(&mut builder, ids.b, |s| s.color = rgba(GREEN));
+    for node in [ids.a, ids.b] {
+        style(&mut builder, node, |s| {
+            s.color = rgba(GREEN);
+            s.size = Some(FontSize::Pt(40.0));
+        });
+    }
     defaults(&mut builder, |d| {
         d.connector.color = rgba(BLUE);
         d.connector.size = Some(30.0);
         d.portal_end.color = rgba(YELLOW);
+        d.portal_end.size = Some(60.0);
     });
     let resolved = text(&builder, ids.b_connector_span).0;
     assert_eq!((resolved.size, resolved.color), (FontSize::Pt(20.0), RED));
@@ -305,9 +332,16 @@ pub fn do_document_resolve_path_and_portal_text_tiers() {
         }
     });
     let resolved = text(&builder, ids.b_connector_span).0;
-    assert_eq!((resolved.size, resolved.color), (FontSize::Pt(30.0), GREEN));
-    style(&mut builder, ids.b, |s| s.color = None);
-    assert_eq!(color(&builder, ids.b_connector_span), BLUE);
+    assert_eq!((resolved.size, resolved.color), (FontSize::Pt(30.0), BLUE));
+    defaults(&mut builder, |d| {
+        d.connector.color = None;
+        d.connector.size = None;
+    });
+    let resolved = text(&builder, ids.b_connector_span).0;
+    assert_eq!(
+        (resolved.size, resolved.color),
+        (BUILT_IN.connector.text.size, BUILT_IN.connector.text.color)
+    );
 
     builder.edit(ids.portal_source, |e| {
         if let DocElement::PortalEnd(end) = e {
@@ -320,7 +354,75 @@ pub fn do_document_resolve_path_and_portal_text_tiers() {
             end.style.color = None;
         }
     });
-    assert_eq!(color(&builder, ids.portal_source), YELLOW);
+    let resolved = text(&builder, ids.portal_source).0;
+    assert_eq!((resolved.size, resolved.color), (FontSize::Pt(60.0), YELLOW));
+}
+
+#[test]
+fn test_document_resolve_node_text_stays_out_of_other_flows() {
+    do_document_resolve_node_text_stays_out_of_other_flows();
+}
+
+/// R4: a node's text size and color, `Defaults.span.size` and
+/// `Defaults.node.text`'s size and color each leave a connector span, a
+/// portal marker, a label and a ring at their own tier — and each still
+/// reaches a section span (the control: the setting is live). The face
+/// keeps the whole chain, and reaches all of them.
+pub fn do_document_resolve_node_text_stays_out_of_other_flows() {
+    let (base, ids) = example();
+    let flows = [
+        ids.b_connector_span,
+        ids.portal_source,
+        ids.b_label,
+        ids.ring_span,
+    ];
+    let untouched: Vec<ResolvedText> = flows.iter().map(|&id| text(&base, id).0).collect();
+    type Setting = fn(&mut DocumentBuilder, &Example);
+    let settings: [(&str, Setting); 4] = [
+        ("node text size", |b, ids| {
+            for node in [ids.a, ids.b] {
+                style(b, node, |s| s.size = Some(FontSize::Pt(40.0)));
+            }
+        }),
+        ("node text color", |b, ids| {
+            for node in [ids.a, ids.b] {
+                style(b, node, |s| s.color = rgba(RED));
+            }
+        }),
+        ("Defaults.span.size", |b, _| {
+            defaults(b, |d| d.span.size = Some(FontSize::Pt(40.0)))
+        }),
+        ("Defaults.node.text", |b, _| {
+            defaults(b, |d| {
+                d.node.text.size = Some(FontSize::Pt(40.0));
+                d.node.text.color = rgba(RED);
+            })
+        }),
+    ];
+    for (what, set) in settings {
+        let (mut builder, _) = example();
+        let section_before = text(&builder, ids.a_body_span).0;
+        set(&mut builder, &ids);
+        let section_after = text(&builder, ids.a_body_span).0;
+        assert_ne!(section_before, section_after, "{what} must reach a section span");
+        for (&id, expected) in flows.iter().zip(&untouched) {
+            assert_eq!(
+                text(&builder, id).0,
+                *expected,
+                "{what} must not reach a {:?}",
+                builder.tree().arena()[id].get().kind()
+            );
+        }
+    }
+    let (mut builder, _) = example();
+    defaults(&mut builder, |d| d.node.text.font = Some(AppFont::Novem));
+    for id in flows.into_iter().chain([ids.a_body_span]) {
+        assert_eq!(
+            text(&builder, id).0.font,
+            AppFont::Novem,
+            "the face keeps the whole chain"
+        );
+    }
 }
 
 #[test]
@@ -449,10 +551,68 @@ pub fn do_document_resolve_palette_field_mapping() {
         color(&builder, ids.b_connector_span),
         BUILT_IN.connector.text.color
     );
-    assert_eq!(color(&builder, ids.b_label), BUILT_IN.label.text.color);
+    assert_eq!(color(&builder, ids.b_label), BUILT_IN.label.on_connector.color);
     assert_eq!(color(&builder, ids.portal_source), BUILT_IN.portal_end.text.color);
     style(&mut builder, ids.a, |s| s.color = rgba(RED));
     assert_eq!(color(&builder, ids.a_body_span), RED);
+}
+
+#[test]
+fn test_document_resolve_untitled_group_titles_with_text() {
+    do_document_resolve_untitled_group_titles_with_text();
+}
+
+/// R5: a group with no `title` gives the first section its `text`, in
+/// the palette tier — not a later tier. Control: with a `title`, the
+/// first section takes it.
+pub fn do_document_resolve_untitled_group_titles_with_text() {
+    let (mut builder, ids) = example();
+    defaults(&mut builder, |d| d.section.color = rgba(MAGENTA));
+    assert_eq!(
+        color(&builder, ids.a_title_span),
+        Rgba::opaque(10, 10, 0),
+        "titled: title"
+    );
+    let palette = builder.root().children(builder.tree().arena()).nth(1).unwrap();
+    builder.edit(palette, |e| {
+        if let DocElement::Palette(p) = e {
+            p.groups[0].title = None;
+        }
+    });
+    assert_eq!(
+        color(&builder, ids.a_title_span),
+        Rgba::opaque(0, 0, 10),
+        "untitled: text, not Defaults"
+    );
+}
+
+#[test]
+fn test_document_resolve_first_section_reads_the_row() {
+    do_document_resolve_first_section_reads_the_row();
+}
+
+/// Which section is first is a row read: a section span of `b` records
+/// `Row(b)`, and adding a section ahead of it changes its color from
+/// the group's `title` to its `text`. Control: a span whose own color is
+/// set reads no row.
+pub fn do_document_resolve_first_section_reads_the_row() {
+    let (mut builder, ids) = example();
+    let (resolved, reads) = text(&builder, ids.b_span);
+    assert_eq!(resolved.color, Rgba::opaque(11, 11, 0));
+    assert!(reads.contains(&Input::Row(ids.b)));
+    builder.edit(ids.b_section, |e| {
+        if let DocElement::Section(s) = e {
+            s.channel = 5;
+        }
+    });
+    builder.section(ids.b, 0);
+    assert_eq!(
+        color(&builder, ids.b_span),
+        Rgba::opaque(0, 0, 11),
+        "no longer the first section"
+    );
+    style(&mut builder, ids.b_span, |s| s.color = rgba(RED));
+    assert!(!text(&builder, ids.b_span).1.contains(&Input::Row(ids.b)));
 }
 
 #[test]
@@ -527,9 +687,9 @@ pub fn do_document_records_only_the_span_for_a_complete_rgba_span() {
             italic: Some(false),
         }
     });
-    assert_eq!(text(&builder, span).1, vec![Input::Element(span)]);
+    assert_eq!(text(&builder, span).1, vec![Input::Style(span)]);
     style(&mut builder, span, |s| s.color = Some(ColorRef::Var(VarId(0))));
-    assert_eq!(text(&builder, span).1, vec![Input::Element(span), Input::Theme]);
+    assert_eq!(text(&builder, span).1, vec![Input::Style(span), Input::Theme]);
 }
 
 #[test]
@@ -537,19 +697,22 @@ fn test_document_records_every_tier_it_looks_at() {
     do_document_records_every_tier_it_looks_at();
 }
 
-/// An unstyled section span of `b` reads every tier — itself, its
-/// section, its node, the palette walk and the defaults — even though
-/// most say nothing, and never an element off its chain: not `b`'s
-/// connector, not `c`, not the other root node.
+/// An unstyled section span of `b` reads every tier — its own style,
+/// its section's, its node's, the node's row, the palette walk and the
+/// defaults — even though most say nothing, and nothing off its chain:
+/// not `b`'s connector, not `c`, not the other root node, and of `a`
+/// only its `palette` field, not its style.
 pub fn do_document_records_every_tier_it_looks_at() {
     let (builder, ids) = example();
     let reads = text(&builder, ids.b_span).1;
     for expected in [
-        Input::Element(ids.b_span),
-        Input::Element(ids.b_section),
-        Input::Element(ids.b),
+        Input::Style(ids.b_span),
+        Input::Style(ids.b_section),
+        Input::Style(ids.b),
+        Input::Row(ids.b),
         Input::Depth(ids.b),
-        Input::Element(ids.a),
+        Input::PaletteBinding(ids.b),
+        Input::PaletteBinding(ids.a),
         Input::Depth(ids.a),
         Input::Palette(PaletteId(0)),
         Input::Defaults,
@@ -560,10 +723,12 @@ pub fn do_document_records_every_tier_it_looks_at() {
         );
     }
     for unexpected in [
-        Input::Element(ids.b_connector),
-        Input::Element(ids.c),
-        Input::Element(ids.d),
-        Input::Element(ids.frame),
+        Input::Style(ids.b_connector),
+        Input::Style(ids.c),
+        Input::Style(ids.d),
+        Input::Style(ids.frame),
+        Input::Style(ids.a),
+        Input::Row(ids.a),
         Input::Theme,
     ] {
         assert!(
@@ -578,8 +743,8 @@ fn test_document_records_the_palette_binding() {
     do_document_records_the_palette_binding();
 }
 
-/// A `Palette` color records the node's depth, every node of the walk
-/// up, the binding's depth and the palette — and the theme only when
+/// A `Palette` color records the node's depth, the `palette` field of
+/// every node of the walk up, the binding's depth and the palette — and the theme only when
 /// the group's color is a `Var`. A span of a node with no binding walks
 /// up and records no palette.
 pub fn do_document_records_the_palette_binding() {
@@ -597,10 +762,10 @@ pub fn do_document_records_the_palette_binding() {
     assert_eq!(
         reads,
         vec![
-            Input::Element(ids.b_span),
+            Input::Style(ids.b_span),
             Input::Depth(ids.b),
-            Input::Element(ids.b),
-            Input::Element(ids.a),
+            Input::PaletteBinding(ids.b),
+            Input::PaletteBinding(ids.a),
             Input::Depth(ids.a),
             Input::Palette(PaletteId(0)),
         ]
@@ -630,7 +795,7 @@ fn test_document_records_node_and_frame_reads() {
     do_document_records_node_and_frame_reads();
 }
 
-/// `resolve_node` with every field set reads the node alone; with the
+/// `resolve_node` with every field set reads the node's style alone; with the
 /// fill unset it reads the palette walk too. A ring that sets its whole
 /// style reads no frame; one that does not, does.
 pub fn do_document_records_node_and_frame_reads() {
@@ -642,7 +807,7 @@ pub fn do_document_records_node_and_frame_reads() {
     });
     let mut reads = Vec::new();
     resolve_node(builder.tree(), ids.b, &mut reads);
-    assert_eq!(reads, vec![Input::Element(ids.b)]);
+    assert_eq!(reads, vec![Input::Style(ids.b)]);
     builder.edit_node(ids.b, |n| n.style.fill = None);
     let mut reads = Vec::new();
     resolve_node(builder.tree(), ids.b, &mut reads);
@@ -659,14 +824,9 @@ pub fn do_document_records_node_and_frame_reads() {
         }
     });
     let reads = text(&builder, ids.ring_span).1;
-    assert_eq!(
-        reads,
-        vec![Input::Element(ids.ring_span), Input::Element(ids.ring)]
-    );
+    assert_eq!(reads, vec![Input::Style(ids.ring_span), Input::Style(ids.ring)]);
     style(&mut builder, ids.ring, |s| s.italic = None);
-    assert!(text(&builder, ids.ring_span)
-        .1
-        .contains(&Input::Element(ids.frame)));
+    assert!(text(&builder, ids.ring_span).1.contains(&Input::Style(ids.frame)));
 }
 
 #[test]
@@ -705,7 +865,10 @@ pub fn do_document_resolve_connector_content() {
     let mut reads = Vec::new();
     let resolved = resolve_path(builder.tree(), ids.b_connector, &mut reads);
     assert_eq!(resolved.content, Content::Spans);
-    assert_eq!(reads, vec![Input::Element(ids.b_connector)]);
+    assert_eq!(
+        reads,
+        vec![Input::Style(ids.b_connector), Input::Row(ids.b_connector)]
+    );
 }
 
 #[test]

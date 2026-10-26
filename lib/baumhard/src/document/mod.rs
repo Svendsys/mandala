@@ -30,6 +30,9 @@ pub mod bounds;
 /// [`BUILT_IN`](defaults::BUILT_IN): the last tier of every
 /// resolution, reproducing today's defaults.
 pub mod defaults;
+/// [`inputs_changed`](deps::inputs_changed): which resolution inputs a
+/// change of one element touches.
+pub mod deps;
 /// [`DocKind`](element::DocKind), [`DocElement`](element::DocElement)
 /// and the per-kind data, and the engine instantiation.
 pub mod element;

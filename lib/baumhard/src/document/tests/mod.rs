@@ -7,6 +7,7 @@
 //! mostly from [`example`](crate::document::tests::test_support::example).
 
 pub mod bounds_tests;
+pub mod deps_tests;
 pub mod element_tests;
 pub mod ids_tests;
 pub mod inspect_tests;

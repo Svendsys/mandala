@@ -14,9 +14,9 @@
 //! `BUILT_IN` is fully resolved: no `Option`, no theme variable, no
 //! palette reference. It is keyed by **where text is drawn**, not by
 //! the kind of the element that holds it: a span in a section, in a
-//! ring, on a connector, on a link, in a label and in a portal marker
-//! each fall back to their own text, because today those six draw at
-//! different sizes and in different colors.
+//! ring, on a connector, on a link, in a portal marker, and in a label
+//! on each of the three label hosts falls back to its own text, because
+//! today those draw at different sizes and in different colors.
 
 use crate::document::resolve::{BorderPoint, ResolvedText};
 use crate::document::values::{Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, StartPoint, Weight};
@@ -26,6 +26,20 @@ use crate::font::fonts::AppFont;
 /// `opacity` is not inherited, so it has no tier here; the loader
 /// writes this.
 pub const DEFAULT_OPACITY: f32 = 1.0;
+
+/// The color of connector text: `default_parent_child_edge`'s
+/// `#888888`, `src/application/document/defaults.rs`.
+const CONNECTOR_COLOR: Rgba = Rgba::opaque(0x88, 0x88, 0x88);
+
+/// The color of line-link and portal text: `default_cross_link_edge`'s
+/// and `default_portal_edge`'s `#aa88cc`,
+/// `src/application/document/defaults.rs`.
+const LINK_COLOR: Rgba = Rgba::opaque(0xaa, 0x88, 0xcc);
+
+/// The size of a portal marker, in points:
+/// `DEFAULT_PORTAL_MARKER_FONT_SIZE_PT` in
+/// `lib/baumhard/src/mindmap/tree_builder/portal_style.rs`.
+pub const PORTAL_MARKER_SIZE_PT: f32 = 50.0;
 
 /// The size of connector and link text, in points:
 /// `default_connection_font_size()` in
@@ -99,15 +113,20 @@ pub struct BuiltInPath {
     pub text: ResolvedText,
 }
 
-/// [`BUILT_IN`]'s label fields.
+/// [`BUILT_IN`]'s label fields. A label's text depends on what it
+/// labels, as it does today: it reads like its host.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BuiltInLabel {
     /// The position along the path.
     pub t: f32,
     /// The distance from the path.
     pub offset: f32,
-    /// Label text.
-    pub text: ResolvedText,
+    /// The text of a label on a connector.
+    pub on_connector: ResolvedText,
+    /// The text of a label on a line link.
+    pub on_link: ResolvedText,
+    /// The text of a label beside a portal end.
+    pub on_portal_end: ResolvedText,
 }
 
 /// [`BUILT_IN`]'s portal-end fields.
@@ -191,30 +210,32 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         spacing: 0.0,
         // `default_connection_body()`, mindmap/model/edge.rs.
         content: "\u{00B7}",
-        // Color: `default_parent_child_edge`'s `#888888`,
-        // src/application/document/defaults.rs.
-        text: text(FontSize::Pt(PATH_TEXT_SIZE_PT), Rgba::opaque(0x88, 0x88, 0x88)),
+        text: text(FontSize::Pt(PATH_TEXT_SIZE_PT), CONNECTOR_COLOR),
     },
     link: BuiltInPath {
         fit: FitMode::Repeat,
         spacing: 0.0,
         content: "\u{00B7}",
-        // Color: `default_cross_link_edge`'s `#aa88cc`,
-        // src/application/document/defaults.rs.
-        text: text(FontSize::Pt(PATH_TEXT_SIZE_PT), Rgba::opaque(0xaa, 0x88, 0xcc)),
+        text: text(FontSize::Pt(PATH_TEXT_SIZE_PT), LINK_COLOR),
     },
     label: BuiltInLabel {
         // `EdgeLabelConfig::effective_position_t`'s midpoint and
         // `effective_perpendicular_offset`'s `0.0`, mindmap/model/edge.rs.
         t: 0.5,
         offset: 0.0,
-        // Size: the path's size times `DEFAULT_LABEL_SIZE_FACTOR`
-        // (`EdgeLabelConfig::effective_font_size_pt`). Color: a label
-        // inherits its edge's color, `#888888` on a parent-child edge.
-        text: text(
+        // On a path: the path's size times `DEFAULT_LABEL_SIZE_FACTOR`
+        // (`EdgeLabelConfig::effective_font_size_pt`), in the edge's
+        // color (`EdgeLabelConfig`'s "edge color cascade").
+        on_connector: text(
             FontSize::Pt(PATH_TEXT_SIZE_PT * LABEL_SIZE_FACTOR),
-            Rgba::opaque(0x88, 0x88, 0x88),
+            CONNECTOR_COLOR,
         ),
+        on_link: text(FontSize::Pt(PATH_TEXT_SIZE_PT * LABEL_SIZE_FACTOR), LINK_COLOR),
+        // Beside a portal end: the marker's size and color at 1:1,
+        // `resolve_portal_endpoint_text_style` in
+        // mindmap/tree_builder/portal_style.rs, which skips the label
+        // factor on purpose.
+        on_portal_end: text(FontSize::Pt(PORTAL_MARKER_SIZE_PT), LINK_COLOR),
     },
     portal_end: BuiltInPortalEnd {
         // `PortalEndpointState::border_t` `None`: face the other end.
@@ -223,9 +244,6 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         offset: 0.0,
         // `PORTAL_GLYPH_PRESETS[0]`, mindmap/model/edge.rs.
         content: "\u{25C8}",
-        // Size: `DEFAULT_PORTAL_MARKER_FONT_SIZE_PT`,
-        // mindmap/tree_builder/portal_style.rs. Color: the portal
-        // edge's `#aa88cc` (`default_portal_edge`).
-        text: text(FontSize::Pt(50.0), Rgba::opaque(0xaa, 0x88, 0xcc)),
+        text: text(FontSize::Pt(PORTAL_MARKER_SIZE_PT), LINK_COLOR),
     },
 };
