@@ -31,14 +31,15 @@ use super::measure_max_glyph_advance;
 // Mirrors the picker's stable-channel discipline: every console
 // GlyphArea sits at a deterministic channel so the §B2 in-place
 // mutator path can target it across keystrokes. Bands are wide
-// enough to add new sub-rows without renumbering. **Order
-// matters** — the values must be strictly ascending in
-// tree-insertion order, otherwise Baumhard's `align_child_walks`
-// breaks alignment and the mutator path silently misses elements.
+// enough to add new sub-rows without renumbering. The tree keeps
+// its children sorted by channel and the mutator pairs each cell
+// by channel, so neither depends on the order cells are added
+// in; adding them in ascending channel order is what makes each
+// insert the O(1) append at the end of the row.
 //
-// Layout-wise: 4 borders → `scrollback_rows` × (gutter + text)
-// always-emitted slots → `completion_rows` always-emitted slots
-// → prompt line. Slots beyond what the geometry currently
+// Layout-wise: 4 borders → `scrollback_rows` gutters →
+// `scrollback_rows` texts → `completion_rows` always-emitted
+// slots → prompt line. Slots beyond what the geometry currently
 // populates carry empty `""` text, which the walker shapes as
 // nothing — a stable element set even when scrollback is short.
 
@@ -58,8 +59,8 @@ pub(super) const CONSOLE_CHANNEL_PROMPT: usize = 100_000;
 /// consume this so the two paths cannot drift.
 ///
 /// Emits `4 + scrollback_rows * 2 + completion_rows + 1` leaves:
-/// the 4 border areas, a `(gutter, text)` pair per scrollback row,
-/// one area per completion row, and one prompt. `scrollback_rows`
+/// the 4 border areas, a gutter per scrollback row, then a text per
+/// scrollback row, one area per completion row, and one prompt. `scrollback_rows`
 /// and `completion_rows` are the layout's capped counts — they
 /// scale with the underlying geometry, so a count change
 /// (scrollback-grow, a Tab firing a new completion list, window
@@ -70,9 +71,12 @@ pub(super) const CONSOLE_CHANNEL_PROMPT: usize = 100_000;
 /// changes as the visible window slides.
 ///
 /// **Channel ordering invariant**: returned in strictly ascending
-/// channel order — the constants above are deliberately spaced so
-/// that strict order is preserved even when the per-row counts
-/// grow.
+/// channel order — the order the tree keeps its children in, so
+/// each insert of the initial build is the O(1) append. The
+/// constants above are deliberately spaced so that strict order is
+/// preserved even when the per-row counts grow; that is why every
+/// gutter comes before every text, though a row draws its gutter
+/// and text side by side.
 pub(super) fn console_overlay_areas(
     geometry: &ConsoleOverlayGeometry,
     layout: &ConsoleFrameLayout,
@@ -210,6 +214,9 @@ pub(super) fn console_overlay_areas(
     // every slot inside the loop is `Some`.
     let skip = geometry.scrollback.len().saturating_sub(scrollback_rows);
     let visible_count = scrollback_rows.max(1);
+    // The texts' band lies above every gutter's, so they are held
+    // here and emitted after the last gutter: channel order.
+    let mut texts: Vec<(usize, GlyphArea)> = Vec::with_capacity(scrollback_rows);
     for slot in 0..scrollback_rows {
         // `scrollback_rows` is pinned to `geometry.scrollback.len()`
         // (minus the drop prefix) by construction, so `skip + slot`
@@ -273,7 +280,7 @@ pub(super) fn console_overlay_areas(
                 default_font,
             ),
         ));
-        out.push((
+        texts.push((
             CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + slot,
             mk_area(
                 &text_str,
@@ -286,6 +293,7 @@ pub(super) fn console_overlay_areas(
             ),
         ));
     }
+    out.append(&mut texts);
 
     // Completion popup rows: same guarantee as scrollback —
     // `completion_rows = min(completions.len(), MAX)`, so every

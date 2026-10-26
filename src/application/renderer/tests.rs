@@ -344,16 +344,13 @@ fn console_mutator_round_trips_to_fresh_build() {
     mutator.apply_to(&mut tree, &());
 
     // The tree keeps its children in channel order, and the areas
-    // come out row by row — a gutter and its text, then the next
-    // row's — so the expectation is put in channel order too. The
-    // sort is stable, which is the order the tree keeps equal
-    // channels in.
-    let mut expected = {
+    // come out in channel order — every gutter, then every text —
+    // so the two are compared as they stand.
+    let expected = {
         let mut fs =
             baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay areas expected)");
         console_overlay_areas(&g_b, &layout_b, &mut fs)
     };
-    expected.sort_by_key(|(channel, _)| *channel);
 
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
     for descendant_id in tree.root().descendants(tree.arena()) {

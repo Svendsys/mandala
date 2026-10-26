@@ -69,11 +69,38 @@ fn handle_layout<E: HandleVisual>(elem: &E) -> (usize, GlyphArea) {
     (elem.channel(), area)
 }
 
+/// Every handle's `(unique_id, channel, area)` cell, in the order
+/// the tree keeps them: by channel, and on a tie in slice order.
+/// The tree would hold them in that order whatever order they were
+/// added in — the key decides a child's place — but added in slice
+/// order, one edge's or one section's handles (an edge's `1, 2, 3`
+/// and `100 + n`, a section's `1..=8`) are followed by the next
+/// one's lower channels, and each of those inserts scans back past
+/// every higher-channel handle already in the row. Sorted first, every insert is the O(1)
+/// append. The sort is stable, so equal channels keep slice order,
+/// as the tree would have kept them.
+///
+/// `unique_id`s run 1.. in slice order, so a handle keeps its id
+/// whatever its channel. Cost: one layout per handle plus an
+/// O(n log n) sort of the `n` cells.
+fn handle_cells<E: HandleVisual>(elements: &[E]) -> Vec<(usize, usize, GlyphArea)> {
+    let mut cells: Vec<(usize, usize, GlyphArea)> = elements
+        .iter()
+        .enumerate()
+        .map(|(idx, elem)| {
+            let (channel, area) = handle_layout(elem);
+            (idx + 1, channel, area)
+        })
+        .collect();
+    cells.sort_by_key(|&(_, channel, _)| channel);
+    cells
+}
+
 /// Identity sequence for a set of handle elements — the channel
-/// of each handle, in tree-insertion order. Two handle sets
-/// produce the same identity iff their structural shape is
-/// identical (same channels in the same order); the in-place
-/// mutator path is sound only under that condition.
+/// of each handle, in slice order. Two handle sets produce the
+/// same identity iff their structural shape is identical (same
+/// channels in the same order); the in-place mutator path is
+/// sound only under that condition.
 pub fn handle_identity_sequence<E: HandleVisual>(elements: &[E]) -> Vec<usize> {
     elements.iter().map(|e| e.channel()).collect()
 }
@@ -84,16 +111,11 @@ pub fn handle_identity_sequence<E: HandleVisual>(elements: &[E]) -> Vec<usize> {
 /// same kind-derived channel across drag frames.
 pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> GfxTree {
     let mut tree: GfxTree = GfxTree::new_non_indexed();
-
-    for (idx, elem) in elements.iter().enumerate() {
-        // Ids run 1.. in insertion order.
-        let unique_id = idx + 1;
-        let (channel, area) = handle_layout(elem);
+    let root = tree.root;
+    for (unique_id, channel, area) in handle_cells(elements) {
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
-        let root = tree.root;
         super::push_element(&mut tree, root, element_node);
     }
-
     tree
 }
 
@@ -106,10 +128,9 @@ pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> GfxTree {
 /// fields in place via `DeltaGlyphArea::full_assign_from`.
 pub fn build_handle_mutator_tree<E: HandleVisual>(elements: &[E]) -> GfxMutatorTree {
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
-    for elem in elements {
-        let (channel, area) = handle_layout(elem);
+    let root = mt.root;
+    for (_, channel, area) in handle_cells(elements) {
         let delta = DeltaGlyphArea::full_assign_from(&area);
-        let root = mt.root;
         super::push_mutator(
             &mut mt,
             root,
