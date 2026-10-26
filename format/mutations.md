@@ -426,21 +426,41 @@ AST is generic over the element type and the mutation payload; in a
 custom mutation it is the glyph instantiation,
 `MutatorNode<GfxElement, GfxMutation>`, so its predicates name
 `GfxElementField`s and its literal mutations and templates are glyph
-mutations. Four top-level variants:
+mutations.
 
-- **`Void`** — structural grouping, no mutation. Walks children.
-- **`Single { channel, mutation }`** — one mutation at one channel.
+### Routing keys: `kind` and `channel`
+
+Every node names the **key** its mutator routes on in two fields,
+`"kind"` and `"channel"`, and **both are required**: a node missing
+either is refused at load. A mutator reaches a target element only
+when the two keys are equal — kind and channel alike — so one parent
+can hold children of several kinds whose channel spaces are
+independent. The kind is the element type's: the glyph trees a custom
+mutation targets have a single kind, `()`, written **`"kind": null`**,
+so for them routing is by channel alone. (A key on its own — an
+engine `Mutator`'s `"key"` — is the same pair:
+`{"kind": null, "channel": 0}`.)
+
+```json
+{ "Void": { "kind": null, "channel": 0, "children": [] } }
+```
+
+Five variants:
+
+- **`Void { kind, channel, children }`** — structural grouping, no
+  mutation. Walks children.
+- **`Single { kind, channel, mutation }`** — one mutation at one channel.
   With `"mutation": "None"` it builds as a `Void` on that channel:
   a mutator's "no payload" is structural, and a mutation payload has
   no no-op variant of its own.
-- **`Macro { channel, mutations, children }`** — a flat list of
+- **`Macro { kind, channel, mutations, children }`** — a flat list of
   mutations applied to the matched target. `mutations` is
   `{ "Literal": [...] }` for baked-in values or
   `{ "Runtime": "<label>" }` for runtime-supplied values. `children`
   default to empty; used by the `SelfAndDescendants` scope topology
   (a Macro on the anchor whose child is an `Instruction` walking
   descendants).
-- **`Instruction { channel, instruction, children }`** — control
+- **`Instruction { kind, channel, instruction, children }`** — control
   flow wrapping inner children. Instructions:
   - `RepeatWhileAlwaysTrue` — apply children to every descendant.
   - `RepeatWhile(<Predicate>)` — apply children to every descendant
@@ -507,11 +527,12 @@ mutations. Four top-level variants:
   - `RotateWhile` is not part of V1; its design is V2 sub-issue #265.
   - `MapChildren` — **zip-by-sibling-position**. Pairs the
     mutator's direct children with the target's direct children
-    by index, **bypassing channel alignment**. See "MapChildren"
+    by index, **bypassing key alignment**. See "MapChildren"
     below.
-- **`Repeat { section, channel_base, count, skip_indices, template }`**
-  — expands at build time into N children at consecutive channels,
-  each derived from `template`. `count` is `{ "Literal": N }` or
+- **`Repeat { kind, section, channel_base, count, skip_indices, template }`**
+  — expands at build time into N children keyed
+  `(kind, channel_base + i)`, each derived from `template`, whose own
+  `kind` must be the `Repeat`'s. `count` is `{ "Literal": N }` or
   `{ "Runtime": "<label>" }`. Used by widgets (the picker's hue
   ring) and any runtime-shaped section.
 
@@ -542,18 +563,23 @@ content and the build runs on an interactive path:
 - `"channel": "SectionIndex"` outside a `Repeat` template;
 - a `Template` mutation outside a `Repeat` template;
 - a `Repeat` whose `template` is itself a `Repeat`;
+- a `Repeat` whose `template` names another `kind`;
 - `SpatialDescend` for an element type with no geometry.
 
-### Channel alignment vs. `MapChildren`
+### Key alignment vs. `MapChildren`
 
 By default, the walker pairs a mutator's direct children with a
-target's direct children **by matching the `channel` field on
-each element** — see `format/channels.md`. This is broadcast
+target's direct children **by matching keys** — the `kind` and
+`channel` of each — see `format/channels.md`. This is broadcast
 semantics: one mutator on channel N hits every target child that
-happens to share channel N. It's the right default for groups.
+happens to share its key. It's the right default for groups. A
+mutator's children are kept in key order whatever order the JSON
+declares them in, children with an equal key in declaration order;
+when two of them share a key, the first reaches that key's targets
+and the second reaches none.
 
 `Instruction::MapChildren` is the opt-in alternative: it pairs
-strictly by **sibling position** (zip), ignoring channels entirely.
+strictly by **sibling position** (zip), ignoring keys entirely.
 This is the shape size-aware layouts want — the `i`-th target child
 gets the `i`-th mutator child, regardless of how channels are
 assigned. A typical declarative layout pairs `MapChildren` with a
@@ -562,15 +588,18 @@ assigned. A typical declarative layout pairs `MapChildren` with a
 ```json
 {
   "Instruction": {
+    "kind": null,
     "channel": 0,
     "instruction": "MapChildren",
     "children": [{
       "Repeat": {
+        "kind": null,
         "section": "children",
         "channel_base": 0,
         "count": { "Runtime": "children" },
         "template": {
           "Single": {
+            "kind": null,
             "channel": "SectionIndex",
             "mutation": { "Template": ["position"] }
           }
