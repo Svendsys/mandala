@@ -40,14 +40,21 @@ const FORBIDDEN: &[&str] = &[
 ];
 
 /// Every `(line, identifier)` in `source` that is a [`FORBIDDEN`]
-/// identifier in code. Comments are stripped and string literals
-/// blanked first; line numbers are 1-based and survive both.
+/// identifier in code. See [`references_to`].
 fn forbidden_references(source: &str) -> Vec<(usize, &'static str)> {
+    references_to(source, FORBIDDEN)
+}
+
+/// Every `(line, identifier)` in `source` that is one of `needles` in
+/// code. Comments are stripped and string literals blanked first; line
+/// numbers are 1-based and survive both. Shared with
+/// `util::document_surface`, which holds the document to its own list.
+pub(crate) fn references_to(source: &str, needles: &[&'static str]) -> Vec<(usize, &'static str)> {
     let code = blank_string_literals(&strip_comments(source));
     let mut found = Vec::new();
     for (index, line) in code.lines().enumerate() {
         for word in line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
-            if let Some(needle) = FORBIDDEN.iter().find(|n| **n == word) {
+            if let Some(needle) = needles.iter().find(|n| **n == word) {
                 found.push((index + 1, *needle));
             }
         }
@@ -56,7 +63,7 @@ fn forbidden_references(source: &str) -> Vec<(usize, &'static str)> {
 }
 
 /// Every `.rs` file under `dir`, recursively, sorted.
-fn rust_files(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn rust_files(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(next) = pending.pop() {

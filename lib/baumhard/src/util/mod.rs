@@ -40,6 +40,12 @@ pub mod doc_fixtures;
 /// walkers it reads through, is.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod doc_identifiers;
+/// The document's surface held against the tree: it names no module of
+/// the model it replaces, its elements hold a `String` only where #235
+/// allows one, and no field D13 deletes exists in it. Test-only and
+/// native-only for the same reasons `source_scan` is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod document_surface;
 /// The engine names no glyph module and no glyph type in code: every
 /// file under `engine/` is read, comments and literals blanked, and
 /// held to that. Test-only and native-only for the same reasons

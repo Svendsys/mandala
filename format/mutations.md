@@ -721,6 +721,71 @@ the bundle — useful for tweaking constants without rebuilding. A
 map-level mutation in turn overrides the user's, and an inline
 mutation on a specific node overrides the map's.
 
+## The document's kinds and predicate fields
+
+The document (`lib/baumhard/src/document/`, V1-B1) is the engine's
+second element type. Nothing authors mutators against it yet — its
+mutations are V1-B3's, and its edits and presentations V1-D1's and
+V1-D2's — but the two spellings a document mutator will carry are
+fixed here, because they are serialized by the types themselves.
+
+**Kinds.** A document mutator's `"kind"` is one of, in sibling order:
+`"map"`, `"theme"`, `"palette"`, `"defaults"`, `"section"`, `"span"`,
+`"frame"`, `"ring"`, `"connector"`, `"cap_start"`, `"cap_end"`,
+`"label"`, `"link"`, `"portal_end"`, `"node"`. Unlike the glyph trees'
+`null`, the kind routes: a mutator for `"section"` channel 0 never
+lands on `"node"` channel 0. A node, a section and a ring store their
+channel; a portal end's channel is its end (0 the source, 1 the
+target); every other kind is on channel 0. The root of a document is
+its `"map"`, so a mutator applied from the root has a `"map"` root.
+
+**Predicate fields** (`DocField`) are written `{"<field>": <value>}`
+in `snake_case`, beside the same comparators as above:
+
+| Field | Value | On |
+|---|---|---|
+| `kind` | a kind | every element |
+| `channel` | integer | every element |
+| `ident` | integer | node |
+| `position_x`, `position_y` | number | node |
+| `min_width`, `min_height` | number | node, section |
+| `shape` | `"ellipse"` or `{"rectangle": {"radius": 0–100}}` | node |
+| `fill` | a color | node |
+| `fill_fade`, `opacity` | number | node |
+| `palette`, `on_click`, `on_hover` | integer (an index) | node |
+| `folded`, `hidden` | boolean | node |
+| `zoom_min`, `zoom_max` | number | node, connector, link |
+| `offset_x`, `offset_y` | number | section |
+| `align` | `"left"`, `"center"`, `"right"` | section |
+| `font` | a compiled-in face, as `AppFont` spells it | node, section, span, frame, ring, cap, label |
+| `font_size` | `{"pt": n}` or `{"rel": n}` | those, plus connector, link and portal end (points) |
+| `color` | a color | those, plus connector, link and portal end |
+| `weight` | 100–900 | node, section, span, frame, ring, cap, label |
+| `italic` | boolean | node, section, span, frame, ring, cap, label |
+| `visible` | boolean | frame, connector, link |
+| `start_edge` | `"top"`, `"right"`, `"bottom"`, `"left"` | frame |
+| `start_at`, `gap`, `inset` | number | frame |
+| `direction` | `"clockwise"`, `"counter_clockwise"` | frame |
+| `fit` | `"repeat"`, `"spread"`, `{"once": {"filler": …}}`, `{"fit": {"min": n, "max": n}}` | frame, ring, connector, link |
+| `spacing` | number | connector, link |
+| `anchor_from`, `anchor_to` | `"auto"`, `"top"`, `"right"`, `"bottom"`, `"left"` | connector, link |
+| `link_kind` | `"line"`, `"portal"` | link |
+| `label_t` | number | label |
+| `offset` | number | label, portal end |
+| `border_t` | number | portal end |
+
+A color is `{"rgba": [r, g, b, a]}`, `{"var": <variable index>}` or
+`{"palette": "fill" | "frame" | "text" | "title"}`.
+
+A predicate tests what an element **stores**, not what it resolves
+to: a node with no `fill` of its own has none here, whatever its
+palette or the map's defaults paint it. A field the element's kind
+does not carry answers nothing and the predicate moves on to its next
+pair. On an unset optional field `Exists` fails, `Equals(false)` fails
+and `Equals(true)` passes; `GreaterThan` and `LessThan` order numbers
+— and font sizes of the same unit — and fail on everything else,
+negated or not, as they do on an unset field.
+
 ## Related
 
 - `format/schema.md` — the full `.mindmap.json` shape including the

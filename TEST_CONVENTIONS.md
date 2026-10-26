@@ -74,6 +74,9 @@ Exemplars:
 - `lib/baumhard/src/core/tests/` — primitives (ranges, color regions).
 - `lib/baumhard/src/engine/tests/` — the engine over a non-glyph
   element: the walker matrix, inherited state, the builder.
+- `lib/baumhard/src/document/tests/` — the document: shape rules,
+  identity, style resolution and its read records, built through
+  `test_support::DocumentBuilder`.
 
 ### §T2.3 Cross-crate rule
 
