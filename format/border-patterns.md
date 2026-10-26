@@ -141,6 +141,14 @@ naturally across the corners.
 is cycled — `"frame"` (default), `"background"`, `"text"`, or
 `"title"`. Unknown values warn and fall back to `"frame"`.
 
+The console refuses a `palette=` / `border palette <name>` that
+names a palette the map does not define, on every border surface,
+before anything is written: the console has no verb that adds a
+palette, so a forward reference could never come to resolve from
+there. A file may still carry a dangling name; it loads, renders
+the plain `color` instead, and `border show` reports it as
+`(not found in map)`.
+
 This is a different field from a node's theme,
 `color_schema.palette` ([palettes.md](./palettes.md)), even when both
 name the same palette. `border show` reports it on its own

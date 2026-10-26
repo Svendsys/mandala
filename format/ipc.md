@@ -912,9 +912,23 @@ those also carries a warning saying why: `console_error` for the
 file-path Actions, `save_unbound` or `save_failed` for `SaveDocument`.
 Treat an unrecognized value as `"unhandled"`.
 
+`reason` (string or `null`): why an `unhandled` Action did not run,
+when its arm declined for a stated reason; `null` otherwise, and
+always `null` with `"handled"`. `FastResizeStart` is one: the resize
+it starts is finalized by the release of the mouse button holding the
+gesture, and a synthetic pointer holds none, so with `x`/`y` it is
+refused with a reason saying nothing holds the gesture rather than
+start a drag no release could end (without `x`/`y` there is no
+gesture to anchor at, which is a reason too). Drive it as a hand
+does instead, with the button it is bound to: `input.drag` with
+`button: "right"` and `mods: ["ctrl"]` for the default
+`Ctrl+RightDrag`.
+`PanCanvas` is another, while a drag owed a commit or a held pan
+runs.
+
 ```jsonc
 {"id": 1, "cmd": "act.action", "action": "ZoomIn"}
-{"id": 1, "ok": true, "result": {"outcome": "handled"}}
+{"id": 1, "ok": true, "result": {"outcome": "handled", "reason": null}}
 {"id": 2, "cmd": "act.action", "action": "DoubleClickActivate", "x": 412, "y": 96, "space": "surface"}
 ```
 
@@ -1538,10 +1552,15 @@ reports.
 
 ### `input.touch`
 
-One finger event, as `WindowEvent::Touch`, into the touch-gesture
-recognizer (tap, long-press, one-finger pan, pinch). The recognizer
-measures time on the real clock, so a long-press is a `started`, a
-wait, and the finger's next event.
+One finger event, as `WindowEvent::Touch`, through the native touch
+path: the touch-gesture recognizer (tap, long-press, one-finger pan,
+pinch), with one exception. A finger that *starts a gesture* on a
+resize handle in Resize mode drives the handle drag instead, as the
+left button would, until it lifts (#160): it resizes, commits with
+one undo entry on `ended` or `canceled`, and never reaches the
+recognizer, so it does not pan. Another finger landing meanwhile is
+ignored. The recognizer measures time on the real clock, so a
+long-press is a `started`, a wait, and the finger's next event.
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1689,14 +1708,13 @@ frame the next one moves on from. Waiting for the app to settle is
 `clock.wait`'s job (IPC-09), not this command's: `capture.screenshot`
 never defers its reply.
 
-**Errors.** Beyond `invalid_params`: `busy` when the capture frames a
-zoom other than the live one while a node drag is in flight (the
-zoom-dependent scene would have to be re-projected from a model the
-drag has not written yet; capture at the live zoom, or after the
-release), and `internal` when the GPU does not finish a band of the readback
-within five seconds (`renderer::capture::GPU_WAIT`, half the
-`FreezeWatchdog`'s threshold) or the disk refuses the write; `message`
-says which. A large capture is long main-thread work — the readback
+**Errors.** Beyond `invalid_params`: `internal` when the GPU does not
+finish a band of the readback within five seconds
+(`renderer::capture::GPU_WAIT`, half the `FreezeWatchdog`'s threshold)
+or the disk refuses the write; `message` says which. A node drag in
+flight refuses nothing: a capture at any zoom mid-drag shows the
+dragged nodes and their connections where the window does (below).
+A large capture is long main-thread work — the readback
 runs in bands that fit the GPU's buffer limit, and the PNG encodes in
 4 MiB slices — so it ticks the watchdog after every band and every
 slice, the pattern `clock.step` follows per heartbeat: a capture that
@@ -1710,14 +1728,20 @@ is the window's size (`width`/`height` unset, or equal to it); a
 capture of any other size leaves it out rather than drawing it where
 it would not be in any window.
 
-**State after a capture is state before it.** The renderer's camera
-is never moved: the capture draws through a camera of its own. A
-capture framed at another zoom re-projects the zoom-dependent roles
-(connections, their labels, portals — their glyph sizes are clamped in
-screen points) at that zoom, draws, and re-projects them at the live
-zoom before replying, so `query.camera`, `scene.*` and every hit test
-afterwards answer exactly as before. Nothing is redrawn on the
-window's behalf.
+**State after a capture is state before it, because the capture never
+writes it.** The renderer's camera is never moved: the capture draws
+through a camera of its own. A capture framed at another zoom needs
+the zoom-dependent roles (connections, their labels, portals — their
+glyph sizes are clamped in screen points) projected at that zoom, and
+projects them into a scratch scene of the capture's own, drawing one
+frame of that scratch over the live scene's zoom-independent roles;
+the live scene, its connection cache and the window's shaped glyphs
+are read, never written, so `query.camera`, `scene.*` and every hit
+test afterwards answer exactly as before, and nothing is projected
+back. During a node drag the scratch is projected with the drag's
+in-flight offsets — the same ones the window's own frames use — so
+the dragged nodes' connections land in the picture where they are on
+screen. Nothing is redrawn on the window's behalf.
 
 **Aspect rule.** When `region`'s aspect ratio differs from the
 target's, the capture is **extended, never distorted or
@@ -1863,9 +1887,9 @@ with the recording, and a rewrite is an `fsync`), so what landed is
 named — (b) when 256 MiB of them have piled up (a stall the loop pays
 rarely, ticking the watchdog per 4 MiB chunk, and the boundaries it
 costs are `dropped_frames`), and (c) when the recording ends, which is
-what `capture.record_stop` pays for whatever (a) did not reach. A busy
-drag therefore records at whatever rate the machine sustains, reports
-the frames it could not take, and never wedges the loop.
+what `capture.record_stop` pays for whatever (a) did not reach. A
+heavy drag therefore records at whatever rate the machine sustains,
+reports the frames it could not take, and never wedges the loop.
 
 `capture.record_stop` params: none. Result: `{"dir", "manifest_path",
 "frames", "dropped_frames", "duration_ms", "stopped", "bytes", "width",
@@ -1921,10 +1945,10 @@ state and view it shows.
 `t_ms` is when the first missing frame was due, `frames` how many,
 `reason` why — `overrun` (the loop was late for the boundary, or the
 recording ended with boundaries crossed since the last heartbeat),
-`busy` (a node drag is in flight and the frame would need another zoom
-than the live one, as for a screenshot; a drag ends by itself, so this
-never ends a recording), `invalid` (above), or the renderer's skip word
-(`font_system_contended`, `not_started`, `prepare_failed`). `t_ms` is
+`invalid` (above), or the renderer's skip word
+(`font_system_contended`, `not_started`, `prepare_failed`). A node
+drag is no gap: a recording framed at another zoom draws every frame
+of it, dragged connections included, as a screenshot does. `t_ms` is
 the boundary's time, not the moment it was noticed.
 `dropped_frames` is their sum, and the manifest's `frames` names only
 files that exist.

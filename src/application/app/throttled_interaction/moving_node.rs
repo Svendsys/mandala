@@ -49,6 +49,16 @@ pub(in crate::application::app) struct MovingNodeInteraction {
     /// exactly this, and a `Vec::new()` per drained frame did not
     /// honor it.
     patches: Vec<(usize, (f32, f32))>,
+    /// Every node the drag moves, mapped to the delta the last drain
+    /// moved it by — the `offsets` the canvas projections take. Written
+    /// by [`Self::refresh_offsets`] at each drain, so between drains it
+    /// says where the tree *is* (the drained total), not where the
+    /// pointer has since gone (the pending delta): a projection from
+    /// the model plus these lands exactly where the window draws the
+    /// nodes. Kept on the interaction for the allocation, as `patches`
+    /// is, and read back by the capture engine through
+    /// [`Self::drained_offsets`].
+    offsets: HashMap<String, (f32, f32)>,
 }
 
 impl MovingNodeInteraction {
@@ -70,7 +80,39 @@ impl MovingNodeInteraction {
             pending: ThrottledPending::accumulating_deltas(),
             descendant_ids,
             patches: Vec::new(),
+            offsets: HashMap::new(),
         }
+    }
+
+    /// Rewrite [`Self::drained_offsets`] from the running total: every
+    /// anchor, and with `individual` off every descendant, at the
+    /// total delta. Called by `drain` once its delta is in the tree.
+    /// Clears and refills rather than rebuilding, so a drag allocates
+    /// its map once.
+    fn refresh_offsets(&mut self) {
+        let total = self.pending.total_delta();
+        let delta = (total.x, total.y);
+        self.offsets.clear();
+        for nid in &self.node_ids {
+            self.offsets.insert(nid.clone(), delta);
+        }
+        if !self.individual {
+            for desc_id in &self.descendant_ids {
+                self.offsets.insert(desc_id.clone(), delta);
+            }
+        }
+    }
+
+    /// The offsets the last drain projected the canvas with: node id
+    /// to the delta the tree holds for it. Empty before the first
+    /// drain, when the tree still sits where the model does.
+    ///
+    /// The capture engine's read (`app::capture_flow`): a capture at
+    /// another zoom projects its scratch scene from the model plus
+    /// these, so its connections land where the window's do — the
+    /// window's were projected with this very map.
+    pub(in crate::application::app) fn drained_offsets(&self) -> &HashMap<String, (f32, f32)> {
+        &self.offsets
     }
 }
 
@@ -126,22 +168,11 @@ impl ThrottledInteraction for MovingNodeInteraction {
         // renderer's keyed rebuild methods then only re-shape the
         // buffers for dirty elements; stable elements have just
         // their `pos` patched in place.
+        self.refresh_offsets();
         if let Some(doc) = document.as_ref() {
-            let mut offsets: HashMap<String, (f32, f32)> = HashMap::new();
-            let total = self.pending.total_delta();
-            let delta = (total.x, total.y);
-            for nid in &self.node_ids {
-                offsets.insert(nid.clone(), delta);
-            }
-            if !self.individual {
-                for desc_id in &self.descendant_ids {
-                    offsets.insert(desc_id.clone(), delta);
-                }
-            }
-
             let mut frame = CanvasFrame::new(
                 doc,
-                &offsets,
+                &self.offsets,
                 interaction_mode.resize_handle_overrides(),
                 renderer.camera_zoom(),
             );
@@ -260,6 +291,58 @@ mod tests {
         assert_eq!(i.pending.total_delta(), Vec2::new(3.0, -2.0));
         assert_eq!(i.pending.pending_delta(), Vec2::new(3.0, -2.0));
         assert_eq!(i.pending.peek_cursor(), None);
+    }
+
+    /// The offsets a capture reads are the *drained* total, not the
+    /// pointer's: empty before the first drain, every anchor and
+    /// descendant at the total after one, and unmoved by samples that
+    /// have arrived since — the tree has not moved for those either.
+    /// `individual` keeps the descendants out.
+    #[test]
+    fn test_drained_offsets_follow_the_drains_and_not_the_pointer() {
+        let descendants: HashSet<String> = ["n.1".to_string(), "n.1.1".to_string()].into_iter().collect();
+        let mut i = MovingNodeInteraction::new(vec!["n".into()], false, descendants.clone());
+        assert!(i.drained_offsets().is_empty(), "nothing drained, nothing offset");
+
+        i.accumulate(moved(3.0, -2.0));
+        assert!(
+            i.drained_offsets().is_empty(),
+            "a sample that has not been drained has not moved the tree"
+        );
+
+        // What `drain` does around its canvas projection, minus the
+        // renderer it needs (TEST_CONVENTIONS §T8).
+        i.pending.take_delta();
+        i.refresh_offsets();
+        let expected: HashMap<String, (f32, f32)> = ["n", "n.1", "n.1.1"]
+            .into_iter()
+            .map(|id| (id.to_string(), (3.0, -2.0)))
+            .collect();
+        assert_eq!(*i.drained_offsets(), expected);
+
+        i.accumulate(moved(10.0, 10.0));
+        assert_eq!(
+            *i.drained_offsets(),
+            expected,
+            "the pending delta is the pointer's, not the tree's"
+        );
+        i.pending.take_delta();
+        i.refresh_offsets();
+        assert_eq!(
+            i.drained_offsets()["n.1.1"],
+            (13.0, 8.0),
+            "the running total, once drained"
+        );
+
+        let mut alone = MovingNodeInteraction::new(vec!["n".into()], true, descendants);
+        alone.accumulate(moved(1.0, 1.0));
+        alone.pending.take_delta();
+        alone.refresh_offsets();
+        assert_eq!(
+            alone.drained_offsets().keys().collect::<Vec<_>>(),
+            vec!["n"],
+            "an individual drag leaves the descendants where they are"
+        );
     }
 
     #[test]

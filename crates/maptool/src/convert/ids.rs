@@ -4,13 +4,32 @@
 //! before children; returns the old→new map for a follow-up
 //! reference-rewrite pass.
 
+use baumhard::mindmap::model::dewey_cmp;
 use serde_json::Value;
 use std::collections::HashMap;
 
 /// Walk the node tree and return a mapping from old IDs to new
-/// Dewey-decimal IDs. Roots are numbered 0, 1, 2, ... in index order.
-/// Children are numbered by their sibling position under each parent.
-pub fn assign_dewey_ids(nodes: &serde_json::Map<String, Value>) -> HashMap<String, String> {
+/// Dewey-decimal IDs. Roots are numbered 0, 1, 2, ... in sibling
+/// order, and children by their sibling position under each parent.
+///
+/// **A map that is already current keeps every id** — the mapping is
+/// the identity. `format/migration.md` promises that, and
+/// renumbering cannot keep it: a current map legitimately has gaps
+/// (deleting `1.1` leaves `1.0` and `1.2`) and drifted ids (a
+/// reparent does not cascade, `format/ids.md`), and a contiguous
+/// renumber rewrites both. "Already current" is decided for the
+/// whole map: the caller passes `no_legacy_marker` — no shape any
+/// pass migrates, [`super::markers::first_legacy_marker`] — and every
+/// id must be a Dewey path, [`ids_are_dewey`]. So a file is either
+/// left alone or renumbered throughout, never half of each.
+pub fn assign_dewey_ids(
+    nodes: &serde_json::Map<String, Value>,
+    no_legacy_marker: bool,
+) -> HashMap<String, String> {
+    if no_legacy_marker && ids_are_dewey(nodes) {
+        return nodes.keys().map(|id| (id.clone(), id.clone())).collect();
+    }
+
     let mut id_map: HashMap<String, String> = HashMap::new();
 
     // Collect children grouped by parent, sorted by index.
@@ -56,8 +75,31 @@ fn assign_children(
     }
 }
 
-/// Return old IDs of nodes whose parent_id matches `parent`, sorted by
-/// ascending index.
+/// Whether every id in `nodes` is a Dewey path: dot-separated runs
+/// of ASCII digits.
+///
+/// Necessary but not sufficient for "already current". miMind's
+/// heap-pointer ids (`"348068464"`) pass it — a run of digits is a
+/// well-formed Dewey root — which is why the caller also demands the
+/// absence of every legacy marker. What this check adds is the
+/// early hand-authored map with symbolic ids (`"title"`,
+/// `"child_a"`), which carries no legacy marker and still has to be
+/// renumbered.
+fn ids_are_dewey(nodes: &serde_json::Map<String, Value>) -> bool {
+    nodes.keys().all(|id| {
+        id.split('.')
+            .all(|segment| !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit()))
+    })
+}
+
+/// Return old IDs of nodes whose parent_id matches `parent`, in
+/// sibling order: ascending legacy `index`, then [`dewey_cmp`] on the
+/// id, which is a total order on any string, Dewey or not.
+///
+/// The tie-break is load-bearing. `nodes` is a `serde_json::Map`,
+/// which without `preserve_order` is a `BTreeMap` and iterates
+/// lexicographically, so a stable sort on `index` alone put `"x.10"`
+/// before `"x.2"` whenever the index was missing or equal.
 fn sorted_children_of(nodes: &serde_json::Map<String, Value>, parent: Option<&str>) -> Vec<String> {
     let mut children: Vec<(&str, i64)> = nodes
         .iter()
@@ -70,7 +112,7 @@ fn sorted_children_of(nodes: &serde_json::Map<String, Value>, parent: Option<&st
             (id.as_str(), index)
         })
         .collect();
-    children.sort_by_key(|(_, idx)| *idx);
+    children.sort_by(|(a, a_index), (b, b_index)| a_index.cmp(b_index).then_with(|| dewey_cmp(a, b)));
     children.into_iter().map(|(id, _)| id.to_string()).collect()
 }
 
@@ -182,7 +224,7 @@ mod deep_chain_tests {
                     };
                     nodes.insert(format!("n{i}"), json!({ "parent_id": parent, "index": 0 }));
                 }
-                assign_dewey_ids(&nodes).len()
+                assign_dewey_ids(&nodes, false).len()
             })
             .expect("spawn the small-stack conversion")
             .join()
@@ -205,12 +247,98 @@ mod deep_chain_tests {
             "b1":    { "parent_id": "b",    "index": 0 },
         }))
         .expect("fixture parses");
-        let map = assign_dewey_ids(&nodes);
+        let map = assign_dewey_ids(&nodes, false);
         assert_eq!(map.get("root").map(String::as_str), Some("0"));
         assert_eq!(map.get("a").map(String::as_str), Some("0.0"));
         assert_eq!(map.get("b").map(String::as_str), Some("0.1"));
         assert_eq!(map.get("a1").map(String::as_str), Some("0.0.0"));
         assert_eq!(map.get("a2").map(String::as_str), Some("0.0.1"));
         assert_eq!(map.get("b1").map(String::as_str), Some("0.1.0"));
+    }
+}
+
+#[cfg(test)]
+mod sibling_order_tests {
+    use super::assign_dewey_ids;
+    use serde_json::json;
+
+    fn assign(nodes: serde_json::Value, no_legacy_marker: bool) -> std::collections::HashMap<String, String> {
+        assign_dewey_ids(
+            &serde_json::from_value(nodes).expect("fixture parses"),
+            no_legacy_marker,
+        )
+    }
+
+    /// Equal `index` values fall back to Dewey order on the old id,
+    /// not to the map's lexicographic iteration, which put `"10"`
+    /// before `"2"` (#198).
+    #[test]
+    fn test_legacy_index_ties_break_in_dewey_order() {
+        let map = assign(
+            json!({
+                "r":  { "parent_id": null, "index": 0 },
+                "10": { "parent_id": "r",  "index": 0 },
+                "2":  { "parent_id": "r",  "index": 0 },
+            }),
+            false,
+        );
+        assert_eq!(map["2"], "0.0");
+        assert_eq!(map["10"], "0.1");
+    }
+
+    /// A map whose ids are all Dewey and which carries no legacy
+    /// marker is left exactly as it is: gaps stay gaps and a drifted id (a
+    /// reparent that did not cascade) stays put, because both are
+    /// legal in a current map and a renumber rewrites both.
+    #[test]
+    fn test_an_already_dewey_map_keeps_every_id() {
+        let map = assign(
+            json!({
+                "0":    { "parent_id": null },
+                "0.0":  { "parent_id": "0" },
+                "0.2":  { "parent_id": "0" },
+                "0.10": { "parent_id": "0" },
+                "1":    { "parent_id": null },
+                "1.4":  { "parent_id": "0" },
+            }),
+            true,
+        );
+        for id in ["0", "0.0", "0.2", "0.10", "1", "1.4"] {
+            assert_eq!(map[id], id, "{id} must survive unchanged");
+        }
+        assert_eq!(map.len(), 6);
+    }
+
+    /// Without a legacy marker's say-so the same all-Dewey map is
+    /// renumbered — gaps closed, the drifted `1.4` moved under its
+    /// parent — which is what a legacy file whose ids merely look
+    /// Dewey needs.
+    #[test]
+    fn test_a_legacy_marker_renumbers_even_dewey_shaped_ids() {
+        let map = assign(
+            json!({
+                "0":    { "parent_id": null },
+                "0.2":  { "parent_id": "0" },
+                "1.4":  { "parent_id": "0" },
+            }),
+            false,
+        );
+        assert_eq!(map["0.2"], "0.0");
+        assert_eq!(map["1.4"], "0.1");
+    }
+
+    /// Symbolic ids from early hand-authored maps carry no legacy
+    /// marker, and the shape check is what renumbers them.
+    #[test]
+    fn test_symbolic_ids_are_renumbered() {
+        let map = assign(
+            json!({
+                "title":   { "parent_id": null },
+                "child_a": { "parent_id": "title" },
+            }),
+            true,
+        );
+        assert_eq!(map["title"], "0");
+        assert_eq!(map["child_a"], "0.0");
     }
 }

@@ -68,6 +68,8 @@ mod tests_resize;
 #[cfg(test)]
 mod tests_revision;
 #[cfg(test)]
+mod tests_section_text_preserve;
+#[cfg(test)]
 mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,

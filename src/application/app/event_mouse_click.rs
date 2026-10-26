@@ -27,8 +27,8 @@ use crate::application::keybinds::Action;
 ///
 /// Pure so both halves of the middle button are pinnable at
 /// `DragState` level — the dispatcher below takes an
-/// [`InputHandlerContext`], i.e. a live wgpu device, which
-/// TEST_CONVENTIONS §T8 keeps out of the harness.
+/// [`InputHandlerContext`], i.e. a live wgpu device, which only the
+/// suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MiddleButtonRoute {
     /// The drag state is idle — run whatever the user bound to
@@ -78,6 +78,65 @@ fn route_middle_button(state: ElementState, drag_state: &DragState) -> MiddleBut
             _ => MiddleButtonRoute::Keep,
         },
     }
+}
+
+/// The resize handle a press at `canvas_pos` lands on, as the press
+/// records it: at most one of the two is `Some`, and only in
+/// `InteractionMode::Resize`, on the target's own handles.
+/// `Resize { Node }` asks `hit_test_node_resize_handle`, `Resize {
+/// Section }` asks `hit_test_section_resize_handle` (which emits no
+/// handles for a fill-parent section); every other mode, and a press
+/// with no document, answers neither.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(super) struct ResizeHandlePress {
+    pub section: Option<(String, usize, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
+    pub node: Option<(String, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
+}
+
+impl ResizeHandlePress {
+    /// True when the press landed on a handle of either kind.
+    pub fn any(&self) -> bool {
+        self.section.is_some() || self.node.is_some()
+    }
+}
+
+/// Which resize handle, if any, a press at `canvas_pos` grabs.
+///
+/// Renderer-free — `tolerance` is the hit radius already converted to
+/// canvas units — so the left press and the touch claim
+/// (`touch_handle`) ask one definition, and the harness can ask it
+/// too. `pub(super)` for that second caller: before #160 this was two
+/// inline `match`es inside the press arm, and a finger had no way to
+/// know whether it was on a handle.
+pub(super) fn resize_handle_press(
+    document: Option<&crate::application::document::MindMapDocument>,
+    mode: &InteractionMode,
+    canvas_pos: glam::Vec2,
+    tolerance: f32,
+) -> ResizeHandlePress {
+    let Some(doc) = document else {
+        return ResizeHandlePress::default();
+    };
+    let section = mode.resize_handle_section().and_then(|(node_id, section_idx)| {
+        crate::application::document::hit_test_section_resize_handle(
+            &doc.mindmap,
+            canvas_pos,
+            node_id,
+            section_idx,
+            tolerance,
+        )
+        .map(|side| (node_id.to_string(), section_idx, side))
+    });
+    let node = mode.resize_handle_node().and_then(|node_id| {
+        crate::application::document::hit_test_node_resize_handle(
+            &doc.mindmap,
+            canvas_pos,
+            node_id,
+            tolerance,
+        )
+        .map(|side| (node_id.to_string(), side))
+    });
+    ResizeHandlePress { section, node }
 }
 
 /// Dispatch a `WindowEvent::MouseInput`. Persistent state arrives
@@ -318,6 +377,7 @@ pub(super) fn handle_mouse_input(
                         let dispatch_hit = super::dispatch::DispatchHit {
                             click_hit: click_hit.clone(),
                             canvas_pos,
+                            held_by: None,
                         };
                         let _ = super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
                         return;
@@ -353,44 +413,20 @@ pub(super) fn handle_mouse_input(
                     },
                     None => None,
                 };
-                // Section resize handle press capture — only fires
-                // when the active mode is `Resize { Section { .. } }`.
-                // Fill-parent sections emit no handles regardless;
-                // `hit_test_section_resize_handle` filters them out
-                // internally.
-                let hit_section_resize_handle = match (
+                // Resize-handle press capture — fires only in
+                // `Resize` mode, on the target's own handles. Shared
+                // with the touch path (`touch_handle`), which asks the
+                // same question before it lets a finger drive this
+                // press instead of the gesture recognizer.
+                let ResizeHandlePress {
+                    section: hit_section_resize_handle,
+                    node: hit_node_resize_handle,
+                } = resize_handle_press(
                     ctx.document.as_ref(),
-                    ctx.interaction_mode.resize_handle_section(),
-                ) {
-                    (Some(doc), Some((node_id, section_idx))) => {
-                        let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
-                        crate::application::document::hit_test_section_resize_handle(
-                            &doc.mindmap,
-                            canvas_pos,
-                            node_id,
-                            section_idx,
-                            tol,
-                        )
-                        .map(|side| (node_id.to_string(), section_idx, side))
-                    }
-                    _ => None,
-                };
-                // Node resize handle press capture — only fires when
-                // the active mode is `Resize { Node(_) }`.
-                let hit_node_resize_handle =
-                    match (ctx.document.as_ref(), ctx.interaction_mode.resize_handle_node()) {
-                        (Some(doc), Some(node_id)) => {
-                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
-                            crate::application::document::hit_test_node_resize_handle(
-                                &doc.mindmap,
-                                canvas_pos,
-                                node_id,
-                                tol,
-                            )
-                            .map(|side| (node_id.to_string(), side))
-                        }
-                        _ => None,
-                    };
+                    ctx.interaction_mode,
+                    canvas_pos,
+                    HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel(),
+                );
                 // Portal-label drag capture: pressing a marker
                 // and dragging slides the label along its owning
                 // node's border. Captured regardless of current
@@ -854,6 +890,49 @@ mod tests {
     use crate::application::app::throttled_interaction::moving_node::MovingNodeInteraction;
     use crate::application::app::PanOwner;
     use std::collections::HashSet;
+
+    /// **The handle question both a press and a finger ask** (#160),
+    /// pinned without a renderer (§T9). Three rows, each the others'
+    /// control:
+    ///
+    /// - in `Resize { Node }`, a press on the node's SE corner grabs
+    ///   its SE handle — the one row that answers `Some`;
+    /// - the same mode, a press in the node's middle, grabs nothing:
+    ///   a finger there is the recognizer's, and pans;
+    /// - the same SE corner in `Default` mode grabs nothing: handles
+    ///   exist only in `Resize`, so outside it every touch keeps its
+    ///   meaning.
+    #[test]
+    fn test_a_resize_handle_is_grabbed_only_on_a_handle_and_only_in_resize_mode() {
+        use crate::application::app::{InteractionMode, ResizeTarget};
+        use baumhard::mindmap::tree_builder::ResizeHandleSide;
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let node = doc.mindmap.nodes.get("1").expect("fixture carries node 1");
+        let (x, y) = (node.position.x as f32, node.position.y as f32);
+        let (w, h) = (node.size.width as f32, node.size.height as f32);
+        let se = glam::Vec2::new(x + w, y + h);
+        let middle = glam::Vec2::new(x + w / 2.0, y + h / 2.0);
+        let resize = InteractionMode::Resize {
+            target: ResizeTarget::Node("1".into()),
+        };
+
+        let on_handle = resize_handle_press(Some(&doc), &resize, se, 4.0);
+        assert_eq!(on_handle.node, Some(("1".to_string(), ResizeHandleSide::SE)));
+        assert!(on_handle.any());
+
+        assert!(
+            !resize_handle_press(Some(&doc), &resize, middle, 4.0).any(),
+            "the node's middle is not a handle"
+        );
+        assert!(
+            !resize_handle_press(Some(&doc), &InteractionMode::Default, se, 4.0).any(),
+            "outside Resize mode there are no handles to grab"
+        );
+        assert!(
+            !resize_handle_press(None, &resize, se, 4.0).any(),
+            "with no document there is nothing to resize"
+        );
+    }
 
     /// A left-started move-node drag, mid-gesture: pending state
     /// buffered, `commit_on_release_core` not yet run.

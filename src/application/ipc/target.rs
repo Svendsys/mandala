@@ -75,6 +75,19 @@ pub(crate) struct SceneView<'a> {
     pub(crate) camera: &'a Camera2D,
 }
 
+/// What dispatching one `Action` did, as `act.action` reports it: the
+/// funnel's `DispatchOutcome`, in the protocol's own vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActionOutcome {
+    /// The Action's body ran.
+    Handled,
+    /// Nothing ran: the Action does not apply in the current context.
+    Unhandled,
+    /// Nothing ran: the arm's guard declined, for this reason (#194).
+    /// The reply carries it as `reason`.
+    Refused(&'static str),
+}
+
 /// What a command may ask of the running application.
 ///
 /// Every method executes on the main thread, inside the IPC drain
@@ -92,8 +105,8 @@ pub(crate) trait CommandTarget {
     /// pointer is, so their next wheel or key does not act at a point
     /// the agent chose.
     ///
-    /// Returns whether the funnel reported `Handled`.
-    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> bool;
+    /// Returns what the funnel reported.
+    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> ActionOutcome;
 
     /// Parse and run one console line through the console's own
     /// parse → execute → side-effect drain, without opening the
@@ -199,9 +212,9 @@ pub(crate) trait CommandTarget {
     /// `None` when the app has no document.
     ///
     /// Changes nothing a frame would show: the capture draws through a
-    /// camera of its own, and a scene it re-projects for another zoom
-    /// is projected back before this returns. [`Self::changed_view`]
-    /// is untouched.
+    /// camera of its own, and what another zoom needs is projected
+    /// into a scratch scene of the capture's own, never into the live
+    /// one (`app::capture_scene`). [`Self::changed_view`] is untouched.
     fn capture(
         &mut self,
         request: &CaptureRequest,

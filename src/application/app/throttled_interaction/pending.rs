@@ -55,8 +55,8 @@ impl DragInput {
     /// the pointer. Split out of the dispatcher so the sign, and the
     /// fact that the absolute half is the newer of the two
     /// projections, are pinned without a live renderer — the
-    /// dispatcher itself needs one and TEST_CONVENTIONS §T8 keeps
-    /// that out of the harness.
+    /// dispatcher itself needs one, which only the GPU-backed tier of
+    /// the suite has (TEST_CONVENTIONS §T8).
     pub(in crate::application::app) fn between(prev: Vec2, cursor: Vec2) -> Self {
         Self {
             delta: cursor - prev,

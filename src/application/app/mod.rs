@@ -59,6 +59,8 @@ pub(crate) mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod capture_flow;
 #[cfg(not(target_arch = "wasm32"))]
+mod capture_scene;
+#[cfg(not(target_arch = "wasm32"))]
 mod click;
 mod click_triggers;
 #[cfg(not(target_arch = "wasm32"))]
@@ -125,6 +127,7 @@ mod startup_load;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
 mod touch_gesture;
+mod touch_handle;
 
 // Drift surface for a new `InputHandlerContext` field: the struct in
 // `input_context.rs`, the `InitState::input_context()` builder in
@@ -865,9 +868,12 @@ enum DragState {
     /// threshold. Press-time hit captures the body of any node /
     /// section under the cursor (no edge-handle / portal-label /
     /// resize-handle precedence — fast-resize is body-only by
-    /// design). Threshold-cross promotes to
-    /// `Throttled(NodeResize | SectionResize)` via
-    /// `Action::FastResizeStart`; release-without-movement fires
+    /// design). The threshold cross takes it down to `None` and
+    /// dispatches whatever `MouseGesture::RightDrag` is bound to, with
+    /// a hit built from the press ([`Self::right_drag_hit`]) — by
+    /// default `Action::FastResizeStart`, which promotes to
+    /// `Throttled(NodeResize | SectionResize)`, and `PanCanvas` when
+    /// the user binds it there (#194); release-without-movement fires
     /// the bound `MouseGesture::RightClick` action (default
     /// unbound) and resets to `None`.
     PendingRight {
@@ -958,9 +964,25 @@ impl DragState {
     /// model does not hold until release — so a camera-geometry rebuild
     /// in the middle of it, which projects from the model, would put
     /// them back where they were. The per-frame drain skips the rebuild
-    /// then, and a capture at another zoom refuses.
+    /// then, and a capture at another zoom projects its scratch scene
+    /// with the same offsets ([`Self::moving_node_offsets`]).
     fn is_moving_node(&self) -> bool {
-        matches!(self, Self::Throttled(d) if matches!(**d, ThrottledDrag::MovingNode(_)))
+        self.moving_node_offsets().is_some()
+    }
+
+    /// The offsets a node drag has drained into the tree so far
+    /// (`MovingNodeInteraction::drained_offsets`), while one is in
+    /// flight: the map that makes a projection from the model land
+    /// where the window shows the dragged nodes. `None` outside a node
+    /// drag — every other state leaves the model where the tree is.
+    fn moving_node_offsets(&self) -> Option<&std::collections::HashMap<String, (f32, f32)>> {
+        match self {
+            Self::Throttled(d) => match &**d {
+                ThrottledDrag::MovingNode(moving) => Some(moving.drained_offsets()),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// True when overwriting this state with a freshly-armed
@@ -974,8 +996,8 @@ impl DragState {
     ///   until the next model rebuild snaps them back. Reachable
     ///   from a *right*-started fast-resize, which is in flight
     ///   while the left button is still free.
-    /// - `PendingRight` holds a user-named gesture (`RightClick` /
-    ///   `FastResizeStart`) that has not fired yet.
+    /// - `PendingRight` holds a user-named gesture (`RightClick`, or
+    ///   whatever `RightDrag` is bound to) that has not fired yet.
     ///
     /// `Pending` / `Panning` / `SelectingRect` are deliberately
     /// outside it: none owes the model anything, and each is
@@ -1076,6 +1098,38 @@ impl DragState {
             | Self::Panning { .. }
             | Self::SelectingRect { .. } => None,
         }
+    }
+
+    /// The hit a `RightDrag` threshold cross dispatches with, built from
+    /// the pending right press: its press-time body hit, its press-time
+    /// canvas position, and the right button as the holder. `None` for
+    /// every other state.
+    ///
+    /// Press-time on purpose, both halves: `Action::FastResizeStart`
+    /// anchors its corner at `canvas_pos`, and the corner the user
+    /// means is the one nearest where they pressed, not the one the
+    /// cursor happened to cross the threshold toward
+    /// (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3). A pure read, so the
+    /// harness pins it without the cursor handler's renderer.
+    fn right_drag_hit(&self) -> Option<dispatch::DispatchHit> {
+        let Self::PendingRight {
+            start_canvas,
+            hit_node,
+            hit_section_idx,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let click_hit = match hit_node {
+            Some(id) => ClickHit::Node(id.clone(), *hit_section_idx),
+            None => ClickHit::Empty,
+        };
+        Some(dispatch::DispatchHit {
+            click_hit,
+            canvas_pos: *start_canvas,
+            held_by: Some(crate::application::platform::input::MouseButton::Right),
+        })
     }
 
     /// Where the pending press began, in surface pixels: the state a
@@ -1263,9 +1317,20 @@ pub(crate) fn project_scene_for_tests(
 }
 
 // Unit tests for pure helpers (cursor math, caret insertion,
-// double-click detection, Baumhard mutation round-trip). Event-loop
-// integration is verified manually via `cargo run`.
+// double-click detection, Baumhard mutation round-trip). What needs
+// the renderer is `tests_gpu`'s, below.
 
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests;
+
+// The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
+// native app with no window on whatever adapter the machine has —
+// Mesa's lavapipe on a GPU-less box — skipped with a note where there
+// is none, and never skipped in CI.
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod gpu_harness;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu;

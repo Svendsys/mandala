@@ -49,9 +49,10 @@ borders, connection paths — is laid out as positioned font glyphs.
   before touching anything under `lib/baumhard/`.
 - **`TEST_CONVENTIONS.md`** — testing philosophy, where to put tests, the
   `do_*()` benchmark-reuse pattern, what we deliberately don't do
-  (no mocks, no snapshots, no GPU tests), and §T13's checklist of
-  assertions that cannot fail on their subject, with the negative
-  control every passing assertion owes.
+  (no mocks, no snapshots, no pixel assertions, no test that
+  *requires* a hardware GPU), and §T13's checklist of assertions
+  that cannot fail on their subject, with the negative control
+  every passing assertion owes.
 - **`format/`** — the `.mindmap.json` format specification.
   `format/schema.md` is the primary reference; per-concept docs cover
   Dewey-decimal IDs, named enums, palettes, channels, text runs,
@@ -106,7 +107,8 @@ the parity trajectory (or why none is owed):
   the named-pipe adapter lands (#169).
 - **Screenshot capture** (`src/application/capture/`,
   `src/application/renderer/capture.rs`,
-  `src/application/app/capture_flow.rs`; IPC-07/#67) — the engine
+  `src/application/app/capture_flow.rs`,
+  `src/application/app/capture_scene.rs`; IPC-07/#67, #178) — the engine
   behind `capture.screenshot` and the `screenshot` console verb, and
   with it frame-sequence recording (`capture/record.rs`,
   `app/record_flow.rs`; IPC-08/#68: `capture.record_start` /
@@ -116,7 +118,10 @@ the parity trajectory (or why none is owed):
   and the map resolves only when the event loop yields). The frame it
   draws is not gated: `Renderer::prepare_frame` / `encode_frame` are
   the browser's render path too, so a browser capture would draw the
-  same frame. Parity is the browser canvas capture parked with the
+  same frame — including the composed canvas a capture at another
+  zoom reads (`CanvasSource::Composed`, `renderer/scene_shape_cache.rs`),
+  which compiles for both targets and is simply never asked for by
+  the window. Parity is the browser canvas capture parked with the
   WebSocket transport in IPC-15 (#75), resolving asynchronously
   rather than blocking.
 - **Headless and one-shot launches** (`--headless`, `--size`,
@@ -174,10 +179,24 @@ the parity trajectory (or why none is owed):
   observable. Parity unblocks `Action::DoubleClickActivate` and
   `Action::EditSelection*` flipping to `Compatible`; tracked in
   `work_plans/WASM_CONVERGENCE.md`.
-- **`LongPress` → `EnterResizeMode`** (`src/application/keybinds/config.rs`,
-  `src/application/app/run_wasm/event_touch.rs`) — the one touch
-  gesture that resolves through the keybind table, and the one that
-  is native-only. Its default `Action` is `NativeOnly`, so on the
+- **`LongPress` → `EnterResizeMode`, and a finger on a resize
+  handle** (`src/application/keybinds/config.rs`,
+  `src/application/app/run_wasm/event_touch.rs`,
+  `src/application/app/touch_handle.rs`) — the touch route to a
+  resize, and native-only end to end. **On native** a long-press
+  enters `InteractionMode::Resize` on the selection, and a finger
+  that then starts a gesture on one of its handles drives the
+  handle drag as the left button would (`touch_handle`, #160) —
+  captured, promoted to the `Throttled` resize and committed with
+  its undo entry on lift — without reaching the gesture recognizer,
+  so it cannot also pan. Before #160 this entry implied that route
+  existed while every finger drag panned the camera; a touch-only
+  user could not resize at all. `FastResizeStart`
+  (`Ctrl+RightDrag`) is the mouse's accelerator for the same resize,
+  by design: it has no touch binding, because this is its touch
+  route. **On the browser** neither half exists. `LongPress` is the
+  one touch gesture that resolves through the keybind table, and the
+  one that is native-only. Its default `Action` is `NativeOnly`, so on the
   browser the dispatch returns `Unhandled` and a one-shot `warn!`
   names the remedy; the gesture is *recognized* identically on both
   targets, and only the `Action` it reaches is not. Deliberate rather
@@ -190,10 +209,11 @@ the parity trajectory (or why none is owed):
   resolve to no `Action` at all and run on both targets through
   `dispatch::apply_touch_effect`, which is what makes the browser
   usable by finger without this entry being closed. Parity is the
-  `InteractionMode::Resize` chrome plus its handle-drag reaching the
+  `InteractionMode::Resize` chrome plus its handle drag reaching the
   browser — the same drag-state machine **Rubber-band select** below
-  is parked on — and flips this `Action` to `Compatible` when it
-  lands.
+  is parked on, with `touch_handle`'s routing ported beside it so a
+  finger can hold a handle there too — and flips this `Action` to
+  `Compatible` when it lands.
 - **Rubber-band select** (`DragState::SelectingRect`,
   `src/application/app/drain_frame.rs`,
   `scene_rebuild::rebuild_selection_highlight`,
@@ -278,8 +298,20 @@ the parity trajectory (or why none is owed):
   holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
   baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
   §T9): it skips with a note without the target or `node`, and CI sets
-  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. The
-  test count itself is not a gate — a summary-format change makes it
+  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. **And for
+  the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
+  TEST_CONVENTIONS §T8): they build the real app headless on whatever
+  adapter the machine has — Mesa's lavapipe on a GPU-less box,
+  `apt-get install mesa-vulkan-drivers`; an agent container needs the
+  apt-over-HTTPS recipe in the `mandala-drive` skill — and skip with a
+  `SKIPPED:` note without one, so a green run on a box with no adapter
+  has proved nothing about the code behind `&mut Renderer`. The note
+  is written past libtest's per-test capture
+  (`baumhard::util::test_skip`), so it shows in a plain run and the
+  summary counts the `SKIPPED:` lines beside the pass count. CI
+  installs lavapipe and sets `MANDALA_REQUIRE_GPU`, so they cannot
+  skip there.
+  The test count itself is not a gate — a summary-format change makes it
   print "count unavailable" rather than ending the run, which is
   what it used to do, silently, under `set -euo pipefail`. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
@@ -390,8 +422,9 @@ the parity trajectory (or why none is owed):
   window — text-first inspection, acting with `--wait-settled`,
   screenshots read through their geometry sidecar, teardown, and a
   troubleshooting table. `scripts/ipc_smoke.sh` is its end-to-end
-  check — deliberately outside `./test.sh`, which holds no live GPU
-  (TEST_CONVENTIONS §T8).
+  check — deliberately outside `./test.sh`: it needs the built
+  binaries, a socket and a process to drive, where the suite's
+  GPU-backed tests build the app in-process (TEST_CONVENTIONS §T8).
   **Showing a behavior, not a state, is the `mandala-record` skill**
   (`.claude/skills/mandala-record/SKILL.md`): a captioned demo GIF
   from `scripts/record_demo.sh`, watched by its maker before it is

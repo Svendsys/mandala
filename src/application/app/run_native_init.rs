@@ -100,6 +100,9 @@ pub(super) struct InitState {
     /// `WasmInputState.touch_recognizer`. See `app/touch_gesture.rs`
     /// for the machine and CONCEPTS §5 for where each emission goes.
     pub(super) touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
+    /// The finger, if any, holding a resize handle in `Resize` mode —
+    /// the one touch the recognizer is not fed (`app/touch_handle.rs`).
+    pub(super) touch_handle: super::touch_handle::HandleTouch,
     /// App-clock ms at which the current tree-mutating drag began
     /// suppressing the animation tick — `Some(now_ms)` while a
     /// `MovingNode` / `MovingSection` / `SectionResize` /
@@ -124,6 +127,10 @@ pub(super) struct InitState {
     /// ended (`app::record_flow`). App state, not session state: it
     /// outlives the client that started it.
     pub(super) recorder: Recorder,
+    /// The capture engine's scratch scene, where a capture framed at
+    /// another zoom projects its zoom-dependent roles instead of into
+    /// `app_scene` (`app::capture_scene`). Reused across captures.
+    pub(super) scratch_canvas: super::capture_scene::ScratchCanvas,
     /// A handle on the event loop's freeze watchdog, for main-thread
     /// work that runs long while making progress — a screenshot ticks
     /// it per band and per encoded chunk (`app::capture_flow`), a
@@ -172,9 +179,11 @@ impl InitState {
             macros: &mut self.macros,
             artifacts: &mut self.artifacts,
             recorder: &mut self.recorder,
+            scratch_canvas: &mut self.scratch_canvas,
             watchdog: &self.watchdog,
             shell: &self.shell,
             touch_recognizer: &mut self.touch_recognizer,
+            touch_handle: &mut self.touch_handle,
             anim_pause_start_ms: &mut self.anim_pause_start_ms,
             injected: &mut self.injected,
             clock: &mut self.clock,
@@ -468,9 +477,11 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         // Touch gesture recognizer. State machine starts Idle;
         // first `WindowEvent::Touch` lands a finger.
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
+        touch_handle: super::touch_handle::HandleTouch::default(),
         injected: InjectedQueue::default(),
         artifacts: Artifacts::for_this_process(),
         recorder: Recorder::default(),
+        scratch_canvas: super::capture_scene::ScratchCanvas::new(),
         watchdog,
         clock,
         redraws: RedrawLedger::default(),

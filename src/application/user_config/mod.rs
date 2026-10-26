@@ -3,7 +3,7 @@
 //! Shared loader scaffolding for user-tier JSON config files
 //! (`keybinds.json`, `mutations.json`, `macros.json`).
 //!
-//! Every one of them answers the same three questions the same way,
+//! Every one of them answers the same four questions the same way,
 //! so each answer lives here exactly once:
 //!
 //! - *How big may a payload be?* [`MAX_USER_PAYLOAD_BYTES`], enforced
@@ -12,6 +12,10 @@
 //! - *How is one candidate source turned into text?*
 //!   `capped_read::read_capped` for the filesystem tier (native),
 //!   `web_storage::read_local_storage` for the browser tier.
+//! - *What does one malformed value cost?* That value and nothing
+//!   else: the parsers stand on [`salvage`], which fails the whole
+//!   layer only when its container is unusable and otherwise drops
+//!   the one broken field or entry with a warning naming it.
 //! - *How do candidate sources compose into a fallback chain?*
 //!   [`layered::load_layered`] — with the same "absent is silent,
 //!   broken is logged, first good one wins" policy on either target.
@@ -42,6 +46,8 @@ pub mod capped_read;
 pub mod desktop;
 
 pub mod layered;
+
+pub mod salvage;
 
 /// The shared `XDG_CONFIG_HOME` / `HOME` override harness. One
 /// module rather than a helper per test module, because the lock it

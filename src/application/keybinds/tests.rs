@@ -1054,24 +1054,22 @@ fn test_default_long_press_resolves_to_enter_resize_mode() {
 /// while the recognizer went on moving the camera underneath it.
 ///
 /// **Two consequences of the deletion, recorded because neither is
-/// visible from the assertions below and neither is fixed here:**
+/// visible from the assertions below; #160 closed both:**
 ///
-/// 1. A user whose only pointer is a touchscreen loses
-///    `FastResizeStart` outright. It ships bound to `Ctrl+RightDrag`
-///    alone now, and that needs a mouse. The touch route back is
-///    `LongPress` → `EnterResizeMode` plus a resize-handle drag,
-///    which is native-only today (CLAUDE.md's Dual-target registry).
-/// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` is
-///    **silently accepted and never matches** — the same
-///    `KeyBind::parse` permissiveness that makes the first assertion
-///    below meaningful also means a retired token parses into a
-///    binding for a key nothing will ever press. There is no warning
-///    and no migration note. Warning on it would mean the resolver
-///    could tell "a gesture name that no longer exists" from "an
-///    ordinary key", which it cannot: every single letter is a valid
-///    key name. The honest fix is a known-gesture check at parse
-///    time, which is a keybind-surface change rather than a touch
-///    one, so it is written down here instead of half-done.
+/// 1. `FastResizeStart` ships bound to `Ctrl+RightDrag` alone, which
+///    needs a mouse. The touch route to a resize is `LongPress` →
+///    `EnterResizeMode`, then a finger on a handle — which until #160
+///    panned the camera instead, so a touch-only user could not resize
+///    at all. A finger that lands on a handle in Resize mode now drives
+///    the handle drag (`app::touch_handle`); native-only, as the drag
+///    state is (CLAUDE.md's Dual-target registry).
+/// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` used to
+///    be **silently accepted and never match**: `KeyBind::parse`
+///    takes any non-modifier word as a key, so a retired token parsed
+///    into a binding for a key nothing will ever press. It is now
+///    refused at parse time with a diagnostic, through the
+///    `RETIRED_NAMES` table (#160) —
+///    `test_a_retired_name_in_a_user_config_is_skipped_rather_than_bound`.
 #[test]
 fn test_two_finger_drag_is_not_a_bindable_gesture() {
     use strum::IntoEnumIterator;
@@ -1085,6 +1083,111 @@ fn test_two_finger_drag_is_not_a_bindable_gesture() {
         !MouseGesture::iter().any(|g| g.key_name() == "twofingerdrag"),
         "twofingerdrag must not be back in the gesture vocabulary"
     );
+}
+
+/// **A retired name is refused with a diagnostic, not parsed into a
+/// dead binding** (#160). The diagnostic names the spelling the user
+/// typed and what replaced it, and holds under modifiers and any case.
+///
+/// The negative controls are the unretired names beside it: the live
+/// gestures, an ordinary key, and a word that merely *starts* like the
+/// retired one. Each still parses, so the check is a lookup of the
+/// whole token and not a blanket refusal of gesture-looking words.
+#[test]
+fn test_a_retired_name_is_refused_with_a_diagnostic() {
+    for input in [
+        "TwoFingerDrag",
+        "twofingerdrag",
+        "Ctrl+TwoFingerDrag",
+        " Shift + TWOFINGERDRAG ",
+    ] {
+        let err = KeyBind::parse(input).expect_err("a retired name must not parse");
+        assert!(
+            err.contains("'TwoFingerDrag'") && err.contains("no longer a bindable name"),
+            "the diagnostic must say which name is retired: {err}"
+        );
+        assert!(err.contains("#35"), "and point at why: {err}");
+    }
+    for live in [
+        "LongPress",
+        "RightDrag",
+        "Ctrl+RightDrag",
+        "t",
+        "TwoFinger",
+        "TwoFingerDragging",
+    ] {
+        assert!(
+            KeyBind::parse(live).is_ok(),
+            "{live} is not retired and must still parse"
+        );
+    }
+}
+
+/// **The point of the diagnostic, end to end**: a `keybinds.json` that
+/// still binds a retired name loses that one entry, and nothing else —
+/// through `from_json`, the loader's own parse, then `resolve`.
+///
+/// Fails without the `RETIRED_NAMES` check in a way the user could
+/// never see: `TwoFingerDrag` parsed as the key `twofingerdrag`, so the
+/// first lookup answered `Some(FastResizeStart)` for a gesture the
+/// recognizer no longer emits.
+///
+/// The sibling entry is `Alt+F9`, deliberately **not**
+/// `fast_resize_start`'s built-in default: a sibling equal to the
+/// default would pass under a fault that dropped the whole field back
+/// to its default on a bad entry (§T13's default-shadowed control).
+/// So the second lookup proves the user's own entry survived, and the
+/// third proves the field is the user's, not the default — the
+/// default `Ctrl+RightDrag` no longer binds.
+#[test]
+fn test_a_retired_name_in_a_user_config_is_skipped_rather_than_bound() {
+    let cfg = KeybindConfig::from_json(r#"{ "fast_resize_start": ["TwoFingerDrag", "Alt+F9"] }"#)
+        .expect("a JSON object loads");
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_gesture("twofingerdrag", false, false, false),
+        None,
+        "the retired entry must bind nothing"
+    );
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "f9", false, false, true),
+        Some(Action::FastResizeStart),
+        "the live entry beside it in the same list must still bind"
+    );
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        None,
+        "the user's list replaced the default, so Ctrl+RightDrag must not bind"
+    );
+}
+
+/// **A retired name cannot come back by accident.** Every row is
+/// spelled in the lowercase form `KeyBind::parse` normalizes to (or
+/// its lookup would never match), and none is a live gesture — which
+/// would make that gesture unbindable while it still fires. The second
+/// half is the one that bites: re-adding `TwoFingerDrag` to
+/// `MouseGesture` without deleting its row here fails this test, not a
+/// user's config.
+#[test]
+fn test_every_retired_name_is_normalized_and_out_of_the_live_vocabulary() {
+    use crate::application::keybinds::bind::RETIRED_NAMES;
+    use strum::IntoEnumIterator;
+    assert!(
+        !RETIRED_NAMES.is_empty(),
+        "the table the check reads went missing"
+    );
+    for retired in RETIRED_NAMES {
+        assert_eq!(
+            retired.token,
+            normalize_key_name(retired.spelling),
+            "a token must be the normalized form of its spelling"
+        );
+        assert!(
+            !MouseGesture::iter().any(|g| g.key_name() == retired.token),
+            "{} is retired but is a live gesture again",
+            retired.spelling
+        );
+    }
 }
 
 /// Default `enter_resize_mode` config carries both `r` (kbd)
@@ -2019,7 +2122,7 @@ fn test_parametric_filesystem_variants_resolve() {
 }
 
 #[test]
-fn test_clear_zoom_rejects_the_parametric_binding_shape() {
+fn test_a_stale_clear_zoom_shape_costs_only_clear_zoom() {
     // `ClearZoom` is a unit variant, and the `keybind_surface!`
     // table puts every unit variant on the simple string-list
     // surface — the `simple` section names the variant with no
@@ -2029,60 +2132,149 @@ fn test_clear_zoom_rejects_the_parametric_binding_shape() {
     // `{combo, args}` object was a *valid* `clear_zoom` value — it
     // parsed, it resolved, and Shift+F12 fired `Action::ClearZoom`.
     //
-    // What the break costs is bigger than the key. `from_json`
-    // returns `Err`, and `user_config::layered::load_layered`
-    // answers a failed parse by logging one warning and walking to
-    // the next layer, so a file with one stale `clear_zoom` entry
-    // loses *every other binding in it* to the built-in defaults.
-    // §10 licenses the shape change (pre-V1, no users); this test
-    // records the blast radius, and issue #129 tracks the per-field
-    // parsing that would scope it back to the one key.
+    // What the break costs is the one key and nothing else (#129):
+    // the file is parsed field by field, so the stale `clear_zoom`
+    // keeps its default and is named in a warning, while the two
+    // well-formed bindings beside it load. Before #129 one serde pass
+    // failed the whole document and the layer went with it.
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
     let json = r#"{
         "clear_zoom": [ { "combo": "Shift+F12", "args": [] } ],
         "undo": ["Ctrl+Alt+U"],
         "select_all": ["Ctrl+Alt+A"]
     }"#;
+    let defaults = KeybindConfig::default();
+    // The fixture's good values differ from the defaults, or "they
+    // loaded" and "the layer was dropped" would read the same.
+    assert_ne!(defaults.undo, vec!["Ctrl+Alt+U".to_string()]);
+    assert_ne!(defaults.select_all, vec!["Ctrl+Alt+A".to_string()]);
 
-    let err = KeybindConfig::from_json(json).unwrap_err();
-    assert!(
-        err.contains("parse keybinds JSON"),
-        "expected the loader's parse-error prefix, got: {err}",
-    );
-    // The prefix alone is what `from_json` puts on *every* failure,
-    // including a bare `{` — it would still be there if `clear_zoom`
-    // had simply been deleted from the table. The discriminating
-    // half is serde naming the value shape it refused.
-    assert!(
-        err.contains("invalid type: map, expected a string"),
-        "expected serde to name the refused value shape, got: {err}",
+    let (cfg, captured) = capture(|| KeybindConfig::from_json(json));
+    let cfg = cfg.expect("a malformed value inside an object is not a whole-file failure");
+    assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
+    assert_eq!(cfg.select_all, vec!["Ctrl+Alt+A".to_string()]);
+    assert_eq!(
+        cfg.clear_zoom, defaults.clear_zoom,
+        "the malformed key keeps its default"
     );
 
-    // The blast radius, through the real desktop loader and a real
-    // file: the two well-formed bindings beside the stale one are
-    // gone too.
-    //
-    // Under `with_no_user_config` because the claim is that the
-    // bindings fall back to the *built-in defaults*, and the loader
-    // has one more layer beneath the explicit path: on a machine
-    // carrying a real `~/.config/mandala/keybinds.json`, the fallback
-    // lands on that file and this asserts something about its
-    // contents instead.
+    let warning = captured
+        .records
+        .iter()
+        .find(|r| r.message.contains("'clear_zoom'"))
+        .unwrap_or_else(|| panic!("the malformed key must be named: {:?}", captured.records));
+    assert!(warning.message.starts_with("keybinds: "), "{}", warning.message);
+    assert!(
+        warning.message.contains("has a malformed value"),
+        "{}",
+        warning.message
+    );
+    // The key name alone would also appear in an unrecognized-key
+    // warning, the line `clear_zoom` would draw had it been deleted
+    // from the table. The discriminating half is serde naming the
+    // value shape it refused.
+    assert!(
+        warning.message.contains("invalid type: map, expected a string"),
+        "expected serde to name the refused value shape, got: {}",
+        warning.message,
+    );
+
+    // The same through the real desktop loader and a real file: the
+    // layer is used, not skipped. Under `with_no_user_config` so a real
+    // `~/.config/mandala/keybinds.json` cannot answer in its place.
     let scratch = baumhard::util::test_temp::TempDir::new("stale-clear-zoom-keybinds");
     let path = scratch.join("keybinds.json");
     std::fs::write(&path, json).unwrap();
     crate::application::user_config::test_env::with_no_user_config(|| {
         let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
-        let defaults = KeybindConfig::default();
-        assert_eq!(
-            cfg.undo, defaults.undo,
-            "the stale `clear_zoom` entry took `undo` down with it — the whole layer is \
-             discarded, not the one key",
-        );
-        assert_eq!(
-            cfg.select_all, defaults.select_all,
-            "the stale `clear_zoom` entry took `select_all` down with it too",
-        );
+        assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
+        assert_eq!(cfg.select_all, vec!["Ctrl+Alt+A".to_string()]);
     });
+}
+
+/// Text that is not a JSON object has no fields to salvage, so it is
+/// still the whole-file failure the loader answers by walking to its
+/// next layer — the boundary the per-field parse stops at.
+#[test]
+fn test_keybinds_text_that_is_not_an_object_still_fails_the_layer() {
+    for (source, reason) in [
+        ("{ \"undo\": [\"Ctrl+Alt+U\"]", "EOF"),
+        ("[\"Ctrl+Alt+U\"]", "expected a JSON object, found an array"),
+        ("null", "expected a JSON object, found null"),
+    ] {
+        let err = KeybindConfig::from_json(source).unwrap_err();
+        assert!(err.starts_with("parse keybinds JSON: "), "{err}");
+        assert!(err.contains(reason), "{source:?}: expected {reason:?} in {err}");
+    }
+
+    // And the loader does walk on: the explicit file is unusable, so
+    // the defaults answer. Control first — the same file made valid
+    // is honored, so the fallback below is the parse failure's doing.
+    let scratch = baumhard::util::test_temp::TempDir::new("keybinds-not-an-object");
+    let path = scratch.join("keybinds.json");
+    crate::application::user_config::test_env::with_no_user_config(|| {
+        std::fs::write(&path, r#"{ "undo": ["Ctrl+Alt+U"] }"#).unwrap();
+        let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
+        assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
+
+        std::fs::write(&path, r#"[ "undo", ["Ctrl+Alt+U"] ]"#).unwrap();
+        let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
+        assert_eq!(cfg.undo, KeybindConfig::default().undo);
+    });
+}
+
+/// Every key the config recognizes is read by the generated per-field
+/// walk, and a malformed value under *any* of them costs that key and
+/// nothing else. `known_keys()` is built from `bind_surface` plus
+/// `EXTRA_KEYS`; `take_fields` is a separate expansion of the table.
+/// A row the walk missed would leave its key unclaimed — reported as
+/// *unrecognized*, not malformed — and that is what this tells apart.
+#[test]
+fn test_a_malformed_value_under_any_known_key_costs_only_that_key() {
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+    // Malformed for every field type the table declares: not a string
+    // list, not a list of `{combo, args}` objects, not a map, not a
+    // string, not a number.
+    let malformed = serde_json::json!([[[]]]);
+    let probe_good = |bad: &str| if bad == "undo" { "select_all" } else { "undo" };
+    for key in KeybindConfig::known_keys() {
+        let good = probe_good(key);
+        let mut object = serde_json::Map::new();
+        object.insert(key.to_string(), malformed.clone());
+        object.insert(good.to_string(), serde_json::json!(["Ctrl+Alt+Shift+F9"]));
+        let json = serde_json::Value::Object(object).to_string();
+
+        let (cfg, captured) = capture(|| KeybindConfig::from_json(&json));
+        let cfg = cfg.unwrap_or_else(|e| panic!("`{key}` malformed failed the whole file: {e}"));
+        let good_value = if good == "undo" {
+            &cfg.undo
+        } else {
+            &cfg.select_all
+        };
+        assert_eq!(
+            good_value,
+            &vec!["Ctrl+Alt+Shift+F9".to_string()],
+            "a malformed `{key}` took `{good}` down with it"
+        );
+        let named: Vec<&str> = captured
+            .records
+            .iter()
+            .map(|r| r.message.as_str())
+            .filter(|m| m.contains(&format!("'{key}'")))
+            .collect();
+        assert!(
+            named.iter().any(|m| m.contains("has a malformed value")),
+            "`{key}` was not read by the per-field walk: {named:?}"
+        );
+        assert!(
+            !named.iter().any(|m| m.contains("unrecognized key")),
+            "`{key}` is recognized and must not be reported as unknown: {named:?}"
+        );
+    }
 }
 
 #[test]
@@ -2711,12 +2903,55 @@ fn test_unknown_top_level_keys_names_a_renamed_action() {
 fn test_unknown_top_level_key_does_not_discard_the_rest_of_the_config() {
     // Warn, don't reject: `deny_unknown_fields` would answer one
     // stale key by throwing away every good binding beside it.
-    let json = r#"{ "cancel_mode": ["Escape"], "undo": ["Ctrl+Alt+U"] }"#;
-    let cfg = KeybindConfig::from_json(json).unwrap();
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+    let json = r#"{ "cancel_mode": ["Escape"], "exit_modes": ["Escape"], "undo": ["Ctrl+Alt+U"] }"#;
+    let (cfg, captured) = capture(|| KeybindConfig::from_json(json));
+    let cfg = cfg.unwrap();
     assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
     assert_eq!(
         cfg.resolve().action_for("u", true, false, true),
         Some(Action::Undo),
+    );
+
+    // And it told somebody, through the loader itself rather than the
+    // test seam: one warning per stale key, each with the half only
+    // its branch produces. A key name alone would also appear in a
+    // malformed-value warning.
+    let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(
+        messages[0].starts_with("keybinds: unrecognized key 'cancel_mode' — ignored. None of the "),
+        "{}",
+        messages[0]
+    );
+    assert!(
+        messages[1]
+            .starts_with("keybinds: unrecognized key 'exit_modes' — ignored. Did you mean 'exit_mode'?"),
+        "{}",
+        messages[1]
+    );
+}
+
+/// A key written twice is the third way a hand-edited file goes stale.
+/// The last occurrence is used — what appending an override at the
+/// bottom of the file means — and the repeat is named. A one-pass
+/// typed parse used to refuse the whole file over it.
+#[test]
+fn test_a_repeated_keybinds_key_uses_the_last_occurrence_and_says_so() {
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+    let json = r#"{ "undo": ["Ctrl+Alt+U"], "select_all": ["Ctrl+Alt+A"], "undo": ["Ctrl+Alt+X"] }"#;
+    let (cfg, captured) = capture(|| KeybindConfig::from_json(json));
+    let cfg = cfg.expect("a repeated key is not a whole-file failure");
+    assert_eq!(cfg.undo, vec!["Ctrl+Alt+X".to_string()]);
+    assert_eq!(cfg.select_all, vec!["Ctrl+Alt+A".to_string()]);
+    let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        vec!["keybinds: key 'undo' appears more than once; the last occurrence is used"]
     );
 }
 

@@ -1976,9 +1976,10 @@ WASM:
 - User from `localStorage` (never a URL query param).
 
 Map and inline are loaded from the document on every load. Each
-layer is best-effort — user file parse failures log a warning
-and skip; app bundle failures log an error (a build-time invariant
-violation).
+layer is best-effort — a malformed entry in the user file logs a
+warning and is skipped on its own (a file that is not the
+`{"mutations": [...]}` envelope at all is skipped whole); app bundle
+failures log an error (a build-time invariant violation).
 
 The provenance of each merged mutation is tracked in
 `MindMapDocument::mutation_sources` as a `SourceTier`
@@ -2792,7 +2793,13 @@ the arm (`dispatch::native::route_pan_canvas`, pure and pinned at
 `DragState` level the way `route_middle_button` is), which closes
 all three at once. `Pending` stays outside the refused class
 precisely because the `LeftDrag` threshold cross dispatches
-`PanCanvas` from it.
+`PanCanvas` from it. The `RightDrag` cross does not need the same
+exemption for `PendingRight`: it takes the press down to `None`
+before it dispatches, with a hit built from the press, so a
+`RightDrag`-bound `pan_canvas` arms from rest and the right release
+ends it. `FastResizeStart` reads its target, its anchor and its
+owning button off that hit rather than off `PendingRight` (#194),
+which is what let the state come down first.
 
 The release halves match, and the rule is the same one: **the
 button that started a gesture is the one that finalizes it.**
@@ -2928,14 +2935,24 @@ the camera instead, and the variant is gone rather than
 default-unbound, because a binding firing on the same event as
 the camera step would be a conflict rather than a choice.
 
-Two consequences of that deletion, neither fixed: a user whose
-only pointer is a touchscreen loses `FastResizeStart` (it ships
-bound to `Ctrl+RightDrag` alone, which needs a mouse), and an
-existing `keybinds.json` naming `"TwoFingerDrag"` is silently
-accepted and never matches, because `KeyBind::parse` takes any
-non-modifier word and cannot tell a retired gesture name from an
-ordinary key. `test_two_finger_drag_is_not_a_bindable_gesture`
-carries the reasoning.
+Two consequences of that deletion, both since closed (#160).
+**A touch-only user lost every resize, not only
+`FastResizeStart`**: the route this paragraph used to offer —
+long-press into `Resize`, then drag a handle — did not exist,
+because a one-finger drag is always the recognizer's `Pan` and
+moved the camera out from under the handle. Now a finger that
+starts a gesture on a handle in `Resize` mode is the left button
+until it lifts (`app/touch_handle.rs`): it drives the press,
+cursor-move and release handlers a mouse drives, so the handle drag
+is the one that already exists, and it is never fed to the
+recognizer. Every other touch is unchanged, so one-finger pan and
+pinch keep their meaning everywhere off a handle. That makes
+`FastResizeStart` a mouse accelerator by design rather than by
+accident. Native-only, as the drag state is. **And an existing
+`keybinds.json` naming `"TwoFingerDrag"` was silently accepted and
+never matched**, because `KeyBind::parse` takes any non-modifier
+word; a retired name is now refused at parse time through the
+`RETIRED_NAMES` table, with a diagnostic saying what replaced it.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
@@ -3301,11 +3318,11 @@ two as a value, with `execute` as the only place either is
 actually called. The reason is the same one
 [`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
 the drag-release path: both tiers need `&mut Renderer`, so an
-interaction that *decides* a tier could not be tested at all
-while deciding and performing were one statement (TEST_CONVENTIONS
-§T8 keeps live wgpu out of the harness). Handing the decision back
-as a value is what lets a test ask which tier a given interaction
-picks.
+interaction that *decides* a tier could not be tested without
+a device while deciding and performing were one statement
+(TEST_CONVENTIONS §T8). Handing the decision back as a value
+is what lets a renderer-free test ask which tier a given
+interaction picks.
 
 Two constructors carry the rules:
 
@@ -3572,10 +3589,24 @@ server-chosen capture lands in, removed on exit; `geometry` is the
 sidecar, read off the node tree through `scene_dump` at the capture's
 camera; `png` encodes. `app/capture_flow.rs` is the app half both
 surfaces call: it runs the camera-geometry rebuild the next frame
-owes, re-projects the zoom-dependent roles for a capture framed at
-another zoom and projects them back afterwards (so the live scene and
-camera are untouched), and refuses that re-projection as `busy`
-during a node drag. Every caller-chosen path is written through
+owes, and for a capture framed at another zoom projects the
+zoom-dependent roles — connections with their edge handles, labels,
+portals (`CanvasRole::zoom_dependent`) — into a scratch scene of the
+capture's own (`app/capture_scene.rs`: its own `AppScene`, its own
+`SceneConnectionCache`, its own hit indices), through the same
+`CanvasFrame::update_zoom_dependent_roles` body the camera rebuild
+runs on the live scene. The renderer walks the scratch into a second
+shaped set and composes one frame of it with the live set's
+zoom-independent roles by layer (`renderer::compose_capture_canvas`,
+`CanvasSource::Composed`); the live scene, cache and shaped set are
+read and never written, so there is nothing to project back. A node
+drag's drained offsets are passed into the scratch projection, so a
+capture at any zoom mid-drag shows the dragged node's connections
+where the window does, and no `busy` refusal is needed. The scratch
+cache stays warm across the frames of a recording at one zoom and
+follows the live cache's `clear` / `invalidate_edge` statements
+through `SceneConnectionCache::invalidations`, so it goes stale
+exactly when the live one is told to. Every caller-chosen path is written through
 `guarded_file::publish` — atomic, no symlink followed, no file
 replaced unasked — the writer the IPC `to_file` sidecar uses too.
 
@@ -3872,8 +3903,8 @@ click-outside commit and the dispatch arms do not grow.
 
 The lifecycle core is renderer-free and returns an `EditRefresh`
 naming the canvas work it owes, so the whole open / type /
-commit / cancel sequence is driven directly in tests (§T8 keeps
-live wgpu out of the harness).
+commit / cancel sequence is driven directly in renderer-free
+tests (§T8).
 
 One asymmetry survives on purpose: a portal caption stops being
 editable once its edge is deleted or leaves portal mode, and a
@@ -4125,6 +4156,24 @@ declares its name, its sentence and its vocabulary, and what
 non-custom-preset gate — are handwritten handlers *behind* the
 table.
 
+*Which* handler a matched subverb runs is declared too, through
+`spec::route`: each dispatcher keeps a `Routes` table pairing
+every declared name with a variant of its own route enum, and
+matches on the variant. Before it, dispatchers matched
+`subverb.name` and most let `_ =>` absorb the last name, so a new
+`Subverb` row was right on every derived surface and ran the
+catch-all's behavior: `fps snapshot` would have toggled the
+rolling average (#155). The match is now exhaustive without a
+catch-all, and because every route enum is private to its
+dispatcher with one payload-free variant per row, a variant whose
+row is deleted is dead code, which the clippy gate refuses. A
+registry test holds every table against the subverbs its levels
+declare, in both directions, so a row with no handler fails the
+suite naming the subverb. A level composing a shared set — the
+border family's per-field subverbs — hands it on through a
+`Delegates` row, which is data the registry test reads too, and
+the shared set's own table is held against the set.
+
 `console::spec`'s own tests hold the declaration against itself
 over the whole registry, in both directions: a form naming a
 key its level does not declare, and a key no form prints. The
@@ -4236,14 +4285,14 @@ in a user's file are warned about (`"keybinds: unrecognized key
 skipped rather than rejected — one stale *key* must not cost the
 user the rest of their bindings — and keys starting with `_` are
 treated as comments, which is how the shipped
-`config/default_keybinds.json` carries its instructions. That
-tolerance stops at the key: a *malformed value* under a
-recognized key fails the whole serde pass, and
-`user_config::layered::load_layered` answers a failed parse by
-skipping the layer, so it costs the user every binding in the
-file. The asymmetry is real rather than designed — the three
-user configs share the seam — and issue #129 tracks the
-per-field parsing that would close it.
+`config/default_keybinds.json` carries its instructions. A
+*malformed value* under a recognized key gets the same posture one
+level down: the file is parsed field by field (a loop generated from
+the same table), so that key is warned about and keeps its default
+while every other binding loads; a key written twice uses its last
+occurrence, also with a warning. Only text that is not a JSON object
+costs the layer. `user_config::salvage` holds the primitives, and
+`macros.json` and `mutations.json` use them per entry.
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
@@ -4357,6 +4406,11 @@ the finding is written once in
   `None` and the caller substitutes its defaults. Nothing here is
   platform-specific, so the precedence logic is unit-tested on
   native even for the browser's layers.
+- "Broken" means the parser found nothing to salvage: the parsers
+  stand on `salvage` (`parse_object` / `parse_array`, `take_field`,
+  `parse_entry`), which drop a malformed field or entry with a
+  warning naming it and fail the layer only when its container is
+  not usable JSON of the right outer shape.
 - Each target names its own layers exactly once, in the
   composition wrapper that sits on the driver:
   `desktop::load_desktop_layered(label, filename, explicit, parse)`

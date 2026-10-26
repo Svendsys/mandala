@@ -14,7 +14,7 @@ use baumhard::mindmap::border_pattern::SidePattern;
 use baumhard::mindmap::model::{MindMap, MindNode};
 
 use crate::application::console::parser::Args;
-use crate::application::console::spec::{kvs, Descent};
+use crate::application::console::spec::{kvs, Descent, Vocabulary};
 use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
 use crate::application::document::SelectionState;
 
@@ -44,19 +44,31 @@ pub fn execute_border_show(descent: &Descent, args: &Args, eff: &mut ConsoleEffe
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
     };
-    let side_filter = kvs::value(&pairs, "side").map(|v| v.to_ascii_lowercase());
-    if let Some(ref s) = side_filter {
-        if !matches!(s.as_str(), "top" | "bottom" | "left" | "right" | "all") {
+    let side_raw = kvs::value(&pairs, "side");
+    let side_filter = side_raw.map(|v| v.to_ascii_lowercase());
+    if let (Some(raw), Some(s)) = (side_raw, side_filter.as_deref()) {
+        if !matches!(s, "top" | "bottom" | "left" | "right" | "all") {
+            // Echo `raw`, not the lowercased copy the match reads.
             return ExecResult::err(format!(
                 "border show: side='{}' unknown; pick top | bottom | left | right | all",
-                s
+                raw
             ));
         }
     }
-    let verbose = descent
-        .slot_value(args)
-        .get(0)
-        .is_some_and(|p| p.eq_ignore_ascii_case("verbose"));
+    // The slot holds a closed word list, so a word outside it is
+    // refused by name, echoed as typed: reading anything but
+    // `verbose` as "not verbose" answered `border show verbos` with
+    // the plain readout, a confident wrong answer (#135).
+    let verbose = match descent.slot_value(args).get(0) {
+        None => false,
+        Some(p) if Vocabulary::Words(super::grammar::VERBOSE_FLAG).admits(p) => true,
+        Some(p) => {
+            return ExecResult::err(format!(
+                "border show: unknown word '{}'; pick verbose or side=<top|bottom|left|right|all>",
+                p
+            ))
+        }
+    };
     let node = match eff.document().mindmap.nodes.get(&id) {
         Some(n) => n,
         None => return ExecResult::err(format!("border: node '{}' not found", id)),

@@ -8,9 +8,18 @@
 //! `localStorage` alone on web — and the first source
 //! that yields a payload which fits the size cap *and* parses wins.
 //! A source that is simply absent is skipped silently; a source that
-//! is present but unreadable, oversized, or malformed is logged and
+//! is present but unreadable, oversized, or unparseable is logged and
 //! the walk continues. That policy is identical for every config and
 //! every platform, so it lives here exactly once.
+//!
+//! **"Unparseable" means the parser found nothing to salvage.** The
+//! parsers degrade a malformed field or entry in place and still
+//! return `Ok` (see [`super::salvage`]), so an `Err` reaching this
+//! driver means the payload's container is unusable — text that is
+//! not JSON, or JSON of the wrong outer shape — and the whole layer
+//! is rightly skipped. Layers are alternatives, not overlays: a
+//! partly-salvaged layer still wins, and a field it dropped falls back
+//! to that field's default rather than to the next layer's value.
 //!
 //! The driver itself is platform-neutral: it only knows how to walk
 //! [`ConfigLayer`]s. The filesystem-backed layers are built by

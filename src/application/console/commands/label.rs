@@ -16,6 +16,7 @@ use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
     bare_words, free, kvs, usage, Bare, Form, Grammar, Key, Subverb, Vocabulary, Word,
 };
@@ -50,6 +51,24 @@ const SUBVERBS: &[Subverb] = &[
     Subverb::bare("clear", "reset", "drop the label text"),
 ];
 
+/// Which handler each declared subverb runs (`spec::route`). The
+/// bare kv form is not a route: it is what runs when no subverb
+/// matched.
+#[derive(Clone, Copy)]
+enum Route {
+    Edit,
+    Clear,
+}
+
+const ROUTES: &Routes<Route> = &[("edit", Route::Edit), ("clear", Route::Clear)];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 pub static GRAMMAR: Grammar = Grammar {
     label: "label",
     subverb_sets: &[SUBVERBS],
@@ -80,8 +99,11 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Err(msg) = kvs::read_strict(&descent, args) {
         return ExecResult::err(msg);
     }
-    let name = match descent.stop {
-        Stop::Matched(subverb) => Some(subverb.name),
+    let route = match descent.stop {
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(route) => Some(route),
+            None => return ExecResult::err(route::miss(descent.level, subverb)),
+        },
         Stop::Bare => None,
         _ => {
             return ExecResult::err(usage::unknown_subverb_message(
@@ -90,8 +112,8 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             ))
         }
     };
-    match name {
-        Some("edit") => {
+    match route {
+        Some(Route::Edit) => {
             // `label edit` opens the inline editor. Dispatches
             // to the edge label editor for `Edge` selections and
             // to the portal-text editor for `PortalLabel`
@@ -115,7 +137,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 _ => return ExecResult::err("no edge selected"),
             }
         }
-        Some("clear") => match eff.document().selection.clone() {
+        Some(Route::Clear) => match eff.document().selection.clone() {
             SelectionState::Edge(e) => {
                 let changed = eff.document_mut().set_edge_label(&e, None);
                 return if changed {
@@ -136,7 +158,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             _ => return ExecResult::err("no edge selected"),
         },
-        _ => {}
+        None => {}
     }
 
     let kvs: Vec<(String, String)> = args.kvs().map(|(k, v)| (k.to_string(), v.to_string())).collect();

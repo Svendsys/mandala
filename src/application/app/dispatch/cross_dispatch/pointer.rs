@@ -12,7 +12,7 @@
 //!
 //! [`resolve_double_click_route`] is the pure half of the
 //! double-click behavior — the decision, with no renderer in sight,
-//! so `cargo test` can pin every branch (`TEST_CONVENTIONS §T8`).
+//! so a renderer-free test pins every branch (`TEST_CONVENTIONS §T8`).
 //! [`apply_double_click_activate`] is the renderer-driving half and
 //! matches exhaustively on the route, so a new [`DoubleClickRoute`]
 //! variant is a build error rather than a silently-dropped gesture.
@@ -49,6 +49,26 @@ pub struct DispatchHit {
     /// Canvas-space cursor position at the gesture's trigger time.
     /// Used by orphan-creation / open-editor arms.
     pub canvas_pos: Vec2,
+    /// The mouse button holding the gesture this hit came from, for a
+    /// drag gesture's threshold cross (`LeftDrag`, `RightDrag`): the
+    /// button whose release must end what the Action starts. `None`
+    /// for a discrete gesture (a double-click) and for a synthetic
+    /// pointer with no button down (IPC `act.action` with a target).
+    ///
+    /// `Action::FastResizeStart` is the reader (#194): it starts a
+    /// drag only the holding button's release finalizes, so it reads
+    /// the owner here, and refuses a hit with none rather than start a
+    /// drag no release can end. Its default `Ctrl+RightDrag` is the
+    /// one binding that reaches a node: only the empty-canvas leg of a
+    /// left press consults `LeftDrag`, so that cross's hit is always
+    /// `Empty`, and a `LeftDrag`-bound fast-resize is refused as off a
+    /// node. The left button is still what holds that gesture.
+    ///
+    /// Native-only: the browser has no drag gesture for a button to
+    /// hold (CLAUDE.md, the Rubber-band select entry), so its one
+    /// construction site — the double-click — has nothing to say here.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub held_by: Option<crate::application::platform::input::MouseButton>,
 }
 
 /// What a double-click does, decided before anything is mutated.
@@ -605,10 +625,10 @@ pub(in crate::application::app) fn edge_under_pointer(
 /// actually scaled.
 ///
 /// Split out of [`apply_touch_effect`] because it is the half with a
-/// rule in it, and the half a test can reach: `apply_touch_effect`
-/// drives a live `Renderer`, which `TEST_CONVENTIONS §T8` keeps out
-/// of the harness, while *which decrees a step asks for* is plain
-/// values in and plain values out.
+/// rule in it, and the half a renderer-free test can reach:
+/// `apply_touch_effect` drives a live `Renderer`, which only the
+/// GPU-backed tier (`TEST_CONVENTIONS §T8`) builds, while *which
+/// decrees a step asks for* is plain values in and plain values out.
 ///
 /// **The rule: a step that only panned must not emit `CameraZoom`.**
 /// `CameraZoom` is the only decree that raises the renderer's
@@ -818,8 +838,8 @@ mod tests {
     //! that differed between the two pre-unification
     //! implementations, and it is the half that runs without a
     //! renderer — so it carries the coverage. The apply half is a
-    //! renderer-driving `match` over these routes and is out of
-    //! scope per `TEST_CONVENTIONS §T8`.
+    //! renderer-driving `match` over these routes, reachable only
+    //! from the GPU-backed tier (`TEST_CONVENTIONS §T8`).
 
     use super::*;
     use crate::application::document::SectionSel;
@@ -1134,8 +1154,8 @@ mod tests {
     // dispatcher arm and the browser's mouse handler used to make
     // inline, where a `Renderer` (`TEST_CONVENTIONS §T8`) and a
     // `#[cfg(target_arch = "wasm32")]` module respectively put them
-    // out of the suite's reach. §T9: platform-shared pure logic has
-    // to be reachable without a wgpu instance.
+    // out of a renderer-free test's reach. §T9: platform-shared pure
+    // logic has to be reachable without a wgpu instance.
     // -------------------------------------------------------------
 
     /// Every residual maps to exactly one outcome, and the `None`

@@ -7,8 +7,10 @@
 # all down. The procedure is the one `.claude/skills/mandala-drive/SKILL.md`
 # teaches; this script is that skill's proof that it still works.
 #
-# Deliberately outside ./test.sh: it needs a live GPU adapter, and
-# TEST_CONVENTIONS §T8/§T10 keep live wgpu out of the suite.
+# Deliberately outside ./test.sh: it needs the built binaries, a socket
+# and a process to drive, and it checks the launch, IPC and capture loop
+# end to end. The suite's GPU-backed tests (TEST_CONVENTIONS §T8) build
+# the app in-process on the same adapter; this script is the other half.
 #
 # Usage:
 #   ./scripts/ipc_smoke.sh                   # testament, release build: a window when
@@ -272,10 +274,11 @@ fi
 # ---- A pan ends on its own button's release ---------------------------
 
 # The left and right release arms end a pan behind a `mem::replace` with
-# no pure route in front of them, so the suite cannot reach them (#153,
-# TEST_CONVENTIONS §T8); this is the one place they run. A middle press
-# arms a pan the middle button holds; the left and right releases must
-# leave it, and the middle release must end it.
+# no pure route in front of them, so no renderer-free test can reach
+# them (#153, TEST_CONVENTIONS §T8), and no GPU-backed test drives them
+# through `input.*` yet; until one does, this is the one place they
+# run. A middle press arms a pan the middle button holds; the left and
+# right releases must leave it, and the middle release must end it.
 pan_state() { # the drag state's kind and owner, as `query.mode` reports them
     local mode
     mode="$("$CTL" query.mode)" || fail "query.mode failed"
@@ -292,6 +295,104 @@ for other in left right; do
 done
 "$CTL" input.mouse_button middle release --wait-settled >/dev/null || fail "middle release failed"
 [ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "the middle release did not end its pan"
+
+# ---- A finger resizes from a handle -----------------------------------
+
+# A touch-only user's resize route (#160): long-press a node to enter
+# Resize mode, then drag a handle with a finger. The finger is the left
+# button only while it holds the handle, and the recognizer never sees
+# it, so the drag resizes and the camera stays put. Like the step above,
+# this wiring (`dispatch_touch_event`) needs a live renderer, so this is
+# the one place it runs. Uses the node the region check found wholly on
+# screen.
+if [ -z "$node" ]; then
+    echo "   no node is wholly inside the window capture; touch-resize check skipped"
+else
+    step "touch resize of $node"
+    rect() { # the node's surface rect: x y w h
+        local geo
+        geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+        printf '%s %s %s %s' "$(field "$geo" surface.x)" "$(field "$geo" surface.y)" \
+            "$(field "$geo" surface.w)" "$(field "$geo" surface.h)"
+    }
+    model_size() { # the node's model size: w h
+        local geo
+        geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+        printf '%s %s' "$(field "$geo" model.size.width)" "$(field "$geo" model.size.height)"
+    }
+    # Zoom in about the node until a handle is a finger's width from
+    # the middle, so a touch at the middle cannot land on one.
+    for _ in $(seq 1 40); do
+        read -r x y w h <<<"$(rect)"
+        awk -v w="$w" 'BEGIN { exit !(w >= 80) }' && break
+        "$CTL" input.wheel 3 x="$(awk -v x="$x" -v w="$w" 'BEGIN { print x + w / 2 }')" \
+            y="$(awk -v y="$y" -v h="$h" 'BEGIN { print y + h / 2 }')" >/dev/null || fail "zoom failed"
+    done
+    read -r x y w h <<<"$(rect)"
+    mx="$(awk -v x="$x" -v w="$w" 'BEGIN { print x + w / 2 }')"; my="$(awk -v y="$y" -v h="$h" 'BEGIN { print y + h / 2 }')"
+    "$CTL" input.touch started 1 "$mx" "$my" >/dev/null && "$CTL" input.touch ended 1 "$mx" "$my" >/dev/null \
+        || fail "tap on $node failed"
+    "$CTL" input.touch started 1 "$mx" "$my" >/dev/null || fail "long-press start failed"
+    "$CTL" clock.step ms=500 >/dev/null || fail "clock.step failed"
+    "$CTL" input.touch moved 1 "$mx" "$my" >/dev/null && "$CTL" input.touch ended 1 "$mx" "$my" >/dev/null \
+        || fail "long-press end failed"
+    [ "$(field "$("$CTL" query.mode)" interaction_mode.kind)" = '"Resize"' ] || fail "a long-press did not enter Resize mode"
+    before="$(model_size)"; camera_before="$("$CTL" query.camera)"
+    ex="$(awk -v x="$x" -v w="$w" 'BEGIN { print x + w }')"; ey="$(awk -v y="$y" -v h="$h" 'BEGIN { print y + h }')"
+    "$CTL" input.touch started 2 "$ex" "$ey" >/dev/null || fail "handle touch failed"
+    for i in 1 2 3 4 5; do
+        "$CTL" input.touch moved 2 "$(awk -v a="$ex" -v i="$i" 'BEGIN { print a + i * 8 }')" \
+            "$(awk -v a="$ey" -v i="$i" 'BEGIN { print a + i * 8 }')" >/dev/null || fail "handle drag failed"
+        "$CTL" clock.step frames=1 >/dev/null || fail "clock.step failed"
+    done
+    "$CTL" input.touch ended 2 "$(awk -v a="$ex" 'BEGIN { print a + 40 }')" \
+        "$(awk -v a="$ey" 'BEGIN { print a + 40 }')" >/dev/null || fail "handle lift failed"
+    "$CTL" clock.step frames=3 >/dev/null || fail "clock.step failed"
+    [ "$("$CTL" query.camera)" = "$camera_before" ] || fail "the handle drag moved the camera: the finger panned"
+    [ "$(model_size)" != "$before" ] || fail "the handle drag did not resize $node (still $before)"
+    "$CTL" act.action Undo --wait-settled >/dev/null || fail "undo failed"
+    [ "$(model_size)" = "$before" ] || fail "one undo did not restore $node's size"
+    "$CTL" act.action ExitMode --wait-settled >/dev/null || fail "ExitMode failed"
+fi
+
+# ---- A right drag resizes from where it pressed ----------------------
+
+# `Ctrl+RightDrag` is `FastResizeStart`: the `RightDrag` threshold cross
+# takes its pending press down and dispatches with a hit built from the
+# press (#194). `app::tests_gpu` holds the cross's anchor and the IPC
+# refusal below inside `./test.sh`; this step runs the same route over
+# the socket, in a launched app. Uses the node the region check found
+# wholly on screen: a press just inside its SE corner, dragged further
+# SE, must grow it, and one undo must put it back.
+if [ -z "$node" ]; then
+    echo "   no node is wholly inside the window capture; fast-resize check skipped"
+else
+    step "fast resize of $node"
+    geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+    fx="$(awk -v x="$(field "$geo" surface.x)" -v w="$(field "$geo" surface.w)" 'BEGIN { print x + w * 0.9 }')"
+    fy="$(awk -v y="$(field "$geo" surface.y)" -v h="$(field "$geo" surface.h)" 'BEGIN { print y + h * 0.9 }')"
+    before="$(field "$geo" model.size.width) $(field "$geo" model.size.height)"
+    "$CTL" input.drag "$fx" "$fy" "$(awk -v a="$fx" 'BEGIN { print a + 40 }')" "$(awk -v a="$fy" 'BEGIN { print a + 40 }')" \
+        button=right mods='["ctrl"]' --wait-settled >/dev/null || fail "Ctrl+RightDrag failed"
+    "$CTL" clock.step frames=40 >/dev/null || fail "clock.step failed"
+    geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+    after="$(field "$geo" model.size.width) $(field "$geo" model.size.height)"
+    [ "$after" != "$before" ] || fail "a Ctrl+RightDrag from inside $node's SE corner did not resize it (still $before)"
+    [ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "the right release did not end the resize"
+    "$CTL" act.action Undo --wait-settled >/dev/null || fail "undo failed"
+    geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+    [ "$(field "$geo" model.size.width) $(field "$geo" model.size.height)" = "$before" ] \
+        || fail "one undo did not restore $node's size"
+    # The same Action from IPC holds no button, so it must be refused,
+    # saying why, and start nothing: a drag no release could end.
+    reply="$("$CTL" act.action FastResizeStart x="$fx" y="$fy" space=surface)" || fail "act.action FastResizeStart failed"
+    [ "$(field "$reply" outcome)" = '"unhandled"' ] || fail "act.action FastResizeStart ran: $reply"
+    case "$(field "$reply" reason)" in
+        *"nothing holds this gesture"*) ;;
+        *) fail "act.action FastResizeStart was not refused with its reason: $reply" ;;
+    esac
+    [ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "a refused FastResizeStart armed a drag"
+fi
 
 # ---- Graceful quit -----------------------------------------------------
 
