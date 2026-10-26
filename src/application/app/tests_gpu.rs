@@ -573,3 +573,152 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
     }
     panic!("the font system stayed contended through {ATTEMPTS} capture attempts: {reply}");
 }
+
+/// Node 1's canvas AABB as (min, size).
+fn node_1_rect(init: &InitState) -> (glam::Vec2, glam::Vec2) {
+    let n = &init.document.as_ref().expect("document").mindmap.nodes["1"];
+    (
+        glam::Vec2::new(n.position.x as f32, n.position.y as f32),
+        glam::Vec2::new(n.size.width as f32, n.size.height as f32),
+    )
+}
+
+/// Zoom in about node 1 until nothing else sits on it: at the
+/// fixture's opening zoom an edge label overlaps its SE corner, and a
+/// label outranks the node's body in a press's hit-test.
+fn zoom_onto_node_1(init: &mut InitState) {
+    let (pos, size) = node_1_rect(init);
+    let center = pos + size / 2.0;
+    for id in 0..12 {
+        let (reply, _) = act(
+            init,
+            json!({"id": 100 + id, "cmd": "act.action", "action": "ZoomIn", "x": center.x, "y": center.y}),
+        );
+        assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    }
+    init.input_context().drain_frame(Beat::Loop);
+}
+
+/// **`act.action FastResizeStart` with a pointer is refused, says
+/// why, and starts nothing** (#194). The synthetic pointer IPC places
+/// holds no button, so no release could end the drag the Action would
+/// arm. Through the real decoder, `IpcCommandTarget` and the dispatch
+/// arm, over node 1: the reply is `unhandled` with
+/// `FastResizeRefusal::NO_HOLDER` as its `reason`, the drag state stays
+/// `None`, and the document and undo stack are untouched.
+///
+/// The control is the same Action with no pointer at all, which the
+/// arm refuses for a different, named cause (`NO_POINTER`): the
+/// `reason` is the arm's verdict on this request, not a constant the
+/// reply carries for every refusal. Its positive counterpart, a held
+/// button through the same Action, is the next test.
+#[test]
+fn test_act_action_fast_resize_start_is_refused_by_name_and_starts_nothing() {
+    use super::dispatch::native::FastResizeRefusal;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    zoom_onto_node_1(init);
+    let baseline = document_json(init);
+    let (pos, size) = node_1_rect(init);
+    let near_se = pos + size * 0.9;
+
+    let (reply, _) = act(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "FastResizeStart", "x": near_se.x, "y": near_se.y}),
+    );
+    assert_eq!(reply["result"]["outcome"], "unhandled", "{reply}");
+    assert_eq!(reply["result"]["reason"], FastResizeRefusal::NO_HOLDER, "{reply}");
+    assert!(
+        matches!(init.drag_state, super::DragState::None),
+        "a refused fast-resize arms no drag"
+    );
+    init.input_context().drain_frame(Beat::Loop);
+    assert_eq!(document_json(init), baseline, "a refusal writes nothing");
+    assert!(init.document.as_ref().expect("document").undo_stack.is_empty());
+
+    let (reply, _) = act(
+        init,
+        json!({"id": 2, "cmd": "act.action", "action": "FastResizeStart"}),
+    );
+    assert_eq!(reply["result"]["outcome"], "unhandled", "{reply}");
+    assert_eq!(
+        reply["result"]["reason"],
+        FastResizeRefusal::NO_POINTER,
+        "control: a request with no pointer is refused for its own cause: {reply}"
+    );
+}
+
+/// **A `Ctrl+RightDrag` anchors at the press, through the real
+/// threshold cross** (#194). A right press with Ctrl just inside node
+/// 1's SE corner, then one move deep into its NW quadrant: the cross
+/// fires on that move, with the cursor nearest NW, and the drag it
+/// arms must be a node resize anchored SE and owned by the right
+/// button. A cross that built its hit from the cursor at the cross
+/// would anchor NW.
+///
+/// The control is the same press and move mirrored — pressed inside
+/// the NW corner, crossing in the SE quadrant — which anchors NW: the
+/// side follows the press, rather than being SE for every drag.
+#[test]
+fn test_a_ctrl_right_drag_anchors_its_resize_at_the_press() {
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
+
+    use super::throttled_interaction::ThrottledDrag;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    zoom_onto_node_1(init);
+    let (pos, size) = node_1_rect(init);
+
+    // Press `button` with Ctrl at canvas `press`, then one move to
+    // canvas `cross`; answers the side of the drag the cross armed,
+    // then releases.
+    let mut press_then_cross = |press: glam::Vec2, cross: glam::Vec2| {
+        for (id, request) in [
+            json!({"cmd": "input.mouse_move", "x": press.x, "y": press.y, "space": "canvas", "mods": ["ctrl"]}),
+            json!({"cmd": "input.mouse_button", "button": "right", "state": "press", "mods": ["ctrl"]}),
+            json!({"cmd": "input.mouse_move", "x": cross.x, "y": cross.y, "space": "canvas", "mods": ["ctrl"]}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut request = request;
+            request["id"] = json!(id);
+            let (reply, _) = act(init, request);
+            assert!(reply.get("error").is_none(), "{reply}");
+            init.input_context().drain_frame(Beat::Loop);
+        }
+        let armed = match &init.drag_state {
+            super::DragState::Throttled(drag) => match drag.as_ref() {
+                ThrottledDrag::NodeResize(i) => Some((i.side, drag.as_dyn().started_with_right())),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (reply, _) = act(
+            init,
+            json!({"id": 9, "cmd": "input.mouse_button", "button": "right", "state": "release", "mods": ["ctrl"]}),
+        );
+        assert!(reply.get("error").is_none(), "{reply}");
+        init.input_context().drain_frame(Beat::Loop);
+        armed
+    };
+
+    let near_se = pos + size * 0.9;
+    let nw_quadrant = pos + size * 0.2;
+    assert_eq!(
+        press_then_cross(near_se, nw_quadrant),
+        Some((ResizeHandleSide::SE, true)),
+        "a press inside the SE corner anchors SE wherever the cross lands, and the right button owns it"
+    );
+    assert_eq!(
+        press_then_cross(nw_quadrant, near_se),
+        Some((ResizeHandleSide::NW, true)),
+        "control: the mirrored press anchors NW"
+    );
+}

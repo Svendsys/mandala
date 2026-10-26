@@ -1253,6 +1253,16 @@ fn apply_fast_resize_start(
             *ctx.drag_state = DragState::throttled(drag);
             Ok(())
         }
+        // A fill-parent section is the one refusal a user's own
+        // well-aimed drag meets, with nothing on screen to say why
+        // the corner did not move, so it is logged at `info!`:
+        // `RUST_LOG=info` shows it without the dispatch trace. The
+        // rest are no target, or a caller that cannot finalize a
+        // drag.
+        Err(reason) if reason == FastResizeRefusal::FILL_PARENT => {
+            log::info!("dispatch: FastResizeStart refused: {reason}");
+            Err(reason)
+        }
         Err(reason) => {
             log::debug!("dispatch: FastResizeStart refused: {reason}");
             Err(reason)
@@ -1296,11 +1306,9 @@ impl FastResizeRefusal {
 ///   finalizes the drag. A hit no button holds — a synthetic IPC
 ///   pointer — is refused rather than start a drag no release can end.
 ///
-/// It used to read the target off `DragState::PendingRight` and
-/// hard-code the right button as owner. That coupling is what made a
-/// `RightDrag`-bound `pan_canvas` impossible: the pending right press
-/// had to survive into the dispatch for this arm, and `PanCanvas`
-/// refuses a pending right press (#194).
+/// Reading all three off the hit, not off `DragState`, is what lets
+/// the cross take the pending press down before it dispatches, so a
+/// `RightDrag`-bound `pan_canvas` can arm (#194).
 ///
 /// Renderer-free, so the harness drives it (§T8).
 fn fast_resize_drag(
@@ -1389,7 +1397,7 @@ mod tests {
     /// A right-started fast-resize, mid-gesture: the model write and
     /// the undo entry it owes happen only in
     /// `commit_on_release_core`.
-    fn fast_resize_drag() -> DragState {
+    fn throttled_fast_resize_state() -> DragState {
         DragState::throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
             "n0".to_string(),
             ResizeHandleSide::SE,
@@ -1434,7 +1442,7 @@ mod tests {
         doc: &crate::application::document::MindMapDocument,
         hit: &DispatchHit,
     ) -> ResizeHandleSide {
-        match super::fast_resize_drag(doc, hit).expect("a node hit held by a button starts a resize") {
+        match fast_resize_drag(doc, hit).expect("a node hit held by a button starts a resize") {
             ThrottledDrag::NodeResize(i) => i.side,
             _ => panic!("a whole-node hit starts a node resize"),
         }
@@ -1493,20 +1501,17 @@ mod tests {
             DragState::Panning {
                 owner: PanOwner::Toggled,
             },
-            fast_resize_drag(),
+            throttled_fast_resize_state(),
         ] {
             assert!(state.right_drag_hit().is_none());
         }
     }
 
     /// **A fast-resize is owned by the button that holds its gesture,
-    /// and refused when none does** (#194). The owner used to be
-    /// hard-coded to the right button, read off `PendingRight`; once
-    /// the cross takes that state down, the hit is the only witness.
+    /// and refused when none does** (#194). Once the cross takes the
+    /// pending press down, the hit is the only witness to the owner.
     ///
-    /// Right owns it on a right drag, left on a left drag — a
-    /// `LeftDrag`-bound fast-resize, which used to arm a right-owned
-    /// drag under a held left button that no release could end. The
+    /// The hit's button is the drag's owner, whichever it is. The
     /// refusal row is IPC `act.action FastResizeStart x= y=`, whose
     /// synthetic pointer holds nothing: the same hit with an owner
     /// starts a resize (the two rows above), so the refusal is the
@@ -1521,9 +1526,8 @@ mod tests {
             canvas_pos: max,
             held_by,
         };
-        let owner = |held_by| {
-            super::fast_resize_drag(&doc, &hit(held_by)).map(|drag| drag.as_dyn().started_with_right())
-        };
+        let owner =
+            |held_by| fast_resize_drag(&doc, &hit(held_by)).map(|drag| drag.as_dyn().started_with_right());
         assert_eq!(owner(Some(MouseButton::Right)), Ok(true));
         assert_eq!(owner(Some(MouseButton::Left)), Ok(false));
         assert_eq!(
@@ -1532,7 +1536,7 @@ mod tests {
             "no button holds an IPC pointer's gesture, and the refusal says so by name"
         );
         assert_eq!(
-            super::fast_resize_drag(
+            fast_resize_drag(
                 &doc,
                 &DispatchHit {
                     click_hit: crate::application::app::ClickHit::Empty,
@@ -1556,7 +1560,7 @@ mod tests {
     #[test]
     fn test_pan_canvas_mid_drag_leaves_the_throttled_drag_intact() {
         assert_eq!(
-            route_pan_canvas(&fast_resize_drag()),
+            route_pan_canvas(&throttled_fast_resize_state()),
             PanCanvasRoute::Refuse,
             "a keyboard-bound pan must not replace a right-started fast-resize: \
              its release-commit has not run, so the model write and the undo \
@@ -1707,7 +1711,7 @@ mod tests {
     #[test]
     fn test_entering_a_target_picker_mode_leaves_every_other_gesture_alone() {
         for mut drag in [
-            fast_resize_drag(),
+            throttled_fast_resize_state(),
             moving_node_drag(),
             DragState::Panning {
                 owner: PanOwner::Toggled,

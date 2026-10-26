@@ -350,9 +350,9 @@ pub enum Action {
     /// `Throttled(NodeResize | SectionResize)` owned by that
     /// button, whose release finalizes via `set_node_aabb` /
     /// `set_section_aabb`. Default-bound to `Ctrl+RightDrag`, so
-    /// the right button; bound to `LeftDrag`, the left. A hit no
-    /// button holds (IPC `act.action` with a target) is refused,
-    /// since no release could end the drag.
+    /// the right button owns it. A hit no button holds (IPC
+    /// `act.action` with a target) is refused, since no release
+    /// could end the drag.
     ///
     /// **Destructive on commit** (the release at the end of the
     /// drag writes through), but the *Action itself* is just a

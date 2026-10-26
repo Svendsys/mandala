@@ -300,10 +300,11 @@ done
 
 # `Ctrl+RightDrag` is `FastResizeStart`: the `RightDrag` threshold cross
 # takes its pending press down and dispatches with a hit built from the
-# press (#194). That cross needs a live renderer, so this is where it
-# runs. Uses the node the region check found wholly on screen: a press
-# just inside its SE corner, dragged further SE, must grow it, and one
-# undo must put it back.
+# press (#194). `app::tests_gpu` holds the cross's anchor and the IPC
+# refusal below inside `./test.sh`; this step runs the same route over
+# the socket, in a launched app. Uses the node the region check found
+# wholly on screen: a press just inside its SE corner, dragged further
+# SE, must grow it, and one undo must put it back.
 if [ -z "$node" ]; then
     echo "   no node is wholly inside the window capture; fast-resize check skipped"
 else

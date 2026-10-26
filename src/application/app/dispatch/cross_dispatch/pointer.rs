@@ -58,7 +58,11 @@ pub struct DispatchHit {
     /// `Action::FastResizeStart` is the reader (#194): it starts a
     /// drag only the holding button's release finalizes, so it reads
     /// the owner here, and refuses a hit with none rather than start a
-    /// drag no release can end.
+    /// drag no release can end. Its default `Ctrl+RightDrag` is the
+    /// one binding that reaches a node: only the empty-canvas leg of a
+    /// left press consults `LeftDrag`, so that cross's hit is always
+    /// `Empty`, and a `LeftDrag`-bound fast-resize is refused as off a
+    /// node. The left button is still what holds that gesture.
     ///
     /// Native-only: the browser has no drag gesture for a button to
     /// hold (CLAUDE.md, the Rubber-band select entry), so its one
