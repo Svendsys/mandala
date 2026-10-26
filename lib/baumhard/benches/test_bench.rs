@@ -9,6 +9,7 @@ use baumhard::document::tests::inspect_tests::*;
 use baumhard::document::tests::journal_tests::*;
 use baumhard::document::tests::resolve_tests::*;
 use baumhard::document::tests::shape_tests::*;
+use baumhard::document::tests::structure_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
 use baumhard::engine::tests::inherited_tests::*;
@@ -1788,6 +1789,19 @@ fn criterion_benchmark(c: &mut Criterion) {
         "document_validate_row_is_order_independent_and_names_no_id",
         |b| b.iter(do_document_validate_row_is_order_independent_and_names_no_id),
     );
+    c.bench_function("document_validate_subtree_judges_every_row", |b| {
+        b.iter(do_document_validate_subtree_judges_every_row)
+    });
+    c.bench_function("document_span_splits_and_merges_at_grapheme_boundaries", |b| {
+        b.iter(do_document_span_splits_and_merges_at_grapheme_boundaries)
+    });
+    c.bench_function(
+        "document_span_merge_is_refused_for_different_styles_or_links",
+        |b| b.iter(do_document_span_merge_is_refused_for_different_styles_or_links),
+    );
+    c.bench_function("document_span_split_and_merge_are_journaled_commands", |b| {
+        b.iter(do_document_span_split_and_merge_are_journaled_commands)
+    });
     c.bench_function("document_geometry_touches_no_input", |b| {
         b.iter(do_document_geometry_touches_no_input)
     });
