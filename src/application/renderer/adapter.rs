@@ -184,7 +184,15 @@ pub(super) fn fallback_backends(requested: Backends, enabled: Backends) -> Optio
 /// is when WebGPU answers a `requestAdapter` or was not asked for, and
 /// otherwise `desc` over [`fallback_backends`], with one `warn!`.
 /// Callers create the canvas surface only after this returns: the
-/// probe must not find the canvas already holding a WebGPU context.
+/// surface claims the canvas for the instance's context type, and no
+/// WebGL2 context can be had from a canvas a WebGPU surface has
+/// claimed.
+///
+/// Not `wgpu::util::new_instance_with_webgpu_detection`, which is
+/// this function without its two differences: it says nothing when it
+/// demotes, and it strips WebGPU even when nothing would be left, so a
+/// WebGPU-only request would become an empty instance whose startup
+/// panic no longer names the WebGPU failure.
 #[cfg(target_arch = "wasm32")]
 pub(super) async fn browser_instance(mut desc: wgpu::InstanceDescriptor) -> Instance {
     if desc.backends.contains(Backends::BROWSER_WEBGPU) && !wgpu::util::is_browser_webgpu_supported().await {
