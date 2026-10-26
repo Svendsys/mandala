@@ -226,7 +226,7 @@ fn test_a_missing_required_key_is_refused() {
         missing("frame"),
     );
     rejects(
-        &format!(r#"{{"format":1,"name":"t","theme":{{"variants":{{"d":{{}}}}}}}}"#),
+        r#"{"format":1,"name":"t","theme":{"variants":{"d":{}}}}"#,
         "theme",
         missing("active"),
     );
@@ -338,10 +338,7 @@ fn test_an_object_written_as_an_array_of_its_values_is_refused() {
         "nodes[0].frame.fit.fit",
     );
     rejects_as_invalid(&map_of(r#","frame":{"start":["top",0]}"#), "nodes[0].frame.start");
-    rejects_as_invalid(
-        &format!(r#"{{"format":1,"name":"t","theme":[],"nodes":[]}}"#),
-        "theme",
-    );
+    rejects_as_invalid(r#"{"format":1,"name":"t","theme":[],"nodes":[]}"#, "theme");
 }
 
 #[test]

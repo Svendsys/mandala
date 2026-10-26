@@ -21,7 +21,7 @@ use crate::document::format::dto::{
     PortalEndDto, RingDto, SectionDto, SpanDto,
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
-use crate::document::format::load::{Builder, LoadResult, PendingLink};
+use crate::document::format::from_dto::{Builder, LoadResult, PendingLink};
 use crate::document::format::SizeUnit;
 use crate::document::ids::NodeIdent;
 use crate::document::values::{Align, Anchor, LinkKind, LinkTarget, PaletteId};
@@ -93,24 +93,29 @@ impl Builder {
             return Err(self.error_at("connector", LoadErrorKind::ConnectorOnRoot));
         }
 
-        let node = self.add(
-            parent,
-            DocElement::Node(NodeData {
-                ident: NodeIdent(ident),
-                channel: dto.channel,
-                position,
-                min_size,
-                style,
-                palette,
-                zoom,
-                folded: dto.folded,
-                hidden: dto.hidden,
-                opacity,
-                on,
-            }),
-        )?;
-        self.idents.insert(ident, node);
+        let data = DocElement::Node(NodeData {
+            ident: NodeIdent(ident),
+            channel: dto.channel,
+            position,
+            min_size,
+            style,
+            palette,
+            zoom,
+            folded: dto.folded,
+            hidden: dto.hidden,
+            opacity,
+            on,
+        });
+        self.element(parent, data, |b, node| {
+            b.idents.insert(ident, node);
+            b.node_row(node, dto, is_root)
+        })?;
+        Ok(())
+    }
 
+    /// What a node holds, in the order of the kinds: its sections, its
+    /// frame, its connector, its links, its child nodes.
+    fn node_row(&mut self, node: NodeId, dto: &NodeDto, is_root: bool) -> LoadResult<()> {
         self.each_by_channel(
             "sections",
             &dto.sections,
@@ -126,11 +131,8 @@ impl Builder {
                 None => {
                     // A child node with no `connector` has one with
                     // every field inherited and nothing under it.
-                    let id = self.add(
-                        node,
-                        DocElement::Connector(ConnectorData { path: default_path() }),
-                    )?;
-                    self.finish(id)?;
+                    let data = DocElement::Connector(ConnectorData { path: default_path() });
+                    self.element(node, data, |_, _| Ok(()))?;
                 }
             }
         }
@@ -140,8 +142,7 @@ impl Builder {
             &dto.children,
             |n| n.channel,
             |b, child| b.node(node, child, false),
-        )?;
-        self.finish(node)
+        )
     }
 
     /// A palette by name.
@@ -169,22 +170,19 @@ impl Builder {
             .map(|size| self.extent("min_size", size))
             .transpose()?;
         let text = self.text_style(text_in!(dto), SizeUnit::Pt)?;
-        let section = self.add(
-            node,
-            DocElement::Section(SectionData {
-                channel: dto.channel,
-                offset,
-                min_size,
-                align: dto.align.map(|align| match align {
-                    AlignDto::Left => Align::Left,
-                    AlignDto::Center => Align::Center,
-                    AlignDto::Right => Align::Right,
-                }),
-                text,
+        let data = DocElement::Section(SectionData {
+            channel: dto.channel,
+            offset,
+            min_size,
+            align: dto.align.map(|align| match align {
+                AlignDto::Left => Align::Left,
+                AlignDto::Center => Align::Center,
+                AlignDto::Right => Align::Right,
             }),
-        )?;
-        self.spans(section, &dto.spans, false)?;
-        self.finish(section)
+            text,
+        });
+        self.element(node, data, |b, section| b.spans(section, &dto.spans, false))
+            .map(|_| ())
     }
 
     /// The spans under `parent`, in file order. `in_ring` refuses a
@@ -212,23 +210,21 @@ impl Builder {
             })?),
             None => None,
         };
-        let span = self.add(
-            parent,
-            DocElement::Span(SpanData {
-                text: dto.text.clone(),
-                style,
-                link,
-            }),
-        )?;
-        self.finish(span)
+        let data = DocElement::Span(SpanData {
+            text: dto.text.clone(),
+            style,
+            link,
+        });
+        self.element(parent, data, |_, _| Ok(())).map(|_| ())
     }
 
     /// A node's frame and its rings.
     fn frame(&mut self, node: NodeId, dto: &FrameDto) -> LoadResult<()> {
         let style = self.frame_style(frame_in!(dto))?;
-        let frame = self.add(node, DocElement::Frame(FrameData { style }))?;
-        self.each_by_channel("rings", &dto.rings, |r| r.channel, |b, ring| b.ring(frame, ring))?;
-        self.finish(frame)
+        self.element(node, DocElement::Frame(FrameData { style }), |b, frame| {
+            b.each_by_channel("rings", &dto.rings, |r| r.channel, |b, ring| b.ring(frame, ring))
+        })
+        .map(|_| ())
     }
 
     /// One ring and its spans.
@@ -238,15 +234,12 @@ impl Builder {
             None => None,
         };
         let text = self.text_style(text_in!(dto), SizeUnit::Rel)?;
-        let ring = self.add(
-            frame,
-            DocElement::Ring(RingData {
-                channel: dto.channel,
-                style: RingStyle { fit, text },
-            }),
-        )?;
-        self.spans(ring, &dto.spans, true)?;
-        self.finish(ring)
+        let data = DocElement::Ring(RingData {
+            channel: dto.channel,
+            style: RingStyle { fit, text },
+        });
+        self.element(frame, data, |b, ring| b.spans(ring, &dto.spans, true))
+            .map(|_| ())
     }
 
     /// A connector: the path, then what is on it.
@@ -258,15 +251,20 @@ impl Builder {
             dto.visible,
             dto.zoom.as_ref(),
         )?;
-        let connector = self.add(node, DocElement::Connector(ConnectorData { path }))?;
-        self.on_path(
-            connector,
-            &dto.spans,
-            dto.cap_start.as_ref(),
-            dto.cap_end.as_ref(),
-            dto.label.as_ref(),
-        )?;
-        self.finish(connector)
+        self.element(
+            node,
+            DocElement::Connector(ConnectorData { path }),
+            |b, connector| {
+                b.on_path(
+                    connector,
+                    &dto.spans,
+                    dto.cap_start.as_ref(),
+                    dto.cap_end.as_ref(),
+                    dto.label.as_ref(),
+                )
+            },
+        )
+        .map(|_| ())
     }
 
     /// The path a connector or a line link draws.
@@ -332,24 +330,22 @@ impl Builder {
     fn cap(&mut self, path: NodeId, dto: &CapDto, start: bool) -> LoadResult<()> {
         let text: TextStyle = self.text_style(text_in!(dto), SizeUnit::Pt)?;
         let data = CapData { text };
-        let cap = self.add(
-            path,
-            if start {
-                DocElement::CapStart(data)
-            } else {
-                DocElement::CapEnd(data)
-            },
-        )?;
-        self.spans(cap, &dto.spans, false)?;
-        self.finish(cap)
+        let element = if start {
+            DocElement::CapStart(data)
+        } else {
+            DocElement::CapEnd(data)
+        };
+        self.element(path, element, |b, cap| b.spans(cap, &dto.spans, false))
+            .map(|_| ())
     }
 
     /// A label and its spans.
     fn label(&mut self, parent: NodeId, dto: &LabelDto) -> LoadResult<()> {
         let style = self.label_style(dto.t, dto.offset, text_in!(dto))?;
-        let label = self.add(parent, DocElement::Label(LabelData { style }))?;
-        self.spans(label, &dto.spans, false)?;
-        self.finish(label)
+        self.element(parent, DocElement::Label(LabelData { style }), |b, label| {
+            b.spans(label, &dto.spans, false)
+        })
+        .map(|_| ())
     }
 
     /// A link: a line, or a portal with its two ends.
@@ -385,54 +381,47 @@ impl Builder {
         // `to` waits: the node it names may come later in the file. The
         // root stands in until `resolve_links`.
         let placeholder = self.tree.root();
-        let link = self.add(
-            node,
-            DocElement::Link(LinkData {
-                to: placeholder,
-                kind,
-                path,
-            }),
-        )?;
-        let mut path = self.path.clone();
-        path.push(Seg::Key("to"));
-        self.links.push(PendingLink {
-            link,
-            owner: node,
-            to: dto.to,
+        let data = DocElement::Link(LinkData {
+            to: placeholder,
+            kind,
             path,
         });
-        match kind {
-            LinkKind::Line => {
-                self.on_path(
+        let mut to_path = self.path.clone();
+        to_path.push(Seg::Key("to"));
+        self.element(node, data, |b, link| {
+            b.links.push(PendingLink {
+                link,
+                owner: node,
+                to: dto.to,
+                path: to_path,
+            });
+            match kind {
+                LinkKind::Line => b.on_path(
                     link,
                     &dto.spans,
                     dto.cap_start.as_ref(),
                     dto.cap_end.as_ref(),
                     dto.label.as_ref(),
-                )?;
-            }
-            LinkKind::Portal => match &dto.ends {
-                Some([source, target]) => {
-                    self.key("ends", |b| {
+                ),
+                LinkKind::Portal => match &dto.ends {
+                    Some([source, target]) => b.key("ends", |b| {
                         b.at(Seg::Index(0), |b| b.portal_end(link, 0, source))?;
                         b.at(Seg::Index(1), |b| b.portal_end(link, 1, target))
-                    })?;
-                }
-                None => {
-                    for end in 0..2 {
-                        let id = self.add(
-                            link,
-                            DocElement::PortalEnd(PortalEndData {
+                    }),
+                    None => {
+                        for end in 0..2 {
+                            let data = DocElement::PortalEnd(PortalEndData {
                                 end,
                                 ..PortalEndData::default()
-                            }),
-                        )?;
-                        self.finish(id)?;
+                            });
+                            b.element(link, data, |_, _| Ok(()))?;
+                        }
+                        Ok(())
                     }
-                }
-            },
-        }
-        self.finish(link)
+                },
+            }
+        })
+        .map(|_| ())
     }
 
     /// Refuse any key of a line that a portal link was given.
@@ -467,12 +456,15 @@ impl Builder {
     /// One end of a portal link, and its marker spans and label.
     fn portal_end(&mut self, link: NodeId, end: u8, dto: &PortalEndDto) -> LoadResult<()> {
         let style = self.portal_end_style(portal_in!(dto))?;
-        let id = self.add(link, DocElement::PortalEnd(PortalEndData { end, style }))?;
-        self.spans(id, &dto.spans, false)?;
-        if let Some(label) = &dto.label {
-            self.key("label", |b| b.label(id, label))?;
-        }
-        self.finish(id)
+        let data = DocElement::PortalEnd(PortalEndData { end, style });
+        self.element(link, data, |b, id| {
+            b.spans(id, &dto.spans, false)?;
+            if let Some(label) = &dto.label {
+                b.key("label", |b| b.label(id, label))?;
+            }
+            Ok(())
+        })
+        .map(|_| ())
     }
 }
 

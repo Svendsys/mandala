@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The saver: a [`Document`](crate::document::ids::Document) becomes
+//! The saver: a [`Document`] becomes
 //! the DTOs of its file, and serde writes them.
 //!
 //! **Deterministic.** The DTO fields are declared in schema order, so
@@ -76,7 +76,7 @@ struct Saver<'a> {
 }
 
 /// The DTOs of `doc`. O(nodes + elements): one walk.
-pub(super) fn to_dto(doc: &Document) -> MapDto {
+pub(super) fn dtos_of(doc: &Document) -> MapDto {
     let mut saver = Saver {
         doc,
         vars: &doc.theme().variables,

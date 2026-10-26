@@ -11,7 +11,7 @@
 use crate::document::bounds;
 use crate::document::element::{FlowStyle, FrameStyle, LabelStyle, PortalEndStyle, TextStyle};
 use crate::document::format::dto::DirectionDto;
-use crate::document::format::load::{Builder, LoadResult};
+use crate::document::format::from_dto::{Builder, LoadResult};
 use crate::document::format::spelling::{ColorDto, FitDto, StartDto, WeightDto};
 use crate::document::format::SizeUnit;
 use crate::document::values::Direction;

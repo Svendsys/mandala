@@ -14,7 +14,7 @@ use crate::document::format::dto::{
     RingDefaultsDto, TextDefaultsDto, ThemeDto,
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
-use crate::document::format::load::{sorted_names, Builder, LoadResult};
+use crate::document::format::from_dto::{sorted_names, Builder, LoadResult};
 use crate::document::format::spelling::{HexDto, Named};
 use crate::document::format::SizeUnit;
 use crate::document::ids::{Definitions, EditDef, PresentationDef, VerbDef};
@@ -36,16 +36,14 @@ impl Builder {
         self.counts(dto)?;
         let root = self.tree.root();
         let theme = self.key("theme", |b| b.theme(&dto.theme))?;
-        let theme = self.add(root, DocElement::Theme(theme))?;
-        self.finish(theme)?;
+        self.element(root, DocElement::Theme(theme), |_, _| Ok(()))?;
         self.key("palettes", |b| b.palettes(root, &dto.palettes))?;
         let definitions = self.definitions(dto)?;
         let defaults = match &dto.defaults {
             Some(defaults) => self.key("defaults", |b| b.defaults(defaults))?,
             None => DefaultsData::default(),
         };
-        let defaults = self.add(root, DocElement::Defaults(Box::new(defaults)))?;
-        self.finish(defaults)?;
+        self.element(root, DocElement::Defaults(Box::new(defaults)), |_, _| Ok(()))?;
         self.each_by_channel(
             "nodes",
             &dto.nodes,
@@ -221,8 +219,7 @@ impl Builder {
                     groups: out,
                 })
             })?;
-            let id = self.add(root, DocElement::Palette(data))?;
-            self.finish(id)?;
+            self.element(root, DocElement::Palette(data), |_, _| Ok(()))?;
         }
         Ok(())
     }

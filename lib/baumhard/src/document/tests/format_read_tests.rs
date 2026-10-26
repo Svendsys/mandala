@@ -295,3 +295,20 @@ fn test_a_link_may_name_a_node_that_comes_later() {
     let DocElement::Link(link) = kid(&doc, one, DocKind::Link, 0).1 else { panic!("a link") };
     assert_eq!(link.to, nine, "the link leads to the arena node of id 9");
 }
+
+#[test]
+fn test_every_element_of_a_loaded_map_has_had_its_row_checked() {
+    // The loader runs `validate_shape` for every element it builds, the
+    // map itself included: the count of rows checked is the count of
+    // elements in the tree, for every fixture.
+    use crate::document::format::load_counting_checks;
+    use crate::document::tests::format_support::FIXTURES;
+    let mut total = 0;
+    for (name, text) in FIXTURES {
+        let (doc, checked) = load_counting_checks(text).unwrap();
+        let elements = doc.tree().descendants().count();
+        assert_eq!(checked, elements, "{name}: a row went unchecked");
+        total += elements;
+    }
+    assert!(total > 150, "precondition: {total} elements across the corpus");
+}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The loader's builder: the DTOs of a parsed file become a
-//! [`Document`](crate::document::ids::Document), in one pass.
+//! [`Document`], in one pass.
 //!
 //! **One pass, in key order.** The builder walks the DTOs depth first
 //! and appends each element to its parent. It never inserts into the
@@ -19,9 +19,9 @@
 //! **Names become indices here and nowhere else.** The theme's
 //! variables, the palettes and the verbs are read first, so a color,
 //! a node's palette or a trigger can be resolved to its
-//! [`VarId`](crate::document::values::VarId),
+//! [`VarId`],
 //! [`PaletteId`](crate::document::values::PaletteId) or
-//! [`VerbId`](crate::document::values::VerbId) as it is met. Links are
+//! [`VerbId`] as it is met. Links are
 //! the exception: a link may name a node that comes later in the file,
 //! so each is recorded and resolved once every node has an arena id.
 //!
@@ -83,11 +83,17 @@ pub(super) struct Builder {
     /// The font families already looked up: `None` for one this build
     /// has no face for.
     pub fonts: FxHashMap<String, Option<AppFont>>,
+    /// How many elements have had their row checked against the shape
+    /// rules. Every element is checked once, because
+    /// [`Self::element`] is the only way to add one; the count is how a
+    /// test sees that.
+    pub checked: usize,
 }
 
-/// The document a parsed file describes, or the first thing wrong
-/// with it. O(file): one pass over the DTOs, one hash insert per node.
-pub(super) fn build(dto: &MapDto) -> LoadResult<Document> {
+/// The document a parsed file describes and how many of its elements
+/// were checked against the shape rules, or the first thing wrong with
+/// it. O(file): one pass over the DTOs, one hash insert per node.
+pub(super) fn build(dto: &MapDto) -> LoadResult<(Document, usize)> {
     let mut builder = Builder {
         tree: Tree::new_non_indexed_with(DocElement::Map(MapData {
             name: dto.name.clone(),
@@ -99,17 +105,21 @@ pub(super) fn build(dto: &MapDto) -> LoadResult<Document> {
         idents: FxHashMap::default(),
         links: Vec::new(),
         fonts: FxHashMap::default(),
+        checked: 0,
     };
     let definitions = builder.map(dto)?;
     builder.resolve_links()?;
     let root = builder.tree.root();
     builder.finish(root)?;
-    Document::from_tree(builder.tree, definitions).map_err(|error| LoadError {
-        path: String::new(),
-        kind: LoadErrorKind::Internal {
-            message: error.to_string(),
-        },
-    })
+    let checked = builder.checked;
+    Document::from_tree(builder.tree, definitions)
+        .map(|document| (document, checked))
+        .map_err(|error| LoadError {
+            path: String::new(),
+            kind: LoadErrorKind::Internal {
+                message: error.to_string(),
+            },
+        })
 }
 
 impl Builder {
@@ -211,9 +221,29 @@ impl Builder {
         })
     }
 
-    /// Append `element` under `parent`: the O(1) end of its row, since
+    /// Add `element` under `parent`, let `under` add what lies under it,
+    /// then check the element's row against the shape rules
+    /// ([`validate_shape`]). **The only way to put an element in the
+    /// tree**, so none is added without its check.
+    ///
+    /// The add is the O(1) append at the end of the parent's row, since
     /// the builder adds a row in key order.
-    pub fn add(&mut self, parent: NodeId, element: DocElement) -> LoadResult<NodeId> {
+    pub fn element(
+        &mut self,
+        parent: NodeId,
+        element: DocElement,
+        under: impl FnOnce(&mut Self, NodeId) -> LoadResult<()>,
+    ) -> LoadResult<NodeId> {
+        let id = self.add(parent, element)?;
+        under(self, id)?;
+        self.finish(id)?;
+        Ok(id)
+    }
+
+    /// Append `element` under `parent`: the O(1) end of its row, since
+    /// the builder adds a row in key order. Only [`Self::element`] calls
+    /// it.
+    fn add(&mut self, parent: NodeId, element: DocElement) -> LoadResult<NodeId> {
         self.tree
             .insert_child(parent, element, Placement::Last)
             .map_err(|error| {
@@ -225,7 +255,8 @@ impl Builder {
 
     /// Check the shape rules for the element at `id`, whose children
     /// are all in.
-    pub fn finish(&self, id: NodeId) -> LoadResult<()> {
+    fn finish(&mut self, id: NodeId) -> LoadResult<()> {
+        self.checked += 1;
         validate_shape(&self.tree, id).map_err(|error| {
             self.error(LoadErrorKind::Internal {
                 message: error.to_string(),

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! [`Objects`](crate::document::format::strict::Objects): a deserializer
+//! [`Objects`]: a deserializer
 //! adapter that holds the whole file to being JSON *objects* where the
 //! schema has objects.
 //!
@@ -17,7 +17,7 @@
 //! The adapter has to reach every nested value, so it wraps what serde
 //! hands out at each step — the sequence, the map and the enum accessors
 //! and the seeds they take — and is otherwise a pass-through. It changes
-//! one thing: [`Strict`] is the visitor a struct's `deserialize_struct`
+//! one thing: `Strict` is the visitor a struct's `deserialize_struct`
 //! (or a struct variant) is given, and it refuses `visit_seq`.
 
 use serde::de::{

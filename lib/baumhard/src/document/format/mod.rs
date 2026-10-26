@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The file format: a [`Document`](crate::document::ids::Document) as
+//! The file format: a [`Document`] as
 //! strict, nested, typed JSON — `.mandala.json` (design §7).
 //!
-//! [`load`] reads a file into a document and [`save`] writes one. The
+//! [`load`] reads a file into a document and
+//! [`save`] writes one. The
 //! shape, key by key, is `format/schema.md`; this module is its
 //! reference implementation, and the two are held to each other by the
 //! fixture corpus.
@@ -32,7 +33,7 @@
 //!
 //! **One spelling per value, in the whole file.** The value spellings
 //! (a color, a weight, a fit mode, a start point) are the types in
-//! [`spelling`](crate::document::format::spelling), names throughout,
+//! `document::format::spelling`, names throughout,
 //! never an index: indices are assigned by sorted name, so a saved one
 //! would name another entry the moment a name was added. A predicate
 //! saved in an edit (V1-D1) is spelled with them too, and the strictness
@@ -43,19 +44,15 @@
 
 #[macro_use]
 mod macros;
-/// The DTOs: the JSON shape as serde types.
 pub(crate) mod dto;
-/// [`LoadError`] and its kinds.
 pub mod error;
-mod load;
+mod from_dto;
 mod load_map;
 mod load_node;
 pub(crate) mod load_style;
-mod save;
-/// The file's spellings of colors, weights, fit modes and start points.
 pub(crate) mod spelling;
-/// The deserializer adapter that holds the file to objects.
 mod strict;
+mod to_dto;
 
 pub use error::{LoadError, LoadErrorKind};
 
@@ -170,7 +167,15 @@ pub fn load(json: &str) -> Result<Document, LoadError> {
 pub(crate) fn load_under(json: &str, ceiling: Option<u64>) -> Result<Document, LoadError> {
     check_text_cap_against(json, ceiling)?;
     let dto = parse(json)?;
-    load::build(&dto)
+    from_dto::build(&dto).map(|(document, _)| document)
+}
+
+/// [`load`], and how many elements of the document had their row
+/// checked against the shape rules: every element, which a test asserts.
+#[cfg(test)]
+pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), LoadError> {
+    check_text_cap_against(json, MAX_MAP_BYTES)?;
+    from_dto::build(&parse(json)?)
 }
 
 /// Refuse `json` if it is longer than `ceiling`. O(1).
@@ -192,7 +197,7 @@ pub(crate) fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result
 /// out with a warning (see the module docs of the saver). Cost: one walk
 /// of the tree to build the DTOs, then serde_json's writer; O(elements).
 pub fn save(doc: &Document) -> String {
-    let dto = save::to_dto(doc);
+    let dto = to_dto::dtos_of(doc);
     let mut text = match serde_json::to_string_pretty(&dto) {
         Ok(text) => text,
         Err(error) => {

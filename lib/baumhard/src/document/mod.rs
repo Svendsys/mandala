@@ -23,8 +23,8 @@
 //! input it reads so the projection can track what depends on what.
 //!
 //! Nothing here mutates a document: mutations are V1-B3 and the writer
-//! V1-B4. A document is built by [`format::load`] — the one place a
-//! file becomes a document — and written back by [`format::save`].
+//! V1-B4. A document is built by [`format::load`](crate::document::format::load) — the one place a
+//! file becomes a document — and written back by [`format::save`](crate::document::format::save).
 
 /// Every numeric bound the loader and the mutations enforce.
 pub mod bounds;
@@ -37,8 +37,6 @@ pub mod deps;
 /// [`DocKind`](element::DocKind), [`DocElement`](element::DocElement)
 /// and the per-kind data, and the engine instantiation.
 pub mod element;
-/// The `.mandala.json` format: [`load`](format::load) and
-/// [`save`](format::save), strict and deterministic.
 pub mod format;
 /// [`NodeIdent`](ids::NodeIdent), [`Document`](ids::Document) and its
 /// read API.

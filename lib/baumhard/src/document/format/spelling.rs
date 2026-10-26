@@ -104,8 +104,8 @@ pub(crate) fn parse_hex(text: &str) -> Option<[u8; 4]> {
     }
     let nibble = |byte: u8| char::from(byte).to_digit(16).and_then(|d| u8::try_from(d).ok());
     let mut out = [0, 0, 0, 255];
-    for (slot, pair) in out.iter_mut().zip(digits.as_bytes().chunks_exact(2)) {
-        let [high, low] = pair else { return None };
+    let (pairs, _) = digits.as_bytes().as_chunks::<2>();
+    for (slot, [high, low]) in out.iter_mut().zip(pairs) {
         *slot = (nibble(*high)? << 4) | nibble(*low)?;
     }
     Some(out)

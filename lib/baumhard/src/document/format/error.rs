@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! [`LoadError`](crate::document::format::error::LoadError): why a
+//! [`LoadError`]: why a
 //! `.mandala.json` did not load, and where in the file.
 //!
 //! **Every error names its JSON path** (design §16): the location of

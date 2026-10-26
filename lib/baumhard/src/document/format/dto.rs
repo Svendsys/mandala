@@ -14,7 +14,7 @@
 //!
 //! **Every optional key is an `Option` and absent means "not set"**
 //! (inherit); `null` is not a way to write it
-//! ([`present`](crate::document::format::spelling::present)). The keys
+//! ([`present`]). The keys
 //! that have a default instead of an inherited value (`channel`,
 //! `folded`, `hidden`, `opacity`, a section's `offset`) are omitted by
 //! the saver when they equal it.

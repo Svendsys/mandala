@@ -20,6 +20,8 @@ mod format_robust_tests;
 #[cfg(test)]
 mod format_save_tests;
 #[cfg(test)]
+mod format_schema_tests;
+#[cfg(test)]
 mod format_strict_tests;
 /// What the format's tests share: the fixture corpus and ways to read
 /// a loaded document.
