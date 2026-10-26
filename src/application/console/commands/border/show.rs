@@ -14,7 +14,7 @@ use baumhard::mindmap::border_pattern::SidePattern;
 use baumhard::mindmap::model::{MindMap, MindNode};
 
 use crate::application::console::parser::Args;
-use crate::application::console::spec::{kvs, Descent};
+use crate::application::console::spec::{kvs, Descent, Vocabulary};
 use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
 use crate::application::document::SelectionState;
 
@@ -55,10 +55,20 @@ pub fn execute_border_show(descent: &Descent, args: &Args, eff: &mut ConsoleEffe
             ));
         }
     }
-    let verbose = descent
-        .slot_value(args)
-        .get(0)
-        .is_some_and(|p| p.eq_ignore_ascii_case("verbose"));
+    // The slot holds a closed word list, so a word outside it is
+    // refused by name, echoed as typed: reading anything but
+    // `verbose` as "not verbose" answered `border show verbos` with
+    // the plain readout, a confident wrong answer (#135).
+    let verbose = match descent.slot_value(args).get(0) {
+        None => false,
+        Some(p) if Vocabulary::Words(super::grammar::VERBOSE_FLAG).admits(p) => true,
+        Some(p) => {
+            return ExecResult::err(format!(
+                "border show: unknown word '{}'; pick verbose or side=<top|bottom|left|right|all>",
+                p
+            ))
+        }
+    };
     let node = match eff.document().mindmap.nodes.get(&id) {
         Some(n) => n,
         None => return ExecResult::err(format!("border: node '{}' not found", id)),
