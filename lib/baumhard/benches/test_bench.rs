@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use baumhard::core::tests::primitives_tests::*;
+use baumhard::engine::tests::builder_tests::*;
+use baumhard::engine::tests::inherited_tests::*;
+use baumhard::engine::tests::walker_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::color_tests::*;
 use baumhard::font::tests::fonts_tests::*;
@@ -596,8 +599,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("instruction_repeat_while_always_true", |b| {
         b.iter(do_instruction_repeat_while_always_true)
     });
-    c.bench_function("instruction_rotate_while", |b| {
-        b.iter(do_instruction_rotate_while)
+    c.bench_function("instruction_mutator_applies_its_attached_mutation", |b| {
+        b.iter(do_instruction_mutator_applies_its_attached_mutation)
     });
     c.bench_function("mutator_tree_applies_to_target", |b| {
         b.iter(do_mutator_tree_applies_to_target)
@@ -1522,6 +1525,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("spatial_descend_delivers_event_to_leaf", |b| {
         b.iter(do_spatial_descend_delivers_event_to_leaf)
     });
+    c.bench_function("spatial_descend_prefers_the_smallest_overlapping_box", |b| {
+        b.iter(do_spatial_descend_prefers_the_smallest_overlapping_box)
+    });
+    c.bench_function("spatial_descend_skips_a_box_with_no_extent", |b| {
+        b.iter(do_spatial_descend_skips_a_box_with_no_extent)
+    });
     c.bench_function("spatial_descend_miss_is_noop", |b| {
         b.iter(do_spatial_descend_miss_is_noop)
     });
@@ -1585,6 +1594,66 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("map_children_ignores_sibling_channels_when_unequal_counts", |b| {
         b.iter(do_map_children_ignores_sibling_channels_when_unequal_counts)
+    });
+    // the engine over a non-glyph element: the walker matrix, inherited
+    // state, and the builder //
+    c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {
+        b.iter(do_engine_walk_aligns_mutators_by_channel)
+    });
+    c.bench_function("engine_walk_broadcasts_to_equal_channels", |b| {
+        b.iter(do_engine_walk_broadcasts_to_equal_channels)
+    });
+    c.bench_function("engine_walk_void_gates_descent_without_applying", |b| {
+        b.iter(do_engine_walk_void_gates_descent_without_applying)
+    });
+    c.bench_function("engine_walk_nested_macros_apply_in_order", |b| {
+        b.iter(do_engine_walk_nested_macros_apply_in_order)
+    });
+    c.bench_function("engine_repeat_while_stops_where_the_predicate_fails", |b| {
+        b.iter(do_engine_repeat_while_stops_where_the_predicate_fails)
+    });
+    c.bench_function("engine_repeat_while_filters_on_kind", |b| {
+        b.iter(do_engine_repeat_while_filters_on_kind)
+    });
+    c.bench_function("engine_repeat_while_resumes_with_the_terminator", |b| {
+        b.iter(do_engine_repeat_while_resumes_with_the_terminator)
+    });
+    c.bench_function("engine_map_children_pairs_by_position", |b| {
+        b.iter(do_engine_map_children_pairs_by_position)
+    });
+    c.bench_function(
+        "engine_apply_invalidates_the_cache_per_mutation_and_once_more",
+        |b| b.iter(do_engine_apply_invalidates_the_cache_per_mutation_and_once_more),
+    );
+    c.bench_function("engine_walk_wide_and_deep_tree", |b| {
+        b.iter(do_engine_walk_wide_and_deep_tree)
+    });
+    c.bench_function("inherited_state_reaches_a_grandchild", |b| {
+        b.iter(do_inherited_state_reaches_a_grandchild)
+    });
+    c.bench_function("inherited_state_is_read_after_the_ancestors_own_mutations", |b| {
+        b.iter(do_inherited_state_is_read_after_the_ancestors_own_mutations)
+    });
+    c.bench_function("inherited_state_leaves_a_sibling_subtree_alone", |b| {
+        b.iter(do_inherited_state_leaves_a_sibling_subtree_alone)
+    });
+    c.bench_function("inherited_state_threads_through_repeat_while", |b| {
+        b.iter(do_inherited_state_threads_through_repeat_while)
+    });
+    c.bench_function("inherited_state_threads_through_map_children", |b| {
+        b.iter(do_inherited_state_threads_through_map_children)
+    });
+    c.bench_function("inherited_state_reaches_the_terminator", |b| {
+        b.iter(do_inherited_state_reaches_the_terminator)
+    });
+    c.bench_function("engine_build_resolves_templates_and_runtime_payloads", |b| {
+        b.iter(do_engine_build_resolves_templates_and_runtime_payloads)
+    });
+    c.bench_function("engine_build_refuses_a_root_repeat", |b| {
+        b.iter(do_engine_build_refuses_a_root_repeat)
+    });
+    c.bench_function("engine_build_refuses_spatial_descend_without_geometry", |b| {
+        b.iter(do_engine_build_refuses_spatial_descend_without_geometry)
     });
     // camera viewport math //
     c.bench_function("canvas_to_screen_round_trips", |b| {

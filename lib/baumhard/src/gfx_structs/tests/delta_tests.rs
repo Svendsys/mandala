@@ -15,6 +15,7 @@
 //! never gave us.
 
 use crate::core::primitives::{ApplyOperation, ColorFontRegions, Discriminated};
+use crate::engine::mutator::MutatorType;
 use crate::font::fonts::AppFont;
 use crate::gfx_structs::area::{
     DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaCommandType, GlyphAreaField, GlyphAreaFieldType,
@@ -26,7 +27,9 @@ use crate::gfx_structs::model::{
     DeltaGlyphModel, GlyphComponent, GlyphLine, GlyphMatrix, GlyphModelCommand, GlyphModelCommandType,
     GlyphModelField, GlyphModelFieldType,
 };
-use crate::gfx_structs::mutator::{GfxMutator, Mutation, MutationType, MutatorType};
+use crate::gfx_structs::mutator::{
+    GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance, MutationType,
+};
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::util::color::Color;
@@ -158,9 +161,12 @@ pub fn do_pipeline_tags_are_derived() {
     );
     assert_eq!(GfxMutator::new_void(3).variant(), MutatorType::Void);
     assert!(GfxMutator::new_void(3).is(MutatorType::Void));
-    assert_eq!(Mutation::none().variant(), MutationType::None);
     assert_eq!(
-        Mutation::area_delta(DeltaGlyphArea::new(vec![])).variant(),
+        GfxMutation::Event(GlyphTreeEventInstance::new(GlyphTreeEvent::NoopEvent(0), 0)).variant(),
+        MutationType::Event
+    );
+    assert_eq!(
+        GfxMutation::area_delta(DeltaGlyphArea::new(vec![])).variant(),
         MutationType::AreaDelta
     );
 

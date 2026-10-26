@@ -64,7 +64,7 @@ use crate::core::primitives::ColorFontRegions;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::connection;
 use crate::mindmap::model::{GlyphConnectionConfig, MindMap};
 use crate::mindmap::scene_cache::{EdgeKey, SampleParams, SceneConnectionCache};
@@ -806,8 +806,8 @@ fn connection_edge_layout(edge_index: usize, elem: &ConnectionElement) -> (usize
 /// O(sum of glyph_positions across all elements). Allocates the
 /// tree arena. No font shaping happens here — that's the
 /// renderer's `walk_tree_into_buffers` step.
-pub fn build_connection_tree(elements: &[ConnectionElement]) -> Tree<GfxElement, GfxMutator> {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+pub fn build_connection_tree(elements: &[ConnectionElement]) -> GfxTree {
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let mut unique_id: usize = 1;
 
     for (idx, elem) in elements.iter().enumerate() {
@@ -828,7 +828,7 @@ pub fn build_connection_tree(elements: &[ConnectionElement]) -> Tree<GfxElement,
     tree
 }
 
-/// Build a [`MutatorTree`](crate::gfx_structs::tree::MutatorTree)
+/// Build a [`MutatorTree`](crate::gfx_structs::tree::GfxMutatorTree)
 /// that updates an already-registered connection tree to the
 /// current `elements` state without rebuilding the arena. Pairs
 /// with [`build_connection_tree`] — both consume
@@ -838,12 +838,12 @@ pub fn build_connection_tree(elements: &[ConnectionElement]) -> Tree<GfxElement,
 /// fields in place.
 pub fn build_connection_mutator_tree(
     elements: &[ConnectionElement],
-) -> crate::gfx_structs::tree::MutatorTree<GfxMutator> {
+) -> crate::gfx_structs::tree::GfxMutatorTree {
     use crate::gfx_structs::area::DeltaGlyphArea;
-    use crate::gfx_structs::mutator::Mutation;
-    use crate::gfx_structs::tree::MutatorTree;
+    use crate::gfx_structs::mutator::GfxMutation;
+    use crate::gfx_structs::tree::GfxMutatorTree;
 
-    let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
+    let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
         let edge_node = mt
@@ -853,7 +853,7 @@ pub fn build_connection_mutator_tree(
         for (channel, area) in children {
             let delta = DeltaGlyphArea::full_assign_from(&area);
             edge_node.append_value(
-                GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel),
+                GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel),
                 &mut mt.arena,
             );
         }

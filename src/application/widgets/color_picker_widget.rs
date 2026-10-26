@@ -17,7 +17,9 @@ use std::sync::OnceLock;
 use baumhard::font::fonts::AppFont;
 use serde::Deserialize;
 
-use baumhard::mutator_builder::MutatorNode;
+use baumhard::engine::builder::MutatorNode;
+use baumhard::gfx_structs::element::GfxElement;
+use baumhard::gfx_structs::mutator::GfxMutation;
 
 /// Top-level spec — one file describes the whole widget. All
 /// `Vec<String>` fields are read as slices by the renderer and never
@@ -49,11 +51,11 @@ pub struct ColorPickerWidgetSpec {
     /// Declarative mutator-tree shape for the picker overlay's
     /// **layout phase** — full per-cell field set, applied on layout
     /// changes only (initial open, viewport resize, RMB size_scale
-    /// drag). Walked by `baumhard::mutator_builder` at
-    /// apply time to produce a `MutatorTree<GfxMutator>` covering
+    /// drag). Built by `baumhard::engine::builder` at
+    /// apply time to produce a `GfxMutatorTree` covering
     /// every variable field on every cell. See the JSON file's
     /// `_mutator_spec_comment` for the on-disk contract.
-    pub mutator_spec: MutatorNode,
+    pub mutator_spec: MutatorNode<GfxElement, GfxMutation>,
     /// Declarative mutator-tree shape for the picker overlay's
     /// **dynamic phase** — slim per-section field lists, applied on
     /// every hover / HSV / drag frame. Shares the same channel layout
@@ -62,7 +64,7 @@ pub struct ColorPickerWidgetSpec {
     /// Pairs with the layout phase: layout writes static fields once,
     /// dynamic writes per-frame fields on top. See the JSON file's
     /// `_dynamic_mutator_spec_comment` for the on-disk contract.
-    pub dynamic_mutator_spec: MutatorNode,
+    pub dynamic_mutator_spec: MutatorNode<GfxElement, GfxMutation>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,7 +184,7 @@ mod tests {
     /// than as a silent picker misalignment.
     #[test]
     fn spec_mutator_spec_shape_matches_expectations() {
-        use baumhard::mutator_builder::{CountSrc, MutatorNode};
+        use baumhard::engine::builder::{CountSrc, MutatorNode};
         let spec = load_spec();
         let MutatorNode::Void { channel, children } = &spec.mutator_spec else {
             panic!("mutator_spec root must be a Void");
@@ -222,12 +224,10 @@ mod tests {
     /// relies on.
     #[test]
     fn spec_mutator_spec_total_live_cells_is_58() {
-        use baumhard::mutator_builder::{iter_section_channels, SectionContext};
-        struct NoCtx;
-        impl SectionContext for NoCtx {}
+        use baumhard::engine::builder::{iter_section_channels, NoRuntime};
         let spec = load_spec();
         let mut out = Vec::new();
-        iter_section_channels(&spec.mutator_spec, &NoCtx, &mut out);
+        iter_section_channels(&spec.mutator_spec, &NoRuntime, &mut out);
         assert_eq!(out.len(), 58);
     }
 
@@ -240,14 +240,12 @@ mod tests {
     /// in-place update.
     #[test]
     fn spec_dynamic_mutator_spec_channel_layout_mirrors_layout_spec() {
-        use baumhard::mutator_builder::{iter_section_channels, SectionContext};
-        struct NoCtx;
-        impl SectionContext for NoCtx {}
+        use baumhard::engine::builder::{iter_section_channels, NoRuntime};
         let spec = load_spec();
         let mut layout_out = Vec::new();
-        iter_section_channels(&spec.mutator_spec, &NoCtx, &mut layout_out);
+        iter_section_channels(&spec.mutator_spec, &NoRuntime, &mut layout_out);
         let mut dynamic_out = Vec::new();
-        iter_section_channels(&spec.dynamic_mutator_spec, &NoCtx, &mut dynamic_out);
+        iter_section_channels(&spec.dynamic_mutator_spec, &NoRuntime, &mut dynamic_out);
         assert_eq!(
             layout_out, dynamic_out,
             "dynamic spec channel layout must match layout spec"
@@ -261,7 +259,8 @@ mod tests {
     /// silent perf regression on the picker hot path.
     #[test]
     fn spec_dynamic_mutator_spec_per_section_fields_are_slim() {
-        use baumhard::mutator_builder::{CellField, MutationSrc, MutatorNode};
+        use baumhard::engine::builder::{MutationSrc, MutatorNode};
+        use baumhard::gfx_structs::template::CellField;
         let spec = load_spec();
         let MutatorNode::Void { children, .. } = &spec.dynamic_mutator_spec else {
             panic!("dynamic_mutator_spec root must be Void");
@@ -288,8 +287,8 @@ mod tests {
             let MutatorNode::Single { mutation, .. } = template.as_ref() else {
                 panic!("dynamic spec template must be Single");
             };
-            let MutationSrc::AreaDelta(fields) = mutation else {
-                panic!("dynamic spec mutation must be AreaDelta");
+            let MutationSrc::Template(fields) = mutation else {
+                panic!("dynamic spec mutation must be a Template");
             };
             assert_eq!(
                 fields.len(),

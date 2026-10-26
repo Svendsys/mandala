@@ -2,7 +2,7 @@
 
 //! Tests for per-node subtree AABB computation and invalidation (§T1).
 //!
-//! Covers [`Tree::ensure_subtree_aabbs`], bottom-up computation,
+//! Covers [`Tree::ensure_subtree_aabbs`](crate::engine::tree::Tree::ensure_subtree_aabbs), bottom-up computation,
 //! invalidation on mutation, and edge cases (void trees, negative
 //! positions, zero-bounds areas, deep/wide trees). Follows the
 //! `do_*()` / `test_*()` benchmark-reuse split (§T2.2).
@@ -10,14 +10,12 @@
 //! BVH descent tests live in `bvh_descent_tests.rs`.
 //! SpatialDescend tests live in `spatial_descend_tests.rs`.
 
-use glam::Vec2;
-
-use crate::core::primitives::Applicable;
 use crate::font::fonts;
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand};
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::{GfxMutator, Mutation};
-use crate::gfx_structs::tree::{MutatorTree, Tree};
+use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
+use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
+use glam::Vec2;
 
 /// Build a small tree for testing subtree AABBs:
 ///
@@ -32,9 +30,9 @@ use crate::gfx_structs::tree::{MutatorTree, Tree};
 ///  pos(20,40)
 ///  bounds(30,15)
 /// ```
-pub fn build_test_tree() -> Tree<GfxElement, GfxMutator> {
+pub fn build_test_tree() -> GfxTree {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
 
     let left = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("left", 14.0, 14.0, Vec2::new(10.0, 10.0), Vec2::new(50.0, 20.0)),
@@ -67,9 +65,9 @@ pub fn build_test_tree() -> Tree<GfxElement, GfxMutator> {
 }
 
 /// Deep chain: root → 4 void nodes → 1 area leaf (5 levels).
-pub fn build_deep_chain() -> Tree<GfxElement, GfxMutator> {
+pub fn build_deep_chain() -> GfxTree {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let mut parent = tree.root;
     for _ in 0..4 {
         let void = tree.arena.new_node(GfxElement::new_void(0));
@@ -86,9 +84,9 @@ pub fn build_deep_chain() -> Tree<GfxElement, GfxMutator> {
 }
 
 /// Wide tree: root has 20 GlyphArea children at different x positions.
-pub fn build_wide_tree() -> Tree<GfxElement, GfxMutator> {
+pub fn build_wide_tree() -> GfxTree {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     for i in 0..20_u32 {
         let area = GfxElement::new_area_non_indexed(
             GlyphArea::new_with_str(
@@ -186,11 +184,14 @@ pub fn do_subtree_aabb_invalidated_by_mutation() {
         .subtree_aabb()
         .expect("root has AABB");
 
-    let move_mutator = GfxMutator::new(Mutation::area_command(GlyphAreaCommand::MoveTo(500.0, 500.0)), 1);
-    let mut mtree = MutatorTree::new();
+    let move_mutator = GfxMutator::new(
+        GfxMutation::area_command(GlyphAreaCommand::MoveTo(500.0, 500.0)),
+        1,
+    );
+    let mut mtree = GfxMutatorTree::new();
     let move_id = mtree.arena.new_node(move_mutator);
     mtree.root.append(move_id, &mut mtree.arena);
-    mtree.apply_to(&mut tree);
+    mtree.apply_to(&mut tree, &());
 
     tree.ensure_subtree_aabbs();
     let after = tree
@@ -213,7 +214,7 @@ fn test_subtree_aabb_void_tree_is_none() {
 }
 
 pub fn do_subtree_aabb_void_tree_is_none() {
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let child = tree.arena.new_node(GfxElement::new_void(0));
     tree.root.append(child, &mut tree.arena);
     tree.ensure_subtree_aabbs();
@@ -292,7 +293,7 @@ fn test_subtree_aabb_single_area_node() {
 
 pub fn do_subtree_aabb_single_area_node() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("sole", 14.0, 14.0, Vec2::new(50.0, 60.0), Vec2::new(40.0, 30.0)),
         0,
@@ -315,7 +316,7 @@ fn test_subtree_aabb_zero_bounds_area_ignored() {
 
 pub fn do_subtree_aabb_zero_bounds_area_ignored() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("zero", 14.0, 14.0, Vec2::new(100.0, 100.0), Vec2::new(0.0, 0.0)),
         0,
@@ -335,7 +336,7 @@ fn test_subtree_aabb_negative_position() {
 
 pub fn do_subtree_aabb_negative_position() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("neg", 14.0, 14.0, Vec2::new(-50.0, -30.0), Vec2::new(100.0, 60.0)),
         0,
@@ -363,7 +364,7 @@ fn test_subtree_aabb_merge_none_base_with_child() {
 /// `union_aabb(None, other) -> other` path.
 pub fn do_subtree_aabb_merge_none_base_with_child() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let void = tree.arena.new_node(GfxElement::new_void(0));
     let child = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("c", 14.0, 14.0, Vec2::new(5.0, 5.0), Vec2::new(10.0, 10.0)),
@@ -388,7 +389,7 @@ fn test_subtree_aabb_merge_two_disjoint_children() {
 /// `union_aabb(Some(a), b) -> min/max merge` path.
 pub fn do_subtree_aabb_merge_two_disjoint_children() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let void = tree.arena.new_node(GfxElement::new_void(0));
     let a = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("a", 14.0, 14.0, Vec2::new(-10.0, -10.0), Vec2::new(5.0, 5.0)),
@@ -418,7 +419,7 @@ fn test_subtree_aabb_all_children_zero_bounds() {
 /// child contributes None, so the parent's subtree AABB is None.
 pub fn do_subtree_aabb_all_children_zero_bounds() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let void = tree.arena.new_node(GfxElement::new_void(0));
     for _ in 0..3 {
         let area = GfxElement::new_area_non_indexed(

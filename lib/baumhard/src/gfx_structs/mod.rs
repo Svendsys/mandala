@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Render-side graph structures — the `GfxElement` tree, its
-//! mutators, the predicate language that steers walker traversal,
-//! and the `Scene` that composes multiple trees into one frame.
-//! Mindmap nodes, borders, connections, and overlay UI all compile
-//! down to `GfxElement`s; mutations flow through the walker to
+//! Render-side graph structures — the glyph instantiation of the
+//! [mutation engine](crate::engine): the `GfxElement` element type, its
+//! `GfxMutation` payload, how it answers predicates, its builder
+//! template, the spatial queries only glyph trees answer, and the
+//! `Scene` that composes multiple trees into one frame. Mindmap nodes,
+//! borders, connections, and overlay UI all compile down to
+//! `GfxElement`s; mutations flow through the engine's walker to
 //! reshape them without rebuilding from scratch.
 
 /// `GlyphArea` — text-region element variant: text, scale,
@@ -24,21 +26,24 @@ pub mod delta;
 /// `GfxElement` — tree-node variant (`GlyphArea` / `GlyphModel` /
 /// `Void`) plus its field enum, flags, and AABB caching.
 pub mod element;
+/// How a `GfxElement` answers a predicate's field tests — the glyph
+/// `Inspect` implementation over `GfxElementField`.
+pub mod inspect;
 /// `GlyphModel` wrapping a `GlyphMatrix` of `GlyphLine`s of
 /// `GlyphComponent`s.
 pub mod model;
-/// `GfxMutator` — top-level mutator enum (`Single` / `Void` /
-/// `Instruction` / `Macro`) the walker applies.
+/// `GfxMutation` — the glyph payload — its `GfxMutator` node alias,
+/// and the glyph event side channel.
 pub mod mutator;
-/// Predicate language steering walker traversal (the conditions in
-/// `Instruction::RepeatWhile` and siblings).
-pub mod predicate;
 /// `Scene` — composes multiple `Tree`s at per-layer offsets into a
 /// single rendered frame.
 pub mod scene;
 /// Per-node background / hit-test shape enum shared by the
 /// renderer (SDF) and the BVH hit test.
 pub mod shape;
+/// `CellField` — the glyph payload's builder template — and the
+/// helpers that resolve one into an `AreaDelta`.
+pub mod template;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 /// `#[allow(clippy::unwrap_used)]` because this is a tests tree
@@ -49,12 +54,9 @@ pub mod shape;
 /// `util::unwrap_posture`, which excludes these trees by path.
 #[allow(clippy::unwrap_used)]
 pub mod tests;
-/// Arena-backed `Tree` plus `MutatorTree` — the mutation-first
-/// substrate (§B2).
+/// `GfxTree` / `GfxMutatorTree`, the glyph tree's cache, and the
+/// spatial queries (AABB memo, BVH hit-test) only glyph trees answer.
 pub mod tree;
-/// Walker that aligns a `MutatorTree` against a target `Tree` by
-/// channel — the `apply_to` engine.
-pub mod tree_walker;
 /// Spatial bookkeeping: grid-bucket region index, grid parameters,
 /// per-model hit-box bags.
 pub mod util;

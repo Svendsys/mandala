@@ -25,9 +25,8 @@
 
 use std::collections::HashMap;
 
-use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::{BranchChannel, Tree};
+use crate::engine::element::TreeElement;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::model::{
     ColorGroup, ColorOverrides, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindMap, Palette,
     PortalEndpointState,
@@ -58,7 +57,7 @@ use super::fixtures::{sized_node, synthetic_map, synthetic_node, synthetic_porta
 /// The one field neither this comparison nor the signature reads
 /// is `hitbox`, which both builders leave empty — pinned by
 /// `test_border_and_portal_areas_carry_no_hitbox`.
-fn trees_draw_identically(a: &Tree<GfxElement, GfxMutator>, b: &Tree<GfxElement, GfxMutator>) -> bool {
+fn trees_draw_identically(a: &GfxTree, b: &GfxTree) -> bool {
     let a_nodes: Vec<_> = a.root.descendants(&a.arena).collect();
     let b_nodes: Vec<_> = b.root.descendants(&b.arena).collect();
     if a_nodes.len() != b_nodes.len() {

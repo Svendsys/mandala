@@ -19,8 +19,8 @@ use glam::Vec2;
 use crate::core::primitives::ColorFontRegions;
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea};
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::{GfxMutator, Mutation};
-use crate::gfx_structs::tree::{MutatorTree, Tree};
+use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
+use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use crate::mindmap::SELECTION_HIGHLIGHT;
 use crate::util::color;
 
@@ -82,8 +82,8 @@ pub fn handle_identity_sequence<E: HandleVisual>(elements: &[E]) -> Vec<usize> {
 /// computed slice. Channels come from `HandleVisual::channel`
 /// so the in-place mutator path can target each leaf by the
 /// same kind-derived channel across drag frames.
-pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> Tree<GfxElement, GfxMutator> {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> GfxTree {
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
 
     for (idx, elem) in elements.iter().enumerate() {
         // Ids run 1.. in insertion order.
@@ -96,20 +96,20 @@ pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> Tree<GfxElement, Gf
     tree
 }
 
-/// Build a [`MutatorTree`] that updates an already-registered
+/// Build a [`GfxMutatorTree`] that updates an already-registered
 /// handle tree to the current `elements` state without
 /// rebuilding the arena. Pairs with [`build_handle_tree`] —
 /// applying this mutator to a tree built from an element slice
 /// with the same identity sequence (per
 /// [`handle_identity_sequence`]) updates each handle's variable
 /// fields in place via `DeltaGlyphArea::full_assign_from`.
-pub fn build_handle_mutator_tree<E: HandleVisual>(elements: &[E]) -> MutatorTree<GfxMutator> {
-    let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
+pub fn build_handle_mutator_tree<E: HandleVisual>(elements: &[E]) -> GfxMutatorTree {
+    let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for elem in elements {
         let (channel, area) = handle_layout(elem);
         let delta = DeltaGlyphArea::full_assign_from(&area);
         mt.root.append_value(
-            GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel),
+            GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel),
             &mut mt.arena,
         );
     }

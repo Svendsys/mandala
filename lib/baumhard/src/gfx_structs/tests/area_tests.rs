@@ -23,7 +23,7 @@ use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Rang
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField, OutlineStyle};
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::model::GlyphModel;
-use crate::gfx_structs::mutator::Mutation;
+use crate::gfx_structs::mutator::GfxMutation;
 use crate::gfx_structs::shape::NodeShape;
 use crate::util::geometry::{almost_equal_vec2, clockwise_rotation_around_pivot};
 use crate::util::ordered_vec2::OrderedVec2;
@@ -294,7 +294,7 @@ pub fn do_shape_field_add_picks_rhs() {
     let combined = lhs + rhs.clone();
     assert_eq!(combined, rhs);
 }
-// ── Mutation-surface completeness: area commands / deltas (P1-10) ────
+// ── GfxMutation-surface completeness: area commands / deltas (P1-10) ────
 
 /// `GlyphAreaCommand::ChangeRegionRange` must not panic when the
 /// requested source range is missing — interactive mutation paths
@@ -507,7 +507,7 @@ fn documented_rotate_example() -> String {
 }
 
 pub fn do_area_rotate_command_json_wire_shape() {
-    let command = Mutation::AreaCommand(Box::new(GlyphAreaCommand::Rotate {
+    let command = GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::Rotate {
         pivot: Vec2::new(1.0, 2.0),
         degrees: 90.0,
     }));
@@ -521,11 +521,11 @@ pub fn do_area_rotate_command_json_wire_shape() {
     // Read, do not restate: this is the byte sequence the doc actually
     // publishes today, whatever that is.
     let documented = documented_rotate_example();
-    let parsed: Mutation = serde_json::from_str(&documented).unwrap_or_else(|e| {
+    let parsed: GfxMutation = serde_json::from_str(&documented).unwrap_or_else(|e| {
         panic!("the example published in format/mutations.md must parse: {e}\n{documented}")
     });
     match parsed {
-        Mutation::AreaCommand(command) => match *command {
+        GfxMutation::AreaCommand(command) => match *command {
             GlyphAreaCommand::Rotate { pivot, degrees } => {
                 assert_eq!(pivot, Vec2::ZERO);
                 assert_eq!(degrees, 90.0);
@@ -539,5 +539,5 @@ pub fn do_area_rotate_command_json_wire_shape() {
     // `Vec2` deserializer. Pinned so a future doc edit that reaches
     // for the intuitive-looking map shape fails here first.
     let map_shaped = r#"{"AreaCommand": { "Rotate": { "pivot": { "x": 0.0, "y": 0.0 }, "degrees": 90.0 } }}"#;
-    assert!(serde_json::from_str::<Mutation>(map_shaped).is_err());
+    assert!(serde_json::from_str::<GfxMutation>(map_shaped).is_err());
 }

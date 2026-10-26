@@ -192,7 +192,7 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// and with no guard either: every comparison is `>=` / `<=`, and
 /// both are false against `NaN`. That is a deliberate difference
 /// from the four-way *disjunction* this replaced at
-/// [`crate::gfx_structs::tree_walker`]'s BVH prune, which spelled
+/// the glyph tree's BVH prune (`bvh_find`), which spelled
 /// the same question as `x < min.x || x > max.x || …` and so
 /// answered "outside is false, descend" for a `NaN` box — walking a
 /// subtree whose bounds are not a box. No reachable `NaN` was found

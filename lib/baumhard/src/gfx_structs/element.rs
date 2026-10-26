@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `GfxElement` — the value type every `Tree<GfxElement, _>` node
+//! `GfxElement` — the value type every `GfxTree` node
 //! holds. Three variants cover the two renderable glyph types
 //! (`GlyphArea` for text regions, `GlyphModel` for composed glyph
 //! shapes) plus a lightweight `Void` placeholder used to pad tree
@@ -11,10 +11,11 @@
 //! caching that accelerates the hit-test BVH descent.
 
 use crate::core::primitives::{ColorFontRegionField, Flag, Flaggable, Range};
+use crate::engine::element::TreeElement;
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
 use crate::gfx_structs::model::{GlyphModel, GlyphModelField};
 use crate::gfx_structs::mutator::GlyphTreeEventInstance;
-use crate::gfx_structs::tree::{BranchChannel, EventSubscriber, TreeEventConsumer, TreeNode};
+use crate::gfx_structs::tree::{EventSubscriber, GlyphTreeCache, TreeEventConsumer};
 use crate::util::color::FloatRgba;
 use crate::util::geometry::clockwise_rotation_around_pivot;
 use crate::util::ordered_vec2::OrderedVec2;
@@ -52,7 +53,7 @@ pub enum GfxElementField {
 
 /// A node element in the Baumhard glyph tree.
 ///
-/// Every node in a [`Tree<GfxElement, GfxMutator>`](crate::gfx_structs::tree::Tree)
+/// Every node in a [`GfxTree`](crate::gfx_structs::tree::GfxTree)
 /// stores one `GfxElement`. The three variants cover the two renderable
 /// glyph types ([`GlyphArea`] for text regions, [`GlyphModel`] for
 /// composed glyph shapes) and a lightweight [`Void`](GfxElement::Void)
@@ -88,7 +89,7 @@ pub enum GfxElement {
         event_subscribers: Vec<EventSubscriber>,
         /// Cached AABB covering this node and all its descendants.
         /// Computed lazily by
-        /// [`Tree::ensure_subtree_aabbs`](crate::gfx_structs::tree::Tree::ensure_subtree_aabbs)
+        /// [`Tree::ensure_subtree_aabbs`](crate::engine::tree::Tree::ensure_subtree_aabbs)
         /// and invalidated when a mutation touches the tree. Not
         /// serialised — it is a runtime cache, not persistent state.
         subtree_aabb: Option<(Vec2, Vec2)>,
@@ -447,12 +448,6 @@ impl GfxElement {
     }
 }
 
-impl TreeNode for GfxElement {
-    fn void() -> Self {
-        Self::new_void_with_id(0, 0)
-    }
-}
-
 impl Flaggable for GfxElement {
     fn flag_is_set(&self, flag: Flag) -> bool {
         match self {
@@ -588,13 +583,41 @@ impl TreeEventConsumer for GfxElement {
     }
 }
 
-impl BranchChannel for GfxElement {
+/// The glyph instantiation of the engine. One kind, so routing stays
+/// channel-only; no inherited state; the AABB memo and region index
+/// are the tree's [`GlyphTreeCache`]. Spatial: a `GlyphArea` with a
+/// positive render size answers [`TreeElement::spatial_bounds`]
+/// with its position and render bounds; a model or a `Void` has no
+/// box of its own.
+impl TreeElement for GfxElement {
+    type Kind = ();
+    type Cache = GlyphTreeCache;
+    type Inherited = ();
+    const SPATIAL: bool = true;
+
+    fn kind(&self) {}
+
     fn channel(&self) -> usize {
         match self {
             GfxElement::GlyphArea { channel, .. } => *channel,
             GfxElement::Void { channel, .. } => *channel,
             GfxElement::GlyphModel { channel, .. } => *channel,
         }
+    }
+
+    fn void() -> Self {
+        Self::new_void_with_id(0, 0)
+    }
+
+    fn inherit(&self, _parent: &()) {}
+
+    /// `(position, render_bounds)` of a `GlyphArea` whose render
+    /// bounds are positive on both axes — the same box, and the same
+    /// positivity rule, as the BVH behind `Tree::descendant_at` uses.
+    fn spatial_bounds(&self) -> Option<(Vec2, Vec2)> {
+        let area = self.glyph_area()?;
+        let bounds = area.render_bounds.to_vec2();
+        (bounds.x > 0.0 && bounds.y > 0.0).then(|| (area.position.to_vec2(), bounds))
     }
 }
 

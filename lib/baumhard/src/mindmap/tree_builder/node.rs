@@ -37,9 +37,8 @@ use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Flag, Flaggable
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::model::{GlyphComponent, GlyphLine, GlyphModel};
-use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::shape::NodeShape;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
 use crate::mindmap::model::{ChildIndex, MindMap, MindNode, MindSection};
 use crate::util::color::{self, Color as BaumhardColor};
@@ -464,7 +463,7 @@ pub(super) fn append_node_sections(
     map: &MindMap,
     node: &MindNode,
     parent_node_id: NodeId,
-    tree: &mut Tree<GfxElement, GfxMutator>,
+    tree: &mut GfxTree,
     section_map: &mut HashMap<(String, usize), NodeId>,
     id_counter: &mut usize,
 ) {
@@ -550,7 +549,7 @@ pub(super) fn build_descendants<'a>(
     parent_mind_id: &str,
     parent_folded: bool,
     parent_node_id: NodeId,
-    tree: &mut Tree<GfxElement, GfxMutator>,
+    tree: &mut GfxTree,
     node_map: &mut HashMap<String, NodeId>,
     section_map: &mut HashMap<(String, usize), NodeId>,
     id_counter: &mut usize,

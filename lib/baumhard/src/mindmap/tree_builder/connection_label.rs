@@ -33,7 +33,7 @@ use crate::core::primitives::ColorFontRegions;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::connection;
 use crate::mindmap::model::{EdgeLabelConfig, GlyphConnectionConfig, MindEdge, MindMap};
 use crate::mindmap::scene_cache::EdgeKey;
@@ -327,7 +327,7 @@ fn apply_perpendicular_offset(path: &connection::ConnectionPath, t: f32, anchor:
 /// names them. The AABBs live in the tree's `GlyphArea`s and
 /// nowhere else; the index carries only channel → edge identity.
 pub struct ConnectionLabelTree {
-    pub tree: Tree<GfxElement, GfxMutator>,
+    pub tree: GfxTree,
     /// Channel → owning [`EdgeKey`] for every label leaf in
     /// `tree`.
     pub hit_index: EdgeChannelIndex,
@@ -373,7 +373,7 @@ fn connection_label_layout(channel: usize, elem: &ConnectionLabelElement) -> (us
 /// each leaf by its insertion index when the identity sequence
 /// matches.
 pub fn build_connection_label_tree(elements: &[ConnectionLabelElement]) -> ConnectionLabelTree {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
 
     for (idx, elem) in elements.iter().enumerate() {
         // Ids run 1.. in insertion order.
@@ -394,11 +394,11 @@ pub fn build_connection_label_tree(elements: &[ConnectionLabelElement]) -> Conne
 /// via `MutatorTree::apply_to`; `hit_index` is re-stamped alongside
 /// it so both build paths hand back interchangeable values.
 pub struct ConnectionLabelMutator {
-    pub mutator: crate::gfx_structs::tree::MutatorTree<GfxMutator>,
+    pub mutator: crate::gfx_structs::tree::GfxMutatorTree,
     pub hit_index: EdgeChannelIndex,
 }
 
-/// Build a [`MutatorTree`](crate::gfx_structs::tree::MutatorTree)
+/// Build a [`MutatorTree`](crate::gfx_structs::tree::GfxMutatorTree)
 /// that updates an already-registered connection-label tree to the
 /// current `elements` state without rebuilding the arena. Pairs
 /// with [`build_connection_label_tree`] — channels and insertion
@@ -408,16 +408,16 @@ pub struct ConnectionLabelMutator {
 /// variable fields in place.
 pub fn build_connection_label_mutator_tree(elements: &[ConnectionLabelElement]) -> ConnectionLabelMutator {
     use crate::gfx_structs::area::DeltaGlyphArea;
-    use crate::gfx_structs::mutator::Mutation;
-    use crate::gfx_structs::tree::MutatorTree;
+    use crate::gfx_structs::mutator::GfxMutation;
+    use crate::gfx_structs::tree::GfxMutatorTree;
 
-    let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
+    let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
 
     for (idx, elem) in elements.iter().enumerate() {
         let (channel, area) = connection_label_layout(idx + 1, elem);
         let delta = DeltaGlyphArea::full_assign_from(&area);
         mt.root.append_value(
-            GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel),
+            GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel),
             &mut mt.arena,
         );
     }

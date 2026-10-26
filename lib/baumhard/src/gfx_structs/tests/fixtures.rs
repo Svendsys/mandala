@@ -17,8 +17,7 @@ use indextree::NodeId;
 
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 
 /// Build a `GfxElement::GlyphArea` at canvas `(x, y)` with the given
 /// channel and unique id. All other fields use sensible defaults
@@ -46,7 +45,7 @@ pub fn mk_area(x: f32, y: f32, channel: usize, unique_id: usize) -> GfxElement {
 /// Cost: one [`mk_area`] call plus one `arena.new_node` allocation
 /// and one `parent.append` link operation. O(1) total.
 pub fn append_area(
-    model: &mut Tree<GfxElement, GfxMutator>,
+    model: &mut GfxTree,
     parent: NodeId,
     x: f32,
     y: f32,

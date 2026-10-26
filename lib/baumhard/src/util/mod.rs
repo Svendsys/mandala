@@ -40,6 +40,12 @@ pub mod doc_fixtures;
 /// walkers it reads through, is.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod doc_identifiers;
+/// The engine names no glyph module and no glyph type in code: every
+/// file under `engine/` is read, comments and literals blanked, and
+/// held to that. Test-only and native-only for the same reasons
+/// `source_scan` is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod engine_isolation;
 /// Small-scale 2D geometry: pivot rotation, epsilon compare,
 /// pixel-space ordering.
 pub mod geometry;

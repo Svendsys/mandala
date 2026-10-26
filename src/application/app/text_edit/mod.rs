@@ -26,7 +26,7 @@ pub(in crate::application::app) use editor::{
 /// Commit is via click-outside-the-edited-node; Esc cancels. The
 /// `buffer` is the transient in-progress text; `cursor_grapheme_pos`
 /// is a grapheme-cluster offset within `buffer`. The transient edits
-/// flow through Baumhard's `Mutation::AreaDelta` vocabulary applied
+/// flow through Baumhard's `GfxMutation::AreaDelta` vocabulary applied
 /// to the live tree — the model is untouched until commit.
 #[derive(Debug, Clone)]
 pub(in crate::application::app) enum TextEditState {
@@ -400,7 +400,7 @@ pub(in crate::application::app) fn apply_text_edit_action(
 
 /// Build the display text for the edited node by inserting the caret
 /// glyph at the cursor's grapheme position. Used on every keystroke
-/// to produce the `Mutation::AreaDelta` payload.
+/// to produce the `GfxMutation::AreaDelta` payload.
 pub(in crate::application::app) fn insert_caret(buffer: &str, cursor: usize) -> String {
     let byte = grapheme_chad::find_byte_index_of_grapheme(buffer, cursor).unwrap_or(buffer.len());
     let mut out = String::with_capacity(buffer.len() + TEXT_EDIT_CARET.len_utf8());

@@ -39,7 +39,7 @@ pub mod scene_cache;
 /// Scene introspection — what the canvas trees draw, where, and
 /// whether the camera shows it, as serializable data.
 pub mod scene_dump;
-/// `MindMap` → `Tree<GfxElement, GfxMutator>` builder with
+/// `MindMap` → `GfxTree` builder with
 /// per-canvas-role sub-builders.
 pub mod tree_builder;
 /// Keys the model has no field for — captured at load, warned about

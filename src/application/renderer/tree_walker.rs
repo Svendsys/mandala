@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Hot-path walker turning a Baumhard `Tree<GfxElement, GfxMutator>`
+//! Hot-path walker turning a Baumhard `GfxTree`
 //! into shaped text buffers for glyphon. Lives renderer-side because
 //! `Buffer::new → set_size → set_rich_text → shape_until_scroll` is
 //! renderer territory. Per CODE_CONVENTIONS §1, styled-region →
@@ -11,8 +11,7 @@ use glam::Vec2;
 use baumhard::font::attrs::{rich_text_spans_into, RegionFamilies};
 use baumhard::font::{buffer, Align, Attrs, Color, FontSystem, SHAPING_ADVANCED};
 use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::mutator::GfxMutator;
-use baumhard::gfx_structs::tree::Tree;
+use baumhard::gfx_structs::tree::GfxTree;
 
 use super::{MindMapTextBuffer, NodeBackgroundRect};
 
@@ -72,7 +71,7 @@ pub(super) fn extract_background_rect(
 /// `font_system` write guard for the duration of the walk — keep
 /// the call site's own guard scope tight.
 pub(super) fn walk_tree_into_buffers(
-    tree: &Tree<GfxElement, GfxMutator>,
+    tree: &GfxTree,
     offset: Vec2,
     font_system: &mut FontSystem,
     mut yield_buffer: impl FnMut(usize, MindMapTextBuffer),

@@ -8,7 +8,7 @@
 //! Public surface is two functions and a [`ColorPickerOverlayBuild`]
 //! result: [`build`] produces a fresh `(tree, backdrop)` from a
 //! geometry + layout, [`build_mutator`] produces an in-place
-//! `MutatorTree<GfxMutator>` that updates the same tree's channels
+//! `GfxMutatorTree` that updates the same tree's channels
 //! without rebuilding the arena. Layout is computed once at the
 //! dispatch site (app.rs `compute_picker_geometry`) and threaded
 //! through to every builder so the per-frame hot path doesn't
@@ -16,9 +16,7 @@
 //! geometry. Picker spec and the `(GlyphArea, GlyphModel)` pair shape
 //! stay internal to the module.
 
-use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::mutator::GfxMutator;
-use baumhard::gfx_structs::tree::{MutatorTree, Tree};
+use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 
 use crate::application::color_picker::{ColorPickerLayout, ColorPickerOverlayGeometry};
 
@@ -37,7 +35,7 @@ mod tests;
 /// geometry — the renderer treats both cases the same: skip the
 /// fill-rect pass.
 pub(crate) struct ColorPickerOverlayBuild {
-    pub tree: Tree<GfxElement, GfxMutator>,
+    pub tree: GfxTree,
     pub backdrop: Option<(f32, f32, f32, f32)>,
 }
 
@@ -59,7 +57,7 @@ pub(crate) fn build(
     ColorPickerOverlayBuild { tree, backdrop }
 }
 
-/// Build an in-place [`MutatorTree`] for the picker's
+/// Build an in-place [`GfxMutatorTree`] for the picker's
 /// already-registered overlay tree — the **layout** phase. Carries
 /// every variable field on every cell; meant to run on layout-change
 /// events (initial open, viewport resize, RMB size_scale drag), not
@@ -69,11 +67,11 @@ pub(crate) fn build(
 pub(crate) fn build_mutator(
     geometry: &ColorPickerOverlayGeometry,
     layout: &ColorPickerLayout,
-) -> MutatorTree<GfxMutator> {
+) -> GfxMutatorTree {
     picker_glyph_areas::build_color_picker_overlay_mutator(geometry, layout)
 }
 
-/// Build an in-place [`MutatorTree`] for the picker — the **dynamic**
+/// Build an in-place [`GfxMutatorTree`] for the picker — the **dynamic**
 /// phase, applied every hover / HSV / drag frame. Same channel layout
 /// as [`build_mutator`] but slimmer per-section field lists, driven by
 /// the JSON's `dynamic_mutator_spec`. Position / bounds / line_height
@@ -82,6 +80,6 @@ pub(crate) fn build_mutator(
 pub(crate) fn build_dynamic_mutator(
     geometry: &ColorPickerOverlayGeometry,
     layout: &ColorPickerLayout,
-) -> MutatorTree<GfxMutator> {
+) -> GfxMutatorTree {
     picker_glyph_areas::build_color_picker_overlay_dynamic_mutator(geometry, layout)
 }

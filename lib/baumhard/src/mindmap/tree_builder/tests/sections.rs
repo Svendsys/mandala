@@ -248,7 +248,7 @@ fn test_default_section_channel_falls_through_to_index() {
     let map = synthetic_map(vec![node], vec![]);
     let result = build_mindmap_tree(&map);
 
-    use crate::gfx_structs::tree::BranchChannel;
+    use crate::engine::element::TreeElement;
     for (idx, expected_channel) in [(0usize, 0usize), (1, 1), (2, 2)] {
         let section_id = result.section_arena_id("n", idx).unwrap();
         let element = result.tree.arena.get(section_id).unwrap().get();
@@ -276,7 +276,7 @@ fn test_explicit_channel_zero_honored_for_non_zero_index() {
     let map = synthetic_map(vec![node], vec![]);
     let result = build_mindmap_tree(&map);
 
-    use crate::gfx_structs::tree::BranchChannel;
+    use crate::engine::element::TreeElement;
     let s1_id = result.section_arena_id("n", 1).unwrap();
     let element = result.tree.arena.get(s1_id).unwrap().get();
     assert_eq!(

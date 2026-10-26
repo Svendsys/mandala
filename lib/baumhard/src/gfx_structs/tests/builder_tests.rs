@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Pure-data tests for the mutator-builder walker. These exercise
-//! the builder against a stub `SectionContext` so we don't need any
-//! picker / widget / GPU state.
+//! Pure-data tests for the [builder](crate::engine::builder) over the
+//! glyph instantiation. These exercise the builder against a stub
+//! `BuildContext<GfxElement, GfxMutation>` so we don't need any picker
+//! / widget / GPU state. The `BuildError` paths an element type with
+//! no geometry takes live in `engine::tests::builder_tests`.
 
 use crate::core::primitives::{ApplyOperation, ColorFontRegions};
+use crate::engine::builder::{BuildContext, ChannelSrc, MutationSrc, MutatorNode};
 use crate::gfx_structs::area::GlyphArea;
-use crate::mutator_builder::{CellField, ChannelSrc, MutationSrc, MutatorNode, SectionContext};
+use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::mutator::GfxMutation;
+use crate::gfx_structs::template::{resolve_from_area, CellField};
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -14,9 +19,15 @@ use std::collections::HashMap;
 // `#[cfg(test)]` the non-test build of `pub mod tests;` (§T2.2)
 // would flag them as unused.
 #[cfg(test)]
-use crate::gfx_structs::tree::BranchChannel;
+use crate::engine::builder::{
+    build, iter_section_channels, BuildError, CountSrc, InstructionSpec, MutationListSrc, NoRuntime,
+};
 #[cfg(test)]
-use crate::mutator_builder::{build, iter_section_channels, CountSrc, InstructionSpec, MutationListSrc};
+use crate::engine::element::TreeElement;
+
+/// The AST over the glyph instantiation.
+#[allow(dead_code)]
+type Node = MutatorNode<GfxElement, GfxMutation>;
 
 /// Stub context: yields one pre-built `GlyphArea` per index, and
 /// honours runtime-count queries out of a `HashMap`. Per-section
@@ -50,20 +61,20 @@ impl StubCtx {
     }
 }
 
-impl SectionContext for StubCtx {
-    fn area(&self, _section: &str, index: usize) -> &GlyphArea {
-        &self.areas[index]
-    }
+impl BuildContext<GfxElement, GfxMutation> for StubCtx {
     fn count(&self, name: &str) -> usize {
         *self.runtime_counts.get(name).unwrap_or(&0)
+    }
+    fn resolve(&self, _section: &str, index: usize, template: &Vec<CellField>) -> GfxMutation {
+        resolve_from_area(&self.areas[index], template)
     }
 }
 
 #[allow(dead_code)]
-fn single_with_text() -> Box<MutatorNode> {
+fn single_with_text() -> Box<Node> {
     Box::new(MutatorNode::Single {
         channel: ChannelSrc::SectionIndex,
-        mutation: MutationSrc::AreaDelta(vec![
+        mutation: MutationSrc::Template(vec![
             CellField::Text,
             CellField::Operation(ApplyOperation::Assign),
         ]),
@@ -73,7 +84,7 @@ fn single_with_text() -> Box<MutatorNode> {
 /// Repeat with literal count expands to the right number of children
 /// at consecutive channels in declaration order.
 #[test]
-fn repeat_literal_expands_to_consecutive_channels() {
+fn test_repeat_literal_expands_to_consecutive_channels() {
     let node = MutatorNode::Void {
         channel: 0,
         children: vec![MutatorNode::Repeat {
@@ -85,7 +96,7 @@ fn repeat_literal_expands_to_consecutive_channels() {
         }],
     };
     let ctx = StubCtx::with_areas(5);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
         .children(&mt.arena)
@@ -97,7 +108,7 @@ fn repeat_literal_expands_to_consecutive_channels() {
 /// `skip_indices` skips the named iteration indices; channels are
 /// strided (skipped channels are absent, not renumbered).
 #[test]
-fn repeat_skip_indices_stride_channels() {
+fn test_repeat_skip_indices_stride_channels() {
     let node = MutatorNode::Void {
         channel: 0,
         children: vec![MutatorNode::Repeat {
@@ -109,7 +120,7 @@ fn repeat_skip_indices_stride_channels() {
         }],
     };
     let ctx = StubCtx::with_areas(5);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
         .children(&mt.arena)
@@ -121,7 +132,7 @@ fn repeat_skip_indices_stride_channels() {
 /// Multiple sections concatenate in declaration order; bands stay
 /// disjoint.
 #[test]
-fn multiple_sections_concatenate_in_declaration_order() {
+fn test_multiple_sections_concatenate_in_declaration_order() {
     let node = MutatorNode::Void {
         channel: 0,
         children: vec![
@@ -149,7 +160,7 @@ fn multiple_sections_concatenate_in_declaration_order() {
         ],
     };
     let ctx = StubCtx::with_areas(3);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
         .children(&mt.arena)
@@ -158,11 +169,55 @@ fn multiple_sections_concatenate_in_declaration_order() {
     assert_eq!(channels, vec![1, 100, 101, 102, 200]);
 }
 
+/// A glyph template resolves, per iteration, into the `AreaDelta`
+/// today's picker relies on: every bare slot pulled out of *that
+/// iteration's* area, every tagged slot baked in. The expected deltas
+/// are written from the fixture's literal values, not computed by the
+/// resolver under test.
+#[test]
+fn test_template_resolves_against_each_iterations_area() {
+    use crate::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
+    let node = MutatorNode::Void {
+        channel: 0,
+        children: vec![MutatorNode::Repeat {
+            section: "cells".into(),
+            channel_base: 10,
+            count: CountSrc::Literal(2),
+            skip_indices: vec![],
+            template: Box::new(MutatorNode::Single {
+                channel: ChannelSrc::SectionIndex,
+                mutation: MutationSrc::Template(vec![
+                    CellField::Text,
+                    CellField::position,
+                    CellField::Operation(ApplyOperation::Assign),
+                ]),
+            }),
+        }],
+    };
+    let mt = build(&node, &StubCtx::with_areas(2)).unwrap();
+    let built: Vec<GfxMutation> = mt
+        .root
+        .children(&mt.arena)
+        .map(|id| match mt.arena.get(id).unwrap().get() {
+            crate::gfx_structs::mutator::GfxMutator::Single { mutation, .. } => mutation.clone(),
+            other => panic!("expected Single, got {other:?}"),
+        })
+        .collect();
+    let expected = |text: &str, x: f32| {
+        GfxMutation::area_delta(DeltaGlyphArea::new(vec![
+            GlyphAreaField::Text(text.to_string()),
+            GlyphAreaField::position(x, 0.0),
+            GlyphAreaField::Operation(ApplyOperation::Assign),
+        ]))
+    };
+    assert_eq!(built, vec![expected("cell_0", 0.0), expected("cell_1", 1.0)]);
+}
+
 /// `iter_section_channels` emits every `(section, index, channel)`
 /// tuple in tree-insertion order; used by the initial-build path so
 /// the channel set stays aligned with the mutator path.
 #[test]
-fn iter_section_channels_walks_in_order() {
+fn test_iter_section_channels_walks_in_order() {
     let node = MutatorNode::Void {
         channel: 0,
         children: vec![
@@ -196,10 +251,10 @@ fn iter_section_channels_walks_in_order() {
 }
 
 /// Runtime counts: builder asks the context how many cells the
-/// section has at apply time. Proves the design absorbs the
+/// section has at build time. Proves the design absorbs the
 /// console overlay's `scrollback_rows`-style use case.
 #[test]
-fn repeat_runtime_count_consults_context() {
+fn test_repeat_runtime_count_consults_context() {
     let node = MutatorNode::Void {
         channel: 0,
         children: vec![MutatorNode::Repeat {
@@ -212,7 +267,7 @@ fn repeat_runtime_count_consults_context() {
     };
     let mut ctx = StubCtx::with_areas(7);
     ctx.runtime_counts.insert("row_count".into(), 3);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
         .root
         .children(&mt.arena)
@@ -233,19 +288,23 @@ fn repeat_runtime_count_consults_context() {
 #[cfg(test)]
 use crate::core::primitives::Discriminated;
 #[cfg(test)]
-use crate::gfx_structs::mutator::{GfxMutator, Instruction, Mutation, MutatorType};
+use crate::engine::mutator::{Instruction, MutatorType};
 #[cfg(test)]
-use crate::gfx_structs::predicate::Predicate;
+use crate::engine::predicate::Predicate;
+#[cfg(test)]
+use crate::gfx_structs::area::GlyphAreaCommand;
+#[cfg(test)]
+use crate::gfx_structs::mutator::GfxMutator;
 
 /// Tree rooted at a `Void` with no children produces an empty root.
 #[test]
-fn void_root_with_no_children() {
-    let node = MutatorNode::Void {
+fn test_void_root_with_no_children() {
+    let node: Node = MutatorNode::Void {
         channel: 42,
         children: vec![],
     };
     let ctx = StubCtx::with_areas(0);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &ctx).unwrap();
     let root = mt.arena.get(mt.root).unwrap().get();
     assert!(matches!(root, GfxMutator::Void { channel: 42 }));
     assert_eq!(mt.root.children(&mt.arena).count(), 0);
@@ -253,70 +312,107 @@ fn void_root_with_no_children() {
 
 /// `ChannelSrc::Literal` resolves without needing a `Repeat`
 /// iteration context — proves a `Single` can sit at the tree root.
+/// With `MutationSrc::None` there is no payload, and a mutator's "no
+/// payload" is structural: the node builds as a `Void` on the same
+/// channel.
 #[test]
-fn single_as_tree_root_with_literal_channel() {
-    let node = MutatorNode::Single {
+fn test_single_as_tree_root_with_literal_channel() {
+    let node: Node = MutatorNode::Single {
         channel: ChannelSrc::Literal(7),
         mutation: MutationSrc::None,
     };
     // No-op context — Single with MutationSrc::None needs nothing.
-    let ctx = StubCtx::with_areas(0);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &NoRuntime).unwrap();
     let root = mt.arena.get(mt.root).unwrap().get();
-    match root {
-        GfxMutator::Single { channel, mutation } => {
-            assert_eq!(*channel, 7);
-            assert!(matches!(mutation, Mutation::None));
-        }
-        other => panic!("expected Single root, got {other:?}"),
-    }
+    assert!(
+        matches!(root, GfxMutator::Void { channel: 7 }),
+        "expected Void on channel 7, got {root:?}"
+    );
 }
 
 /// `MutationSrc::Runtime` consults the context via
-/// [`SectionContext::mutation`]; the `label` argument is the
-/// enclosing section name, or `""` when called from a non-Repeat
-/// context (e.g. a Single-as-root).
+/// [`BuildContext::mutation`] with the label the variant carries —
+/// inside a `Repeat` too, where the label is still the variant's own
+/// and not the section's name — and the node builds as a `Single`
+/// carrying what the context returned.
 #[test]
-fn mutation_src_runtime_consults_context() {
+fn test_mutation_src_runtime_consults_context() {
     struct RuntimeCtx {
         asked_with: std::cell::RefCell<Vec<String>>,
     }
-    impl SectionContext for RuntimeCtx {
-        fn mutation(&self, label: &str) -> Mutation {
+    impl BuildContext<GfxElement, GfxMutation> for RuntimeCtx {
+        fn mutation(&self, label: &str) -> GfxMutation {
             self.asked_with.borrow_mut().push(label.to_string());
-            Mutation::None
+            GfxMutation::area_command(GlyphAreaCommand::NudgeRight(4.0))
+        }
+        fn resolve(&self, _: &str, _: usize, _: &Vec<CellField>) -> GfxMutation {
+            unreachable!("no template in this AST")
         }
     }
-    let node = MutatorNode::Single {
-        channel: ChannelSrc::Literal(5),
-        mutation: MutationSrc::Runtime,
+    let node: Node = MutatorNode::Void {
+        channel: 0,
+        children: vec![
+            MutatorNode::Single {
+                channel: ChannelSrc::Literal(5),
+                mutation: MutationSrc::Runtime("nudge".into()),
+            },
+            MutatorNode::Repeat {
+                section: "cells".into(),
+                channel_base: 10,
+                count: CountSrc::Literal(1),
+                skip_indices: vec![],
+                template: Box::new(MutatorNode::Single {
+                    channel: ChannelSrc::SectionIndex,
+                    mutation: MutationSrc::Runtime("per_cell".into()),
+                }),
+            },
+        ],
     };
     let ctx = RuntimeCtx {
         asked_with: std::cell::RefCell::new(Vec::new()),
     };
-    let _ = build(&node, &ctx);
-    assert_eq!(ctx.asked_with.borrow().as_slice(), &["".to_string()]);
+    let mt = build(&node, &ctx).unwrap();
+    assert_eq!(
+        ctx.asked_with.borrow().as_slice(),
+        &["nudge".to_string(), "per_cell".to_string()]
+    );
+    let first = mt.root.children(&mt.arena).next().unwrap();
+    match mt.arena.get(first).unwrap().get() {
+        GfxMutator::Single { channel, mutation } => {
+            assert_eq!(*channel, 5);
+            assert_eq!(
+                *mutation,
+                GfxMutation::area_command(GlyphAreaCommand::NudgeRight(4.0))
+            );
+        }
+        other => panic!("expected Single, got {other:?}"),
+    }
 }
 
-/// `Macro` with `MutationListSrc::Runtime` pulls its `Vec<Mutation>`
-/// from the context — proves the AST carries the scope-topology
-/// shape (which uses Macro with runtime payloads).
+/// `Macro` with `MutationListSrc::Runtime` pulls its list from the
+/// context — proves the AST carries the scope-topology shape (which
+/// uses Macro with runtime payloads).
 #[test]
-fn macro_pulls_mutation_list_from_runtime_context() {
+fn test_macro_pulls_mutation_list_from_runtime_context() {
     struct MacroCtx;
-    impl SectionContext for MacroCtx {
-        fn mutation_list(&self, label: &str) -> Vec<Mutation> {
+    impl BuildContext<GfxElement, GfxMutation> for MacroCtx {
+        fn mutation_list(&self, label: &str) -> Vec<GfxMutation> {
             assert_eq!(label, "scope_mutations");
-            vec![Mutation::None, Mutation::None]
+            vec![
+                GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
+                GfxMutation::area_command(GlyphAreaCommand::NudgeUp(2.0)),
+            ]
+        }
+        fn resolve(&self, _: &str, _: usize, _: &Vec<CellField>) -> GfxMutation {
+            unreachable!("no template in this AST")
         }
     }
-    let node = MutatorNode::Macro {
+    let node: Node = MutatorNode::Macro {
         channel: 0,
         mutations: MutationListSrc::Runtime("scope_mutations".into()),
         children: vec![],
     };
-    let ctx = MacroCtx;
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &MacroCtx).unwrap();
     let root = mt.arena.get(mt.root).unwrap().get();
     match root {
         GfxMutator::Macro { channel, mutations } => {
@@ -332,14 +428,17 @@ fn macro_pulls_mutation_list_from_runtime_context() {
 /// whose mutations come from runtime. The walker descends into
 /// Instruction children the same way it descends into Void children.
 #[test]
-fn instruction_with_children_mirrors_scope_topology() {
+fn test_instruction_with_children_mirrors_scope_topology() {
     struct ScopeCtx;
-    impl SectionContext for ScopeCtx {
-        fn mutation_list(&self, _label: &str) -> Vec<Mutation> {
-            vec![Mutation::None]
+    impl BuildContext<GfxElement, GfxMutation> for ScopeCtx {
+        fn mutation_list(&self, _label: &str) -> Vec<GfxMutation> {
+            vec![GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0))]
+        }
+        fn resolve(&self, _: &str, _: usize, _: &Vec<CellField>) -> GfxMutation {
+            unreachable!("no template in this AST")
         }
     }
-    let node = MutatorNode::Instruction {
+    let node: Node = MutatorNode::Instruction {
         channel: 0,
         instruction: InstructionSpec::RepeatWhileAlwaysTrue,
         mutation: MutationSrc::None,
@@ -349,9 +448,13 @@ fn instruction_with_children_mirrors_scope_topology() {
             children: vec![],
         }],
     };
-    let mt = build(&node, &ScopeCtx);
+    let mt = build(&node, &ScopeCtx).unwrap();
     let root = mt.arena.get(mt.root).unwrap().get();
     assert!(matches!(root.variant(), MutatorType::Instruction));
+    assert!(
+        matches!(root, GfxMutator::Instruction { mutation: None, .. }),
+        "MutationSrc::None on an Instruction builds with no payload"
+    );
     let child_ids: Vec<_> = mt.root.children(&mt.arena).collect();
     assert_eq!(child_ids.len(), 1);
     let child = mt.arena.get(child_ids[0]).unwrap().get();
@@ -362,47 +465,47 @@ fn instruction_with_children_mirrors_scope_topology() {
 /// `Instruction::RepeatWhile(always_true())` without needing the
 /// consumer to spell the predicate out.
 #[test]
-fn instruction_spec_repeat_while_always_true_materializes_predicate() {
-    let node = MutatorNode::Instruction {
+fn test_instruction_spec_repeat_while_always_true_materializes_predicate() {
+    let node: Node = MutatorNode::Instruction {
         channel: 5,
         instruction: InstructionSpec::RepeatWhileAlwaysTrue,
         mutation: MutationSrc::None,
         children: vec![],
     };
-    let ctx = StubCtx::with_areas(0);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &NoRuntime).unwrap();
     match mt.arena.get(mt.root).unwrap().get() {
         GfxMutator::Instruction {
-            instruction: Instruction::RepeatWhile(_),
+            instruction: Instruction::RepeatWhile(predicate),
             channel,
             ..
         } => {
             assert_eq!(*channel, 5);
+            assert!(predicate.always_match);
         }
         other => panic!("expected Instruction::RepeatWhile, got {other:?}"),
     }
 }
 
-/// `InstructionSpec::RotateWhile` round-trips its angle + predicate
-/// payload through `into_instruction`.
+/// `InstructionSpec::SpatialDescend` carries its point through to
+/// `Instruction::SpatialDescend` for the glyph instantiation, which is
+/// spatial. (Its refusal for a non-spatial element type, from the same
+/// JSON, is `test_spatial_descend_builds_only_for_a_spatial_element`.)
 #[test]
-fn instruction_spec_rotate_while_carries_angle_and_predicate() {
-    let node = MutatorNode::Instruction {
+fn test_instruction_spec_spatial_descend_carries_its_point() {
+    use crate::util::ordered_vec2::OrderedVec2;
+    let node: Node = MutatorNode::Instruction {
         channel: 0,
-        instruction: InstructionSpec::RotateWhile(42.0, Predicate::always_true()),
+        instruction: InstructionSpec::SpatialDescend(OrderedVec2::new_f32(3.0, 4.0)),
         mutation: MutationSrc::None,
         children: vec![],
     };
-    let ctx = StubCtx::with_areas(0);
-    let mt = build(&node, &ctx);
+    let mt = build(&node, &NoRuntime).unwrap();
     match mt.arena.get(mt.root).unwrap().get() {
         GfxMutator::Instruction {
-            instruction: Instruction::RotateWhile(angle, _),
+            instruction: Instruction::SpatialDescend(point),
             ..
-        } => {
-            assert!((*angle - 42.0).abs() < 1e-6);
-        }
-        other => panic!("expected Instruction::RotateWhile, got {other:?}"),
+        } => assert_eq!(*point, OrderedVec2::new_f32(3.0, 4.0)),
+        other => panic!("expected Instruction::SpatialDescend, got {other:?}"),
     }
 }
 
@@ -413,8 +516,8 @@ fn instruction_spec_rotate_while_carries_angle_and_predicate() {
 /// when a consumer wraps its cell template in a grouping Void (e.g.
 /// for future per-cell decorations).
 #[test]
-fn repeat_template_wrapping_void_threads_iter_channel() {
-    let node = MutatorNode::Void {
+fn test_repeat_template_wrapping_void_threads_iter_channel() {
+    let node: Node = MutatorNode::Void {
         channel: 0,
         children: vec![MutatorNode::Repeat {
             section: "wrapped".into(),
@@ -425,13 +528,21 @@ fn repeat_template_wrapping_void_threads_iter_channel() {
                 channel: 999, // Void's own channel — literal, not iterated.
                 children: vec![MutatorNode::Single {
                     channel: ChannelSrc::SectionIndex,
-                    mutation: MutationSrc::None,
+                    mutation: MutationSrc::Runtime("inner".into()),
                 }],
             }),
         }],
     };
-    let ctx = StubCtx::with_areas(0);
-    let mt = build(&node, &ctx);
+    struct InnerCtx;
+    impl BuildContext<GfxElement, GfxMutation> for InnerCtx {
+        fn mutation(&self, _label: &str) -> GfxMutation {
+            GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0))
+        }
+        fn resolve(&self, _: &str, _: usize, _: &Vec<CellField>) -> GfxMutation {
+            unreachable!("no template in this AST")
+        }
+    }
+    let mt = build(&node, &InnerCtx).unwrap();
     // Root Void → 3 wrapper Voids → each wrapper Void has 1 Single child.
     let wrapper_ids: Vec<_> = mt.root.children(&mt.arena).collect();
     assert_eq!(wrapper_ids.len(), 3);
@@ -450,13 +561,21 @@ fn repeat_template_wrapping_void_threads_iter_channel() {
     }
 }
 
+// =============================================================
+// Refused shapes — every AST no mutator tree can express is a
+// `BuildError`, never a panic: these ASTs arrive from JSON (custom
+// mutations in a map, widget specs), and the build runs on an
+// interactive path. Each refusal is paired with its control — the
+// nearest shape that does build — so the error is pinned to the
+// shape and not to the fixture.
+// =============================================================
+
 /// A `Repeat` at the tree root is a misuse — Repeats only describe
-/// children expansion. The builder catches this rather than silently
-/// producing a malformed tree.
+/// children expansion. The builder refuses it rather than producing a
+/// malformed tree; the same `Repeat` one level down builds.
 #[test]
-#[should_panic(expected = "Repeat can only appear as a child")]
-fn repeat_at_tree_root_panics() {
-    let node = MutatorNode::Repeat {
+fn test_repeat_at_tree_root_is_a_build_error() {
+    let repeat = MutatorNode::Repeat {
         section: "x".into(),
         channel_base: 0,
         count: CountSrc::Literal(1),
@@ -464,34 +583,153 @@ fn repeat_at_tree_root_panics() {
         template: single_with_text(),
     };
     let ctx = StubCtx::with_areas(1);
-    let _ = build(&node, &ctx);
+    assert_eq!(build(&repeat, &ctx).err(), Some(BuildError::RootRepeat));
+
+    let wrapped: Node = MutatorNode::Void {
+        channel: 0,
+        children: vec![repeat],
+    };
+    assert!(build(&wrapped, &ctx).is_ok(), "the control: as a child it builds");
 }
 
 /// `ChannelSrc::SectionIndex` only makes sense inside a `Repeat`
 /// template. Using it at a tree root (or in any non-iterated
-/// position) is a contract violation surfaced immediately.
+/// position) is refused; inside a `Repeat` the same node builds.
 #[test]
-#[should_panic(expected = "ChannelSrc::SectionIndex used outside a Repeat template")]
-fn channel_src_section_index_outside_repeat_panics() {
-    let node = MutatorNode::Single {
+fn test_channel_src_section_index_outside_repeat_is_a_build_error() {
+    let single = MutatorNode::Single {
         channel: ChannelSrc::SectionIndex,
         mutation: MutationSrc::None,
     };
-    let ctx = StubCtx::with_areas(0);
-    let _ = build(&node, &ctx);
+    assert_eq!(
+        build(&single, &NoRuntime).err(),
+        Some(BuildError::SectionIndexOutsideRepeat)
+    );
+
+    let inside: Node = MutatorNode::Void {
+        channel: 0,
+        children: vec![MutatorNode::Repeat {
+            section: "x".into(),
+            channel_base: 0,
+            count: CountSrc::Literal(1),
+            skip_indices: vec![],
+            template: Box::new(single),
+        }],
+    };
+    assert!(
+        build(&inside, &NoRuntime).is_ok(),
+        "the control: in a template it builds"
+    );
 }
 
-/// `MutationSrc::AreaDelta` needs a `Repeat` iteration context to
-/// resolve its per-cell area — used outside one is a contract bug.
+/// `MutationSrc::Template` needs a `Repeat` iteration context to
+/// resolve against — outside one it is refused; inside one the same
+/// template builds.
 #[test]
-#[should_panic(expected = "MutationSrc::AreaDelta requires a Repeat-templated context")]
-fn area_delta_outside_repeat_panics() {
-    let node = MutatorNode::Single {
+fn test_template_outside_repeat_is_a_build_error() {
+    let node: Node = MutatorNode::Single {
         channel: ChannelSrc::Literal(0),
-        mutation: MutationSrc::AreaDelta(vec![CellField::Text]),
+        mutation: MutationSrc::Template(vec![CellField::Text]),
     };
     let ctx = StubCtx::with_areas(1);
-    let _ = build(&node, &ctx);
+    assert_eq!(build(&node, &ctx).err(), Some(BuildError::TemplateOutsideRepeat));
+
+    let inside: Node = MutatorNode::Void {
+        channel: 0,
+        children: vec![MutatorNode::Repeat {
+            section: "x".into(),
+            channel_base: 0,
+            count: CountSrc::Literal(1),
+            skip_indices: vec![],
+            template: single_with_text(),
+        }],
+    };
+    assert!(
+        build(&inside, &ctx).is_ok(),
+        "the control: in a template it builds"
+    );
+}
+
+/// A `Repeat` whose template is itself a `Repeat` has nothing to
+/// materialize per iteration and is refused — it used to reach an
+/// `unreachable!` inside the builder. A `Repeat` *inside* a template
+/// node (one level further down) is a child expansion and builds.
+#[test]
+fn test_repeat_as_template_is_a_build_error() {
+    let inner = MutatorNode::Repeat {
+        section: "inner".into(),
+        channel_base: 0,
+        count: CountSrc::Literal(1),
+        skip_indices: vec![],
+        template: single_with_text(),
+    };
+    let outer = |template: Node| -> Node {
+        MutatorNode::Void {
+            channel: 0,
+            children: vec![MutatorNode::Repeat {
+                section: "outer".into(),
+                channel_base: 0,
+                count: CountSrc::Literal(1),
+                skip_indices: vec![],
+                template: Box::new(template),
+            }],
+        }
+    };
+    let ctx = StubCtx::with_areas(1);
+    assert_eq!(
+        build(&outer(inner.clone()), &ctx).err(),
+        Some(BuildError::RepeatAsTemplate)
+    );
+
+    let grouped = MutatorNode::Void {
+        channel: 0,
+        children: vec![inner],
+    };
+    assert!(
+        build(&outer(grouped), &ctx).is_ok(),
+        "the control: one level down it builds"
+    );
+}
+
+/// The engine refuses `SpatialDescend` for an element type with no
+/// geometry when the mutator tree is built, so its walker never meets
+/// one. The **same JSON** builds for the glyph instantiation, which is
+/// spatial — the negative control that pins the refusal to the
+/// element type and not to the AST.
+#[test]
+fn test_spatial_descend_builds_only_for_a_spatial_element() {
+    use crate::engine::tests::test_element::{TestElement, TestMutation};
+    const SRC: &str = r#"{
+        "Instruction": {
+            "channel": 0,
+            "instruction": { "SpatialDescend": { "x": 1.0, "y": 2.0 } }
+        }
+    }"#;
+    // Checked at compile time: the precondition is a property of the
+    // two types, not of a value.
+    const {
+        assert!(
+            !TestElement::SPATIAL && GfxElement::SPATIAL,
+            "precondition: the two element types differ"
+        )
+    };
+
+    let for_test: MutatorNode<TestElement, TestMutation> =
+        serde_json::from_str(SRC).expect("parse for TestElement");
+    assert_eq!(
+        build(&for_test, &NoRuntime).err(),
+        Some(BuildError::SpatialOnNonSpatial)
+    );
+
+    let for_glyph: Node = serde_json::from_str(SRC).expect("parse for GfxElement");
+    let mt = build(&for_glyph, &NoRuntime).expect("the same AST builds for a spatial element");
+    assert!(matches!(
+        mt.arena.get(mt.root).unwrap().get(),
+        GfxMutator::Instruction {
+            instruction: Instruction::SpatialDescend(_),
+            ..
+        }
+    ));
 }
 
 // =============================================================
@@ -506,7 +744,7 @@ fn area_delta_outside_repeat_panics() {
 /// renames of variant tags or field names that would break the
 /// picker's `mutator_spec` block without warning.
 #[test]
-fn json_roundtrip_minimal_repeat_tree() {
+fn test_json_roundtrip_minimal_repeat_tree() {
     let src = r#"{
         "Void": {
             "channel": 0,
@@ -519,7 +757,7 @@ fn json_roundtrip_minimal_repeat_tree() {
                         "template": {
                             "Single": {
                                 "channel": "SectionIndex",
-                                "mutation": { "AreaDelta": ["Text", { "Operation": "Assign" }] }
+                                "mutation": { "Template": ["Text", { "Operation": "Assign" }] }
                             }
                         }
                     }
@@ -527,7 +765,7 @@ fn json_roundtrip_minimal_repeat_tree() {
             ]
         }
     }"#;
-    let node: MutatorNode = serde_json::from_str(src).expect("parse MutatorNode");
+    let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
     // Shape assertions — same structure as a hand-built AST.
     let MutatorNode::Void { channel, children } = &node else {
         panic!("root must be Void");
@@ -552,8 +790,8 @@ fn json_roundtrip_minimal_repeat_tree() {
         panic!("template must be Single");
     };
     assert!(matches!(channel, ChannelSrc::SectionIndex));
-    let MutationSrc::AreaDelta(fields) = mutation else {
-        panic!("mutation must be AreaDelta");
+    let MutationSrc::Template(fields) = mutation else {
+        panic!("mutation must be Template");
     };
     assert_eq!(fields.len(), 2);
     assert!(matches!(fields[0], CellField::Text));
@@ -564,7 +802,7 @@ fn json_roundtrip_minimal_repeat_tree() {
 /// the overwhelming case, so the picker JSON stays terse for
 /// sections that don't skip anything.
 #[test]
-fn json_skip_indices_defaults_to_empty() {
+fn test_json_skip_indices_defaults_to_empty() {
     let src = r#"{
         "Repeat": {
             "section": "cells",
@@ -573,7 +811,7 @@ fn json_skip_indices_defaults_to_empty() {
             "template": { "Single": { "channel": "SectionIndex", "mutation": "None" } }
         }
     }"#;
-    let node: MutatorNode = serde_json::from_str(src).expect("parse MutatorNode");
+    let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
     let MutatorNode::Repeat { skip_indices, .. } = node else {
         panic!("expected Repeat");
     };
@@ -585,18 +823,35 @@ fn json_skip_indices_defaults_to_empty() {
 /// don't need an explicit mutation payload on the instruction node
 /// itself, and we want the JSON to reflect that.
 #[test]
-fn json_instruction_mutation_defaults_to_none() {
+fn test_json_instruction_mutation_defaults_to_none() {
     let src = r#"{
         "Instruction": {
             "channel": 0,
             "instruction": "RepeatWhileAlwaysTrue"
         }
     }"#;
-    let node: MutatorNode = serde_json::from_str(src).expect("parse MutatorNode");
+    let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
     let MutatorNode::Instruction { mutation, .. } = node else {
         panic!("expected Instruction");
     };
     assert!(matches!(mutation, MutationSrc::None));
+}
+
+/// `MutationSrc::Runtime` carries its label in JSON as
+/// `{ "Runtime": "<label>" }`, the same spelling as
+/// `MutationListSrc::Runtime`.
+#[test]
+fn test_json_mutation_src_runtime_carries_its_label() {
+    let src = r#"{ "Single": { "channel": { "Literal": 2 }, "mutation": { "Runtime": "nudge" } } }"#;
+    let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
+    let MutatorNode::Single {
+        mutation: MutationSrc::Runtime(label),
+        ..
+    } = node
+    else {
+        panic!("expected Single with a Runtime mutation");
+    };
+    assert_eq!(label, "nudge");
 }
 
 /// `InstructionSpec::MapChildren` round-trips through JSON and
@@ -605,14 +860,14 @@ fn json_instruction_mutation_defaults_to_none() {
 /// declaring MapChildren-shaped mutators in a custom_mutations
 /// bundle.
 #[test]
-fn json_instruction_spec_map_children_materializes_correctly() {
+fn test_json_instruction_spec_map_children_materializes_correctly() {
     let src = r#"{
         "Instruction": {
             "channel": 3,
             "instruction": "MapChildren"
         }
     }"#;
-    let node: MutatorNode = serde_json::from_str(src).expect("parse MutatorNode");
+    let node: Node = serde_json::from_str(src).expect("parse MutatorNode");
     let MutatorNode::Instruction {
         channel, instruction, ..
     } = node
@@ -638,9 +893,9 @@ fn json_instruction_spec_map_children_materializes_correctly() {
 /// `serde_json::Value` for comparison so field-order drift doesn't
 /// spuriously fail.
 #[allow(dead_code)]
-fn assert_mutator_node_json_round_trips(node: &MutatorNode) {
+fn assert_mutator_node_json_round_trips(node: &Node) {
     let first = serde_json::to_string(node).expect("first serialize");
-    let reparsed: MutatorNode = serde_json::from_str(&first).expect("reparse");
+    let reparsed: Node = serde_json::from_str(&first).expect("reparse");
     let second = serde_json::to_string(&reparsed).expect("second serialize");
     let v1: serde_json::Value = serde_json::from_str(&first).unwrap();
     let v2: serde_json::Value = serde_json::from_str(&second).unwrap();
@@ -648,16 +903,14 @@ fn assert_mutator_node_json_round_trips(node: &MutatorNode) {
 }
 
 #[test]
-fn json_round_trip_macro_with_literal_mutations_preserves_shape() {
-    use crate::gfx_structs::area::GlyphAreaCommand;
-    use crate::gfx_structs::mutator::Mutation;
+fn test_json_round_trip_macro_with_literal_mutations_preserves_shape() {
     // The pure-data shape that scope::self_only produces — a Macro
     // on channel 0 carrying a `MutationListSrc::Literal` list.
     let node = MutatorNode::Macro {
         channel: 0,
         mutations: MutationListSrc::Literal(vec![
-            Mutation::area_command(GlyphAreaCommand::NudgeRight(3.0)),
-            Mutation::area_command(GlyphAreaCommand::GrowFont(1.5)),
+            GfxMutation::area_command(GlyphAreaCommand::NudgeRight(3.0)),
+            GfxMutation::area_command(GlyphAreaCommand::GrowFont(1.5)),
         ]),
         children: vec![],
     };
@@ -665,7 +918,7 @@ fn json_round_trip_macro_with_literal_mutations_preserves_shape() {
 }
 
 #[test]
-fn json_round_trip_instruction_map_children_preserves_shape() {
+fn test_json_round_trip_instruction_map_children_preserves_shape() {
     let node = MutatorNode::Instruction {
         channel: 7,
         instruction: InstructionSpec::MapChildren,
@@ -679,11 +932,10 @@ fn json_round_trip_instruction_map_children_preserves_shape() {
 }
 
 #[test]
-fn json_round_trip_repeat_inside_map_children_preserves_shape() {
+fn test_json_round_trip_repeat_inside_map_children_preserves_shape() {
     // The canonical declarative size-aware layout shape — Repeat
-    // under MapChildren, with SectionIndex channels and an
-    // AreaDelta template. The Repeat-composition test relies on
-    // this exact serde layout.
+    // under MapChildren, with SectionIndex channels and a template.
+    // The Repeat-composition test relies on this exact serde layout.
     let node = MutatorNode::Instruction {
         channel: 0,
         instruction: InstructionSpec::MapChildren,
@@ -695,9 +947,28 @@ fn json_round_trip_repeat_inside_map_children_preserves_shape() {
             skip_indices: vec![],
             template: Box::new(MutatorNode::Single {
                 channel: ChannelSrc::SectionIndex,
-                mutation: MutationSrc::AreaDelta(vec![CellField::position]),
+                mutation: MutationSrc::Template(vec![CellField::position]),
             }),
         }],
+    };
+    assert_mutator_node_json_round_trips(&node);
+}
+
+/// `Predicate<GfxElement>` survives the AST's JSON round-trip with its
+/// glyph field vocabulary — the element type fixes what a predicate's
+/// fields mean, and the AST carries them verbatim.
+#[test]
+fn test_json_round_trip_repeat_while_predicate_preserves_shape() {
+    use crate::engine::predicate::Comparator;
+    use crate::gfx_structs::element::GfxElementField;
+    let node: Node = MutatorNode::Instruction {
+        channel: 0,
+        instruction: InstructionSpec::RepeatWhile(Predicate {
+            fields: vec![(GfxElementField::Channel(4), Comparator::equals())],
+            always_match: false,
+        }),
+        mutation: MutationSrc::None,
+        children: vec![],
     };
     assert_mutator_node_json_round_trips(&node);
 }

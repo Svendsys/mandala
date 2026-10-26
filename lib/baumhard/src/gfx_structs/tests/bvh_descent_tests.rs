@@ -16,7 +16,7 @@ use crate::font::fonts;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::tests::subtree_aabb_tests::{build_deep_chain, build_test_tree, build_wide_tree};
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 
 // ── basic hit/miss ────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ fn test_descendant_at_overlapping_siblings() {
 
 pub fn do_descendant_at_overlapping_siblings() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let big = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("big", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(200.0, 200.0)),
         0,
@@ -153,7 +153,7 @@ fn test_descendant_near_negative_coords() {
 
 pub fn do_descendant_near_negative_coords() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("neg", 14.0, 14.0, Vec2::new(-100.0, -50.0), Vec2::new(40.0, 30.0)),
         0,
@@ -173,7 +173,7 @@ fn test_bvh_descend_skips_glyph_model_nodes() {
 
 pub fn do_bvh_descend_skips_glyph_model_nodes() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let model = GfxElement::new_model_blank(0, 1);
     let area = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("a", 14.0, 14.0, Vec2::new(100.0, 100.0), Vec2::new(50.0, 30.0)),
@@ -198,7 +198,7 @@ fn test_bvh_descend_point_on_exact_boundary() {
 /// Containment uses `>=` / `<=` — boundaries are inclusive.
 pub fn do_bvh_descend_point_on_exact_boundary() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("b", 14.0, 14.0, Vec2::new(10.0, 20.0), Vec2::new(30.0, 40.0)),
         0,
@@ -240,7 +240,7 @@ pub fn do_bvh_far_edge_hit_survives_float_rounding() {
     fonts::init();
     let pos = Vec2::new(872.0, 391.02222);
     let bounds = Vec2::new(22.4, 22.4);
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(GlyphArea::new_with_str("m", 14.0, 14.0, pos, bounds), 0);
     let id = tree.arena.new_node(area);
     tree.root.append(id, &mut tree.arena);
@@ -271,7 +271,7 @@ fn test_bvh_point_in_subtree_aabb_but_outside_own_area() {
 /// The core BVH case: child extends beyond parent's own area.
 pub fn do_bvh_point_in_subtree_aabb_but_outside_own_area() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let parent = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("p", 14.0, 14.0, Vec2::new(10.0, 10.0), Vec2::new(50.0, 20.0)),
         0,
@@ -300,7 +300,7 @@ fn test_descendant_near_slack_expands_hit_region() {
 /// just outside the AABB but within the slack margin.
 pub fn do_descendant_near_slack_expands_hit_region() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("s", 14.0, 14.0, Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0)),
         0,
@@ -329,7 +329,7 @@ fn test_descendant_near_slack_smallest_area_still_wins() {
 /// area, not slacked area).
 pub fn do_descendant_near_slack_smallest_area_still_wins() {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let big = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("big", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0)),
         0,

@@ -592,7 +592,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
 fn test_sync_node_from_tree_writes_back_section_run_color() {
     use baumhard::core::primitives::Range;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::TextRun;
     let mut doc = load_test_doc();
@@ -620,7 +620,7 @@ fn test_sync_node_from_tree_writes_back_section_run_color() {
         name: "Recolor".into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::SetRegionColor(Range::new(0, 5), [1.0, 0.0, 0.0, 1.0]),
         )])),
         target_scope: TS::SelfOnly,
@@ -655,7 +655,7 @@ fn test_sync_node_from_tree_writes_back_section_run_color() {
 fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
     use baumhard::core::primitives::Range;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::{MindSection, TextRun};
     let mut doc = load_test_doc();
@@ -711,7 +711,7 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
         // (section 1 is [0,9)). Section 1 will see a new region
         // inserted at [0,5) — which is exactly the case the
         // selective gate must NOT silently swallow.
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::SetRegionColor(Range::new(0, 5), [1.0, 0.0, 0.0, 1.0]),
         )])),
         target_scope: TS::SectionsOnly,
@@ -806,7 +806,7 @@ fn test_sync_node_from_tree_var_color_preserved_when_regions_untouched() {
 #[test]
 fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -817,7 +817,7 @@ fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
         name: "Translate section 0".into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::NudgeRight(13.0),
         )])),
         target_scope: TS::SectionsOnly,
@@ -873,7 +873,7 @@ fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
 #[test]
 fn test_sync_node_from_tree_pins_section_size_only_on_a_real_resize() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
 
     let sections_only = |id: &str, command: GlyphAreaCommand| CustomMutation {
@@ -881,7 +881,7 @@ fn test_sync_node_from_tree_pins_section_size_only_on_a_real_resize() {
         name: id.into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(command)])),
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(command)])),
         target_scope: TS::SectionsOnly,
         behavior: MB::Persistent,
         predicate: None,
@@ -962,7 +962,7 @@ fn test_sync_node_from_tree_pins_section_size_only_on_a_real_resize() {
 #[test]
 fn test_sync_node_from_tree_holds_fill_parent_none_at_a_sub_epsilon_resize() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::Size;
 
@@ -995,7 +995,7 @@ fn test_sync_node_from_tree_holds_fill_parent_none_at_a_sub_epsilon_resize() {
             name: "sub-epsilon-resize".into(),
             description: String::new(),
             contexts: vec![],
-            mutator: Some(scope::self_only(vec![Mutation::area_command(
+            mutator: Some(scope::self_only(vec![GfxMutation::area_command(
                 GlyphAreaCommand::SetBounds(one_ulp_up, 1.0),
             )])),
             target_scope: TS::SectionsOnly,
@@ -1102,7 +1102,7 @@ fn test_find_triggered_mutations_at_section_binding_fires_first() {
 #[test]
 fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::{MindSection, Position};
     let mut doc = load_test_doc();
@@ -1119,7 +1119,7 @@ fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
         name: "MoveTo".into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::MoveTo(500.0, 600.0),
         )])),
         target_scope: TS::SelfOnly,
@@ -1233,8 +1233,8 @@ fn test_start_animation_at_does_not_dedup_across_sections() {
 #[test]
 fn test_apply_custom_mutation_sections_only_with_predicate_compose() {
     use baumhard::core::primitives::Flag;
+    use baumhard::engine::predicate::{Comparator, Predicate};
     use baumhard::gfx_structs::element::GfxElementField;
-    use baumhard::gfx_structs::predicate::{Comparator, Predicate};
     use baumhard::mindmap::model::MindSection;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -1341,8 +1341,8 @@ fn test_sync_node_from_tree_selective_gate_preserves_unchanged_runs() {
 #[test]
 fn test_apply_custom_mutation_predicate_gate_filters_container() {
     use baumhard::core::primitives::Flag;
+    use baumhard::engine::predicate::{Comparator, Predicate};
     use baumhard::gfx_structs::element::GfxElementField;
-    use baumhard::gfx_structs::predicate::{Comparator, Predicate};
     use baumhard::mindmap::model::MindSection;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -1445,10 +1445,10 @@ fn test_apply_custom_mutation_persistent_sets_dirty() {
 /// `SelfAndDescendants` set.
 #[test]
 fn test_apply_custom_mutation_match_nothing_repeat_while_does_not_apply() {
+    use baumhard::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+    use baumhard::engine::predicate::Predicate;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::gfx_structs::predicate::Predicate;
-    use baumhard::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+    use baumhard::gfx_structs::mutator::GfxMutation;
 
     let mut doc = load_test_doc();
     let mut cm = make_test_mutation("match-nothing", TS::SelfAndDescendants);
@@ -1458,9 +1458,9 @@ fn test_apply_custom_mutation_match_nothing_repeat_while_does_not_apply() {
         mutation: MutationSrc::None,
         children: vec![MutatorNode::Macro {
             channel: 0,
-            mutations: MutationListSrc::Literal(vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(
-                10.0,
-            ))]),
+            mutations: MutationListSrc::Literal(vec![GfxMutation::area_command(
+                GlyphAreaCommand::NudgeRight(10.0),
+            )]),
             children: vec![],
         }],
     });
@@ -1497,12 +1497,12 @@ fn test_apply_custom_mutation_match_nothing_repeat_while_does_not_apply() {
 #[test]
 fn test_apply_custom_mutation_always_true_repeat_while_still_applies() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::scope;
 
     let mut doc = load_test_doc();
     let mut cm = make_test_mutation("always-true", TS::SelfAndDescendants);
-    cm.mutator = Some(scope::descendants(vec![Mutation::area_command(
+    cm.mutator = Some(scope::descendants(vec![GfxMutation::area_command(
         GlyphAreaCommand::NudgeRight(10.0),
     )]));
     doc.mindmap.custom_mutations.push(cm.clone());
@@ -1534,12 +1534,12 @@ fn test_apply_custom_mutation_always_true_repeat_while_still_applies() {
 /// path, so a decline means nothing moved anywhere).
 #[test]
 fn test_apply_custom_mutation_unevaluatable_nested_child_applies_nothing() {
+    use baumhard::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+    use baumhard::engine::predicate::Predicate;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::gfx_structs::predicate::Predicate;
-    use baumhard::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+    use baumhard::gfx_structs::mutator::GfxMutation;
 
-    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+    let nudge = |n: f32| GfxMutation::area_command(GlyphAreaCommand::NudgeRight(n));
 
     let mut doc = load_test_doc();
     let mut cm = make_test_mutation("nested-decline", TS::SelfAndDescendants);
@@ -1612,11 +1612,11 @@ fn test_apply_custom_mutation_unevaluatable_nested_child_applies_nothing() {
 /// cannot be both `nudge(10)` and `nudge(99)`.
 #[test]
 fn test_apply_custom_mutation_disagreeing_nested_payload_applies_nothing() {
+    use baumhard::engine::builder::{MutationListSrc, MutatorNode};
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mutator_builder::{MutationListSrc, MutatorNode};
+    use baumhard::gfx_structs::mutator::GfxMutation;
 
-    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+    let nudge = |n: f32| GfxMutation::area_command(GlyphAreaCommand::NudgeRight(n));
 
     let mut doc = load_test_doc();
     let mut cm = make_test_mutation("nested-disagree", TS::SelfAndDescendants);
@@ -1725,14 +1725,14 @@ fn make_animated_mutation(id: &str, duration_ms: u32) -> CM {
 /// regress.
 fn make_animated_moveto_mutation(id: &str, duration_ms: u32, tx: f32, ty: f32) -> CM {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::scope;
     CM {
         id: id.into(),
         name: id.into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::MoveTo(tx, ty),
         )])),
         target_scope: TS::SelfOnly,
@@ -1803,11 +1803,11 @@ fn test_start_animation_derives_to_snapshot_via_nudge() {
 /// — every node extractable, two payloads that disagree.
 #[test]
 fn test_start_animation_with_a_declined_mutator_tweens_zero_delta() {
+    use baumhard::engine::builder::{MutationListSrc, MutatorNode};
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mutator_builder::{MutationListSrc, MutatorNode};
+    use baumhard::gfx_structs::mutator::GfxMutation;
 
-    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+    let nudge = |n: f32| GfxMutation::area_command(GlyphAreaCommand::NudgeRight(n));
 
     let mut doc = load_test_doc();
     let mut cm = make_animated_mutation("anim-declined", 500);
@@ -1859,11 +1859,11 @@ fn test_start_animation_with_a_declined_mutator_tweens_zero_delta() {
 /// nothing to do with the decline.
 #[test]
 fn test_start_animation_with_an_agreeing_nested_payload_tweens_the_delta() {
+    use baumhard::engine::builder::{MutationListSrc, MutatorNode};
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mutator_builder::{MutationListSrc, MutatorNode};
+    use baumhard::gfx_structs::mutator::GfxMutation;
 
-    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+    let nudge = |n: f32| GfxMutation::area_command(GlyphAreaCommand::NudgeRight(n));
 
     let mut doc = load_test_doc();
     let mut cm = make_animated_mutation("anim-agreeing", 500);
@@ -2349,14 +2349,14 @@ fn test_tick_completion_no_tree_noop_pushes_no_undo() {
 
 /// Build a `GrowFont`/`ShrinkFont`-style area-command mutation.
 fn make_font_scale_mutation(id: &str, cmd: baumhard::gfx_structs::area::GlyphAreaCommand, scope: TS) -> CM {
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::scope as sc;
     CM {
         id: id.into(),
         name: id.into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(sc::self_only(vec![Mutation::area_command(cmd)])),
+        mutator: Some(sc::self_only(vec![GfxMutation::area_command(cmd)])),
         target_scope: scope,
         behavior: MB::Persistent,
         predicate: None,
@@ -2852,7 +2852,7 @@ fn test_text_edit_keeps_a_colorless_run_deferring_on_a_themed_node() {
 #[test]
 fn test_toggle_mutation_survives_rebuild_and_reverts_off() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -2862,7 +2862,7 @@ fn test_toggle_mutation_survives_rebuild_and_reverts_off() {
         name: "Toggle nudge".into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::NudgeRight(25.0),
         )])),
         target_scope: TS::SelfOnly,
@@ -2964,7 +2964,7 @@ fn test_no_op_mutation_pushes_no_undo_entry() {
 /// is mutated and the model is unchanged — no dead undo entry.
 #[test]
 fn test_predicate_filtered_all_apply_pushes_no_undo() {
-    use baumhard::gfx_structs::predicate::Predicate;
+    use baumhard::engine::predicate::Predicate;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     // See the note in `test_no_op_mutation_pushes_no_undo_entry`:
@@ -3045,7 +3045,7 @@ fn test_persistent_apply_does_not_leak_highlight_overlay_into_model() {
 #[test]
 fn test_persistent_apply_does_not_leak_active_toggle_into_model() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -3057,7 +3057,7 @@ fn test_persistent_apply_does_not_leak_active_toggle_into_model() {
         name: "vis".into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::NudgeRight(100.0),
         )])),
         target_scope: TS::SelfOnly,
@@ -3097,7 +3097,7 @@ fn test_persistent_apply_does_not_leak_active_toggle_into_model() {
 fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
     use baumhard::core::primitives::Range;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::TextRun;
     let mut doc = load_test_doc();
@@ -3138,7 +3138,7 @@ fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
         name: "drop".into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::DeleteColorFontRegion(Range::new(3, 6)),
         )])),
         target_scope: TS::SelfOnly,
@@ -3167,7 +3167,7 @@ fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
 #[test]
 fn test_active_toggles_replay_in_activation_order() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -3177,7 +3177,7 @@ fn test_active_toggles_replay_in_activation_order() {
         name: id.into(),
         description: String::new(),
         contexts: vec![],
-        mutator: Some(scope::self_only(vec![Mutation::area_command(
+        mutator: Some(scope::self_only(vec![GfxMutation::area_command(
             GlyphAreaCommand::MoveTo(x, 0.0),
         )])),
         target_scope: TS::SelfOnly,

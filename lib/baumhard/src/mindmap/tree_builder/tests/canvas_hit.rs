@@ -52,7 +52,7 @@ use glam::Vec2;
 use super::super::*;
 use super::fixtures::*;
 use crate::gfx_structs::area::GlyphArea;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::model::{MindMap, PortalEndpointState};
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::util::geometry::aabb_center;
@@ -112,7 +112,7 @@ fn overlapping_icons_map(hub_id: &str, far_big: &str, far_small: &str) -> MindMa
 }
 
 /// The `hub`-side icon area of the portal pair at `pair_idx`.
-fn hub_icon(tree: &Tree<GfxElement, GfxMutator>, pair_idx: usize) -> GlyphArea {
+fn hub_icon(tree: &GfxTree, pair_idx: usize) -> GlyphArea {
     let pair = tree
         .root
         .children(&tree.arena)

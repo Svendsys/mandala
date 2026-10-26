@@ -1,27 +1,32 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Typed AST for the mutator-tree DSL. The variants here are what
-//! [`mutator_builder::build`](super::build()) walks to produce a
-//! [`MutatorTree<GfxMutator>`](crate::gfx_structs::tree::MutatorTree)
-//! ready for `apply_to`. Every JSON-loaded mutator (custom mutations,
-//! procedural animation defs in `lib/baumhard/src/mindmap/`) round-trips
-//! through these types via serde, and the procedural-builder code paths
-//! in the app crate construct the same shapes directly. See `super` for
-//! the high-level tour and CONVENTIONS §B2 for why the tree mutates
-//! rather than rebuilds.
+//! [`build`](super::build()) walks to produce a
+//! [`MutatorTree<E, M>`](crate::engine::tree::MutatorTree) ready for
+//! `apply_to`. The AST is generic over the element type `E`, which fixes
+//! the predicate vocabulary, and the payload `M`, which fixes the
+//! literal mutations and the template shape — so one JSON authoring
+//! surface serves every instantiation, and the element type is fixed by
+//! where the AST is used, never guessed. See `super` for the high-level
+//! tour and CONVENTIONS §B2 for why the tree mutates rather than
+//! rebuilds.
 
-use crate::core::primitives::ApplyOperation;
-use crate::gfx_structs::mutator::{Instruction, Mutation};
-use crate::gfx_structs::predicate::Predicate;
+use crate::engine::element::TreeElement;
+use crate::engine::mutation::Mutation;
+use crate::engine::mutator::Instruction;
+use crate::engine::predicate::Predicate;
 use crate::util::ordered_vec2::OrderedVec2;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-/// One node in the mutator-tree DSL. Variants map 1:1 to `GfxMutator`
-/// constructors; `Repeat` is a compact sugar for "expand to N children
-/// at consecutive channels".
+/// One node in the mutator-tree DSL. Variants map 1:1 to
+/// [`Mutator`](crate::engine::mutator::Mutator) constructors; `Repeat`
+/// is a compact sugar for "expand to N children at consecutive
+/// channels".
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MutatorNode {
-    /// `GfxMutator::Void` — no mutation, just structural grouping.
+#[serde(bound(serialize = "M: Serialize", deserialize = "M: DeserializeOwned"))]
+pub enum MutatorNode<E: TreeElement, M: Mutation<E>> {
+    /// `Mutator::Void` — no mutation, just structural grouping.
     /// Children are expanded in declaration order.
     Void {
         /// Branch-routing channel index. The walker descends only
@@ -31,21 +36,24 @@ pub enum MutatorNode {
         /// this grouping. Empty by default so a bare structural
         /// `Void` need not declare an empty list.
         #[serde(default)]
-        children: Vec<MutatorNode>,
+        children: Vec<MutatorNode<E, M>>,
     },
-    /// `GfxMutator::Single` — one mutation on one channel.
+    /// `Mutator::Single` — one mutation on one channel. With
+    /// [`MutationSrc::None`] it builds a `Mutator::Void` on the same
+    /// channel: a single mutation that applies nothing *is* a void
+    /// node, because a mutator's "no payload" is structural.
     Single {
         /// Channel source — literal index or per-iteration index
         /// resolved by an enclosing [`MutatorNode::Repeat`].
         channel: ChannelSrc,
-        /// Mutation payload — literal `Mutation`, runtime-fetched
-        /// from a [`SectionContext`](super::context::SectionContext),
-        /// or `None` placeholder.
-        mutation: MutationSrc,
+        /// Mutation payload — a template resolved per `Repeat`
+        /// iteration, runtime-fetched from a
+        /// [`BuildContext`](super::context::BuildContext), or nothing.
+        mutation: MutationSrc<E, M>,
     },
-    /// `GfxMutator::Macro` — flat batch of `Mutation`s on one channel.
+    /// `Mutator::Macro` — flat batch of mutations on one channel.
     /// Macros can't nest their own mutation list — that's
-    /// `Mutation`-level nesting, which this AST doesn't model.
+    /// mutation-level nesting, which this AST doesn't model.
     /// `children` lets a Macro carry child mutator nodes in the
     /// arena (for the `SelfAndDescendants` scope shape: Macro at root
     /// applies to the anchor, with an `Instruction(RepeatWhile)`
@@ -54,47 +62,48 @@ pub enum MutatorNode {
     Macro {
         /// Branch-routing channel index for the whole macro batch.
         channel: usize,
-        /// Source of the flat `Vec<Mutation>` — literal payload
-        /// or runtime-fetched by label.
-        mutations: MutationListSrc,
+        /// Source of the flat `Vec<M>` — literal payload or
+        /// runtime-fetched by label.
+        mutations: MutationListSrc<M>,
         /// Optional inner nodes expanded after the macro. The
         /// `SelfAndDescendants` shape uses one
         /// `Instruction(RepeatWhile)` child to walk descendants.
         /// Empty default keeps the common flat-Macro case terse.
         #[serde(default)]
-        children: Vec<MutatorNode>,
+        children: Vec<MutatorNode<E, M>>,
     },
-    /// `GfxMutator::Instruction` — recursive evaluation driver
+    /// `Mutator::Instruction` — recursive evaluation driver
     /// (`RepeatWhile` etc.) wrapping inner children.
     Instruction {
         /// Branch-routing channel index. The walker descends only
         /// where the target tree's channel matches.
         channel: usize,
         /// Which `Instruction` variant drives the recursive walk
-        /// (`RepeatWhile`, `RotateWhile`, `SpatialDescend`,
-        /// `MapChildren`).
-        instruction: InstructionSpec,
+        /// (`RepeatWhile`, `SpatialDescend`, `MapChildren`).
+        instruction: InstructionSpec<E>,
         /// Optional per-step mutation applied to the current
         /// target before descending. Defaults to
         /// [`MutationSrc::None`] so `Instruction` nodes that only
         /// drive walking need not carry a payload.
         #[serde(default = "MutationSrc::none_default")]
-        mutation: MutationSrc,
+        mutation: MutationSrc<E, M>,
         /// Inner mutator nodes evaluated against each visited
         /// target during the walk. Empty default for terse JSON.
         #[serde(default)]
-        children: Vec<MutatorNode>,
+        children: Vec<MutatorNode<E, M>>,
     },
     /// Compact "N consecutive children with the same template" — the
-    /// "24 children of X" idiom. Expands at apply time into
+    /// "24 children of X" idiom. Expands at build time into
     /// `count - skip_indices.len()` children on channels
     /// `[channel_base + i for i in 0..count if !skip_indices.contains(i)]`.
     /// The `template`'s `ChannelSrc` should be `SectionIndex` so the
-    /// builder threads the per-iteration channel through.
+    /// builder threads the per-iteration channel through. Only valid
+    /// as a child: a `Repeat` at the root of a build is
+    /// [`BuildError::RootRepeat`](super::BuildError::RootRepeat).
     Repeat {
-        /// Free-form label the [`SectionContext`](super::context::SectionContext)
-        /// keys per-iteration runtime data on (mutation lookups,
-        /// runtime counts, area lookups).
+        /// Free-form label the [`BuildContext`](super::context::BuildContext)
+        /// keys per-iteration runtime data on (runtime counts and
+        /// template resolution).
         section: String,
         /// First channel in the iterated range. Iteration `i`
         /// (zero-indexed) maps to channel `channel_base + i`.
@@ -109,7 +118,7 @@ pub enum MutatorNode {
         /// One template node cloned per iteration; its
         /// [`ChannelSrc::SectionIndex`] entries resolve to
         /// `channel_base + iter_index` at build time.
-        template: Box<MutatorNode>,
+        template: Box<MutatorNode<E, M>>,
     },
 }
 
@@ -121,7 +130,9 @@ pub enum ChannelSrc {
     /// A baked-in channel index.
     Literal(usize),
     /// The iteration's channel (`channel_base + iter_index`). Only
-    /// meaningful inside a [`MutatorNode::Repeat`] template.
+    /// meaningful inside a [`MutatorNode::Repeat`] template; anywhere
+    /// else it is
+    /// [`BuildError::SectionIndexOutsideRepeat`](super::BuildError::SectionIndexOutsideRepeat).
     SectionIndex,
 }
 
@@ -132,83 +143,57 @@ pub enum CountSrc {
     /// Count baked into the AST at deserialize time.
     Literal(usize),
     /// Count fetched from
-    /// [`SectionContext::count`](crate::mutator_builder::context::SectionContext::count)
-    /// at apply time under the given label.
+    /// [`BuildContext::count`](crate::engine::builder::BuildContext::count)
+    /// at build time under the given label.
     Runtime(String),
 }
 
-/// Where a single `Mutation` comes from.
+/// Where a single mutation comes from.
+///
+/// Generic over the element type as well as the payload because the
+/// template shape is the payload's
+/// [`Mutation::Template`],
+/// and a payload type names its template only together with the
+/// element type it mutates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 #[non_exhaustive]
-pub enum MutationSrc {
-    /// `Mutation::AreaDelta` whose fields are filled at apply time —
-    /// bare `CellField` variants pull from the area lookup; tagged
-    /// variants are baked-in literals.
-    AreaDelta(Vec<CellField>),
-    /// Entirely runtime-supplied single `Mutation`. The section
-    /// context is asked for it keyed by the enclosing section's name
-    /// (or `""` if not inside a `Repeat`).
-    Runtime,
-    /// `Mutation::None` literal.
+pub enum MutationSrc<E: TreeElement, M: Mutation<E>> {
+    /// A per-iteration template: the
+    /// [`BuildContext`](super::context::BuildContext) resolves it into
+    /// a mutation for each `Repeat` iteration, given the section name
+    /// and the iteration index. Only meaningful inside a
+    /// [`MutatorNode::Repeat`] template; anywhere else it is
+    /// [`BuildError::TemplateOutsideRepeat`](super::BuildError::TemplateOutsideRepeat).
+    Template(M::Template),
+    /// Entirely runtime-supplied single mutation. The context is asked
+    /// for it by the label carried here — the same keying as
+    /// [`MutationListSrc::Runtime`].
+    Runtime(String),
+    /// No mutation. A `Single` carrying it builds a `Mutator::Void`;
+    /// an `Instruction` carrying it builds with `mutation: None`.
     None,
 }
 
-impl MutationSrc {
+impl<E: TreeElement, M: Mutation<E>> MutationSrc<E, M> {
     pub(super) fn none_default() -> Self {
         MutationSrc::None
     }
 }
 
-/// Where a `Macro`'s `Vec<Mutation>` comes from.
+/// Where a `Macro`'s `Vec<M>` comes from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
-pub enum MutationListSrc {
-    /// A baked-in `Vec<Mutation>` serialized alongside the AST. The
-    /// overwhelming case for [`crate::mindmap::custom_mutation`]
-    /// entries that ship pure data from a JSON file — no runtime
-    /// context is consulted.
-    Literal(Vec<Mutation>),
-    /// Entirely runtime-supplied — the section context returns the
-    /// list keyed by the label (a free-form name the consumer
-    /// disambiguates on). Used by consumers whose `Vec<Mutation>`
-    /// depends on scene state (e.g. size-aware layouts).
+pub enum MutationListSrc<M> {
+    /// A baked-in `Vec<M>` serialized alongside the AST. The
+    /// overwhelming case for entries that ship pure data from a JSON
+    /// file — no runtime context is consulted.
+    Literal(Vec<M>),
+    /// Entirely runtime-supplied — the build context returns the list
+    /// keyed by the label (a free-form name the consumer disambiguates
+    /// on). Used by consumers whose list depends on scene state (e.g.
+    /// size-aware layouts).
     Runtime(String),
-}
-
-/// Per-cell `AreaDelta` field slot. Bare variants = "supplied at
-/// runtime by the area lookup"; tagged variants = baked-in literals
-/// reused for every cell.
-//
-// The lowercase variants (`position`, `bounds`, `scale`, `line_height`)
-// match the snake_case JSON tags consumers emit for runtime-supplied
-// fields; renaming them would break the on-the-wire contract.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(non_camel_case_types)]
-#[non_exhaustive]
-pub enum CellField {
-    /// Pull the cell's text payload from the per-section area
-    /// lookup at apply time.
-    Text,
-    /// Pull the cell's canvas-space position
-    /// (`OrderedVec2`) from the area lookup.
-    position,
-    /// Pull the cell's render bounds (width, height in canvas
-    /// pixels) from the area lookup.
-    bounds,
-    /// Pull the cell's font-size scalar from the area lookup.
-    scale,
-    /// Pull the cell's line-height multiplier from the area lookup.
-    line_height,
-    /// Pull the cell's [`ColorFontRegions`](crate::core::primitives::ColorFontRegions)
-    /// styled-span set from the area lookup.
-    ColorFontRegions,
-    /// Pull the cell's optional halo outline payload from the
-    /// area lookup.
-    Outline,
-    /// Bake an [`ApplyOperation`] literal into the delta — every
-    /// cell built from this template uses the same arithmetic
-    /// (`Add`, `Assign`, `Subtract`, `Delete`, ...).
-    Operation(ApplyOperation),
 }
 
 /// Serializable shadow of [`Instruction`].
@@ -220,15 +205,16 @@ pub enum CellField {
 /// format revision can collapse the sugar into a serde alias without
 /// breaking existing documents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 #[non_exhaustive]
-pub enum InstructionSpec {
+pub enum InstructionSpec<E: TreeElement> {
     /// `Instruction::RepeatWhile(Predicate::always_true())`.
     RepeatWhileAlwaysTrue,
     /// `Instruction::RepeatWhile(predicate)`.
-    RepeatWhile(Predicate),
-    /// `Instruction::RotateWhile(angle, predicate)`.
-    RotateWhile(f32, Predicate),
-    /// `Instruction::SpatialDescend(point)`.
+    RepeatWhile(Predicate<E>),
+    /// `Instruction::SpatialDescend(point)`. Refused by
+    /// [`build`](super::build()) for an element type that is not
+    /// [`SPATIAL`](crate::engine::element::TreeElement::SPATIAL).
     SpatialDescend(OrderedVec2),
     /// `Instruction::MapChildren` — unit variant, no payload. Pairs
     /// this instruction node's mutator children with the current
@@ -238,12 +224,13 @@ pub enum InstructionSpec {
     MapChildren,
 }
 
-impl InstructionSpec {
-    pub(super) fn into_instruction(self) -> Instruction {
+impl<E: TreeElement> InstructionSpec<E> {
+    /// The [`Instruction`] this spec stands for. O(1); moves the
+    /// predicate of a `RepeatWhile`.
+    pub fn into_instruction(self) -> Instruction<E> {
         match self {
             InstructionSpec::RepeatWhileAlwaysTrue => Instruction::RepeatWhile(Predicate::always_true()),
             InstructionSpec::RepeatWhile(p) => Instruction::RepeatWhile(p),
-            InstructionSpec::RotateWhile(a, p) => Instruction::RotateWhile(a, p),
             InstructionSpec::SpatialDescend(point) => Instruction::SpatialDescend(point),
             InstructionSpec::MapChildren => Instruction::MapChildren,
         }

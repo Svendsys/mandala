@@ -15,7 +15,7 @@ use crate::application::color_picker::{HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_
 /// initial-build path walks to seat each cell at the right channel.
 /// The per-section `[Option<usize>; N]` arrays index into `ordered` so
 /// the mutator path can resolve
-/// `baumhard::mutator_builder::SectionContext::area(section, index)` calls
+/// `BuildContext::resolve(section, index, template)` calls
 /// without scanning or doing channel math. The arrays are inline on
 /// the struct (no per-frame heap allocation) — sized at compile time
 /// from the per-section constants in `color_picker.rs`. `None` slots

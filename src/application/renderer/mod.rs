@@ -4,7 +4,7 @@
 //! rasterization, every text/rect/border buffer Mandala paints
 //! lives under [`Renderer`]. `Renderer` reads two intermediate
 //! representation the document layer hands it
-//! (`Tree<GfxElement, GfxMutator>`, one per canvas role — nodes,
+//! (`GfxTree`, one per canvas role — nodes,
 //! borders, connections, labels, portals, handles); it never
 //! reaches into the document directly, and the document never
 //! holds GPU resources (CODE_CONVENTIONS §3 "Model / view

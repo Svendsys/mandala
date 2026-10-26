@@ -8,7 +8,7 @@
 //! screen, where, overlapping what, saying what?" without pixels.
 //!
 //! **One source of truth: the drawn trees.** Every command reads the
-//! `Tree<GfxElement, GfxMutator>`s the renderer shapes, through
+//! `GfxTree`s the renderer shapes, through
 //! Baumhard's serializer ([`baumhard::mindmap::scene_dump`]), with the
 //! camera the renderer culls by. Nothing here re-derives geometry from
 //! the model or re-implements a visibility rule. `scene.hit_test`
@@ -25,9 +25,7 @@ use glam::Vec2;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::mutator::GfxMutator;
-use baumhard::gfx_structs::tree::Tree;
+use baumhard::gfx_structs::tree::GfxTree;
 use baumhard::mindmap::scene_dump::{
     dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, DumpFilter, EdgeDump,
     LabelDump, NodeDump, Placement, PortalDump,
@@ -353,10 +351,7 @@ struct Drawn {
 /// A role's registered tree and its scene offset, or `None` when the
 /// role has no tree or its tree is registered hidden — in which case
 /// the renderer draws none of it, and the scene reports none of it.
-fn drawn_role<'v>(
-    view: &SceneView<'v>,
-    role: CanvasRole,
-) -> Option<(&'v Tree<GfxElement, GfxMutator>, Vec2)> {
+fn drawn_role<'v>(view: &SceneView<'v>, role: CanvasRole) -> Option<(&'v GfxTree, Vec2)> {
     let entry = view.app_scene.canvas_entry(role)?;
     entry.visible().then(|| (entry.tree(), entry.offset()))
 }

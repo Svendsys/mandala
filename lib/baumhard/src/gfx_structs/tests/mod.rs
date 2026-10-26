@@ -11,6 +11,7 @@
 pub mod fixtures;
 
 pub mod area_tests;
+pub mod builder_tests;
 pub mod bvh_descent_tests;
 pub mod camera_tests;
 pub mod delta_tests;

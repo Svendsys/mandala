@@ -395,7 +395,7 @@ impl RegionParams {
 /// Copy + 16 bytes so shipping one through a channel will be free —
 /// no heap, no clone.
 ///
-/// [`Tree`]: crate::gfx_structs::tree::Tree
+/// [`Tree`]: crate::gfx_structs::tree::GfxTree
 #[derive(Debug, Clone, Copy)]
 pub struct RegionElementKeyPair {
     region_num: usize,

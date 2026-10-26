@@ -31,7 +31,6 @@ fn edge_handle_channels_preserve_ordering_and_distinctness() {
 /// stable and the mutator path is sound.
 #[test]
 fn edge_handle_mutator_round_trip_matches_full_rebuild() {
-    use crate::core::primitives::Applicable;
     use crate::mindmap::scene_cache::EdgeKey;
     use crate::mindmap::tree_builder::{EdgeHandleElement, EdgeHandleKind};
 
@@ -62,7 +61,7 @@ fn edge_handle_mutator_round_trip_matches_full_rebuild() {
 
     let mut tree_a = build_handle_tree(&set_a);
     let mutator = build_handle_mutator_tree(&set_b);
-    mutator.apply_to(&mut tree_a);
+    mutator.apply_to(&mut tree_a, &());
 
     let expected = build_handle_tree(&set_b);
     let actual_leaves: Vec<NodeId> = tree_a.root.children(&tree_a.arena).collect();

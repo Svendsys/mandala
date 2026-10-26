@@ -7,7 +7,7 @@
 //! replay helper used during tick.
 
 use baumhard::gfx_structs::area::GlyphAreaCommand;
-use baumhard::gfx_structs::mutator::Mutation;
+use baumhard::gfx_structs::mutator::GfxMutation;
 use baumhard::mindmap::custom_mutation::{CustomMutation, PlatformContext, Trigger};
 use baumhard::mindmap::model::MindNode;
 use baumhard::mindmap::tree_builder::MindMapTree;
@@ -18,7 +18,7 @@ use super::undo_action::UndoAction;
 use super::MindMapDocument;
 use crate::application::source_tier::SourceTier;
 
-/// Apply position-bearing `Mutation`s to a `MindNode` to derive
+/// Apply position-bearing `GfxMutation`s to a `MindNode` to derive
 /// the `to` snapshot for an animation. Mirrors the GlyphArea
 /// command vocabulary of the existing tree mutator path so that
 /// "what does this mutation do" has only one definition,
@@ -27,9 +27,9 @@ use crate::application::source_tier::SourceTier;
 /// `NudgeDown`; other commands are no-ops on the model snapshot
 /// (their tree-side effect still runs at completion via
 /// `apply_custom_mutation`).
-fn apply_position_mutations_to_node(mutations: &[Mutation], node: &mut MindNode) {
+fn apply_position_mutations_to_node(mutations: &[GfxMutation], node: &mut MindNode) {
     for mutation in mutations {
-        if let Mutation::AreaCommand(cmd) = mutation {
+        if let GfxMutation::AreaCommand(cmd) = mutation {
             match cmd.as_ref() {
                 GlyphAreaCommand::NudgeLeft(dx) => {
                     node.offset_position_clamped(-(*dx as f64), 0.0);
@@ -296,7 +296,7 @@ impl MindMapDocument {
         // GlyphArea command vocabulary so animation receives the same
         // final state instant-mode would have landed on — there's
         // only one source of truth for "what does this mutation do".
-        // Extract the flat Mutation list from the mutator AST for the
+        // Extract the flat GfxMutation list from the mutator AST for the
         // scratch-node replay. MutatorNode shapes with runtime holes
         // (size-aware mutations) can't be previewed against a single
         // model node — the scratch stays at `from` and the animation

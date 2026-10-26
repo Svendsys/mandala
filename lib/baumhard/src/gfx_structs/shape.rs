@@ -577,8 +577,7 @@ impl NodeShape {
     /// compare inexact — f32 addition is not associative, so
     /// `(position + extent) - position` can exceed `extent` by an
     /// ULP and a point exactly on the far edge then reports `false`.
-    /// `bvh_find` in
-    /// [`tree_walker`](crate::gfx_structs::tree_walker) is the
+    /// `bvh_find` in [`tree`](crate::gfx_structs::tree) is the
     /// reference caller.
     ///
     /// A degenerate `bounds` (either dimension `<= 0`) always

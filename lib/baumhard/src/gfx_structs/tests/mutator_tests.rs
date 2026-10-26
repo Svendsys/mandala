@@ -3,9 +3,9 @@
 //! Tests for [`crate::gfx_structs::mutator`] — mutation fundamentals
 //! (§T1).
 //!
-//! Covers `Mutation::AreaDelta`, `Mutation::AreaCommand`,
-//! `Mutation::None`, `Instruction::RepeatWhile`,
-//! `Instruction::RotateWhile`, `GfxMutator::Macro`,
+//! Covers `GfxMutation::AreaDelta`, `GfxMutation::AreaCommand`, a
+//! mutator with no payload, `Instruction::RepeatWhile`, an
+//! `Instruction` carrying a mutation, `GfxMutator::Macro`,
 //! `GfxMutator::Void`, and `MutatorTree::apply_to` forward-apply
 //! behaviour.
 //!
@@ -14,13 +14,15 @@
 
 use glam::Vec2;
 
-use crate::core::primitives::{Applicable, ApplyOperation};
+use crate::core::primitives::ApplyOperation;
+use crate::engine::mutation::Mutation;
+use crate::engine::mutator::Instruction;
+use crate::engine::predicate::Predicate;
 use crate::font::fonts;
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField};
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::{GfxMutator, Instruction, Mutation};
-use crate::gfx_structs::predicate::Predicate;
-use crate::gfx_structs::tree::{MutatorTree, Tree};
+use crate::gfx_structs::mutator::{GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance};
+use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use crate::util::geometry::almost_equal;
 
 /// Build a single `GfxElement::GlyphArea` for tests that need one
@@ -36,14 +38,14 @@ fn subject_area_element(text: &str, scale: f32, font_size: f32, pos: Vec2, size:
     GfxElement::new_area_non_indexed_with_id(GlyphArea::new_with_str(text, scale, font_size, pos, size), 0, 0)
 }
 
-// ── Mutation::AreaDelta ────────────────────────────────────────────
+// ── GfxMutation::AreaDelta ────────────────────────────────────────────
 
 #[test]
 fn test_mutation_area_delta_applies_field() {
     do_mutation_area_delta_applies_field();
 }
 
-/// Construct a `GlyphArea` element, apply a `Mutation::AreaDelta`
+/// Construct a `GlyphArea` element, apply a `GfxMutation::AreaDelta`
 /// that adds to its position, and verify the position changed.
 pub fn do_mutation_area_delta_applies_field() {
     let mut element = subject_area_element("hello", 1.0, 10.0, Vec2::new(10.0, 20.0), Vec2::new(100.0, 50.0));
@@ -57,8 +59,8 @@ pub fn do_mutation_area_delta_applies_field() {
         GlyphAreaField::Operation(ApplyOperation::Add),
         GlyphAreaField::position(5.0, 7.0),
     ]);
-    let mutation = Mutation::area_delta(delta);
-    mutation.apply_to(&mut element);
+    let mutation = GfxMutation::area_delta(delta);
+    mutation.apply_to(&mut element, &());
 
     // Position should now be (15, 27).
     assert!(
@@ -73,7 +75,7 @@ pub fn do_mutation_area_delta_applies_field() {
     );
 }
 
-// ── Mutation::AreaCommand (NudgeRight) ─────────────────────────────
+// ── GfxMutation::AreaCommand (NudgeRight) ─────────────────────────────
 
 #[test]
 fn test_mutation_area_command_nudge_right() {
@@ -88,8 +90,8 @@ pub fn do_mutation_area_command_nudge_right() {
     let original_x = element.position().x;
     let original_y = element.position().y;
 
-    let mutation = Mutation::area_command(GlyphAreaCommand::NudgeRight(12.5));
-    mutation.apply_to(&mut element);
+    let mutation = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(12.5));
+    mutation.apply_to(&mut element, &());
 
     assert!(
         almost_equal(element.position().x, original_x + 12.5),
@@ -106,14 +108,17 @@ pub fn do_mutation_area_command_nudge_right() {
     );
 }
 
-// ── Mutation::None (noop) ──────────────────────────────────────────
+// ── no payload (noop) ──────────────────────────────────────────────
 
 #[test]
 fn test_mutation_noop_leaves_tree_unchanged() {
     do_mutation_noop_leaves_tree_unchanged();
 }
 
-/// Apply `Mutation::None` to an element and verify nothing changed.
+/// A mutator's "no payload" is `Option::None` — an `Instruction` whose
+/// `mutation` is `None`. Applying one directly leaves the element
+/// unchanged; the same node with `Some` payload is the control that
+/// proves the element was reachable.
 pub fn do_mutation_noop_leaves_tree_unchanged() {
     let mut element = subject_area_element(
         "stable",
@@ -126,16 +131,30 @@ pub fn do_mutation_noop_leaves_tree_unchanged() {
     let pos_before = element.position();
     let text_before = element.glyph_area().unwrap().text.clone();
 
-    let mutation = Mutation::none();
-    assert!(mutation.is_none());
-    assert!(!mutation.is_some());
-    mutation.apply_to(&mut element);
+    let empty = GfxMutator::new_instruction(Instruction::MapChildren);
+    assert!(
+        matches!(empty, GfxMutator::Instruction { mutation: None, .. }),
+        "precondition: new_instruction carries no payload"
+    );
+    empty.apply_to(&mut element, &());
 
     assert_eq!(element.position(), pos_before);
     assert_eq!(element.glyph_area().unwrap().text, text_before);
+
+    let carrying = GfxMutator::Instruction {
+        instruction: Instruction::MapChildren,
+        channel: 0,
+        mutation: Some(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0))),
+    };
+    carrying.apply_to(&mut element, &());
+    assert_ne!(
+        element.position(),
+        pos_before,
+        "the control: a payload does reach the element"
+    );
 }
 
-// ── Mutation::writes_the_same ──────────────────────────────────────
+// ── GfxMutation::writes_the_same ──────────────────────────────────────
 
 #[test]
 fn test_writes_the_same_is_reflexive_where_partial_eq_is_not() {
@@ -143,21 +162,21 @@ fn test_writes_the_same_is_reflexive_where_partial_eq_is_not() {
 }
 
 /// The property the derived `PartialEq` cannot provide, and the
-/// reason [`Mutation::writes_the_same`] exists: `flat_mutations`
+/// reason [`GfxMutation::writes_the_same`] exists: `flat_mutations`
 /// decides whether a mutator runs by asking whether two payloads
 /// agree, and `scope::self_and_descendants` asks that of a payload
 /// and a clone of itself.
 pub fn do_writes_the_same_is_reflexive_where_partial_eq_is_not() {
-    let nan = Mutation::area_command(GlyphAreaCommand::NudgeRight(f32::NAN));
+    let nan = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(f32::NAN));
     assert_ne!(nan, nan.clone(), "precondition: `==` is not reflexive here");
     assert!(nan.writes_the_same(&nan.clone()), "but agreement must be");
 
     // Reflexive for every payload, not only the pathological one.
     for m in [
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
-        Mutation::area_command(GlyphAreaCommand::MoveTo(f32::NAN, 2.0)),
-        Mutation::area_command(GlyphAreaCommand::NudgeUp(f32::INFINITY)),
-        Mutation::none(),
+        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
+        GfxMutation::area_command(GlyphAreaCommand::MoveTo(f32::NAN, 2.0)),
+        GfxMutation::area_command(GlyphAreaCommand::NudgeUp(f32::INFINITY)),
+        GfxMutation::Event(GlyphTreeEventInstance::new(GlyphTreeEvent::NoopEvent(3), 0)),
     ] {
         assert!(m.writes_the_same(&m.clone()), "not reflexive for {m:?}");
     }
@@ -173,17 +192,22 @@ fn test_writes_the_same_separates_values_that_write_differently() {
 /// `NaN`/`inf` do not, which is also why the predicate is not
 /// defined over the serialized form (JSON writes both as `null`).
 pub fn do_writes_the_same_separates_values_that_write_differently() {
-    let nan = Mutation::area_command(GlyphAreaCommand::NudgeRight(f32::NAN));
-    let inf = Mutation::area_command(GlyphAreaCommand::NudgeRight(f32::INFINITY));
-    let one = Mutation::area_command(GlyphAreaCommand::NudgeRight(1.0));
-    let pos_zero = Mutation::area_command(GlyphAreaCommand::NudgeRight(0.0));
-    let neg_zero = Mutation::area_command(GlyphAreaCommand::NudgeRight(-0.0));
-    let other_axis = Mutation::area_command(GlyphAreaCommand::NudgeUp(1.0));
+    let nan = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(f32::NAN));
+    let inf = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(f32::INFINITY));
+    let one = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0));
+    let pos_zero = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(0.0));
+    let neg_zero = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(-0.0));
+    let other_axis = GfxMutation::area_command(GlyphAreaCommand::NudgeUp(1.0));
 
     assert!(!nan.writes_the_same(&inf));
     assert!(!nan.writes_the_same(&one));
     assert!(!one.writes_the_same(&other_axis));
-    assert!(!one.writes_the_same(&Mutation::none()));
+    assert!(
+        !one.writes_the_same(&GfxMutation::Event(GlyphTreeEventInstance::new(
+            GlyphTreeEvent::NoopEvent(3),
+            0
+        )))
+    );
     assert!(pos_zero.writes_the_same(&neg_zero), "0.0 and -0.0 write alike");
     assert!(neg_zero.writes_the_same(&pos_zero), "and symmetrically");
 }
@@ -204,7 +228,7 @@ pub fn do_instruction_repeat_while_always_true() {
     fonts::init();
 
     // -- target tree: root (Void, ch 0) -> child_a (ch 0) -> child_b (ch 0)
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut model: GfxTree = GfxTree::new_non_indexed();
     let child_a_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("a", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(50.0, 50.0)),
         0,
@@ -224,18 +248,18 @@ pub fn do_instruction_repeat_while_always_true() {
     // child, applies the child mutator to matching children, then
     // recurses into their descendants.
     let predicate = Predicate::always_true();
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
 
     let instruction_mutator = GfxMutator::Instruction {
         instruction: Instruction::RepeatWhile(predicate),
         channel: 0,
-        mutation: Mutation::None,
+        mutation: None,
     };
     *mutator.arena.get_mut(mutator.root).unwrap().get_mut() = instruction_mutator;
 
     // Child mutator: shifts position by (5, 7).
     let child_mutator = GfxMutator::new(
-        Mutation::area_delta(DeltaGlyphArea::new(vec![
+        GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::position(5.0, 7.0),
         ])),
@@ -245,7 +269,7 @@ pub fn do_instruction_repeat_while_always_true() {
     mutator.root.append(child_mut_id, &mut mutator.arena);
 
     // Apply.
-    mutator.apply_to(&mut model);
+    mutator.apply_to(&mut model, &());
 
     // child_a should have been mutated (position += (5, 7)).
     let child_a = model.arena.get(child_a_id).unwrap().get();
@@ -275,36 +299,35 @@ pub fn do_instruction_repeat_while_always_true() {
     );
 }
 
-// ── Instruction::RotateWhile ───────────────────────────────────────
+// ── Instruction carrying a mutation ────────────────────────────────
 
 #[test]
-fn test_instruction_rotate_while() {
-    do_instruction_rotate_while();
+fn test_instruction_mutator_applies_its_attached_mutation() {
+    do_instruction_mutator_applies_its_attached_mutation();
 }
 
-/// `RotateWhile` is currently a stub in the tree walker. Verify that
-/// the variant can be constructed, stored in a `GfxMutator`, and
-/// that applying the mutator directly (via `Applicable`) still
-/// delivers its attached `mutation` field to the target element. The
-/// rotation instruction itself is a no-op today.
-pub fn do_instruction_rotate_while() {
-    let mut element =
-        subject_area_element("rotate", 1.0, 10.0, Vec2::new(20.0, 30.0), Vec2::new(100.0, 50.0));
+/// Applying an `Instruction` mutator directly delivers its attached
+/// `mutation` to the target element; the instruction itself is a
+/// walker concern and does nothing to the element it is applied to.
+pub fn do_instruction_mutator_applies_its_attached_mutation() {
+    let mut element = subject_area_element(
+        "attached",
+        1.0,
+        10.0,
+        Vec2::new(20.0, 30.0),
+        Vec2::new(100.0, 50.0),
+    );
 
-    // Build an Instruction::RotateWhile mutator with an attached
-    // area delta. The RotateWhile instruction is a tree-walker
-    // concern (currently stubbed), but the Applicable impl for
-    // GfxMutator::Instruction still applies the `mutation` field.
     let mutator = GfxMutator::Instruction {
-        instruction: Instruction::RotateWhile(45.0, Predicate::always_true()),
+        instruction: Instruction::RepeatWhile(Predicate::always_true()),
         channel: 0,
-        mutation: Mutation::area_delta(DeltaGlyphArea::new(vec![
+        mutation: Some(GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::position(10.0, 10.0),
-        ])),
+        ]))),
     };
 
-    mutator.apply_to(&mut element);
+    mutator.apply_to(&mut element, &());
 
     // The direct mutation should have been applied.
     assert!(
@@ -333,7 +356,7 @@ pub fn do_mutator_tree_applies_to_target() {
     fonts::init();
 
     // -- target tree: root (ch 0) -> child (ch 0)
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut model: GfxTree = GfxTree::new_non_indexed();
 
     // Replace the default void root with an area element.
     let root_element = GfxElement::new_area_non_indexed_with_id(
@@ -351,12 +374,12 @@ pub fn do_mutator_tree_applies_to_target() {
     model.root.append(child_id, &mut model.arena);
 
     // -- mutator tree: root (NudgeRight 7.0, ch 0) -> child (position += (0, 11), ch 0)
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
-    let root_mut = GfxMutator::new(Mutation::area_command(GlyphAreaCommand::NudgeRight(7.0)), 0);
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
+    let root_mut = GfxMutator::new(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(7.0)), 0);
     *mutator.arena.get_mut(mutator.root).unwrap().get_mut() = root_mut;
 
     let child_mut = GfxMutator::new(
-        Mutation::area_delta(DeltaGlyphArea::new(vec![
+        GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::position(0.0, 11.0),
         ])),
@@ -366,7 +389,7 @@ pub fn do_mutator_tree_applies_to_target() {
     mutator.root.append(child_mut_id, &mut mutator.arena);
 
     // Apply.
-    mutator.apply_to(&mut model);
+    mutator.apply_to(&mut model, &());
 
     // Root: x should have shifted right by 7.
     let root = model.arena.get(model.root).unwrap().get();
@@ -402,24 +425,24 @@ fn test_mutator_macro_applies_all_mutations_in_order() {
     do_mutator_macro_applies_all_mutations_in_order();
 }
 
-/// A `Macro` mutator applies every `Mutation` in its vec to the same
+/// A `Macro` mutator applies every `GfxMutation` in its vec to the same
 /// target element. The position delta is split across two `AreaDelta`
 /// entries so the assertion proves *both* ran — a single-apply bug
 /// would leave one component short of the summed delta.
 pub fn do_mutator_macro_applies_all_mutations_in_order() {
     let mut element = subject_area_element("macro", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0));
 
-    let first = Mutation::area_delta(DeltaGlyphArea::new(vec![
+    let first = GfxMutation::area_delta(DeltaGlyphArea::new(vec![
         GlyphAreaField::Operation(ApplyOperation::Add),
         GlyphAreaField::position(5.0, 7.0),
     ]));
-    let second = Mutation::area_delta(DeltaGlyphArea::new(vec![
+    let second = GfxMutation::area_delta(DeltaGlyphArea::new(vec![
         GlyphAreaField::Operation(ApplyOperation::Add),
         GlyphAreaField::position(2.0, 3.0),
     ]));
     let mutator = GfxMutator::new_macro(vec![first, second], 0);
 
-    mutator.apply_to(&mut element);
+    mutator.apply_to(&mut element, &());
 
     // Both deltas ran: (5+2, 7+3) = (7, 10).
     assert!(
@@ -439,17 +462,16 @@ fn test_mutator_macro_empty_is_noop() {
     do_mutator_macro_empty_is_noop();
 }
 
-/// A `Macro` with no mutations leaves the target untouched. Mirrors
-/// the `Mutation::None` noop guarantee at the mutator level — an
+/// A `Macro` with no mutations leaves the target untouched — an
 /// empty-vec `Macro` is a valid carrier even if nothing inside it
-/// fires.
+/// fires, like a `Void` or an `Instruction` with no payload.
 pub fn do_mutator_macro_empty_is_noop() {
     let mut element = subject_area_element("empty", 1.0, 10.0, Vec2::new(15.0, 25.0), Vec2::new(100.0, 50.0));
     let before = element.position();
     let text_before = element.glyph_area().unwrap().text.clone();
 
     let mutator = GfxMutator::new_macro(vec![], 0);
-    mutator.apply_to(&mut element);
+    mutator.apply_to(&mut element, &());
 
     assert_eq!(element.position(), before);
     assert_eq!(element.glyph_area().unwrap().text, text_before);
@@ -472,7 +494,7 @@ pub fn do_mutator_void_is_noop_when_applied_directly() {
     let text_before = element.glyph_area().unwrap().text.clone();
 
     let mutator = GfxMutator::new_void(0);
-    mutator.apply_to(&mut element);
+    mutator.apply_to(&mut element, &());
 
     assert_eq!(element.position(), before);
     assert_eq!(element.glyph_area().unwrap().text, text_before);
@@ -494,7 +516,7 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
     fonts::init();
 
     // -- target tree: root (ch 0) -> child_1 (ch 1) -> child_2 (ch 2)
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut model: GfxTree = GfxTree::new_non_indexed();
     let child_1_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("ch1", 1.0, 10.0, Vec2::new(10.0, 10.0), Vec2::new(50.0, 50.0)),
         1,
@@ -511,10 +533,10 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
     let child_1_before = model.arena.get(child_1_id).unwrap().get().position();
 
     // -- mutator tree: root (Void ch 0) -> Void (ch 1), Single (ch 2, add (3, 4))
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     let void_mut_id = mutator.arena.new_node(GfxMutator::new_void(1));
     let single_mut_id = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(DeltaGlyphArea::new(vec![
+        GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::position(3.0, 4.0),
         ])),
@@ -523,7 +545,7 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
     mutator.root.append(void_mut_id, &mut mutator.arena);
     mutator.root.append(single_mut_id, &mut mutator.arena);
 
-    mutator.apply_to(&mut model);
+    mutator.apply_to(&mut model, &());
 
     // child_1 unchanged (the Void aligned to it).
     let child_1 = model.arena.get(child_1_id).unwrap().get();

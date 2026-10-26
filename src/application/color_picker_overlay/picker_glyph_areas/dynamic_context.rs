@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `PickerDynamicContext` — the slim per-frame `SectionContext`
+//! `PickerDynamicContext` — the slim per-frame `BuildContext`
 //! impl that replaces the full `compute_picker_areas` pass on the
 //! dynamic mutator path. Computes each requested `GlyphAreaField`
 //! directly from `(geometry, layout, section, index)` so no
@@ -25,7 +25,10 @@ use crate::application::color_picker_overlay::color::{
     highlight_hovered_cell_color, highlight_selected_cell_color,
 };
 use crate::application::widgets::color_picker_widget::load_spec;
-use baumhard::mutator_builder::{CellField, SectionContext};
+use baumhard::engine::builder::BuildContext;
+use baumhard::gfx_structs::element::GfxElement;
+use baumhard::gfx_structs::mutator::GfxMutation;
+use baumhard::gfx_structs::template::{area_delta_from_template, CellField};
 
 use super::areas::PickerSection;
 
@@ -288,7 +291,10 @@ impl<'a> PickerDynamicContext<'a> {
     }
 }
 
-impl<'a> SectionContext for PickerDynamicContext<'a> {
+impl<'a> PickerDynamicContext<'a> {
+    /// One template slot for cell `index` of `section`, computed
+    /// straight from the geometry — the per-field source
+    /// [`BuildContext::resolve`] hands to `area_delta_from_template`.
     fn field(&self, section: &str, index: usize, template: &CellField) -> GlyphAreaField {
         // Resolve the section string to the typed enum up front so
         // every `match` below is exhaustive on the enum rather than
@@ -400,6 +406,16 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
             Some(cosmic_color_to_rgba(color)),
             font,
         ))
+    }
+}
+
+/// The dynamic phase resolves each cell's template field by field from
+/// the geometry, so no `GlyphArea` is built per cell per frame. The
+/// spec carries no runtime counts, mutations or lists, so the other
+/// look-ups keep their `unreachable!()` defaults.
+impl<'a> BuildContext<GfxElement, GfxMutation> for PickerDynamicContext<'a> {
+    fn resolve(&self, section: &str, index: usize, template: &Vec<CellField>) -> GfxMutation {
+        area_delta_from_template(template, |cell| self.field(section, index, cell))
     }
 }
 

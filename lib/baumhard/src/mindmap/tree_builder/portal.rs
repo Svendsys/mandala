@@ -37,10 +37,11 @@ use glam::Vec2;
 use indextree::NodeId;
 
 use crate::core::primitives::ColorFontRegions;
+use crate::engine::element::TreeElement;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::{BranchChannel, Tree};
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::model::{is_portal_edge, portal_endpoint_state, MindMap, MindNode};
 use crate::util::geometry::aabb_center;
 
@@ -66,10 +67,10 @@ pub type SelectedEdgeRef<'a> = (&'a str, &'a str, &'a str);
 /// carries identity alone, so there is no second copy of the
 /// AABBs to keep in sync.
 pub struct PortalTree {
-    pub tree: Tree<GfxElement, GfxMutator>,
+    pub tree: GfxTree,
     /// Channel-path → `(EdgeKey, endpoint)` identity for every
     /// leaf in `tree`. Feed a `NodeId` from
-    /// [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at)
+    /// [`Tree::descendant_at`](crate::engine::tree::Tree::descendant_at)
     /// (or [`Scene::component_in`](crate::gfx_structs::scene::Scene::component_in))
     /// into [`PortalHitIndex::resolve`] to name the hit.
     pub hit_index: PortalHitIndex,
@@ -203,7 +204,7 @@ impl PortalHitIndex {
     /// allocation beyond the four `String` clones in the returned
     /// [`PortalHit`]: the [`EdgeKey`]'s three plus the endpoint
     /// id.
-    pub fn resolve(&self, tree: &Tree<GfxElement, GfxMutator>, hit: NodeId) -> Option<PortalHit> {
+    pub fn resolve(&self, tree: &GfxTree, hit: NodeId) -> Option<PortalHit> {
         let leaf = tree.arena.get(hit)?;
         let part = match leaf.get().channel() {
             ICON_SLOT => PortalPart::Icon,
@@ -593,7 +594,7 @@ pub fn build_portal_tree(
 /// Variant of [`build_portal_tree`] that consumes pre-computed
 /// pair data.
 pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let mut unique_id: usize = 1;
 
     for pair in pairs {
@@ -637,11 +638,11 @@ pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
 /// sequence, but the caller re-stamps the index anyway so the
 /// two build paths hand back interchangeable values.
 pub struct PortalMutator {
-    pub mutator: crate::gfx_structs::tree::MutatorTree<GfxMutator>,
+    pub mutator: crate::gfx_structs::tree::GfxMutatorTree,
     pub hit_index: PortalHitIndex,
 }
 
-/// Build a [`MutatorTree`](crate::gfx_structs::tree::MutatorTree)
+/// Build a [`MutatorTree`](crate::gfx_structs::tree::GfxMutatorTree)
 /// that updates an already-registered portal tree to the current
 /// state without rebuilding the arena.
 pub fn build_portal_mutator_tree(
@@ -671,10 +672,10 @@ pub fn build_portal_mutator_tree(
 /// pre-computed pair data.
 pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalMutator {
     use crate::gfx_structs::area::DeltaGlyphArea;
-    use crate::gfx_structs::mutator::Mutation;
-    use crate::gfx_structs::tree::MutatorTree;
+    use crate::gfx_structs::mutator::GfxMutation;
+    use crate::gfx_structs::tree::GfxMutatorTree;
 
-    let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
+    let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
 
     for pair in pairs {
         let pair_node = mt
@@ -688,7 +689,7 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
             for (slot, area) in [(ICON_SLOT, &ep.icon), (TEXT_SLOT, &ep.text)] {
                 let delta = DeltaGlyphArea::full_assign_from(area);
                 endpoint_void.append_value(
-                    GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), slot),
+                    GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), slot),
                     &mut mt.arena,
                 );
             }

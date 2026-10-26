@@ -439,11 +439,11 @@ pub(in crate::application::app) fn cancel_text_edit(
 }
 
 /// push the current (`buffer`, `cursor`) state into the
-/// live Baumhard tree via a `Mutation::AreaDelta { text: Assign }`
+/// live Baumhard tree via a `GfxMutation::AreaDelta { text: Assign }`
 /// targeting the edited node's GlyphArea. This is the "utilize
 /// Baumhard" path — the buffer is transient UI state on the app
 /// layer, but every visual frame goes through the existing
-/// `Mutation::apply_to_area` vocabulary. The renderer's text buffers
+/// `GfxMutation::apply_to_area` vocabulary. The renderer's text buffers
 /// are rebuilt from the mutated tree so the next frame reflects the
 /// keystroke.
 pub(in crate::application::app) fn apply_text_edit_to_tree(

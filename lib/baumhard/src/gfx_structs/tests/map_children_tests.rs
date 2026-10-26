@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Tests for [`crate::gfx_structs::mutator::Instruction::MapChildren`]
+//! Tests for [`crate::engine::mutator::Instruction::MapChildren`]
 //! — the zip-by-sibling-position walker primitive that stands
 //! alongside the default channel-based aligner.
 //!
@@ -15,12 +15,13 @@
 
 use indextree::NodeId;
 
+use crate::engine::mutator::Instruction;
+use crate::engine::walker::walk_tree_from;
 use crate::font::fonts;
 use crate::gfx_structs::area::GlyphAreaCommand;
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::{GfxMutator, Instruction, Mutation};
-use crate::gfx_structs::tree::{MutatorTree, Tree};
-use crate::gfx_structs::tree_walker::walk_tree_from;
+use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
+use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -31,9 +32,9 @@ use crate::gfx_structs::tests::fixtures::{append_area, mk_area};
 /// Build a target tree: root at (0, 0) on channel 0, with `n` children
 /// at (100, i*10), channels from `channels`. Returns (tree, child ids
 /// in declaration order) for assertion convenience.
-fn build_target_with_children(channels: &[usize]) -> (Tree<GfxElement, GfxMutator>, Vec<NodeId>) {
+fn build_target_with_children(channels: &[usize]) -> (GfxTree, Vec<NodeId>) {
     fonts::init();
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let mut child_ids = Vec::with_capacity(channels.len());
     for (i, ch) in channels.iter().enumerate() {
@@ -47,26 +48,26 @@ fn build_target_with_children(channels: &[usize]) -> (Tree<GfxElement, GfxMutato
 /// the given `attached` mutation, and with N `Single` children each
 /// carrying `nudges[i]` as its mutation on channel `mutator_channels[i]`.
 fn build_map_children_mutator(
-    attached: Mutation,
+    attached: Option<GfxMutation>,
     root_channel: usize,
     mutator_channels: &[usize],
     nudges: &[f32],
-) -> MutatorTree<GfxMutator> {
+) -> GfxMutatorTree {
     assert_eq!(mutator_channels.len(), nudges.len());
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::Instruction {
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::Instruction {
         instruction: Instruction::MapChildren,
         channel: root_channel,
         mutation: attached,
     });
     for (ch, dx) in mutator_channels.iter().zip(nudges.iter()) {
-        let m = Mutation::area_command(GlyphAreaCommand::NudgeRight(*dx));
+        let m = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(*dx));
         let child = mutator.arena.new_node(GfxMutator::new(m, *ch));
         mutator.root.append(child, &mut mutator.arena);
     }
     mutator
 }
 
-fn position_x(tree: &Tree<GfxElement, GfxMutator>, id: NodeId) -> f32 {
+fn position_x(tree: &GfxTree, id: NodeId) -> f32 {
     tree.arena.get(id).unwrap().get().position().x
 }
 
@@ -85,9 +86,9 @@ pub fn do_one_to_one_zip_applies_each_child_by_position() {
     // alignment would apply none; MapChildren must apply each by
     // sibling position.
     let (mut tree, child_ids) = build_target_with_children(&[0, 1, 2]);
-    let mutator = build_map_children_mutator(Mutation::None, 0, &[9, 9, 9], &[10.0, 20.0, 30.0]);
+    let mutator = build_map_children_mutator(None, 0, &[9, 9, 9], &[10.0, 20.0, 30.0]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 110.0, "child 0 got dx=10");
     assert_eq!(position_x(&tree, child_ids[1]), 120.0, "child 1 got dx=20");
@@ -106,9 +107,9 @@ fn test_zip_shorter_mutator_than_target() {
 pub fn do_zip_shorter_mutator_than_target() {
     let (mut tree, child_ids) = build_target_with_children(&[0, 0, 0, 0]);
     // Only 2 mutators — indices 0 and 1 should move, 2 and 3 untouched.
-    let mutator = build_map_children_mutator(Mutation::None, 0, &[0, 0], &[5.0, 7.0]);
+    let mutator = build_map_children_mutator(None, 0, &[0, 0], &[5.0, 7.0]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 105.0);
     assert_eq!(position_x(&tree, child_ids[1]), 107.0);
@@ -129,9 +130,9 @@ pub fn do_zip_shorter_target_than_mutator() {
     let (mut tree, child_ids) = build_target_with_children(&[0, 0]);
     // 4 mutators, 2 targets — only the first two apply; the remaining
     // two are silently dropped with a debug log.
-    let mutator = build_map_children_mutator(Mutation::None, 0, &[0, 0, 0, 0], &[1.0, 2.0, 3.0, 4.0]);
+    let mutator = build_map_children_mutator(None, 0, &[0, 0, 0, 0], &[1.0, 2.0, 3.0, 4.0]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 101.0);
     assert_eq!(position_x(&tree, child_ids[1]), 102.0);
@@ -148,9 +149,9 @@ fn test_zip_empty_mutator_children_is_noop() {
 
 pub fn do_zip_empty_mutator_children_is_noop() {
     let (mut tree, child_ids) = build_target_with_children(&[0, 0]);
-    let mutator = build_map_children_mutator(Mutation::None, 0, &[], &[]);
+    let mutator = build_map_children_mutator(None, 0, &[], &[]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
     assert_eq!(position_x(&tree, child_ids[0]), 100.0);
     assert_eq!(position_x(&tree, child_ids[1]), 100.0);
 }
@@ -163,9 +164,9 @@ fn test_zip_empty_target_children_is_noop() {
 pub fn do_zip_empty_target_children_is_noop() {
     // Target is a leaf — no children to zip against.
     let (mut tree, _) = build_target_with_children(&[]);
-    let mutator = build_map_children_mutator(Mutation::None, 0, &[0, 0], &[1.0, 2.0]);
+    let mutator = build_map_children_mutator(None, 0, &[0, 0], &[1.0, 2.0]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
     // No panic; root untouched.
     assert_eq!(position_x(&tree, root), 0.0);
 }
@@ -177,9 +178,9 @@ fn test_zip_empty_both_sides_is_noop() {
 
 pub fn do_zip_empty_both_sides_is_noop() {
     let (mut tree, _) = build_target_with_children(&[]);
-    let mutator = build_map_children_mutator(Mutation::None, 0, &[], &[]);
+    let mutator = build_map_children_mutator(None, 0, &[], &[]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
     assert_eq!(position_x(&tree, root), 0.0);
 }
 
@@ -201,7 +202,7 @@ pub fn do_nested_map_children_descends_recursively() {
     //   │  └─ a1
     //   └─ b
     //      └─ b0
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut tree: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = tree.root;
     let a = append_area(&mut tree, root, 0.0, 0.0, 0, 1);
     let a0 = append_area(&mut tree, a, 0.0, 0.0, 0, 2);
@@ -211,26 +212,26 @@ pub fn do_nested_map_children_descends_recursively() {
 
     // Mutator: outer MapChildren with two Instruction(MapChildren)
     // children, each carrying a Single leaf mutator per grandchild.
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::Instruction {
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::Instruction {
         instruction: Instruction::MapChildren,
         channel: 0,
-        mutation: Mutation::None,
+        mutation: None,
     });
 
     // Build a MapChildren child with two leaf Singles nudging x by 1 and 2.
     let inner_a = mutator.arena.new_node(GfxMutator::Instruction {
         instruction: Instruction::MapChildren,
         channel: 0,
-        mutation: Mutation::None,
+        mutation: None,
     });
     mutator.root.append(inner_a, &mut mutator.arena);
     let a0_leaf = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
+        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
         0,
     ));
     inner_a.append(a0_leaf, &mut mutator.arena);
     let a1_leaf = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(2.0)),
+        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(2.0)),
         0,
     ));
     inner_a.append(a1_leaf, &mut mutator.arena);
@@ -239,16 +240,16 @@ pub fn do_nested_map_children_descends_recursively() {
     let inner_b = mutator.arena.new_node(GfxMutator::Instruction {
         instruction: Instruction::MapChildren,
         channel: 0,
-        mutation: Mutation::None,
+        mutation: None,
     });
     mutator.root.append(inner_b, &mut mutator.arena);
     let b0_leaf = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(7.0)),
+        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(7.0)),
         0,
     ));
     inner_b.append(b0_leaf, &mut mutator.arena);
 
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, a0), 1.0);
     assert_eq!(position_x(&tree, a1), 2.0);
@@ -274,13 +275,13 @@ pub fn do_instruction_carrying_mutation_applies_to_current_target() {
     // attached NudgeRight on the root + one MapChildren child that
     // moves child 0.
     let mutator = build_map_children_mutator(
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(50.0)),
+        Some(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(50.0))),
         0,
         &[0],
         &[3.0],
     );
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, root), 50.0, "attached mutation hit root");
     assert_eq!(position_x(&tree, child_ids[0]), 103.0, "zipped child moved too");
@@ -301,13 +302,13 @@ pub fn do_instruction_mutation_skipped_on_channel_mismatch() {
     // (channel 0), so the attached mutation is skipped. The zip
     // continues into paired children regardless.
     let mutator = build_map_children_mutator(
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(50.0)),
+        Some(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(50.0))),
         99,
         &[0],
         &[3.0],
     );
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, root), 0.0, "attached mutation NOT applied");
     assert_eq!(position_x(&tree, child_ids[0]), 103.0, "zip still ran");
@@ -324,27 +325,28 @@ fn test_compose_repeat_inside_map_children() {
 
 pub fn do_compose_repeat_inside_map_children() {
     use crate::core::primitives::ApplyOperation;
-    use crate::gfx_structs::area::GlyphAreaField;
-    use crate::mutator_builder::{
-        build, CellField, ChannelSrc, CountSrc, InstructionSpec, MutationSrc, MutatorNode, SectionContext,
+    use crate::engine::builder::{
+        build, BuildContext, ChannelSrc, CountSrc, InstructionSpec, MutationSrc, MutatorNode,
     };
+    use crate::gfx_structs::area::GlyphAreaField;
+    use crate::gfx_structs::template::{area_delta_from_template, CellField};
 
-    // SectionContext that supplies per-index position values — the
+    // BuildContext that supplies per-index position values — the
     // `flower-layout` / `tree-cascade` pattern. Three children at
     // computed positions (10, 20, 30).
     struct PerIndex;
-    impl SectionContext for PerIndex {
+    impl BuildContext<GfxElement, GfxMutation> for PerIndex {
         fn count(&self, name: &str) -> usize {
             assert_eq!(name, "children");
             3
         }
-        fn field(&self, section: &str, index: usize, template: &CellField) -> GlyphAreaField {
+        fn resolve(&self, section: &str, index: usize, template: &Vec<CellField>) -> GfxMutation {
             assert_eq!(section, "children");
-            match template {
+            area_delta_from_template(template, |cell| match cell {
                 CellField::position => GlyphAreaField::position((10 * (index + 1)) as f32, 0.0),
                 CellField::Operation(op) => GlyphAreaField::Operation(*op),
                 other => panic!("unexpected cell field in test: {:?}", other),
-            }
+            })
         }
     }
 
@@ -362,7 +364,7 @@ pub fn do_compose_repeat_inside_map_children() {
             skip_indices: vec![],
             template: Box::new(MutatorNode::Single {
                 channel: ChannelSrc::SectionIndex,
-                mutation: MutationSrc::AreaDelta(vec![
+                mutation: MutationSrc::Template(vec![
                     CellField::position,
                     CellField::Operation(ApplyOperation::Assign),
                 ]),
@@ -370,14 +372,14 @@ pub fn do_compose_repeat_inside_map_children() {
         }],
     };
 
-    let mutator = build(&node, &PerIndex);
+    let mutator = build(&node, &PerIndex).expect("the MapChildren-over-Repeat AST builds");
 
     // Target: three children all on channel 0 (broadcast group). In
     // the channel-aligner world, only one mutator child would apply
     // to all; MapChildren pairs them by position.
     let (mut tree, child_ids) = build_target_with_children(&[0, 0, 0]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 10.0);
     assert_eq!(position_x(&tree, child_ids[1]), 20.0);
@@ -399,9 +401,9 @@ pub fn do_map_children_ignores_sibling_channels_when_unequal_counts() {
     // channel that matches neither. MapChildren pairs strictly by
     // position so both pairs apply.
     let (mut tree, child_ids) = build_target_with_children(&[0, 5]);
-    let mutator = build_map_children_mutator(Mutation::None, 0, &[9, 9], &[4.0, 8.0]);
+    let mutator = build_map_children_mutator(None, 0, &[9, 9], &[4.0, 8.0]);
     let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root);
+    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 104.0);
     assert_eq!(position_x(&tree, child_ids[1]), 108.0);

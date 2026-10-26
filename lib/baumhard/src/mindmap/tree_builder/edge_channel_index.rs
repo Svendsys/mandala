@@ -15,9 +15,8 @@
 
 use indextree::NodeId;
 
-use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::{BranchChannel, Tree};
+use crate::engine::element::TreeElement;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::scene_cache::EdgeKey;
 
 /// The `EdgeKey` of each per-edge child of a canvas tree's root, by
@@ -83,7 +82,7 @@ impl EdgeChannelIndex {
     ///
     /// One arena lookup per level climbed, one slice index, one
     /// `EdgeKey` clone on a hit. No allocation otherwise.
-    pub fn resolve(&self, tree: &Tree<GfxElement, GfxMutator>, node: NodeId) -> Option<EdgeKey> {
+    pub fn resolve(&self, tree: &GfxTree, node: NodeId) -> Option<EdgeKey> {
         let edge_root = Self::edge_root(tree, node)?;
         let channel = tree.arena.get(edge_root)?.get().channel();
         self.key_for_channel(channel).cloned()
@@ -91,7 +90,7 @@ impl EdgeChannelIndex {
 
     /// The root's child `node` sits under (itself, when it is one).
     /// `None` for the root and for a node outside the arena.
-    fn edge_root(tree: &Tree<GfxElement, GfxMutator>, mut node: NodeId) -> Option<NodeId> {
+    fn edge_root(tree: &GfxTree, mut node: NodeId) -> Option<NodeId> {
         loop {
             let parent = tree.arena.get(node)?.parent()?;
             if parent == tree.root {

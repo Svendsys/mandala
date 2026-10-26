@@ -12,10 +12,10 @@
 use glam::Vec2;
 
 use baumhard::core::primitives::{Flag, Flaggable, Range};
+use baumhard::engine::walker::walk_tree_from;
 use baumhard::gfx_structs::area::GlyphAreaCommand;
-use baumhard::gfx_structs::mutator::{GfxMutator, Mutation};
-use baumhard::gfx_structs::tree::MutatorTree;
-use baumhard::gfx_structs::tree_walker::walk_tree_from;
+use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
+use baumhard::gfx_structs::tree::GfxMutatorTree;
 use baumhard::mindmap::connection;
 use baumhard::mindmap::model::MindMap;
 use baumhard::mindmap::tree_builder::MindMapTree;
@@ -334,7 +334,7 @@ pub fn apply_inactive_node_dimming(tree: &mut MindMapTree, active_node_id: Optio
                     })
                     .collect();
                 let channel = {
-                    use baumhard::gfx_structs::tree::BranchChannel;
+                    use baumhard::engine::element::TreeElement;
                     element.channel()
                 };
                 (dimmed, channel)
@@ -342,12 +342,18 @@ pub fn apply_inactive_node_dimming(tree: &mut MindMapTree, active_node_id: Optio
             if dimmed.is_empty() {
                 continue;
             }
-            let mutations: Vec<Mutation> = dimmed
+            let mutations: Vec<GfxMutation> = dimmed
                 .into_iter()
-                .map(|(r, rgba)| Mutation::area_command(GlyphAreaCommand::SetRegionColor(r, rgba)))
+                .map(|(r, rgba)| GfxMutation::area_command(GlyphAreaCommand::SetRegionColor(r, rgba)))
                 .collect();
-            let mutator_tree = MutatorTree::new_with(GfxMutator::new_macro(mutations, target_channel));
-            walk_tree_from(&mut tree.tree, &mutator_tree, section_node_id, mutator_tree.root);
+            let mutator_tree = GfxMutatorTree::new_with(GfxMutator::new_macro(mutations, target_channel));
+            walk_tree_from(
+                &mut tree.tree,
+                &mutator_tree,
+                section_node_id,
+                mutator_tree.root,
+                &(),
+            );
         }
     }
 }
@@ -431,7 +437,7 @@ where
                 let Some(area) = element.glyph_area() else { continue };
                 let ranges = area.regions.all_regions().iter().map(|r| r.range).collect();
                 let channel = {
-                    use baumhard::gfx_structs::tree::BranchChannel;
+                    use baumhard::engine::element::TreeElement;
                     element.channel()
                 };
                 (ranges, channel)
@@ -440,12 +446,18 @@ where
                 continue;
             }
 
-            let mutations: Vec<Mutation> = ranges
+            let mutations: Vec<GfxMutation> = ranges
                 .into_iter()
-                .map(|r| Mutation::area_command(GlyphAreaCommand::SetRegionColor(r, color)))
+                .map(|r| GfxMutation::area_command(GlyphAreaCommand::SetRegionColor(r, color)))
                 .collect();
-            let mutator_tree = MutatorTree::new_with(GfxMutator::new_macro(mutations, target_channel));
-            walk_tree_from(&mut tree.tree, &mutator_tree, section_node_id, mutator_tree.root);
+            let mutator_tree = GfxMutatorTree::new_with(GfxMutator::new_macro(mutations, target_channel));
+            walk_tree_from(
+                &mut tree.tree,
+                &mutator_tree,
+                section_node_id,
+                mutator_tree.root,
+                &(),
+            );
         }
     }
 }
