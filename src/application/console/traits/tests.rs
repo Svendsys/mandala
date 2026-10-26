@@ -45,6 +45,16 @@ fn test_parse_unknown_is_error() {
     assert!(ColorValue::parse("bogus").is_err());
 }
 
+/// Matched case-insensitively, reported as typed: a user reads the
+/// rejection back looking for their own spelling (#136).
+#[test]
+fn test_parse_unknown_echoes_the_typed_spelling() {
+    assert_eq!(ColorValue::parse("Coral").unwrap_err(), "unknown color 'Coral'");
+    // Control: the same letters in a known word's case-insensitive
+    // match still parse, so the echo is not a change in matching.
+    assert_eq!(ColorValue::parse("Accent").unwrap(), ColorValue::Var(VAR_ACCENT));
+}
+
 #[test]
 fn test_selection_targets_for_each_variant() {
     use crate::application::document::EdgeRef;

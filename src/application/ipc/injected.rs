@@ -40,6 +40,45 @@ use crate::application::platform::input::{
 
 use super::space::Point;
 
+/// The mouse buttons the wire names, by the word it spells each with
+/// (`format/ipc.md` §`input`). One table for both directions:
+/// `input.*`'s `button` parameter parses through it, and `query.mode`
+/// reports the button that holds a pan through it, so the word an agent
+/// reads back is the word it would send.
+pub(crate) const BUTTON_WORDS: [(&str, MouseButton); 3] = [
+    ("left", MouseButton::Left),
+    ("right", MouseButton::Right),
+    ("middle", MouseButton::Middle),
+];
+
+/// The table as prose — `"left", "right" or "middle"` — for the
+/// messages and docs that list the words, so none of them spells the
+/// vocabulary a second time. The `input` family's `button` docs are
+/// `&'static str` consts and cannot call this; a test holds them to it.
+pub(crate) fn button_words_prose() -> String {
+    let quoted: Vec<String> = BUTTON_WORDS.iter().map(|(w, _)| format!("\"{w}\"")).collect();
+    match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+/// The button `word` names, if the wire names one by it.
+pub(crate) fn button_from_word(word: &str) -> Option<MouseButton> {
+    BUTTON_WORDS.iter().find(|(w, _)| *w == word).map(|(_, b)| *b)
+}
+
+/// The word the wire names `button` with — `None` for the buttons it
+/// does not name (back, forward, other), which no `input.*` command
+/// can press and no native handler acts on. Read by `query.mode`'s pan
+/// projection, which names the button a held pan is owned by; the
+/// browser has no drag state yet, so no reader there.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) fn button_word(button: MouseButton) -> Option<&'static str> {
+    BUTTON_WORDS.iter().find(|(_, b)| *b == button).map(|(w, _)| *w)
+}
+
 /// The queue's capacity, in samples (`format/ipc.md` §`input`, the
 /// pacing model). A command whose samples would not fit is refused
 /// whole, `overloaded`, and enqueues nothing.
@@ -234,6 +273,25 @@ mod tests {
     /// A stand-in camera: canvas x lands at `x + shift` on the surface.
     fn through(shift: f64) -> impl FnMut(Point) -> Surface {
         move |p| (f64::from(p.x) + shift, f64::from(p.y))
+    }
+
+    /// **The word a pan reports is the word that presses the button**:
+    /// `query.mode`'s `drag_state.button` and `input.*`'s `button`
+    /// parameter read one table, so a rename on either side moves both.
+    /// The round trip is the check that they still agree; the refused
+    /// rows are its negative control — a word the wire does not name
+    /// parses to nothing, and a button it does not name reports nothing.
+    #[test]
+    fn test_every_button_word_round_trips_and_no_other_does() {
+        for (word, button) in BUTTON_WORDS {
+            assert_eq!(button_from_word(word), Some(button), "{word} must parse");
+            assert_eq!(button_word(button), Some(word), "{button:?} must report {word}");
+        }
+        assert_eq!(button_from_word("Left"), None, "the wire is lowercase");
+        assert_eq!(button_from_word("back"), None);
+        for unnamed in [MouseButton::Back, MouseButton::Forward, MouseButton::Other(7)] {
+            assert_eq!(button_word(unnamed), None, "{unnamed:?} has no wire word");
+        }
     }
 
     #[test]

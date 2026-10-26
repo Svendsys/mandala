@@ -1124,7 +1124,7 @@ recorder, the redraw decision, the FPS flip, the clock wait, the map
 publication — because the issue's own rule was to reuse the functions
 and not fork a second heartbeat. The one-shot check is the eleventh
 step, at the point the clock wait is evaluated. `pump::tests` pins the
-order against a recording fake (§T8: no GPU).
+order against a recording fake (renderer-free, §T8).
 
 **Waiting and waking.** The headless driver parks its thread — until
 the iteration's deadline, or indefinitely — and the IPC boundary
@@ -1305,9 +1305,13 @@ Moved later, by the issue that found the need:
   renderer did not draw, and no file written), `scale`, the `camera`
   the image was drawn through, and `settled`. Waiting stays
   `clock.wait`'s: a screenshot reports whether the app was settled and
-  never defers its reply. (5) A capture framed at another zoom during a
-  node drag is `busy`, because its re-projection would draw from a
-  model the drag has not written. (6) The offscreen target is the
+  never defers its reply. (5) A capture framed at another zoom was at
+  first `busy` during a node drag, because its re-projection of the
+  live scene would have drawn from a model the drag has not written;
+  #178 moved that projection into a scratch scene of the capture's
+  own, fed with the drag's offsets, and the refusal is gone — see
+  `format/ipc.md` §`capture.screenshot` "State after a capture".
+  (6) The offscreen target is the
   surface's own format — #7's single source, `config.format` — not a
   constant beside it.
 

@@ -53,7 +53,7 @@ use super::text_edit::TextEditState;
 use super::throttled_interaction::ThrottledDrag;
 use super::InteractionMode;
 #[cfg(not(target_arch = "wasm32"))]
-use super::{DragState, Grab};
+use super::{DragState, Grab, HeldInput, PanOwner};
 
 /// How many scrollback lines `query.editors` reports for an open
 /// console: the tail, which is what is on screen. The total is
@@ -209,7 +209,19 @@ impl DragState {
                 "hit_node": hit_node,
                 "hit_section_idx": hit_section_idx,
             }),
-            DragState::Panning => json!({ "kind": "Panning" }),
+            DragState::Panning { owner } => match owner {
+                PanOwner::Toggled => json!({ "kind": "Panning", "owner": "toggled" }),
+                PanOwner::Held(HeldInput::Button(button)) => json!({
+                    "kind": "Panning",
+                    "owner": "button",
+                    "button": crate::application::ipc::injected::button_word(*button),
+                }),
+                PanOwner::Held(HeldInput::Key(key)) => json!({
+                    "kind": "Panning",
+                    "owner": "key",
+                    "key": key,
+                }),
+            },
             DragState::SelectingRect {
                 start_canvas,
                 current_canvas,
@@ -539,6 +551,7 @@ mod tests {
     use crate::application::app::PendingPress;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::EdgeRef;
+    use crate::application::platform::input::MouseButton;
     use baumhard::mindmap::model::{Position, Size};
     use std::collections::HashSet;
 
@@ -637,7 +650,9 @@ mod tests {
                 hit_node: None,
                 hit_section_idx: None,
             },
-            DragState::Panning,
+            DragState::Panning {
+                owner: PanOwner::Held(HeldInput::Button(MouseButton::Middle)),
+            },
             DragState::SelectingRect {
                 start_canvas: glam::Vec2::new(1.0, 2.0),
                 current_canvas: glam::Vec2::new(3.0, 4.5),
@@ -687,7 +702,7 @@ mod tests {
                 DragState::None
                 | DragState::Pending(_)
                 | DragState::PendingRight { .. }
-                | DragState::Panning
+                | DragState::Panning { .. }
                 | DragState::SelectingRect { .. } => {}
                 DragState::Throttled(inner) => match **inner {
                     ThrottledDrag::MovingNode(_)
@@ -719,7 +734,7 @@ mod tests {
                 DragState::None => "None",
                 DragState::Pending(_) => "Pending",
                 DragState::PendingRight { .. } => "PendingRight",
-                DragState::Panning => "Panning",
+                DragState::Panning { .. } => "Panning",
                 DragState::SelectingRect { .. } => "SelectingRect",
                 DragState::Throttled(_) => "Throttled",
             };
@@ -767,6 +782,28 @@ mod tests {
         assert_eq!(
             all[9].to_ipc_json()["handle"],
             json!({ "kind": "ControlPoint", "index": 1 })
+        );
+    }
+
+    /// A pan reports what ends it (#153) — the owner is the one fact
+    /// about a pan an agent driving it needs, since it decides whether
+    /// the next `input.mouse_button` release, `input.key` release or
+    /// `act.action PanCanvas` ends it. Each row is the others'
+    /// negative control: three owners, three distinct replies.
+    #[test]
+    fn test_a_pan_reports_the_input_that_ends_it() {
+        let pan = |owner| DragState::Panning { owner }.to_ipc_json();
+        assert_eq!(
+            pan(PanOwner::Held(HeldInput::Button(MouseButton::Middle))),
+            json!({ "kind": "Panning", "owner": "button", "button": "middle" })
+        );
+        assert_eq!(
+            pan(PanOwner::Held(HeldInput::Key("space".into()))),
+            json!({ "kind": "Panning", "owner": "key", "key": "space" })
+        );
+        assert_eq!(
+            pan(PanOwner::Toggled),
+            json!({ "kind": "Panning", "owner": "toggled" })
         );
     }
 

@@ -42,6 +42,7 @@ use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
     kvs, usage, Bare, Descent, Form, Grammar, Key, Slot, Subverb, Vocabulary,
 };
@@ -91,6 +92,22 @@ const SUBVERBS: &[Subverb] = &[
     ),
 ];
 
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    Set,
+    List,
+}
+
+const ROUTES: &Routes<Route> = &[("set", Route::Set), ("list", Route::List)];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 pub static GRAMMAR: Grammar = Grammar {
     label: "font",
     subverb_sets: &[SUBVERBS],
@@ -134,15 +151,18 @@ pub const COMMAND: Command = Command {
 /// stripping is needed.
 ///
 /// `pub(crate)` because this is the console's *only* font-family
-/// vocabulary, and the border family reaches it from seven slots:
-/// `border font <TAB>` / `font=<TAB>`, `canvas border font` in both
-/// forms, `canvas section-frame font=`, `section frame font=`, and
-/// `border preview font=`. Those ran on a byte-near copy in
-/// `border/complete.rs` that omitted the quoting above, so
-/// tab-accepting any of the whitespace-bearing families — 43 of the
-/// 77 this host loads — produced a line the verb then refused with
-/// "'DejaVu' is not a loaded font". One body, so the two cannot
-/// disagree about it again.
+/// vocabulary, with two borrowers: `font set` here, and the border
+/// grammar's one font vocabulary, which the shared `font=` key and
+/// the positional `font` subverb both declare — so every border
+/// surface's font slot, kv or positional, preview level or not,
+/// reaches this body. The slots are not listed here on purpose: an
+/// enumeration of them here kept going stale, and the grammar
+/// tables are the list. The border slots once ran on a
+/// byte-near copy in `border/complete.rs` that omitted the quoting
+/// above, so tab-accepting any of the whitespace-bearing families
+/// produced a line the verb then refused with "'DejaVu' is not a
+/// loaded font". One body, so the two cannot disagree about it
+/// again.
 pub(crate) fn font_family_completions(partial: &str) -> Vec<Completion> {
     let partial_lc = partial.to_ascii_lowercase();
     baumhard::font::fonts::loaded_families_iter()
@@ -230,12 +250,13 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // and the loaded-family lookup owns that comparison.
     let descent = descend(&GRAMMAR, args.tokens());
     match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "set" => execute_font_set(&descent, args, eff),
-            _ => match kvs::read_strict(&descent, args) {
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(Route::Set) => execute_font_set(&descent, args, eff),
+            Some(Route::List) => match kvs::read_strict(&descent, args) {
                 Ok(_) => execute_font_list(),
                 Err(msg) => ExecResult::err(msg),
             },
+            None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::Bare => {
             let parsed = match parse_font_args(&descent, args) {

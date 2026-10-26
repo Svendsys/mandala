@@ -69,6 +69,14 @@ pub(crate) use finish::BorderEdit;
 // `section frame …` all name the same table rather than
 // transcribing it.
 pub(crate) use positional::{positional_subverb_to_edits, BorderSurface};
+// Each dispatcher's routed names, for the registry test in
+// `console::spec::tests` (`spec::route`).
+#[cfg(test)]
+pub(crate) use execute::{delegated_sets, routed_names};
+#[cfg(test)]
+pub(crate) use positional::routed_names as positional_routed_names;
+#[cfg(test)]
+pub(crate) use preview::routed_names as preview_routed_names;
 
 /// Border preset names — the vocabulary `stage_preset` and the
 /// positional `preset` subverb validate against.

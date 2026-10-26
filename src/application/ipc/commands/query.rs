@@ -541,7 +541,8 @@ mod tests {
     /// funnels a query must never reach, so each one fails the test
     /// that calls it (the `MacroDispatchTarget` test double in
     /// `macro_core.rs` is the precedent: a real `IpcCommandTarget`
-    /// needs a GPU renderer, which `TEST_CONVENTIONS` §T8 rules out).
+    /// needs a GPU renderer, which only the GPU-backed tier of
+    /// `TEST_CONVENTIONS` §T8 builds, one app at a time).
     /// What it reports for the shell state is a fixed, recognizable
     /// value, since the real projections are tested where they live.
     struct LoadedApp {

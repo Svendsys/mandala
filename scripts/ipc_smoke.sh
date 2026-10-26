@@ -7,8 +7,10 @@
 # all down. The procedure is the one `.claude/skills/mandala-drive/SKILL.md`
 # teaches; this script is that skill's proof that it still works.
 #
-# Deliberately outside ./test.sh: it needs a live GPU adapter, and
-# TEST_CONVENTIONS §T8/§T10 keep live wgpu out of the suite.
+# Deliberately outside ./test.sh: it needs the built binaries, a socket
+# and a process to drive, and it checks the launch, IPC and capture loop
+# end to end. The suite's GPU-backed tests (TEST_CONVENTIONS §T8) build
+# the app in-process on the same adapter; this script is the other half.
 #
 # Usage:
 #   ./scripts/ipc_smoke.sh                   # testament, release build: a window when
@@ -268,6 +270,31 @@ else
         || fail "node $node is not wholly inside the region capture framed around it"
     [ "$("$CTL" query.camera)" = "$camera_before" ] || fail "the capture moved the live camera"
 fi
+
+# ---- A pan ends on its own button's release ---------------------------
+
+# The left and right release arms end a pan behind a `mem::replace` with
+# no pure route in front of them, so no renderer-free test can reach
+# them (#153, TEST_CONVENTIONS §T8), and no GPU-backed test drives them
+# through `input.*` yet; until one does, this is the one place they
+# run. A middle press arms a pan the middle button holds; the left and
+# right releases must leave it, and the middle release must end it.
+pan_state() { # the drag state's kind and owner, as `query.mode` reports them
+    local mode
+    mode="$("$CTL" query.mode)" || fail "query.mode failed"
+    printf '%s %s %s' "$(field "$mode" drag_state.kind)" "$(field "$mode" drag_state.owner)" \
+        "$(field "$mode" drag_state.button)"
+}
+step "pan ownership"
+"$CTL" input.mouse_button middle press --wait-settled >/dev/null || fail "middle press failed"
+held='"Panning" "button" "middle"'
+[ "$(pan_state)" = "$held" ] || fail "a middle press did not arm a middle-held pan: $(pan_state)"
+for other in left right; do
+    "$CTL" input.mouse_button "$other" release --wait-settled >/dev/null || fail "$other release failed"
+    [ "$(pan_state)" = "$held" ] || fail "a $other release ended the middle-held pan: $(pan_state)"
+done
+"$CTL" input.mouse_button middle release --wait-settled >/dev/null || fail "middle release failed"
+[ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "the middle release did not end its pan"
 
 # ---- Graceful quit -----------------------------------------------------
 

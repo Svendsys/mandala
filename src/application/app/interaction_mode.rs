@@ -194,7 +194,7 @@ pub enum ResizeTargetError {
 /// Single source of truth shared by [`Action::EnterResizeMode`]'s
 /// dispatch arm (`apply_enter_resize_mode`) and the `mode resize`
 /// console verb. Pre-fix Batch 2 of
-/// `SECTIONS_BORDERS_RESIZE_PLAN.md` had this logic duplicated
+/// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` had this logic duplicated
 /// across both call sites, with subtly different error wording.
 ///
 /// Reads only the document's selection + the `MindMap` model

@@ -49,18 +49,20 @@ borders, connection paths — is laid out as positioned font glyphs.
   before touching anything under `lib/baumhard/`.
 - **`TEST_CONVENTIONS.md`** — testing philosophy, where to put tests, the
   `do_*()` benchmark-reuse pattern, what we deliberately don't do
-  (no mocks, no snapshots, no GPU tests), and §T13's checklist of
-  assertions that cannot fail on their subject, with the negative
-  control every passing assertion owes.
+  (no mocks, no snapshots, no pixel assertions, no test that
+  *requires* a hardware GPU), and §T13's checklist of assertions
+  that cannot fail on their subject, with the negative control
+  every passing assertion owes.
 - **`format/`** — the `.mindmap.json` format specification.
   `format/schema.md` is the primary reference; per-concept docs cover
   Dewey-decimal IDs, named enums, palettes, channels, text runs,
   validation invariants, portal labels, mutations, and migration from
   legacy. Read this before changing the data model.
 - **`crates/maptool/`** — CLI tool for working with `.mindmap.json`
-  files: `show`, `grep`, `apply`, `export`, `convert --legacy`
-  (migration from miMind-derived format), and `verify` (structural
-  validation).
+  files: `show`, `grep`, `apply`, `export`, `convert` (`--legacy`
+  migrates the miMind-derived format; `--portals` and `--sections`
+  migrate pre-refactor maps that are otherwise current), and `verify`
+  (structural and numeric validation).
 - **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
   socket: one invocation, one command, JSON or `path: value` lines on
   stdout, exit code `0` / `1` (the app said no) / `2` (could not reach
@@ -111,7 +113,8 @@ the parity trajectory (or why none is owed):
   amended by IPC-15).
 - **The screenshot engine, and recording** (`src/application/capture/`
   minus `geometry.rs`, `src/application/renderer/capture.rs`,
-  `src/application/app/capture_flow.rs`; IPC-07/#67) — the offscreen
+  `src/application/app/capture_flow.rs`,
+  `src/application/app/capture_scene.rs`; IPC-07/#67, #178) — the offscreen
   engine behind native's `capture.screenshot` and the `screenshot`
   console verb (its own camera, its own size, a file on disk), and
   with it frame-sequence recording (`capture/record.rs`,
@@ -120,7 +123,12 @@ the parity trajectory (or why none is owed):
   native-only: the readback blocks the main thread on a GPU buffer
   map, which a browser cannot do (wgpu's `poll` is a no-op on WebGPU,
   and the map resolves only when the event loop yields), and a
-  recording is files. **`capture.screenshot` itself is served on both
+  recording is files. The frame it draws is not gated:
+  `Renderer::prepare_frame` / `encode_frame` are the browser's render
+  path too — including the composed canvas a capture at another zoom
+  reads (`CanvasSource::Composed`, `renderer/scene_shape_cache.rs`),
+  which compiles for both targets and is simply never asked for by
+  the window. **`capture.screenshot` itself is served on both
   targets since IPC-15 (#75)**: the browser draws the live view into
   its canvas and reads it back in the same task (`to_data_url`,
   `run_wasm/ipc_target.rs::capture_canvas`), returning the PNG inline
@@ -197,8 +205,8 @@ the parity trajectory (or why none is owed):
   than pending: long-press is the touch peer of the keyboard's `r`,
   so rebinding the browser's long-press to some unrelated
   `Compatible` Action would make one gesture mean two different
-  things on two targets — a worse §4 outcome than a gesture that is
-  honestly unavailable and says so. **The rest of the touch
+  things on two targets — a worse CODE_CONVENTIONS §4 outcome than
+  a gesture that is honestly unavailable and says so. **The rest of the touch
   vocabulary is not affected**: tap, one-finger pan and pinch-zoom
   resolve to no `Action` at all and run on both targets through
   `dispatch::apply_touch_effect`, which is what makes the browser
@@ -294,8 +302,20 @@ the parity trajectory (or why none is owed):
   holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
   baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
   §T9): it skips with a note without the target or `node`, and CI sets
-  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. The
-  test count itself is not a gate — a summary-format change makes it
+  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. **And for
+  the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
+  TEST_CONVENTIONS §T8): they build the real app headless on whatever
+  adapter the machine has — Mesa's lavapipe on a GPU-less box,
+  `apt-get install mesa-vulkan-drivers`; an agent container needs the
+  apt-over-HTTPS recipe in the `mandala-drive` skill — and skip with a
+  `SKIPPED:` note without one, so a green run on a box with no adapter
+  has proved nothing about the code behind `&mut Renderer`. The note
+  is written past libtest's per-test capture
+  (`baumhard::util::test_skip`), so it shows in a plain run and the
+  summary counts the `SKIPPED:` lines beside the pass count. CI
+  installs lavapipe and sets `MANDALA_REQUIRE_GPU`, so they cannot
+  skip there.
+  The test count itself is not a gate — a summary-format change makes it
   print "count unavailable" rather than ending the run, which is
   what it used to do, silently, under `set -euo pipefail`. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
@@ -327,7 +347,7 @@ the parity trajectory (or why none is owed):
   pinned in `rust-toolchain.toml`: a new stable release cannot add a
   lint until the pin is bumped, and bumping it is a change of its own
   that fixes what the new lints report), `--bench` (runs the criterion
-  benches after tests — **maintainers only**; §7 and `AGENTS.md`
+  benches after tests — **maintainers only**; §6 and `AGENTS.md`
   forbid it to agents, who need the type-check above and nothing
   else).
 - **Build releases**: `./build.sh` builds both the native binary
@@ -406,8 +426,9 @@ the parity trajectory (or why none is owed):
   window — text-first inspection, acting with `--wait-settled`,
   screenshots read through their geometry sidecar, teardown, and a
   troubleshooting table. `scripts/ipc_smoke.sh` is its end-to-end
-  check — deliberately outside `./test.sh`, which holds no live GPU
-  (TEST_CONVENTIONS §T8).
+  check — deliberately outside `./test.sh`: it needs the built
+  binaries, a socket and a process to drive, where the suite's
+  GPU-backed tests build the app in-process (TEST_CONVENTIONS §T8).
   **Showing a behavior, not a state, is the `mandala-record` skill**
   (`.claude/skills/mandala-record/SKILL.md`): a captioned demo GIF
   from `scripts/record_demo.sh`, watched by its maker before it is

@@ -1976,9 +1976,10 @@ WASM:
 - User from `localStorage` (never a URL query param).
 
 Map and inline are loaded from the document on every load. Each
-layer is best-effort — user file parse failures log a warning
-and skip; app bundle failures log an error (a build-time invariant
-violation).
+layer is best-effort — a malformed entry in the user file logs a
+warning and is skipped on its own (a file that is not the
+`{"mutations": [...]}` envelope at all is skipped whole); app bundle
+failures log an error (a build-time invariant violation).
 
 The provenance of each merged mutation is tracked in
 `MindMapDocument::mutation_sources` as a `SourceTier`
@@ -2807,17 +2808,49 @@ exception on both halves until #37 — it overwrote any state on
 press and forced `None` on release — and the right-button guard's
 comment named that overwrite as the posture it was rejecting.
 
-**One state is outside the rule, and knowingly.** `Panning` does
-not record which button armed it, and three things arm it (a
-middle press, the `LeftDrag` threshold cross, any keyboard or
-macro `pan_canvas`), so a middle release during a left-drag pan
-ends it and a left release ends a middle-started one. Nothing is
-at risk — `Panning` owes the model no write and no undo entry,
-which is exactly what puts it outside the class above — and
-closing it is a decision about `Action::PanCanvas`'s semantics
-rather than a guard: the variant would have to carry its origin,
-and a keyboard-armed pan has no button to name, so "momentary or
-modal" has to be answered first.
+**A pan belongs to the input that armed it** (#153).
+`Panning { owner: PanOwner }` records it, and the release rule
+above extends to it unchanged: a pan ends on its owner's release
+and on no other, so a middle release no longer ends a left-drag
+pan, nor a left release a middle-started one. What `pan_canvas`
+means on a key is the one decision this needed, and it is
+**momentary**: a key holds the pan exactly as a button does, and
+ends it on its own key-up (the Space-to-pan posture of most canvas
+tools). The reason is that momentary is what a held input *is* —
+the release is the "stop" every other pointer gesture here already
+reads — and it makes a key's auto-repeat harmless, where a toggle
+would flip the pan off and on while the key is down. An input
+with no release — a macro step, a console line, IPC `act.action`
+— cannot be momentary, so its pan is **modal**: `Toggled`, ended
+by the next `pan_canvas` from a key, a macro, the console or IPC.
+(Not from the mouse: a middle press arms only from `None`, so it
+cannot reach the arm while a pan runs.) One rule covers both
+halves: *held inputs hold, the rest toggle.* A touch `LongPress`
+bound to `pan_canvas` is one of the rest — `HeldInput` has no
+finger — so its pan toggles too. Whatever owns a pan, a left
+*press* re-arms `Pending` over it, as it always has: `Panning` owes
+the model nothing, and the release rule is about releases.
+
+The Action cannot see which input reached it — the funnel hands it
+only an `Action` — so the arm arms every pan `Toggled`, and a held
+input claims the pan its own dispatch armed on the way out of
+`dispatch_held_action` (the same read-the-decision-back shape the
+`LeftDrag` first-delta gate uses). A key bound to something else,
+pressed during a toggled pan, claims nothing: the claim is only for
+a pan that did not exist before the dispatch.
+
+**Focus loss resolves every state** (`DragState::end_on_focus_loss`,
+`WindowEvent::Focused(false)`). Before #153 nothing ran on it, so a
+`Throttled` gesture whose owning release never arrived — focus
+lost, the OS eating the release — was unreachable. Now the state
+ends at `None` and a throttled drag is **committed**, through the
+same `resolve_release` gate with `Release::FocusLost`, which
+answers `Commit` whichever button started it. Commit rather than
+discard because commit is the reversible one: the model takes what
+the user was looking at, with its undo entry, while a discard
+snaps the canvas back and leaves nothing to redo. A pending press
+is dropped without firing its click; a pan of either kind, and a
+rubber band, are simply ended. Native-only, as `DragState` is.
 
 ### `TouchGestureRecognizer`
 
@@ -2961,6 +2994,12 @@ which discipline the active gesture uses.
 canvas work a commit owes once its model write has landed:
 `None`, `SceneOnly`, or `All`. Named rather than performed, so
 the commit body stays renderer-free.
+
+**What ends a drag is a `Release`**: `Button(b)` commits only when
+`b` started the gesture and hands the drag back otherwise;
+`FocusLost` commits whichever button did, because the owning
+release may never come and nothing else finalizes a throttled drag
+(see [`DragState`](#dragstate)).
 
 Variants:
 
@@ -3263,11 +3302,11 @@ two as a value, with `execute` as the only place either is
 actually called. The reason is the same one
 [`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
 the drag-release path: both tiers need `&mut Renderer`, so an
-interaction that *decides* a tier could not be tested at all
-while deciding and performing were one statement (TEST_CONVENTIONS
-§T8 keeps live wgpu out of the harness). Handing the decision back
-as a value is what lets a test ask which tier a given interaction
-picks.
+interaction that *decides* a tier could not be tested without
+a device while deciding and performing were one statement
+(TEST_CONVENTIONS §T8). Handing the decision back as a value
+is what lets a renderer-free test ask which tier a given
+interaction picks.
 
 Two constructors carry the rules:
 
@@ -3538,10 +3577,24 @@ server-chosen capture lands in, removed on exit; `geometry` is the
 sidecar, read off the node tree through `scene_dump` at the capture's
 camera; `png` encodes. `app/capture_flow.rs` is the app half both
 surfaces call: it runs the camera-geometry rebuild the next frame
-owes, re-projects the zoom-dependent roles for a capture framed at
-another zoom and projects them back afterwards (so the live scene and
-camera are untouched), and refuses that re-projection as `busy`
-during a node drag. Every caller-chosen path is written through
+owes, and for a capture framed at another zoom projects the
+zoom-dependent roles — connections with their edge handles, labels,
+portals (`CanvasRole::zoom_dependent`) — into a scratch scene of the
+capture's own (`app/capture_scene.rs`: its own `AppScene`, its own
+`SceneConnectionCache`, its own hit indices), through the same
+`CanvasFrame::update_zoom_dependent_roles` body the camera rebuild
+runs on the live scene. The renderer walks the scratch into a second
+shaped set and composes one frame of it with the live set's
+zoom-independent roles by layer (`renderer::compose_capture_canvas`,
+`CanvasSource::Composed`); the live scene, cache and shaped set are
+read and never written, so there is nothing to project back. A node
+drag's drained offsets are passed into the scratch projection, so a
+capture at any zoom mid-drag shows the dragged node's connections
+where the window does, and no `busy` refusal is needed. The scratch
+cache stays warm across the frames of a recording at one zoom and
+follows the live cache's `clear` / `invalidate_edge` statements
+through `SceneConnectionCache::invalidations`, so it goes stale
+exactly when the live one is told to. Every caller-chosen path is written through
 `guarded_file::publish` — atomic, no symlink followed, no file
 replaced unasked — the writer the IPC `to_file` sidecar uses too.
 
@@ -3838,8 +3891,8 @@ click-outside commit and the dispatch arms do not grow.
 
 The lifecycle core is renderer-free and returns an `EditRefresh`
 naming the canvas work it owes, so the whole open / type /
-commit / cancel sequence is driven directly in tests (§T8 keeps
-live wgpu out of the harness).
+commit / cancel sequence is driven directly in renderer-free
+tests (§T8).
 
 One asymmetry survives on purpose: a portal caption stops being
 editable once its edge is deleted or leaves portal mode, and a
@@ -4091,6 +4144,24 @@ declares its name, its sentence and its vocabulary, and what
 non-custom-preset gate — are handwritten handlers *behind* the
 table.
 
+*Which* handler a matched subverb runs is declared too, through
+`spec::route`: each dispatcher keeps a `Routes` table pairing
+every declared name with a variant of its own route enum, and
+matches on the variant. Before it, dispatchers matched
+`subverb.name` and most let `_ =>` absorb the last name, so a new
+`Subverb` row was right on every derived surface and ran the
+catch-all's behavior: `fps snapshot` would have toggled the
+rolling average (#155). The match is now exhaustive without a
+catch-all, and because every route enum is private to its
+dispatcher with one payload-free variant per row, a variant whose
+row is deleted is dead code, which the clippy gate refuses. A
+registry test holds every table against the subverbs its levels
+declare, in both directions, so a row with no handler fails the
+suite naming the subverb. A level composing a shared set — the
+border family's per-field subverbs — hands it on through a
+`Delegates` row, which is data the registry test reads too, and
+the shared set's own table is held against the set.
+
 `console::spec`'s own tests hold the declaration against itself
 over the whole registry, in both directions: a form naming a
 key its level does not declare, and a key no form prints. The
@@ -4202,14 +4273,14 @@ in a user's file are warned about (`"keybinds: unrecognized key
 skipped rather than rejected — one stale *key* must not cost the
 user the rest of their bindings — and keys starting with `_` are
 treated as comments, which is how the shipped
-`config/default_keybinds.json` carries its instructions. That
-tolerance stops at the key: a *malformed value* under a
-recognized key fails the whole serde pass, and
-`user_config::layered::load_layered` answers a failed parse by
-skipping the layer, so it costs the user every binding in the
-file. The asymmetry is real rather than designed — the three
-user configs share the seam — and issue #129 tracks the
-per-field parsing that would close it.
+`config/default_keybinds.json` carries its instructions. A
+*malformed value* under a recognized key gets the same posture one
+level down: the file is parsed field by field (a loop generated from
+the same table), so that key is warned about and keeps its default
+while every other binding loads; a key written twice uses its last
+occurrence, also with a warning. Only text that is not a JSON object
+costs the layer. `user_config::salvage` holds the primitives, and
+`macros.json` and `mutations.json` use them per entry.
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
@@ -4323,6 +4394,11 @@ the finding is written once in
   `None` and the caller substitutes its defaults. Nothing here is
   platform-specific, so the precedence logic is unit-tested on
   native even for the browser's layers.
+- "Broken" means the parser found nothing to salvage: the parsers
+  stand on `salvage` (`parse_object` / `parse_array`, `take_field`,
+  `parse_entry`), which drop a malformed field or entry with a
+  warning naming it and fail the layer only when its container is
+  not usable JSON of the right outer shape.
 - Each target names its own layers exactly once, in the
   composition wrapper that sits on the driver:
   `desktop::load_desktop_layered(label, filename, explicit, parse)`

@@ -93,6 +93,8 @@ mod selection_overlay;
 mod tree_buffers;
 mod tree_walker;
 
+#[cfg(test)]
+pub(crate) use adapter::probe_adapter;
 pub use adapter::AdapterPolicy;
 pub use borders::measure_max_glyph_advance;
 // The screenshot engine's half of the renderer's surface, native-only
@@ -101,6 +103,15 @@ pub use borders::measure_max_glyph_advance;
 pub(crate) use camera::{content_bounds, FIT_PADDING_FRACTION};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use capture::{CaptureFailure, CapturedPixels};
+// Which canvas set a capture's frame draws; the window's frames are
+// always the live one (`render::render`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use scene_shape_cache::CanvasSource;
+// Test-only, beside `refresh` above: the capture composition is pure
+// over two projected scenes, and the test that holds it to the roles'
+// zoom split needs the segment vocabulary to read its answer.
+#[cfg(test)]
+pub(crate) use scene_shape_cache::{compose_capture_canvas, CanvasSegment, CaptureCanvas, ShapedSet};
 // For the watchdog's test that holds the two bounds together.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use capture::GPU_WAIT as CAPTURE_GPU_WAIT;
@@ -173,7 +184,7 @@ use glam::Vec2;
 /// in lock-step, and
 /// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
 /// is what holds them there — it reads this string as text, so no
-/// GPU is involved and §T8 is untouched. That it is *this* string
+/// GPU is involved (§T8's renderer-free tier). That it is *this* string
 /// `Renderer::new` compiles, rather than another const beside it, is
 /// pinned by
 /// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`:
@@ -552,7 +563,7 @@ pub struct Renderer {
     /// The rubber-band selection rectangle's four shaped edges, and
     /// nothing else. Camera-transformed. Written only by
     /// [`Self::rebuild_selection_rect_overlay`] and dropped only by
-    /// [`Self::clear_overlay_buffers`]; the color picker, the FPS
+    /// [`Self::clear_selection_rect_overlay`]; the color picker, the FPS
     /// readout and the mode-status line each have their own store.
     ///
     /// The exclusivity is load-bearing rather than incidental:
@@ -600,6 +611,16 @@ pub struct Renderer {
     /// that index-ordered draw stream stable while only part of the
     /// scene re-shapes.
     canvas_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
+    /// A capture's canvas: the shaped output of the capture engine's
+    /// scratch scene — the zoom-dependent roles projected at the
+    /// capture's zoom — and the draw order that interleaves it with
+    /// the live set above. Filled by
+    /// [`Self::rebuild_capture_canvas_buffers`] right before a capture
+    /// framed at another zoom draws, read only by a frame prepared with
+    /// [`scene_shape_cache::CanvasSource::Composed`], and reused across
+    /// such captures by the same rule as the live set. Empty on the
+    /// browser, which has no capture engine.
+    capture_canvas: scene_shape_cache::CaptureCanvas,
     /// Set whenever the camera *zoom* changes. The document-side
     /// `SceneConnectionCache` stores pre-clip samples whose spacing
     /// depends on `GlyphConnectionConfig::effective_font_size_pt`, which
@@ -976,6 +997,7 @@ impl Renderer {
             selection_rect_shape_cache: None,
             overlay_scene_elements: Vec::new(),
             canvas_scene_elements: Vec::new(),
+            capture_canvas: Default::default(),
             connection_geometry_dirty: false,
             rect_pipeline,
             rect_vertex_buffer,
@@ -991,6 +1013,17 @@ impl Renderer {
                 a: 1.0,
             },
         }
+    }
+
+    /// How many tree elements hold shaped text buffers right now —
+    /// the keys of the per-element buffer table `rebuild_buffers_from_tree`
+    /// refills. For the GPU-backed tests (TEST_CONVENTIONS §T8), which
+    /// assert on what a rebuild left in the renderer rather than on
+    /// pixels: a deleted node's buffers are gone after the rebuild that
+    /// follows the delete, and back after the one that follows the undo.
+    #[cfg(test)]
+    pub(crate) fn text_buffer_owner_count(&self) -> usize {
+        self.mindmap_buffers.len()
     }
 
     /// Current camera zoom level, used by the event loop when it

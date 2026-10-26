@@ -11,7 +11,7 @@ If you're picking this work up, **start here, then read in order**:
 [`src/application/keybinds/action/mod.rs`](../src/application/keybinds/action/mod.rs),
 [`src/application/app/dispatch/native.rs`](../src/application/app/dispatch/native.rs)
 (the reference implementation), and
-[`src/application/app/run_wasm/`](./src/application/app/run_wasm/).
+[`src/application/app/run_wasm/`](../src/application/app/run_wasm/).
 
 ## The current shape
 
@@ -139,7 +139,11 @@ contributor adds an Action to the denylist.
 - The inline label / portal-text editors and the color picker on
   WASM. Track A on individual Actions.
 - The console on WASM. Track A.
-- `AppMode` (Reparent / Connect) on WASM. Track A.
+- Reparent / Connect modes on WASM. `AppMode` is gone — its
+  variants are `InteractionMode::Reparent` / `Connect`
+  (`src/application/app/interaction_mode.rs`), a cross-platform enum
+  — but only native-gated handlers enter either mode, so nothing on
+  wasm32 constructs them. Track A.
 - `DragState` / continuous-drag gestures (`PanCanvas`) on WASM.
   Track A — note that WASM has its own `pending_click` mechanism
   that may serve as the basis.

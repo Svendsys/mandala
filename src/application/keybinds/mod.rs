@@ -8,11 +8,12 @@
 //! There is **no `?keybinds=` layer**, because a query param is
 //! owned by whoever composed the link rather than by the user; see
 //! `KeybindConfig::load_for_web` for the full argument.
-//! Failures log and skip the layer — the app never crashes for a bad
-//! keybinds file. Partial configs work via serde's `default`
-//! attribute, but only per *key*: a key whose value has the wrong
-//! shape fails the whole parse and costs the user that entire layer
-//! (issue #129).
+//! The app never crashes for a bad keybinds file, and a bad part of
+//! one costs only that part: text that is not a JSON object skips
+//! the layer, while a key whose value has the wrong shape is warned
+//! about and keeps its default, and an unrecognized key is warned
+//! about and ignored. Partial configs work because an absent key
+//! keeps its default too.
 
 mod action;
 mod bind;

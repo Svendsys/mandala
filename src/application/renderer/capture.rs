@@ -10,10 +10,14 @@
 //! frames. A capture at the live camera and the surface size therefore
 //! draws the pixels the window shows; one at another size, framing or
 //! pixel ratio draws the same scene projected differently. Nothing the
-//! renderer holds is changed by a capture except the GPU staging it
-//! re-uploads every frame anyway (both rect batches, the text prepares
-//! and the glyphon viewport), so the next window frame is exactly the
-//! frame it would have been.
+//! renderer holds for the window is changed by a capture except the GPU
+//! staging it re-uploads every frame anyway (both rect batches, the
+//! text prepares and the glyphon viewport), so the next window frame is
+//! exactly the frame it would have been. A capture at another zoom
+//! draws its zoom-dependent canvas roles from a set of the capture's
+//! own ([`Renderer::rebuild_capture_canvas_buffers`],
+//! [`CanvasSource::Composed`]) rather than re-projecting the window's,
+//! which is what keeps that sentence true of the live set as well.
 //!
 //! **The target is the frames' own format.** Both pipelines are built
 //! for the renderer's `format` — the sRGB one the window's surface
@@ -40,6 +44,7 @@ use baumhard::gfx_structs::camera::Camera2D;
 use web_time::Instant;
 
 use super::render::{FrameSkip, ModalLayer};
+use super::scene_shape_cache::CanvasSource;
 use super::Renderer;
 
 /// How long a capture waits for the GPU to finish one band of its frame
@@ -164,7 +169,11 @@ impl Renderer {
 
     /// Draw one frame through `camera` into an offscreen texture of
     /// `camera.viewport_size` pixels and read it back, with or without
-    /// the open modal as `modal` says.
+    /// the open modal as `modal` says, and with the tree-rendered canvas
+    /// roles read from the set `canvas` names: the live one for a frame
+    /// at the window's zoom, the composition
+    /// [`Renderer::rebuild_capture_canvas_buffers`] just laid out for a
+    /// frame at another.
     ///
     /// Refreshes the screen-space overlays the way `process()` does
     /// before its render — the mode-status line and the FPS readout
@@ -184,6 +193,7 @@ impl Renderer {
         &mut self,
         camera: &Camera2D,
         modal: ModalLayer,
+        canvas: CanvasSource,
         progress: &mut dyn FnMut(),
     ) -> Result<CapturedPixels, CaptureFailure> {
         if !self.should_render {
@@ -204,7 +214,7 @@ impl Renderer {
         }
         self.rebuild_mode_status_overlay_if_needed();
         let prepared = self
-            .prepare_frame(camera, modal)
+            .prepare_frame(camera, modal, canvas)
             .map_err(CaptureFailure::Skipped)?;
 
         let extent = wgpu::Extent3d {

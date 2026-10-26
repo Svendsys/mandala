@@ -127,7 +127,7 @@ pub(super) struct WasmInputState {
     pub modifiers: crate::application::platform::input::Modifiers,
     /// High-level interaction mode (Default / Reparent / Connect /
     /// NodeEdit / Resize). Cross-platform field per Batch 1 of
-    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` — the enum is target-agnostic
+    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` — the enum is target-agnostic
     /// even though some mode transitions still depend on native-only
     /// dispatch arms (Reparent / Connect). WASM construction
     /// initializes to `Default`; later batches add mode-aware click
@@ -724,7 +724,7 @@ pub(super) fn run(mut app: Application) {
     // so the canvas can use right-button gestures
     // (`MouseGesture::RightClick` / `RightDrag`,
     // `Action::FastResizeStart` per Batch 4 of
-    // SECTIONS_BORDERS_RESIZE_PLAN.md §6.3). Without this, every
+    // work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md §6.3). Without this, every
     // right-press on the canvas would pop the browser's context
     // menu and the gesture would never reach the threshold-cross.
     //

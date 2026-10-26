@@ -5,8 +5,10 @@
 # The procedure is the one `.claude/skills/mandala-record/SKILL.md` teaches;
 # the launch half is `.claude/skills/mandala-drive/SKILL.md`'s.
 #
-# Deliberately outside ./test.sh: it needs a live GPU adapter, and
-# TEST_CONVENTIONS §T8/§T10 keep live wgpu out of the suite.
+# Deliberately outside ./test.sh: it needs the built binaries, a socket
+# and a process to record, and its product is a GIF for a human to
+# watch. The suite's GPU-backed tests (TEST_CONVENTIONS §T8) assert on
+# state in-process; nothing in the suite looks at frames.
 #
 # Usage:
 #   ./scripts/record_demo.sh <map> <script-file> <out.gif>

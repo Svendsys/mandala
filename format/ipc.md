@@ -1018,8 +1018,13 @@ a `console_error` warning.
 
 ### `act.action`
 
-Dispatch one `Action` through `dispatch_action`, exactly as a key
-binding fires it.
+Dispatch one `Action` through `dispatch_action`, as a key binding
+fires it — with one difference, which only `PanCanvas` shows. A key
+is a held input and this command is not, so a `PanCanvas` from a key
+is momentary and ends on that key's release, while one from here is
+modal: `query.mode` reports its `drag_state.owner` as `"toggled"`, no
+button or key release ends it, and the next `PanCanvas` (from here, a
+key, a macro or the console) does.
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1233,7 +1238,7 @@ Params: none.
 | result field | type | meaning |
 |---|---|---|
 | `interaction_mode` | object | `kind`: `Default`, `Reparent` (`sources`), `Connect` (`source`), `NodeEdit` (`node_id`) or `Resize` (`target`: `{"kind": "Node", "node_id"}` or `{"kind": "Section", "node_id", "section_idx"}`). |
-| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Throttled`. `Pending` carries `start_pos` (surface pixels), `hit_node`, `hit_section_idx` and `grabs`, the names of any handle the press landed on (`edge_handle`, `portal_label`, `edge_label`, `section_resize_handle`, `node_resize_handle`). `PendingRight` carries `start_pos`, `start_canvas`, `hit_node`, `hit_section_idx`. `SelectingRect` carries `start_canvas` and `current_canvas`. `Throttled` names its `gesture` (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) with what it is acting on (`node_ids`, `node_id`, `section_idx`, `side`, `edge`, `handle`, `endpoint_node_id`). A gesture's pre-drag snapshots, pending delta and throttle are omitted: bookkeeping, not identity. |
+| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Throttled`. `Pending` carries `start_pos` (surface pixels), `hit_node`, `hit_section_idx` and `grabs`, the names of any handle the press landed on (`edge_handle`, `portal_label`, `edge_label`, `section_resize_handle`, `node_resize_handle`). `PendingRight` carries `start_pos`, `start_canvas`, `hit_node`, `hit_section_idx`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. `Throttled` names its `gesture` (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) with what it is acting on (`node_ids`, `node_id`, `section_idx`, `side`, `edge`, `handle`, `endpoint_node_id`). A gesture's pre-drag snapshots, pending delta and throttle are omitted: bookkeeping, not identity. |
 | `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`, `single_line_edit`, `text_edit`. Keys do not have one owner. The console takes **every** key. The color picker claims **only its own** keys (its commit, cancel and nudge verbs, and its clipboard keys); every other key falls through to the editors. The single-line editor, then the node text editor, take every key that reaches them. `query.editors` has each one's state. |
 | `key_owner` | string | Who receives an *ordinary* key right now: `console`, `single_line_edit`, `text_edit`, or `none` (normal dispatch). Never `color_picker`: with a picker and a text editor both open, a key the picker does not claim goes to `text_edit`, and that is what this field says. Type against `key_owner`, not against the head of `modals`. |
 | `hovered_node` | string | The node id under the pointer; `null` over none. |
@@ -1643,7 +1648,7 @@ selected label, and the macro and custom-mutation fall-through.
 | param | type | required | meaning |
 |---|---|---|---|
 | `key` | string | yes | One typed character (`"a"`, `"/"`, `"é"`, `"👋"`), or a named key spelled as winit's `NamedKey` spells it, case-exact: `"Enter"`, `"Tab"`, `"Escape"`, `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"F2"`. These are the names a keybind matches, but a keybind compares them lowercased and the wire does not: `"enter"` is `invalid_params`, `"Enter"` presses the key a `"enter"` binding names. A space is the `Space` key, as winit delivers the space bar. A control character, and a modifier key (`"Shift"`, `"Control"`, `"Alt"`, `"AltGraph"`, `"Super"`, `"Meta"`, `"Hyper"`), are `invalid_params`: winit reports a modifier through a separate modifier-state event rather than as this key, so a modifier press would change nothing a later event reads. Hold modifiers with `mods`. |
-| `state` | string | no | `"tap"` (default: a press, then a release), `"press"` or `"release"`. The app acts on presses; a release reaches the same arm a real one does, which does nothing. |
+| `state` | string | no | `"tap"` (default: a press, then a release), `"press"` or `"release"`. The app acts on presses; a release reaches the same arm a real one does, which does one thing: it ends a pan the released key holds (`query.mode`'s `drag_state.owner` `"key"`, with this `key`). With no such pan it does nothing. |
 | `mods` | array | no | Modifiers held for the events: `"key": "z", "mods": ["ctrl"]` is Ctrl+Z. |
 
 ### `input.text`
@@ -1832,14 +1837,13 @@ frame the next one moves on from. Waiting for the app to settle is
 `clock.wait`'s job (IPC-09), not this command's: `capture.screenshot`
 never defers its reply.
 
-**Errors.** Beyond `invalid_params`: `busy` when the capture frames a
-zoom other than the live one while a node drag is in flight (the
-zoom-dependent scene would have to be re-projected from a model the
-drag has not written yet; capture at the live zoom, or after the
-release), and `internal` when the GPU does not finish a band of the readback
-within five seconds (`renderer::capture::GPU_WAIT`, half the
-`FreezeWatchdog`'s threshold) or the disk refuses the write; `message`
-says which. A large capture is long main-thread work — the readback
+**Errors.** Beyond `invalid_params`: `internal` when the GPU does not
+finish a band of the readback within five seconds
+(`renderer::capture::GPU_WAIT`, half the `FreezeWatchdog`'s threshold)
+or the disk refuses the write; `message` says which. A node drag in
+flight refuses nothing: a capture at any zoom mid-drag shows the
+dragged nodes and their connections where the window does (below).
+A large capture is long main-thread work — the readback
 runs in bands that fit the GPU's buffer limit, and the PNG encodes in
 4 MiB slices — so it ticks the watchdog after every band and every
 slice, the pattern `clock.step` follows per heartbeat: a capture that
@@ -1853,14 +1857,20 @@ is the window's size (`width`/`height` unset, or equal to it); a
 capture of any other size leaves it out rather than drawing it where
 it would not be in any window.
 
-**State after a capture is state before it.** The renderer's camera
-is never moved: the capture draws through a camera of its own. A
-capture framed at another zoom re-projects the zoom-dependent roles
-(connections, their labels, portals — their glyph sizes are clamped in
-screen points) at that zoom, draws, and re-projects them at the live
-zoom before replying, so `query.camera`, `scene.*` and every hit test
-afterwards answer exactly as before. Nothing is redrawn on the
-window's behalf.
+**State after a capture is state before it, because the capture never
+writes it.** The renderer's camera is never moved: the capture draws
+through a camera of its own. A capture framed at another zoom needs
+the zoom-dependent roles (connections, their labels, portals — their
+glyph sizes are clamped in screen points) projected at that zoom, and
+projects them into a scratch scene of the capture's own, drawing one
+frame of that scratch over the live scene's zoom-independent roles;
+the live scene, its connection cache and the window's shaped glyphs
+are read, never written, so `query.camera`, `scene.*` and every hit
+test afterwards answer exactly as before, and nothing is projected
+back. During a node drag the scratch is projected with the drag's
+in-flight offsets — the same ones the window's own frames use — so
+the dragged nodes' connections land in the picture where they are on
+screen. Nothing is redrawn on the window's behalf.
 
 **Aspect rule.** When `region`'s aspect ratio differs from the
 target's, the capture is **extended, never distorted or
@@ -2006,9 +2016,9 @@ with the recording, and a rewrite is an `fsync`), so what landed is
 named — (b) when 256 MiB of them have piled up (a stall the loop pays
 rarely, ticking the watchdog per 4 MiB chunk, and the boundaries it
 costs are `dropped_frames`), and (c) when the recording ends, which is
-what `capture.record_stop` pays for whatever (a) did not reach. A busy
-drag therefore records at whatever rate the machine sustains, reports
-the frames it could not take, and never wedges the loop.
+what `capture.record_stop` pays for whatever (a) did not reach. A
+heavy drag therefore records at whatever rate the machine sustains,
+reports the frames it could not take, and never wedges the loop.
 
 `capture.record_stop` params: none. Result: `{"dir", "manifest_path",
 "frames", "dropped_frames", "duration_ms", "stopped", "bytes", "width",
@@ -2064,10 +2074,10 @@ state and view it shows.
 `t_ms` is when the first missing frame was due, `frames` how many,
 `reason` why — `overrun` (the loop was late for the boundary, or the
 recording ended with boundaries crossed since the last heartbeat),
-`busy` (a node drag is in flight and the frame would need another zoom
-than the live one, as for a screenshot; a drag ends by itself, so this
-never ends a recording), `invalid` (above), or the renderer's skip word
-(`font_system_contended`, `not_started`, `prepare_failed`). `t_ms` is
+`invalid` (above), or the renderer's skip word
+(`font_system_contended`, `not_started`, `prepare_failed`). A node
+drag is no gap: a recording framed at another zoom draws every frame
+of it, dragged connections included, as a screenshot does. `t_ms` is
 the boundary's time, not the moment it was noticed.
 `dropped_frames` is their sum, and the manifest's `frames` names only
 files that exist.

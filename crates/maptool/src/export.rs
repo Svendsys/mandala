@@ -80,15 +80,12 @@ mod tests {
     use baumhard::mindmap::model::{
         Canvas, MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun,
     };
+    use baumhard::util::doc_fixtures::repo_path;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
     fn testament_path() -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.pop(); // crates/maptool -> crates
-        path.pop(); // crates -> root
-        path.push("maps/testament.mindmap.json");
-        path
+        repo_path("maps/testament.mindmap.json")
     }
 
     /// Minimal `MindNode`; non-text fields are throwaway defaults.

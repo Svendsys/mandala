@@ -11,9 +11,10 @@
 //! draws with (`renderer::capture`), and written here (`write()`): the
 //! PNG, its geometry sidecar, and — for a server-chosen path — the
 //! bounded artifacts dir. The app half that sits between planning and
-//! saving, re-projecting the zoom-dependent scene for a capture that
-//! frames another zoom and putting it back after, is
-//! `app::capture_flow`. IPC and the console both call that one
+//! saving — projecting the zoom-dependent roles into the capture's own
+//! scratch scene for a capture that frames another zoom, so the live
+//! scene is never written for a picture of it — is `app::capture_flow`
+//! with `app::capture_scene`. IPC and the console both call that one
 //! function; neither has a capture path of its own.
 //!
 //! **Truthful.** A frame the renderer did not draw is reported as not
@@ -94,9 +95,6 @@ pub(crate) enum CaptureOutcome {
 pub(crate) enum CaptureError {
     /// A parameter asked for something that cannot be drawn or written.
     Invalid { param: &'static str, message: String },
-    /// The app is in the middle of something the capture would
-    /// disturb; retry when it is done.
-    Busy(String),
     /// The capture could not be honored: the GPU, the disk.
     Internal(String),
 }
@@ -107,9 +105,7 @@ impl CaptureError {
     /// charged to: for a caller that reports every refusal the same way.
     pub(crate) fn into_message(self) -> String {
         match self {
-            CaptureError::Invalid { message, .. }
-            | CaptureError::Busy(message)
-            | CaptureError::Internal(message) => message,
+            CaptureError::Invalid { message, .. } | CaptureError::Internal(message) => message,
         }
     }
 }

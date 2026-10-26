@@ -22,6 +22,7 @@
 use baumhard::mindmap::border::{next_border_preset, preset_glyph_set};
 
 use crate::application::console::parser::Args;
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::document::{BorderConfigEdits, BorderSide, MindMapDocument, OptionEdit};
 
@@ -128,6 +129,39 @@ pub(crate) struct PositionalEdits {
     pub(crate) cycled_to: Option<String>,
 }
 
+/// Which parser each of [`super::grammar::POSITIONAL_SUBVERBS`]
+/// runs (`spec::route`). Every surface that composes the set hands
+/// its rows here by name (a `route::Delegates` row, matched by
+/// `route::declares`), so this table is the one place a new
+/// per-field subverb needs a handler.
+#[derive(Clone, Copy)]
+enum Route {
+    Preset,
+    Color,
+    Padding,
+    Palette,
+    Font,
+    Side,
+    Corner,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("preset", Route::Preset),
+    ("color", Route::Color),
+    ("padding", Route::Padding),
+    ("palette", Route::Palette),
+    ("font", Route::Font),
+    ("side", Route::Side),
+    ("corner", Route::Corner),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 /// Translate a positional border subverb into a staged
 /// [`BorderConfigEdits`] bundle.
 ///
@@ -139,10 +173,11 @@ pub(crate) struct PositionalEdits {
 /// The `usage:` line each missing value reports is the very line
 /// `help` prints for that form, derived from the same declaration.
 ///
-/// Returns `Ok(None)` when the descent matched no subverb at all —
-/// the caller owns the "unknown subverb" message because each
-/// surface lists a different set of siblings. Errors are plain
-/// strings; the caller lifts them into its own `ExecResult::Err`.
+/// Returns `Ok(None)` when the descent matched no subverb at all, or
+/// one outside the shared set — the caller owns the "unknown
+/// subverb" message because each surface lists a different set of
+/// siblings. Errors are plain strings; the caller lifts them into
+/// its own `ExecResult::Err`.
 pub(crate) fn positional_subverb_to_edits(
     descent: &Descent,
     args: &Args,
@@ -152,17 +187,40 @@ pub(crate) fn positional_subverb_to_edits(
     let Some(subverb) = descent.subverb() else {
         return Ok(None);
     };
+    let Some(route) = route::lookup(ROUTES, subverb) else {
+        // A sibling of the set (`show`, `reset`, …) is not this
+        // parser's; a row of the set with no route is a dispatch gap.
+        return if route::declares(super::grammar::POSITIONAL_SUBVERBS, subverb) {
+            Err(route::miss(descent.level, subverb))
+        } else {
+            Ok(None)
+        };
+    };
     let verb_pos = descent.slot;
     let usage_line = usage::subverb_usage(descent.level, subverb);
+    let label = surface.label();
     // The two refusals every form owes, asked once for all four
     // surfaces: a kv this subverb does not read, and a positional
     // past its declared slots. `border preset heavy color=#fff`
     // dropped the color without a word until this line existed.
-    let pairs = kvs::read_strict(descent, args)?;
+    //
+    // `font` is the one exception to the second: its value is a
+    // *run* of positionals, as `font set`'s is, so it reads keys
+    // only and joins the run below.
+    let pairs = if matches!(route, Route::Font) {
+        kvs::read(descent, args)?
+    } else {
+        kvs::read_strict(descent, args)?
+    };
+    // `stage_kv` names the key, not the surface; label it here, as
+    // every other border caller does.
+    let stage = |edits: &mut BorderConfigEdits, key: &str, value: &str| {
+        stage_kv(edits, key, value).map_err(|e| format!("{}: {}", label, e))
+    };
     let mut edits = BorderConfigEdits::default();
     let mut cycled_to: Option<String> = None;
-    match subverb.name {
-        "preset" => {
+    match route {
+        Route::Preset => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
             let name_lc = value.to_ascii_lowercase();
             if name_lc == "cycle" {
@@ -172,41 +230,51 @@ pub(crate) fn positional_subverb_to_edits(
             } else {
                 if !super::PRESETS.iter().any(|p| *p == name_lc) {
                     return Err(format!(
-                        "preset '{}' unknown; pick one of {} | cycle",
+                        "{}: preset '{}' unknown; pick one of {} | cycle",
+                        label,
                         value,
                         super::PRESETS.join(" | ")
                     ));
                 }
-                stage_kv(&mut edits, "preset", &name_lc)?;
+                stage(&mut edits, "preset", &name_lc)?;
             }
         }
-        "color" => {
+        Route::Color => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
-            stage_kv(&mut edits, "color", value)?;
+            stage(&mut edits, "color", value)?;
         }
-        "padding" => {
+        Route::Padding => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
-            stage_kv(&mut edits, "padding", value)?;
+            stage(&mut edits, "padding", value)?;
         }
-        "palette" => {
+        Route::Palette => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
-            stage_kv(&mut edits, "palette", value)?;
+            stage(&mut edits, "palette", value)?;
             // The optional `field=` kv composes with the positional
             // palette name — `border palette coral field=text`.
             if let Some(fv) = kvs::value(&pairs, "field") {
-                stage_kv(&mut edits, "field", fv)?;
+                stage(&mut edits, "field", fv)?;
             }
         }
-        "font" => {
-            let value = required_value(args, verb_pos + 1, usage_line)?;
-            stage_kv(&mut edits, "font", value)?;
+        Route::Font => {
+            required_value(args, verb_pos + 1, usage_line)?;
+            // Every positional past the subverb is one family name,
+            // joined on a single space — the same rule `font set`
+            // follows, so `border font DejaVu Sans` and `font set
+            // DejaVu Sans` agree (#136). Read as one slot, the
+            // second word was first dropped — `border font Unifont
+            // CSUR` set `Unifont`, a real font the user did not
+            // pick — and later refused as an extra positional while
+            // `font set` accepted the same line. A quoted family is
+            // one token either way.
+            let family: Vec<&str> = args.positionals().skip(verb_pos + 1).collect();
+            stage(&mut edits, "font", &family.join(" "))?;
             if let Some(sv) = kvs::value(&pairs, "size") {
-                stage_kv(&mut edits, "size", sv)?;
+                stage(&mut edits, "size", sv)?;
             }
         }
-        "side" => stage_side(args, verb_pos, usage_line, surface, doc, &mut edits)?,
-        "corner" => stage_corner(args, verb_pos, usage_line, surface, doc, &mut edits)?,
-        _ => return Ok(None),
+        Route::Side => stage_side(args, verb_pos, usage_line, surface, doc, &mut edits)?,
+        Route::Corner => stage_corner(args, verb_pos, usage_line, surface, doc, &mut edits)?,
     }
     Ok(Some(PositionalEdits { edits, cycled_to }))
 }
@@ -259,9 +327,13 @@ fn stage_side(
                     BorderSide::Left => gs.left,
                     BorderSide::Right => gs.right,
                 };
-                edits.with_side_pattern(side, &ch.to_string())?;
+                edits
+                    .with_side_pattern(side, &ch.to_string())
+                    .map_err(|e| format!("{} side {}", label, e))?;
             }
-            None => edits.with_side_pattern(side, pattern)?,
+            None => edits
+                .with_side_pattern(side, pattern)
+                .map_err(|e| format!("{} side {}", label, e))?,
         }
     }
     Ok(())
@@ -315,9 +387,9 @@ fn stage_corner(
                     // (CODE_CONVENTIONS §9).
                     other => return Err(format!("internal: unrecognized corner '{}'", other)),
                 };
-                stage_kv(edits, corner, &ch.to_string())?;
+                stage_kv(edits, corner, &ch.to_string()).map_err(|e| format!("{} corner {}", label, e))?;
             }
-            None => stage_kv(edits, corner, glyph)?,
+            None => stage_kv(edits, corner, glyph).map_err(|e| format!("{} corner {}", label, e))?,
         }
     }
     Ok(())

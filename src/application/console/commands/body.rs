@@ -94,14 +94,15 @@ fn execute_body(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Ok(pairs) => pairs,
         Err(msg) => return ExecResult::err(msg),
     };
-    let name = match kvs::value(&pairs, "glyph") {
-        Some(n) => n.to_ascii_lowercase(),
+    let (raw, name) = match kvs::value(&pairs, "glyph") {
+        Some(n) => (n, n.to_ascii_lowercase()),
         None => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
     };
     if glyph_for_preset(&name).is_none() {
+        // Echo `raw`, not the lowercased copy the lookup reads.
         return ExecResult::err(format!(
             "glyph '{}' must be one of dot|dash|double|wave|chain",
-            name
+            raw
         ));
     }
     // Route through the mutation core — same setter, single
@@ -155,6 +156,25 @@ mod tests {
         let changed_second = apply_body_glyph_to_selection(&mut doc, "double");
         assert!(changed_first || changed_second);
         assert_eq!(body_of_first_edge(&doc), Some("\u{2550}".to_string()));
+    }
+
+    /// The verb matches the preset case-insensitively and reports the
+    /// spelling the user typed, not the lowercased copy it looked up
+    /// (#136).
+    #[test]
+    fn body_verb_rejection_echoes_the_typed_glyph() {
+        let mut doc = doc_with_first_edge_selected();
+        match crate::application::console::tests::fixtures::run("body glyph=Nope", &mut doc) {
+            ExecResult::Err(msg) => {
+                assert_eq!(msg, "glyph 'Nope' must be one of dot|dash|double|wave|chain")
+            }
+            other => panic!("an unknown glyph must be refused, got {other:?}"),
+        }
+        // Control: the matching itself is still case-insensitive.
+        assert!(matches!(
+            crate::application::console::tests::fixtures::run("body glyph=DASH", &mut doc),
+            ExecResult::Ok(_)
+        ));
     }
 
     #[test]

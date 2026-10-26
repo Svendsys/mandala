@@ -15,9 +15,9 @@ use super::drain_frame::end_rect_select_gesture;
 use super::input_context::InputHandlerContext;
 use super::modal_editor::commit_modal_editors_on_release;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
-use super::throttled_interaction::release::commit_if_resolved;
+use super::throttled_interaction::release::{commit_if_resolved, Release};
 use super::throttled_interaction::ThrottledDrag;
-use super::{is_double_click, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
+use super::{is_double_click, DragState, HeldInput, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{rect_select, SelectionState};
 use crate::application::keybinds::Action;
@@ -27,8 +27,8 @@ use crate::application::keybinds::Action;
 ///
 /// Pure so both halves of the middle button are pinnable at
 /// `DragState` level — the dispatcher below takes an
-/// [`InputHandlerContext`], i.e. a live wgpu device, which
-/// TEST_CONVENTIONS §T8 keeps out of the harness.
+/// [`InputHandlerContext`], i.e. a live wgpu device, which only the
+/// suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MiddleButtonRoute {
     /// The drag state is idle — run whatever the user bound to
@@ -55,26 +55,14 @@ enum MiddleButtonRoute {
 /// tree kept the dragged offsets until the next model rebuild
 /// snapped them back, with no undo entry to recover from.
 ///
-/// The release half needs a guard for the same reason, but it is
-/// **not the same guard** — it is wider by one state, and the width
-/// is a known hole rather than a design. `Panning` is what a middle
-/// press can arm (`Action::PanCanvas` is the only Action that writes
-/// a drag state with no prior state; `Action::FastResizeStart` reads
-/// `PendingRight` and bails otherwise), but it is not *only* that:
-/// the `LeftDrag` threshold cross and any keyboard or macro
-/// `pan_canvas` arm the same variant, and `Panning` carries nothing
-/// that says which. So a middle release during a *left*-drag pan
-/// still writes `DragState::None` and ends the pan while the left
-/// button is down. Pre-existing, and left standing here on purpose:
-/// closing it means giving `Panning` its origin the way the resize
-/// gestures carry `started_with_right`, and once it has one the same
-/// question has to be answered for the left release (which ends a
-/// middle-started pan just as readily) and for a keyboard-armed pan,
-/// which has no button at all — i.e. whether `pan_canvas` on a key
-/// is momentary or modal. That is a decision about the Action's
-/// semantics, not a guard. Nothing is at risk while it stands:
-/// `Panning` owes the model no write and no undo entry, which is
-/// what separates it from the class above.
+/// The release half needs a guard for the same reason, and since
+/// #153 it is the *same* rule the other two buttons follow: a
+/// middle release ends exactly the pan the middle button holds
+/// (`DragState::is_pan_held_by`). It used to be wider by every
+/// other pan, because `Panning` did not record who armed it — so a
+/// middle release ended a left-drag pan while the left button was
+/// still down. A pan held by the left button, by a key, or toggled
+/// on from a macro is another gesture's, and `Keep` leaves it.
 ///
 /// `None` clears trivially — a middle press bound to a non-drag
 /// Action leaves the state alone and its release has nothing to end.
@@ -85,7 +73,8 @@ fn route_middle_button(state: ElementState, drag_state: &DragState) -> MiddleBut
             _ => MiddleButtonRoute::Keep,
         },
         ElementState::Released => match drag_state {
-            DragState::Panning | DragState::None => MiddleButtonRoute::Clear,
+            DragState::None => MiddleButtonRoute::Clear,
+            pan if pan.is_pan_held_by(&HeldInput::Button(MouseButton::Middle)) => MiddleButtonRoute::Clear,
             _ => MiddleButtonRoute::Keep,
         },
     }
@@ -172,8 +161,9 @@ pub(super) fn handle_mouse_input(
             MiddleButtonRoute::Dispatch => {
                 // Middle-click press on an idle drag state: lookup what's
                 // bound to MiddleClick (default `PanCanvas`). The dispatch
-                // arm sets `DragState::Panning`, which the `Clear` route
-                // below takes back down on release.
+                // arm arms `DragState::Panning`, the held dispatch hands
+                // it to the middle button, and the `Clear` route below
+                // takes it back down on that button's release.
                 let name = crate::application::keybinds::MouseGesture::MiddleClick.key_name();
                 // Modifier-fallback: Ctrl+MiddleClick matches the bare
                 // MiddleClick binding when no exact-modifier match
@@ -186,7 +176,12 @@ pub(super) fn handle_mouse_input(
                     ctx.modifiers.alt_key(),
                 );
                 if let Some(a) = action {
-                    let _ = super::dispatch::dispatch_action(a, ctx, None);
+                    let _ = super::dispatch::dispatch_held_action(
+                        a,
+                        ctx,
+                        None,
+                        HeldInput::Button(MouseButton::Middle),
+                    );
                 }
             }
             MiddleButtonRoute::Clear => {
@@ -590,7 +585,16 @@ pub(super) fn handle_mouse_input(
                             );
                         }
                     }
-                    DragState::Panning | DragState::None => {}
+                    DragState::None => {}
+                    // A pan ends on the release of the input that
+                    // holds it, and only that one (#153): a pan the
+                    // middle button or a key holds, or one toggled on
+                    // from a macro, outlives this release.
+                    pan @ DragState::Panning { .. } => {
+                        *ctx.drag_state = pan;
+                        ctx.drag_state
+                            .end_pan_held_by(&HeldInput::Button(MouseButton::Left));
+                    }
                     // Left-button release while a right-button gesture
                     // is pending: the `mem::replace` above already
                     // swapped in `None`, so put the original state
@@ -617,7 +621,7 @@ pub(super) fn handle_mouse_input(
 }
 
 /// Right-button press / release handler — fast-resize gesture
-/// substrate (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+/// substrate (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
 ///
 /// Press: stash the press-time hit (body of any node / section,
 /// no edge-handle / portal-label / resize-handle precedence — the
@@ -701,9 +705,7 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
         // the left button has one. Middle-click used to be the
         // counter-example this comment named — it overwrote any
         // state unconditionally — and [`route_middle_button`]'s
-        // *press* half now applies exactly this guard. Its release
-        // half is wider by `Panning`, for the reason recorded there:
-        // that variant does not say which button armed it.
+        // *press* half now applies exactly this guard.
         if !matches!(*ctx.drag_state, DragState::None) {
             log::debug!("right-button press ignored (drag already in flight); state stays put");
             return;
@@ -742,10 +744,14 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
                 finalize_or_put_back(MouseButton::Right, drag, ctx);
             }
             // Any other state on right-release: put it back. Right-
-            // button release shouldn't terminate a panning gesture
-            // or a rubber-band selection either.
+            // button release shouldn't terminate a rubber-band
+            // selection, nor a pan some other input holds — only one
+            // the right button holds, by the rule every release
+            // follows (#153).
             other => {
                 *ctx.drag_state = other;
+                ctx.drag_state
+                    .end_pan_held_by(&HeldInput::Button(MouseButton::Right));
             }
         }
     }
@@ -776,7 +782,7 @@ fn finalize_or_put_back(
     // `commit_if_resolved` and dropped there, and the
     // `Option<ReleaseRefresh>` that comes back is `Copy` and borrows
     // nothing, so no borrow of `ctx` survives into the arms.
-    let refresh = commit_if_resolved(released, &mut drag, ctx.release_commit());
+    let refresh = commit_if_resolved(Release::Button(released), &mut drag, ctx.release_commit());
     match refresh {
         Some(refresh) => refresh.execute(ctx.drain_context()),
         None => {
@@ -846,6 +852,7 @@ fn maybe_exit_node_edit_on_outside_click(
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::moving_node::MovingNodeInteraction;
+    use crate::application::app::PanOwner;
     use std::collections::HashSet;
 
     /// A left-started move-node drag, mid-gesture: pending state
@@ -892,9 +899,9 @@ mod tests {
     /// button unable to pan at all.
     ///
     /// Fails when the press arm stops matching `DragState::None`, or
-    /// when the release arm stops matching `Panning`: a middle-drag
-    /// pan would then never end and the canvas would keep panning
-    /// after the button came up.
+    /// when the release arm stops matching a middle-held `Panning`: a
+    /// middle-drag pan would then never end and the canvas would keep
+    /// panning after the button came up.
     #[test]
     fn test_middle_click_from_idle_still_arms_and_ends_a_pan() {
         assert_eq!(
@@ -903,7 +910,10 @@ mod tests {
             "an idle drag state is what a middle press is for"
         );
         assert_eq!(
-            route_middle_button(ElementState::Released, &DragState::Panning),
+            route_middle_button(
+                ElementState::Released,
+                &held_pan(HeldInput::Button(MouseButton::Middle))
+            ),
             MiddleButtonRoute::Clear,
             "the release must end the pan its own press armed"
         );
@@ -913,6 +923,37 @@ mod tests {
             "a middle press bound to a non-drag Action leaves None behind; \
              its release has nothing to end"
         );
+    }
+
+    /// **A middle release ends only the pan the middle button holds**
+    /// (#153). The control is the `Clear` row in
+    /// `test_middle_click_from_idle_still_arms_and_ends_a_pan`: the
+    /// same variant, held by the middle button, *is* cleared.
+    ///
+    /// Fails on the pre-#153 release arm, `DragState::Panning |
+    /// DragState::None => Clear`, which ended every one of these —
+    /// a left-drag pan with the left button still down among them.
+    #[test]
+    fn test_middle_release_leaves_a_pan_another_input_holds() {
+        for owner in [
+            PanOwner::Held(HeldInput::Button(MouseButton::Left)),
+            PanOwner::Held(HeldInput::Key("space".into())),
+            PanOwner::Toggled,
+        ] {
+            let pan = DragState::Panning { owner: owner.clone() };
+            assert_eq!(
+                route_middle_button(ElementState::Released, &pan),
+                MiddleButtonRoute::Keep,
+                "a middle release must not end a pan owned by {owner:?}"
+            );
+        }
+    }
+
+    /// A pan held by `input`.
+    fn held_pan(input: HeldInput) -> DragState {
+        DragState::Panning {
+            owner: PanOwner::Held(input),
+        }
     }
 
     /// A middle press must not cancel the two unthrottled gestures

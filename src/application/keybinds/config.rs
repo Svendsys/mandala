@@ -19,18 +19,18 @@
 //! `resolve()` that folds in the id-keyed custom-mutation and macro
 //! binding maps.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use baumhard::font::fonts::{app_font_by_family, loaded_families_iter, AppFont};
 use log::warn;
-use serde::de::IgnoredAny;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use strum::IntoEnumIterator;
 
 use super::action::{Action, ActionKind};
 use super::bind::KeyBind;
 use super::resolved::ResolvedKeybinds;
 use super::surface::{keybind_surface, BindSurface, ParametricBinding};
+use crate::application::user_config::salvage::{parse_object, JsonObject};
 
 keybind_surface! {
     // ─────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ keybind_surface! {
         /// Enter connect mode on the current selection.
         EnterConnectMode => enter_connect_mode = ["Ctrl+D"],
         /// Enter resize mode on the current selection — Batch 2 of
-        /// `SECTIONS_BORDERS_RESIZE_PLAN.md`.
+        /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`.
         EnterResizeMode => enter_resize_mode = ["r", "LongPress"],
         /// Start a corner-anchored fast-resize gesture from a
         /// right-button drag. Lookup goes through
@@ -68,7 +68,7 @@ keybind_surface! {
         /// As `edit_selection`, but the editor opens empty.
         EditSelectionClean => edit_selection_clean = ["Backspace"],
         /// Enter NodeEdit mode (Batch 3 of
-        /// `SECTIONS_BORDERS_RESIZE_PLAN.md`). The umbrella `Enter`
+        /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`). The umbrella `Enter`
         /// keybind dispatches `edit_selection` first (which fans out
         /// here for node-bearing selections), so users normally
         /// don't rebind this — but the explicit hook is here for
@@ -502,15 +502,32 @@ keybind_surface! {
 }
 
 impl KeybindConfig {
-    /// Parse a JSON string into a config. Missing fields fall back to
-    /// defaults thanks to `#[serde(default)]` on the generated
-    /// struct, and unrecognized top-level keys are warned about
-    /// rather than rejected — see
-    /// [`Self::unknown_top_level_keys`] for why.
+    /// Parse a JSON string into a config, one field at a time.
+    ///
+    /// Text that is not a JSON object is the one whole-file failure:
+    /// there are no fields to salvage, so this returns `Err` and the
+    /// loader walks to its next layer. Anything inside an object
+    /// degrades in place instead:
+    ///
+    /// - a key the object leaves out keeps its default, which is what
+    ///   makes a partial config work;
+    /// - a recognized key whose value has the wrong shape is warned
+    ///   about by name and keeps its default, and costs nothing else;
+    /// - a key that appears twice is warned about, and its last
+    ///   occurrence is the one used (`salvage::parse_object`);
+    /// - a key this config does not recognize is warned about and
+    ///   ignored — `unclaimed_keys` says why.
+    ///
+    /// All of these are one posture, *warn, don't reject*, for the
+    /// ways a hand-edited file goes stale. The per-field walk is
+    /// generated from the `keybind_surface!` table (`take_fields`),
+    /// so a new row is read the day it is added, and "recognized"
+    /// means exactly "claimed by that walk": whatever it leaves in the
+    /// object is what gets reported.
     pub fn from_json(json: &str) -> Result<Self, String> {
-        let config: Self =
-            baumhard::format::json::parse(json).map_err(|e| format!("parse keybinds JSON: {}", e))?;
-        let unknown = Self::unknown_top_level_keys(json);
+        let mut object = parse_object("keybinds", json).map_err(|e| format!("parse keybinds JSON: {e}"))?;
+        let config = Self::take_fields(&mut object);
+        let unknown = Self::unclaimed_keys(object);
         if !unknown.is_empty() {
             // `known_keys()` allocates, so it is built once for the
             // whole report rather than per offending key.
@@ -535,48 +552,43 @@ impl KeybindConfig {
         Ok(config)
     }
 
-    /// The top-level keys in `json` that this config does not
-    /// recognize, sorted. Keys starting with `_` are skipped: JSON
-    /// has no comment syntax, and the shipped
+    /// The keys `take_fields` left in `object` — the ones no table row
+    /// claimed — minus comments, sorted. Keys starting with `_` are
+    /// skipped: JSON has no comment syntax, and the shipped
     /// `config/default_keybinds.json` carries its instructions in a
-    /// `_comment` key, so the underscore prefix is the documented
-    /// way to annotate a config.
+    /// `_comment` key, so the underscore prefix is the documented way
+    /// to annotate a config.
     ///
-    /// **Warn, don't reject — for an unrecognized *key*.** A
-    /// hand-edited config is exactly the surface where a
-    /// silently-ignored key is the whole bug: a renamed action
-    /// (`cancel_mode` → `exit_mode`) left the shipped template's Esc
-    /// entry inert and said nothing. But `deny_unknown_fields` would
-    /// answer one stale key by discarding every good binding beside
-    /// it, so the loader keeps the config and names the key instead.
-    ///
-    /// **A malformed *value* under a recognized key is the opposite,
-    /// and this is not the good outcome.** Serde fails the whole
-    /// document, [`Self::from_json`] returns `Err`, and
-    /// `user_config::layered::load_layered` answers a failed parse by
-    /// logging one warning and walking to the next layer — so one
-    /// bad value costs the user every good binding in the same file,
-    /// which is precisely what the paragraph above rejects. The
-    /// asymmetry is real, not a design: it falls out of parsing the
-    /// document in one serde pass, and the same seam gives
-    /// `macros.json` and `mutations.json` the same behavior. Issue
-    /// #129 tracks the fix (per-field parsing with warn-and-skip, so
-    /// a malformed value costs its own field and nothing else);
-    /// `test_clear_zoom_rejects_the_parametric_binding_shape` pins
-    /// the blast radius until then.
-    ///
-    /// Costs one extra pass over the source, keys only
-    /// ([`IgnoredAny`] skips the values), on a config that is parsed
-    /// once per launch. A source that is not a JSON object yields no
-    /// keys — the typed parse ahead of it has already failed.
-    pub fn unknown_top_level_keys(json: &str) -> Vec<String> {
-        let Ok(raw) = baumhard::format::json::parse::<BTreeMap<String, IgnoredAny>>(json) else {
-            return Vec::new();
-        };
-        let known = Self::known_keys();
-        raw.into_keys()
-            .filter(|key| !key.starts_with('_') && !known.contains(&key.as_str()))
-            .collect()
+    /// **Warn, don't reject.** A hand-edited config is exactly the
+    /// surface where a silently-ignored key is the whole bug: a
+    /// renamed action (`cancel_mode` → `exit_mode`) left the shipped
+    /// template's Esc entry inert and said nothing. But
+    /// `deny_unknown_fields` would answer one stale key by discarding
+    /// every good binding beside it, so the loader keeps the config
+    /// and names the key instead. A malformed *value* under a
+    /// recognized key gets the same treatment one level down — see
+    /// [`Self::from_json`].
+    fn unclaimed_keys(object: JsonObject) -> Vec<String> {
+        let mut unknown: Vec<String> = object
+            .into_iter()
+            .map(|(key, _)| key)
+            .filter(|key| !key.starts_with('_'))
+            .collect();
+        unknown.sort();
+        unknown
+    }
+
+    /// The keys of `json` that `from_json` would warn about as
+    /// unrecognized; nothing when `json` is not a JSON object. A test
+    /// seam over the same walk the loader runs.
+    #[cfg(test)]
+    pub(super) fn unknown_top_level_keys(json: &str) -> Vec<String> {
+        parse_object("keybinds", json)
+            .map(|mut object| {
+                Self::take_fields(&mut object);
+                Self::unclaimed_keys(object)
+            })
+            .unwrap_or_default()
     }
 
     /// Parse every binding string into concrete `KeyBind` values. Any

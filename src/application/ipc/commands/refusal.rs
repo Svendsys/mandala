@@ -20,21 +20,18 @@ pub(super) enum Refusal {
     NotFound(String),
     /// The command could not be honored: `internal`.
     Internal(String),
-    /// The app is in the middle of something the command would
-    /// disturb, and retrying once it is done will work: `busy`. Built
-    /// by the native capture engine's refusal (`capture::refusal_of`);
-    /// the browser's capture has nothing to be busy with.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    Busy(String),
 }
 
 /// The error reply for `refusal`.
+///
+/// No `busy` arm: the three families this serves have nothing to be
+/// in the middle of. The `clock` and `input` families, which do,
+/// build their `busy` replies beside the state that makes them busy.
 pub(super) fn refuse(call: &Call<'_>, refusal: Refusal) -> Reply {
     match refusal {
         Refusal::Invalid(param, message) => call.invalid_params(param, message),
         Refusal::NotFound(message) => call.error(code::NOT_FOUND, message, None),
         Refusal::Internal(message) => call.error(code::INTERNAL, message, None),
-        Refusal::Busy(message) => call.error(code::BUSY, message, None),
     }
 }
 

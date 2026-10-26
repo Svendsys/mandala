@@ -215,9 +215,9 @@ pub(crate) trait CommandTarget {
     /// `None` when the app has no document.
     ///
     /// Changes nothing a frame would show: the capture draws through a
-    /// camera of its own, and a scene it re-projects for another zoom
-    /// is projected back before this returns. [`Self::changed_view`]
-    /// is untouched.
+    /// camera of its own, and what another zoom needs is projected
+    /// into a scratch scene of the capture's own, never into the live
+    /// one (`app::capture_scene`). [`Self::changed_view`] is untouched.
     #[cfg(not(target_arch = "wasm32"))]
     fn capture(
         &mut self,
