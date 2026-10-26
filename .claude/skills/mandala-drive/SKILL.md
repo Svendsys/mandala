@@ -276,7 +276,7 @@ node_id: "3.2"
 $ mandalactl act.action DeleteSelection --wait-settled
 outcome: "handled"
 $ mandalactl query.undo
-entries[0].kind: "DeleteNode"
+entries[0].kind: "DeleteNodes"
 entries[0].node_ids[0]: "3.2"
 $ mandalactl act.action Undo --wait-settled
 outcome: "handled"

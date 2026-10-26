@@ -2903,7 +2903,7 @@ same commit.
 variants: `MoveNodes`, `CustomMutation`, `ReparentNodes`,
 `DeleteEdge`, `CreateEdge`, `EditEdge`, `CreateNode`,
 `EditNodeText`, `EditNodeStyle`, `EditNodeZoom`,
-`CanvasSnapshot`, `EditNodeAabb`, `DeleteNode`. `CustomMutation`
+`CanvasSnapshot`, `EditNodeAabb`, `DeleteNodes`. `CustomMutation`
 is the general bucket — it snapshots the `target_scope`-defined
 window so any declarative or imperative mutation replays
 cleanly. Every arm is bounds-checked (e.g. `index <
