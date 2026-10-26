@@ -621,6 +621,30 @@ mod tests {
         assert!(doc.undo_stack.is_empty(), "a refused split pushes no undo entry");
     }
 
+    /// The cap's refusal is one message with one source: both writers
+    /// return `validate::room_for_another_section`'s text, and the verb
+    /// prefix is the only part each caller writes. Two hand-written
+    /// copies are how `add_section`'s check and its missing twin in
+    /// `split_section` came apart in the first place.
+    ///
+    /// Fails when: either writer words its own refusal instead of
+    /// forwarding the guard's, or the two prefixes stop being the only
+    /// difference.
+    #[test]
+    fn test_add_and_split_refuse_the_cap_with_one_message() {
+        let (mut doc, id) = doc_with_sections(MAX_SECTIONS_PER_NODE);
+        let shared = baumhard::mindmap::model::validate::room_for_another_section(&doc.mindmap.nodes[&id])
+            .expect_err("precondition: the node is at the cap");
+
+        let add = doc
+            .add_section(&id, None, empty_section())
+            .expect_err("add is refused");
+        let split = doc.split_section(&id, 0, Some(0)).expect_err("split is refused");
+
+        assert_eq!(add, format!("section add: {shared}"));
+        assert_eq!(split, format!("section split: {shared}"));
+    }
+
     /// The other side of the line: one under the cap, a split is
     /// allowed and lands the node *exactly* on it — and a map with a
     /// node at the cap is one the strict loader still opens. Without

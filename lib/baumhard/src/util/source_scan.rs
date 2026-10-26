@@ -775,22 +775,88 @@ const SECTION_GROWTH_METHODS: &[&str] = &[
     "resize_with(",
 ];
 
-/// Every shipped site that grows a `sections` vector, as
-/// `(repo-relative file, 1-based line, the line's text, whether the
-/// enclosing fn calls `validate::room_for_another_section`)`.
+/// One site in a Rust source that grows a `sections` vector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SectionGrowth {
+    /// Repo-relative file (empty for text scanned with
+    /// [`section_growths_in`] directly).
+    pub file: String,
+    /// 1-based line of the growth.
+    pub line: usize,
+    /// The line's code, comment stripped and trimmed.
+    pub code: String,
+    /// The name of the enclosing fn, as declared (`fn name(`).
+    pub function: String,
+    /// Whether that fn calls `room_for_another_section(` before the
+    /// growth.
+    pub guarded: bool,
+}
+
+/// Every site in `source` that grows a `sections` vector — a
+/// `.sections.` receiver followed by one of [`SECTION_GROWTH_METHODS`]
+/// — with its enclosing fn and whether that fn calls
+/// `validate::room_for_another_section` first.
 ///
 /// "Enclosing fn" is the nearest preceding line that declares one
-/// (`fn name(` after any qualifiers), and "calls" means the text from
-/// that line to the growth site contains `room_for_another_section(`.
-/// That is a textual approximation, stated so nobody mistakes it for
-/// more: a guard called *after* the growth, or in a helper the fn
-/// calls, does not count — which is the conservative direction, since
-/// the guard has to run before the vector grows to mean anything.
+/// (`fn name(` after any qualifiers), and "calls first" means the text
+/// from that line to the growth site contains
+/// `room_for_another_section(`. That is a textual approximation, stated
+/// so nobody mistakes it for more: a guard called *after* the growth,
+/// or in a helper the fn calls, does not count — the conservative
+/// direction, since the guard has to run before the vector grows to
+/// mean anything. A closure inside the fn is part of it, which is the
+/// shape both shipped writers use (the growth runs inside an undo
+/// envelope's closure). A growth through a `&mut` binding, a raw
+/// pointer or a macro is text this cannot see.
 ///
-/// Reads shipped text only (`production_source` plus the out-of-line
-/// test modules `test_gated_module_files` resolves), so a fixture that
-/// pads a node by direct push is not a finding.
-pub(crate) fn section_growth_sites() -> Vec<(String, usize, String, bool)> {
+/// Pure over its input so the classification can be tested against
+/// planted text, not only against whatever the workspace holds.
+pub(crate) fn section_growths_in(source: &str) -> Vec<SectionGrowth> {
+    let lines: Vec<&str> = source.lines().collect();
+    let code_of = |l: &'_ str| -> String { l.split("//").next().unwrap_or(l).to_string() };
+    let mut out = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let code = code_of(line);
+        let Some(at) = code.find(".sections.") else { continue };
+        let tail = &code[at + ".sections.".len()..];
+        if !SECTION_GROWTH_METHODS
+            .iter()
+            .any(|method| tail.starts_with(method))
+        {
+            continue;
+        }
+        let declares = |l: &str| -> Option<String> {
+            let after = l.split_once("fn ")?.1;
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            (!name.is_empty() && after[name.len()..].trim_start().starts_with(['(', '<'])).then_some(name)
+        };
+        let (fn_start, function) = (0..=index)
+            .rev()
+            .find_map(|i| declares(&code_of(lines[i])).map(|name| (i, name)))
+            .unwrap_or((0, String::new()));
+        let guarded = lines[fn_start..=index]
+            .iter()
+            .any(|l| code_of(l).contains("room_for_another_section("));
+        out.push(SectionGrowth {
+            file: String::new(),
+            line: index + 1,
+            code: code.trim().to_string(),
+            function,
+            guarded,
+        });
+    }
+    out
+}
+
+/// [`section_growths_in`] over every shipped Rust source in the
+/// workspace: `production_source` blanks in-file test items, and the
+/// out-of-line test modules `test_gated_module_files` resolves are
+/// skipped whole, so a fixture that pads a node by direct push is not
+/// a finding.
+pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
     let mut out = Vec::new();
     let sources = workspace_rust_sources();
     let test_only = test_gated_module_files(&sources);
@@ -800,37 +866,10 @@ pub(crate) fn section_growth_sites() -> Vec<(String, usize, String, bool)> {
         }
         let text = std::fs::read_to_string(&file)
             .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-        let shipped = production_source(&file, &text);
-        let lines: Vec<&str> = shipped.lines().collect();
-        for (index, line) in lines.iter().enumerate() {
-            let code = line.split("//").next().unwrap_or(line);
-            let Some(at) = code.find(".sections.") else { continue };
-            let tail = &code[at + ".sections.".len()..];
-            if !SECTION_GROWTH_METHODS
-                .iter()
-                .any(|method| tail.starts_with(method))
-            {
-                continue;
-            }
-            let fn_start = (0..=index)
-                .rev()
-                .find(|&i| {
-                    let l = lines[i].split("//").next().unwrap_or(lines[i]);
-                    l.contains("fn ") && l.contains('(')
-                })
-                .unwrap_or(0);
-            let guarded = lines[fn_start..=index].iter().any(|l| {
-                l.split("//")
-                    .next()
-                    .unwrap_or(l)
-                    .contains("room_for_another_section(")
-            });
-            out.push((
-                relative_to_repo(&file),
-                index + 1,
-                code.trim().to_string(),
-                guarded,
-            ));
+        let rel = relative_to_repo(&file);
+        for mut site in section_growths_in(&production_source(&file, &text)) {
+            site.file = rel.clone();
+            out.push(site);
         }
     }
     out

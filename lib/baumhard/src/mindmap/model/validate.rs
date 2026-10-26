@@ -1141,19 +1141,23 @@ mod section_cap_writer_tests {
     /// `section_growth_sites` for the approximation it makes.
     #[test]
     fn test_every_section_growth_checks_the_cap() {
-        let sites = crate::util::source_scan::section_growth_sites();
+        use crate::util::source_scan::section_growth_sites;
 
-        // Precondition: the scan has to be reading something, or every
-        // assertion below passes on an empty list. `add_section` and
-        // `split_section` are two known growth sites today.
-        assert!(
-            sites.len() >= 2,
-            "the scan found {} section growth sites, fewer than the two known writers — \
-             the scan is what broke: {sites:#?}",
-            sites.len()
-        );
+        let sites = section_growth_sites();
 
-        let unguarded: Vec<_> = sites.iter().filter(|(_, _, _, guarded)| !guarded).collect();
+        // Precondition, by name rather than by count: the scan has to
+        // be finding the writers that exist, or every assertion below
+        // passes on whatever it happened to read. A count would also
+        // pass on two wrong sites.
+        for writer in ["add_section", "split_section"] {
+            assert!(
+                sites.iter().any(|site| site.function == writer),
+                "the scan did not find `{writer}`, a known writer of node.sections — the \
+                 scan is what broke, not the writer:\n{sites:#?}"
+            );
+        }
+
+        let unguarded: Vec<_> = sites.iter().filter(|site| !site.guarded).collect();
         assert!(
             unguarded.is_empty(),
             "these lines grow `node.sections` without first calling \
@@ -1162,9 +1166,69 @@ mod section_cap_writer_tests {
              saves a map that will not reopen (#208).",
             unguarded
                 .iter()
-                .map(|(f, n, line, _)| format!("  {f}:{n}   {line}"))
+                .map(|site| format!(
+                    "  {}:{}   {} (in fn {})",
+                    site.file, site.line, site.code, site.function
+                ))
                 .collect::<Vec<_>>()
                 .join("\n")
+        );
+    }
+
+    /// The classification the workspace scan relies on, against planted
+    /// text with a known answer — so the test above cannot pass because
+    /// the scan stopped telling a guarded writer from an unguarded one.
+    /// Each fn below is one case; its name says which.
+    #[test]
+    fn test_the_section_growth_scan_tells_guarded_from_unguarded() {
+        use crate::util::source_scan::section_growths_in;
+
+        let planted = r#"
+impl Doc {
+    pub fn guarded_push(&mut self, node: &mut MindNode) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn unguarded_insert(&mut self, node: &mut MindNode) {
+        node.sections.insert(0, MindSection::default());
+    }
+
+    pub fn guarded_in_a_closure(&mut self, id: &str) -> Option<usize> {
+        let node = self.node(id)?;
+        validate::room_for_another_section(node).ok()?;
+        self.mutate(id, move |node| {
+            node.sections.extend([MindSection::default()]);
+            Some(0)
+        })
+    }
+
+    pub fn guard_too_late(&mut self, node: &mut MindNode) {
+        node.sections.splice(0..0, [MindSection::default()]);
+        let _ = validate::room_for_another_section(node);
+    }
+
+    pub fn reads_only(&self, node: &MindNode) -> usize {
+        // node.sections.push(x) in a comment is not a growth
+        node.sections.len()
+    }
+}
+"#;
+        let found: Vec<(String, bool)> = section_growths_in(planted)
+            .into_iter()
+            .map(|site| (site.function, site.guarded))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("guarded_push".to_string(), true),
+                ("unguarded_insert".to_string(), false),
+                ("guarded_in_a_closure".to_string(), true),
+                ("guard_too_late".to_string(), false),
+            ],
+            "each planted writer must be found once, in its own fn, guarded only when the \
+             guard runs before the growth; a read and a comment are not growths"
         );
     }
 }
