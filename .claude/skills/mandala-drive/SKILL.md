@@ -394,7 +394,7 @@ echo "http://127.0.0.1:41815/?map=maps/testament.mindmap.json&ipc=$APP_URL"
 # 3. Drive it. A controller before the page is refused `no_app` (exit 2) with the remedy.
 for i in $(seq 1 30); do mandalactl --timeout 2 ping >/dev/null 2>&1 && break; sleep 0.5; done
 mandalactl ping                                # now_ms: …   (exit 0)
-mandalactl describe act.console                # supported: false   unsupported_reason: "the browser has no console runtime; …"
+mandalactl describe act.console                # "act.console - …" then "unsupported on this target - the browser has no console runtime; …"
 mandalactl scene.find_text Introduction
 mandalactl act.action ZoomIn --wait-settled
 mandalactl capture.screenshot /tmp/browser.png # the client writes the PNG the page returns inline, and /tmp/browser.png.geometry.json
@@ -428,11 +428,23 @@ mandalactl capture.screenshot /tmp/browser.png # the client writes the PNG the p
 
 **Status of the proof.** The relay, the `--ws` client and the screenshot
 file path are proven in `cargo test -p mandalactl` against a stand-in page
-on real loopback sockets; the page's own side — its WebSocket, its command
+on real loopback sockets. The page's own side — its WebSocket, its command
 target, the canvas read-back — is type-checked and clippy-clean for wasm32
-by `./test.sh --lint` and was driven once in this repo's cloud container
-through Playwright's Chromium (the PR that landed it, #75's, records the
-run). Nothing in `./test.sh` runs a browser (TEST_CONVENTIONS §T8).
+by `./test.sh --lint`, and was driven in this repo's cloud container through
+Playwright's Chromium (`--enable-unsafe-webgpu --use-webgpu-adapter=swiftshader`;
+the PR that landed it, #75's, records the run): attach and greet, `ping`,
+`describe`, `scene.*`, `act.action` with `--wait-settled`, the three
+refusals, `clock.set_mode`/`step`, `input.click_node`, and
+`capture.screenshot` writing a 1024×640 PNG with a sidecar naming nodes.
+What that run could **not** prove is the pixels: on headless Chromium's
+SwiftShader WebGPU the canvas composites nothing — Chromium's own page
+screenshot is blank and `toDataURL` reads transparent at any moment — so
+the PNG the client wrote was transparent. The image half of the browser
+capture needs a browser with a GPU; run the block above on a desktop and
+look. (The build's WebGL fallback is not compiled in despite the `webgl`
+feature — headless Chromium without WebGPU panics at the adapter — a
+pre-existing matter noted on that PR.) Nothing in `./test.sh` runs a
+browser (TEST_CONVENTIONS §T8).
 
 ## Tear down
 
