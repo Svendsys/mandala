@@ -220,6 +220,10 @@ impl Tree<GfxElement> {
 
     /// Whether [`Self::descendants_aabb`]'s memo is current, so the next
     /// call answers without a pass over the tree. O(1).
+    ///
+    /// It exists for tests, which observe the memo through it; it is
+    /// public only because the `do_*` test bodies are shipped for the
+    /// benches. Nothing outside the tests needs to ask.
     pub fn descendants_aabb_is_memoized(&self) -> bool {
         self.cache.aabb_cache.get().is_some()
     }

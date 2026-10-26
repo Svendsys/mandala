@@ -242,6 +242,10 @@ fn tree_order<E: TreeElement>(arena: &Arena<E>, ties: &TiePositions, a: &Placed,
             if by_key != Ordering::Equal {
                 return by_key;
             }
+            // Every path starts at the tree's root — each anchor was
+            // validated as under it — so two paths share at least that
+            // first node, and the nodes where they part have a parent.
+            debug_assert!(shared > 0, "anchor paths share the root");
             let parent = a.path[shared - 1];
             ties.of(arena, parent, x).cmp(&ties.of(arena, parent, y))
         }

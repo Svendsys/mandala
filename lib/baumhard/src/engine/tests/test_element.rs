@@ -100,8 +100,6 @@ impl TreeCache for TestCache {
 pub enum TestField {
     /// The element's value, compared numerically.
     Value(i64),
-    /// The element's kind; only `Equals` and `Exists` are meaningful.
-    Kind(TestKind),
 }
 
 impl Inspect for TestElement {
@@ -112,9 +110,7 @@ impl Inspect for TestElement {
             (TestField::Value(v), Comparator::Equals(neg)) => Some((self.value == *v) != *neg),
             (TestField::Value(v), Comparator::GreaterThan(neg)) => Some((self.value > *v) != *neg),
             (TestField::Value(v), Comparator::LessThan(neg)) => Some((self.value < *v) != *neg),
-            (TestField::Kind(k), Comparator::Equals(neg)) => Some((self.kind == *k) != *neg),
-            (_, Comparator::Exists(neg)) => Some(!neg),
-            (TestField::Kind(_), _) => None,
+            (TestField::Value(_), Comparator::Exists(neg)) => Some(!neg),
         }
     }
 }
@@ -248,14 +244,13 @@ impl SpatialTestElement {
 impl Inspect for SpatialTestElement {
     type Field = TestField;
 
-    /// Only [`TestField::Value`] applies; this element has no kind.
+    /// The same answers as [`TestElement`]'s, from this element's value.
     fn test_field(&self, field: &TestField, comparator: &Comparator) -> Option<bool> {
         match (field, comparator) {
             (TestField::Value(v), Comparator::Equals(neg)) => Some((self.value == *v) != *neg),
             (TestField::Value(v), Comparator::GreaterThan(neg)) => Some((self.value > *v) != *neg),
             (TestField::Value(v), Comparator::LessThan(neg)) => Some((self.value < *v) != *neg),
             (TestField::Value(_), Comparator::Exists(neg)) => Some(!neg),
-            (TestField::Kind(_), _) => None,
         }
     }
 }
