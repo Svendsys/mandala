@@ -35,7 +35,12 @@ impl MindMapDocument {
     /// do this (#172): the first removal renames the second node's id
     /// out from under it. "Delete parent and child" therefore means
     /// *the set*, not the subtree — a descendant that was not selected
-    /// survives, re-rooted, as it does under a single delete.
+    /// survives, re-rooted, as it does under a single delete. One
+    /// consequence worth knowing before it is traced: `SelectAll`
+    /// skips fold-hidden descendants, so SelectAll + Delete on a map
+    /// with a folded node does not empty it — the hidden descendants
+    /// come back as fresh, visible roots, exactly as they would under
+    /// a single delete of the folded node.
     ///
     /// Costs: O(N) over the nodes to resolve the set and find the
     /// orphans, O(E) over the edges, plus one `cascade_rename` (itself
@@ -80,24 +85,27 @@ impl MindMapDocument {
         // platforms and saved output); `id_sort_key` reads the last
         // segment only and would tie two orphans from different
         // subtrees, leaving the tie to the map's hash seed.
-        let mut orphaned_children: Vec<OrphanedChild> = self
+        let mut orphans: Vec<(&str, &str)> = self
             .mindmap
             .nodes
             .values()
             .filter(|n| !victim_set.contains(n.id.as_str()))
             .filter_map(|n| {
                 let parent_id = n.parent_id.as_deref()?;
-                victim_set.contains(parent_id).then(|| OrphanedChild {
-                    original_id: n.id.clone(),
-                    root_id: String::new(),
-                    parent_id: parent_id.to_owned(),
-                })
+                victim_set
+                    .contains(parent_id)
+                    .then_some((n.id.as_str(), parent_id))
             })
             .collect();
-        orphaned_children.sort_by(|a, b| dewey_cmp(&a.original_id, &b.original_id));
-        for (root_segment, orphan) in (first_root..).zip(orphaned_children.iter_mut()) {
-            orphan.root_id = root_segment.to_string();
-        }
+        orphans.sort_by(|a, b| dewey_cmp(a.0, b.0));
+        let orphaned_children: Vec<OrphanedChild> = (first_root..)
+            .zip(orphans)
+            .map(|(root_segment, (original_id, parent_id))| OrphanedChild {
+                original_id: original_id.to_owned(),
+                root_id: root_segment.to_string(),
+                parent_id: parent_id.to_owned(),
+            })
+            .collect();
 
         // Remove every victim *before* any cascade. A structural child's
         // id may be a Dewey prefix of its parent's (child "1" whose
