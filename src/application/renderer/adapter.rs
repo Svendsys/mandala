@@ -50,8 +50,8 @@
 //! property and has no WebGPU adapter — Chromium on Linux, every
 //! headless Chromium without the unsafe-WebGPU flags — then fails every
 //! attempt with an error the WebGPU context hard-codes
-//! (`src/backend/webgpu.rs:1018-1028`: `supported_backends` is
-//! `BROWSER_WEBGPU` alone, under an upstream TODO), which prints as
+//! (`src/backend/webgpu.rs:1018-1028`: its supported-backends field
+//! is `BROWSER_WEBGPU` alone, under an upstream TODO), which prints as
 //! "gl support not compiled in" although GL is. So the browser's
 //! instance comes from `browser_instance` (wasm32 only), which asks
 //! first: one `requestAdapter` through
