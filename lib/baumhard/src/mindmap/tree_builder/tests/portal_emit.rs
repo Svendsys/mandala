@@ -432,8 +432,9 @@ fn portal_text_aabb_never_overlaps_icon_aabb() {
     // could slip back into the icon's bounds along any non-cardinal
     // normal. `border_outward_normal` returns only the four cardinal
     // normals today, so the general form is not load-bearing yet;
-    // this pins non-overlap for every `border_t` the user can reach. Exercise several positions
-    // around the border — including the cardinal-corner
+    // this pins non-overlap for every `border_t` the user can
+    // reach. Exercise several positions around the border —
+    // including the cardinal-corner
     // transitions in `border_outward_normal` — and every text
     // length from 1 char to a realistic long label.
     use super::super::portal_style::{layout_portal_label, layout_portal_text};

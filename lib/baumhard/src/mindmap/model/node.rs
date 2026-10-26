@@ -677,10 +677,13 @@ pub struct GlyphBorderConfig {
     /// Font size in points for border glyphs.
     #[serde(default = "default_border_font_size")]
     pub font_size_pt: f32,
-    /// Border color override as #RRGGBB. `None` falls through the one
-    /// field-level tier of the border cascade: the node's theme frame,
-    /// then the canvas default's `color`, then `style.frame_color`
-    /// (`resolve_border_style`).
+    /// Border color override as #RRGGBB. On a node border, `None`
+    /// falls through the one field-level tier of the border
+    /// cascade: the node's theme frame, then the canvas default's
+    /// `color`, then `style.frame_color` (`resolve_border_style`).
+    /// On a section frame, `None` is the selection-highlight cyan
+    /// (`SELECTION_HIGHLIGHT_HEX` through `theme_variables`), with
+    /// no theme or canvas tier (`resolve_section_frame_border`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// Custom glyph definitions. Only used when preset = "custom".
@@ -691,11 +694,13 @@ pub struct GlyphBorderConfig {
     pub padding: f32,
     /// Optional palette name (key in `MindMap.palettes`) whose
     /// colors cycle per glyph around the border. When absent, the
-    /// resolved single color (`border.color` → theme frame → canvas
-    /// default `color` → `style.frame_color`) paints every glyph. When present but
-    /// missing from the map, the renderer logs a warning and falls
-    /// back to the single-color path — interactive paths must not
-    /// panic per `CODE_CONVENTIONS.md` §9.
+    /// resolved single color paints every glyph: on a node border
+    /// `border.color` → theme frame → canvas default `color` →
+    /// `style.frame_color`, on a section frame `color` → the
+    /// selection-highlight cyan (see [`Self::color`]). When present
+    /// but missing from the map, the renderer logs a warning and
+    /// falls back to the single-color path — interactive paths must
+    /// not panic per `CODE_CONVENTIONS.md` §9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color_palette: Option<String>,
     /// Which `ColorGroup` field is cycled when `color_palette` is

@@ -15,7 +15,7 @@
 //! [`DEFAULT_TERMINATOR`](crate::gfx_structs::tree_walker::DEFAULT_TERMINATOR)
 //! are `pub` too, so mutator-DSL authors can compose custom
 //! terminators without forking the walker; everything else in this
-//! module is private scaffolding.
+//! module is crate-internal scaffolding.
 
 use crate::core::primitives::Applicable;
 use crate::gfx_structs::element::GfxElement;

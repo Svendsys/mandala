@@ -1217,8 +1217,8 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 ///    system, 14 pt).
 ///
 /// So a per-node config replaces the canvas default wholesale: a
-/// node config whose `font` is `None` draws no font even under a
-/// canvas default that sets one. A field-level cascade cannot be
+/// node config whose `font` is `None` draws in the system face
+/// even under a canvas default that sets one. A field-level cascade cannot be
 /// read off the model, because `preset`, `font_size_pt` and
 /// `padding` are not `Option` — the resolver cannot tell "author
 /// chose light" from "author left it unset". The first edit to a
@@ -1344,7 +1344,7 @@ pub fn resolve_border_font_size_pt(
 /// Resolve a section-frame's [`BorderStyle`] against the same
 /// vocabulary node borders use. Drives the cyan rectangle drawn
 /// around each section while the owning node is in
-/// `InteractionMode::NodeEdit` mode (Plan §3.5 / §4.3).
+/// `InteractionMode::NodeEdit` mode.
 ///
 /// Cascade (mirrors [`resolve_border_style`] but with section-
 /// frame-specific canvas defaults and floors):
@@ -1358,7 +1358,7 @@ pub fn resolve_border_font_size_pt(
 ///    `resolve_border_style` call — there are no inline glyph
 ///    constants in the section-frame path.
 ///
-/// `frame_color_resolved` is the cyan `SELECTED_EDGE_COLOR` the
+/// `frame_color_resolved` is the cyan `SELECTION_HIGHLIGHT_HEX` the
 /// caller already resolved through `theme_variables`. The frame
 /// system is mode-driven chrome — the active-affordance signal
 /// (cyan) sits at the bottom of the cascade; an author who sets
@@ -1373,8 +1373,8 @@ pub fn resolve_section_frame_border(
     frame_color_resolved: &str,
 ) -> BorderStyle {
     // Slot-level cascade — same shape as `resolve_border_style`.
-    // The per-section override wins whole; otherwise the canvas-level default
-    // for the focused / unfocused state. When neither is set we
+    // The per-section override wins whole; otherwise the
+    // canvas-level default for the focused / unfocused state. When neither is set we
     // synthesize a hardcoded floor `GlyphBorderConfig` so the
     // returned `BorderStyle` flows through the same resolver every
     // other border consumes — the floor is just another author

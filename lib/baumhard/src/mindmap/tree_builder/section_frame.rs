@@ -103,7 +103,7 @@ pub struct SectionFrameElement {
     /// preset floor (or the canvas-level
     /// `default_focused_section_frame_border` when set) so the
     /// user sees which section is being edited among the active
-    /// node's siblings. Plan §4.4.
+    /// node's siblings.
     pub focused: bool,
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Section-frame emission rules. Pin the gating contract that
-//! Plan §3.5 / §4.3 promises: frames appear only in NodeEdit on
+//! NodeEdit promises: frames appear only in NodeEdit on
 //! a multi-section node, only on the active node, and one frame
 //! tracks each section's effective AABB.
 
@@ -346,8 +346,7 @@ fn test_section_frames_focused_uses_focused_canvas_default() {
 }
 
 /// `focused = true` with only the unfocused canvas default set
-/// falls through to the unfocused config (Plan §4.4 cascade
-/// fallback). Pins the `default_focused.or(default_unfocused)`
+/// falls through to the unfocused config. Pins the `default_focused.or(default_unfocused)`
 /// branch in `resolve_section_frame_border`.
 #[test]
 fn test_section_frames_focused_falls_back_to_unfocused_canvas_default() {
