@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Tests for the mode-driven resize-handle gate that landed in
-//! Batch 2 of `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`.
+//! Tests for the mode-driven resize-handle gate.
 //!
-//! Pre-Batch-2 the scene-builder gate at
-//! `MindMapDocument::frame_overrides` read `SelectionState`
-//! directly: `Single(node)` → 8 node handles, `Section(s)` →
-//! 8 section handles. That auto-emission produced the user-facing
-//! "we often find ourselves accidentally resizing when we only want
-//! to move nodes around" bug. Batch 2 moved the gate to
-//! `InteractionModeOverrides` (populated from `InteractionMode`), so
-//! handles emit only when the active mode is `Resize { target }`.
+//! Handles are gated on `InteractionModeOverrides` (populated from
+//! `InteractionMode`), not on `SelectionState`, so they emit only
+//! when the active mode is `Resize { target }`. A gate keyed to the
+//! selection would arm handles on every `Single` / `Section`
+//! selection, and users would resize by accident when they only
+//! meant to move a node.
 //!
 //! These tests pin the contract on both ends:
 //! - `Default` mode + any selection → zero handles.
@@ -22,8 +19,7 @@
 use super::tests_common::{first_testament_node_id, load_test_doc, pinned_two_section_node};
 use super::{InteractionModeOverrides, SelectionState};
 
-/// Regression for the auto-anchor-on-selection UX bug fixed in
-/// Batch 2: a `Single`-selection in `Default` mode (i.e. callers
+/// No handles on a plain selection: a `Single`-selection in `Default` mode (i.e. callers
 /// that pass `InteractionModeOverrides::none()`) emits zero handles.
 #[test]
 fn test_default_mode_with_single_selection_emits_no_resize_handles() {
@@ -46,9 +42,8 @@ fn test_default_mode_with_single_selection_emits_no_resize_handles() {
 }
 
 /// `Default` mode + a `Section` selection — same regression as
-/// above for the section-handle path. Pre-Batch-2 the gate at
-/// `selected_section()` would have armed 8 section handles for any
-/// `Some`-sized section selection.
+/// above for the section-handle path: a `Some`-sized section
+/// selection alone arms no section handles.
 #[test]
 fn test_default_mode_with_section_selection_emits_no_resize_handles() {
     let (mut doc, id) = pinned_two_section_node();

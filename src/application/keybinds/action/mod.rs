@@ -202,9 +202,6 @@ pub enum Action {
     /// rebuild slice runs on both targets via `dispatch_compatible`;
     /// the native-only residual (clearing `hovered_node` for the
     /// Reparent/Connect overlay rebuild) runs in the native arm.
-    /// Replaces the pre-Batch-2 `CancelMode` per
-    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
-    /// (rename rather than alias).
     #[action(context = Document, wasm = Compatible)]
     ExitMode,
     /// Create a new unattached (orphan) node at the cursor position.
@@ -887,10 +884,8 @@ pub enum Action {
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeAbs { w: String, h: String },
     /// Mirror `section resize fill` — flip the selected section
-    /// back to fill-parent (`size = None`). Renamed from `none`
-    /// in Batch 5 (the prior literal misleadingly read as "remove
-    /// the section"); this Action's name stays `FillParent` for
-    /// keybind-stability.
+    /// back to fill-parent (`size = None`). The verb literal is
+    /// `fill`, not `none`, which read as "remove the section".
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
     /// Mirror `section move x=<x> y=<y> [section=<idx>]` — pin the

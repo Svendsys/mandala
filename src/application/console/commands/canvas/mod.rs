@@ -956,8 +956,7 @@ mod positional_tests {
 
 #[cfg(test)]
 mod blocker_pins {
-    //! Regression pins for the canvas-side blockers from the
-    //! Batch-6 opus review:
+    //! Regression pins for the canvas-side border verbs:
     //!
     //! 1. `canvas border|section-frame side|corner reset` used
     //!    to hardcode "light" preset glyphs. Now resolves the
@@ -1051,7 +1050,7 @@ mod cycle_pin {
 
     /// `canvas border preset cycle` advances the canvas-default
     /// preset by one, wrapping. Pin parity with the per-node
-    /// `border preset cycle` shipped in B6.4.
+    /// `border preset cycle`.
     #[test]
     fn canvas_border_preset_cycle_advances_canvas_default() {
         let mut doc = load_test_doc();

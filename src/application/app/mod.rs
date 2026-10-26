@@ -635,8 +635,9 @@ pub(in crate::application) use interaction_mode::{
 // (the resolver returns it); production consumers pattern-match
 // the result without naming the type. Tests assert on the variant
 // shape, so the re-export is `#[cfg(test)]`-gated to avoid an
-// unused-import warning on non-test builds. When Batch 4 (fast
-// resize) lands a non-test consumer, the gate moves.
+// unused-import warning on non-test builds. Production code
+// (`ipc_state.rs`) imports it from `interaction_mode` directly; the
+// gate moves when a non-test consumer needs this path.
 #[cfg(test)]
 pub(in crate::application) use interaction_mode::ResizeTarget;
 

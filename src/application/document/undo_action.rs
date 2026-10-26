@@ -93,8 +93,8 @@ pub enum UndoAction {
         before_color_schema: Option<ColorSchema>,
         before_sections: Vec<MindSection>,
         /// Pre-mutation `node.position`. Captured because some
-        /// style setters (and the structural section mutators
-        /// added in Batch 5) trigger `grow_one_node_to_fit_text`
+        /// style setters (and the structural section mutators)
+        /// trigger `grow_one_node_to_fit_text`
         /// / `grow_one_node_to_fit_border` floor passes that can
         /// shift the node's AABB; without restoring `position`
         /// on undo, the node would visibly drift after style →

@@ -629,9 +629,8 @@ fn execute_move_fan_out_multisection(
 }
 
 /// `section move dx=<f64> dy=<f64>` (delta) or `section move
-/// x=<f64> y=<f64>` (absolute). The kv form replaces the
-/// pre-Batch-5 positional `<dx> <dy>` — no compatibility shim;
-/// users update muscle memory.
+/// x=<f64> y=<f64>` (absolute). There is no positional
+/// `<dx> <dy>` form.
 ///
 /// `dx`/`dy` and `x`/`y` are mutually exclusive: passing both
 /// (`dx=1 x=2 dy=0 y=0`) is rejected at parse time so the user
@@ -739,10 +738,8 @@ fn parse_move_kvs(descent: &Descent, pairs: &[Pair]) -> Result<MoveTarget, Strin
 }
 
 /// `section resize w=<f64> h=<f64>` or `section resize fill`.
-/// The kv form replaces the pre-Batch-5 positional `<w>
-/// <h>`; the `fill` literal replaces `none` ("none" reads as
-/// "remove the section" rather than "fill the parent" — `fill`
-/// is the clearer rename).
+/// There is no positional `<w> <h>` form; the literal is `fill`
+/// rather than `none`, which reads as "remove the section".
 fn execute_resize(
     descent: &Descent,
     args: &Args,

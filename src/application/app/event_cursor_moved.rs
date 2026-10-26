@@ -1142,8 +1142,7 @@ mod tests {
     /// matching winit `CursorIcon` for direction-appropriate
     /// resize feedback. Pinned per-side so a future refactor that
     /// (e.g.) swaps NW and SW silently leaves users with the
-    /// wrong cursor on every diagonal grab. Test agent flagged
-    /// this as the most important coverage gap in Batch 4.
+    /// wrong cursor on every diagonal grab.
     #[test]
     fn cursor_icon_for_resize_side_pin_per_side() {
         // Diagonals share an axis: NW/SE = `\` = NwseResize.

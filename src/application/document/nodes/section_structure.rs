@@ -16,8 +16,6 @@
 //! ask for [`NodeEditTail::GrowAndCleanup`], the only tail that
 //! also repairs a selection or border preview left pointing at a
 //! section index that no longer exists.
-//!
-//! Per `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5 (Batch 5).
 
 use baumhard::mindmap::model::{validate, MindSection};
 

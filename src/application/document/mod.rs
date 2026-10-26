@@ -1046,14 +1046,6 @@ fn build_border_preview_scene_view<'a>(bp: &'a BorderPreview) -> tree_builder::B
     }
 }
 
-/// Convert an owned `BorderConfigEdits` (from the application
-/// crate) into a borrowed scene-side `BorderConfigEditsView<'a>`
-/// the scene builder consumes. Per-field tri-state: `Keep` →
-/// `EditView::Keep`, `Clear` → `EditView::Clear`, `Set(v)` →
-/// `EditView::Set(&v)`. Pre-fix this projection collapsed both
-/// `Keep` and `Clear` to a single "no edit" sentinel, dropping
-/// the `Clear` axis entirely and breaking the parity contract
-/// with `apply_glyph_border_edits_to_slot` (Risk #1 in the plan).
 /// Test-only re-export of [`build_border_config_edits_view`].
 /// Used by the parity test in `tests_nodes.rs` that exercises
 /// `apply_view_to_slot` (baumhard) vs `apply_glyph_border_edits_to_slot`
@@ -1079,6 +1071,13 @@ pub(crate) fn nodes_border_apply_glyph_border_edits_to_slot_for_test(
     nodes::apply_glyph_border_edits_to_slot(slot, edits, outcome)
 }
 
+/// Convert an owned `BorderConfigEdits` (from the application
+/// crate) into a borrowed scene-side `BorderConfigEditsView<'a>`
+/// the scene builder consumes. Per-field tri-state: `Keep` →
+/// `EditView::Keep`, `Clear` → `EditView::Clear`, `Set(v)` →
+/// `EditView::Set(&v)`. `Clear` must stay distinct from `Keep`:
+/// collapsing them would drop the `Clear` axis and break the
+/// parity contract with `apply_glyph_border_edits_to_slot`.
 fn build_border_config_edits_view(edits: &BorderConfigEdits) -> tree_builder::BorderConfigEditsView<'_> {
     use crate::application::document::OptionEdit;
     use tree_builder::EditView;

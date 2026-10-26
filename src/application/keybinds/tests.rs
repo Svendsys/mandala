@@ -567,7 +567,8 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
         Action::FastResizeStart,
         // EnterNodeEdit / EnterSectionEdit reach `open_text_edit`,
         // which depends on the native modal-stealer cascade
-        // (`TextEditState`). Reclassification waits on Batch 4/7.
+        // (`TextEditState`). Reclassification waits on the browser
+        // gaining that pipeline (see `Action::EnterNodeEdit`).
         Action::EnterNodeEdit,
         Action::EnterNodeEditClean,
         Action::EnterSectionEdit,
@@ -973,7 +974,7 @@ fn test_action_for_gesture_falls_back_to_unmodified_binding() {
 }
 
 /// Default `Ctrl+RightDrag` resolves to `FastResizeStart`. Pins
-/// the Batch 4 gesture binding — without it, threshold-cross on
+/// the gesture binding — without it, threshold-cross on
 /// PendingRight would no-op silently.
 #[test]
 fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
