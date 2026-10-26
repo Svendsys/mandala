@@ -4,7 +4,7 @@
 //! selection's section (when the selection is
 //! `SelectionState::Section` / `SectionRange`) or an explicit
 //! `section=K` kv (when the selection is a single node). Subverbs
-//! (per `SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5):
+//! (per `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5):
 //!
 //! - `section show [section=<idx>]` — multi-line resolved-property
 //!   readout (text preview / runs / offset / size / channel /
@@ -432,9 +432,12 @@ fn execute_text(
     }
     // Preserve mode: keep prior runs clipped to the new text
     // length. Per-grapheme styling on overlapping ranges
-    // survives; uncovered tail (when the new text is longer
-    // than every prior run's `end`) falls through to section /
-    // node defaults per `format/text-runs.md`.
+    // survives. An uncovered tail (when the new text is longer
+    // than every surviving run's `end`) is *not drawn*, per the
+    // coverage rule in `format/text-runs.md`: nothing here
+    // extends a run over it, so appended text is invisible until
+    // a run covers it. That is a defect in this mode, not the
+    // intended contract (#197).
     let changed = doc.set_section_text_preserving_runs(node_id, idx, new_text);
     if changed {
         ExecResult::ok_msg(format!("section[{}] text replaced (runs preserved)", idx))
@@ -1479,8 +1482,7 @@ mod tests {
     }
 
     /// Preserve mode clips runs that straddle or overflow the
-    /// new (shorter) text length. Uncovered tail falls through
-    /// to section / node defaults per `format/text-runs.md`.
+    /// new (shorter) text length.
     #[test]
     fn section_text_preserve_clips_runs_to_shorter_text() {
         use baumhard::mindmap::model::TextRun;

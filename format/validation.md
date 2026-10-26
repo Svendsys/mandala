@@ -36,10 +36,19 @@ that moved.
    The rules are listed under [Numeric domain](#numeric-domain)
    below, and the reasoning is in
    [macros.md](./macros.md#the-load-time-trust-boundary).
-   **Parent cycles and the key-equals-`node.id` rule are in this
-   column too** — both are load-blocking, because the cycle check
-   and the scene builder address nodes by different spellings, and a
-   disagreement between them is a walk that never terminates.
+   **Four structural rules are in this column too**, and the loader
+   runs them before the numeric sweep (`check_invariants` in
+   `lib/baumhard/src/mindmap/loader.rs`): no node with zero
+   sections, the key-equals-`node.id` rule, no parent cycles, and no
+   node over `MAX_SECTIONS_PER_NODE` sections. The middle two are
+   load-blocking because the cycle check and the scene builder
+   address nodes by different spellings, and a disagreement between
+   them is a walk that never terminates. The first and last are
+   model-entry invariants: `sections` is serde-defaulted, so only the
+   loader can insist a node has one, and the cap bounds one node's
+   content strata. On the editor side `add_section` holds the cap
+   and `split_section` does not, so repeated splits can save a map
+   this rule then refuses to reopen (#208).
 3. **Coherence — `verify` reports.** Everything else: a file that
    loads and renders but still says something incoherent. Dangling
    edge references, a Dewey ID that disagrees with `parent_id`, an
@@ -66,10 +75,18 @@ precisely so it can still open the files column 2 rejects — a tool
 whose job is saying *what is wrong with this map* would be useless if
 it could only read maps that were already fine. That path captures
 unknown keys and skipped constructs exactly as the strict door does,
-and drops only column 2's checks; without the capture, the two
-reports in column 1 would be silently empty. So a violation listed in
-column 2 appears in a `verify` report **and** blocks the load; one in
-column 1 or 3 appears only in the report.
+and drops column 2's checks; without the capture, the two reports in
+column 1 would be silently empty. So a violation listed in column 2
+appears in a `verify` report **and** blocks the load; one in column 1
+or 3 appears only in the report.
+
+**Two ceilings are not dropped**, because they bound the cost of
+reading the file at all rather than the safety of rendering it: the
+document size (`MAX_MAP_BYTES`) and the unknown-key count
+(`MAX_UNKNOWN_KEYS`). Over either one, `verify` cannot open the map
+and prints the load error instead of a report — they are never
+violations in any category. Both are `None` on native and bounded
+only on wasm32 (see [Numeric domain](#numeric-domain)).
 
 ## What gets checked
 
@@ -86,7 +103,9 @@ traversal. A cycle makes `all_descendants` loop forever.
 - The HashMap key equals `node.id` for every entry
 - For every non-root node, `derive_parent_id(node.id)` agrees with
   `node.parent_id`
-- Root nodes (`parent_id: null`) have no dot in their ID
+- A dotted ID has a non-null `parent_id` (`id implies parent "0" but
+  parent_id is null`), and a dotless, root-style ID has a null one
+  (`root-style id has parent_id "0" (expected null)`)
 
 **Why**: the Dewey ID encodes structure. If `"1.2"` claims its parent is
 `"0"`, either the ID is lying or `parent_id` is — which one loads right
@@ -95,13 +114,20 @@ depends on which code path runs, a reliability nightmare.
 ### References
 
 - Every edge's `from_id` and `to_id` exist in `nodes`
-- No two edges share the same `(from_id, to_id, edge_type)` tuple
 
 **Why**: dangling references silently disappear at render time — the
 connection just doesn't draw, with no indication that something was
 lost. Applies uniformly to line-mode and portal-mode edges.
 
-Duplicate tuples break edge identity: `EdgeRef` lookups return the
+### Edges
+
+- No two edges share the same `(from_id, to_id, edge_type)` tuple
+
+Reported under the `edges` category. The loader does not refuse a
+duplicate — it logs a warning and opens the map — so this is a
+column 3 rule.
+
+**Why**: duplicate tuples break edge identity: `EdgeRef` lookups return the
 first match, `SceneConnectionCache` overwrites with the second edge's
 geometry, and the on-disk format no longer round-trips through the
 runtime faithfully. Multiple edges between the same pair with
@@ -156,19 +182,26 @@ painful to diagnose after the fact.
 
 ### Section bounds
 
-For every `MindNode.sections[i]`:
+For every `MindNode.sections[i]`. The rules split across two
+categories: a section's own shape and the node's size are
+load-blocking and reported under `numeric` (the shared
+`validate::section_extent_violations`); fitting inside the parent,
+the section count and channel collisions are reported under
+`sections`.
 
 - `offset.{x,y}` finite and non-negative
 - The section's effective AABB (`offset + effective_size`) is inside
   the parent node's `size`. The effective size is the explicit
   `section.size` when set, otherwise `node.size` (fill-parent).
 - `size.{width,height}` (when set) finite and strictly positive, and
-  not over 100× the parent's matching dimension (typo guard)
+  not over 100× the parent's matching dimension (typo guard; the
+  factor is a literal in `section_extent_violations`, not a named
+  constant)
 - The owning `node.size.{width,height}` itself finite, strictly
-  positive, and not over `MAX_NODE_AXIS` (`1_000_000.0`) (sub-check,
-  since a corrupt node-size cascades into every section's AABB math)
-- `node.sections.len()` does not exceed `MAX_SECTIONS_PER_NODE`
-  (`1024`)
+  positive, and not over `MAX_NODE_AXIS` (sub-check, since a corrupt
+  node-size cascades into every section's AABB math)
+- `node.sections` is non-empty and does not exceed
+  `MAX_SECTIONS_PER_NODE` — both load-blocking
 - No two sections share the same effective channel under the same
   parent — the effective channel is `section.channel.unwrap_or(section_idx)`.
   Surfaced as a *warning*, not a hard rejection: the broadcast
@@ -187,6 +220,7 @@ edit and a `verify` violation read identically.
 ### Zoom bounds
 
 - `min_zoom_to_render` and `max_zoom_to_render` (when set) are finite
+  and non-negative
 - Whenever both are set on a `MindNode`, `MindEdge`,
   `EdgeLabelConfig`, or `PortalEndpointState`, `min <= max` holds
 
@@ -272,27 +306,42 @@ build has to be one the renderer survives, because the code
 downstream of it is not defensive — the text shaper asserts, and the
 border and connection builders size a `String` and a `Vec` from
 authored geometry. `verify` reports these under the `numeric`
-category; the loader refuses them outright.
+category; the loader refuses them outright. The bounds are named by
+their constants rather than restated — the constant is the authority,
+and a number copied here would go stale without saying so.
 
 | Rule | Bound |
 |---|---|
-| Font metrics — `font_size_pt`, `size_pt`, every min / max on borders, connections, labels, portals and text runs | finite, `0.5`..=`4096` pt |
+| Font metrics — `font_size_pt` on borders, connections and edge labels, `text_font_size_pt` on portal labels, `size_pt` on text runs, and every min / max font clamp on connections, edge labels and portal labels | finite, `MIN_FONT_SIZE_PT`..=`MAX_FONT_SIZE_PT` |
 | Min / max font pairs | not inverted (the cascades clamp with them) |
-| Node extent | finite, positive, ≤ `1_000_000` per axis |
-| Positions, section offsets, Bezier control points | finite, `|v|` ≤ `1e9` |
+| Node extent | finite, positive, ≤ `MAX_NODE_AXIS` per axis |
+| Node `style.corner_radius_percent` and `style.frame_thickness`; border `padding`; connection `spacing` | finite, `|v|` ≤ `MAX_NODE_AXIS` |
+| Positions, section offsets, Bezier control points, node `layout.spacing` | finite, `|v|` ≤ `MAX_CANVAS_COORD` |
+| Edge-label `position_t` / `perpendicular_offset`; portal-label `border_t` / `perpendicular_offset` | finite |
 | Text runs | sorted, non-overlapping, non-empty, `end` ≤ the section's grapheme count |
-| Connection body / cap glyphs | ≤ 16 grapheme clusters **and** ≤ 512 bytes (each is re-emitted per sampled point, and one cluster can carry unlimited combining marks — the cluster count keeps it a motif, the byte count keeps `bytes × samples` finite) |
-| Border glyphs — all eight of `glyphs`, on every slot that carries a border config: a node's `style.border`, a section's `frame_border`, and the canvas's `default_border` / `default_section_frame_border` / `default_focused_section_frame_border` | ≤ 64 grapheme clusters **and** ≤ 1024 bytes. The four sides are patterns repeated to fill an edge; the four corners are emitted verbatim and looked up in the glyph-metric cache four times per node **per frame**. The shaping is memoized, but the cache key is an owned copy of the glyph built before the lookup, so an unbounded corner is an unbounded clone every frame and a permanent cache entry. Paired for the same reason as the connection glyph |
-| Animation envelope — `duration_ms`, `delay_ms` | ≤ `60_000` ms each |
+| Connection body / cap glyphs, on every edge's `glyph_connection` and on the canvas's `default_connection` | ≤ `MAX_CONNECTION_GLYPH_GRAPHEMES` grapheme clusters **and** ≤ `MAX_CONNECTION_GLYPH_BYTES` bytes (each is re-emitted per sampled point, and one cluster can carry unlimited combining marks — the cluster count keeps it a motif, the byte count keeps `bytes × samples` finite) |
+| Border glyphs — all eight of `glyphs`, on every slot that carries a border config: a node's `style.border`, a section's `frame_border`, and the canvas's `default_border` / `default_section_frame_border` / `default_focused_section_frame_border` | ≤ `MAX_BORDER_GLYPH_CLUSTERS` grapheme clusters **and** ≤ `MAX_BORDER_GLYPH_BYTES` bytes. The four sides are patterns repeated to fill an edge; the four corners are emitted verbatim and looked up in the glyph-metric cache four times per node **per frame**. The shaping is memoized, but the cache key is an owned copy of the glyph built before the lookup, so an unbounded corner is an unbounded clone every frame and a permanent cache entry. Paired for the same reason as the connection glyph |
+| Animation envelope — `duration_ms`, `delay_ms` | ≤ `MAX_ANIMATION_MS` each |
 | Zoom windows | finite, non-negative, not inverted |
-| Whole file | ≤ 256 MiB |
-| Unrecognized keys per document | ≤ 100 000. Keys this build has no field for are kept and written back untouched, but each costs a heap-allocated capture route, and the file that buys one is about twelve bytes. Without a ceiling the byte limit above stops bounding memory: measured at roughly 575 bytes of peak RSS per captured key, a document at the 256 MiB limit reaches something on the order of 11 GB and the process dies before any check below it runs. Counted per *occurrence*, not per distinct name, so ten new keys on each of ten thousand nodes fits with room over |
 
-The constants live in `lib/baumhard/src/mindmap/model/validate.rs`
-and `lib/baumhard/src/font/fonts.rs` (with `MAX_NODE_AXIS` in
-`model/node.rs` and the font window re-exported from `font/fonts.rs`),
-and the loader, the document setters, and `verify` all read the same
-ones.
+Two more ceilings guard the load, and neither is a `numeric` rule:
+they are refused before the document is built, by `verify` as well
+as the editor, so an oversized file is a load error and never a
+reported violation.
+
+| Ceiling | Bound |
+|---|---|
+| Whole file — `MAX_MAP_BYTES` (`mindmap/loader.rs`) | `None` on native: a map opens if the machine can hold it. Bounded on wasm32, where `usize` is 32 bits and the 4 GiB address space is shared with the runtime, the GPU buffers and the browser — a refusal with a message instead of a trap mid-parse |
+| Unrecognized keys per document — `MAX_UNKNOWN_KEYS` (`mindmap/unknown_keys.rs`) | `None` on native, for the same reason; bounded on wasm32. Counted per *occurrence*, not per distinct name. It began as a resource ceiling standing in for a cost defect, and once capturing and writing back unknown keys were both made linear there was nothing on native left for it to bound |
+
+Both are native-only carve-outs in `CLAUDE.md`'s dual-target
+registry, which records the reasoning and the trajectory.
+
+The `numeric` constants live in
+`lib/baumhard/src/mindmap/model/validate.rs`, except `MAX_NODE_AXIS`
+and `MAX_SECTIONS_PER_NODE` (`model/node.rs`) and the font window,
+which `font/fonts.rs` defines and `validate.rs` re-exports. The
+loader, the document setters, and `verify` all read the same ones.
 
 The setters clamp rather than pass through, so a value the editor
 writes is a value the loader accepts. That is a property maintained
@@ -390,3 +439,16 @@ numeric @ 0: section[0].text_runs[1] overlaps previous run (start 3 < previous e
 Each violation names its category, the location inside the file, and what
 went wrong. The location format varies by category (node ID, edge index,
 etc.) but is always clickable / greppable.
+
+The categories are `tree`, `ids`, `references`, `edges`, `palettes`,
+`enums`, `sections`, `numeric`, `unknown_keys` and `unknown_variant`.
+The report is not grouped by them: `verify::verify` sorts every
+finding by location in Dewey order (`"0.2"` before `"0.10"`), then
+by category, then by message, so two runs on one file print the same
+list.
+
+A clean map prints `<map.json>: valid` on stdout. Otherwise every
+violation goes to stderr, followed by a summary: `N warning(s)` and
+exit 0 when every finding is a warning, or `N violation(s) in
+<map.json> (E error(s), W warning(s))` and a nonzero exit when any is
+an error.

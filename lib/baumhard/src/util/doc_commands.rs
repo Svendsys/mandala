@@ -780,9 +780,10 @@ mod tests {
     /// bench targets** — #148's other defect, and the one that cost
     /// something. The bare form — `cargo check` with no `--workspace`
     /// — had been the project's stated proof that a bench target
-    /// still builds, in `CLAUDE.md` §7, in `AGENTS.md` and in three
-    /// more documents, and it exits 0 on a bench file that does not
-    /// compile: the root package is the default selection, it
+    /// still builds, in `CLAUDE.md`'s benchmark rule (§6), in
+    /// `AGENTS.md` and in three more documents, and it exits 0 on a
+    /// bench file that does not compile: the root package is the
+    /// default selection, it
     /// declares `autobenches = false`, and it owns no bench target,
     /// so cargo checks nothing and says "Finished".
     ///

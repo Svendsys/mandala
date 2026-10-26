@@ -2807,17 +2807,49 @@ exception on both halves until #37 — it overwrote any state on
 press and forced `None` on release — and the right-button guard's
 comment named that overwrite as the posture it was rejecting.
 
-**One state is outside the rule, and knowingly.** `Panning` does
-not record which button armed it, and three things arm it (a
-middle press, the `LeftDrag` threshold cross, any keyboard or
-macro `pan_canvas`), so a middle release during a left-drag pan
-ends it and a left release ends a middle-started one. Nothing is
-at risk — `Panning` owes the model no write and no undo entry,
-which is exactly what puts it outside the class above — and
-closing it is a decision about `Action::PanCanvas`'s semantics
-rather than a guard: the variant would have to carry its origin,
-and a keyboard-armed pan has no button to name, so "momentary or
-modal" has to be answered first.
+**A pan belongs to the input that armed it** (#153).
+`Panning { owner: PanOwner }` records it, and the release rule
+above extends to it unchanged: a pan ends on its owner's release
+and on no other, so a middle release no longer ends a left-drag
+pan, nor a left release a middle-started one. What `pan_canvas`
+means on a key is the one decision this needed, and it is
+**momentary**: a key holds the pan exactly as a button does, and
+ends it on its own key-up (the Space-to-pan posture of most canvas
+tools). The reason is that momentary is what a held input *is* —
+the release is the "stop" every other pointer gesture here already
+reads — and it makes a key's auto-repeat harmless, where a toggle
+would flip the pan off and on while the key is down. An input
+with no release — a macro step, a console line, IPC `act.action`
+— cannot be momentary, so its pan is **modal**: `Toggled`, ended
+by the next `pan_canvas` from a key, a macro, the console or IPC.
+(Not from the mouse: a middle press arms only from `None`, so it
+cannot reach the arm while a pan runs.) One rule covers both
+halves: *held inputs hold, the rest toggle.* A touch `LongPress`
+bound to `pan_canvas` is one of the rest — `HeldInput` has no
+finger — so its pan toggles too. Whatever owns a pan, a left
+*press* re-arms `Pending` over it, as it always has: `Panning` owes
+the model nothing, and the release rule is about releases.
+
+The Action cannot see which input reached it — the funnel hands it
+only an `Action` — so the arm arms every pan `Toggled`, and a held
+input claims the pan its own dispatch armed on the way out of
+`dispatch_held_action` (the same read-the-decision-back shape the
+`LeftDrag` first-delta gate uses). A key bound to something else,
+pressed during a toggled pan, claims nothing: the claim is only for
+a pan that did not exist before the dispatch.
+
+**Focus loss resolves every state** (`DragState::end_on_focus_loss`,
+`WindowEvent::Focused(false)`). Before #153 nothing ran on it, so a
+`Throttled` gesture whose owning release never arrived — focus
+lost, the OS eating the release — was unreachable. Now the state
+ends at `None` and a throttled drag is **committed**, through the
+same `resolve_release` gate with `Release::FocusLost`, which
+answers `Commit` whichever button started it. Commit rather than
+discard because commit is the reversible one: the model takes what
+the user was looking at, with its undo entry, while a discard
+snaps the canvas back and leaves nothing to redo. A pending press
+is dropped without firing its click; a pan of either kind, and a
+rubber band, are simply ended. Native-only, as `DragState` is.
 
 ### `TouchGestureRecognizer`
 
@@ -2961,6 +2993,12 @@ which discipline the active gesture uses.
 canvas work a commit owes once its model write has landed:
 `None`, `SceneOnly`, or `All`. Named rather than performed, so
 the commit body stays renderer-free.
+
+**What ends a drag is a `Release`**: `Button(b)` commits only when
+`b` started the gesture and hands the drag back otherwise;
+`FocusLost` commits whichever button did, because the owning
+release may never come and nothing else finalizes a throttled drag
+(see [`DragState`](#dragstate)).
 
 Variants:
 

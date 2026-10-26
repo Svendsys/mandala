@@ -544,9 +544,9 @@ impl MindSection {
 /// measured and shaped at
 /// ([`crate::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE`]
 /// is this constant by definition). One number on purpose: a run
-/// that says nothing about size must render exactly like the
-/// uncovered text around it, the same way a run whose `color` is
-/// empty takes the color the uncovered text has.
+/// that says nothing about size must render at the size run-less
+/// text does, the same way a run whose `color` is empty takes the
+/// node's effective text color rather than one of its own.
 ///
 /// Distinct from the *authoring* default the application writes
 /// into a freshly-created run (24 pt, in the app crate's
@@ -567,13 +567,15 @@ fn is_false(v: &bool) -> bool {
 /// A styled slice of a section's `text`, matching miMind's text-run
 /// concept: `[start, end)` grapheme indices carry one font / size /
 /// color / style combination, with optional hyperlink target.
-/// Multiple runs describe a single multi-style string; gaps in
-/// coverage render with section-level defaults (which themselves
-/// fall through to the owning node's defaults).
+/// Multiple runs describe a single multi-style string. **Gaps in
+/// coverage are not drawn**: a section with non-empty runs renders
+/// only the graphemes its runs cover (see [`MindSection::text`] and
+/// `format/text-runs.md` § "Coverage rules"); the rule itself is
+/// `covered_slices` in [`crate::font::attrs`].
 ///
 /// **Only `start` and `end` are required on disk.** Every styling
-/// field defaults to the value that renders like uncovered text —
-/// false flags, unpinned font, inherited color, and
+/// field defaults to *no opinion* — false flags, unpinned font,
+/// the node's effective text color, and
 /// [`DEFAULT_TEXT_RUN_SIZE_PT`] — so `{"start": 0, "end": 5,
 /// "bold": true}` is a complete run. The saver omits fields
 /// sitting at those defaults, per the omission policy in
@@ -613,8 +615,8 @@ pub struct TextRun {
     pub size_pt: f32,
     /// `#RRGGBB` or `var(--name)` text color. Empty (the default)
     /// declines to name one: the covered graphemes take the node's
-    /// effective text color exactly as uncovered graphemes do, and
-    /// keep tracking it through a retheme — see
+    /// effective text color ([`super::MindMap::node_text_rgba`]), and keep
+    /// tracking it through a retheme — see
     /// `format/text-runs.md` § "Leaving `color` empty".
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color: String,

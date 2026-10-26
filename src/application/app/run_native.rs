@@ -293,6 +293,13 @@ impl InitState {
                     self.input_context()
                         .dispatch_touch_event(touch.phase, touch.id, touch.location);
             }
+            //// FOCUS ////
+            Event::WindowEvent {
+                event: WindowEvent::Focused(false),
+                ..
+            } => {
+                redraw_after = self.input_context().on_focus_lost();
+            }
             //// KEYBOARD ////
             Event::WindowEvent {
                 event: WindowEvent::ModifiersChanged(mods),

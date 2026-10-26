@@ -192,7 +192,7 @@ pub enum MutationBehavior {
 /// differential harness's scope list, and the `target_scope` value
 /// list published in `format/schema.md` are all driven off
 /// `TargetScope::iter()`, so none of them can silently omit a new
-/// variant (CLAUDE.md §5 — make the drift impossible, don't fix it
+/// variant (CLAUDE.md §4 — make the drift impossible, don't fix it
 /// once).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum TargetScope {
