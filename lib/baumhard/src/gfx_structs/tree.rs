@@ -166,7 +166,7 @@ impl Tree<GfxElement> {
         let slack = slack.max(0.0);
         self.ensure_subtree_aabbs();
         let mut best: Option<(NodeId, f32)> = None;
-        bvh_find(&self.arena, self.root, point, slack, &mut best);
+        bvh_find(self.arena(), self.root, point, slack, &mut best);
         best.map(|(id, _)| id)
     }
 
@@ -178,9 +178,9 @@ impl Tree<GfxElement> {
     ///
     /// O(n) on the first call after the tree mutates; O(1) on
     /// repeated calls thanks to a per-tree memo. The memo is
-    /// cleared by every mutation the walker applies — any other
-    /// mutating caller that bypasses the mutator pipeline must call
-    /// [`Tree::invalidate_caches`](crate::engine::tree::Tree::invalidate_caches) itself or the bbox will drift.
+    /// cleared by every mutation the walker applies and by every
+    /// change made through the tree's own methods — the only other
+    /// way to change a tree.
     pub fn descendants_aabb(&self) -> Option<(Vec2, Vec2)> {
         if let Some(cached) = self.cache.aabb_cache.get() {
             return cached;
@@ -236,14 +236,18 @@ impl Tree<GfxElement> {
     /// running out is fatal rather than merely costly. The pass is
     /// gated behind `subtree_aabbs_dirty`, so it runs once per
     /// mutation rather than once per frame.
+    ///
+    /// Each node's AABB is written through [`Tree::update`], the one
+    /// way to change an element outside a walk; the write never
+    /// changes a key, so nothing moves.
     fn compute_subtree_aabbs(&mut self) {
         let root = self.root;
-        let arena = &mut self.arena;
         // `false` = this node's children still need queueing;
         // `true` = they are done and its own merge may run.
         let mut pending: Vec<(NodeId, bool)> = vec![(root, false)];
 
         while let Some((node_id, children_done)) = pending.pop() {
+            let arena = self.arena();
             if !children_done {
                 pending.push((node_id, true));
                 let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
@@ -276,9 +280,10 @@ impl Tree<GfxElement> {
                 child_opt = arena.get(cid).and_then(|n| n.next_sibling());
             }
 
-            if let Some(node) = arena.get_mut(node_id) {
-                node.get_mut().set_subtree_aabb(combined);
-            }
+            // `node_id` came off this pass's own frontier, so it is in
+            // the tree; a refusal could only be a stale id, which
+            // leaves nothing to write.
+            let _ = self.update(node_id, |element| element.set_subtree_aabb(combined));
         }
     }
 
@@ -286,8 +291,8 @@ impl Tree<GfxElement> {
         let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
         let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
         let mut any = false;
-        for node_id in self.root.descendants(&self.arena) {
-            let Some(node) = self.arena.get(node_id) else {
+        for node_id in self.root.descendants(self.arena()) {
+            let Some(node) = self.arena().get(node_id) else {
                 continue;
             };
             let Some(area) = node.get().glyph_area() else {

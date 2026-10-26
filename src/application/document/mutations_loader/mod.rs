@@ -136,7 +136,7 @@ mod tests {
     fn mutation_json(id: &str, target_scope: &str) -> String {
         format!(
             r#"{{"id": "{id}", "name": "{id}",
-                "mutator": {{"Macro": {{"channel": 0, "mutations": {{"Literal": []}}}}}},
+                "mutator": {{"Macro": {{"kind": null, "channel": 0, "mutations": {{"Literal": []}}}}}},
                 "target_scope": "{target_scope}"}}"#
         )
     }
@@ -234,7 +234,7 @@ mod tests {
             "mutations": [{
                 "id": "hi",
                 "name": "Hi",
-                "mutator": {"Macro": {"channel": 0, "mutations": {"Literal": []}}},
+                "mutator": {"Macro": {"kind": null, "channel": 0, "mutations": {"Literal": []}}},
                 "target_scope": "SelfOnly"
             }]
         }"#;

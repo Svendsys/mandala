@@ -23,16 +23,25 @@ use serde::{Deserialize, Serialize};
 /// [`Mutator`](crate::engine::mutator::Mutator) constructors; `Repeat`
 /// is a compact sugar for "expand to N children at consecutive
 /// channels".
+///
+/// Every variant carries the `kind` half of the
+/// [key](crate::engine::key::BranchKey) its mutator routes on, beside
+/// the channel half: a node's `kind` and `channel` together are its
+/// key. Both are required in JSON; for an element type whose kind is
+/// `()` — the glyph trees — `kind` is written `null`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "M: Serialize", deserialize = "M: DeserializeOwned"))]
 pub enum MutatorNode<E: TreeElement, M: Mutation<E>> {
     /// `Mutator::Void` — no mutation, just structural grouping.
-    /// Children are expanded in declaration order.
+    /// Children are inserted in key order, equal keys in declaration
+    /// order.
     Void {
-        /// Branch-routing channel index. The walker descends only
-        /// where the target tree's channel matches.
+        /// The kind half of the routing key.
+        kind: E::Kind,
+        /// The channel half of the routing key. The walker descends
+        /// only where a target's key matches.
         channel: usize,
-        /// Inner mutator nodes expanded in declaration order under
+        /// Inner mutator nodes inserted in key order under
         /// this grouping. Empty by default so a bare structural
         /// `Void` need not declare an empty list.
         #[serde(default)]
@@ -43,6 +52,10 @@ pub enum MutatorNode<E: TreeElement, M: Mutation<E>> {
     /// channel: a single mutation that applies nothing *is* a void
     /// node, because a mutator's "no payload" is structural.
     Single {
+        /// The kind half of the routing key. Inside a `Repeat`
+        /// template it must equal the `Repeat`'s own `kind`
+        /// ([`BuildError::TemplateKindDiffers`](super::BuildError::TemplateKindDiffers)).
+        kind: E::Kind,
         /// Channel source — literal index or per-iteration index
         /// resolved by an enclosing [`MutatorNode::Repeat`].
         channel: ChannelSrc,
@@ -60,7 +73,10 @@ pub enum MutatorNode<E: TreeElement, M: Mutation<E>> {
     /// child walking descendants). Defaults to empty so the overwhelming
     /// "flat Macro" case stays terse.
     Macro {
-        /// Branch-routing channel index for the whole macro batch.
+        /// The kind half of the routing key.
+        kind: E::Kind,
+        /// The channel half of the routing key, for the whole macro
+        /// batch.
         channel: usize,
         /// Source of the flat `Vec<M>` — literal payload or
         /// runtime-fetched by label.
@@ -75,8 +91,10 @@ pub enum MutatorNode<E: TreeElement, M: Mutation<E>> {
     /// `Mutator::Instruction` — recursive evaluation driver
     /// (`RepeatWhile` etc.) wrapping inner children.
     Instruction {
-        /// Branch-routing channel index. The walker descends only
-        /// where the target tree's channel matches.
+        /// The kind half of the routing key.
+        kind: E::Kind,
+        /// The channel half of the routing key. The walker descends
+        /// only where a target's key matches.
         channel: usize,
         /// Which `Instruction` variant drives the recursive walk
         /// (`RepeatWhile`, `SpatialDescend`, `MapChildren`).
@@ -94,13 +112,17 @@ pub enum MutatorNode<E: TreeElement, M: Mutation<E>> {
     },
     /// Compact "N consecutive children with the same template" — the
     /// "24 children of X" idiom. Expands at build time into
-    /// `count - skip_indices.len()` children on channels
-    /// `[channel_base + i for i in 0..count if !skip_indices.contains(i)]`.
-    /// The `template`'s `ChannelSrc` should be `SectionIndex` so the
-    /// builder threads the per-iteration channel through. Only valid
-    /// as a child: a `Repeat` at the root of a build is
+    /// `count - skip_indices.len()` children keyed
+    /// `(kind, channel_base + i)` for every `i in 0..count` not in
+    /// `skip_indices`. The `template`'s `ChannelSrc` should be
+    /// `SectionIndex` so the builder threads the per-iteration channel
+    /// through, and the template's own `kind` must equal this one
+    /// ([`BuildError::TemplateKindDiffers`](super::BuildError::TemplateKindDiffers)).
+    /// Only valid as a child: a `Repeat` at the root of a build is
     /// [`BuildError::RootRepeat`](super::BuildError::RootRepeat).
     Repeat {
+        /// The kind of every key this `Repeat` emits.
+        kind: E::Kind,
         /// Free-form label the [`BuildContext`](super::context::BuildContext)
         /// keys per-iteration runtime data on (runtime counts and
         /// template resolution).
@@ -122,8 +144,9 @@ pub enum MutatorNode<E: TreeElement, M: Mutation<E>> {
     },
 }
 
-/// Where a `Single`'s channel comes from. Inside a `Repeat`,
-/// `SectionIndex` resolves to `channel_base + iter_index`.
+/// Where a `Single`'s channel comes from — the channel half of its key,
+/// beside the node's `kind`. Inside a `Repeat`, `SectionIndex` resolves
+/// to `channel_base + iter_index`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ChannelSrc {
@@ -219,9 +242,22 @@ pub enum InstructionSpec<E: TreeElement> {
     /// `Instruction::MapChildren` — unit variant, no payload. Pairs
     /// this instruction node's mutator children with the current
     /// target's children by sibling position (zip), independent of
-    /// channel. The opt-in alternative to channel-based alignment for
+    /// key. The opt-in alternative to key-based alignment for
     /// per-index targeting.
     MapChildren,
+}
+
+impl<E: TreeElement, M: Mutation<E>> MutatorNode<E, M> {
+    /// The kind half of this node's routing key. O(1).
+    pub fn kind(&self) -> E::Kind {
+        match self {
+            MutatorNode::Void { kind, .. }
+            | MutatorNode::Single { kind, .. }
+            | MutatorNode::Macro { kind, .. }
+            | MutatorNode::Instruction { kind, .. }
+            | MutatorNode::Repeat { kind, .. } => *kind,
+        }
+    }
 }
 
 impl<E: TreeElement> InstructionSpec<E> {

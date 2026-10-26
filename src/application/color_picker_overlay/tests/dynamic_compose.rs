@@ -47,8 +47,8 @@ fn picker_dynamic_mutator_composes_on_layout_built_tree() {
 
     let expected = picker_glyph_areas(&g_b, &layout_b);
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
-    for descendant_id in tree.root().descendants(&tree.arena) {
-        let node = tree.arena.get(descendant_id).expect("arena node");
+    for descendant_id in tree.root().descendants(tree.arena()) {
+        let node = tree.arena().get(descendant_id).expect("arena node");
         let element = node.get();
         if let Some(area) = element.glyph_area() {
             got.push((element.channel(), area.clone()));
@@ -108,8 +108,8 @@ fn picker_dynamic_mutator_composes_across_repeated_applies() {
     // picker_glyph_areas(g_c, layout_A) produces exactly that.
     let expected = picker_glyph_areas(&g_c, &layout);
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
-    for descendant_id in tree.root().descendants(&tree.arena) {
-        let node = tree.arena.get(descendant_id).expect("arena node");
+    for descendant_id in tree.root().descendants(tree.arena()) {
+        let node = tree.arena().get(descendant_id).expect("arena node");
         let element = node.get();
         if let Some(area) = element.glyph_area() {
             got.push((element.channel(), area.clone()));

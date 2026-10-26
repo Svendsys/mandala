@@ -25,6 +25,7 @@ use crate::gfx_structs::mutator::GfxMutation;
 /// Shape: a single `Macro` node on channel 0 with no children.
 pub fn self_only(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMutation> {
     MutatorNode::Macro {
+        kind: (),
         channel: 0,
         mutations: MutationListSrc::Literal(mutations),
         children: vec![],
@@ -38,10 +39,12 @@ pub fn self_only(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMuta
 /// `Macro` child carrying the mutations.
 pub fn descendants(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMutation> {
     MutatorNode::Instruction {
+        kind: (),
         channel: 0,
         instruction: InstructionSpec::RepeatWhile(Predicate::always_true()),
         mutation: MutationSrc::None,
         children: vec![MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(mutations),
             children: vec![],
@@ -64,14 +67,17 @@ pub fn descendants(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMu
 /// on the anchor and on every descendant via separate walker steps.
 pub fn self_and_descendants(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMutation> {
     MutatorNode::Macro {
+        kind: (),
         channel: 0,
         // First copy: the root Macro applies this list to the anchor.
         mutations: MutationListSrc::Literal(mutations.clone()),
         children: vec![MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             instruction: InstructionSpec::RepeatWhile(Predicate::always_true()),
             mutation: MutationSrc::None,
             children: vec![MutatorNode::Macro {
+                kind: (),
                 channel: 0,
                 // Second copy (moved): the RepeatWhile body applies
                 // this list to every descendant.
@@ -137,7 +143,7 @@ mod tests {
     fn self_only_builds_to_macro_mutator() {
         let node = self_only(vec![nudge(10.0)]);
         let mt = build(&node, &NoRuntime).unwrap();
-        let root = mt.arena.get(mt.root).unwrap().get();
+        let root = mt.arena().get(mt.root).unwrap().get();
         assert!(matches!(root.variant(), MutatorType::Macro));
     }
 
@@ -161,7 +167,7 @@ mod tests {
     fn descendants_builds_to_instruction_with_always_true_predicate() {
         let node = descendants(vec![nudge(1.0)]);
         let mt = build(&node, &NoRuntime).unwrap();
-        let root = mt.arena.get(mt.root).unwrap().get();
+        let root = mt.arena().get(mt.root).unwrap().get();
         assert!(matches!(
             root,
             crate::gfx_structs::mutator::GfxMutator::Instruction {
@@ -179,6 +185,7 @@ mod tests {
                 channel,
                 mutations,
                 children,
+                ..
             } => {
                 assert_eq!(channel, 0);
                 assert!(matches!(mutations, MutationListSrc::Literal(_)));

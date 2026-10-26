@@ -6,6 +6,7 @@
 //! dynamic mutator paths produce in-place `GfxMutatorTree`s
 //! that target an already-registered overlay tree.
 
+use baumhard::engine::tree::Placement;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 
@@ -36,8 +37,12 @@ pub(in crate::application::color_picker_overlay) fn build_color_picker_overlay_t
     let mut tree: GfxTree = GfxTree::new_non_indexed();
     for (channel, area) in areas.ordered {
         let area_element = GfxElement::new_area_non_indexed_with_id(area, channel, channel);
-        let area_id = tree.arena.new_node(area_element);
-        tree.root.append(area_id, &mut tree.arena);
+        // Under the root, which is always in the tree: the insert
+        // cannot be refused, and a refusal would leave the cell out
+        // rather than abort the overlay.
+        if let Err(e) = tree.insert_child(tree.root, area_element, Placement::Last) {
+            log::error!("color picker: could not add cell {channel}: {e}");
+        }
     }
     tree
 }

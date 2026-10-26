@@ -117,7 +117,7 @@ impl World {
 fn tree_pos(tree: &Option<MindMapTree>, node_id: &str) -> Option<(f32, f32)> {
     let tree = tree.as_ref()?;
     let arena_id = tree.arena_id_for(node_id)?;
-    let pos = tree.tree.arena.get(arena_id)?.get().position();
+    let pos = tree.tree.arena().get(arena_id)?.get().position();
     Some((round1(pos.x), round1(pos.y)))
 }
 

@@ -1357,45 +1357,64 @@ pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
     out
 }
 
-/// Every shipped `NodeId::append(` call under `mindmap/tree_builder/`,
-/// as `(repo-relative file, 1-based line, the line's text)`.
+/// Every checked indextree insert in the body of the engine's
+/// `siblings::insert_sorted` — the one path every new tree node and
+/// mutator-tree node goes through — as `(repo-relative file, 1-based
+/// line, the line's text)`, plus the count of the value-inserting
+/// calls the body makes, so a caller can tell an empty finding from a
+/// scan that read nothing.
 ///
-/// `indextree`'s `append` is a wrapper over `NodeId::checked_append`, whose
-/// third act is `self.ancestors(arena).any(|a| new_child == a)` —
-/// an O(depth) walk, on every append. The scene builder appends once
-/// per node and once per section, and a `.mindmap.json` may declare a
-/// linear `parent_id` chain, which is a legal acyclic tree the loader
-/// accepts. Depth then equals the node count and the build is O(N²).
+/// `indextree`'s `append`, `prepend`, `insert_after` and
+/// `insert_before` are wrappers over their `checked_*` forms, whose
+/// cycle check is `ancestors(arena).any(..)` — an O(depth) walk, on
+/// every insert. The scene builder inserts once per node and once per
+/// section, and a `.mindmap.json` may declare a linear `parent_id`
+/// chain, which is a legal acyclic tree the loader accepts. Depth then
+/// equals the node count and the build is O(N²).
 ///
-/// `append_value` is indextree's documented O(1) fast path. Every
-/// append in the tree builder is of a node `arena.new_node` produced
-/// on the line above, so it is detached by construction and the
-/// ancestor walk can never fire — the check is pure cost.
-///
-/// Reads shipped text only, so a test that builds a fixture tree with
-/// `append` is not a finding.
-pub(crate) fn tree_builder_checked_appends() -> Vec<(String, usize, String)> {
-    let mut out = Vec::new();
-    let sources = workspace_rust_sources();
-    let test_only = test_gated_module_files(&sources);
-    for file in sources {
-        if test_only.contains(&file) {
+/// The `*_value` forms are indextree's documented O(1) fast paths.
+/// `insert_sorted` places a value it is handed, so the node is new and
+/// detached by construction and the ancestor walk could never fire —
+/// the check is pure cost.
+pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, usize) {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/siblings.rs");
+    let rel = relative_to_repo(&file);
+    let text =
+        std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+    let source = production_source(&file, &text);
+    let mut found = Vec::new();
+    let mut value_inserts = 0;
+    let mut in_body = false;
+    for (number, line) in source.lines().enumerate() {
+        if line.starts_with("pub(crate) fn insert_sorted") {
+            in_body = true;
+        } else if in_body && line == "}" {
+            break;
+        }
+        if !in_body {
             continue;
         }
-        let rel = relative_to_repo(&file);
-        if !rel.contains("mindmap/tree_builder") {
-            continue;
+        let code = line.split("//").next().unwrap_or(line);
+        for call in [
+            "append_value(",
+            "prepend_value(",
+            "insert_after_value(",
+            "insert_before_value(",
+        ] {
+            value_inserts += code.matches(call).count();
         }
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-        for (number, line) in production_source(&file, &text).lines().enumerate() {
-            let code = line.split("//").next().unwrap_or(line);
-            if code.contains(".append(") {
-                out.push((rel.clone(), number + 1, code.trim().to_string()));
-            }
+        let checked = [
+            ".append(",
+            ".prepend(",
+            ".insert_after(",
+            ".insert_before(",
+            "checked_",
+        ];
+        if checked.iter().any(|call| code.contains(call)) {
+            found.push((rel.clone(), number + 1, code.trim().to_string()));
         }
     }
-    out
+    (found, value_inserts)
 }
 
 #[cfg(test)]

@@ -493,8 +493,8 @@ pub(crate) fn refresh(
         }
         let tree = entry.tree();
         let offset = entry.offset();
-        for descendant_id in tree.root().descendants(&tree.arena) {
-            let Some(element) = tree.arena.get(descendant_id).map(|n| n.get()) else {
+        for descendant_id in tree.root().descendants(tree.arena()) {
+            let Some(element) = tree.arena().get(descendant_id).map(|n| n.get()) else {
                 continue;
             };
             let slot = counts.walked;

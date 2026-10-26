@@ -77,8 +77,8 @@ pub(super) fn walk_tree_into_buffers(
     mut yield_buffer: impl FnMut(usize, MindMapTextBuffer),
     mut yield_background: impl FnMut(NodeBackgroundRect),
 ) {
-    for descendant_id in tree.root().descendants(&tree.arena) {
-        let node = match tree.arena.get(descendant_id) {
+    for descendant_id in tree.root().descendants(tree.arena()) {
+        let node = match tree.arena().get(descendant_id) {
             Some(n) => n,
             None => continue,
         };

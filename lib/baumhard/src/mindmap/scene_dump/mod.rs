@@ -78,7 +78,7 @@ pub mod tests;
 
 /// An axis-aligned rect: top-left corner and extent, y-down. In
 /// canvas units or surface pixels depending on which side of a
-/// [`Placement`] it is.
+/// [`ScenePlacement`] it is.
 ///
 /// Each coordinate serializes as its shortest decimal
 /// ([`serialize_shortest`]), so a dump built into a `serde_json::Value`
@@ -147,7 +147,7 @@ impl SceneRect {
 /// Where one drawn element is, in both coordinate spaces, and whether
 /// the camera shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct Placement {
+pub struct ScenePlacement {
     /// The extent the renderer draws for the element, in canvas space.
     pub canvas: SceneRect,
     /// The same rect in surface pixels at the current camera. Not
@@ -158,11 +158,11 @@ pub struct Placement {
     pub visibility: Visibility,
 }
 
-impl Placement {
+impl ScenePlacement {
     /// A canvas extent and the verdict already reached for it, with
     /// its surface rect derived at `camera`. O(1).
     fn spanning(canvas: SceneRect, visibility: Visibility, camera: &Camera2D) -> Self {
-        Placement {
+        ScenePlacement {
             canvas,
             surface: canvas.to_surface(camera),
             visibility,
@@ -214,7 +214,7 @@ struct Extent {
 }
 
 impl Extent {
-    fn add(&mut self, part: &Placement) {
+    fn add(&mut self, part: &ScenePlacement) {
         let rank = |v: Visibility| match v {
             Visibility::Visible => 2,
             Visibility::Offscreen => 1,
@@ -234,9 +234,9 @@ impl Extent {
     }
 
     /// The element's placement, or `None` when no part was added.
-    fn placement(&self, camera: &Camera2D) -> Option<Placement> {
+    fn placement(&self, camera: &Camera2D) -> Option<ScenePlacement> {
         self.whole
-            .map(|(canvas, visibility)| Placement::spanning(canvas, visibility, camera))
+            .map(|(canvas, visibility)| ScenePlacement::spanning(canvas, visibility, camera))
     }
 }
 
@@ -272,7 +272,7 @@ impl DumpFilter {
         text: false,
     };
 
-    fn keeps(&self, placement: &Placement) -> bool {
+    fn keeps(&self, placement: &ScenePlacement) -> bool {
         !self.visible_only || placement.visibility.is_visible()
     }
 
@@ -294,7 +294,7 @@ pub struct NodeDump {
     /// The node container's placement: its background fill grown by
     /// its padding, or its layout box when it draws no fill.
     #[serde(flatten)]
-    pub placement: Placement,
+    pub placement: ScenePlacement,
     /// Each rendered section the filter keeps, in model order. A
     /// section the tree builder skips (a non-finite or empty authored
     /// size) is never here.
@@ -307,7 +307,7 @@ pub struct SectionDump {
     /// The section's index in `MindNode.sections`.
     pub section_idx: usize,
     #[serde(flatten)]
-    pub placement: Placement,
+    pub placement: ScenePlacement,
     /// What the user reads in it: the section's text after its
     /// `text_runs` coverage ([`displayed_text`]), which drops every
     /// grapheme no run covers. `None` when the filter asks for no text.
@@ -344,10 +344,10 @@ pub fn dump_nodes(tree: &MindMapTree, map: &MindMap, camera: &Camera2D, filter: 
 pub fn node_boxes<'t>(
     tree: &'t MindMapTree,
     camera: &'t Camera2D,
-) -> impl Iterator<Item = (&'t str, Placement)> + 't {
+) -> impl Iterator<Item = (&'t str, ScenePlacement)> + 't {
     containers(tree).filter_map(move |(mind_id, arena_id)| {
-        let container = tree.tree.arena.get(arena_id)?.get().glyph_area()?;
-        Some((mind_id, Placement::of_area(container, Vec2::ZERO, camera)))
+        let container = tree.tree.arena().get(arena_id)?.get().glyph_area()?;
+        Some((mind_id, ScenePlacement::of_area(container, Vec2::ZERO, camera)))
     })
 }
 
@@ -355,7 +355,7 @@ pub fn node_boxes<'t>(
 fn containers(tree: &MindMapTree) -> impl Iterator<Item = (&str, NodeId)> + '_ {
     tree.tree
         .root()
-        .descendants(&tree.tree.arena)
+        .descendants(tree.tree.arena())
         .filter_map(|arena_id| Some((tree.mind_id_for_node(arena_id)?, arena_id)))
 }
 
@@ -378,15 +378,15 @@ fn node_dump(
     arena_id: NodeId,
     filter: DumpFilter,
 ) -> Option<NodeDump> {
-    let arena = &tree.tree.arena;
+    let arena = tree.tree.arena();
     let container = arena.get(arena_id)?.get().glyph_area()?;
-    let placement = Placement::of_area(container, Vec2::ZERO, camera);
+    let placement = ScenePlacement::of_area(container, Vec2::ZERO, camera);
     let sections: Vec<SectionDump> = arena_id
         .children(arena)
         .filter_map(|child| {
             let (_, section_idx) = tree.section_for_node(child)?;
             let area = arena.get(child)?.get().glyph_area()?;
-            let placement = Placement::of_area(area, Vec2::ZERO, camera);
+            let placement = ScenePlacement::of_area(area, Vec2::ZERO, camera);
             filter.keeps(&placement).then(|| SectionDump {
                 section_idx,
                 placement,
@@ -415,7 +415,7 @@ pub struct EdgeDump {
     /// The union of its glyphs' placements, and the most visible of
     /// their verdicts: visible when any glyph is drawn.
     #[serde(flatten)]
-    pub placement: Placement,
+    pub placement: ScenePlacement,
     /// Glyphs drawn along the path, caps included.
     pub glyphs: usize,
     /// How many of them the camera shows.
@@ -443,16 +443,16 @@ pub fn dump_edges(
     filter: DumpFilter,
 ) -> Vec<EdgeDump> {
     tree.root()
-        .children(&tree.arena)
+        .children(tree.arena())
         .filter_map(|edge_root| {
             let mut glyphs = 0usize;
             let mut visible_glyphs = 0usize;
             let mut extent = Extent::default();
-            for glyph in edge_root.children(&tree.arena) {
-                let Some(area) = tree.arena.get(glyph).and_then(|n| n.get().glyph_area()) else {
+            for glyph in edge_root.children(tree.arena()) {
+                let Some(area) = tree.arena().get(glyph).and_then(|n| n.get().glyph_area()) else {
                     continue;
                 };
-                let placed = Placement::of_area(area, offset, camera);
+                let placed = ScenePlacement::of_area(area, offset, camera);
                 glyphs += 1;
                 visible_glyphs += usize::from(placed.visibility.is_visible());
                 extent.add(&placed);
@@ -480,7 +480,7 @@ pub fn dump_edges(
 pub struct LabelDump {
     pub edge: EdgeKey,
     #[serde(flatten)]
-    pub placement: Placement,
+    pub placement: ScenePlacement,
     /// The label as displayed — while it is being edited, the live
     /// buffer with its caret, which is what the tree holds. `None`
     /// when the filter asks for no text.
@@ -503,10 +503,10 @@ pub fn dump_labels(
     filter: DumpFilter,
 ) -> Vec<LabelDump> {
     tree.root()
-        .children(&tree.arena)
+        .children(tree.arena())
         .filter_map(|leaf| {
-            let area = tree.arena.get(leaf)?.get().glyph_area()?;
-            let placement = Placement::of_area(area, offset, camera);
+            let area = tree.arena().get(leaf)?.get().glyph_area()?;
+            let placement = ScenePlacement::of_area(area, offset, camera);
             if !filter.keeps(&placement) {
                 return None;
             }
@@ -531,7 +531,7 @@ pub struct PortalDump {
     pub endpoint_node_id: String,
     pub part: PortalPart,
     #[serde(flatten)]
-    pub placement: Placement,
+    pub placement: ScenePlacement,
     /// The glyph or caption as displayed. `None` when the filter asks
     /// for no text.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -556,13 +556,13 @@ pub fn dump_portals(
     filter: DumpFilter,
 ) -> Vec<PortalDump> {
     tree.root()
-        .descendants(&tree.arena)
+        .descendants(tree.arena())
         .filter_map(|leaf| {
-            let area = tree.arena.get(leaf)?.get().glyph_area()?;
+            let area = tree.arena().get(leaf)?.get().glyph_area()?;
             if area.text.is_empty() {
                 return None;
             }
-            let placement = Placement::of_area(area, offset, camera);
+            let placement = ScenePlacement::of_area(area, offset, camera);
             if !filter.keeps(&placement) {
                 return None;
             }

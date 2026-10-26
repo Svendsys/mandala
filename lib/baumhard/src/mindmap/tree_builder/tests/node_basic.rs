@@ -16,7 +16,7 @@ fn test_build_tree_structure() {
     assert_eq!(result.node_count(), 252);
 
     // Root of tree is Void, its children are the mindmap root nodes
-    let root_children: Vec<_> = result.tree.root.children(&result.tree.arena).collect();
+    let root_children: Vec<_> = result.tree.root.children(result.tree.arena()).collect();
     let mindmap_roots = map.root_nodes();
     assert_eq!(root_children.len(), mindmap_roots.len());
 }
@@ -28,7 +28,7 @@ fn test_tree_root_nodes_match_mindmap() {
     let result = build_mindmap_tree(&map);
 
     let mindmap_roots = map.root_nodes();
-    let tree_root_children: Vec<NodeId> = result.tree.root.children(&result.tree.arena).collect();
+    let tree_root_children: Vec<NodeId> = result.tree.root.children(result.tree.arena()).collect();
 
     // Each mindmap root should be in the node_map and a child of tree root
     for root in &mindmap_roots {
@@ -50,7 +50,7 @@ fn test_glyph_area_properties() {
     // Container area: chrome only — empty text post-section-refactor.
     let lord_god = map.nodes.get("0").unwrap();
     let node_id = result.arena_id_for("0").unwrap();
-    let element = result.tree.arena.get(node_id).unwrap().get();
+    let element = result.tree.arena().get(node_id).unwrap().get();
     let container = element.glyph_area().expect("container is a GlyphArea");
     assert!(container.text.is_empty(), "container area carries no glyphs");
     assert_eq!(container.position.x.0, lord_god.position.x as f32);
@@ -63,7 +63,7 @@ fn test_glyph_area_properties() {
     let section_id = result.section_arena_id("0", 0).expect("section[0] arena id");
     let section_area = result
         .tree
-        .arena
+        .arena()
         .get(section_id)
         .unwrap()
         .get()
@@ -81,7 +81,7 @@ fn test_color_regions_from_text_runs() {
 
     // Regions live on the section-area, not the container.
     let section_id = result.section_arena_id("0", 0).unwrap();
-    let element = result.tree.arena.get(section_id).unwrap().get();
+    let element = result.tree.arena().get(section_id).unwrap().get();
     let area = element.glyph_area().unwrap();
 
     assert_eq!(area.regions.num_regions(), 1);
@@ -111,7 +111,7 @@ fn test_parent_child_hierarchy_preserved() {
 
     let containers: std::collections::HashSet<NodeId> = result.node_ids().map(|(_, id)| id).collect();
     let mind_child_arena_ids: Vec<NodeId> = lord_god_tree_id
-        .children(&result.tree.arena)
+        .children(result.tree.arena())
         .filter(|cid| containers.contains(cid))
         .collect();
     assert_eq!(mind_child_arena_ids.len(), mindmap_children.len());
@@ -134,7 +134,7 @@ fn test_unique_ids_are_unique() {
 
     let mut seen_ids = std::collections::HashSet::new();
     for (_, node_id) in result.node_ids() {
-        let element = result.tree.arena.get(node_id).unwrap().get();
+        let element = result.tree.arena().get(node_id).unwrap().get();
         let uid = element.unique_id();
         assert!(seen_ids.insert(uid), "Duplicate unique_id: {}", uid);
     }
@@ -147,7 +147,7 @@ fn test_all_elements_are_glyph_areas() {
     let result = build_mindmap_tree(&map);
 
     for (_, node_id) in result.node_ids() {
-        let element = result.tree.arena.get(node_id).unwrap().get();
+        let element = result.tree.arena().get(node_id).unwrap().get();
         assert!(element.glyph_area().is_some(), "Expected GlyphArea for node");
     }
 }

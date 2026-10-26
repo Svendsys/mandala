@@ -1054,10 +1054,10 @@ pub(in crate::application) mod tests {
         let id = app.canvas_id(CanvasRole::Portals).expect("portals registered");
         let tree = app.canvas_scene().tree(id).expect("portal tree");
         let mut out = Vec::new();
-        for pair in tree.root.children(&tree.arena) {
-            for endpoint in pair.children(&tree.arena) {
-                for leaf in endpoint.children(&tree.arena) {
-                    let area = match tree.arena.get(leaf).and_then(|n| n.get().glyph_area()) {
+        for pair in tree.root.children(tree.arena()) {
+            for endpoint in pair.children(tree.arena()) {
+                for leaf in endpoint.children(tree.arena()) {
+                    let area = match tree.arena().get(leaf).and_then(|n| n.get().glyph_area()) {
                         Some(a) => a,
                         None => continue,
                     };
@@ -1221,8 +1221,9 @@ pub(in crate::application) mod tests {
         let mut tree = GfxTree::new_non_indexed();
         let area = GlyphArea::new_with_str("overlay", 1.0, 10.0, position, bounds);
         let element = GfxElement::new_area_non_indexed_with_id(area, 0, 0);
-        let leaf = tree.arena.new_node(element);
-        tree.root.append(leaf, &mut tree.arena);
+        let leaf = tree
+            .insert_child(tree.root, element, baumhard::engine::tree::Placement::Last)
+            .unwrap();
         (tree, leaf)
     }
 

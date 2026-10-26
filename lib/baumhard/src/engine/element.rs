@@ -3,13 +3,15 @@
 //! What an element type gives the engine.
 //!
 //! The walker needs four things from an element and nothing else: the
-//! channel it routes on, a placeholder to pad structure with, the
+//! [key](crate::engine::key::BranchKey) it routes on and is sorted by
+//! among its siblings, a placeholder to pad structure with, the
 //! state it hands its children ([`TreeElement::inherit`](crate::engine::element::TreeElement::inherit)), and —
 //! only for element types with geometry — a box to hit-test. Every
 //! other fact about an element is the business of its
 //! [`Mutation`](crate::engine::mutation::Mutation)s and its
 //! [`Inspect`](crate::engine::predicate::Inspect) surface.
 
+use crate::engine::key::BranchKey;
 use crate::engine::predicate::Inspect;
 use glam::Vec2;
 use serde::de::DeserializeOwned;
@@ -24,10 +26,11 @@ use std::hash::Hash;
 /// none of them, but every other consumer of a tree (journals,
 /// interpolation) works per element.
 pub trait TreeElement: Clone + Debug + Inspect {
-    /// The element's kind. Carried from this trait's first version on;
-    /// the walker routes on [`channel`](Self::channel) alone until
-    /// kind-aware routing arrives. An element type with one kind uses
-    /// `()`.
+    /// The element's kind: the first half of its
+    /// [`key`](Self::key). The walker routes on kind and channel
+    /// together, so one parent can hold children of several kinds
+    /// whose channel spaces are independent. An element type with one
+    /// kind uses `()`, and then routes on its channel alone.
     type Kind: Copy + Ord + Eq + Hash + Debug + Serialize + DeserializeOwned;
 
     /// Per-tree derived state, owned by the
@@ -57,8 +60,21 @@ pub trait TreeElement: Clone + Debug + Inspect {
     /// This element's kind. O(1).
     fn kind(&self) -> Self::Kind;
 
-    /// The channel the walker aligns this element on. O(1).
+    /// This element's channel within its kind: the second half of its
+    /// [`key`](Self::key). O(1).
     fn channel(&self) -> usize;
+
+    /// The key the walker routes this element on, and the key its
+    /// parent keeps it sorted by among its siblings: its
+    /// [`kind`](Self::kind), then its [`channel`](Self::channel).
+    ///
+    /// A change to either is a change of position: a tree moves an
+    /// element whose key changed to its sorted place
+    /// ([`Tree::update`](crate::engine::tree::Tree::update), and the
+    /// walker after a walk). O(1).
+    fn key(&self) -> BranchKey<Self::Kind> {
+        BranchKey::new(self.kind(), self.channel())
+    }
 
     /// A neutral placeholder, used as the root of an empty tree.
     fn void() -> Self;

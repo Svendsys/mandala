@@ -15,6 +15,7 @@
 use glam::Vec2;
 use indextree::NodeId;
 
+use crate::engine::tree::Placement;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::tree::GfxTree;
@@ -36,14 +37,13 @@ pub fn mk_area(x: f32, y: f32, channel: usize, unique_id: usize) -> GfxElement {
     )
 }
 
-/// Allocate a fresh `GlyphArea` element in `model` via [`mk_area`],
-/// append it to `parent`, and return its `NodeId`. Collapses the
-/// four-line `arena.new_node(...) + parent.append(...)` dance into
-/// one call — the dance was the same shape across every test that
-/// builds a multi-node tree by hand.
+/// Add a fresh `GlyphArea` element, made by [`mk_area`], under
+/// `parent` in `model` — at the end of the run of its channel — and
+/// return its `NodeId`. One call for the shape every test that builds
+/// a multi-node tree by hand repeats.
 ///
-/// Cost: one [`mk_area`] call plus one `arena.new_node` allocation
-/// and one `parent.append` link operation. O(1) total.
+/// Cost: one [`mk_area`] call plus one `insert_child` — an arena slot
+/// and a scan of the siblings keyed above `channel`.
 pub fn append_area(
     model: &mut GfxTree,
     parent: NodeId,
@@ -52,7 +52,7 @@ pub fn append_area(
     channel: usize,
     unique_id: usize,
 ) -> NodeId {
-    let id = model.arena.new_node(mk_area(x, y, channel, unique_id));
-    parent.append(id, &mut model.arena);
-    id
+    model
+        .insert_child(parent, mk_area(x, y, channel, unique_id), Placement::Last)
+        .unwrap()
 }

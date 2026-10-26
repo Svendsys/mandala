@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use baumhard::gfx_structs::tree::GfxTree;
 use baumhard::mindmap::scene_dump::{
     dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, DumpFilter, EdgeDump,
-    LabelDump, NodeDump, Placement, PortalDump,
+    LabelDump, NodeDump, PortalDump, ScenePlacement,
 };
 use baumhard::mindmap::tree_builder::PortalPart;
 
@@ -522,7 +522,7 @@ fn visible_set(call: &mut Call<'_>) -> Reply {
 
 /// `{canvas, surface, visibility}` beside `entry`'s own keys: the flat
 /// shape every scene element takes on the wire.
-fn placed(mut entry: Value, placement: &Placement) -> Value {
+fn placed(mut entry: Value, placement: &ScenePlacement) -> Value {
     if let (Some(object), Ok(Value::Object(placed))) =
         (entry.as_object_mut(), serde_json::to_value(placement))
     {

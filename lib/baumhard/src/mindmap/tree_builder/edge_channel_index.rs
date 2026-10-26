@@ -84,7 +84,7 @@ impl EdgeChannelIndex {
     /// `EdgeKey` clone on a hit. No allocation otherwise.
     pub fn resolve(&self, tree: &GfxTree, node: NodeId) -> Option<EdgeKey> {
         let edge_root = Self::edge_root(tree, node)?;
-        let channel = tree.arena.get(edge_root)?.get().channel();
+        let channel = tree.arena().get(edge_root)?.get().channel();
         self.key_for_channel(channel).cloned()
     }
 
@@ -92,7 +92,7 @@ impl EdgeChannelIndex {
     /// `None` for the root and for a node outside the arena.
     fn edge_root(tree: &GfxTree, mut node: NodeId) -> Option<NodeId> {
         loop {
-            let parent = tree.arena.get(node)?.parent()?;
+            let parent = tree.arena().get(node)?.parent()?;
             if parent == tree.root {
                 return Some(node);
             }

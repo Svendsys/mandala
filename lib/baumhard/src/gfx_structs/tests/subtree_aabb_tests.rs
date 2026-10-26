@@ -10,6 +10,7 @@
 //! BVH descent tests live in `bvh_descent_tests.rs`.
 //! SpatialDescend tests live in `spatial_descend_tests.rs`.
 
+use crate::engine::tree::Placement;
 use crate::font::fonts;
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand};
 use crate::gfx_structs::element::GfxElement;
@@ -53,13 +54,9 @@ pub fn build_test_tree() -> GfxTree {
         0,
     );
 
-    let left_id = tree.arena.new_node(left);
-    let right_id = tree.arena.new_node(right);
-    let left_child_id = tree.arena.new_node(left_child);
-
-    tree.root.append(left_id, &mut tree.arena);
-    tree.root.append(right_id, &mut tree.arena);
-    left_id.append(left_child_id, &mut tree.arena);
+    let left_id = tree.insert_child(tree.root, left, Placement::Last).unwrap();
+    tree.insert_child(tree.root, right, Placement::Last).unwrap();
+    tree.insert_child(left_id, left_child, Placement::Last).unwrap();
 
     tree
 }
@@ -70,16 +67,16 @@ pub fn build_deep_chain() -> GfxTree {
     let mut tree = GfxTree::new_non_indexed();
     let mut parent = tree.root;
     for _ in 0..4 {
-        let void = tree.arena.new_node(GfxElement::new_void(0));
-        parent.append(void, &mut tree.arena);
+        let void = tree
+            .insert_child(parent, GfxElement::new_void(0), Placement::Last)
+            .unwrap();
         parent = void;
     }
     let leaf = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("deep", 14.0, 14.0, Vec2::new(100.0, 100.0), Vec2::new(20.0, 10.0)),
         0,
     );
-    let leaf_id = tree.arena.new_node(leaf);
-    parent.append(leaf_id, &mut tree.arena);
+    tree.insert_child(parent, leaf, Placement::Last).unwrap();
     tree
 }
 
@@ -98,8 +95,7 @@ pub fn build_wide_tree() -> GfxTree {
             ),
             0,
         );
-        let id = tree.arena.new_node(area);
-        tree.root.append(id, &mut tree.arena);
+        tree.insert_child(tree.root, area, Placement::Last).unwrap();
     }
     tree
 }
@@ -114,8 +110,8 @@ fn test_subtree_aabb_leaf_equals_own_bounds() {
 pub fn do_subtree_aabb_leaf_equals_own_bounds() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let right_id = tree.root.children(&tree.arena).nth(1).expect("right child");
-    let aabb = tree.arena.get(right_id).unwrap().get().subtree_aabb();
+    let right_id = tree.root.children(tree.arena()).nth(1).expect("right child");
+    let aabb = tree.arena().get(right_id).unwrap().get().subtree_aabb();
     assert_eq!(aabb, Some((Vec2::new(200.0, 200.0), Vec2::new(280.0, 230.0))));
 }
 
@@ -129,9 +125,9 @@ fn test_subtree_aabb_parent_encloses_children() {
 pub fn do_subtree_aabb_parent_encloses_children() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let left_id = tree.root.children(&tree.arena).next().expect("left child");
+    let left_id = tree.root.children(tree.arena()).next().expect("left child");
     let (min, max) = tree
-        .arena
+        .arena()
         .get(left_id)
         .unwrap()
         .get()
@@ -154,7 +150,7 @@ pub fn do_subtree_aabb_root_encloses_entire_tree() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
     let (min, max) = tree
-        .arena
+        .arena()
         .get(tree.root)
         .unwrap()
         .get()
@@ -177,7 +173,7 @@ pub fn do_subtree_aabb_invalidated_by_mutation() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
     let before = tree
-        .arena
+        .arena()
         .get(tree.root)
         .unwrap()
         .get()
@@ -189,13 +185,14 @@ pub fn do_subtree_aabb_invalidated_by_mutation() {
         1,
     );
     let mut mtree = GfxMutatorTree::new();
-    let move_id = mtree.arena.new_node(move_mutator);
-    mtree.root.append(move_id, &mut mtree.arena);
+    mtree
+        .insert_child(mtree.root, move_mutator, Placement::Last)
+        .unwrap();
     mtree.apply_to(&mut tree, &());
 
     tree.ensure_subtree_aabbs();
     let after = tree
-        .arena
+        .arena()
         .get(tree.root)
         .unwrap()
         .get()
@@ -215,11 +212,18 @@ fn test_subtree_aabb_void_tree_is_none() {
 
 pub fn do_subtree_aabb_void_tree_is_none() {
     let mut tree = GfxTree::new_non_indexed();
-    let child = tree.arena.new_node(GfxElement::new_void(0));
-    tree.root.append(child, &mut tree.arena);
+    let child = tree
+        .insert_child(tree.root, GfxElement::new_void(0), Placement::Last)
+        .unwrap();
     tree.ensure_subtree_aabbs();
-    assert!(tree.arena.get(tree.root).unwrap().get().subtree_aabb().is_none());
-    assert!(tree.arena.get(child).unwrap().get().subtree_aabb().is_none());
+    assert!(tree
+        .arena()
+        .get(tree.root)
+        .unwrap()
+        .get()
+        .subtree_aabb()
+        .is_none());
+    assert!(tree.arena().get(child).unwrap().get().subtree_aabb().is_none());
 }
 
 // ── idempotent without mutation ───────────────────────────────────
@@ -232,9 +236,9 @@ fn test_subtree_aabb_ensure_is_idempotent() {
 pub fn do_subtree_aabb_ensure_is_idempotent() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let first = tree.arena.get(tree.root).unwrap().get().subtree_aabb();
+    let first = tree.arena().get(tree.root).unwrap().get().subtree_aabb();
     tree.ensure_subtree_aabbs();
-    let second = tree.arena.get(tree.root).unwrap().get().subtree_aabb();
+    let second = tree.arena().get(tree.root).unwrap().get().subtree_aabb();
     assert_eq!(first, second);
 }
 
@@ -251,10 +255,10 @@ pub fn do_subtree_aabb_deep_chain_propagates_to_root() {
     let leaf_aabb = (Vec2::new(100.0, 100.0), Vec2::new(120.0, 110.0));
     let mut node = tree.root;
     loop {
-        let aabb = tree.arena.get(node).unwrap().get().subtree_aabb();
-        if tree.arena.get(node).unwrap().first_child().is_some() {
+        let aabb = tree.arena().get(node).unwrap().get().subtree_aabb();
+        if tree.arena().get(node).unwrap().first_child().is_some() {
             assert_eq!(aabb, Some(leaf_aabb));
-            node = tree.arena.get(node).unwrap().first_child().unwrap();
+            node = tree.arena().get(node).unwrap().first_child().unwrap();
         } else {
             assert_eq!(aabb, Some(leaf_aabb));
             break;
@@ -273,7 +277,7 @@ pub fn do_subtree_aabb_wide_tree_root_covers_all() {
     let mut tree = build_wide_tree();
     tree.ensure_subtree_aabbs();
     let root_aabb = tree
-        .arena
+        .arena()
         .get(tree.root)
         .unwrap()
         .get()
@@ -298,11 +302,10 @@ pub fn do_subtree_aabb_single_area_node() {
         GlyphArea::new_with_str("sole", 14.0, 14.0, Vec2::new(50.0, 60.0), Vec2::new(40.0, 30.0)),
         0,
     );
-    let id = tree.arena.new_node(area);
-    tree.root.append(id, &mut tree.arena);
+    tree.insert_child(tree.root, area, Placement::Last).unwrap();
     tree.ensure_subtree_aabbs();
     assert_eq!(
-        tree.arena.get(tree.root).unwrap().get().subtree_aabb().unwrap(),
+        tree.arena().get(tree.root).unwrap().get().subtree_aabb().unwrap(),
         (Vec2::new(50.0, 60.0), Vec2::new(90.0, 90.0))
     );
 }
@@ -321,10 +324,15 @@ pub fn do_subtree_aabb_zero_bounds_area_ignored() {
         GlyphArea::new_with_str("zero", 14.0, 14.0, Vec2::new(100.0, 100.0), Vec2::new(0.0, 0.0)),
         0,
     );
-    let id = tree.arena.new_node(area);
-    tree.root.append(id, &mut tree.arena);
+    tree.insert_child(tree.root, area, Placement::Last).unwrap();
     tree.ensure_subtree_aabbs();
-    assert!(tree.arena.get(tree.root).unwrap().get().subtree_aabb().is_none());
+    assert!(tree
+        .arena()
+        .get(tree.root)
+        .unwrap()
+        .get()
+        .subtree_aabb()
+        .is_none());
 }
 
 // ── negative position ─────────────────────────────────────────────
@@ -341,11 +349,10 @@ pub fn do_subtree_aabb_negative_position() {
         GlyphArea::new_with_str("neg", 14.0, 14.0, Vec2::new(-50.0, -30.0), Vec2::new(100.0, 60.0)),
         0,
     );
-    let id = tree.arena.new_node(area);
-    tree.root.append(id, &mut tree.arena);
+    tree.insert_child(tree.root, area, Placement::Last).unwrap();
     tree.ensure_subtree_aabbs();
     assert_eq!(
-        tree.arena.get(tree.root).unwrap().get().subtree_aabb().unwrap(),
+        tree.arena().get(tree.root).unwrap().get().subtree_aabb().unwrap(),
         (Vec2::new(-50.0, -30.0), Vec2::new(50.0, 30.0))
     );
 }
@@ -365,17 +372,17 @@ fn test_subtree_aabb_merge_none_base_with_child() {
 pub fn do_subtree_aabb_merge_none_base_with_child() {
     fonts::init();
     let mut tree = GfxTree::new_non_indexed();
-    let void = tree.arena.new_node(GfxElement::new_void(0));
     let child = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("c", 14.0, 14.0, Vec2::new(5.0, 5.0), Vec2::new(10.0, 10.0)),
         0,
     );
-    let child_id = tree.arena.new_node(child);
-    tree.root.append(void, &mut tree.arena);
-    void.append(child_id, &mut tree.arena);
+    let void = tree
+        .insert_child(tree.root, GfxElement::new_void(0), Placement::Last)
+        .unwrap();
+    tree.insert_child(void, child, Placement::Last).unwrap();
 
     tree.ensure_subtree_aabbs();
-    let void_aabb = tree.arena.get(void).unwrap().get().subtree_aabb().unwrap();
+    let void_aabb = tree.arena().get(void).unwrap().get().subtree_aabb().unwrap();
     assert_eq!(void_aabb, (Vec2::new(5.0, 5.0), Vec2::new(15.0, 15.0)));
 }
 
@@ -390,7 +397,6 @@ fn test_subtree_aabb_merge_two_disjoint_children() {
 pub fn do_subtree_aabb_merge_two_disjoint_children() {
     fonts::init();
     let mut tree = GfxTree::new_non_indexed();
-    let void = tree.arena.new_node(GfxElement::new_void(0));
     let a = GfxElement::new_area_non_indexed(
         GlyphArea::new_with_str("a", 14.0, 14.0, Vec2::new(-10.0, -10.0), Vec2::new(5.0, 5.0)),
         0,
@@ -399,14 +405,14 @@ pub fn do_subtree_aabb_merge_two_disjoint_children() {
         GlyphArea::new_with_str("b", 14.0, 14.0, Vec2::new(100.0, 200.0), Vec2::new(5.0, 5.0)),
         0,
     );
-    let a_id = tree.arena.new_node(a);
-    let b_id = tree.arena.new_node(b);
-    tree.root.append(void, &mut tree.arena);
-    void.append(a_id, &mut tree.arena);
-    void.append(b_id, &mut tree.arena);
+    let void = tree
+        .insert_child(tree.root, GfxElement::new_void(0), Placement::Last)
+        .unwrap();
+    tree.insert_child(void, a, Placement::Last).unwrap();
+    tree.insert_child(void, b, Placement::Last).unwrap();
 
     tree.ensure_subtree_aabbs();
-    let void_aabb = tree.arena.get(void).unwrap().get().subtree_aabb().unwrap();
+    let void_aabb = tree.arena().get(void).unwrap().get().subtree_aabb().unwrap();
     assert_eq!(void_aabb, (Vec2::new(-10.0, -10.0), Vec2::new(105.0, 205.0)));
 }
 
@@ -420,17 +426,17 @@ fn test_subtree_aabb_all_children_zero_bounds() {
 pub fn do_subtree_aabb_all_children_zero_bounds() {
     fonts::init();
     let mut tree = GfxTree::new_non_indexed();
-    let void = tree.arena.new_node(GfxElement::new_void(0));
+    let void = tree
+        .insert_child(tree.root, GfxElement::new_void(0), Placement::Last)
+        .unwrap();
     for _ in 0..3 {
         let area = GfxElement::new_area_non_indexed(
             GlyphArea::new_with_str("z", 14.0, 14.0, Vec2::new(50.0, 50.0), Vec2::new(0.0, 0.0)),
             0,
         );
-        let id = tree.arena.new_node(area);
-        void.append(id, &mut tree.arena);
+        tree.insert_child(void, area, Placement::Last).unwrap();
     }
-    tree.root.append(void, &mut tree.arena);
 
     tree.ensure_subtree_aabbs();
-    assert!(tree.arena.get(void).unwrap().get().subtree_aabb().is_none());
+    assert!(tree.arena().get(void).unwrap().get().subtree_aabb().is_none());
 }

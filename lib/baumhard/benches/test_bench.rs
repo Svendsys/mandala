@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use baumhard::core::tests::primitives_tests::*;
+use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
 use baumhard::engine::tests::inherited_tests::*;
+use baumhard::engine::tests::routing_tests::*;
+use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::walker_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::color_tests::*;
@@ -1631,6 +1634,86 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("engine_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_walk_wide_and_deep_tree)
     });
+    // routing keys, the sorted-children invariant and anchored walks //
+    c.bench_function("engine_walk_routes_by_kind_and_channel", |b| {
+        b.iter(do_engine_walk_routes_by_kind_and_channel)
+    });
+    c.bench_function("engine_walk_merges_rows_of_two_kinds", |b| {
+        b.iter(do_engine_walk_merges_rows_of_two_kinds)
+    });
+    c.bench_function("branch_key_json_has_two_required_fields", |b| {
+        b.iter(do_branch_key_json_has_two_required_fields)
+    });
+    c.bench_function("mutator_and_ast_json_carry_the_kind", |b| {
+        b.iter(do_mutator_and_ast_json_carry_the_kind)
+    });
+    c.bench_function(
+        "engine_build_repeat_emits_its_kind_on_consecutive_channels",
+        |b| b.iter(do_engine_build_repeat_emits_its_kind_on_consecutive_channels),
+    );
+    c.bench_function("engine_build_refuses_a_template_of_another_kind", |b| {
+        b.iter(do_engine_build_refuses_a_template_of_another_kind)
+    });
+    c.bench_function("engine_build_inserts_children_in_key_order", |b| {
+        b.iter(do_engine_build_inserts_children_in_key_order)
+    });
+    c.bench_function("insert_child_places_within_the_run_of_its_key", |b| {
+        b.iter(do_insert_child_places_within_the_run_of_its_key)
+    });
+    c.bench_function("insert_child_refuses_a_placement_across_keys", |b| {
+        b.iter(do_insert_child_refuses_a_placement_across_keys)
+    });
+    c.bench_function("update_moves_an_element_whose_key_changed", |b| {
+        b.iter(do_update_moves_an_element_whose_key_changed)
+    });
+    c.bench_function("update_of_a_stale_node_calls_nothing", |b| {
+        b.iter(do_update_of_a_stale_node_calls_nothing)
+    });
+    c.bench_function("remove_subtree_frees_the_subtree_and_keeps_the_row", |b| {
+        b.iter(do_remove_subtree_frees_the_subtree_and_keeps_the_row)
+    });
+    c.bench_function("walk_moves_the_children_whose_key_it_changed", |b| {
+        b.iter(do_walk_moves_the_children_whose_key_it_changed)
+    });
+    c.bench_function("walk_sees_the_row_as_it_was_until_it_ends", |b| {
+        b.iter(do_walk_sees_the_row_as_it_was_until_it_ends)
+    });
+    c.bench_function("check_sorted_finds_a_row_out_of_order", |b| {
+        b.iter(do_check_sorted_finds_a_row_out_of_order)
+    });
+    c.bench_function("every_tree_method_that_changes_it_invalidates_the_cache", |b| {
+        b.iter(do_every_tree_method_that_changes_it_invalidates_the_cache)
+    });
+    c.bench_function("apply_at_drops_anchors_nested_in_another", |b| {
+        b.iter(do_apply_at_drops_anchors_nested_in_another)
+    });
+    c.bench_function("apply_at_walks_a_repeated_anchor_once", |b| {
+        b.iter(do_apply_at_walks_a_repeated_anchor_once)
+    });
+    c.bench_function("reaches_below_root_reads_the_shape", |b| {
+        b.iter(do_reaches_below_root_reads_the_shape)
+    });
+    c.bench_function("apply_at_matches_the_root_by_kind_alone", |b| {
+        b.iter(do_apply_at_matches_the_root_by_kind_alone)
+    });
+    c.bench_function("apply_to_anchors_at_the_root", |b| {
+        b.iter(do_apply_to_anchors_at_the_root)
+    });
+    c.bench_function("parent_of_resolves_to_the_distinct_parents", |b| {
+        b.iter(do_parent_of_resolves_to_the_distinct_parents)
+    });
+    c.bench_function("siblings_of_resolves_to_same_kind_siblings", |b| {
+        b.iter(do_siblings_of_resolves_to_same_kind_siblings)
+    });
+    c.bench_function("apply_at_seeds_every_anchor_before_walking_any", |b| {
+        b.iter(do_apply_at_seeds_every_anchor_before_walking_any)
+    });
+    c.bench_function("a_stale_anchor_applies_nothing", |b| {
+        b.iter(do_a_stale_anchor_applies_nothing)
+    });
+    c.bench_function("apply_at_moves_an_anchor_whose_key_it_changed", |b| {
+        b.iter(do_apply_at_moves_an_anchor_whose_key_it_changed)
+    });
     c.bench_function("inherited_state_reaches_a_grandchild", |b| {
         b.iter(do_inherited_state_reaches_a_grandchild)
     });
@@ -1673,8 +1756,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("template_resolves_against_each_iterations_area", |b| {
         b.iter(do_template_resolves_against_each_iterations_area)
     });
-    c.bench_function("iter_section_channels_walks_in_order", |b| {
-        b.iter(do_iter_section_channels_walks_in_order)
+    c.bench_function("iter_section_keys_walks_in_order", |b| {
+        b.iter(do_iter_section_keys_walks_in_order)
     });
     c.bench_function("repeat_runtime_count_consults_context", |b| {
         b.iter(do_repeat_runtime_count_consults_context)
@@ -2351,9 +2434,9 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
     // Deepest channel path: last pair, second endpoint, text slot.
     let last_leaf = {
         let t = &portal.tree;
-        let pair = t.root.children(&t.arena).nth(PAIRS - 1).expect("last pair");
-        let endpoint = pair.children(&t.arena).nth(1).expect("to-endpoint void");
-        endpoint.children(&t.arena).nth(1).expect("text leaf")
+        let pair = t.root.children(t.arena()).nth(PAIRS - 1).expect("last pair");
+        let endpoint = pair.children(t.arena()).nth(1).expect("to-endpoint void");
+        endpoint.children(t.arena()).nth(1).expect("text leaf")
     };
     c.bench_function("portal_hit_index_resolve", |b| {
         b.iter(|| portal.hit_index.resolve(&portal.tree, last_leaf))
@@ -2375,7 +2458,7 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
     let last_label = labels
         .tree
         .root
-        .children(&labels.tree.arena)
+        .children(labels.tree.arena())
         .nth(PAIRS - 1)
         .expect("last label leaf");
     c.bench_function("connection_label_hit_index_resolve", |b| {

@@ -29,7 +29,7 @@ fn drawn_text(doc: &MindMapDocument, node_id: &str, idx: usize) -> String {
         .expect("section is in the tree");
     let area = tree
         .tree
-        .arena
+        .arena()
         .get(arena_id)
         .expect("arena node")
         .get()

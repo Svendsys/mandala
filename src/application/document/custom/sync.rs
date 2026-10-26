@@ -403,7 +403,7 @@ impl MindMapDocument {
         let Some(tree_nid) = tree.arena_id_for(node_id) else {
             return false;
         };
-        let Some(element) = tree.tree.arena.get(tree_nid).map(|n| n.get()) else {
+        let Some(element) = tree.tree.arena().get(tree_nid).map(|n| n.get()) else {
             return false;
         };
         let Some(area) = element.glyph_area() else {
@@ -440,7 +440,7 @@ impl MindMapDocument {
         for idx in 0..section_count {
             let snapshot = tree
                 .section_arena_id(node_id, idx)
-                .and_then(|sid| tree.tree.arena.get(sid))
+                .and_then(|sid| tree.tree.arena().get(sid))
                 .and_then(|n| n.get().glyph_area())
                 .map(|sec_area| SectionSnapshot {
                     text: sec_area.text.clone(),

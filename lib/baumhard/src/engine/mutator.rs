@@ -6,6 +6,7 @@
 //! node's children rather than *what* it changes.
 
 use crate::engine::element::TreeElement;
+use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
 use crate::engine::predicate::Predicate;
 use crate::util::ordered_vec2::OrderedVec2;
@@ -30,9 +31,9 @@ pub enum Instruction<E: TreeElement> {
     /// [`default_terminator`](crate::engine::walker::default_terminator).
     /// O(n) in the number of descendants tested.
     ///
-    /// Aligns mutator children to target children by **channel**. For
-    /// per-index targeting that sidesteps channel semantics entirely,
-    /// see [`Instruction::MapChildren`].
+    /// Aligns mutator children to target children by
+    /// [key](BranchKey) — kind and channel. For per-index targeting
+    /// that sidesteps keys entirely, see [`Instruction::MapChildren`].
     RepeatWhile(Predicate<E>),
     /// Find the descendant of the current target whose own box
     /// ([`TreeElement::spatial_bounds`]) contains the point — the
@@ -40,7 +41,7 @@ pub enum Instruction<E: TreeElement> {
     /// the instruction's mutation to it; no-op if no box contains the
     /// point.
     ///
-    /// Bypasses channel alignment — like [`Instruction::MapChildren`]
+    /// Bypasses key alignment — like [`Instruction::MapChildren`]
     /// but routing on a spatial hit-test rather than sibling position.
     /// Only meaningful for an element type with
     /// [`SPATIAL`](TreeElement::SPATIAL) set; the builder refuses it
@@ -51,9 +52,9 @@ pub enum Instruction<E: TreeElement> {
     /// is folded down that path).
     SpatialDescend(OrderedVec2),
     /// Pair mutator children with target children **by sibling
-    /// position** (zip), ignoring channels on the paired children.
+    /// position** (zip), ignoring the keys of the paired children.
     /// The opt-in alternative to [`Instruction::RepeatWhile`]'s
-    /// channel-broadcast semantics, used when each child needs a
+    /// key-broadcast semantics, used when each child needs a
     /// distinct mutation (per-index layout). Excess children on
     /// either side are dropped with one `debug!` at termination.
     /// The attached `mutation` field is applied to the current
@@ -68,9 +69,10 @@ pub enum Instruction<E: TreeElement> {
 
 /// A node in a [`MutatorTree`](crate::engine::tree::MutatorTree).
 ///
-/// Each variant pairs a channel (used by the walker to align mutator
-/// nodes with target nodes) with what happens when the walker reaches
-/// the matching target. A node that carries no payload says so
+/// Each variant pairs a [`BranchKey`] (used by the walker to align
+/// mutator nodes with target nodes: a mutator reaches a target only
+/// when the two keys are equal) with what happens when the walker
+/// reaches the matching target. A node that carries no payload says so
 /// structurally: [`Mutator::Void`], or an [`Mutator::Instruction`]
 /// whose `mutation` is `None`.
 ///
@@ -90,25 +92,24 @@ pub enum Instruction<E: TreeElement> {
 #[strum_discriminants(doc = "test.")]
 pub enum Mutator<E: TreeElement, M: Mutation<E>> {
     /// A placeholder node that occupies a position in the mutator
-    /// tree without carrying any mutation. Used to preserve channel
-    /// alignment when sibling mutators must skip certain target
-    /// positions, and to group children.
+    /// tree without carrying any mutation. Used to carry its children
+    /// down to the target its key matches, and to group children.
     Void {
-        /// Channel index for walker alignment.
-        channel: usize,
+        /// The key the walker aligns this node on.
+        key: BranchKey<E::Kind>,
     },
-    /// A single mutation targeting the element at the matching channel.
+    /// A single mutation targeting the element with the matching key.
     Single {
-        /// Channel index for walker alignment.
-        channel: usize,
+        /// The key the walker aligns this node on.
+        key: BranchKey<E::Kind>,
         /// The mutation payload to apply.
         mutation: M,
     },
     /// A batch of mutations applied to the same target element in
     /// sequence, in the order of the `Vec`.
     Macro {
-        /// Channel index for walker alignment.
-        channel: usize,
+        /// The key the walker aligns this node on.
+        key: BranchKey<E::Kind>,
         /// The mutations to apply, in order.
         mutations: Vec<M>,
     },
@@ -117,8 +118,8 @@ pub enum Mutator<E: TreeElement, M: Mutation<E>> {
     /// optional `mutation` is applied to the matched target before the
     /// instruction body runs.
     Instruction {
-        /// Channel index for walker alignment.
-        channel: usize,
+        /// The key the walker aligns this node on.
+        key: BranchKey<E::Kind>,
         /// The control-flow directive.
         instruction: Instruction<E>,
         /// An optional direct mutation applied before the instruction
@@ -128,41 +129,47 @@ pub enum Mutator<E: TreeElement, M: Mutation<E>> {
 }
 
 impl<E: TreeElement, M: Mutation<E>> Mutator<E, M> {
-    /// A `Single` mutator on the given channel. No allocation beyond
-    /// what `mutation` already owns.
-    pub fn new(mutation: M, channel: usize) -> Self {
-        Mutator::Single { channel, mutation }
+    /// A `Single` mutator on `key`. Takes anything that converts into
+    /// a key, so a single-kind element type can name a channel alone.
+    /// No allocation beyond what `mutation` already owns.
+    pub fn new(mutation: M, key: impl Into<BranchKey<E::Kind>>) -> Self {
+        Mutator::Single {
+            key: key.into(),
+            mutation,
+        }
     }
 
-    /// A `Macro` mutator carrying several mutations on the given
-    /// channel. The `Vec` is moved, not cloned.
-    pub fn new_macro(mutations: Vec<M>, channel: usize) -> Self {
-        Mutator::Macro { channel, mutations }
+    /// A `Macro` mutator carrying several mutations on `key`. The
+    /// `Vec` is moved, not cloned.
+    pub fn new_macro(mutations: Vec<M>, key: impl Into<BranchKey<E::Kind>>) -> Self {
+        Mutator::Macro {
+            key: key.into(),
+            mutations,
+        }
     }
 
-    /// A `Void` placeholder on the given channel. No payload, no
-    /// allocation.
-    pub fn new_void(channel: usize) -> Self {
-        Mutator::Void { channel }
+    /// A `Void` placeholder on `key`. No payload, no allocation.
+    pub fn new_void(key: impl Into<BranchKey<E::Kind>>) -> Self {
+        Mutator::Void { key: key.into() }
     }
 
-    /// An `Instruction` mutator on channel 0 with no mutation of its
-    /// own. The instruction governs child traversal during the walk.
-    pub fn new_instruction(instruction: Instruction<E>) -> Self {
+    /// An `Instruction` mutator on `key` with no mutation of its own.
+    /// The instruction governs child traversal during the walk.
+    pub fn new_instruction(instruction: Instruction<E>, key: impl Into<BranchKey<E::Kind>>) -> Self {
         Mutator::Instruction {
-            channel: 0,
+            key: key.into(),
             instruction,
             mutation: None,
         }
     }
 
-    /// The channel the walker aligns this node on. O(1).
-    pub fn channel(&self) -> usize {
+    /// The key the walker aligns this node on. O(1).
+    pub fn key(&self) -> BranchKey<E::Kind> {
         match self {
-            Mutator::Void { channel }
-            | Mutator::Single { channel, .. }
-            | Mutator::Macro { channel, .. }
-            | Mutator::Instruction { channel, .. } => *channel,
+            Mutator::Void { key }
+            | Mutator::Single { key, .. }
+            | Mutator::Macro { key, .. }
+            | Mutator::Instruction { key, .. } => *key,
         }
     }
 
@@ -177,7 +184,7 @@ impl<E: TreeElement, M: Mutation<E>> Mutator<E, M> {
     /// `Instruction`'s mutation when it has one, nothing for `Void`.
     /// `inherited` is the target's parent's inherited state, passed
     /// through to every [`Mutation::apply_to`]. Does not consult
-    /// channels — the walker decides whether this node reaches
+    /// keys — the walker decides whether this node reaches
     /// `target`. O(k) in the number of mutations applied.
     pub fn apply_to(&self, target: &mut E, inherited: &E::Inherited) {
         match self {

@@ -82,7 +82,7 @@ pub(super) fn glyph_area_of(
     tree: &crate::gfx_structs::tree::GfxTree,
     node_id: indextree::NodeId,
 ) -> &crate::gfx_structs::area::GlyphArea {
-    tree.arena.get(node_id).unwrap().get().glyph_area().unwrap()
+    tree.arena().get(node_id).unwrap().get().glyph_area().unwrap()
 }
 
 /// The tree every builder in this module emits.
@@ -114,12 +114,12 @@ pub(super) fn endpoint_leaf_areas(
     crate::gfx_structs::area::GlyphArea,
     crate::gfx_structs::area::GlyphArea,
 ) {
-    let pair = tree.root.children(&tree.arena).next().expect("one portal pair");
+    let pair = tree.root.children(tree.arena()).next().expect("one portal pair");
     let endpoint = pair
-        .children(&tree.arena)
+        .children(tree.arena())
         .nth(endpoint_idx)
         .expect("endpoint void");
-    let leaves: Vec<_> = endpoint.children(&tree.arena).collect();
+    let leaves: Vec<_> = endpoint.children(tree.arena()).collect();
     (
         glyph_area_of(tree, leaves[0]).clone(),
         glyph_area_of(tree, leaves[1]).clone(),
@@ -141,9 +141,9 @@ pub(super) fn portal_hit_at(
 /// Zero-extent reserved text slots are absent by construction.
 pub(super) fn hittable_parts(portal: &super::super::PortalTree) -> Vec<super::super::PortalPart> {
     let mut out = Vec::new();
-    for pair in portal.tree.root.children(&portal.tree.arena) {
-        for endpoint in pair.children(&portal.tree.arena) {
-            for leaf in endpoint.children(&portal.tree.arena) {
+    for pair in portal.tree.root.children(portal.tree.arena()) {
+        for endpoint in pair.children(portal.tree.arena()) {
+            for leaf in endpoint.children(portal.tree.arena()) {
                 let area = glyph_area_of(&portal.tree, leaf);
                 let (_, extent) = area_rect(area);
                 if extent.x <= 0.0 || extent.y <= 0.0 {

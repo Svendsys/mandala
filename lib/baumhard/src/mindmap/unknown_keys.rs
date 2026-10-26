@@ -1152,7 +1152,7 @@ enum Descend {
 ///
 /// **How the missing level is identified.** Not by counting members —
 /// that is a guess, and it guesses wrong on
-/// `{"Void": {"channel": 0, "Void": 99}}`, where the payload carries a
+/// `{"Void": {"kind": null, "channel": 0, "Void": 99}}`, where the payload carries a
 /// key spelled like the variant. It is identified by asking the model
 /// what *it* writes at that level, via `probe`:
 ///
@@ -1313,10 +1313,10 @@ mod tests {
     #[test]
     fn test_expand_route_restores_an_external_enum_tag() {
         let document = serde_json::json!({
-            "custom_mutations": [{"mutator": {"Void": {"channel": 0, "surprise": 7}}}]
+            "custom_mutations": [{"mutator": {"Void": {"kind": null, "channel": 0, "surprise": 7}}}]
         });
         let probe = serde_json::json!({
-            "custom_mutations": [{"mutator": {"Void": {"channel": 0, "children": []}}}]
+            "custom_mutations": [{"mutator": {"Void": {"kind": null, "channel": 0, "children": []}}}]
         });
         let expanded = expand_route(
             &document,
@@ -1347,10 +1347,10 @@ mod tests {
     #[test]
     fn test_expand_route_resolves_a_key_spelled_like_its_own_variant() {
         let document = serde_json::json!({
-            "custom_mutations": [{"mutator": {"Void": {"channel": 0, "Void": 99}}}]
+            "custom_mutations": [{"mutator": {"Void": {"kind": null, "channel": 0, "Void": 99}}}]
         });
         let probe = serde_json::json!({
-            "custom_mutations": [{"mutator": {"Void": {"channel": 0, "children": []}}}]
+            "custom_mutations": [{"mutator": {"Void": {"kind": null, "channel": 0, "children": []}}}]
         });
         let expanded = expand_route(
             &document,

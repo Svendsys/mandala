@@ -90,7 +90,8 @@ pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> GfxTree {
         let unique_id = idx + 1;
         let (channel, area) = handle_layout(elem);
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
-        tree.root.append_value(element_node, &mut tree.arena);
+        let root = tree.root;
+        super::push_element(&mut tree, root, element_node);
     }
 
     tree
@@ -108,9 +109,11 @@ pub fn build_handle_mutator_tree<E: HandleVisual>(elements: &[E]) -> GfxMutatorT
     for elem in elements {
         let (channel, area) = handle_layout(elem);
         let delta = DeltaGlyphArea::full_assign_from(&area);
-        mt.root.append_value(
+        let root = mt.root;
+        super::push_mutator(
+            &mut mt,
+            root,
             GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel),
-            &mut mt.arena,
         );
     }
     mt

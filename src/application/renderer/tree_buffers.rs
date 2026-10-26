@@ -126,7 +126,7 @@ impl Renderer {
     /// `rebuild_buffers_from_tree` if it cannot guarantee the
     /// arena id is fresh.
     pub fn reshape_buffer_for(&mut self, arena_id: indextree::NodeId, tree: &GfxTree) {
-        let Some(element) = tree.arena.get(arena_id).map(|n| n.get()) else {
+        let Some(element) = tree.arena().get(arena_id).map(|n| n.get()) else {
             return;
         };
         let unique_id = element.unique_id();
@@ -210,8 +210,8 @@ impl Renderer {
         // walker's `extract_background_rect` so the drag-fast-path
         // and the full text-shaping pass can't drift on padding /
         // shape-id / zoom-visibility resolution.
-        for descendant_id in tree.root().descendants(&tree.arena) {
-            let Some(node) = tree.arena.get(descendant_id) else { continue };
+        for descendant_id in tree.root().descendants(tree.arena()) {
+            let Some(node) = tree.arena().get(descendant_id) else { continue };
             let element = node.get();
             let Some(area) = element.glyph_area() else { continue };
             if let Some(rect) = super::tree_walker::extract_background_rect(element, area, Vec2::ZERO) {

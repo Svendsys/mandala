@@ -488,7 +488,9 @@ pub(super) fn append_node_sections(
         section_element.set_flag(Flag::SectionRoot);
         *id_counter += 1;
 
-        let section_id = parent_node_id.append_value(section_element, &mut tree.arena);
+        let Some(section_id) = super::push_element(tree, parent_node_id, section_element) else {
+            continue;
+        };
         section_map.insert((node.id.clone(), section_idx), section_id);
 
         let mut model_element =
@@ -499,7 +501,7 @@ pub(super) fn append_node_sections(
         // arena edge.
         model_element.set_flag(Flag::SectionRoot);
         *id_counter += 1;
-        section_id.append_value(model_element, &mut tree.arena);
+        super::push_element(tree, section_id, model_element);
     }
 }
 
@@ -569,7 +571,9 @@ pub(super) fn build_descendants<'a>(
         let element = GfxElement::new_area_non_indexed_with_id(area, child.channel, *id_counter);
         *id_counter += 1;
 
-        let child_node_id = arena_parent.append_value(element, &mut tree.arena);
+        let Some(child_node_id) = super::push_element(tree, arena_parent, element) else {
+            continue;
+        };
         node_map.insert(child.id.clone(), child_node_id);
 
         append_node_sections(map, child, child_node_id, tree, section_map, id_counter);

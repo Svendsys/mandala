@@ -8,6 +8,7 @@
 use glam::Vec2;
 
 use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range as ColorFontRange};
+use baumhard::engine::tree::Placement;
 use baumhard::font::color::cosmic_color_to_rgba;
 use baumhard::font::fonts::{app_font_by_family, AppFont};
 use baumhard::font::{Color, FontSystem};
@@ -450,8 +451,12 @@ pub(super) fn build_console_overlay_tree(
     let mut tree: GfxTree = GfxTree::new_non_indexed();
     for (channel, area) in console_overlay_areas(geometry, layout, font_system) {
         let element = GfxElement::new_area_non_indexed_with_id(area, channel, channel);
-        let leaf = tree.arena.new_node(element);
-        tree.root.append(leaf, &mut tree.arena);
+        // Under the root, which is always in the tree: the insert
+        // cannot be refused, and a refusal would leave the cell out
+        // rather than abort the frame.
+        if let Err(e) = tree.insert_child(tree.root, element, Placement::Last) {
+            log::error!("console overlay: could not add cell {channel}: {e}");
+        }
     }
     tree
 }
@@ -486,8 +491,9 @@ pub(super) fn build_console_overlay_mutator(
     for (channel, area) in console_overlay_areas(geometry, layout, font_system) {
         let delta = DeltaGlyphArea::full_assign_from(&area);
         let mutator = GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel);
-        let id = mt.arena.new_node(mutator);
-        mt.root.append(id, &mut mt.arena);
+        if let Err(e) = mt.insert_child(mt.root, mutator, Placement::Last) {
+            log::error!("console overlay: could not add the mutator for cell {channel}: {e}");
+        }
     }
     mt
 }

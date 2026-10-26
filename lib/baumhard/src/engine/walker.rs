@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The walker behind [`MutatorTree::apply_to`](crate::engine::tree::MutatorTree::apply_to): aligns mutators to
-//! target-tree elements by [`channel`](crate::engine::element::TreeElement::channel) and
+//! The walker behind [`MutatorTree::apply_to`](crate::engine::tree::MutatorTree::apply_to) and
+//! [`MutatorTree::apply_at`](crate::engine::tree::MutatorTree::apply_at): aligns mutators to
+//! target-tree elements by [key](crate::engine::key::BranchKey) — kind and channel — and
 //! dispatches each mutator's effect. Handles straight-line alignment,
 //! [`Instruction::RepeatWhile`](crate::engine::mutator::Instruction::RepeatWhile) loop expansion (with the
 //! [`Predicate`](crate::engine::predicate::Predicate) language), [`Instruction::MapChildren`](crate::engine::mutator::Instruction::MapChildren)'s positional
 //! zip and [`Instruction::SpatialDescend`](crate::engine::mutator::Instruction::SpatialDescend)'s hit-test.
+//!
+//! # The merge
+//!
+//! A mutator child reaches a target child when their keys are equal.
+//! Both trees keep every parent's children in ascending key order (the
+//! sorted-children invariant, [`crate::engine::tree`]), so the walker
+//! aligns a mutator row with a target row by walking the two sibling
+//! lists **in step** through `first_child` / `next_sibling`: the lower
+//! key advances, equal keys walk. Nothing is collected and nothing is
+//! sorted.
 //!
 //! # Inherited state
 //!
@@ -17,6 +28,16 @@
 //! mutation sees its ancestors as the same walk left them. The state
 //! is a local of the recursion — nothing is stored on an element or in
 //! a tree, and no visited node costs an allocation for it.
+//!
+//! # Keys a walk changes
+//!
+//! A mutation may change its target's key. The walker compares the key
+//! before and after every apply; when it changed, it records the
+//! target in a [`Rekeyed`](crate::engine::walker::Rekeyed) and carries on over the row **as it was**:
+//! no row is re-sorted while the walk is still merging over it. When
+//! the walk is over, [`Rekeyed::settle`](crate::engine::walker::Rekeyed::settle) moves exactly the recorded
+//! children to their sorted places. A walk that changes no key records
+//! nothing and allocates nothing for it.
 //!
 //! # Cache invalidation
 //!
@@ -35,52 +56,123 @@ use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::Predicate;
+use crate::engine::siblings;
 use crate::engine::tree::{MutatorTree, Tree};
 use crate::util::geometry::aabb_contains;
 use crate::util::ordered_vec2::OrderedVec2;
 use indextree::{Arena, Node, NodeId};
 use log::{debug, warn};
+use std::cmp::Ordering;
+
+/// The children whose key a walk changed, recorded so they can be
+/// moved to their sorted places once the walk is over
+/// ([`Rekeyed::settle`]).
+///
+/// Each record is `(parent, child)`. The `Vec` stays empty — and
+/// unallocated — for a walk that changes no key, which is the common
+/// path. A child recorded twice (its key changed by two applies) is
+/// moved once.
+#[derive(Debug, Default)]
+pub struct Rekeyed {
+    moved: Vec<(NodeId, NodeId)>,
+}
+
+impl Rekeyed {
+    /// Record that `child`, under `parent`, has a new key. O(1)
+    /// amortized.
+    fn record(&mut self, parent: NodeId, child: NodeId) {
+        self.moved.push((parent, child));
+    }
+
+    /// Move every recorded child to its sorted place under its parent:
+    /// after every sibling keyed at or below its new key. Every
+    /// recorded child is detached first, which leaves each affected row
+    /// sorted — the children that kept their keys were in order before
+    /// the walk and nothing reordered them — and each is then placed
+    /// into that sorted row in the order the walk recorded it. Children
+    /// keep their ids and subtrees; nothing is sorted.
+    ///
+    /// Invalidates `tree`'s cache when it moved anything. Cost: nothing
+    /// when nothing was recorded; otherwise, per recorded child, a
+    /// detach, a scan from the end of its row and an O(depth)
+    /// re-attach.
+    pub fn settle<E: TreeElement>(mut self, tree: &mut Tree<E>) {
+        if self.moved.is_empty() {
+            return;
+        }
+        let arena = &mut tree.arena;
+        // `retain` visits every record once, in order: the first record
+        // of a child detaches it, and a later one finds it detached and
+        // drops out.
+        self.moved.retain(|&(parent, child)| {
+            if arena.get(child).and_then(|n| n.parent()) == Some(parent) {
+                child.detach(arena);
+                true
+            } else {
+                false
+            }
+        });
+        for &(parent, child) in &self.moved {
+            siblings::attach_last(arena, parent, child, E::key);
+        }
+        tree.cache.invalidate();
+    }
+}
 
 /// The continuation [`repeat_while`] calls when its predicate fails
 /// on a target: `(tree, mutator_tree, target_id, mutator_id,
-/// parent_state)`, with `parent_state` the inherited state of
-/// `target_id`'s parent. [`default_terminator`] is the one the walker
-/// uses.
+/// parent_state, rekeyed)`, with `parent_state` the inherited state of
+/// `target_id`'s parent and `rekeyed` the walk's record of changed
+/// keys. [`default_terminator`] is the one the walker uses.
 pub type Terminator<E, M> =
-    fn(&mut Tree<E>, &MutatorTree<E, M>, NodeId, NodeId, &<E as TreeElement>::Inherited);
+    fn(&mut Tree<E>, &MutatorTree<E, M>, NodeId, NodeId, &<E as TreeElement>::Inherited, &mut Rekeyed);
 
 /// Continuation called after a conditional loop
 /// ([`Instruction::RepeatWhile`]) exits — it resumes the normal walk
-/// from the mutator's children whose channel matches the current
-/// target. `pub` so mutator authors can substitute custom terminators
-/// when extending the walker; not a stable public API.
+/// from the mutator's children whose key matches the current target.
+/// `pub` so mutator authors can substitute custom terminators when
+/// extending the walker; not a stable public API.
 ///
-/// The after-mutations attached under `mutator_id` are treated as a
-/// channel-sorted stream (same logic as the normal child-alignment
-/// walk): arena order is not assumed to be ascending. Every
-/// after-mutation whose channel equals the target's is dispatched via
-/// [`walk_tree_from`], with the target's own `parent_state`; the scan
-/// stops as soon as it passes the target's channel.
+/// The after-mutations attached under `mutator_id` are in key order
+/// (the sorted-children invariant), so they are scanned in sibling
+/// order: every one whose key equals the target's is dispatched with
+/// the target's own `parent_state`, and the scan stops at the first
+/// key above the target's. No allocation.
 pub fn default_terminator<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
     target_id: NodeId,
     mutator_id: NodeId,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
     // When a conditional loop terminates, both the mutator and the
     // target are where the predicate failed: the target has not been
     // mutated (yet), and the mutator is one step behind.
     debug!("The Terminator has received a mission.");
-    let t_chan = get_target(&mut tree.arena, target_id).get().channel();
-    let after_mutators = collect_sorted_children(&mutator_tree.arena, mutator_id, |m| m.channel());
-    for (after_id, after_chan) in after_mutators {
-        if after_chan == t_chan {
-            debug!("Next mutator matches the target, starting walk..");
-            walk_tree_from(tree, mutator_tree, target_id, after_id, parent_state);
-        } else if after_chan > t_chan {
-            debug!("Next mutator channel is higher than target channel, ending branch..");
-            break;
+    let target_key = get_target(&tree.arena, target_id).get().key();
+    let mut after = get_mutator(&mutator_tree.arena, mutator_id).first_child();
+    while let Some(after_id) = after {
+        let node = get_mutator(&mutator_tree.arena, after_id);
+        after = node.next_sibling();
+        match node.get().key().cmp(&target_key) {
+            Ordering::Equal => {
+                debug!("Next mutator matches the target, starting walk..");
+                walk_from(
+                    tree,
+                    mutator_tree,
+                    target_id,
+                    after_id,
+                    parent_state,
+                    true,
+                    rekeyed,
+                );
+            }
+            Ordering::Greater => {
+                debug!("Next mutator key is above the target's, ending branch..");
+                break;
+            }
+            Ordering::Less => {}
         }
     }
     debug!("No more mutators, ending branch..");
@@ -99,9 +191,16 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 }
 
 /// Dispatch one mutator node against one target node and recurse into
-/// aligned children. `target_id` and `mutator_id` must belong to the
-/// arenas that back `tree` and `mutator_tree` respectively;
-/// `parent_state` is the inherited state of `target_id`'s parent.
+/// aligned children. The pair's own mutation applies only when the two
+/// [keys](crate::engine::key::BranchKey) are equal; the walk below the
+/// pair runs either way, aligning each child row by key. `target_id`
+/// and `mutator_id` must belong to the arenas that back `tree` and
+/// `mutator_tree` respectively; `parent_state` is the inherited state
+/// of `target_id`'s parent.
+///
+/// Children whose key the walk changed are moved to their sorted places
+/// when it returns ([`Rekeyed::settle`]).
+///
 /// Cost: O(sum of matching (target, mutator) pairs) — every pairwise
 /// match is one apply; pruned branches are free.
 pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
@@ -111,12 +210,67 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     parent_state: &E::Inherited,
 ) {
+    let keys_match = get_mutator(&mutator_tree.arena, mutator_id).get().key()
+        == get_target(&tree.arena, target_id).get().key();
+    let mut rekeyed = Rekeyed::default();
+    walk_from(
+        tree,
+        mutator_tree,
+        target_id,
+        mutator_id,
+        parent_state,
+        keys_match,
+        &mut rekeyed,
+    );
+    rekeyed.settle(tree);
+}
+
+/// Walk `mutator_tree` from its root at one anchor of an anchored walk:
+/// when the root's **kind** equals the anchor's, the root applies to
+/// the anchor — the channel is not compared — and the walk continues
+/// below; at an anchor of another kind nothing is applied, at the
+/// anchor or below it. A stale `anchor` reaches nothing. Changed keys
+/// are recorded in `rekeyed`; settling them is the caller's, once every
+/// anchor has been walked.
+pub(crate) fn walk_anchor<E: TreeElement, M: Mutation<E>>(
+    tree: &mut Tree<E>,
+    mutator_tree: &MutatorTree<E, M>,
+    anchor: NodeId,
+    seed: &E::Inherited,
+    rekeyed: &mut Rekeyed,
+) {
+    let Some(target) = tree.arena.get(anchor) else {
+        return;
+    };
+    let root = mutator_tree.root;
+    if get_mutator(&mutator_tree.arena, root).get().key().kind != target.get().key().kind {
+        debug!("Anchor {anchor} is of another kind than the mutator root, skipping it.");
+        return;
+    }
+    walk_from(tree, mutator_tree, anchor, root, seed, true, rekeyed);
+}
+
+/// The walk of one (target, mutator) pair: apply the mutator's own
+/// payload to the target when `apply_here`, then descend — by key for
+/// a `Single` / `Macro` / `Void`, through the instruction for an
+/// `Instruction`.
+fn walk_from<E: TreeElement, M: Mutation<E>>(
+    tree: &mut Tree<E>,
+    mutator_tree: &MutatorTree<E, M>,
+    target_id: NodeId,
+    mutator_id: NodeId,
+    parent_state: &E::Inherited,
+    apply_here: bool,
+    rekeyed: &mut Rekeyed,
+) {
     let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
 
     match mutator {
         Mutator::Single { .. } | Mutator::Macro { .. } => {
             debug!("Processing Delta Node...");
-            apply_if_matching_channel(tree, target_id, mutator, parent_state);
+            if apply_here {
+                apply_mutator(tree, target_id, mutator, parent_state, rekeyed);
+            }
         }
         Mutator::Void { .. } => {
             debug!("Void mutator node, skipping")
@@ -127,9 +281,9 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
             ..
         } => {
             debug!("Processing Instruction node...");
-            if mutation.is_some() {
+            if apply_here && mutation.is_some() {
                 debug!("This instruction node has a Delta..");
-                apply_if_matching_channel(tree, target_id, mutator, parent_state);
+                apply_mutator(tree, target_id, mutator, parent_state, rekeyed);
             }
             process_instruction_node(
                 tree,
@@ -138,30 +292,49 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
                 mutator_id,
                 instruction,
                 parent_state,
+                rekeyed,
             );
             return;
         }
     }
-    align_child_walks(tree, mutator_tree, target_id, mutator_id, parent_state);
+    align_child_walks(tree, mutator_tree, target_id, mutator_id, parent_state, rekeyed);
 }
 
-/// Apply `mutator` to `target_id` when their channels match, and
-/// invalidate the tree's cache if it did.
+/// Apply `mutator`'s payload to `target_id`, invalidate the tree's
+/// cache, and record the target in `rekeyed` if its key changed.
 #[inline]
-fn apply_if_matching_channel<E: TreeElement, M: Mutation<E>>(
+fn apply_mutator<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     target_id: NodeId,
     mutator: &Mutator<E, M>,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
-    let target = get_target(&mut tree.arena, target_id).get_mut();
-    if mutator.channel() == target.channel() {
-        debug!("Delta and target channel match, applying..");
-        mutator.apply_to(target, parent_state);
-        tree.cache.invalidate();
-    } else {
-        debug!("Delta mutator channel does not match target channel.");
+    apply_recorded(tree, target_id, rekeyed, |target| {
+        mutator.apply_to(target, parent_state)
+    });
+}
+
+/// Run `f` on the element at `target_id` — every apply in the walker
+/// goes through here — then invalidate the tree's cache and, if `f`
+/// changed the element's key, record it in `rekeyed`. Two O(1) key
+/// reads beside `f`.
+#[inline]
+fn apply_recorded<E: TreeElement>(
+    tree: &mut Tree<E>,
+    target_id: NodeId,
+    rekeyed: &mut Rekeyed,
+    f: impl FnOnce(&mut E),
+) {
+    let node = get_target_mut(&mut tree.arena, target_id);
+    let before = node.get().key();
+    f(node.get_mut());
+    if node.get().key() != before {
+        if let Some(parent) = node.parent() {
+            rekeyed.record(parent, target_id);
+        }
     }
+    tree.cache.invalidate();
 }
 
 /// The inherited state `target_id` hands its children: its own
@@ -169,11 +342,7 @@ fn apply_if_matching_channel<E: TreeElement, M: Mutation<E>>(
 /// mutations. O(1) plus the element type's `inherit`.
 #[inline]
 fn own_state<E: TreeElement>(tree: &Tree<E>, target_id: NodeId, parent_state: &E::Inherited) -> E::Inherited {
-    tree.arena
-        .get(target_id)
-        .expect("walker invariant: target NodeId must belong to tree.arena")
-        .get()
-        .inherit(parent_state)
+    get_target(&tree.arena, target_id).get().inherit(parent_state)
 }
 
 #[inline]
@@ -184,11 +353,12 @@ fn process_instruction_node<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     instruction: &Instruction<E>,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
     match instruction {
         Instruction::RepeatWhile(condition) => {
             let mutator = get_mutator(&mutator_tree.arena, mutator_id);
-            let target = get_target(&mut tree.arena, target_id);
+            let target = get_target(&tree.arena, target_id);
             // Interactive path: a malformed RepeatWhile mutator (no
             // children to repeat) should degrade the walk, not abort
             // mutation application. The caller treats a no-op as
@@ -202,53 +372,7 @@ fn process_instruction_node<E: TreeElement, M: Mutation<E>>(
                 return;
             }
             let state = own_state(tree, target_id, parent_state);
-            compare_apply_repeat_while(tree, mutator_tree, target_id, mutator_id, condition, &state)
-        }
-        Instruction::SpatialDescend(point) => {
-            spatial_descend(tree, mutator_tree, target_id, mutator_id, point, parent_state);
-        }
-        Instruction::MapChildren => {
-            zip_map_children(tree, mutator_tree, target_id, mutator_id, parent_state);
-        }
-    };
-}
-
-/// Walk the children of `target_parent_id` and `mutator_parent_id` as
-/// channel-sorted streams, applying [`repeat_while`] for every
-/// matching (target, mutator) pair. `state` is the inherited state of
-/// `target_parent_id` itself — the parent of every target this
-/// function hands on.
-///
-/// Mirrors [`align_child_walks`]: arena order is **not** assumed to
-/// be channel-ascending, so both sibling rows are collected and
-/// sorted before the merge walk. The sorted merge advances only the
-/// mutator when `m_chan < t_chan` and only the target when
-/// `m_chan > t_chan`, preserving broadcast semantics (one mutator
-/// may apply to multiple consecutive targets sharing its channel).
-///
-/// Cost: O(n log n) per sibling row for the sort, where `n` is the
-/// sibling count under one parent, plus one `Vec` per row.
-fn compare_apply_repeat_while<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_parent_id: NodeId,
-    mutator_parent_id: NodeId,
-    condition: &Predicate<E>,
-    state: &E::Inherited,
-) {
-    let mutator_children = collect_sorted_children(&mutator_tree.arena, mutator_parent_id, |m| m.channel());
-    if mutator_children.is_empty() {
-        debug!("RepeatWhile mutator has no children - nothing to align.");
-        return;
-    }
-    let target_children = collect_sorted_children(&tree.arena, target_parent_id, |t| t.channel());
-
-    let mut t_idx = 0usize;
-    for (m_id, m_chan) in mutator_children.iter().copied() {
-        while t_idx < target_children.len() {
-            let (t_id, t_chan) = target_children[t_idx];
-            if t_chan == m_chan {
-                t_idx += 1;
+            merge_rows(tree, mutator_tree, target_id, mutator_id, |tree, t_id, m_id| {
                 repeat_while(
                     tree,
                     mutator_tree,
@@ -256,16 +380,72 @@ fn compare_apply_repeat_while<E: TreeElement, M: Mutation<E>>(
                     m_id,
                     condition,
                     default_terminator::<E, M>,
-                    state,
+                    &state,
+                    rekeyed,
                 );
-            } else if t_chan > m_chan {
-                debug!(
-                    "Target channel {} exceeds mutator channel {}, advancing to next mutator.",
-                    t_chan, m_chan
-                );
-                break;
-            } else {
-                t_idx += 1;
+            });
+        }
+        Instruction::SpatialDescend(point) => {
+            spatial_descend(
+                tree,
+                mutator_tree,
+                target_id,
+                mutator_id,
+                point,
+                parent_state,
+                rekeyed,
+            );
+        }
+        Instruction::MapChildren => {
+            zip_map_children(tree, mutator_tree, target_id, mutator_id, parent_state, rekeyed);
+        }
+    };
+}
+
+/// Merge the children of `target_parent_id` against the children of
+/// `mutator_parent_id` by key, calling `visit(tree, target, mutator)`
+/// for every pair with equal keys.
+///
+/// Both rows are in ascending key order (the sorted-children
+/// invariant), so they are walked **in step** through `first_child` /
+/// `next_sibling`: a target keyed below the current mutator is passed,
+/// a mutator keyed below the current target is passed, and on equal
+/// keys the pair is visited and the target passed. The mutator stays,
+/// so it reaches every consecutive target with its key (broadcast);
+/// the targets it reached are behind the merge, so a later sibling
+/// mutator with the same key reaches none of them.
+///
+/// The next target is read before `visit` runs. A visit changes only
+/// the visited target's subtree — and its key, whose re-sort waits for
+/// the end of the walk — so the row ahead of the merge is the row as it
+/// was.
+///
+/// Cost: O(mutator row + target row) key reads plus the visits; no
+/// allocation and no sort.
+#[inline]
+fn merge_rows<E: TreeElement, M: Mutation<E>>(
+    tree: &mut Tree<E>,
+    mutator_tree: &MutatorTree<E, M>,
+    target_parent_id: NodeId,
+    mutator_parent_id: NodeId,
+    mut visit: impl FnMut(&mut Tree<E>, NodeId, NodeId),
+) {
+    let mut mutator_cursor = get_mutator(&mutator_tree.arena, mutator_parent_id).first_child();
+    let mut target_cursor = get_target(&tree.arena, target_parent_id).first_child();
+    while let (Some(m_id), Some(t_id)) = (mutator_cursor, target_cursor) {
+        let mutator = get_mutator(&mutator_tree.arena, m_id);
+        let target = get_target(&tree.arena, t_id);
+        match target.get().key().cmp(&mutator.get().key()) {
+            Ordering::Equal => {
+                target_cursor = target.next_sibling();
+                visit(tree, t_id, m_id);
+            }
+            Ordering::Greater => {
+                debug!("Target key exceeds the mutator key, advancing to the next mutator.");
+                mutator_cursor = mutator.next_sibling();
+            }
+            Ordering::Less => {
+                target_cursor = target.next_sibling();
             }
         }
     }
@@ -297,41 +477,34 @@ fn get_mutator<E: TreeElement, M: Mutation<E>>(
 /// invariant rationale. Same precondition: `id` must originate from
 /// the target tree's arena.
 #[inline]
-fn get_target<E: TreeElement>(arena: &mut Arena<E>, id: NodeId) -> &mut Node<E> {
+fn get_target<E: TreeElement>(arena: &Arena<E>, id: NodeId) -> &Node<E> {
+    arena
+        .get(id)
+        .expect("walker invariant: target NodeId must belong to tree.arena")
+}
+
+/// [`get_target`], mutably.
+#[inline]
+fn get_target_mut<E: TreeElement>(arena: &mut Arena<E>, id: NodeId) -> &mut Node<E> {
     arena
         .get_mut(id)
         .expect("walker invariant: target NodeId must belong to tree.arena")
 }
 
 /// Take the children of the mutator and of the target, and start a
-/// walk for each matching channel pair. A mutator reaches every
-/// target on its channel that the merge has not already passed: the
-/// first mutator on a channel consumes that channel's targets, so a
-/// later sibling mutator on the same channel reaches none of them.
+/// walk for each pair with equal keys ([`merge_rows`]). A mutator
+/// reaches every target with its key that the merge has not already
+/// passed: the first mutator on a key consumes that key's targets, so a
+/// later sibling mutator on the same key reaches none of them.
 /// `parent_state` is the inherited state of `target_id`'s parent; the
 /// children receive `target_id`'s own state.
 ///
 /// See also [`zip_map_children`] — the opt-out alternative that pairs
-/// children by sibling position (zip) instead of by channel, for
-/// mutations that need per-index targeting.
+/// children by sibling position (zip) instead of by key, for mutations
+/// that need per-index targeting.
 ///
-/// # Channel-sorted merge walk
-///
-/// The walker treats the target's and mutator's children as sorted
-/// streams keyed by [`channel`](TreeElement::channel) and applies
-/// each mutator child to every target child sharing its channel. The
-/// arena order of children is **not** assumed to be channel-ascending
-/// — children are collected into local `Vec`s and sorted by channel
-/// before the merge walk. This removes a long-standing fragility
-/// where the walker's `t_chan > m_chan` break could prematurely skip
-/// matches when arena order disagreed with channel order (see
-/// `console_mutator_round_trips_to_fresh_build` for a fixture that
-/// exercises a non-ascending sibling row).
-///
-/// Cost: O(n log n) per sibling row for the sort, where `n` is the
-/// sibling count under one parent, plus one `Vec` per row. Sibling
-/// counts are small in practice (single-digit), so the sort is
-/// effectively free next to the per-pair `walk_tree_from` recursion.
+/// Cost: O(mutator row + target row) key reads plus the per-pair
+/// recursion; no allocation and no sort.
 #[inline]
 fn align_child_walks<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
@@ -339,79 +512,44 @@ fn align_child_walks<E: TreeElement, M: Mutation<E>>(
     target_id: NodeId,
     mutator_id: NodeId,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
     debug!(
         "Aligning children of target node {} and mutator node {}.",
         target_id, mutator_id
     );
-    let mutator_children = collect_sorted_children(&mutator_tree.arena, mutator_id, |m| m.channel());
-    if mutator_children.is_empty() {
+    if get_mutator(&mutator_tree.arena, mutator_id)
+        .first_child()
+        .is_none()
+    {
         debug!("Mutator has no children - nothing to align.");
         return;
     }
-    let target_children = collect_sorted_children(&tree.arena, target_id, |t| t.channel());
+    if get_target(&tree.arena, target_id).first_child().is_none() {
+        return;
+    }
     let state = own_state(tree, target_id, parent_state);
-
-    let mut t_idx = 0usize;
-    for (m_id, m_chan) in mutator_children.iter().copied() {
-        while t_idx < target_children.len() {
-            let (t_id, t_chan) = target_children[t_idx];
-            if t_chan == m_chan {
-                t_idx += 1;
-                walk_tree_from(tree, mutator_tree, t_id, m_id, &state);
-            } else if t_chan > m_chan {
-                debug!(
-                    "Target channel {} exceeds mutator channel {}, advancing to next mutator.",
-                    t_chan, m_chan
-                );
-                break;
-            } else {
-                t_idx += 1;
-            }
-        }
-    }
-}
-
-/// Collect direct children of `parent` paired with their channel,
-/// sorted ascending by channel. Stable sort so siblings with identical
-/// channels keep their arena-relative order — pairs the channel-merge
-/// walk against itself deterministically.
-fn collect_sorted_children<T>(
-    arena: &Arena<T>,
-    parent: NodeId,
-    channel_of: impl Fn(&T) -> usize,
-) -> Vec<(NodeId, usize)> {
-    let mut out = Vec::new();
-    let mut cur = arena.get(parent).and_then(|n| n.first_child());
-    while let Some(id) = cur {
-        if let Some(node) = arena.get(id) {
-            out.push((id, channel_of(node.get())));
-            cur = node.next_sibling();
-        } else {
-            break;
-        }
-    }
-    out.sort_by_key(|&(_, ch)| ch);
-    out
+    merge_rows(tree, mutator_tree, target_id, mutator_id, |tree, t_id, m_id| {
+        walk_from(tree, mutator_tree, t_id, m_id, &state, true, rekeyed);
+    });
 }
 
 /// Zip the mutator's direct children against the target's direct
 /// children by sibling position — the alternative to
 /// [`align_child_walks`] for consumers that need per-index targeting
-/// independent of channel semantics (e.g. size-aware layouts where
-/// every target child sits on the same broadcast channel).
+/// independent of keys (e.g. size-aware layouts where every target
+/// child sits on the same broadcast channel).
 ///
 /// For each pair up to `min(mutator_children_len,
 /// target_children_len)`, the mutator's own effect is
-/// **force-applied** to its paired target — bypassing the
-/// channel-match check that [`apply_if_matching_channel`] normally
-/// enforces. That bypass is the whole point: channels on the paired
-/// children are broadcast tags, and MapChildren's job is to ignore
-/// them at the pairing site.
+/// **force-applied** to its paired target — bypassing the key-match
+/// check the merge normally enforces. That bypass is the whole point:
+/// keys on the paired children are broadcast tags, and MapChildren's
+/// job is to ignore them at the pairing site.
 ///
 /// After the force-apply, the mutator's subtree descends against the
 /// target's subtree through the standard path:
-/// - Single/Macro/Void → [`align_child_walks`] (channel-aware).
+/// - Single/Macro/Void → [`align_child_walks`] (key-aware).
 /// - Instruction → [`process_instruction_node`], which re-dispatches
 ///   into whichever instruction body the child carries (including a
 ///   nested MapChildren, which will zip one level deeper).
@@ -421,10 +559,10 @@ fn collect_sorted_children<T>(
 /// Graceful no-op on empty children on either side.
 ///
 /// The *outer* instruction's own attached mutation is already applied
-/// to the current target by [`walk_tree_from`] before this function is
-/// called (same precedent as [`compare_apply_repeat_while`]) — this
-/// function handles only the descent into paired children, which
-/// receive `target_id`'s own inherited state.
+/// to the current target by [`walk_from`] before this function is
+/// called (same precedent as `RepeatWhile`) — this function handles
+/// only the descent into paired children, which receive `target_id`'s
+/// own inherited state.
 #[inline]
 fn zip_map_children<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
@@ -432,9 +570,10 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
     target_id: NodeId,
     mutator_id: NodeId,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
     let mut option_mutator_child = get_mutator(&mutator_tree.arena, mutator_id).first_child();
-    let mut option_target_child = get_target(&mut tree.arena, target_id).first_child();
+    let mut option_target_child = get_target(&tree.arena, target_id).first_child();
     let state = own_state(tree, target_id, parent_state);
 
     let mut paired: usize = 0;
@@ -442,22 +581,18 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
         // Look up the next-siblings *before* the force-apply that
         // takes `&mut tree.arena`, so the read-only borrows end
         // cleanly.
-        let next_mutator = mutator_tree
-            .arena
-            .get(mutator_child_id)
-            .and_then(|n| n.next_sibling());
-        let next_target = tree.arena.get(target_child_id).and_then(|n| n.next_sibling());
+        let next_mutator = get_mutator(&mutator_tree.arena, mutator_child_id).next_sibling();
+        let next_target = get_target(&tree.arena, target_child_id).next_sibling();
 
         // Force-apply the mutator to its paired target. The mutator is
         // borrowed from `mutator_tree`, which the dispatch below only
         // reads, so a nested instruction is handed on by reference.
         let mutator = get_mutator(&mutator_tree.arena, mutator_child_id).get();
-        mutator.apply_to(get_target(&mut tree.arena, target_child_id).get_mut(), &state);
-        tree.cache.invalidate();
+        apply_mutator(tree, target_child_id, mutator, &state, rekeyed);
         match mutator {
             Mutator::Instruction { instruction, .. } => {
                 // Nested instruction: dispatch at the paired target.
-                // Matches `walk_tree_from`'s post-apply path for
+                // Matches `walk_from`'s post-apply path for
                 // Instruction (`process_instruction_node` + early
                 // return — no align_child_walks).
                 process_instruction_node(
@@ -467,13 +602,21 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
                     mutator_child_id,
                     instruction,
                     &state,
+                    rekeyed,
                 );
             }
             Mutator::Single { .. } | Mutator::Macro { .. } | Mutator::Void { .. } => {
-                // Descend via channel-based align at the next level
-                // down. A user who wants the deeper level to also zip
-                // nests MapChildren inside.
-                align_child_walks(tree, mutator_tree, target_child_id, mutator_child_id, &state);
+                // Descend via key-based align at the next level down.
+                // A user who wants the deeper level to also zip nests
+                // MapChildren inside.
+                align_child_walks(
+                    tree,
+                    mutator_tree,
+                    target_child_id,
+                    mutator_child_id,
+                    &state,
+                    rekeyed,
+                );
             }
         }
 
@@ -508,13 +651,15 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
 /// As long as `condition` holds true, keep applying `mutator_id` (and
 /// its descendants) to `target_id` (and its descendants). When the
 /// condition fails, call `terminator` to resume the normal walk.
-/// `parent_state` is the inherited state of `target_id`'s parent.
+/// `parent_state` is the inherited state of `target_id`'s parent, and
+/// `rekeyed` the walk's record of changed keys.
 ///
 /// This is the engine behind [`Instruction::RepeatWhile`]; it is
 /// exposed so mutator authors can supply a custom `terminator` without
 /// forking the walker (see [`default_terminator`] for the default
 /// continuation). The `terminator` receives the same tree pair, the
-/// current target/mutator ids and `parent_state`.
+/// current target/mutator ids, `parent_state` and `rekeyed`.
+#[allow(clippy::too_many_arguments)]
 pub fn repeat_while<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
@@ -523,16 +668,16 @@ pub fn repeat_while<E: TreeElement, M: Mutation<E>>(
     condition: &Predicate<E>,
     terminator: Terminator<E, M>,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
-    let condition_matches = condition.test(get_target(&mut tree.arena, target_id).get());
+    let condition_matches = condition.test(get_target(&tree.arena, target_id).get());
     if condition_matches {
         debug!(
             "Condition is met, applying mutator {} to target {}",
             mutator_id, target_id
         );
         let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
-        mutator.apply_to(get_target(&mut tree.arena, target_id).get_mut(), parent_state);
-        tree.cache.invalidate();
+        apply_mutator(tree, target_id, mutator, parent_state, rekeyed);
         apply_repeat_while_to_children(
             tree,
             mutator_tree,
@@ -541,13 +686,15 @@ pub fn repeat_while<E: TreeElement, M: Mutation<E>>(
             condition,
             terminator,
             parent_state,
+            rekeyed,
         );
     } else {
-        terminator(tree, mutator_tree, target_id, mutator_id, parent_state);
+        terminator(tree, mutator_tree, target_id, mutator_id, parent_state, rekeyed);
     }
 }
 
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
@@ -556,8 +703,9 @@ fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
     condition: &Predicate<E>,
     terminator: Terminator<E, M>,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
-    let mut head = get_target(&mut tree.arena, target_id).first_child();
+    let mut head = get_target(&tree.arena, target_id).first_child();
     if head.is_none() {
         return;
     }
@@ -567,7 +715,7 @@ fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
     // somewhere to go next.
     while let Some(head_id) = head {
         debug!("Found child, recursing down sub-tree");
-        head = get_target(&mut tree.arena, head_id).next_sibling();
+        head = get_target(&tree.arena, head_id).next_sibling();
         repeat_while(
             tree,
             mutator_tree,
@@ -576,6 +724,7 @@ fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
             condition,
             terminator,
             &state,
+            rekeyed,
         );
     }
 }
@@ -595,9 +744,8 @@ fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
 ///    area; the first one found keeps a tie (innermost-first, then
 ///    document order).
 /// 3. Apply the instruction's mutation to that node, regardless of
-///    channel — the spatial match overrides channel alignment —
-///    with the hit's parent's inherited state, folded down the path
-///    from `target_id`.
+///    key — the spatial match overrides key alignment — with the hit's
+///    parent's inherited state, folded down the path from `target_id`.
 ///
 /// If no box contains the point, the instruction is a no-op.
 ///
@@ -613,6 +761,7 @@ fn spatial_descend<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     point: &OrderedVec2,
     parent_state: &E::Inherited,
+    rekeyed: &mut Rekeyed,
 ) {
     let point = point.to_vec2();
     let mut best: Option<(NodeId, f32)> = None;
@@ -647,8 +796,7 @@ fn spatial_descend<E: TreeElement, M: Mutation<E>>(
         return;
     };
     let state = state_above(tree, target_id, hit_id, parent_state);
-    mutation.apply_to(get_target(&mut tree.arena, hit_id).get_mut(), &state);
-    tree.cache.invalidate();
+    apply_recorded(tree, hit_id, rekeyed, |hit| mutation.apply_to(hit, &state));
 }
 
 /// The inherited state of `descendant`'s parent, where `descendant` is

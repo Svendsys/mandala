@@ -524,7 +524,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
     let container_x_before = {
         let aid = tree.arena_id_for(&nid).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(aid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -535,7 +535,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
     let section0_x_before = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(sid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -549,7 +549,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
     let container_x_after = {
         let aid = tree.arena_id_for(&nid).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(aid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -560,7 +560,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
     let section0_x_after = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(sid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -841,7 +841,7 @@ fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
     // from the persisted offset (no revert).
     let tree2 = doc.build_tree();
     let sid = tree2.section_arena_id(&nid, 0).unwrap();
-    let area = tree2.tree.arena.get(sid).unwrap().get().glyph_area().unwrap();
+    let area = tree2.tree.arena().get(sid).unwrap().get().glyph_area().unwrap();
     let node_pos_x = doc.mindmap.nodes.get(&nid).unwrap().position.x as f32;
     let expected = node_pos_x + post_offset_x as f32;
     assert!(
@@ -1256,7 +1256,7 @@ fn test_apply_custom_mutation_sections_only_with_predicate_compose() {
     let s0_x_before = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(sid)
             .unwrap()
             .get()
@@ -1270,7 +1270,7 @@ fn test_apply_custom_mutation_sections_only_with_predicate_compose() {
     let s0_x_after = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(sid)
             .unwrap()
             .get()
@@ -1363,7 +1363,7 @@ fn test_apply_custom_mutation_predicate_gate_filters_container() {
     let container_x_before = {
         let aid = tree.arena_id_for(&nid).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(aid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -1374,7 +1374,7 @@ fn test_apply_custom_mutation_predicate_gate_filters_container() {
     let section_x_before = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(sid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -1388,7 +1388,7 @@ fn test_apply_custom_mutation_predicate_gate_filters_container() {
     let container_x_after = {
         let aid = tree.arena_id_for(&nid).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(aid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -1399,7 +1399,7 @@ fn test_apply_custom_mutation_predicate_gate_filters_container() {
     let section_x_after = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(sid)
             .and_then(|n| n.get().glyph_area())
             .unwrap()
@@ -1453,10 +1453,12 @@ fn test_apply_custom_mutation_match_nothing_repeat_while_does_not_apply() {
     let mut doc = load_test_doc();
     let mut cm = make_test_mutation("match-nothing", TS::SelfAndDescendants);
     cm.mutator = Some(MutatorNode::Instruction {
+        kind: (),
         channel: 0,
         instruction: InstructionSpec::RepeatWhile(Predicate::new()),
         mutation: MutationSrc::None,
         children: vec![MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![GfxMutation::area_command(
                 GlyphAreaCommand::NudgeRight(10.0),
@@ -1544,17 +1546,20 @@ fn test_apply_custom_mutation_unevaluatable_nested_child_applies_nothing() {
     let mut doc = load_test_doc();
     let mut cm = make_test_mutation("nested-decline", TS::SelfAndDescendants);
     cm.mutator = Some(MutatorNode::Macro {
+        kind: (),
         channel: 0,
         // Extractable on its own — this is the payload that used to
         // escape and blanket every target.
         mutations: MutationListSrc::Literal(vec![nudge(10.0)]),
         children: vec![MutatorNode::Instruction {
+            kind: (),
             channel: 0,
             // `Predicate::new()` matches nothing; the flat path has no
             // predicate evaluator, so this branch is unevaluatable.
             instruction: InstructionSpec::RepeatWhile(Predicate::new()),
             mutation: MutationSrc::None,
             children: vec![MutatorNode::Macro {
+                kind: (),
                 channel: 0,
                 mutations: MutationListSrc::Literal(vec![nudge(99.0)]),
                 children: vec![],
@@ -1573,7 +1578,7 @@ fn test_apply_custom_mutation_unevaluatable_nested_child_applies_nothing() {
         .collect();
     let tree_before = tree
         .arena_id_for("0")
-        .and_then(|id| tree.tree.arena.get(id))
+        .and_then(|id| tree.tree.arena().get(id))
         .and_then(|n| n.get().glyph_area())
         .map(|a| a.position.x.0)
         .expect("node '0' is in the tree");
@@ -1591,7 +1596,7 @@ fn test_apply_custom_mutation_unevaluatable_nested_child_applies_nothing() {
     }
     let tree_after = tree
         .arena_id_for("0")
-        .and_then(|id| tree.tree.arena.get(id))
+        .and_then(|id| tree.tree.arena().get(id))
         .and_then(|n| n.get().glyph_area())
         .map(|a| a.position.x.0)
         .expect("node '0' is in the tree");
@@ -1621,9 +1626,11 @@ fn test_apply_custom_mutation_disagreeing_nested_payload_applies_nothing() {
     let mut doc = load_test_doc();
     let mut cm = make_test_mutation("nested-disagree", TS::SelfAndDescendants);
     cm.mutator = Some(MutatorNode::Macro {
+        kind: (),
         channel: 0,
         mutations: MutationListSrc::Literal(vec![nudge(10.0)]),
         children: vec![MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge(99.0)]),
             children: vec![],
@@ -1812,9 +1819,11 @@ fn test_start_animation_with_a_declined_mutator_tweens_zero_delta() {
     let mut doc = load_test_doc();
     let mut cm = make_animated_mutation("anim-declined", 500);
     cm.mutator = Some(MutatorNode::Macro {
+        kind: (),
         channel: 0,
         mutations: MutationListSrc::Literal(vec![nudge(100.0)]),
         children: vec![MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge(999.0)]),
             children: vec![],
@@ -1868,9 +1877,11 @@ fn test_start_animation_with_an_agreeing_nested_payload_tweens_the_delta() {
     let mut doc = load_test_doc();
     let mut cm = make_animated_mutation("anim-agreeing", 500);
     cm.mutator = Some(MutatorNode::Macro {
+        kind: (),
         channel: 0,
         mutations: MutationListSrc::Literal(vec![nudge(100.0)]),
         children: vec![MutatorNode::Macro {
+            kind: (),
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge(100.0)]),
             children: vec![],
@@ -2126,7 +2137,7 @@ fn test_tick_completion_live_tree_relative_no_double_apply() {
     let arena_id = tree.arena_id_for(&node_id).expect("node in tree");
     let tree_x = tree
         .tree
-        .arena
+        .arena()
         .get(arena_id)
         .unwrap()
         .get()
@@ -2379,7 +2390,7 @@ fn section_max_size_pt(doc: &MindMapDocument, node_id: &str, idx: usize) -> f32 
 fn section_tree_scale(tree: &baumhard::mindmap::tree_builder::MindMapTree, node_id: &str, idx: usize) -> f32 {
     let sid = tree.section_arena_id(node_id, idx).unwrap();
     tree.tree
-        .arena
+        .arena()
         .get(sid)
         .unwrap()
         .get()
@@ -2883,7 +2894,7 @@ fn test_toggle_mutation_survives_rebuild_and_reverts_off() {
         doc.reapply_active_toggles(&mut tree);
         let aid = tree.arena_id_for(&nid).unwrap();
         tree.tree
-            .arena
+            .arena()
             .get(aid)
             .unwrap()
             .get()
@@ -3215,7 +3226,7 @@ fn test_active_toggles_replay_in_activation_order() {
     let aid = tree.arena_id_for(&nid).unwrap();
     let x = tree
         .tree
-        .arena
+        .arena()
         .get(aid)
         .unwrap()
         .get()

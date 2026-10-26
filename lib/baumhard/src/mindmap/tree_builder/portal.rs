@@ -205,19 +205,19 @@ impl PortalHitIndex {
     /// [`PortalHit`]: the [`EdgeKey`]'s three plus the endpoint
     /// id.
     pub fn resolve(&self, tree: &GfxTree, hit: NodeId) -> Option<PortalHit> {
-        let leaf = tree.arena.get(hit)?;
+        let leaf = tree.arena().get(hit)?;
         let part = match leaf.get().channel() {
             ICON_SLOT => PortalPart::Icon,
             TEXT_SLOT => PortalPart::Text,
             _ => return None,
         };
         let endpoint_void_id = leaf.parent()?;
-        let endpoint_void = tree.arena.get(endpoint_void_id)?;
+        let endpoint_void = tree.arena().get(endpoint_void_id)?;
         // Endpoint voids are 1-based by the tree-shape contract:
         // channel 1 is `from_id`, channel 2 is `to_id`.
         let endpoint_idx = endpoint_void.get().channel().checked_sub(1)?;
         let pair_void_id = endpoint_void.parent()?;
-        let pair_channel = tree.arena.get(pair_void_id)?.get().channel();
+        let pair_channel = tree.arena().get(pair_void_id)?.get().channel();
         let pair = self.pairs.get(pair_channel.checked_sub(1)?)?;
         Some(PortalHit {
             edge_key: pair.edge_key.clone(),
@@ -598,29 +598,38 @@ pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
     let mut unique_id: usize = 1;
 
     for pair in pairs {
-        let pair_root = tree.root.append_value(
+        let root = tree.root;
+        let Some(pair_root) = super::push_element(
+            &mut tree,
+            root,
             GfxElement::new_void_with_id(pair.pair_channel, unique_id),
-            &mut tree.arena,
-        );
+        ) else {
+            continue;
+        };
         unique_id += 1;
 
         for (endpoint_idx, ep) in pair.endpoints.iter().enumerate() {
             let endpoint_channel = endpoint_idx + 1;
-            let endpoint_void = pair_root.append_value(
+            let Some(endpoint_void) = super::push_element(
+                &mut tree,
+                pair_root,
                 GfxElement::new_void_with_id(endpoint_channel, unique_id),
-                &mut tree.arena,
-            );
+            ) else {
+                continue;
+            };
             unique_id += 1;
 
-            endpoint_void.append_value(
+            super::push_element(
+                &mut tree,
+                endpoint_void,
                 GfxElement::new_area_non_indexed_with_id(ep.icon.clone(), ICON_SLOT, unique_id),
-                &mut tree.arena,
             );
             unique_id += 1;
 
-            endpoint_void.append_value(
+            super::push_element(
+                &mut tree,
+                endpoint_void,
                 GfxElement::new_area_non_indexed_with_id(ep.text.clone(), TEXT_SLOT, unique_id),
-                &mut tree.arena,
             );
             unique_id += 1;
         }
@@ -678,19 +687,26 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
 
     for pair in pairs {
-        let pair_node = mt
-            .root
-            .append_value(GfxMutator::new_void(pair.pair_channel), &mut mt.arena);
+        let root = mt.root;
+        let Some(pair_node) = super::push_mutator(&mut mt, root, GfxMutator::new_void(pair.pair_channel))
+        else {
+            continue;
+        };
 
         for (endpoint_idx, ep) in pair.endpoints.iter().enumerate() {
             let endpoint_channel = endpoint_idx + 1;
-            let endpoint_void = pair_node.append_value(GfxMutator::new_void(endpoint_channel), &mut mt.arena);
+            let Some(endpoint_void) =
+                super::push_mutator(&mut mt, pair_node, GfxMutator::new_void(endpoint_channel))
+            else {
+                continue;
+            };
 
             for (slot, area) in [(ICON_SLOT, &ep.icon), (TEXT_SLOT, &ep.text)] {
                 let delta = DeltaGlyphArea::full_assign_from(area);
-                endpoint_void.append_value(
+                super::push_mutator(
+                    &mut mt,
+                    endpoint_void,
                     GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), slot),
-                    &mut mt.arena,
                 );
             }
         }
