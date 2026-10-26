@@ -1164,7 +1164,7 @@ first, the order `Undo` takes them). Each entry is `{"kind", "node_ids"?,
 "index"?}`: `kind` is the `UndoAction` variant's name (`MoveNodes`,
 `CustomMutation`, `ReparentNodes`, `DeleteEdge`, `CreateEdge`,
 `EditEdge`, `CreateNode`, `EditNodeText`, `EditNodeStyle`,
-`EditNodeZoom`, `CanvasSnapshot`, `EditNodeAabb`, `DeleteNode`), with the
+`EditNodeZoom`, `CanvasSnapshot`, `EditNodeAabb`, `DeleteNodes`), with the
 nodes it touches or, for the edge entries, the edge `index`. The
 before-images an entry carries are what undo restores from and are not
 reported.
