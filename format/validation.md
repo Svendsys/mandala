@@ -57,7 +57,10 @@ that moved.
    `insert`, and one guard covers one such growth — a second needs a
    guard of its own. In a loop, only a guard in the same loop body,
    run once per iteration, counts; a writer that adds several at once
-   has to bound its count against the constant itself.
+   has to bound its count against the constant itself. The scan does
+   not reason about exclusive branches, so `if a { push } else { push }`
+   behind one guard reports the second arm — a conservative false
+   positive: give each arm its own guard.
 3. **Coherence — `verify` reports.** Everything else: a file that
    loads and renders but still says something incoherent. Dangling
    edge references, a Dewey ID that disagrees with `parent_id`, an

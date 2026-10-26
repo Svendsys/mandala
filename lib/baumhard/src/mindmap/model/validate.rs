@@ -1538,6 +1538,27 @@ impl Doc {
         Ok(())
     }
 
+    pub fn push_in_repeat_with_after_guard(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        std::iter::repeat_with(|| node.sections.push(MindSection::default()))
+            .take(n)
+            .count();
+        Ok(())
+    }
+
+    // The documented false positive: only one arm runs, but guards are
+    // spent in source order, not per path, so the `else` push is
+    // reported. Pinned so a change to it is a decision, not a drift.
+    pub fn exclusive_arms_after_one_guard(&mut self, node: &mut MindNode, a: bool) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        if a {
+            node.sections.push(MindSection::default());
+        } else {
+            node.sections.push(MindSection::default());
+        }
+        Ok(())
+    }
+
     pub fn push_in_boxed_closure_after_guard(&mut self, node: &mut MindNode, hooks: &mut Vec<Box<dyn FnMut()>>) -> Result<(), String> {
         validate::room_for_another_section(node)?;
         hooks.push(Box::new(move || node.sections.push(MindSection::default())));
@@ -1617,6 +1638,9 @@ impl Doc {
                 ("two_pushes_per_iteration", Single, true),
                 ("two_pushes_per_iteration", Single, false),
                 ("push_in_from_fn_after_guard", Single, false),
+                ("push_in_repeat_with_after_guard", Single, false),
+                ("exclusive_arms_after_one_guard", Single, true),
+                ("exclusive_arms_after_one_guard", Single, false),
                 ("push_in_boxed_closure_after_guard", Single, false),
                 ("replaces", Assign, false),
                 ("mem_replace", Assign, false),
