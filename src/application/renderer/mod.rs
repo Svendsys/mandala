@@ -101,6 +101,15 @@ pub use borders::measure_max_glyph_advance;
 pub(crate) use camera::{content_bounds, FIT_PADDING_FRACTION};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use capture::{CaptureFailure, CapturedPixels};
+// Which canvas set a capture's frame draws; the window's frames are
+// always the live one (`render::render`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use scene_shape_cache::CanvasSource;
+// Test-only, beside `refresh` above: the capture composition is pure
+// over two projected scenes, and the test that holds it to the roles'
+// zoom split needs the segment vocabulary to read its answer.
+#[cfg(test)]
+pub(crate) use scene_shape_cache::{compose_capture_canvas, CanvasSegment, CaptureCanvas, ShapedSet};
 // For the watchdog's test that holds the two bounds together.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use capture::GPU_WAIT as CAPTURE_GPU_WAIT;
@@ -600,6 +609,16 @@ pub struct Renderer {
     /// that index-ordered draw stream stable while only part of the
     /// scene re-shapes.
     canvas_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
+    /// A capture's canvas: the shaped output of the capture engine's
+    /// scratch scene — the zoom-dependent roles projected at the
+    /// capture's zoom — and the draw order that interleaves it with
+    /// the live set above. Filled by
+    /// [`Self::rebuild_capture_canvas_buffers`] right before a capture
+    /// framed at another zoom draws, read only by a frame prepared with
+    /// [`scene_shape_cache::CanvasSource::Composed`], and reused across
+    /// such captures by the same rule as the live set. Empty on the
+    /// browser, which has no capture engine.
+    capture_canvas: scene_shape_cache::CaptureCanvas,
     /// Set whenever the camera *zoom* changes. The document-side
     /// `SceneConnectionCache` stores pre-clip samples whose spacing
     /// depends on `GlyphConnectionConfig::effective_font_size_pt`, which
@@ -976,6 +995,7 @@ impl Renderer {
             selection_rect_shape_cache: None,
             overlay_scene_elements: Vec::new(),
             canvas_scene_elements: Vec::new(),
+            capture_canvas: Default::default(),
             connection_geometry_dirty: false,
             rect_pipeline,
             rect_vertex_buffer,

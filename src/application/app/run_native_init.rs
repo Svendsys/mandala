@@ -127,6 +127,10 @@ pub(super) struct InitState {
     /// ended (`app::record_flow`). App state, not session state: it
     /// outlives the client that started it.
     pub(super) recorder: Recorder,
+    /// The capture engine's scratch scene, where a capture framed at
+    /// another zoom projects its zoom-dependent roles instead of into
+    /// `app_scene` (`app::capture_scene`). Reused across captures.
+    pub(super) scratch_canvas: super::capture_scene::ScratchCanvas,
     /// A handle on the event loop's freeze watchdog, for main-thread
     /// work that runs long while making progress — a screenshot ticks
     /// it per band and per encoded chunk (`app::capture_flow`), a
@@ -175,6 +179,7 @@ impl InitState {
             macros: &mut self.macros,
             artifacts: &mut self.artifacts,
             recorder: &mut self.recorder,
+            scratch_canvas: &mut self.scratch_canvas,
             watchdog: &self.watchdog,
             shell: &self.shell,
             touch_recognizer: &mut self.touch_recognizer,
@@ -476,6 +481,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         injected: InjectedQueue::default(),
         artifacts: Artifacts::for_this_process(),
         recorder: Recorder::default(),
+        scratch_canvas: super::capture_scene::ScratchCanvas::new(),
         watchdog,
         clock,
         redraws: RedrawLedger::default(),
