@@ -4,11 +4,11 @@
 //! `select_*_in` helpers — `select_all_in` / `deselect_all_in` /
 //! `invert_selection_in` / `select_parent_in` / `select_child_in` /
 //! `select_sibling_in`. The renderer-touching `apply_*` wrappers
-//! are out of scope per `TEST_CONVENTIONS.md §T8` (no live wgpu
-//! in unit tests); the tests below cover the cross-platform inner
-//! functions that carry the actual logic. A regression in any of
-//! these silently changes WASM and native behaviour identically —
-//! the type-checker won't catch it.
+//! need the GPU-backed tier of `TEST_CONVENTIONS.md §T8` (a live
+//! `Renderer`, one app at a time); the tests below cover the
+//! cross-platform inner functions that carry the actual logic. A
+//! regression in any of these silently changes WASM and native
+//! behavior identically — the type-checker won't catch it.
 
 #![cfg(test)]
 

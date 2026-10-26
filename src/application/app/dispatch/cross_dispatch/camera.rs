@@ -199,7 +199,9 @@ mod tests {
     //! that DO mutate document state — `jump_to_root_in`
     //! today; future zoom-window helpers' inner functions
     //! would land here too. The renderer-touching `apply_*`
-    //! wrappers are out of scope per `TEST_CONVENTIONS.md §T8`.
+    //! wrappers are the GPU-backed tier's (`TEST_CONVENTIONS.md
+    //! §T8`): `app/tests_gpu.rs` drives `ZoomIn` through the real
+    //! one.
 
     use super::*;
     use crate::application::document::tests_common::load_test_doc;

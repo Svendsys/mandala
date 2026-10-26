@@ -990,7 +990,8 @@ fn frame_interval_ring_clear_restores_empty_state() {
 // reuse rule in `scene_shape_cache` — what invalidates a cached
 // element, and what deliberately does not. The pass itself is not
 // exercised: it lives on `Renderer`, and standing up a wgpu device
-// for a test is what TEST_CONVENTIONS §T8 forbids. What is
+// belongs to the GPU-backed tier (TEST_CONVENTIONS §T8), not to this
+// renderer-free file. What is
 // exercised is the whole of the decision that pass makes.
 
 use baumhard::core::primitives::{Applicable, ApplyOperation, ColorFontRegions};
@@ -1074,7 +1075,7 @@ fn overlay_cache_field_for(tag: GlyphAreaFieldType) -> GlyphAreaField {
 /// `rebuild_overlay_scene_buffers` skips re-shaping an element whose
 /// inputs still compare equal, so a field a mutator can change but
 /// the comparison cannot see would leave a stale glyph on screen —
-/// with no test in this repo able to see it (§T8 rules out pixels).
+/// with no test in this repo able to see it (§T10: never pixels).
 /// Adding a variant to `GlyphAreaField` fails to compile here until
 /// it is classified, and classifying it as a real field fails the
 /// assertion below unless the comparison actually covers it.
@@ -1346,7 +1347,7 @@ fn test_glyph_area_equality_ignores_only_the_hitbox() {
 /// `rebuild_overlay_scene_buffers` does — one cache entry per walked
 /// element, in walk order. Buffers are left empty: `classify`
 /// never inspects them, and shaping real ones would buy the test
-/// nothing it could assert on (§T8).
+/// nothing it could assert on (§T10: never pixels).
 fn snapshot_overlay(scene: &Scene, id: SceneTreeId) -> Vec<ShapedSceneElement> {
     let tree = scene.tree(id).expect("tree registered");
     tree.root()
@@ -1711,7 +1712,7 @@ type NamedFillMutation = (&'static str, fn(&mut GlyphArea));
 /// turns out not to reach the fill fails here rather than passing
 /// quietly — and only then must the key refuse to reuse. A row that
 /// passed step one and failed step two is a fill left stale on
-/// screen, which no test in this repo could otherwise see (§T8).
+/// screen, which no test in this repo could otherwise see (§T10).
 #[test]
 fn test_canvas_fill_inputs_are_all_visible_to_the_reuse_key() {
     use baumhard::gfx_structs::area::EdgePadding;
@@ -1924,7 +1925,7 @@ type NamedTextMutation = (&'static str, fn(&mut GlyphArea));
 /// fails here instead of passing quietly. Only then must the key
 /// refuse to reuse. A row that passes step one and fails step two is
 /// text left stale on screen at the wrong alignment, which no test
-/// in this repo could otherwise see (§T8).
+/// in this repo could otherwise see (§T10).
 #[test]
 fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
     baumhard::font::fonts::init();
@@ -2136,7 +2137,8 @@ fn test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings() {
 /// walker's stamp geometry and the recorded offset ever disagreed,
 /// a drag would silently scatter (or collapse) an outlined
 /// element's halo. Pinned here rather than at the patch, which is
-/// on `Renderer` and so out of reach of a test (§T8).
+/// on `Renderer` and so reachable only from the suite's GPU-backed
+/// tier (§T8), one app at a time.
 #[test]
 fn test_walker_records_the_stamp_offset_of_every_emitted_buffer() {
     baumhard::font::fonts::init();
@@ -2668,7 +2670,7 @@ fn background_rect_order(rects: &[NodeBackgroundRect]) -> Vec<usize> {
 /// re-appended the fill it just re-collected, the element being
 /// edited would have spent the whole gesture painted over its
 /// neighbors and snapped back on the next full rebuild — a defect no
-/// assertion in this repo can see in pixels (§T8), which is why the
+/// assertion in this repo can see in pixels (§T10), which is why the
 /// ordering is asserted on the list instead.
 #[test]
 fn test_reshaping_an_element_keeps_its_background_fill_in_draw_order() {
@@ -2830,7 +2832,7 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
 // the other. `do_shape_shader_ids_are_stable` (baumhard) pins the
 // Rust half against its own constants; nothing read the shader. The
 // checks below close that by reading the shader as text — no wgpu
-// device, no GPU, so §T8 is satisfied by construction.
+// device, no GPU: the renderer-free tier of §T8.
 
 /// The WGSL constant each `NodeShape` variant expects the fragment
 /// shader to declare.
@@ -3171,10 +3173,10 @@ fn renderer_new_field_expression(new_body: &str, field: &str) -> String {
 /// declared *inside* `Renderer::new` would shadow it: the text the
 /// pin reads is unchanged while the name resolves to something the
 /// test never saw, which is the one silent bypass left after the
-/// three orphans were closed. Nothing under §T8 can resolve a name —
-/// that needs a `Renderer`, and building one needs a GPU — but a
-/// shadowing declaration has to be *written*, and writing it spends
-/// the name a second time.
+/// three orphans were closed. A renderer-free test (§T8) cannot
+/// resolve a name — that needs a `Renderer`, which only the
+/// GPU-backed tier builds — but a shadowing declaration has to be
+/// *written*, and writing it spends the name a second time.
 ///
 /// The input that makes this fail: add `const RECT_VERTEX_SIZE: u64
 /// = 40;` inside `Renderer::new`. Each of the three names occurs

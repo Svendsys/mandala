@@ -50,9 +50,10 @@ impl CanvasPerPixel {
     /// The body is pinned as source text by
     /// `test_canvas_per_pixel_reads_the_camera_ratio_unscaled`,
     /// because it is the one place a scaling could be smuggled back in
-    /// and no runtime test can reach it: checking it that way needs a
-    /// live `Renderer`, which `TEST_CONVENTIONS §T8` keeps out of the
-    /// harness. Reading the source needs neither.
+    /// and no renderer-free test can reach it: checking it that way
+    /// needs a live `Renderer`, which only the GPU-backed tier
+    /// (`TEST_CONVENTIONS §T8`) builds. Reading the source needs
+    /// neither.
     pub(in crate::application::app) fn of(renderer: &Renderer) -> Self {
         Self(renderer.canvas_per_pixel())
     }
@@ -83,10 +84,10 @@ mod tests {
     ///
     /// A source-level pin, because it is the one place the scaling
     /// this newtype exists to keep out could be smuggled back in, and
-    /// no runtime assertion can reach it: calling `of` needs a live
-    /// `Renderer`, which `TEST_CONVENTIONS §T8` keeps out of the
-    /// harness. Reading the source needs neither a renderer nor a GPU
-    /// — the same mechanism
+    /// no renderer-free assertion can reach it: calling `of` needs a
+    /// live `Renderer`, which only the GPU-backed tier
+    /// (`TEST_CONVENTIONS §T8`) builds. Reading the source needs
+    /// neither a renderer nor a GPU — the same mechanism
     /// `event_cursor_moved`'s
     /// `test_the_mouse_drag_arms_name_the_shared_pointer_threshold`
     /// uses for the same reason, and the same one

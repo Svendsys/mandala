@@ -197,7 +197,7 @@ fn execute_subject(
             let mut edits = BorderConfigEdits::default();
             for pair in &pairs {
                 if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
-                    return ExecResult::err(e);
+                    return ExecResult::err(format!("{}: {}", descent.level.label, e));
                 }
             }
             apply_canvas_edits(eff, surface, edits)

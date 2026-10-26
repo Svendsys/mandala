@@ -246,23 +246,97 @@ Any of these triggers a test in the same commit:
 
 ## §T8 GPU and renderer testing
 
-We do **not** exercise `Renderer::new`, the wgpu device/queue,
-cosmic-text rasterization, or any live GPU code path in tests. The
-renderer is constructed once at app startup and never in a test
-harness. Standing up a headless wgpu instance for tests is a tar pit.
+**No test may *require* a hardware GPU.** That is the whole rule
+since #171. The ban it replaced — no live wgpu in the suite at all —
+had an environmental reason, not an architectural one: agent
+containers and CI runners have no GPU. They do have a software one on
+demand. Mesa's lavapipe is a Vulkan ICD that rasterizes on the CPU
+(`apt-get install mesa-vulkan-drivers`), the app runs on it exactly as
+on hardware, and so does the suite.
 
-What we *do* test from the renderer is the pure layout math — cull
-rects, palette frame sizing, palette scroll windows, sacred-border
-layout, backdrop alignment. See `application::renderer::tests` for the
-exemplar. If a bug requires a live wgpu device to reproduce, reproduce
-it with the app itself, outside the suite, rather than building a
-harness to chase it: `mandala --headless --screenshot out.png <map>`
-draws a frame with no display (Mesa's lavapipe on a GPU-less box), and
-the `mandala-drive` skill drives and screenshots a running instance —
-`scripts/ipc_smoke.sh` is that loop as a check. What the suite pins of
-the code around the GPU is what can be pinned without one: the
-adapter plan (`renderer/adapter.rs`), the loop body's order against a
-recording fake (`app/pump.rs`), the headless frame pacing.
+**Two tiers, both first-class.**
+
+- **Renderer-free tests** remain the default and the bulk. Pure
+  layout math — cull rects, palette frame sizing, palette scroll
+  windows, sacred-border layout, backdrop alignment — is tested as
+  values in, values out (`application::renderer::tests` is the
+  exemplar), and a decision made next to a `&mut Renderer` is split
+  out as a pure function and pinned there (`rect_select_frame`,
+  `MiddleButtonRoute`, `ReleaseRefresh`, the pump's `Iteration` fake).
+  That split is still the right shape whenever it is available: a
+  pure function needs no device, runs in microseconds, and fails
+  naming the one decision that broke.
+- **GPU-backed tests** (`src/application/app/tests_gpu.rs`, through
+  `app::gpu_harness`) build the real app, headless, through
+  `run_native_init::build` with `Shell::Headless` — the path
+  `mandala --headless` takes — on whatever adapter the machine has,
+  and drive it through the real funnels: the IPC `act.*` commands via
+  `ipc::run_attached`, the keyboard via
+  `InputHandlerContext::on_keyboard_input`, the frame's input half via
+  `drain_frame`, a drawn frame via `capture.screenshot`. They exist
+  for what no renderer-free test can reach: the arms behind
+  `&mut Renderer` end to end — `dispatch_action` with the rebuilds it
+  runs, the console's side-effect drain, a camera decree through the
+  frame's reprojection, a frame drawn on the adapter and read back by
+  the capture engine. Not the window's frame: under `Shell::Headless`
+  there is no surface to present to, so `draw_frame` keeps the redraw
+  ledger and draws nothing, and the capture is the one route a
+  headless app draws through.
+
+**The requirement, and what holds it.** A GPU-backed test obtains its
+app through `gpu_harness::headless_app` (or `headless_app_with`) and
+returns on `None`. No test under `src/`, `lib/` or `crates/` opens a
+wgpu instance or device, or builds the app on one, by any other
+route — not `Instance::new`, not `request_adapter` / `request_device`,
+not `Renderer::bootstrap_*`, not `run_native_init::build` — because a
+test that did would have no skip note, no `MANDALA_REQUIRE_GPU` and no
+place in the one-at-a-time line.
+`test_only_the_bootstrap_path_and_the_harness_open_a_device`
+(`gpu_harness`) reads every Rust file in the workspace, comments and
+string literals blanked, and holds the list of files that may spell
+those calls: the production bootstrap path and the harness.
+
+**Skipped with a note where no adapter exists, never silently, and
+never in CI.** The harness probes once per process for an adapter
+that can open a device, under the plan every bootstrap uses
+(`renderer::adapter`): a machine with a GPU runs the tests on it, a
+GPU-less box on lavapipe. With none, each GPU-backed test prints a
+`SKIPPED:` note and passes having proved nothing — the same
+conditional-locally, unconditional-in-CI arrangement as `test.sh`'s
+wasm32 gate and the font-lock probe (§T9). "Prints" means it reaches
+the terminal: libtest shows a passing test's `eprintln!` only under
+`--nocapture`, which `./test.sh` does not pass, so the note is
+written through `baumhard::util::test_skip`, straight to the
+process's stderr past the per-test capture — the font-lock probe
+writes its note the same way — and `test.sh` counts the `SKIPPED:`
+lines in its summary beside the pass count. `MANDALA_REQUIRE_GPU` turns
+the skip into a failure; CI installs lavapipe and sets it
+(`.github/workflows/test.yml`), so a runner that lost its driver goes
+red instead of quietly shrinking the suite (§T13.4). An agent
+container gets lavapipe through the apt-over-HTTPS recipe in the
+`mandala-drive` skill.
+
+**Assertions are on state, never on pixels.** The document's bytes
+(`loader::to_json_value`), the undo stack, the installed tree, what a
+rebuild left in the renderer (`text_buffer_owner_count`, the camera,
+the geometry-dirty flag), the redraw ledger. lavapipe's rasterization
+is not a hardware GPU's, so a pixel assertion would hold on one
+machine and not another, and §T10's no-snapshot rule stands.
+
+**One app at a time, and only where it buys something.** Each app
+opens a device and shapes every node's text under the font lock —
+about a second on llvmpipe — so the harness serializes them through
+one mutex; a test that needs two apps drops the first before building
+the second. Put several assertions on one app rather than one on
+each, and do not reach for the harness where a renderer-free test pins
+the same decision: the GPU tier is for the paths that have no
+renderer-free half.
+
+**Still outside the suite.** `scripts/ipc_smoke.sh` and
+`mandala --headless --screenshot out.png <map>` need the built
+binaries, a socket and a process to drive; they check the launch, IPC
+and capture loop end to end and remain the way to see what the app
+actually draws (the `mandala-drive` skill).
 
 ## §T9 Mobile and WASM
 
@@ -322,7 +396,13 @@ re-litigate them without a strong reason.
 - **No async test harness.** The app is single-threaded (see
   `CLAUDE.md`). Tests stay that way.
 - **No `wasm-bindgen-test`.** See §T9.
-- **No GPU / live-wgpu test infrastructure.** See §T8.
+- **No test may require a hardware GPU.** The GPU-backed tests run
+  on whatever adapter the machine has, a software one where there is
+  no GPU, and skip with a note where there is none at all (§T8);
+  nothing in the suite asserts on pixels, and nothing needs a
+  display. The bullet used to read "no GPU / live-wgpu test
+  infrastructure"; #171 replaced the ban with the requirement once a
+  software adapter turned out to run the real app.
 - **No coverage gate in CI.** There *is* CI —
   `.github/workflows/test.yml` runs `./test.sh --lint` on every push
   to main and every pull request, on the toolchain `rust-toolchain.toml`

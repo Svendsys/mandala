@@ -76,10 +76,11 @@ fn unavailable(what: &str) {
     if std::env::var_os(REQUIRE_ENV).is_some() {
         panic!("{what}, and {REQUIRE_ENV} is set, so this test may not skip");
     }
-    eprintln!(
-        "SKIPPED: {what}. The wasm32 font-lock probe did not run, so a green result \
+    // Past libtest's capture, so the note shows under `./test.sh`.
+    baumhard::util::test_skip::note_skipped(&format!(
+        "{what}. The wasm32 font-lock probe did not run, so a green result \
          here says nothing about the browser build. (Set {REQUIRE_ENV} to make this a failure.)"
-    );
+    ));
 }
 
 fn wasm_target_installed() -> bool {

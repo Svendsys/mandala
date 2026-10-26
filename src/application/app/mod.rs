@@ -1281,9 +1281,20 @@ pub(crate) fn project_scene_for_tests(
 }
 
 // Unit tests for pure helpers (cursor math, caret insertion,
-// double-click detection, Baumhard mutation round-trip). Event-loop
-// integration is verified manually via `cargo run`.
+// double-click detection, Baumhard mutation round-trip). What needs
+// the renderer is `tests_gpu`'s, below.
 
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests;
+
+// The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
+// native app with no window on whatever adapter the machine has —
+// Mesa's lavapipe on a GPU-less box — skipped with a note where there
+// is none, and never skipped in CI.
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod gpu_harness;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu;

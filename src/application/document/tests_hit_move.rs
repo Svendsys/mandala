@@ -1639,7 +1639,7 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
 /// styled runs) but which is only reported as a patch keeps a stale
 /// buffer, full stop, because `patch_drag_positions` rewrites a
 /// position and shapes nothing. Neither is visible to any pixel
-/// assertion in this repo (§T8).
+/// assertion in this repo (§T10).
 ///
 /// So this walks the whole arena and snapshots every element's whole
 /// `GlyphArea`, then asserts both halves across the call:

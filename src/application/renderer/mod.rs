@@ -93,6 +93,8 @@ mod selection_overlay;
 mod tree_buffers;
 mod tree_walker;
 
+#[cfg(test)]
+pub(crate) use adapter::probe_adapter;
 pub use adapter::AdapterPolicy;
 pub use borders::measure_max_glyph_advance;
 // The screenshot engine's half of the renderer's surface, native-only
@@ -182,7 +184,7 @@ use glam::Vec2;
 /// in lock-step, and
 /// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
 /// is what holds them there — it reads this string as text, so no
-/// GPU is involved and §T8 is untouched. That it is *this* string
+/// GPU is involved (§T8's renderer-free tier). That it is *this* string
 /// `Renderer::new` compiles, rather than another const beside it, is
 /// pinned by
 /// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`:
@@ -1011,6 +1013,17 @@ impl Renderer {
                 a: 1.0,
             },
         }
+    }
+
+    /// How many tree elements hold shaped text buffers right now —
+    /// the keys of the per-element buffer table `rebuild_buffers_from_tree`
+    /// refills. For the GPU-backed tests (TEST_CONVENTIONS §T8), which
+    /// assert on what a rebuild left in the renderer rather than on
+    /// pixels: a deleted node's buffers are gone after the rebuild that
+    /// follows the delete, and back after the one that follows the undo.
+    #[cfg(test)]
+    pub(crate) fn text_buffer_owner_count(&self) -> usize {
+        self.mindmap_buffers.len()
     }
 
     /// Current camera zoom level, used by the event loop when it

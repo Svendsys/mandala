@@ -105,7 +105,7 @@ pub fn execute_section_frame(descent: &Descent, args: &Args, eff: &mut ConsoleEf
                 }
                 saw_any = true;
                 if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
-                    return ExecResult::err(e);
+                    return ExecResult::err(format!("{}: {}", descent.level.label, e));
                 }
             }
             if !saw_any {
