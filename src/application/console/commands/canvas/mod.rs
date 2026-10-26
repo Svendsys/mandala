@@ -32,6 +32,7 @@ use baumhard::mindmap::border::resolve_border_style;
 use baumhard::mindmap::model::GlyphBorderConfig;
 use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
+use super::border::grammar::POSITIONAL_SUBVERBS;
 use super::border::{
     edits_has_glyph_field, positional_subverb_to_edits, prepend_line, stage_kv, BorderEdit, BorderSurface,
 };
@@ -39,6 +40,7 @@ use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Delegates, Routes};
 use crate::application::console::spec::{kvs, usage, Descent, Grammar};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
@@ -124,6 +126,38 @@ pub fn execute_canvas(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 }
 
+/// Which handler each subject level's subverbs run (`spec::route`)
+/// — the same on all three levels. The per-field subverbs are handed
+/// to the shared set's own table in `border::positional` by one
+/// [`DELEGATES`] row; `preview` and `focused` open levels, so neither
+/// is a row.
+#[derive(Clone, Copy)]
+enum Route {
+    Show,
+    Reset,
+    PerField,
+}
+
+const ROUTES: &Routes<Route> = &[("show", Route::Show), ("reset", Route::Reset)];
+
+const DELEGATES: &Delegates<Route> = &[(POSITIONAL_SUBVERBS, Route::PerField)];
+
+/// The names this dispatcher routes, for the registry test in
+/// `console::spec::tests`: [`ROUTES`] plus every name [`DELEGATES`]
+/// hands on, read off the same rows the dispatch reads.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names_with(ROUTES, DELEGATES)
+}
+
+/// The shared sets [`DELEGATES`] hands on, for the registry test in
+/// `console::spec::tests` to check each is listed in its
+/// `shared_sets()`.
+#[cfg(test)]
+pub(crate) fn delegated_sets() -> Vec<&'static [crate::application::console::spec::Subverb]> {
+    route::sets(DELEGATES)
+}
+
 /// One subject level — `canvas border`, `canvas section-frame`, or
 /// the same past the `focused` modifier. The three differ only in
 /// which document slot `surface` names; the grammar they read is
@@ -135,16 +169,17 @@ fn execute_subject(
     surface: BorderSurface,
 ) -> ExecResult {
     match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "show" => match kvs::read_strict(descent, args) {
+        Stop::Matched(subverb) => match route::lookup_or_delegate(ROUTES, DELEGATES, subverb) {
+            Some(Route::Show) => match kvs::read_strict(descent, args) {
                 Ok(_) => execute_show(eff, surface),
                 Err(msg) => ExecResult::err(msg),
             },
-            "reset" => match kvs::read_strict(descent, args) {
+            Some(Route::Reset) => match kvs::read_strict(descent, args) {
                 Ok(_) => apply_canvas_edits(eff, surface, clear_edits()),
                 Err(msg) => ExecResult::err(msg),
             },
-            _ => apply_positional(descent, args, surface, eff),
+            Some(Route::PerField) => apply_positional(descent, args, surface, eff),
+            None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::KvForm => ExecResult::err(descent.quoting_hint(args)),
         Stop::Unknown => ExecResult::err(usage::unknown_subverb_message(

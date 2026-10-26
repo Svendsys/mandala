@@ -34,6 +34,7 @@ use crate::application::console::commands::border::{
 };
 use crate::application::console::parser::Args;
 use crate::application::console::spec::descent::Stop;
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionEdit, SelectionState};
@@ -42,6 +43,23 @@ use self::grammar::SECTION_FRAME;
 use super::target::{parse_section_target_kv, SectionTargetPolicy};
 
 pub(crate) mod grammar;
+
+/// Which handler each of `section frame`'s own subverbs runs
+/// (`spec::route`). `preview` opens a level, so it is not a row.
+#[derive(Clone, Copy)]
+enum Route {
+    Show,
+    Reset,
+}
+
+const ROUTES: &Routes<Route> = &[("show", Route::Show), ("reset", Route::Reset)];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
 
 /// Entry point dispatched from `section/mod.rs::execute_section`
 /// when the user typed `section frame …`. Args still includes the
@@ -53,15 +71,16 @@ pub fn execute_section_frame(descent: &Descent, args: &Args, eff: &mut ConsoleEf
         return execute_section_frame_preview(descent, args, eff);
     }
     match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "show" => match kvs::read_strict(descent, args) {
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(Route::Show) => match kvs::read_strict(descent, args) {
                 Ok(_) => execute_show(args, eff),
                 Err(msg) => ExecResult::err(msg),
             },
-            _ => match kvs::read_strict(descent, args) {
+            Some(Route::Reset) => match kvs::read_strict(descent, args) {
                 Ok(_) => apply_reset(args, eff),
                 Err(msg) => ExecResult::err(msg),
             },
+            None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::KvForm => ExecResult::err(descent.quoting_hint(args)),
         Stop::Unknown => ExecResult::err(usage::unknown_subverb_message(

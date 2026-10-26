@@ -39,6 +39,13 @@ mod frame;
 pub(crate) mod grammar;
 pub(crate) mod target;
 
+// The `section frame` dispatcher's level and routed names, for the
+// registry test in `console::spec::tests` (`spec::route`).
+#[cfg(test)]
+pub(crate) use frame::grammar::{SECTION_FRAME, SECTION_FRAME_PREVIEW};
+#[cfg(test)]
+pub(crate) use frame::routed_names as frame_routed_names;
+
 use self::target::{
     multi_section_single_target_error, parse_section_target_kv, resolve_section_index, SectionTargetPolicy,
 };
@@ -47,6 +54,7 @@ use crate::application::console::parser::Args;
 use crate::application::console::predicates::node_or_section_selected_single_node;
 use crate::application::console::spec::descent::{descend, Stop};
 use crate::application::console::spec::kvs::Pair;
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SelectionState};
@@ -71,6 +79,46 @@ pub const COMMAND: Command = Command {
     synonyms: &["info", "offset", "size", "border", "preset", "glyph"],
     execute: execute_section,
 };
+
+/// Which handler each of `section`'s own subverbs runs
+/// (`spec::route`). `add` resolves its own target, so it is a variant
+/// of its own; every other subverb runs against the one section the
+/// selection and `section=` resolve to, and shares `Each`. `frame`
+/// opens a level, so it is not a row.
+#[derive(Clone, Copy)]
+enum Route {
+    Add,
+    Each(PerSection),
+}
+
+#[derive(Clone, Copy)]
+enum PerSection {
+    Move,
+    Resize,
+    Show,
+    Text,
+    Edit,
+    Delete,
+    Split,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("move", Route::Each(PerSection::Move)),
+    ("resize", Route::Each(PerSection::Resize)),
+    ("show", Route::Each(PerSection::Show)),
+    ("text", Route::Each(PerSection::Text)),
+    ("edit", Route::Each(PerSection::Edit)),
+    ("add", Route::Add),
+    ("delete", Route::Each(PerSection::Delete)),
+    ("split", Route::Each(PerSection::Split)),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
 
 fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let descent = descend(&grammar::SECTION, args.tokens());
@@ -104,19 +152,26 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Ok(pairs) => pairs,
         Err(msg) => return ExecResult::err(msg),
     };
+    let route = match route::lookup(ROUTES, subverb) {
+        Some(route) => route,
+        None => return ExecResult::err(route::miss(descent.level, subverb)),
+    };
     // `add` resolves its own target — the `at=` kv supplies the
     // insertion index, and the parent node id comes from
     // `selection.primary_node_id()`. Route before the per-section
     // resolver so a `Single(node)` selection with no section
     // pre-selected doesn't trip the "select a specific section"
     // error.
-    if subverb.name == "add" {
-        let node_id = match resolve_node_id(&eff.document().selection) {
-            Ok(id) => id,
-            Err(msg) => return ExecResult::err(msg),
-        };
-        return execute_add(&pairs, eff.document_mut(), &node_id);
-    }
+    let op = match route {
+        Route::Add => {
+            let node_id = match resolve_node_id(&eff.document().selection) {
+                Ok(id) => id,
+                Err(msg) => return ExecResult::err(msg),
+            };
+            return execute_add(&pairs, eff.document_mut(), &node_id);
+        }
+        Route::Each(op) => op,
+    };
     // `move` on a `MultiSection` selection with the **delta** form
     // (`dx=` / `dy=`) fans out to every targeted section — each
     // section's offset shifts by the same `(dx, dy)`. The absolute
@@ -125,11 +180,11 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // coords would all pile up at one offset, which is never the
     // intent).
     //
-    // The name comes off the declaration rather than off the raw
+    // The route comes off the declaration rather than off the raw
     // token, so `section MOVE dx=1` fans out too — the exact-match
     // this replaced did not, while every other arm on the verb was
     // already case-insensitive.
-    if subverb.name == "move" {
+    if let PerSection::Move = op {
         if let SelectionState::MultiSection(_) = &eff.document().selection {
             let has_delta = pairs.iter().any(|p| matches!(p.key.name, "dx" | "dy"));
             let has_abs = pairs.iter().any(|p| matches!(p.key.name, "x" | "y"));
@@ -174,21 +229,16 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if target_idx >= section_count {
         return ExecResult::err(format!("section[{}] not found on node '{}'", target_idx, node_id));
     }
-    match subverb.name {
-        "move" => execute_move(&descent, &pairs, eff.document_mut(), &node_id, target_idx),
-        "resize" => execute_resize(&descent, args, &pairs, eff.document_mut(), &node_id, target_idx),
-        "show" => execute_show(eff.document(), &node_id, target_idx),
-        "text" => execute_text(&descent, args, &pairs, eff.document_mut(), &node_id, target_idx),
-        "edit" => execute_edit(eff, &node_id, target_idx),
-        "delete" => execute_delete(eff.document_mut(), &node_id, target_idx),
-        "split" => execute_split(&pairs, eff.document_mut(), &node_id, target_idx),
-        // `add` is routed above; the arm exists because the match
-        // is over a declared name rather than a closed enum, and an
-        // interactive path degrades rather than panics (§9).
-        other => {
-            log::error!("section: subverb '{other}' reached the per-section dispatcher with no arm");
-            ExecResult::err(format!("internal: section {other} routing miss"))
+    match op {
+        PerSection::Move => execute_move(&descent, &pairs, eff.document_mut(), &node_id, target_idx),
+        PerSection::Resize => {
+            execute_resize(&descent, args, &pairs, eff.document_mut(), &node_id, target_idx)
         }
+        PerSection::Show => execute_show(eff.document(), &node_id, target_idx),
+        PerSection::Text => execute_text(&descent, args, &pairs, eff.document_mut(), &node_id, target_idx),
+        PerSection::Edit => execute_edit(eff, &node_id, target_idx),
+        PerSection::Delete => execute_delete(eff.document_mut(), &node_id, target_idx),
+        PerSection::Split => execute_split(&pairs, eff.document_mut(), &node_id, target_idx),
     }
 }
 
