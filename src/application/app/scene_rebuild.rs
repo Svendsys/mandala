@@ -1976,8 +1976,10 @@ mod canvas_pass_granularity {
         .update_connection_label_tree(app_scene);
     }
 
-    /// A drained frame of an edge-label drag re-shapes the label it
-    /// moved, and nothing else on the canvas.
+    /// A drained frame of an edge-label drag touches the label it
+    /// moved, and nothing else on the canvas — and touches it by
+    /// patching its position, not by re-shaping it, because a drag
+    /// changes where the label sits and nothing cosmic-text reads.
     ///
     /// The claim is asserted the way it is actually load-bearing —
     /// as a zero. The seven roles the drain does not re-project are
@@ -1995,7 +1997,7 @@ mod canvas_pass_granularity {
     /// a later "nothing changed" would be measuring the fixture
     /// rather than the pass.
     #[test]
-    fn test_edge_label_drain_reshapes_only_the_label_it_moved() {
+    fn test_edge_label_drain_touches_only_the_label_it_moved() {
         baumhard::font::fonts::init();
 
         let mut doc = load_test_doc();
@@ -2129,7 +2131,8 @@ mod canvas_pass_granularity {
             ScenePassKind::Canvas,
         );
         assert_eq!(
-            untouched.reshaped, 0,
+            (untouched.reshaped, untouched.patched),
+            (0, 0),
             "a label move re-projects no other role, so the other {} walked positions must \
              keep the buffers they already have",
             untouched.walked
@@ -2141,9 +2144,14 @@ mod canvas_pass_granularity {
             &mut labels,
             ScenePassKind::Canvas,
         );
+        // A label drag moves the label's anchor and nothing else, so
+        // the one position it touches is patched in place rather
+        // than re-shaped (`scene_shape_cache`'s "Moved is not stale").
         assert_eq!(
-            moved.reshaped, 1,
-            "one label moved, so one of the label role's {} walked positions may re-shape",
+            (moved.reshaped, moved.patched),
+            (0, 1),
+            "one label moved, so one of the label role's {} walked positions may be patched, \
+             and none re-shaped",
             moved.walked
         );
 
@@ -2157,9 +2165,10 @@ mod canvas_pass_granularity {
         );
         assert_eq!(production.walked, cold.walked);
         assert_eq!(
-            production.reshaped, 1,
-            "the whole-canvas pass a drained frame runs re-shapes the moved label and nothing \
-             else, out of {} walked positions",
+            (production.reshaped, production.patched),
+            (0, 1),
+            "the whole-canvas pass a drained frame runs patches the moved label and touches \
+             nothing else, out of {} walked positions",
             production.walked
         );
     }
@@ -2282,15 +2291,15 @@ mod canvas_pass_granularity {
             ScenePassKind::Canvas,
         );
         assert!(
-            moved.reshaped > 0,
+            moved.reshaped + moved.patched > 0,
             "re-projecting {moved_roles:?} at a different zoom must move something, or this \
              test is measuring a camera that stood still"
         );
 
         let after = refresh(app_scene.canvas_scene(), &ids, &mut shaped, ScenePassKind::Canvas);
         assert_eq!(
-            (after.walked, after.reshaped),
-            (cold.walked, 0),
+            (after.walked, after.reshaped, after.patched),
+            (cold.walked, 0, 0),
             "the four zoom-independent roles were not re-projected, so none of them re-shapes"
         );
     }

@@ -229,7 +229,9 @@ impl Renderer {
     /// one entry per walked element in draw order; callers do not need
     /// to know about individual overlays.
     ///
-    /// **Only elements whose shaping inputs changed are re-shaped.**
+    /// **Only elements whose shaping inputs changed are re-shaped**;
+    /// an element whose position alone changed has its buffers moved
+    /// in place, halo stamps included.
     /// Every overlay mutator apply routes here — picker hover, picker
     /// HSV drag, console keystroke, console scrollback — and each of
     /// those writes every slot's fields whether or not the value
