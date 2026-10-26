@@ -1457,6 +1457,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("subtree_aabb_deep_chain_propagates_to_root", |b| {
         b.iter(do_subtree_aabb_deep_chain_propagates_to_root)
     });
+    c.bench_function("ensure_subtree_aabbs_keeps_the_descendants_aabb_memo", |b| {
+        b.iter(do_ensure_subtree_aabbs_keeps_the_descendants_aabb_memo)
+    });
     c.bench_function("subtree_aabb_wide_tree_root_covers_all", |b| {
         b.iter(do_subtree_aabb_wide_tree_root_covers_all)
     });
@@ -1967,12 +1970,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flags_accessor_round_trips", |b| {
         b.iter(do_flags_accessor_round_trips)
-    });
-    c.bench_function("subtree_aabb_set_and_read", |b| {
-        b.iter(do_subtree_aabb_set_and_read)
-    });
-    c.bench_function("subtree_aabb_clone_resets_cache", |b| {
-        b.iter(do_subtree_aabb_clone_resets_cache)
     });
     c.bench_function("event_subscribers_add_and_check", |b| {
         b.iter(do_event_subscribers_add_and_check)

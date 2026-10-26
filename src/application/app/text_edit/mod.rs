@@ -118,7 +118,7 @@ impl TextEditState {
 /// Refreshes the subtree-AABB cache **before** the containment test,
 /// which is the load-bearing half.
 /// [`crate::application::document::point_in_node_aabb`] reads
-/// `subtree_aabb()`, which returns `None` while the cache is dirty
+/// `Tree::subtree_aabb`, which returns `None` while the cache is dirty
 /// (post-mutation / post-tree-rebuild) and then falls back to the
 /// container-only AABB — reporting a point over an *overflowing*
 /// second section as "outside". `ensure_subtree_aabbs` is O(1) on a

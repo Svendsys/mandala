@@ -168,7 +168,7 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
         return area.shape.contains_local(canvas_pos - min, bounds);
     }
 
-    if let Some((tl, br)) = element.subtree_aabb() {
+    if let Some((tl, br)) = tree.tree.subtree_aabb(arena_id) {
         return aabb_contains(canvas_pos, tl, br);
     }
     false

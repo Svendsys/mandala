@@ -1378,7 +1378,7 @@ struct Candidate {
     /// under it is a vanished name rather than an external one.
     root: Option<String>,
     /// The segment before the qualifier, when there is one: the enum
-    /// in `GfxElement::GlyphArea::subtree_aabb`, whose variant the
+    /// in `GfxElement::GlyphArea::glyph_area`, whose variant the
     /// qualifier then is.
     enclosing: Option<String>,
 }

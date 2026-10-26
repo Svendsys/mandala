@@ -111,7 +111,7 @@ pub fn do_subtree_aabb_leaf_equals_own_bounds() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
     let right_id = tree.root.children(tree.arena()).nth(1).expect("right child");
-    let aabb = tree.arena().get(right_id).unwrap().get().subtree_aabb();
+    let aabb = tree.subtree_aabb(right_id);
     assert_eq!(aabb, Some((Vec2::new(200.0, 200.0), Vec2::new(280.0, 230.0))));
 }
 
@@ -126,13 +126,7 @@ pub fn do_subtree_aabb_parent_encloses_children() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
     let left_id = tree.root.children(tree.arena()).next().expect("left child");
-    let (min, max) = tree
-        .arena()
-        .get(left_id)
-        .unwrap()
-        .get()
-        .subtree_aabb()
-        .expect("left subtree has an AABB");
+    let (min, max) = tree.subtree_aabb(left_id).expect("left subtree has an AABB");
     assert!(min.x <= 10.0);
     assert!(min.y <= 10.0);
     assert!(max.x >= 50.0);
@@ -149,13 +143,7 @@ fn test_subtree_aabb_root_encloses_entire_tree() {
 pub fn do_subtree_aabb_root_encloses_entire_tree() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let (min, max) = tree
-        .arena()
-        .get(tree.root)
-        .unwrap()
-        .get()
-        .subtree_aabb()
-        .expect("root subtree has an AABB");
+    let (min, max) = tree.subtree_aabb(tree.root).expect("root subtree has an AABB");
     assert!(min.x <= 10.0);
     assert!(min.y <= 10.0);
     assert!(max.x >= 280.0);
@@ -172,13 +160,7 @@ fn test_subtree_aabb_invalidated_by_mutation() {
 pub fn do_subtree_aabb_invalidated_by_mutation() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let before = tree
-        .arena()
-        .get(tree.root)
-        .unwrap()
-        .get()
-        .subtree_aabb()
-        .expect("root has AABB");
+    let before = tree.subtree_aabb(tree.root).expect("root has AABB");
 
     let move_mutator = GfxMutator::new(
         GfxMutation::area_command(GlyphAreaCommand::MoveTo(500.0, 500.0)),
@@ -192,11 +174,7 @@ pub fn do_subtree_aabb_invalidated_by_mutation() {
 
     tree.ensure_subtree_aabbs();
     let after = tree
-        .arena()
-        .get(tree.root)
-        .unwrap()
-        .get()
-        .subtree_aabb()
+        .subtree_aabb(tree.root)
         .expect("root has AABB after mutation");
     assert!(after.1.x >= 580.0);
     assert!(after.1.y >= 530.0);
@@ -216,14 +194,8 @@ pub fn do_subtree_aabb_void_tree_is_none() {
         .insert_child(tree.root, GfxElement::new_void(0), Placement::Last)
         .unwrap();
     tree.ensure_subtree_aabbs();
-    assert!(tree
-        .arena()
-        .get(tree.root)
-        .unwrap()
-        .get()
-        .subtree_aabb()
-        .is_none());
-    assert!(tree.arena().get(child).unwrap().get().subtree_aabb().is_none());
+    assert!(tree.subtree_aabb(tree.root).is_none());
+    assert!(tree.subtree_aabb(child).is_none());
 }
 
 // ── idempotent without mutation ───────────────────────────────────
@@ -236,9 +208,9 @@ fn test_subtree_aabb_ensure_is_idempotent() {
 pub fn do_subtree_aabb_ensure_is_idempotent() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let first = tree.arena().get(tree.root).unwrap().get().subtree_aabb();
+    let first = tree.subtree_aabb(tree.root);
     tree.ensure_subtree_aabbs();
-    let second = tree.arena().get(tree.root).unwrap().get().subtree_aabb();
+    let second = tree.subtree_aabb(tree.root);
     assert_eq!(first, second);
 }
 
@@ -255,7 +227,7 @@ pub fn do_subtree_aabb_deep_chain_propagates_to_root() {
     let leaf_aabb = (Vec2::new(100.0, 100.0), Vec2::new(120.0, 110.0));
     let mut node = tree.root;
     loop {
-        let aabb = tree.arena().get(node).unwrap().get().subtree_aabb();
+        let aabb = tree.subtree_aabb(node);
         if tree.arena().get(node).unwrap().first_child().is_some() {
             assert_eq!(aabb, Some(leaf_aabb));
             node = tree.arena().get(node).unwrap().first_child().unwrap();
@@ -264,6 +236,37 @@ pub fn do_subtree_aabb_deep_chain_propagates_to_root() {
             break;
         }
     }
+}
+
+// ── the fill is not a mutation ────────────────────────────────────
+
+#[test]
+fn test_ensure_subtree_aabbs_keeps_the_descendants_aabb_memo() {
+    do_ensure_subtree_aabbs_keeps_the_descendants_aabb_memo();
+}
+
+/// Filling the subtree AABBs records derived state and changes no
+/// element, so the `descendants_aabb` memo taken before it survives
+/// it: the next `descendants_aabb` answers without a pass. Pins the
+/// fill against going through anything that invalidates the cache.
+pub fn do_ensure_subtree_aabbs_keeps_the_descendants_aabb_memo() {
+    let mut tree = build_test_tree();
+    assert!(
+        !tree.descendants_aabb_is_memoized(),
+        "a built tree starts unmemoized"
+    );
+    let memo = tree.descendants_aabb();
+    assert!(tree.descendants_aabb_is_memoized());
+    assert!(
+        tree.subtree_aabb(tree.root).is_none(),
+        "the subtree AABBs are still dirty"
+    );
+
+    tree.ensure_subtree_aabbs();
+
+    assert!(tree.subtree_aabb(tree.root).is_some(), "the fill ran");
+    assert!(tree.descendants_aabb_is_memoized(), "the fill kept the memo");
+    assert_eq!(tree.descendants_aabb(), memo);
 }
 
 // ── wide tree root covers all ─────────────────────────────────────
@@ -276,13 +279,7 @@ fn test_subtree_aabb_wide_tree_root_covers_all() {
 pub fn do_subtree_aabb_wide_tree_root_covers_all() {
     let mut tree = build_wide_tree();
     tree.ensure_subtree_aabbs();
-    let root_aabb = tree
-        .arena()
-        .get(tree.root)
-        .unwrap()
-        .get()
-        .subtree_aabb()
-        .expect("root should have AABB");
+    let root_aabb = tree.subtree_aabb(tree.root).expect("root should have AABB");
     assert!(root_aabb.0.x <= 0.0);
     assert!(root_aabb.1.x >= 980.0);
     assert!(root_aabb.1.y >= 20.0);
@@ -305,7 +302,7 @@ pub fn do_subtree_aabb_single_area_node() {
     tree.insert_child(tree.root, area, Placement::Last).unwrap();
     tree.ensure_subtree_aabbs();
     assert_eq!(
-        tree.arena().get(tree.root).unwrap().get().subtree_aabb().unwrap(),
+        tree.subtree_aabb(tree.root).unwrap(),
         (Vec2::new(50.0, 60.0), Vec2::new(90.0, 90.0))
     );
 }
@@ -326,13 +323,7 @@ pub fn do_subtree_aabb_zero_bounds_area_ignored() {
     );
     tree.insert_child(tree.root, area, Placement::Last).unwrap();
     tree.ensure_subtree_aabbs();
-    assert!(tree
-        .arena()
-        .get(tree.root)
-        .unwrap()
-        .get()
-        .subtree_aabb()
-        .is_none());
+    assert!(tree.subtree_aabb(tree.root).is_none());
 }
 
 // ── negative position ─────────────────────────────────────────────
@@ -352,7 +343,7 @@ pub fn do_subtree_aabb_negative_position() {
     tree.insert_child(tree.root, area, Placement::Last).unwrap();
     tree.ensure_subtree_aabbs();
     assert_eq!(
-        tree.arena().get(tree.root).unwrap().get().subtree_aabb().unwrap(),
+        tree.subtree_aabb(tree.root).unwrap(),
         (Vec2::new(-50.0, -30.0), Vec2::new(50.0, 30.0))
     );
 }
@@ -382,7 +373,7 @@ pub fn do_subtree_aabb_merge_none_base_with_child() {
     tree.insert_child(void, child, Placement::Last).unwrap();
 
     tree.ensure_subtree_aabbs();
-    let void_aabb = tree.arena().get(void).unwrap().get().subtree_aabb().unwrap();
+    let void_aabb = tree.subtree_aabb(void).unwrap();
     assert_eq!(void_aabb, (Vec2::new(5.0, 5.0), Vec2::new(15.0, 15.0)));
 }
 
@@ -412,7 +403,7 @@ pub fn do_subtree_aabb_merge_two_disjoint_children() {
     tree.insert_child(void, b, Placement::Last).unwrap();
 
     tree.ensure_subtree_aabbs();
-    let void_aabb = tree.arena().get(void).unwrap().get().subtree_aabb().unwrap();
+    let void_aabb = tree.subtree_aabb(void).unwrap();
     assert_eq!(void_aabb, (Vec2::new(-10.0, -10.0), Vec2::new(105.0, 205.0)));
 }
 
@@ -438,5 +429,5 @@ pub fn do_subtree_aabb_all_children_zero_bounds() {
     }
 
     tree.ensure_subtree_aabbs();
-    assert!(tree.arena().get(void).unwrap().get().subtree_aabb().is_none());
+    assert!(tree.subtree_aabb(void).is_none());
 }

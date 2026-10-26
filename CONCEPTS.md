@@ -300,8 +300,11 @@ All visual things — every text region, every composed-glyph
 shape, every structural padding node — is one variant of this
 enum. Shared metadata rides on every variant: a `channel` for
 mutation routing, a `unique_id` assigned by the host app (Mandala
-uses it for the mindmap node id), a `flags` set, an
-`event_subscribers` list, and a cached `subtree_aabb`.
+uses it for the mindmap node id), a `flags` set, and an
+`event_subscribers` list. What a glyph tree derives from its
+elements — the AABB memo and each node's subtree AABB for the BVH
+hit-test — lives in the tree's `GlyphTreeCache`, keyed by `NodeId`,
+never on an element.
 
 `lib/baumhard/src/gfx_structs/element.rs`.
 `GlyphArea` and `GlyphModel` each box their payload (one heap

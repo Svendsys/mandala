@@ -83,48 +83,6 @@ pub fn do_flags_accessor_round_trips() {
     assert!(!elem.flag_is_set(Flag::Focused));
 }
 
-// ── subtree_aabb cache ─────────────────────────────────────────────
-
-#[test]
-fn test_subtree_aabb_set_and_read() {
-    do_subtree_aabb_set_and_read();
-}
-
-/// Writing a subtree AABB via `set_subtree_aabb` makes it visible
-/// through `subtree_aabb()`. `invalidate_subtree_aabb` clears it,
-/// and the cache is excluded from `PartialEq` so two elements that
-/// differ only in their cache are considered equal.
-pub fn do_subtree_aabb_set_and_read() {
-    let mut a = GfxElement::new_void_with_id(0, 42);
-    let b = GfxElement::new_void_with_id(0, 42);
-    let aabb = (Vec2::new(10.0, 20.0), Vec2::new(100.0, 200.0));
-
-    assert!(a.subtree_aabb().is_none());
-    a.set_subtree_aabb(Some(aabb));
-    assert_eq!(a.subtree_aabb(), Some(aabb));
-    // Cache excluded from PartialEq — element identity is unchanged.
-    assert_eq!(a, b);
-
-    a.invalidate_subtree_aabb();
-    assert!(a.subtree_aabb().is_none());
-}
-
-#[test]
-fn test_subtree_aabb_clone_resets_cache() {
-    do_subtree_aabb_clone_resets_cache();
-}
-
-/// Cloning an element with a populated subtree-AABB cache produces
-/// a clone whose cache is `None` — the cache is tree-position-
-/// dependent and a clone can land at a different position. Pins the
-/// invariant against accidental inclusion of the cache field in a
-/// future `Clone` derive.
-pub fn do_subtree_aabb_clone_resets_cache() {
-    let mut elem = GfxElement::new_void(0);
-    elem.set_subtree_aabb(Some((Vec2::ZERO, Vec2::new(50.0, 50.0))));
-    assert!(elem.clone().subtree_aabb().is_none());
-}
-
 // ── event subscribers add and check ────────────────────────────────
 
 #[test]
