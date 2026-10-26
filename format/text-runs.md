@@ -139,7 +139,9 @@ words they used to cover:
   extended when it reached the old end; when it ended short of it,
   a copy of it covering just the appended graphemes is added.
   Graphemes the old table left uncovered stay uncovered: the edit
-  covers only what it appended.
+  covers only what it appended. (The one exception is an
+  overshooting table whose every run lies past the old end; see the
+  last bullet.)
 - **A link does not continue.** The appended graphemes never take
   the last run's `hyperlink`, following the same editor convention
   (typing past a link's end does not extend it): a linked last run
