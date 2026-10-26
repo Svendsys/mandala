@@ -1,6 +1,8 @@
-# Schema Reference
+# Schema Reference (`.mindmap.json`)
 
-Complete field reference for every type in `.mindmap.json`.
+Complete field reference for every type in `.mindmap.json`, the format the
+app reads until V1-C3 switches it to `.mandala.json` ([`schema.md`](./schema.md)).
+This file, and the tests that pin it, are deleted with the old loader.
 
 ## Unknown keys are kept
 
@@ -61,7 +63,7 @@ and says so:
 loader: node "0": unrecognized key `min_zoom_to_rendr` — this build
 has no field for it, so it is kept as written and saved back with the
 value it was authored with. Check the spelling if you meant an
-existing key; see format/schema.md.
+existing key; see format/legacy-schema.md.
 ```
 
 The node renders, `min_zoom_to_render` is unset because nothing set

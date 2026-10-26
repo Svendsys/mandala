@@ -701,7 +701,7 @@ binding to particular runtime platforms (`Desktop` / `Web` /
 
 Trigger bindings respect `MutationBehavior::Toggle` semantics —
 click the same node twice on a Toggle-flavoured mutation to
-reverse it. See `format/schema.md` for the full node field
+reverse it. See `format/legacy-schema.md` for the full node field
 reference.
 
 ## Authoring a user file
@@ -773,6 +773,18 @@ in `snake_case`, beside the same comparators as above:
 A color is `{"rgba": [r, g, b, a]}`, `{"var": <variable index>}` or
 `{"palette": "fill" | "frame" | "text" | "title"}`.
 
+**This is the spelling of the in-memory `DocField`, and it is not what a
+`.mandala.json` holds.** The values here are indices (`{"var": 1}`,
+`"palette"`, `"on_click"`), and an index is assigned by sorted name, so
+it would name another entry the moment a name was added. A predicate
+saved in a map, in an edit (V1-D1) or a presentation, is spelled with the
+file's own values — colors as `"#rrggbb"`, `"var(name)"` or
+`"palette(fill)"`, a font by family name, a verb by id, a palette by
+name, a fit, shape or start point as `format/schema.md` writes them —
+and is resolved against the open document when it runs. The file format's
+types hold no index (`document::tests::format_strict_tests` keeps
+`DocField` and every index type out of the types the loader reads).
+
 A predicate tests what an element **stores**, not what it resolves
 to: a node with no `fill` of its own has none here, whatever its
 palette or the map's defaults paint it. A field the element's kind
@@ -784,7 +796,7 @@ negated or not, as they do on an unset field.
 
 ## Related
 
-- `format/schema.md` — the full `.mindmap.json` shape including the
+- `format/legacy-schema.md` — the full `.mindmap.json` shape including the
   `custom_mutations` and `trigger_bindings` arrays on maps and nodes.
 - `format/channels.md` — the `channel` field on MindNodes and what
   it means for mutator targeting.

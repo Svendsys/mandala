@@ -460,7 +460,7 @@ mod reach_tests {
     /// discover, and one the schema lists but the code rejects is a
     /// map that fails to load. This PR had to hand-repair exactly
     /// that drift — `SectionsOnly` was missing from
-    /// `format/schema.md`'s value list, from `format/mutations.md`'s
+    /// `format/legacy-schema.md`'s value list, from `format/mutations.md`'s
     /// scope table, and from CONCEPTS §4's variant sentence, which
     /// still read "Six variants". Hand-repairing it again next time
     /// is not the fix; failing the suite is (CLAUDE.md §4).
@@ -504,7 +504,7 @@ mod reach_tests {
         // are surfaces this PR had to repair by hand.
         let surfaces = [
             (
-                "format/schema.md",
+                "format/legacy-schema.md",
                 "## CustomMutation",
                 "`target_scope` is one of",
             ),

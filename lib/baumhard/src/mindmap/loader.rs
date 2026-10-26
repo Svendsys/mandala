@@ -1419,7 +1419,7 @@ mod tests {
     /// `#[serde(default)]` fires on an absent key and not on an
     /// explicit `null`, so the field refused a spelling every other
     /// optional object in the format accepts and
-    /// `format/schema.md` calls "an optional object" — with a whole
+    /// `format/legacy-schema.md` calls "an optional object" — with a whole
     /// load failure (`invalid type: null, expected struct
     /// ColorOverrides`), not a degrade.
     #[test]
@@ -2569,7 +2569,7 @@ mod tests {
     }
 
     /// **The policy, spelled out where authors read it.**
-    /// `format/schema.md` publishes one map carrying a mistyped key,
+    /// `format/legacy-schema.md` publishes one map carrying a mistyped key,
     /// the warning it produces, and what the corrected map does. All
     /// three are read out of the spec rather than restated here, so
     /// the pin follows the doc when the doc moves instead of agreeing
@@ -2588,7 +2588,7 @@ mod tests {
         use crate::util::doc_fixtures::{
             documented_json_block, documented_plain_block, format_doc_path, unwrapped,
         };
-        let doc = format_doc_path("schema.md");
+        let doc = format_doc_path("legacy-schema.md");
         let heading = "## Unknown keys are kept";
 
         let mistyped = documented_json_block(&doc, heading, 0);
@@ -2604,7 +2604,7 @@ mod tests {
         assert_eq!(
             unwrapped(&entry.warning()),
             unwrapped(&published),
-            "format/schema.md §{heading} publishes this warning as verbatim loader \
+            "format/legacy-schema.md §{heading} publishes this warning as verbatim loader \
              output and it no longer is. Re-wrap the block to match, or the spec is \
              publishing something the loader does not say.\n\
              \n  loader: {}\n  spec:   {published}\n",
@@ -2641,7 +2641,7 @@ mod tests {
             "must state what happened to the key, not just that it is unknown: {warning}"
         );
         assert!(
-            warning.contains("format/schema.md"),
+            warning.contains("format/legacy-schema.md"),
             "must point at the spec: {warning}"
         );
     }

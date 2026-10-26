@@ -53,8 +53,10 @@ borders, connection paths — is laid out as positioned font glyphs.
   *requires* a hardware GPU), and §T13's checklist of assertions
   that cannot fail on their subject, with the negative control
   every passing assertion owes.
-- **`format/`** — the `.mindmap.json` format specification.
-  `format/schema.md` is the primary reference; per-concept docs cover
+- **`format/`** — the file format specifications. `format/schema.md` is
+  the `.mandala.json` format (V1) and its primary reference;
+  `format/legacy-schema.md` is the `.mindmap.json` format the app still
+  reads until V1-C3 deletes it. Per-concept docs cover
   Dewey-decimal IDs, named enums, palettes, channels, text runs,
   validation invariants, portal labels, mutations, and migration from
   legacy. Read this before changing the data model.
@@ -182,7 +184,7 @@ the parity trajectory (or why none is owed):
 - **FreezeWatchdog** (`src/application/app/freeze_watchdog.rs`) —
   native-only by design: browsers ship their own unresponsive-tab
   dialog; no parity owed.
-- **`MAX_MAP_BYTES`** (`lib/baumhard/src/mindmap/loader.rs`) —
+- **`MAX_MAP_BYTES`** (`lib/baumhard/src/document/format/mod.rs`) —
   `None` on native, `Some(3 GiB)` on wasm32. Divergent by
   platform physics rather than policy: wasm32's `usize` is 32
   bits and its address space is 4 GiB, shared with the runtime,

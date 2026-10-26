@@ -579,7 +579,7 @@ fn is_false(v: &bool) -> bool {
 /// [`DEFAULT_TEXT_RUN_SIZE_PT`] — so `{"start": 0, "end": 5,
 /// "bold": true}` is a complete run. The saver omits fields
 /// sitting at those defaults, per the omission policy in
-/// `format/schema.md` ("a key written out at its own default value
+/// `format/legacy-schema.md` ("a key written out at its own default value
 /// may be omitted"); reloading restores the same model.
 ///
 /// Plain data; no runtime cost beyond the string allocations.

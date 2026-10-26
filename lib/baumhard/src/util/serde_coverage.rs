@@ -558,7 +558,7 @@ impl TypeGraph {
     /// set of places a captured key's route is positional and an edit
     /// can therefore move it.
     ///
-    /// `format/schema.md` §"Unknown keys are kept" publishes this set
+    /// `format/legacy-schema.md` §"Unknown keys are kept" publishes this set
     /// for the reader, and
     /// `loader::tests::test_the_published_positional_arrays_are_the_ones_the_model_has`
     /// holds the two together in both directions. It was a
@@ -608,7 +608,7 @@ impl TypeGraph {
     /// alternative is a route nothing warns anybody about — the same
     /// posture [`Self::unresolved_from`] takes toward a name it
     /// cannot resolve. The first one to appear is a decision about
-    /// what `format/schema.md` should say, not a bug in this walk.
+    /// what `format/legacy-schema.md` should say, not a bug in this walk.
     ///
     /// **An empty answer here is not evidence that the model has
     /// none.** This walk classifies *fields*, and a `Vec<Vec<T>>` is
@@ -687,7 +687,7 @@ impl TypeGraph {
     /// **Resolved through the index rather than matched against the
     /// token `Vec`.** That token match is what this replaces: it read
     /// `BTreeSet<ColorFontRegion>` as a scalar and left `regions` off
-    /// a list `format/schema.md` publishes, and it would have done
+    /// a list `format/legacy-schema.md` publishes, and it would have done
     /// the same to a `Vec` behind a `type` alias. A name the index
     /// holds as an alias or as a newtype struct is followed to what
     /// it stands for, which is the only way `type Leaves =
@@ -2734,7 +2734,7 @@ mod tests {
     /// A `Vec` behind a `type` alias and a `BTreeSet` are arrays a
     /// token match for `Vec` cannot see; the second of those was live
     /// in this crate (`ColorFontRegions::regions`) while
-    /// `format/schema.md` said the list was derived from the model.
+    /// `format/legacy-schema.md` said the list was derived from the model.
     /// A newtype variant's payload is the third: it has no field name,
     /// so the walk skipped it, and its JSON member is the variant's
     /// name.
@@ -2796,7 +2796,7 @@ mod tests {
     /// not dropped.
     ///
     /// Position 0 of a tuple variant is an array a captured route
-    /// crosses and that `format/schema.md`'s one-name-per-line block
+    /// crosses and that `format/legacy-schema.md`'s one-name-per-line block
     /// has no way to name. Reporting it hands a reader a decision
     /// about what the document should say; dropping it would leave a
     /// positional route nothing warns anybody about, which is the
@@ -2895,7 +2895,7 @@ mod tests {
     ///
     /// The copy is deliberate and is the point: if the text and the
     /// types drift apart the two answers stop matching and this
-    /// fails, which is exactly the alarm a `format/schema.md` that
+    /// fails, which is exactly the alarm a `format/legacy-schema.md` that
     /// has drifted from the model should raise.
     #[test]
     fn test_the_scan_and_the_derived_impls_agree_on_a_planted_shape() {
@@ -2977,7 +2977,7 @@ pub struct PlantedLeaf {
     /// exercises.**
     ///
     /// `RenameRule` is a *published* derivation: what it says a field
-    /// or a variant is called is what `format/schema.md` prints and
+    /// or a variant is called is what `format/legacy-schema.md` prints and
     /// what `expand_route` is driven over. Nothing in this crate
     /// carries a `rename_all` today, so replacing
     /// `apply_to_variant`'s body with `format!("MUTANT_{ident}")`

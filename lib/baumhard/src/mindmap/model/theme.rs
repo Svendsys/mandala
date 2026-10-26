@@ -60,7 +60,7 @@ fn channel_override<'a>(
 /// `show_frame`, and text has no off), so an empty one reaches
 /// `hex_to_rgba_safe` and paints opaque black. `title` already
 /// fell through; the other two now do too, which is the symmetry
-/// `format/schema.md` describes.
+/// `format/legacy-schema.md` describes.
 ///
 /// It runs on the [`ColorOverrides`] tier as well as the group,
 /// and the reason there is not the group's. A hole in the group
