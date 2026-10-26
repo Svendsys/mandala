@@ -243,10 +243,25 @@ fn test_the_page_leaving_shuts_its_controller_down() {
 #[test]
 fn test_a_second_page_is_closed_and_the_first_keeps_serving() {
     let relay = Relay::start();
+    // The relay admits a role inside its handshake, before the `101`
+    // (`bridge::connection`), so the first page is counted the moment
+    // its handshake returns and the second page, connecting right
+    // after, is the second.
     let app = app_always(&relay, json!({"first": true}));
     let (mut second, _) = connect_until_up(&relay.url(Role::App));
     let _ = second.get_ref().set_read_timeout(Some(Duration::from_secs(5)));
-    let closed = matches!(second.read(), Ok(Message::Close(_)) | Err(_));
+    // A close, not a read that merely timed out: a second page the relay
+    // had taken for the app would sit there unanswered, and a timeout
+    // must not pass for its eviction.
+    let closed = match second.read() {
+        Ok(Message::Close(_)) => true,
+        Err(tungstenite::Error::Io(e)) => !matches!(
+            e.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ),
+        Err(_) => true,
+        Ok(_) => false,
+    };
     assert!(closed, "the second page is closed at once");
     let outcome = relay.invoke("ping");
     assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);

@@ -338,13 +338,26 @@ fn connection(stream: TcpStream, id: ConnId, shared: &Shared) {
     let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
-    let role: Arc<Mutex<Option<Role>>> = Arc::new(Mutex::new(None));
-    let seen = Arc::clone(&role);
-    let token = shared.token.clone();
-    let check = move |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
-        match role_of(request.uri().path(), &token) {
+    // The role is admitted inside the handshake callback, before the
+    // `101` is written: once a client's handshake completes, the relay
+    // already counts it, so a controller that connects the moment a
+    // page's handshake returned finds the page there. What the hub
+    // decides on admission (a second page's close, the page's
+    // `attached`) waits in this connection's queue until the relay
+    // loop below drains it.
+    let (sender, receiver) = mpsc::channel();
+    // A `Cell`: a handshake error keeps the callback borrowed.
+    let admitted = std::cell::Cell::new(None);
+    let check = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
+        match role_of(request.uri().path(), &shared.token) {
             Some(role) => {
-                *seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(role);
+                shared
+                    .queues
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(id, sender);
+                shared.decide(|hub| hub.connected(id, role));
+                admitted.set(Some(role));
                 Ok(response)
             }
             None => Err(tungstenite::http::Response::builder()
@@ -360,23 +373,17 @@ fn connection(stream: TcpStream, id: ConnId, shared: &Shared) {
     // callback ran: start with the stricter one and raise it for the
     // app once the handshake says so.
     let config = WebSocketConfig::default().max_message_size(Some(CONTROLLER_MESSAGE_CAP));
-    let Ok(mut socket) = tungstenite::accept_hdr_with_config(stream, check, Some(config)) else {
+    let accepted = tungstenite::accept_hdr_with_config(stream, check, Some(config));
+    let Some(role) = admitted.get() else {
         return;
     };
-    let Some(role) = *role.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) else {
-        return;
-    };
-    if role == Role::App {
-        socket.set_config(|config| config.max_message_size = Some(APP_MESSAGE_CAP));
+    // Admitted but the handshake then failed: the hub is told it left.
+    if let Ok(mut socket) = accepted {
+        if role == Role::App {
+            socket.set_config(|config| config.max_message_size = Some(APP_MESSAGE_CAP));
+        }
+        relay(&mut socket, id, shared, &receiver);
     }
-    let (sender, receiver) = mpsc::channel();
-    shared
-        .queues
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(id, sender);
-    shared.decide(|hub| hub.connected(id, role));
-    relay(&mut socket, id, shared, &receiver);
     shared
         .queues
         .lock()
