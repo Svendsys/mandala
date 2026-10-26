@@ -266,7 +266,7 @@ echo "== bench targets type-check =="
 cargo check --workspace --benches
 
 # WASM type-check gate. Native tests can stay green while the WASM leg
-# rots silently (see CODE_CONVENTIONS.md §2); this catches shared-helper
+# rots silently (see CODE_CONVENTIONS.md §4); this catches shared-helper
 # signature drift, cfg-guard mistakes, and missing `wasm-bindgen` usage
 # before the next `trunk serve`. Runs across the whole workspace so
 # baumhard's cross-platform discipline (`lib/baumhard/CONVENTIONS.md`)

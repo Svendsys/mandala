@@ -523,8 +523,8 @@ industrial cost/benefit reasoning. This is not license for speculation.
   mutation. Degrade the frame, log via `log::warn!`/`log::error!`, keep
   running. A crash during editing is the one user-visible failure this
   codebase cannot tolerate. Defensive `let Some(...) else { return; }`
-  in interactive paths is the sanctioned exception to §7's "trust
-  internal invariants".
+  in interactive paths is the sanctioned exception to trusting
+  internal invariants.
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
   the winit event loop and its window (or, under `--headless`,
