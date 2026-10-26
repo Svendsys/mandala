@@ -99,6 +99,11 @@ pub enum MouseGesture {
     /// before the timer fires aborts the long-press candidate,
     /// because that gesture is a one-finger pan instead.
     ///
+    /// Half of the touch route to a resize: once in Resize mode, a
+    /// finger that lands on a handle drags it, on native
+    /// (`app::touch_handle`, #160). `FastResizeStart` has no touch
+    /// binding because this is its touch route.
+    ///
     /// **The only touch gesture that reaches this table**, and
     /// deliberately so. Tap, one-finger pan and pinch-zoom are the
     /// other three the recognizer emits; each takes a carve-out
@@ -185,8 +190,9 @@ pub const RETIRED_NAMES: &[RetiredName] = &[RetiredName {
     token: "twofingerdrag",
     spelling: "TwoFingerDrag",
     replacement: "two fingers now pan and zoom the canvas, and the gesture no longer \
-                  binds an Action (#35). FastResizeStart keeps Ctrl+RightDrag; by touch, \
-                  long-press a node (LongPress → enter_resize_mode) and drag a handle",
+                  binds an Action (#35). fast_resize_start keeps Ctrl+RightDrag; to resize \
+                  by touch, long-press a node (LongPress → enter_resize_mode) and drag one \
+                  of its handles",
 }];
 
 /// The retired name `token` is, if it is one.

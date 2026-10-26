@@ -1054,13 +1054,15 @@ fn test_default_long_press_resolves_to_enter_resize_mode() {
 /// while the recognizer went on moving the camera underneath it.
 ///
 /// **Two consequences of the deletion, recorded because neither is
-/// visible from the assertions below and neither is fixed here:**
+/// visible from the assertions below; #160 closed both:**
 ///
-/// 1. A user whose only pointer is a touchscreen loses
-///    `FastResizeStart` outright. It ships bound to `Ctrl+RightDrag`
-///    alone now, and that needs a mouse. The touch route back is
-///    `LongPress` → `EnterResizeMode` plus a resize-handle drag,
-///    which is native-only today (CLAUDE.md's Dual-target registry).
+/// 1. `FastResizeStart` ships bound to `Ctrl+RightDrag` alone, which
+///    needs a mouse. The touch route to a resize is `LongPress` →
+///    `EnterResizeMode`, then a finger on a handle — which until #160
+///    panned the camera instead, so a touch-only user could not resize
+///    at all. A finger that lands on a handle in Resize mode now drives
+///    the handle drag (`app::touch_handle`); native-only, as the drag
+///    state is (CLAUDE.md's Dual-target registry).
 /// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` used to
 ///    be **silently accepted and never match**: `KeyBind::parse`
 ///    takes any non-modifier word as a key, so a retired token parsed

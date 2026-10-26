@@ -121,6 +121,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub shell: &'a super::shell::Shell,
     /// Touch gesture state machine (`super::touch_gesture`).
     pub touch_recognizer: &'a mut super::touch_gesture::TouchGestureRecognizer,
+    /// The finger holding a resize handle, if one does
+    /// (`super::touch_handle`).
+    pub touch_handle: &'a mut super::touch_handle::HandleTouch,
     /// The app-clock ms at which a tree-mutating drag suspended the
     /// animation tick, or `None` while ticks run. Read and written by
     /// the frame drain ([`Self::drain_frame`]).
@@ -272,6 +275,17 @@ impl InputHandlerContext<'_> {
         // reaches its arm.
         let phase = super::dispatch::touch_phase(phase);
         let pos = (location.x, location.y);
+        // A finger that starts a gesture on a resize handle is the
+        // left button instead (#160, `touch_handle`), and never reaches
+        // the recognizer. The handle question is asked only for the
+        // one event that can claim a handle.
+        let recognizer_idle = self.touch_recognizer.is_idle();
+        let on_handle = phase == Phase::Started && recognizer_idle && self.finger_lands_on_resize_handle(pos);
+        match self.touch_handle.route(phase, id, recognizer_idle, on_handle) {
+            super::touch_handle::TouchRoute::Recognizer => {}
+            super::touch_handle::TouchRoute::Ignore => return false,
+            super::touch_handle::TouchRoute::Handle(step) => return self.drive_handle_finger(step, location),
+        }
         // No gesture recognized — but the recognizer may have moved
         // its internal state (e.g. Started → OneFinger). The caller
         // still wants a redraw on Started/Moved so any
@@ -307,6 +321,41 @@ impl InputHandlerContext<'_> {
                 // renderer-side dirty flag the wheel path uses.
                 true
             }
+        }
+    }
+
+    /// True when a finger at `pos` (surface pixels) lands on a resize
+    /// handle the left press would capture — the same question, through
+    /// the same `event_mouse_click::resize_handle_press`, so a finger and
+    /// a mouse cannot disagree about what is a handle. Nothing outside
+    /// `InteractionMode::Resize`.
+    fn finger_lands_on_resize_handle(&self, pos: (f64, f64)) -> bool {
+        let canvas_pos = self.renderer.screen_to_canvas(pos.0 as f32, pos.1 as f32);
+        event_mouse_click::resize_handle_press(
+            self.document.as_ref(),
+            self.interaction_mode,
+            canvas_pos,
+            super::HANDLE_HIT_TOLERANCE_PX * self.renderer.canvas_per_pixel(),
+        )
+        .any()
+    }
+
+    /// Run a handle finger's step as the left-button events it stands
+    /// for, through the same `on_*` entry points a mouse reaches: the
+    /// press captures the handle, the moves promote and drive the
+    /// `Throttled` resize, and the release commits it with its undo
+    /// entry. Returns whether to request a redraw.
+    fn drive_handle_finger(
+        &mut self,
+        step: super::touch_handle::HandleStep,
+        location: PhysicalPosition<f64>,
+    ) -> bool {
+        use super::touch_handle::HandleStep;
+        let moved = self.on_cursor_moved(location);
+        match step {
+            HandleStep::Press => self.on_mouse_input(ElementState::Pressed, MouseButton::Left),
+            HandleStep::Move => moved,
+            HandleStep::Release => self.on_mouse_input(ElementState::Released, MouseButton::Left),
         }
     }
 
@@ -421,6 +470,9 @@ impl InputHandlerContext<'_> {
     /// wheel gesture ends the way its release ends it. Returns whether
     /// to request a redraw.
     pub(super) fn on_focus_lost(&mut self) -> bool {
+        // A finger holding a resize handle loses its claim with the
+        // drag it was driving, which the commit below resolves.
+        self.touch_handle.forget();
         let picker_gesture_ended =
             super::color_picker_flow::end_color_picker_gesture(self.color_picker_state);
         let was_idle = matches!(*self.drag_state, DragState::None);
