@@ -22,6 +22,7 @@
 use baumhard::mindmap::border::{next_border_preset, preset_glyph_set};
 
 use crate::application::console::parser::Args;
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::document::{BorderConfigEdits, BorderSide, MindMapDocument, OptionEdit};
 
@@ -128,6 +129,39 @@ pub(crate) struct PositionalEdits {
     pub(crate) cycled_to: Option<String>,
 }
 
+/// Which parser each of [`super::grammar::POSITIONAL_SUBVERBS`]
+/// runs (`spec::route`). Every surface that composes the set hands
+/// its rows here by name (a `route::Delegates` row, matched by
+/// `route::declares`), so this table is the one place a new
+/// per-field subverb needs a handler.
+#[derive(Clone, Copy)]
+enum Route {
+    Preset,
+    Color,
+    Padding,
+    Palette,
+    Font,
+    Side,
+    Corner,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("preset", Route::Preset),
+    ("color", Route::Color),
+    ("padding", Route::Padding),
+    ("palette", Route::Palette),
+    ("font", Route::Font),
+    ("side", Route::Side),
+    ("corner", Route::Corner),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 /// Translate a positional border subverb into a staged
 /// [`BorderConfigEdits`] bundle.
 ///
@@ -139,10 +173,11 @@ pub(crate) struct PositionalEdits {
 /// The `usage:` line each missing value reports is the very line
 /// `help` prints for that form, derived from the same declaration.
 ///
-/// Returns `Ok(None)` when the descent matched no subverb at all —
-/// the caller owns the "unknown subverb" message because each
-/// surface lists a different set of siblings. Errors are plain
-/// strings; the caller lifts them into its own `ExecResult::Err`.
+/// Returns `Ok(None)` when the descent matched no subverb at all, or
+/// one outside the shared set — the caller owns the "unknown
+/// subverb" message because each surface lists a different set of
+/// siblings. Errors are plain strings; the caller lifts them into
+/// its own `ExecResult::Err`.
 pub(crate) fn positional_subverb_to_edits(
     descent: &Descent,
     args: &Args,
@@ -151,6 +186,15 @@ pub(crate) fn positional_subverb_to_edits(
 ) -> Result<Option<PositionalEdits>, String> {
     let Some(subverb) = descent.subverb() else {
         return Ok(None);
+    };
+    let Some(route) = route::lookup(ROUTES, subverb) else {
+        // A sibling of the set (`show`, `reset`, …) is not this
+        // parser's; a row of the set with no route is a dispatch gap.
+        return if route::declares(super::grammar::POSITIONAL_SUBVERBS, subverb) {
+            Err(route::miss(descent.level, subverb))
+        } else {
+            Ok(None)
+        };
     };
     let verb_pos = descent.slot;
     let usage_line = usage::subverb_usage(descent.level, subverb);
@@ -161,8 +205,8 @@ pub(crate) fn positional_subverb_to_edits(
     let pairs = kvs::read_strict(descent, args)?;
     let mut edits = BorderConfigEdits::default();
     let mut cycled_to: Option<String> = None;
-    match subverb.name {
-        "preset" => {
+    match route {
+        Route::Preset => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
             let name_lc = value.to_ascii_lowercase();
             if name_lc == "cycle" {
@@ -180,15 +224,15 @@ pub(crate) fn positional_subverb_to_edits(
                 stage_kv(&mut edits, "preset", &name_lc)?;
             }
         }
-        "color" => {
+        Route::Color => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
             stage_kv(&mut edits, "color", value)?;
         }
-        "padding" => {
+        Route::Padding => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
             stage_kv(&mut edits, "padding", value)?;
         }
-        "palette" => {
+        Route::Palette => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
             stage_kv(&mut edits, "palette", value)?;
             // The optional `field=` kv composes with the positional
@@ -197,16 +241,15 @@ pub(crate) fn positional_subverb_to_edits(
                 stage_kv(&mut edits, "field", fv)?;
             }
         }
-        "font" => {
+        Route::Font => {
             let value = required_value(args, verb_pos + 1, usage_line)?;
             stage_kv(&mut edits, "font", value)?;
             if let Some(sv) = kvs::value(&pairs, "size") {
                 stage_kv(&mut edits, "size", sv)?;
             }
         }
-        "side" => stage_side(args, verb_pos, usage_line, surface, doc, &mut edits)?,
-        "corner" => stage_corner(args, verb_pos, usage_line, surface, doc, &mut edits)?,
-        _ => return Ok(None),
+        Route::Side => stage_side(args, verb_pos, usage_line, surface, doc, &mut edits)?,
+        Route::Corner => stage_corner(args, verb_pos, usage_line, surface, doc, &mut edits)?,
     }
     Ok(Some(PositionalEdits { edits, cycled_to }))
 }
