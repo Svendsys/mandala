@@ -14,6 +14,7 @@ use baumhard::mindmap::border_pattern::SidePattern;
 
 use crate::application::console::parser::Args;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Delegates, Routes};
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::traits::ColorValue;
 use crate::application::console::{ConsoleEffects, ExecResult};
@@ -22,9 +23,51 @@ use crate::application::document::{
 };
 
 use super::finish::BorderEdit;
-use super::grammar::BORDER;
+use super::grammar::{BORDER, POSITIONAL_SUBVERBS};
 use super::positional::{positional_subverb_to_edits, BorderSurface};
 use super::show::execute_border_show;
+
+/// Which handler each of `border`'s subverbs runs (`spec::route`).
+/// The seven per-field subverbs are not [`ROUTES`] rows: they belong
+/// to the shared set every border surface composes, so one
+/// [`DELEGATES`] row hands the set to its own table in `positional`.
+/// `preview` is not a row either — it opens a level, so it never
+/// arrives matched.
+#[derive(Clone, Copy)]
+enum Route {
+    On,
+    Off,
+    Toggle,
+    Reset,
+    Show,
+    PerField,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("on", Route::On),
+    ("off", Route::Off),
+    ("toggle", Route::Toggle),
+    ("reset", Route::Reset),
+    ("show", Route::Show),
+];
+
+const DELEGATES: &Delegates<Route> = &[(POSITIONAL_SUBVERBS, Route::PerField)];
+
+/// The names this dispatcher routes, for the registry test in
+/// `console::spec::tests`: [`ROUTES`] plus every name [`DELEGATES`]
+/// hands on, read off the same rows the dispatch reads.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names_with(ROUTES, DELEGATES)
+}
+
+/// The shared sets [`DELEGATES`] hands on, for the registry test in
+/// `console::spec::tests` to check each is listed in its
+/// `shared_sets()`.
+#[cfg(test)]
+pub(crate) fn delegated_sets() -> Vec<&'static [crate::application::console::spec::Subverb]> {
+    route::sets(DELEGATES)
+}
 
 pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let descent = descend(&BORDER, args.tokens());
@@ -35,13 +78,14 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         return super::preview::execute_border_preview(&descent, args, eff);
     }
     match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "on" => bare_subverb(&descent, args, eff, true, apply_set_visible),
-            "off" => bare_subverb(&descent, args, eff, false, apply_set_visible),
-            "toggle" => bare_subverb(&descent, args, eff, (), |eff, ()| apply_toggle_visible(eff)),
-            "reset" => bare_subverb(&descent, args, eff, (), |eff, ()| apply_reset(eff)),
-            "show" => execute_border_show(&descent, args, eff),
-            _ => apply_positional(&descent, args, eff),
+        Stop::Matched(subverb) => match route::lookup_or_delegate(ROUTES, DELEGATES, subverb) {
+            Some(Route::On) => bare_subverb(&descent, args, eff, true, apply_set_visible),
+            Some(Route::Off) => bare_subverb(&descent, args, eff, false, apply_set_visible),
+            Some(Route::Toggle) => bare_subverb(&descent, args, eff, (), |eff, ()| apply_toggle_visible(eff)),
+            Some(Route::Reset) => bare_subverb(&descent, args, eff, (), |eff, ()| apply_reset(eff)),
+            Some(Route::Show) => execute_border_show(&descent, args, eff),
+            Some(Route::PerField) => apply_positional(&descent, args, eff),
+            None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         // A bare positional at a slot a kv already made kv-form
         // almost always means an unquoted multi-word value
@@ -70,7 +114,7 @@ fn apply_composed(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> E
     let mut edits = BorderConfigEdits::default();
     for pair in &pairs {
         if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
-            return ExecResult::err(e);
+            return ExecResult::err(format!("{}: {}", descent.level.label, e));
         }
     }
     apply_edits(eff, edits)
@@ -500,9 +544,13 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState, verb_label: &str) -> Resu
 }
 
 /// Parse one `key=value` pair into the appropriate slot on
-/// `edits`. Returns the same error string the user sees in the
-/// console — kept verbatim so `border top="a)"` reports the parser
-/// output ("unmatched ')'…") with a `top: ` prefix.
+/// `edits`. The error names the key or the value but not the
+/// surface: `stage_kv` is shared by all four border surfaces and
+/// the keybind path, so each caller prefixes its own label —
+/// `canvas section-frame: unknown color 'Coral'` — the way
+/// `border preview` always has. The parser output for a side
+/// pattern keeps its `top: ` prefix, so `border top="a)"` reads
+/// `border: top: unmatched ')'…`.
 pub(crate) fn stage_kv(edits: &mut BorderConfigEdits, key: &str, value: &str) -> Result<(), String> {
     match key {
         "preset" => stage_preset(edits, value),
@@ -573,7 +621,10 @@ fn stage_padding(edits: &mut BorderConfigEdits, value: &str) -> Result<(), Strin
 }
 
 fn stage_color(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
-    let cv = ColorValue::parse(value).map_err(|e| format!("color: {}", e))?;
+    // `ColorValue::parse` already says "color" ("unknown color",
+    // "invalid hex color"), so the caller's surface label is all
+    // this needs; a `color: ` prefix here read `color: unknown color`.
+    let cv = ColorValue::parse(value)?;
     edits.color = match cv {
         ColorValue::Reset => OptionEdit::Clear,
         other => OptionEdit::Set(

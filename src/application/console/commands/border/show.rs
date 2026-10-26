@@ -44,12 +44,14 @@ pub fn execute_border_show(descent: &Descent, args: &Args, eff: &mut ConsoleEffe
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
     };
-    let side_filter = kvs::value(&pairs, "side").map(|v| v.to_ascii_lowercase());
-    if let Some(ref s) = side_filter {
-        if !matches!(s.as_str(), "top" | "bottom" | "left" | "right" | "all") {
+    let side_raw = kvs::value(&pairs, "side");
+    let side_filter = side_raw.map(|v| v.to_ascii_lowercase());
+    if let (Some(raw), Some(s)) = (side_raw, side_filter.as_deref()) {
+        if !matches!(s, "top" | "bottom" | "left" | "right" | "all") {
+            // Echo `raw`, not the lowercased copy the match reads.
             return ExecResult::err(format!(
                 "border show: side='{}' unknown; pick top | bottom | left | right | all",
-                s
+                raw
             ));
         }
     }

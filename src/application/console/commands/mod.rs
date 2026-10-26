@@ -29,6 +29,12 @@
 //!   palette name is stored verbatim and still found by
 //!   `palette=CO`. One flag survives outside the rule —
 //!   `mutation list --all` is a slot *value*, not a subverb (#135).
+//! - **A refusal reports the token as typed.** Matching
+//!   case-insensitively and *reporting* the normalized form are
+//!   separate decisions, and only the first is intended: a user
+//!   reads the message back looking for their own spelling, so
+//!   `canvas section-frame color=Coral` answers `canvas
+//!   section-frame: unknown color 'Coral'`, never `'coral'` (#136).
 //!
 //! What makes the first bullet checkable rather than aspirational
 //! is `console::tests::oracle_corpus`: every verb whose subverb

@@ -290,10 +290,11 @@ fn console_line_needs_rebuild(document_mutated: bool, side_effect: Option<&Conso
 /// state with the scene tree, so `fps on` / `fps debug` / `fps off`
 /// are the one modal-ish transition the scene does not have to be
 /// re-projected for. `Screenshot` is the other: a capture draws
-/// through a camera of its own and puts back any scene it
-/// re-projects, so it leaves the canvas exactly as it found it —
-/// and [`execute_console_line`] returns with its report before this
-/// is ever asked.
+/// through a camera of its own and projects what another zoom needs
+/// into a scratch scene of its own (`app::capture_scene`), so it never
+/// writes the canvas and there is nothing to put back — and
+/// [`execute_console_line`] returns with its report before this is
+/// ever asked.
 ///
 /// Written as an exhaustive match rather than a `matches!` so a new
 /// variant cannot inherit an answer by omission — the default for a

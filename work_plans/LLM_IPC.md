@@ -1260,9 +1260,13 @@ Moved later, by the issue that found the need:
   renderer did not draw, and no file written), `scale`, the `camera`
   the image was drawn through, and `settled`. Waiting stays
   `clock.wait`'s: a screenshot reports whether the app was settled and
-  never defers its reply. (5) A capture framed at another zoom during a
-  node drag is `busy`, because its re-projection would draw from a
-  model the drag has not written. (6) The offscreen target is the
+  never defers its reply. (5) A capture framed at another zoom was at
+  first `busy` during a node drag, because its re-projection of the
+  live scene would have drawn from a model the drag has not written;
+  #178 moved that projection into a scratch scene of the capture's
+  own, fed with the drag's offsets, and the refusal is gone — see
+  `format/ipc.md` §`capture.screenshot` "State after a capture".
+  (6) The offscreen target is the
   surface's own format — #7's single source, `config.format` — not a
   constant beside it.
 

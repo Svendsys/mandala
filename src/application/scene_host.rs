@@ -77,6 +77,74 @@ pub enum CanvasRole {
     SectionFrames,
 }
 
+impl CanvasRole {
+    /// Every canvas role, in no particular order — the order to draw
+    /// them in is [`Self::layer`]'s, and a caller that needs it sorts
+    /// by that rather than trusting this array's spelling.
+    // Read by the native-only capture composition; the browser reaches
+    // the roles one at a time.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub const ALL: [CanvasRole; 8] = [
+        CanvasRole::Borders,
+        CanvasRole::Connections,
+        CanvasRole::Portals,
+        CanvasRole::EdgeHandles,
+        CanvasRole::ConnectionLabels,
+        CanvasRole::SectionResizeHandles,
+        CanvasRole::NodeResizeHandles,
+        CanvasRole::SectionFrames,
+    ];
+
+    /// The layer this role's tree is registered at ([`layers`]).
+    /// Higher draws on top within the canvas sub-scene.
+    pub fn layer(self) -> i32 {
+        match self {
+            CanvasRole::Borders => layers::BORDERS,
+            CanvasRole::Connections => layers::CONNECTIONS,
+            CanvasRole::Portals => layers::PORTALS,
+            CanvasRole::EdgeHandles => layers::EDGE_HANDLES,
+            CanvasRole::ConnectionLabels => layers::CONNECTION_LABELS,
+            CanvasRole::SectionResizeHandles => layers::SECTION_RESIZE_HANDLES,
+            CanvasRole::NodeResizeHandles => layers::NODE_RESIZE_HANDLES,
+            CanvasRole::SectionFrames => layers::SECTION_FRAMES,
+        }
+    }
+
+    /// Whether this role's projection reads the camera's zoom.
+    ///
+    /// Connections, their labels and portals size their glyphs
+    /// through `GlyphConnectionConfig::effective_font_size_pt`, a
+    /// clamp in *screen* points, and edge handles are emitted by the
+    /// connection pass from the same zoom-sized samples; so the trees
+    /// of these four roles are only right for the zoom they were
+    /// projected at. Borders, section frames and the two resize-handle
+    /// roles are canvas-space and the same at every zoom.
+    ///
+    /// Two readers hold each other to this split: the camera-geometry
+    /// rebuild (`scene_rebuild::CanvasFrame::update_zoom_dependent_roles`)
+    /// projects exactly the roles that answer `true`, and the capture
+    /// engine draws a frame at another zoom from a scratch projection of
+    /// those same roles over the live trees of the rest
+    /// (`renderer::compose_capture_canvas`). A role moved from one side
+    /// to the other without both following is what
+    /// `test_the_zoom_dependent_roles_are_the_ones_the_camera_rebuild_projects`
+    /// catches.
+    // Read by the native-only capture composition.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn zoom_dependent(self) -> bool {
+        match self {
+            CanvasRole::Connections
+            | CanvasRole::Portals
+            | CanvasRole::EdgeHandles
+            | CanvasRole::ConnectionLabels => true,
+            CanvasRole::Borders
+            | CanvasRole::SectionResizeHandles
+            | CanvasRole::NodeResizeHandles
+            | CanvasRole::SectionFrames => false,
+        }
+    }
+}
+
 /// Two arms of the §B2 canvas-tree dispatch: apply a mutator to the
 /// existing arena, or rebuild wholesale and re-register. Returned
 /// from [`AppScene::canvas_dispatch`] so the caller can route
@@ -337,17 +405,7 @@ impl AppScene {
         if let Some(old) = self.canvas_role_slot_mut(role).take() {
             self.canvas.remove(old);
         }
-        let layer = match role {
-            CanvasRole::Borders => layers::BORDERS,
-            CanvasRole::Connections => layers::CONNECTIONS,
-            CanvasRole::Portals => layers::PORTALS,
-            CanvasRole::EdgeHandles => layers::EDGE_HANDLES,
-            CanvasRole::ConnectionLabels => layers::CONNECTION_LABELS,
-            CanvasRole::SectionResizeHandles => layers::SECTION_RESIZE_HANDLES,
-            CanvasRole::NodeResizeHandles => layers::NODE_RESIZE_HANDLES,
-            CanvasRole::SectionFrames => layers::SECTION_FRAMES,
-        };
-        let id = self.canvas.insert(tree, layer, offset);
+        let id = self.canvas.insert(tree, role.layer(), offset);
         *self.canvas_role_slot_mut(role) = Some(id);
         id
     }
@@ -391,6 +449,16 @@ impl AppScene {
     /// set — the caller treats that as "force full rebuild".
     pub fn canvas_signature(&self, role: CanvasRole) -> Option<u64> {
         self.canvas_signatures.get(&role).copied()
+    }
+
+    /// Last recorded content signature for a canvas role, if any.
+    /// Test-gated: production asks the question through
+    /// [`Self::canvas_dispatch_with_content`], in the one order it is
+    /// asked in; the capture tests read the value to show a projection
+    /// into another scene left this one's alone.
+    #[cfg(test)]
+    pub fn canvas_content_signature(&self, role: CanvasRole) -> Option<u64> {
+        self.canvas_content_signatures.get(&role).copied()
     }
 
     /// Record the content signature of the tree currently

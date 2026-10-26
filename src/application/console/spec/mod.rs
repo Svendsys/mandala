@@ -42,6 +42,11 @@
 //! - **The hint surface**: one [`Word::hint`] per vocabulary entry
 //!   and one [`Key::hint`] per key, read by the popup and by the
 //!   `<…>` a usage form prints.
+//! - **Which handler runs**, through [`route`]: the verb keeps its
+//!   handlers, but picks one from a table of declared names rather
+//!   than a `match` whose `_ =>` arm silently absorbed the next
+//!   subverb anyone declared. A registry test holds every table
+//!   against its levels' declared subverbs.
 //!
 //! # What stays hand-written
 //!
@@ -67,6 +72,7 @@ use crate::application::console::ConsoleContext;
 pub mod complete;
 pub mod descent;
 pub mod kvs;
+pub mod route;
 pub mod usage;
 
 #[cfg(test)]

@@ -92,9 +92,7 @@ fn report(taken: Result<CaptureOutcome, CaptureError>) -> ExecResult {
             };
             ExecResult::err(format!("screenshot: {key}: {message}"))
         }
-        Err(CaptureError::Busy(message) | CaptureError::Internal(message)) => {
-            ExecResult::err(format!("screenshot: {message}"))
-        }
+        Err(CaptureError::Internal(message)) => ExecResult::err(format!("screenshot: {message}")),
     }
 }
 
@@ -150,7 +148,10 @@ mod tests {
             matches!(&framing, ExecResult::Err(m) if m == "screenshot: frame: too large"),
             "{framing:?}"
         );
-        let busy = report(Err(CaptureError::Busy("a node drag is in progress".into())));
-        assert!(matches!(&busy, ExecResult::Err(m) if m.contains("node drag")));
+        let internal = report(Err(CaptureError::Internal("the GPU did not finish".into())));
+        assert!(
+            matches!(&internal, ExecResult::Err(m) if m == "screenshot: the GPU did not finish"),
+            "{internal:?}"
+        );
     }
 }

@@ -14,6 +14,7 @@ use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{free, kvs, usage, Descent, Form, Grammar, Slot, Subverb};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
@@ -24,6 +25,27 @@ const SUBVERBS: &[Subverb] = &[
     Subverb::bare("fit", "geometry", "shrink the node to its content"),
     Subverb::bare("edit", "editor", "enter node-edit mode on the selection"),
 ];
+
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    Resize,
+    Fit,
+    Edit,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("resize", Route::Resize),
+    ("fit", Route::Fit),
+    ("edit", Route::Edit),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
 
 pub static GRAMMAR: Grammar = Grammar {
     label: "node",
@@ -50,10 +72,11 @@ fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Subverb names are matched case-insensitively by the descent,
     // console-wide — see `commands/mod.rs` § Casing.
     match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "resize" => execute_resize(&descent, args, eff),
-            "fit" => execute_fit(eff),
-            _ => execute_edit(eff),
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(Route::Resize) => execute_resize(&descent, args, eff),
+            Some(Route::Fit) => execute_fit(eff),
+            Some(Route::Edit) => execute_edit(eff),
+            None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::Bare => ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
         _ => ExecResult::err(usage::unknown_subverb_message(
