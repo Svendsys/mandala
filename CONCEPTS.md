@@ -4358,6 +4358,11 @@ the finding is written once in
   `None` and the caller substitutes its defaults. Nothing here is
   platform-specific, so the precedence logic is unit-tested on
   native even for the browser's layers.
+- "Broken" means the parser found nothing to salvage: the parsers
+  stand on `salvage` (`parse_object` / `parse_array`, `take_field`,
+  `parse_entry`), which drop a malformed field or entry with a
+  warning naming it and fail the layer only when its container is
+  not usable JSON of the right outer shape.
 - Each target names its own layers exactly once, in the
   composition wrapper that sits on the driver:
   `desktop::load_desktop_layered(label, filename, explicit, parse)`
