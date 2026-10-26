@@ -616,11 +616,19 @@ fn create_temp_list() -> Result<(PathBuf, File), String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    for attempt in 0..16u32 {
-        let path = std::env::temp_dir().join(format!(
+    claim_first((0..16u32).map(|attempt| {
+        std::env::temp_dir().join(format!(
             "mandalactl-{}-{nanos}-{attempt}-frames.txt",
             std::process::id()
-        ));
+        ))
+    }))
+}
+
+/// The first of `candidates` nothing is at yet, created and opened
+/// through [`open_exclusive`]; one that is taken — planted or not — is
+/// passed over, never opened.
+fn claim_first(candidates: impl IntoIterator<Item = PathBuf>) -> Result<(PathBuf, File), String> {
+    for path in candidates {
         match open_exclusive(&path) {
             Ok(file) => return Ok((path, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -1620,6 +1628,26 @@ mod tests {
         assert_eq!(victim, "precious");
     }
 
+    /// The list's names are claimed through the seam: a first candidate
+    /// planted as a hard link to a file of yours is passed over for the
+    /// next, and the victim is never written. The failing input is a
+    /// `claim_first` that opens a name any other way than
+    /// [`open_exclusive`] — it takes the planted name and writes into the
+    /// victim — so the list cannot quietly stop going through the seam.
+    #[test]
+    fn test_the_ffmpeg_list_passes_over_a_planted_name_for_the_next() {
+        let dir = tempfile::tempdir().expect("a directory");
+        let victim = dir.path().join("yours.txt");
+        std::fs::write(&victim, "precious").expect("seed");
+        let planted = dir.path().join("frames-0.txt");
+        std::fs::hard_link(&victim, &planted).expect("plant");
+        let free = dir.path().join("frames-1.txt");
+        let (claimed, mut file) = claim_first([planted.clone(), free.clone()]).expect("a free name");
+        file.write_all(b"file 'a.png'\n").expect("written");
+        assert_eq!(claimed, free, "the planted name is passed over");
+        assert_eq!(std::fs::read_to_string(&victim).expect("read"), "precious");
+    }
+
     /// The same for a planted symlink, dangling or not.
     ///
     /// Unix-only because planting a symlink on Windows takes a privilege
@@ -1744,6 +1772,26 @@ mod tests {
                 defaults.fps
             ),
             (DEFAULT_MAX_FRAMES, false, None, None)
+        );
+    }
+
+    /// As `params`' path parameters: a directory rooted without a drive
+    /// takes the working directory's, and with none to take, the refusal
+    /// says it has no drive rather than calling it relative.
+    #[cfg(windows)]
+    #[test]
+    fn test_a_directory_rooted_without_a_drive_takes_the_working_directorys() {
+        let args = parse_args(&words(&["assemble", r"\rec"]), Some(Path::new(r"D:\work"))).expect("parsed");
+        assert_eq!(args.dir.display().to_string(), r"D:\rec");
+        let refused = parse_args(&words(&["assemble", r"\rec"]), None);
+        assert!(
+            matches!(&refused, Err(m) if m.contains("has no drive")),
+            "{refused:?}"
+        );
+        let relative = parse_args(&words(&["assemble", "rec"]), None);
+        assert!(
+            matches!(&relative, Err(m) if m.contains("is relative")),
+            "{relative:?}"
         );
     }
 
