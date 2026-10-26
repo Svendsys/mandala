@@ -373,8 +373,9 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
 ///   the new text supports them. Runs wholly inside the new
 ///   grapheme range carry through unchanged; runs straddling
 ///   the new end clip at `new_grapheme_count`; runs entirely
-///   past the new end drop. Backed by
-///   `set_section_text_preserving_runs`.
+///   past the new end drop. Graphemes the new text appends past
+///   the old end take the last run's style, so they draw. Backed
+///   by `set_section_text_preserving_runs`.
 ///
 /// - `runs=clear` drops every prior run and lays down a single
 ///   run cloned from the first prior run's style attributes
@@ -432,12 +433,8 @@ fn execute_text(
     }
     // Preserve mode: keep prior runs clipped to the new text
     // length. Per-grapheme styling on overlapping ranges
-    // survives. An uncovered tail (when the new text is longer
-    // than every surviving run's `end`) is *not drawn*, per the
-    // coverage rule in `format/text-runs.md`: nothing here
-    // extends a run over it, so appended text is invisible until
-    // a run covers it. That is a defect in this mode, not the
-    // intended contract (#197).
+    // survives; graphemes appended past the old end take the
+    // last run's style (#197).
     let changed = doc.set_section_text_preserving_runs(node_id, idx, new_text);
     if changed {
         ExecResult::ok_msg(format!("section[{}] text replaced (runs preserved)", idx))
@@ -1515,6 +1512,57 @@ mod tests {
             (0, 3),
             "run must clip to new grapheme count"
         );
+    }
+
+    /// The verb's default is preserve, and preserve gives text
+    /// appended past the old end the last run's style (#197), so a
+    /// bare `section text` that grows a styled section keeps every
+    /// grapheme covered. The control is `runs=clear` from the same
+    /// state, which lands a run cloned from the *first* run.
+    #[test]
+    fn section_text_default_extends_the_last_run_over_appended_text() {
+        use baumhard::mindmap::model::TextRun;
+        let seed = |doc: &mut MindMapDocument, id: &str| {
+            let section = &mut doc.mindmap.nodes.get_mut(id).unwrap().sections[1];
+            section.text = "Hello".to_string();
+            section.text_runs = vec![
+                TextRun {
+                    start: 0,
+                    end: 2,
+                    bold: true,
+                    ..crate::application::document::defaults::default_text_run(0)
+                },
+                TextRun {
+                    start: 2,
+                    end: 5,
+                    italic: true,
+                    ..crate::application::document::defaults::default_text_run(0)
+                },
+            ];
+            doc.selection = SelectionState::Section(SectionSel {
+                node_id: id.to_string(),
+                section_idx: 1,
+            });
+        };
+        let (mut doc, id) = pinned_two_section_node();
+        seed(&mut doc, &id);
+        assert_exec_ok(run("section text \"Hello world\"", &mut doc));
+        let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[1].text_runs;
+        assert_eq!(
+            runs.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(),
+            vec![(0, 2), (2, 11)]
+        );
+        assert!(runs[1].italic && !runs[1].bold);
+
+        let (mut control, cid) = pinned_two_section_node();
+        seed(&mut control, &cid);
+        assert_exec_ok(run("section text \"Hello world\" runs=clear", &mut control));
+        let runs = &control.mindmap.nodes.get(&cid).unwrap().sections[1].text_runs;
+        assert_eq!(
+            runs.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(),
+            vec![(0, 11)]
+        );
+        assert!(runs[0].bold && !runs[0].italic);
     }
 
     #[test]
