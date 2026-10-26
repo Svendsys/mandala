@@ -30,6 +30,9 @@ mod convert;
 mod export;
 mod verify;
 
+#[cfg(test)]
+mod migration_advice;
+
 const USAGE: &str = "\
 Usage: maptool <command> <map.json> <args...>
 

@@ -59,8 +59,12 @@ time with a concrete migration pointer:
 
 ```
 legacy `text` / `text_runs` on node "0"; run
-`maptool convert --sections <file>` to migrate node text into `sections[]`
+`maptool convert --sections <file> <file>` to migrate node text into `sections[]` in place
 ```
+
+The same path twice is the in-place form: every `convert` verb
+takes an input and an output path, and the write is atomic (see
+[Writes are atomic](./migration.md#writes-are-atomic)).
 
 `maptool convert --sections <in.json> <out.json>` walks every
 node, lifts its legacy `text` + `text_runs` into a single default
