@@ -168,7 +168,7 @@ mod tests {
         assert!(
             warning
                 .message
-                .starts_with("mutations: user entry [1] (id=bad-scope-81f0) failed to parse: "),
+                .starts_with("user config: mutations user entry [1] (id=bad-scope-81f0) failed to parse: "),
             "{}",
             warning.message
         );

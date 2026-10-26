@@ -87,7 +87,7 @@ pub fn parse_array(label: &str, source: &str) -> Result<Vec<Value>, String> {
 fn parse_warning_duplicates(label: &str, source: &str) -> Result<Value, String> {
     let (value, duplicates) = parse_reporting_duplicates(source)?;
     for path in duplicates {
-        log::warn!("{label}: key '{path}' appears more than once; the last occurrence is used");
+        log::warn!("user config: {label} key '{path}' appears more than once; the last occurrence is used");
     }
     Ok(value)
 }
@@ -109,7 +109,7 @@ pub fn take_field<T: DeserializeOwned>(label: &str, object: &mut JsonObject, key
     match parse_value::<T>(&value) {
         Ok(parsed) => Some(parsed),
         Err(e) => {
-            log::warn!("{label}: '{key}' has a malformed value and keeps its default: {e}");
+            log::warn!("user config: {label} '{key}' has a malformed value and keeps its default: {e}");
             None
         }
     }
@@ -130,7 +130,9 @@ pub fn parse_entry<T: DeserializeOwned>(label: &str, tier: &str, index: usize, v
         Ok(parsed) => Some(parsed),
         Err(e) => {
             let id = value.get("id").and_then(Value::as_str).unwrap_or("<no id>");
-            log::warn!("{label}: {tier} entry [{index}] (id={id}) failed to parse: {e} (skipping)");
+            log::warn!(
+                "user config: {label} {tier} entry [{index}] (id={id}) failed to parse: {e} (skipping)"
+            );
             None
         }
     }
@@ -200,7 +202,7 @@ mod tests {
         let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(
             messages,
-            vec!["salvage-test: key 'dup-4b0e' appears more than once; the last occurrence is used"]
+            vec!["user config: salvage-test key 'dup-4b0e' appears more than once; the last occurrence is used"]
         );
 
         let (values, captured) =
@@ -209,7 +211,9 @@ mod tests {
         let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(
             messages,
-            vec!["salvage-test: key '[1].id' appears more than once; the last occurrence is used"]
+            vec![
+                "user config: salvage-test key '[1].id' appears more than once; the last occurrence is used"
+            ]
         );
 
         // Control: the same documents without the repeat warn nothing,
@@ -240,7 +244,7 @@ mod tests {
             .find(|r| r.message.contains("'bad-7d1f'"))
             .unwrap_or_else(|| panic!("a malformed value must be named: {:?}", captured.records));
         assert!(
-            warning.message.starts_with("salvage-test: "),
+            warning.message.starts_with("user config: salvage-test "),
             "{}",
             warning.message
         );
@@ -298,12 +302,13 @@ mod tests {
         let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(messages.len(), 2, "one warning per skipped entry: {messages:?}");
         assert!(
-            messages[0].starts_with("salvage-test: user entry [1] (id=broken-3c9a) failed to parse: "),
+            messages[0]
+                .starts_with("user config: salvage-test user entry [1] (id=broken-3c9a) failed to parse: "),
             "{}",
             messages[0]
         );
         assert!(
-            messages[1].starts_with("salvage-test: user entry [2] (id=<no id>) "),
+            messages[1].starts_with("user config: salvage-test user entry [2] (id=<no id>) "),
             "{}",
             messages[1]
         );

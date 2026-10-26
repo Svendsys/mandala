@@ -20,11 +20,9 @@ a good understanding.
 
 ### 2. Decide on the right model
 The issues may already define a recommended model, but no one has a better overview than you at this point.
-Do not use Haiku unless it's purely for quick research and summary tasks. For Sonnet always use High effort or better.
-For Opus medium effort is acceptable for some tasks. Generally speaking, our list goes like:
-Sonnet (high effort), Opus (medium effort), Opus (high effort), Opus (extra effort), Fable (high effort). Fable may not
-always be available, if it isn't then use Opus (extra effort) instead. For tasks that involve important, fundamental
-parts that much will later build upon or rely upon, go with Opus or higher.
+Do not use Haiku unless it's purely for quick research and summary tasks. Use Sonnet for tasks that are relatively
+straight-forward. Opus for others. Try to minimize use of Fable, and Fable may not always be available.
+Fable should only be used in rare circumstances where the extra cost clearly pays off.
 
 ### 3. Delegate the issue
 When an appropriate model has been selected, spawn the agent and instruct it to run /implement on the issue. You may 
@@ -34,7 +32,8 @@ aware of something that the issue does not mention.
 ### 4. Follow up
 The worker agent may have questions for you, or may have other problems or misunderstandings. It is your job to follow
 up and ensure that everything is going according to plan. When the worker agent is ready to create a PR, see to it that
-it actually does so.
+it actually does so. If a delegation was given to Fable, but Fable usage ran out, then replace the Fable agent with
+an Opus agent instead to complete the task.
 
 ### 5. Have the PR code-reviewed
 When a PR is up, spawn an independent worker agent to review it using /do-code-review. Make sure that you use a strong

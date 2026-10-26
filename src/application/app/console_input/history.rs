@@ -42,14 +42,22 @@ pub(in crate::application::app) fn save_console_history(history: &[String]) {
     };
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            log::warn!("console history: create dir {}: {}", parent.display(), e);
+            log::warn!(
+                "console history: create dir {}: {}",
+                baumhard::util::log::tilde_path(parent),
+                e
+            );
             return;
         }
     }
     let start = history.len().saturating_sub(MAX_HISTORY);
     let body: String = history[start..].join("\n") + "\n";
     if let Err(e) = std::fs::write(&path, body) {
-        log::warn!("console history: write {}: {}", path.display(), e);
+        log::warn!(
+            "console history: write {}: {}",
+            baumhard::util::log::tilde_path(&path),
+            e
+        );
     }
 }
 
