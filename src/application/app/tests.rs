@@ -1086,3 +1086,63 @@ mod abandonment_guard {
         }
     }
 }
+
+/// What a press would drag is what it is (#218): the press reads
+/// `Grab::PRECEDENCE` for double-click detection as the drag does.
+mod handle_press {
+    use super::*;
+    use crate::application::document::EdgeRef;
+    use baumhard::mindmap::scene_cache::EdgeKey;
+    use baumhard::mindmap::tree_builder::{EdgeHandleKind, ResizeHandleSide};
+
+    /// A press on node 1 with the given grabs.
+    fn press(label: bool, edge_handle: bool, node_handle: bool) -> PendingPress {
+        PendingPress {
+            start_pos: (0.0, 0.0),
+            hit_node: Some("1".into()),
+            hit_section_idx: None,
+            hit_edge_handle: edge_handle
+                .then(|| (EdgeRef::new("1", "1.2", "parent_child"), EdgeHandleKind::Midpoint)),
+            hit_portal_label: None,
+            hit_edge_label: label.then(|| EdgeKey::new("1", "1.2", "parent_child")),
+            hit_section_resize_handle: None,
+            hit_node_resize_handle: node_handle.then(|| ("1".into(), ResizeHandleSide::SE)),
+        }
+    }
+
+    /// **A resize handle under a label is a handle press, and an edge
+    /// handle under a label is not.** The first grab decides, in the
+    /// order the drag resolves: a resize handle outranks the label over
+    /// it, the label outranks an edge handle under it.
+    ///
+    /// Controls: the label alone is no handle press, so the predicate
+    /// is not "anything grabbed"; an edge handle alone is one, so it is
+    /// not "a resize handle"; nothing grabbed is none, a press on a
+    /// node's body that double-clicks as it always did.
+    #[test]
+    fn test_the_first_grab_decides_whether_a_press_is_a_handle_press() {
+        let resize_under_label = press(true, false, true);
+        assert_eq!(resize_under_label.first_grab(), Some(Grab::NodeResizeHandle));
+        assert!(resize_under_label.is_handle_press());
+
+        let label_over_edge_handle = press(true, true, false);
+        assert_eq!(label_over_edge_handle.first_grab(), Some(Grab::EdgeLabel));
+        assert!(
+            !label_over_edge_handle.is_handle_press(),
+            "a label over an edge handle is the label's press, which double-clicks into its editor"
+        );
+
+        assert!(
+            !press(true, false, false).is_handle_press(),
+            "control: a label alone"
+        );
+        assert!(
+            press(false, true, false).is_handle_press(),
+            "control: an edge handle alone"
+        );
+        assert!(
+            !press(false, false, false).is_handle_press(),
+            "control: nothing grabbed"
+        );
+    }
+}

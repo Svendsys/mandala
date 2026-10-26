@@ -216,11 +216,12 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
                 // appropriate drag variant. At most one of
                 // `hit_edge_label` / `hit_portal_label` is set
                 // at press time (see `event_mouse_click.rs`'s
-                // click-hit chain), so the ordering here only
-                // resolves the `hit_edge_handle`-vs-`hit_node`
-                // overlap — a handle sits above its edge's
-                // nodes, and a handle-grab drag should always
-                // beat the node behind it. Consumption order:
+                // click-hit chain). What the ordering resolves is
+                // each handle against the node behind it, which a
+                // handle grab always beats, and, in Resize mode, the
+                // mode's own handles against a label lying over them,
+                // which the handles win (#218). Consumption order:
+                //   node-resize-handle → section-resize-handle →
                 //   edge-label → portal-label → edge-handle →
                 //   node (move) → shift-rect-select → pan.
                 // Portal-text is intentionally missing: dragging
