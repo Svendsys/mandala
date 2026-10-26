@@ -2051,6 +2051,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("structure_walk_tree_from_refuses_a_node_out_of_the_tree", |b| {
         b.iter(do_structure_walk_tree_from_refuses_a_node_out_of_the_tree)
     });
+    c.bench_function("structure_rebuilding_a_row_as_it_stood_before_is_one_pass", |b| {
+        b.iter(do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass)
+    });
     c.bench_function("structure_discard_frees_only_what_is_still_detached", |b| {
         b.iter(do_structure_discard_frees_only_what_is_still_detached)
     });

@@ -16,7 +16,7 @@
 use crate::engine::anchor::Anchors;
 use crate::engine::element::TreeElement;
 use crate::engine::interpolate::Snap;
-use crate::engine::journal::{Journal, JournalBuilder, Touch};
+use crate::engine::journal::{children_before, Journal, JournalBuilder, Touch};
 use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tests::journal_fixtures::{
@@ -28,7 +28,7 @@ use crate::engine::tests::test_element::{
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
 use crate::engine::walker::walk_tree_from;
 use indextree::NodeId;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 type TestMutatorTree = MutatorTree<TestElement, TestMutation>;
 
@@ -1440,4 +1440,49 @@ pub fn do_structure_walk_tree_from_refuses_a_node_out_of_the_tree() {
     journal.revert(&mut tree).unwrap();
     assert_eq!(row(&tree, a), vec![kid]);
     assert_eq!(value(&tree, kid), 10);
+}
+
+#[test]
+fn test_structure_rebuilding_a_row_as_it_stood_before_is_one_pass() {
+    do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass();
+}
+
+/// A row of 4000 siblings, half of them moved — the first two of every
+/// four, so a moved node follows the row's front, a kept sibling, or
+/// another moved node. Rebuilding the row as it stood before (what
+/// `touched` walks for a subtree that left) gives back the original
+/// order, in exactly one step per moved node indexed, per kept sibling
+/// and per moved node placed: no scan of the row per moved node, which
+/// would be about 4 million steps here.
+pub fn do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass() {
+    const SIBLINGS: usize = 4000;
+    let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
+    let root = tree.root;
+    let ids: Vec<NodeId> = (0..SIBLINGS)
+        .map(|i| add(&mut tree, root, TestElement::new(0, i as i64)))
+        .collect();
+    let mut before_parent: FxHashMap<NodeId, Option<NodeId>> = FxHashMap::default();
+    let mut moved: Vec<(NodeId, Option<NodeId>)> = Vec::new();
+    for (i, &id) in ids.iter().enumerate().filter(|(i, _)| i % 4 < 2).rev() {
+        before_parent.insert(id, Some(root));
+        moved.push((id, i.checked_sub(1).map(|prev| ids[prev])));
+    }
+    assert_eq!(moved.len(), SIBLINGS / 2, "precondition: half the row moved");
+    let moved_from = FxHashMap::from_iter([(root, moved)]);
+    let mut follows = FxHashMap::default();
+    let mut row = Vec::new();
+    let steps = children_before(
+        tree.arena(),
+        root,
+        &before_parent,
+        &moved_from,
+        &mut follows,
+        &mut row,
+    );
+    assert_eq!(row, ids, "the row as it stood before");
+    assert_eq!(
+        steps,
+        SIBLINGS + SIBLINGS / 2,
+        "one step per moved node indexed, per kept sibling and per moved node placed"
+    );
 }

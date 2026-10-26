@@ -597,6 +597,7 @@ fn structural_touches<E>(
     let mut touched = Vec::new();
     let mut pending: Vec<NodeId> = Vec::new();
     let mut row: Vec<NodeId> = Vec::new();
+    let mut follows: FxHashMap<Option<NodeId>, NodeId> = FxHashMap::default();
     let mut name = |member: NodeId, presence: &mut Presence<'_, E>, touched: &mut Vec<(NodeId, Touch)>| {
         if !seen.insert(member) {
             return;
@@ -635,7 +636,14 @@ fn structural_touches<E>(
                     pending.push(top);
                     while let Some(member) = pending.pop() {
                         name(member, &mut presence, &mut touched);
-                        children_before(arena, member, &presence.before_parent, &moved_from, &mut row);
+                        children_before(
+                            arena,
+                            member,
+                            &presence.before_parent,
+                            &moved_from,
+                            &mut follows,
+                            &mut row,
+                        );
                         pending.extend(row.iter().rev());
                     }
                 }
@@ -654,49 +662,68 @@ fn structural_touches<E>(
 /// and changed position put back after its recorded previous sibling —
 /// the restore [`Journal::revert`] makes, read without writing.
 /// `before_parent` names the nodes that changed position; `moved_from`
-/// holds them by the parent they stood under before.
+/// holds them by the parent they stood under before; `follows` is
+/// scratch, cleared first.
 ///
-/// Cost: one pass over the row; for a row a moved node stood in, a
-/// scan per moved node, which allocates a work list.
-fn children_before<E>(
+/// The moved nodes are indexed once by the sibling they follow, and the
+/// row is then built in one pass: each kept child, then the run of
+/// moved nodes that follow it. Returns the number of steps taken — one
+/// per moved node indexed, per kept child and per moved node placed —
+/// so that its cost can be checked: O(row + moved), and no work list.
+pub(in crate::engine) fn children_before<E>(
     arena: &Arena<E>,
     parent: NodeId,
     before_parent: &FxHashMap<NodeId, Option<NodeId>>,
     moved_from: &FxHashMap<NodeId, Vec<(NodeId, Option<NodeId>)>>,
+    follows: &mut FxHashMap<Option<NodeId>, NodeId>,
     row: &mut Vec<NodeId>,
-) {
+) -> usize {
     row.clear();
-    row.extend(
-        parent
-            .children(arena)
-            .filter(|child| !before_parent.contains_key(child)),
-    );
-    let Some(moved) = moved_from.get(&parent) else {
-        return;
-    };
-    // Each goes in once its previous sibling is in place, as a
-    // restore puts them back.
-    let mut waiting = moved.clone();
-    while !waiting.is_empty() {
-        let left = waiting.len();
-        waiting.retain(|&(node, prev)| {
-            let slot = match prev {
-                None => Some(0),
-                Some(prev) => row.iter().position(|&id| id == prev).map(|i| i + 1),
-            };
-            match slot {
-                Some(slot) => {
-                    row.insert(slot, node);
-                    false
-                }
-                None => true,
-            }
-        });
-        if waiting.len() == left {
-            error!("engine: a journal's recorded positions under {parent} form a cycle");
-            row.extend(waiting.iter().map(|&(node, _)| node));
-            break;
+    follows.clear();
+    let mut steps = 0;
+    let moved: &[(NodeId, Option<NodeId>)] = moved_from.get(&parent).map_or(&[], Vec::as_slice);
+    for &(node, prev) in moved {
+        follows.insert(prev, node);
+        steps += 1;
+    }
+    place_run(follows, None, row, &mut steps);
+    for child in parent.children(arena) {
+        if before_parent.contains_key(&child) {
+            continue;
         }
+        steps += 1;
+        row.push(child);
+        place_run(follows, Some(child), row, &mut steps);
+    }
+    if !follows.is_empty() {
+        // A real arrangement chains every moved node behind a sibling
+        // in it. Should one not be, listing it anyway beats losing it.
+        error!("engine: a journal's recorded positions under {parent} do not chain");
+        let left: FxHashSet<NodeId> = follows.values().copied().collect();
+        row.extend(
+            moved
+                .iter()
+                .map(|&(node, _)| node)
+                .filter(|node| left.contains(node)),
+        );
+        follows.clear();
+    }
+    steps
+}
+
+/// Append to `row` the run of moved nodes behind `prev` in `follows`,
+/// each found by the one before it, taking them out of `follows`.
+fn place_run(
+    follows: &mut FxHashMap<Option<NodeId>, NodeId>,
+    prev: Option<NodeId>,
+    row: &mut Vec<NodeId>,
+    steps: &mut usize,
+) {
+    let mut cursor = follows.remove(&prev);
+    while let Some(node) = cursor {
+        row.push(node);
+        *steps += 1;
+        cursor = follows.remove(&Some(node));
     }
 }
 
