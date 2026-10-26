@@ -23,17 +23,26 @@
 //! [`MutatorTree::insert_child`](crate::engine::tree::MutatorTree::insert_child) place a new
 //! node by its key, [`Tree::update`](crate::engine::tree::Tree::update) moves an element whose key it
 //! changed, and a walk moves the elements whose key it changed once
-//! it is over. [`Tree::check_sorted`](crate::engine::tree::Tree::check_sorted) and
+//! it is over.
+//!
+//! # Journaled changes
+//!
+//! [`MutatorTree::apply_at_journaled`](crate::engine::tree::MutatorTree::apply_at_journaled) and
+//! [`Tree::update_journaled`](crate::engine::tree::Tree::update_journaled) are the walk and the
+//! update recorded in a [`JournalBuilder`](crate::engine::journal::JournalBuilder), for a tree that
+//! keeps history: the closed [`Journal`](crate::engine::journal::Journal) reverts and replays
+//! them exactly. [`Tree::check_sorted`](crate::engine::tree::Tree::check_sorted) and
 //! [`MutatorTree::check_sorted`](crate::engine::tree::MutatorTree::check_sorted)
 //! verify it.
 
 use crate::engine::anchor::{apply_anchored, Anchors};
 use crate::engine::element::{TreeCache, TreeElement};
+use crate::engine::journal::{move_among_siblings, JournalBuilder};
 use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
 use crate::engine::siblings;
-use crate::engine::walker::{walk_anchor, Rekeyed};
+use crate::engine::walker::{walk_anchor, Walk};
 use indextree::{Arena, Children, Descendants, Node, NodeId};
 use std::fmt;
 
@@ -238,18 +247,67 @@ impl<E: TreeElement> Tree<E> {
     /// Errors: [`TreeError::StaleNode`] for an `id` not in the tree;
     /// `f` is then not called.
     ///
+    /// Not journaled: a tree that keeps history changes through
+    /// [`Self::update_journaled`].
+    ///
     /// Invalidates the tree's cache. Cost: `f` and two O(1) key reads;
     /// only when the key changed, a scan of the siblings the element
     /// moves past plus an O(depth) re-attach.
     pub fn update<R>(&mut self, id: NodeId, f: impl FnOnce(&mut E) -> R) -> Result<R, TreeError> {
+        self.update_in(id, None, f)
+    }
+
+    /// [`Self::update`], recorded in `journal`: the element's
+    /// before-image and position are recorded before `f` runs — unless
+    /// `journal` has recorded it already — and a move its key change
+    /// causes is noted, so the closed [`Journal`](crate::engine::journal::Journal)
+    /// can revert and replay it exactly.
+    ///
+    /// Errors: [`TreeError::StaleNode`] for an `id` not in the tree; `f`
+    /// is then not called. A journaled call is all or nothing for its
+    /// whole builder (see [`JournalBuilder`]): on the error, everything
+    /// `journal` recorded is reverted and the builder is left empty.
+    ///
+    /// Cost: [`Self::update`]'s, plus one hash lookup and, on the
+    /// element's first record in `journal`, a clone of it.
+    pub fn update_journaled<R>(
+        &mut self,
+        id: NodeId,
+        journal: &mut JournalBuilder<E>,
+        f: impl FnOnce(&mut E) -> R,
+    ) -> Result<R, TreeError> {
+        let result = self.update_in(id, Some(&mut *journal), f);
+        if result.is_err() {
+            journal.unwind(self);
+        }
+        result
+    }
+
+    /// The body of [`Self::update`] and [`Self::update_journaled`].
+    fn update_in<R>(
+        &mut self,
+        id: NodeId,
+        mut journal: Option<&mut JournalBuilder<E>>,
+        f: impl FnOnce(&mut E) -> R,
+    ) -> Result<R, TreeError> {
+        if self.arena.get(id).is_none() {
+            return Err(TreeError::StaleNode(id));
+        }
+        if let Some(journal) = journal.as_deref_mut() {
+            journal.record(&self.arena, id);
+        }
         let Some(node) = self.arena.get_mut(id) else {
             return Err(TreeError::StaleNode(id));
         };
         let element = node.get_mut();
         let before = element.key();
         let out = f(element);
-        if element.key() != before {
-            siblings::reposition(&mut self.arena, id, E::key);
+        let rekeyed = element.key() != before;
+        let parent = node.parent();
+        if let (true, Some(parent)) = (rekeyed, parent) {
+            if let Some(prev) = siblings::reposition_slot(&self.arena, id, E::key) {
+                move_among_siblings(&mut self.arena, parent, id, prev, journal);
+            }
         }
         self.cache.invalidate();
         Ok(out)
@@ -385,9 +443,9 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// Cost: O(matching (target, mutator) pairs) — see
     /// [`walk_tree_from`](crate::engine::walker::walk_tree_from).
     pub fn apply_to(&self, tree: &mut Tree<E>, seed: &E::Inherited) {
-        let mut rekeyed = Rekeyed::default();
-        walk_anchor(tree, self, tree.root, seed, &mut rekeyed);
-        rekeyed.settle(tree);
+        let mut walk = Walk::new(None);
+        walk_anchor(tree, self, tree.root, seed, &mut walk);
+        walk.settle(tree);
         tree.cache.invalidate();
     }
 
@@ -435,10 +493,50 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     ///   first time two anchors part on equal keys in it;
     /// - then one seed and one walk per kept anchor, O(matching pairs
     ///   below it). Nothing is proportional to the rest of the tree.
+    ///
+    /// Not journaled: for a tree that needs no history (a glyph layer
+    /// that is rebuilt). A tree that keeps history is changed through
+    /// [`Self::apply_at_journaled`].
     pub fn apply_at<F>(&self, tree: &mut Tree<E>, anchors: &Anchors, seed_for: F) -> Result<(), TreeError>
     where
         F: Fn(&Tree<E>, NodeId) -> E::Inherited,
     {
-        apply_anchored(self, tree, anchors, seed_for)
+        apply_anchored(self, tree, anchors, seed_for, None)
+    }
+
+    /// [`Self::apply_at`], recorded in `journal`: the same anchors, the
+    /// same nested-anchor rule and the same per-anchor seeds, and every
+    /// element the walk applies to is recorded — its before-image and
+    /// position, immediately before its first apply within `journal` —
+    /// together with every move a key change causes. Close `journal`
+    /// into a [`Journal`](crate::engine::journal::Journal) to revert or
+    /// replay the walk exactly. An element the walk visits without
+    /// applying to it is not recorded.
+    ///
+    /// All or nothing for the whole builder: if the call returns an
+    /// error, everything `journal` recorded — this call's applies and
+    /// those of earlier calls on the same builder — is reverted before
+    /// it returns, the builder is left empty, and the error is
+    /// returned. The tree is then as it was when the builder was
+    /// created. A stale anchor is refused before anything is applied.
+    ///
+    /// Cost: [`Self::apply_at`]'s, plus per element applied to one hash
+    /// lookup and, on its first record in `journal`, a clone of it; per
+    /// moved element O(1) more bookkeeping. Nothing per element visited.
+    pub fn apply_at_journaled<F>(
+        &self,
+        tree: &mut Tree<E>,
+        anchors: &Anchors,
+        seed_for: F,
+        journal: &mut JournalBuilder<E>,
+    ) -> Result<(), TreeError>
+    where
+        F: Fn(&Tree<E>, NodeId) -> E::Inherited,
+    {
+        let result = apply_anchored(self, tree, anchors, seed_for, Some(&mut *journal));
+        if result.is_err() {
+            journal.unwind(tree);
+        }
+        result
     }
 }

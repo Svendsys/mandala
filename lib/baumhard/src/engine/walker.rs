@@ -33,11 +33,21 @@
 //!
 //! A mutation may change its target's key. The walker compares the key
 //! before and after every apply; when it changed, it records the
-//! target in a `Rekeyed` and carries on over the row **as it was**:
+//! target in its `Walk` and carries on over the row **as it was**:
 //! no row is re-sorted while the walk is still merging over it. When
-//! the walk is over, `Rekeyed::settle` moves exactly the recorded
+//! the walk is over, `Walk::settle` moves exactly the recorded
 //! children to their sorted places. A walk that changes no key records
 //! nothing and allocates nothing for it.
+//!
+//! # Journaled walks
+//!
+//! A journaled walk carries a
+//! [`JournalBuilder`](crate::engine::journal::JournalBuilder) in its
+//! `Walk`. The one function every apply goes through records the
+//! target's before-image there immediately before its first apply, and
+//! the settle notes every move it makes, so the
+//! [journal](crate::engine::journal::Journal) can undo the walk exactly.
+//! Mutations take no part in it.
 //!
 //! # Cache invalidation
 //!
@@ -55,6 +65,7 @@
 //! everything else in this module is internal to the engine.
 
 use crate::engine::element::{TreeCache, TreeElement};
+use crate::engine::journal::JournalBuilder;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::Predicate;
@@ -66,56 +77,74 @@ use indextree::{Arena, Node, NodeId};
 use log::{debug, warn};
 use std::cmp::Ordering;
 
-/// The children whose key a walk changed, recorded so they can be
-/// moved to their sorted places once the walk is over
-/// ([`Rekeyed::settle`]).
+/// What a walk keeps beside the two trees: the children whose key it
+/// changed, recorded so they can be moved to their sorted places once
+/// the walk is over ([`Walk::settle`]), and — for a journaled walk —
+/// the [`JournalBuilder`] every apply is recorded in.
 ///
-/// Each record is `(parent, child)`. The `Vec` stays empty — and
-/// unallocated — for a walk that changes no key, which is the common
-/// path. A child recorded twice (its key changed by two applies) is
-/// moved once.
-#[derive(Debug, Default)]
-pub(in crate::engine) struct Rekeyed {
-    moved: Vec<(NodeId, NodeId)>,
+/// Each re-keyed record is `(parent, child)`. The `Vec` stays empty —
+/// and unallocated — for a walk that changes no key, which is the
+/// common path. A child recorded twice (its key changed by two applies)
+/// is moved once.
+#[derive(Debug)]
+pub(in crate::engine) struct Walk<'j, E: TreeElement> {
+    rekeyed: Vec<(NodeId, NodeId)>,
+    journal: Option<&'j mut JournalBuilder<E>>,
 }
 
-impl Rekeyed {
-    /// Record that `child`, under `parent`, has a new key. O(1)
-    /// amortized.
-    fn record(&mut self, parent: NodeId, child: NodeId) {
-        self.moved.push((parent, child));
+impl<'j, E: TreeElement> Walk<'j, E> {
+    /// A walk that records into `journal`, or into nothing. O(1); no
+    /// allocation.
+    pub(in crate::engine) fn new(journal: Option<&'j mut JournalBuilder<E>>) -> Self {
+        Walk {
+            rekeyed: Vec::new(),
+            journal,
+        }
     }
 
-    /// Move every recorded child to its sorted place under its parent:
+    /// Move every re-keyed child to its sorted place under its parent:
     /// after every sibling keyed at or below its new key. Every
     /// recorded child is detached first, which leaves each affected row
     /// sorted — the children that kept their keys were in order before
     /// the walk and nothing reordered them — and each is then placed
     /// into that sorted row in the order the walk recorded it. Children
-    /// keep their ids and subtrees; nothing is sorted.
+    /// keep their ids and subtrees; nothing is sorted. A journaled walk
+    /// notes each detach and attach in its journal, which is how the
+    /// journal can put the children back.
     ///
     /// Invalidates `tree`'s cache when it moved anything. Cost: nothing
     /// when nothing was recorded; otherwise, per recorded child, a
     /// detach, a scan from the end of its row and an O(depth)
     /// re-attach.
-    pub(in crate::engine) fn settle<E: TreeElement>(mut self, tree: &mut Tree<E>) {
-        if self.moved.is_empty() {
+    pub(in crate::engine) fn settle(self, tree: &mut Tree<E>) {
+        let Walk {
+            mut rekeyed,
+            mut journal,
+        } = self;
+        if rekeyed.is_empty() {
             return;
         }
         let arena = &mut tree.arena;
         // `retain` visits every record once, in order: the first record
         // of a child detaches it, and a later one finds it detached and
         // drops out.
-        self.moved.retain(|&(parent, child)| {
+        rekeyed.retain(|&(parent, child)| {
             if arena.get(child).and_then(|n| n.parent()) == Some(parent) {
+                if let Some(journal) = journal.as_deref_mut() {
+                    journal.note_detach(arena, child);
+                }
                 child.detach(arena);
                 true
             } else {
                 false
             }
         });
-        for &(parent, child) in &self.moved {
-            siblings::attach_last(arena, parent, child, E::key);
+        for &(parent, child) in &rekeyed {
+            let prev = siblings::last_slot(arena, parent, child, E::key);
+            if let Some(journal) = journal.as_deref_mut() {
+                journal.note_attach(arena, parent, prev);
+            }
+            siblings::attach_at(arena, parent, child, prev);
         }
         tree.cache.invalidate();
     }
@@ -123,11 +152,11 @@ impl Rekeyed {
 
 /// The continuation [`repeat_while`] calls when its predicate fails
 /// on a target: `(tree, mutator_tree, target_id, mutator_id,
-/// parent_state, rekeyed)`, with `parent_state` the inherited state of
-/// `target_id`'s parent and `rekeyed` the walk's record of changed
-/// keys. [`default_terminator`] is the one the walker uses.
+/// parent_state, walk)`, with `parent_state` the inherited state of
+/// `target_id`'s parent and `walk` what the walk keeps beside the trees
+/// ([`Walk`]). [`default_terminator`] is the one the walker uses.
 pub(in crate::engine) type Terminator<E, M> =
-    fn(&mut Tree<E>, &MutatorTree<E, M>, NodeId, NodeId, &<E as TreeElement>::Inherited, &mut Rekeyed);
+    fn(&mut Tree<E>, &MutatorTree<E, M>, NodeId, NodeId, &<E as TreeElement>::Inherited, &mut Walk<'_, E>);
 
 /// Continuation called after a conditional loop
 /// ([`Instruction::RepeatWhile`]) exits — it resumes the normal walk
@@ -144,7 +173,7 @@ pub(in crate::engine) fn default_terminator<E: TreeElement, M: Mutation<E>>(
     target_id: NodeId,
     mutator_id: NodeId,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     // When a conditional loop terminates, both the mutator and the
     // target are where the predicate failed: the target has not been
@@ -158,15 +187,7 @@ pub(in crate::engine) fn default_terminator<E: TreeElement, M: Mutation<E>>(
         match node.get().key().cmp(&target_key) {
             Ordering::Equal => {
                 debug!("Next mutator matches the target, starting walk..");
-                walk_from(
-                    tree,
-                    mutator_tree,
-                    target_id,
-                    after_id,
-                    parent_state,
-                    true,
-                    rekeyed,
-                );
+                walk_from(tree, mutator_tree, target_id, after_id, parent_state, true, walk);
             }
             Ordering::Greater => {
                 debug!("Next mutator key is above the target's, ending branch..");
@@ -199,7 +220,7 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 /// of `target_id`'s parent.
 ///
 /// Children whose key the walk changed are moved to their sorted places
-/// when it returns (`Rekeyed::settle`).
+/// when it returns (`Walk::settle`). Not journaled.
 ///
 /// Cost: O(sum of matching (target, mutator) pairs) — every pairwise
 /// match is one apply; pruned branches are free.
@@ -212,7 +233,7 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
 ) {
     let keys_match = get_mutator(&mutator_tree.arena, mutator_id).get().key()
         == get_target(&tree.arena, target_id).get().key();
-    let mut rekeyed = Rekeyed::default();
+    let mut walk = Walk::new(None);
     walk_from(
         tree,
         mutator_tree,
@@ -220,9 +241,9 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
         mutator_id,
         parent_state,
         keys_match,
-        &mut rekeyed,
+        &mut walk,
     );
-    rekeyed.settle(tree);
+    walk.settle(tree);
 }
 
 /// Walk `mutator_tree` from its root at one anchor of an anchored walk:
@@ -230,14 +251,14 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
 /// the anchor — the channel is not compared — and the walk continues
 /// below; at an anchor of another kind nothing is applied, at the
 /// anchor or below it. A stale `anchor` reaches nothing. Changed keys
-/// are recorded in `rekeyed`; settling them is the caller's, once every
+/// are recorded in `walk`; settling them is the caller's, once every
 /// anchor has been walked.
 pub(in crate::engine) fn walk_anchor<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
     anchor: NodeId,
     seed: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     let Some(target) = tree.arena.get(anchor) else {
         return;
@@ -247,7 +268,7 @@ pub(in crate::engine) fn walk_anchor<E: TreeElement, M: Mutation<E>>(
         debug!("Anchor {anchor} is of another kind than the mutator root, skipping it.");
         return;
     }
-    walk_from(tree, mutator_tree, anchor, root, seed, true, rekeyed);
+    walk_from(tree, mutator_tree, anchor, root, seed, true, walk);
 }
 
 /// The walk of one (target, mutator) pair: apply the mutator's own
@@ -261,7 +282,7 @@ fn walk_from<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     parent_state: &E::Inherited,
     apply_here: bool,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
 
@@ -269,7 +290,7 @@ fn walk_from<E: TreeElement, M: Mutation<E>>(
         Mutator::Single { .. } | Mutator::Macro { .. } => {
             debug!("Processing Delta Node...");
             if apply_here {
-                apply_mutator(tree, target_id, mutator, parent_state, rekeyed);
+                apply_mutator(tree, target_id, mutator, parent_state, walk);
             }
         }
         Mutator::Void { .. } => {
@@ -283,7 +304,7 @@ fn walk_from<E: TreeElement, M: Mutation<E>>(
             debug!("Processing Instruction node...");
             if apply_here && mutation.is_some() {
                 debug!("This instruction node has a Delta..");
-                apply_mutator(tree, target_id, mutator, parent_state, rekeyed);
+                apply_mutator(tree, target_id, mutator, parent_state, walk);
             }
             process_instruction_node(
                 tree,
@@ -292,46 +313,60 @@ fn walk_from<E: TreeElement, M: Mutation<E>>(
                 mutator_id,
                 instruction,
                 parent_state,
-                rekeyed,
+                walk,
             );
             return;
         }
     }
-    align_child_walks(tree, mutator_tree, target_id, mutator_id, parent_state, rekeyed);
+    align_child_walks(tree, mutator_tree, target_id, mutator_id, parent_state, walk);
 }
 
-/// Apply `mutator`'s payload to `target_id`, invalidate the tree's
-/// cache, and record the target in `rekeyed` if its key changed.
+/// Apply `mutator`'s payload to `target_id` through [`apply_recorded`].
+/// A mutator with no payload ([`Mutator::has_payload`]) — a `Void`, an
+/// empty `Macro`, an `Instruction` without a mutation — applies
+/// nothing, so it does not reach `apply_recorded`: the element it is
+/// paired with is visited, not applied to, and is not journaled.
 #[inline]
 fn apply_mutator<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     target_id: NodeId,
     mutator: &Mutator<E, M>,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
-    apply_recorded(tree, target_id, rekeyed, |target| {
+    if !mutator.has_payload() {
+        return;
+    }
+    apply_recorded(tree, target_id, walk, |target| {
         mutator.apply_to(target, parent_state)
     });
 }
 
 /// Run `f` on the element at `target_id` — every apply in the walker
-/// goes through here — then invalidate the tree's cache and, if `f`
-/// changed the element's key, record it in `rekeyed`. Two O(1) key
-/// reads beside `f`.
+/// goes through here. A journaled walk first records the element in
+/// its journal (a no-op after the element's first apply in that
+/// journal); then `f` runs, the tree's cache is invalidated and, if `f`
+/// changed the element's key, the element is recorded in `walk` to be
+/// moved when the walk settles.
+///
+/// Cost: two O(1) key reads beside `f`; journaled, one hash lookup, and
+/// on the element's first apply in the journal a clone of it.
 #[inline]
 fn apply_recorded<E: TreeElement>(
     tree: &mut Tree<E>,
     target_id: NodeId,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
     f: impl FnOnce(&mut E),
 ) {
+    if let Some(journal) = walk.journal.as_deref_mut() {
+        journal.record(&tree.arena, target_id);
+    }
     let node = get_target_mut(&mut tree.arena, target_id);
     let before = node.get().key();
     f(node.get_mut());
     if node.get().key() != before {
         if let Some(parent) = node.parent() {
-            rekeyed.record(parent, target_id);
+            walk.rekeyed.push((parent, target_id));
         }
     }
     tree.cache.invalidate();
@@ -353,7 +388,7 @@ fn process_instruction_node<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     instruction: &Instruction<E>,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     match instruction {
         Instruction::RepeatWhile(condition) => {
@@ -381,7 +416,7 @@ fn process_instruction_node<E: TreeElement, M: Mutation<E>>(
                     condition,
                     default_terminator::<E, M>,
                     &state,
-                    rekeyed,
+                    walk,
                 );
             });
         }
@@ -393,11 +428,11 @@ fn process_instruction_node<E: TreeElement, M: Mutation<E>>(
                 mutator_id,
                 point,
                 parent_state,
-                rekeyed,
+                walk,
             );
         }
         Instruction::MapChildren => {
-            zip_map_children(tree, mutator_tree, target_id, mutator_id, parent_state, rekeyed);
+            zip_map_children(tree, mutator_tree, target_id, mutator_id, parent_state, walk);
         }
     };
 }
@@ -512,7 +547,7 @@ fn align_child_walks<E: TreeElement, M: Mutation<E>>(
     target_id: NodeId,
     mutator_id: NodeId,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     debug!(
         "Aligning children of target node {} and mutator node {}.",
@@ -530,7 +565,7 @@ fn align_child_walks<E: TreeElement, M: Mutation<E>>(
     }
     let state = own_state(tree, target_id, parent_state);
     merge_rows(tree, mutator_tree, target_id, mutator_id, |tree, t_id, m_id| {
-        walk_from(tree, mutator_tree, t_id, m_id, &state, true, rekeyed);
+        walk_from(tree, mutator_tree, t_id, m_id, &state, true, walk);
     });
 }
 
@@ -570,7 +605,7 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
     target_id: NodeId,
     mutator_id: NodeId,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     let mut option_mutator_child = get_mutator(&mutator_tree.arena, mutator_id).first_child();
     let mut option_target_child = get_target(&tree.arena, target_id).first_child();
@@ -588,7 +623,7 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
         // borrowed from `mutator_tree`, which the dispatch below only
         // reads, so a nested instruction is handed on by reference.
         let mutator = get_mutator(&mutator_tree.arena, mutator_child_id).get();
-        apply_mutator(tree, target_child_id, mutator, &state, rekeyed);
+        apply_mutator(tree, target_child_id, mutator, &state, walk);
         match mutator {
             Mutator::Instruction { instruction, .. } => {
                 // Nested instruction: dispatch at the paired target.
@@ -602,7 +637,7 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
                     mutator_child_id,
                     instruction,
                     &state,
-                    rekeyed,
+                    walk,
                 );
             }
             Mutator::Single { .. } | Mutator::Macro { .. } | Mutator::Void { .. } => {
@@ -615,7 +650,7 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
                     target_child_id,
                     mutator_child_id,
                     &state,
-                    rekeyed,
+                    walk,
                 );
             }
         }
@@ -652,15 +687,15 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
 /// its descendants) to `target_id` (and its descendants). When the
 /// condition fails, call `terminator` to resume the normal walk.
 /// `parent_state` is the inherited state of `target_id`'s parent, and
-/// `rekeyed` the walk's record of changed keys.
+/// `walk` the walk's record of changed keys.
 ///
 /// This is the engine behind [`Instruction::RepeatWhile`]. Below
 /// `target_id` it visits only the children of the repeated mutator's
 /// **kind**, whatever their channel; a child of another kind is not
 /// tested, not mutated and not descended into. The `terminator` —
 /// [`default_terminator`] in every walk — receives the same tree pair,
-/// the current target/mutator ids, `parent_state` and `rekeyed`.
-/// Internal to the engine: `rekeyed` must be settled when the walk is
+/// the current target/mutator ids, `parent_state` and `walk`.
+/// Internal to the engine: `walk` must be settled when the walk is
 /// over, which only the walk's entry points do.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::engine) fn repeat_while<E: TreeElement, M: Mutation<E>>(
@@ -671,7 +706,7 @@ pub(in crate::engine) fn repeat_while<E: TreeElement, M: Mutation<E>>(
     condition: &Predicate<E>,
     terminator: Terminator<E, M>,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     let condition_matches = condition.test(get_target(&tree.arena, target_id).get());
     if condition_matches {
@@ -680,7 +715,7 @@ pub(in crate::engine) fn repeat_while<E: TreeElement, M: Mutation<E>>(
             mutator_id, target_id
         );
         let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
-        apply_mutator(tree, target_id, mutator, parent_state, rekeyed);
+        apply_mutator(tree, target_id, mutator, parent_state, walk);
         apply_repeat_while_to_children(
             tree,
             mutator_tree,
@@ -689,10 +724,10 @@ pub(in crate::engine) fn repeat_while<E: TreeElement, M: Mutation<E>>(
             condition,
             terminator,
             parent_state,
-            rekeyed,
+            walk,
         );
     } else {
-        terminator(tree, mutator_tree, target_id, mutator_id, parent_state, rekeyed);
+        terminator(tree, mutator_tree, target_id, mutator_id, parent_state, walk);
     }
 }
 
@@ -706,7 +741,7 @@ fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
     condition: &Predicate<E>,
     terminator: Terminator<E, M>,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     let mut head = get_target(&tree.arena, target_id).first_child();
     if head.is_none() {
@@ -737,7 +772,7 @@ fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
             condition,
             terminator,
             &state,
-            rekeyed,
+            walk,
         );
     }
 }
@@ -774,7 +809,7 @@ fn spatial_descend<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     point: &OrderedVec2,
     parent_state: &E::Inherited,
-    rekeyed: &mut Rekeyed,
+    walk: &mut Walk<'_, E>,
 ) {
     let point = point.to_vec2();
     let mut best: Option<(NodeId, f32)> = None;
@@ -809,7 +844,7 @@ fn spatial_descend<E: TreeElement, M: Mutation<E>>(
         return;
     };
     let state = state_above(tree, target_id, hit_id, parent_state);
-    apply_recorded(tree, hit_id, rekeyed, |hit| mutation.apply_to(hit, &state));
+    apply_recorded(tree, hit_id, walk, |hit| mutation.apply_to(hit, &state));
 }
 
 /// The inherited state of `descendant`'s parent, where `descendant` is

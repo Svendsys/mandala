@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// click-sensitive extents of a [`crate::gfx_structs::model::GlyphModel`].
 /// Multiple rects let one model carry disjoint hit areas (wrapped
 /// lines, multi-part glyphs) without needing a separate wrapper type.
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq)]
 pub struct HitBox {
     pub rectangles: Vec<BoundingRectangle>,
 }
@@ -50,7 +50,7 @@ impl HitBox {
 /// plus a `length` (x-extent) and `width` (y-extent). The hit test
 /// matches a point by adding the model's position and testing against
 /// the resulting absolute rect.
-#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
 pub struct BoundingRectangle {
     pub delta_x: f32,
     pub delta_y: f32,

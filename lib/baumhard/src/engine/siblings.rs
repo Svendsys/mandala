@@ -10,11 +10,14 @@
 //! the functions here are generic over the arena's value type and take
 //! the key as a function of the value.
 //!
-//! Every function keeps the invariant by **placing** a node, never by
-//! sorting a row: a node goes in at the one position its key allows,
-//! found by scanning from the end of the row its placement names, and
-//! every other sibling stays where it is. Nothing here allocates beyond
-//! the arena slot a new node takes.
+//! The invariant is kept by **placing** a node, never by sorting a
+//! row: a node goes in at the one position its key allows, found by
+//! scanning from the end of the row its placement names, and every
+//! other sibling stays where it is. Finding a moved node's slot
+//! (`reposition_slot`, `last_slot`) is separate from attaching it
+//! (`attach_at`), so that a [journal](crate::engine::journal::Journal) can note
+//! each move between the two. Nothing here allocates beyond the arena
+//! slot a new node takes.
 
 use crate::engine::tree::{Placement, TreeError};
 use indextree::{Arena, NodeId};
@@ -109,26 +112,26 @@ fn check_sibling<T, K: Ord>(
     Ok(())
 }
 
-/// Move `node` to its sorted position among its siblings — after every
-/// sibling whose key is `<=` its own — assuming every **other** sibling
-/// is already in order. The node keeps its `NodeId` and its subtree.
-/// A node already in place, or one with no parent, is left alone.
+/// Where `node` belongs among its siblings — after every sibling whose
+/// key is `<=` its own — assuming every **other** sibling is already in
+/// order. Returns `None` when the node is already in place (or has no
+/// parent), and otherwise `Some(prev)`: the sibling it must follow,
+/// `None` for the front of the row. Reads only; [`attach_at`] performs
+/// the move once the node is detached.
 ///
 /// This is the single-node repair behind
 /// [`Tree::update`](crate::engine::tree::Tree::update): one key changed,
 /// so the rest of the row is sorted and the node only has to travel
 /// past the siblings its new key no longer sits beside.
 ///
-/// Cost: O(siblings passed) key reads; a move is a detach plus one
-/// indextree insert, whose own check walks the node's ancestors —
-/// O(depth), paid only when the node actually moves.
-pub(crate) fn reposition<T, K: Ord>(arena: &mut Arena<T>, node: NodeId, key_of: impl Fn(&T) -> K) {
-    let Some(current) = arena.get(node) else {
-        return;
-    };
-    let Some(parent) = current.parent() else {
-        return;
-    };
+/// Cost: O(siblings passed) key reads; no allocation.
+pub(crate) fn reposition_slot<T, K: Ord>(
+    arena: &Arena<T>,
+    node: NodeId,
+    key_of: impl Fn(&T) -> K,
+) -> Option<Option<NodeId>> {
+    let current = arena.get(node)?;
+    current.parent()?;
     let key = key_of(current.get());
 
     // Moving earlier: walk back past every sibling keyed above the
@@ -144,18 +147,13 @@ pub(crate) fn reposition<T, K: Ord>(arena: &mut Arena<T>, node: NodeId, key_of: 
         back = sibling.previous_sibling();
     }
     if moved_back {
-        node.detach(arena);
-        match back {
-            Some(anchor) => attach_after(arena, anchor, node),
-            None => attach_first(arena, parent, node),
-        }
-        return;
+        return Some(back);
     }
 
     // Moving later: walk forward past every sibling keyed at or below
     // the node — the end of its new equal-key run.
     let mut last_passed = None;
-    let mut forward = arena[node].next_sibling();
+    let mut forward = current.next_sibling();
     while let Some(id) = forward {
         let sibling = &arena[id];
         if key_of(sibling.get()) > key {
@@ -164,42 +162,55 @@ pub(crate) fn reposition<T, K: Ord>(arena: &mut Arena<T>, node: NodeId, key_of: 
         last_passed = Some(id);
         forward = sibling.next_sibling();
     }
-    if let Some(anchor) = last_passed {
-        node.detach(arena);
-        attach_after(arena, anchor, node);
-    }
+    last_passed.map(Some)
 }
 
-/// Re-attach the detached `node` under `parent` at the end of the run
-/// of children whose key equals its own — [`Placement::Last`] for a
-/// node that already exists. The row it joins must be in order.
+/// Where the detached `node` joins `parent`'s row at the end of the
+/// run of children whose key equals its own — [`Placement::Last`] for
+/// a node that already exists: the sibling it must follow, or `None`
+/// for the front of the row. The row must be in order. Reads only;
+/// [`attach_at`] performs the attach.
 ///
 /// This is the batch repair behind the walker: every child whose key a
 /// walk changed is detached first, which leaves each row sorted, and
-/// each is then placed with this.
+/// each is then placed at the slot this finds.
 ///
-/// Cost: O(siblings scanned from the end of the row) key reads plus an
-/// O(depth) indextree insert check.
-pub(crate) fn attach_last<T, K: Ord>(
-    arena: &mut Arena<T>,
+/// Cost: O(siblings scanned from the end of the row) key reads.
+pub(crate) fn last_slot<T, K: Ord>(
+    arena: &Arena<T>,
     parent: NodeId,
     node: NodeId,
     key_of: impl Fn(&T) -> K,
-) {
+) -> Option<NodeId> {
     let (Some(parent_node), Some(moved)) = (arena.get(parent), arena.get(node)) else {
-        return;
+        return None;
     };
     let key = key_of(moved.get());
     let mut cursor = parent_node.last_child();
     while let Some(id) = cursor {
         let sibling = &arena[id];
         if key_of(sibling.get()) <= key {
-            attach_after(arena, id, node);
-            return;
+            return Some(id);
         }
         cursor = sibling.previous_sibling();
     }
-    attach_first(arena, parent, node);
+    None
+}
+
+/// Attach the detached `node` under `parent`, right after `prev`, or
+/// as the first child when `prev` is `None`. Places exactly where it
+/// is told — keys are not read — so the caller owns the
+/// sorted-children invariant: the walker and [`Tree::update`](crate::engine::tree::Tree::update)
+/// pass a slot found by [`last_slot`] or [`reposition_slot`], and a
+/// [journal](crate::engine::journal::Journal) passes a position it recorded
+/// from a sorted row.
+///
+/// Cost: an O(depth) indextree insert check.
+pub(crate) fn attach_at<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
+    match prev {
+        Some(anchor) => attach_after(arena, anchor, node),
+        None => attach_first(arena, parent, node),
+    }
 }
 
 /// Attach the detached `node` right after `anchor`. The checked
