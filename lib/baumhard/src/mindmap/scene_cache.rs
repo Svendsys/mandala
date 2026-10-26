@@ -315,6 +315,14 @@ pub struct SceneConnectionCache {
     /// having to tell that one too. Per process and monotonic, never
     /// reset: a cache that was cleared and refilled has still been told
     /// once more than before.
+    ///
+    /// The mirror is whole-cache, so a caller that says `invalidate_edge`
+    /// on every frame — the edge-handle drag drains one edge per drain —
+    /// costs the mirror everything it holds on every frame while this
+    /// cache loses one edge. Correct, and the price of a statement the
+    /// mirror cannot narrow; a drag that moved many nodes would be
+    /// better served by the drag's `offsets` map, which both caches'
+    /// passes read, than by per-drain invalidations.
     invalidations: u64,
 }
 

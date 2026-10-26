@@ -91,6 +91,12 @@ use super::InteractionMode;
 
 /// The scratch scene and its cache, owned by the app state beside the
 /// recorder and the artifacts dir, and reused across captures.
+///
+/// Kept for the rest of the process once the first capture at another
+/// zoom fills it, deliberately: the retention is what lets the frames
+/// of a recording take the in-place mutator arm and reuse their shaped
+/// glyphs, and the live `AppScene` it mirrors has the same lifetime.
+/// Nothing evicts it, and nothing should.
 pub(super) struct ScratchCanvas {
     scene: AppScene,
     cache: SceneConnectionCache,
