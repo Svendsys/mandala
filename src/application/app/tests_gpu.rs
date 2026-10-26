@@ -569,7 +569,12 @@ fn test_a_zoom_through_act_action_reprojects_and_a_capture_draws_the_frame() {
 /// still legitimately held. A lock that is never released — the
 /// failure this guards against — still fails, at the deadline.
 fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
+    /// How long to wait out a held font lock: time, not attempts, bounds
+    /// it, because CI load decides how long one shaping pass holds it.
     const PATIENCE: Duration = Duration::from_secs(60);
+    /// The pause between tries, so a wait spends its time asleep rather
+    /// than spinning against the holder.
+    const BACKOFF: Duration = Duration::from_millis(1);
     let request = json!({"id": 2, "cmd": "capture.screenshot", "path": path});
     let deadline = Instant::now() + PATIENCE;
     let mut attempts = 0_usize;
@@ -584,7 +589,7 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
                 "the font system stayed contended for {PATIENCE:?} ({attempts} capture attempts): {reply}"
             );
         }
-        std::thread::sleep(Duration::from_millis(1));
+        std::thread::sleep(BACKOFF);
     }
 }
 
