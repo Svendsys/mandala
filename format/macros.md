@@ -482,9 +482,12 @@ different program under the same id. Only a user file that is not a
 JSON array at all (or is not JSON) yields an empty user tier, again
 with a `warn!`; an empty file is an empty tier. A skipped user macro
 that overrode an App-tier macro of the same id leaves the App macro
-in effect. A field written twice inside a macro uses its last
-occurrence and logs a `warn!` naming its path (`[2].id`). The
-application boots even if the macros file is broken.
+in effect. A field written twice inside a macro **in the user file**
+uses its last occurrence and logs a `warn!` naming its path
+(`[2].id`); in a map's `macros` or a node's `inline_macros` the last
+occurrence is used silently, because the document parse has already
+kept it before the macro loader sees the entry. The application
+boots even if the macros file is broken.
 The application bundle is a build-time invariant and is parsed with
 `expect()` — a malformed bundle is a startup-time bug, not a user
 input error.
