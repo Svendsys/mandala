@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The Unix-socket transport: the boundary threads that own the
-//! socket, and [`IpcServer`], the main thread's handle onto them.
+//! The `--ipc` transport: the boundary threads that own the endpoint —
+//! a Unix socket, or on Windows a named pipe (`pipe.rs`, #169) — and
+//! [`IpcServer`], the main thread's handle onto them. Everything in
+//! this file and in `connection.rs` is the same on both; the endpoint's
+//! lifecycle and its byte stream are the only per-platform parts.
 //!
 //! **Who owns what** (`work_plans/LLM_IPC.md` §D2). A persistent
 //! *acceptor* always waits in `accept()`, so a second client learns it
-//! is refused at once. Each controller connection gets a *reader*
+//! is refused at once; it ends when the server closes its endpoint, at
+//! a graceful exit or on drop, so no boundary thread outlives the
+//! server. Each controller connection gets a *reader*
 //! (bytes → lines → [`IpcRequest`]s) and an *outbound* writer
 //! (frames → bytes), spawned together and torn down together. None of
 //! them sees `InitState`, the document or the renderer; they exchange
@@ -40,15 +45,28 @@
 //! to flush.
 
 mod connection;
+#[cfg(windows)]
+mod pipe;
+// Compiled under test everywhere, not only on Windows: `mandalactl`
+// maps an `--ipc` value to a pipe by the same rule, and the test that
+// holds the two together runs on every platform CI does.
+#[cfg(any(windows, test))]
+mod pipe_name;
+#[cfg(unix)]
 mod socket;
+#[cfg(unix)]
+mod unix;
+
+#[cfg(windows)]
+use pipe::{bind, BoundPipe as Endpoint};
+#[cfg(unix)]
+use socket::{bind, BoundSocket as Endpoint};
 
 use std::path::Path;
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-use std::os::unix::net::UnixStream;
 
 use super::envelope::{Event, Frame, IpcRequest};
 use super::events::{Observed, Queued, Session};
@@ -72,13 +90,13 @@ const EVENT_QUEUE_CAP: usize = 64;
 
 /// How long one write may make no progress before the client is
 /// declared dead and its connection dropped. A write blocks only once
-/// the kernel's socket buffer is full of output the client has not
-/// read, so this measures a client that has stopped reading, not one
-/// that is merely thinking.
+/// the kernel's socket buffer (or the pipe's) is full of output the
+/// client has not read, so this measures a client that has stopped
+/// reading, not one that is merely thinking.
 #[cfg(not(test))]
 const STALLED_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Shortened under test so the dead-client path runs in seconds rather
-/// than ten; the mechanism is the same socket option. Still long enough
+/// than ten; the mechanism is the same one. Still long enough
 /// that a test client descheduled on a loaded runner is not mistaken
 /// for a dead one — the paused-reader test pauses for a small,
 /// independent fraction of it.
@@ -137,9 +155,10 @@ struct Controller {
     /// Change events in the queue and not yet taken by the outbound
     /// thread: the main thread adds, the outbound thread subtracts.
     events_queued: Arc<AtomicUsize>,
-    /// A handle on the connection used only to shut it down — the
-    /// reader and the outbound thread unblock with an error and exit.
-    hangup: UnixStream,
+    /// A handle on the connection used only to end it — the reader and
+    /// the outbound thread unblock and exit. It also ends it when the
+    /// controller is dropped.
+    hangup: connection::HangUpOnDrop,
     /// Disconnects when the outbound thread exits; waited on at exit
     /// so the `shutdown` event can flush.
     flushed: Receiver<()>,
@@ -221,6 +240,11 @@ struct Link {
     /// thread. The mutex is held only to swap or clone an `Arc`, never
     /// across I/O, so neither side can stall the other on it.
     map: Mutex<Option<Arc<str>>>,
+    /// Test-only: how long the acceptor pauses at the top of installing
+    /// a controller, to widen the window in which a server can go away
+    /// mid-install. Zero unless a test sets it.
+    #[cfg(test)]
+    install_delay: Mutex<Duration>,
 }
 
 impl Link {
@@ -278,20 +302,21 @@ pub(crate) struct IpcServer {
     /// controller changes, except for the counters, which are the
     /// process's.
     session: Session,
-    socket: socket::BoundSocket,
+    endpoint: Endpoint,
 }
 
 impl IpcServer {
-    /// Bind the socket at `path` and start the acceptor. `wake` is
-    /// called from boundary threads whenever the main thread has
-    /// messages to drain; it must be cheap and must not block.
+    /// Bind the endpoint `path` names and start the acceptor: the
+    /// socket at `path`, or on Windows the pipe `\\.\pipe\mandala-<path>`.
+    /// `wake` is called from boundary threads whenever the main thread
+    /// has messages to drain; it must be cheap and must not block.
     ///
     /// Every failure — an untrusted parent directory, a path that is
-    /// not a stale socket of ours, a live listener, a bind error — is
-    /// returned as a message naming the path, for the caller's startup
-    /// `expect`.
+    /// not a stale socket of ours, a live listener, a pipe name already
+    /// served, a bind error — is returned as a message naming the
+    /// endpoint, for the caller's startup `expect`.
     pub(crate) fn start(path: &Path, wake: impl Fn() + Send + Sync + 'static) -> Result<IpcServer, String> {
-        let (listener, socket) = socket::bind(path)?;
+        let (listener, endpoint) = bind(path)?;
         let (inbound_tx, inbound) = mpsc::channel();
         let link = Arc::new(Link {
             inbound: inbound_tx,
@@ -300,13 +325,15 @@ impl IpcServer {
             pending_requests: AtomicUsize::new(0),
             controller_live: AtomicBool::new(false),
             map: Mutex::new(None),
+            #[cfg(test)]
+            install_delay: Mutex::new(Duration::ZERO),
         });
         let acceptor_link = Arc::clone(&link);
         std::thread::Builder::new()
             .name("mandala-ipc-acceptor".into())
             .spawn(move || connection::accept_loop(listener, acceptor_link))
             .map_err(|e| format!("cannot start the IPC acceptor thread: {e}"))?;
-        log::info!("ipc: listening on {}", socket.path().display());
+        log::info!("ipc: listening on {}", endpoint.path().display());
         Ok(IpcServer {
             link,
             inbound,
@@ -314,7 +341,7 @@ impl IpcServer {
             stalled: None,
             published_map: None,
             session: Session::default(),
-            socket,
+            endpoint,
         })
     }
 
@@ -491,7 +518,10 @@ impl IpcServer {
             .as_ref()
             .is_some_and(|c| c.generation == generation)
         {
-            self.controller = None;
+            // Its reader has ended; its writer still owes what is queued.
+            if let Some(Controller { hangup, .. }) = self.controller.take() {
+                hangup.release();
+            }
             self.stalled = None;
             self.session.reset_controller();
         }
@@ -516,7 +546,8 @@ impl IpcServer {
 
     /// Graceful exit: tell the controller, if any, that the app is
     /// going away, give that frame until [`SHUTDOWN_FLUSH`] to reach
-    /// it, close the connection and remove the socket file. Requests
+    /// it, close the connection, stop the acceptor and remove the
+    /// socket file. Requests
     /// still queued are not executed — the app is exiting, and the
     /// `shutdown` event is the answer they get.
     ///
@@ -552,9 +583,25 @@ impl IpcServer {
                 drop(outbound);
                 let _ = flushed.recv_timeout(deadline.saturating_duration_since(Instant::now()));
             }
-            let _ = hangup.shutdown(std::net::Shutdown::Both);
+            hangup.hang_up();
         }
-        self.socket.unlink();
+        self.endpoint.close();
+    }
+}
+
+impl Drop for IpcServer {
+    /// Dropped without [`IpcServer::shutdown`] — a panic unwinding past
+    /// the event loop, or a test — the server still leaves nothing
+    /// running. The endpoint is closed, which stops the acceptor, and
+    /// every controller ends with the value that holds it: the live one
+    /// here, one still queued on the inbound channel with the channel,
+    /// and one the acceptor is installing at this instant when its
+    /// announcement finds the channel gone (`HangUpOnDrop`). After a
+    /// graceful shutdown this finds nothing left to do; closing the
+    /// endpoint twice is a no-op.
+    fn drop(&mut self) {
+        self.controller = None;
+        self.endpoint.close();
     }
 }
 

@@ -705,6 +705,14 @@ struct PendingPress {
 /// `query.mode` reports [`PendingPress::grabs`] in it, so the three
 /// cannot disagree. Portal *text* is intentionally absent: dragging a
 /// portal's text sub-part is not a gesture, the icon carries the drag.
+///
+/// The two resize handles lead (#218). They are captured only in
+/// `InteractionMode::Resize`, on the target's own handles, so outside
+/// that mode the order is what it was. Inside it, the mode exists for
+/// those handles, while a label is grabbable in every mode and stays so
+/// once the mode is left. The press reads the same list for
+/// double-click detection ([`PendingPress::is_handle_press`]), so what a
+/// press would drag is what it is.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Grab {
@@ -719,12 +727,21 @@ enum Grab {
 impl Grab {
     /// Every grab, first-resolved first.
     const PRECEDENCE: [Grab; 5] = [
+        Grab::NodeResizeHandle,
+        Grab::SectionResizeHandle,
         Grab::EdgeLabel,
         Grab::PortalLabel,
         Grab::EdgeHandle,
-        Grab::NodeResizeHandle,
-        Grab::SectionResizeHandle,
     ];
+
+    /// Whether this grab is a handle: a drag affordance with no click
+    /// meaning of its own, unlike a label, which a double-click edits.
+    fn is_handle(self) -> bool {
+        match self {
+            Grab::NodeResizeHandle | Grab::SectionResizeHandle | Grab::EdgeHandle => true,
+            Grab::EdgeLabel | Grab::PortalLabel => false,
+        }
+    }
 
     /// The grab's name as `query.mode` reports it.
     fn word(self) -> &'static str {
@@ -761,6 +778,17 @@ impl PendingPress {
     /// to the node-move / rect-select / pan arms.
     fn first_grab(&self) -> Option<Grab> {
         self.grabs().next()
+    }
+
+    /// Whether the drag this press would become is a handle's (#218).
+    /// Such a press never takes part in double-click detection: it
+    /// neither completes a double-click nor starts one, so a second
+    /// press on a handle grabs it rather than opening an editor, and a
+    /// handle grab followed by a quick press elsewhere is no
+    /// double-click either. A press whose first grab is a label, or
+    /// that grabbed nothing, double-clicks as any press does.
+    fn is_handle_press(&self) -> bool {
+        self.first_grab().is_some_and(Grab::is_handle)
     }
 }
 
@@ -1249,9 +1277,10 @@ pub struct Options {
     /// defaults). The event loop resolves this into a `ResolvedKeybinds`
     /// at startup and dispatches keyboard events through it.
     pub keybind_config: crate::application::keybinds::KeybindConfig,
-    /// `--ipc <path>`: the Unix socket to serve the IPC protocol on
-    /// (`format/ipc.md`). `None` — the default — means no socket and
-    /// no IPC thread. Native-only: browsers cannot serve sockets.
+    /// `--ipc <path>`: the Unix socket to serve the IPC protocol on, or
+    /// on Windows the name of the pipe, `\\.\pipe\mandala-<name>`
+    /// (`format/ipc.md`). `None` — the default — means no endpoint and
+    /// no IPC thread. Native-only: browsers cannot serve either.
     #[cfg(not(target_arch = "wasm32"))]
     pub ipc_socket: Option<std::path::PathBuf>,
     /// `--headless`: no window, no display and no event loop — the

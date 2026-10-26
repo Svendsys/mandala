@@ -939,9 +939,11 @@ mod tests {
     }
 
     /// The grab order `query.mode` reports is the order the
-    /// threshold-cross step resolves (review of #174): the press that
-    /// hit an edge label *and* an edge handle reports the label first,
-    /// because that is the gesture it becomes.
+    /// threshold-cross step resolves (review of #174): a press that hit
+    /// a resize handle, an edge label *and* an edge handle reports the
+    /// resize handles first (#218), then the label ahead of the edge
+    /// handle, because that is the order the gesture it becomes is
+    /// chosen in.
     #[test]
     fn test_pending_grabs_report_in_the_threshold_cross_precedence() {
         let key = baumhard::mindmap::scene_cache::EdgeKey::new("a", "b", "cross_link");
@@ -955,14 +957,14 @@ mod tests {
             hit_section_resize_handle: Some(("1".into(), 0, ResizeHandleSide::N)),
             hit_node_resize_handle: Some(("1".into(), ResizeHandleSide::S)),
         };
-        assert_eq!(press.first_grab(), Some(Grab::EdgeLabel));
+        assert_eq!(press.first_grab(), Some(Grab::NodeResizeHandle));
         assert_eq!(
             press.grabs().map(Grab::word).collect::<Vec<_>>(),
             vec![
-                "edge_label",
-                "edge_handle",
                 "node_resize_handle",
-                "section_resize_handle"
+                "section_resize_handle",
+                "edge_label",
+                "edge_handle"
             ]
         );
         let bare = PendingPress {
