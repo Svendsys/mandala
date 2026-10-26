@@ -289,10 +289,14 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
     fn capture_canvas(&mut self, sidecar: bool) -> Option<Result<CanvasCapture, String>> {
         let camera = *self.app.renderer.camera();
         // Draw now, into the canvas, and read it back before this task
-        // ends: the browser composites — and, without
-        // `preserveDrawingBuffer`, clears — the canvas only once the
-        // task yields, so the read-back in the same task sees the
-        // frame just drawn and no other.
+        // ends. On WebGL (no `preserveDrawingBuffer`) that is what
+        // holds the frame just drawn: the buffer is cleared once the
+        // task yields. On WebGPU, which presents the canvas's current
+        // texture at the rendering update, whether a same-task read
+        // sees this frame or the last presented one is unverified
+        // (`format/ipc.md` §`capture.screenshot`); if it is the
+        // latter, this becomes a two-step: draw now, read at the next
+        // `RedrawRequested`.
         let outcome = match self.app.renderer.process() {
             Ok(()) => {
                 self.app.input.redraw_owed = false;

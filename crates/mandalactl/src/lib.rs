@@ -63,4 +63,4 @@ mod testing;
 mod ws_tests;
 
 pub use run::{run, Env, Exit, Io};
-pub use wire::{BRIDGE_ATTACHED, BRIDGE_DETACHED, BRIDGE_KEY, FRAME_CAP, PROTOCOL, REQUEST_CAP};
+pub use wire::{redacted, BRIDGE_ATTACHED, BRIDGE_DETACHED, BRIDGE_KEY, FRAME_CAP, PROTOCOL, REQUEST_CAP};

@@ -11,8 +11,9 @@
 //!
 //! This module is the part of that transport that is protocol, not
 //! browser: how the page finds its relay (`?ipc=`, [`ipc_url_from_query`]),
-//! how it reads the relay's control frames ([`BridgeFrame`]), and how
-//! it paces reconnects ([`Backoff`]). It compiles on both targets, so
+//! how it reads the relay's control frames ([`BridgeFrame`]), which
+//! controller each queued message belongs to ([`stamp`]), and how it
+//! paces reconnects ([`Backoff`]). It compiles on both targets, so
 //! the native test suite proves it; the socket itself — web-sys's
 //! `WebSocket`, the timers, the callbacks — is `socket`, wasm32-only
 //! by nature. The relay's side of the same frames is
@@ -78,6 +79,101 @@ impl BridgeFrame {
     }
 }
 
+/// One queued arrival, as [`stamp`] reads it: what the page's socket
+/// callbacks saw, in the order they saw it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Arrival {
+    /// The relay's `attached`: a new controller generation begins.
+    Attached,
+    /// The relay's `detached`, or the socket closing: the controller
+    /// is gone.
+    Departed,
+    /// A controller's text: a request, or a line that fails to decode.
+    Text,
+    /// Anything else (the socket opened, a reconnect is due).
+    Other,
+}
+
+/// The controller generation each arrival of a batch belongs to, and
+/// the generation that is current once the whole batch has happened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Stamps {
+    /// Per arrival: for a [`Arrival::Text`], the generation of the
+    /// controller attached when it arrived, or `None` if none was;
+    /// `None` for every other arrival.
+    pub(crate) of: Vec<Option<u64>>,
+    /// The controller attached at the end of the batch, if any.
+    pub(crate) current: Option<u64>,
+}
+
+impl Stamps {
+    /// Whether the text at `index` is owed an answer: a controller
+    /// sent it, and that controller is still the current one. Native's
+    /// drain asks the same of `request.generation` against the live
+    /// controller (`transport::IpcServer`), and a request that fails it
+    /// is dropped unexecuted there too.
+    pub(crate) fn owed(&self, index: usize) -> bool {
+        self.of[index].is_some() && self.of[index] == self.current
+    }
+}
+
+/// Stamp a batch of queued arrivals with their controller generations,
+/// starting from the page's state before the batch: `generation` is the
+/// last one begun, `attached` whether its controller is still there.
+///
+/// The socket's callbacks queue what they see and the page drains the
+/// queue later, in order — and later can be seconds on a throttled
+/// tab. By the time a request is reached, its controller may already
+/// have left and another attached: `[request(A), detached, attached]`
+/// is a queue a slow pump really finds. Executing A's request then
+/// would send its reply to B, ahead of B's `hello`. So the page looks
+/// at the whole batch first: what is current is what is current once
+/// every queued arrival has happened, which is what native's
+/// generation check compares against too — its reader stamps a request
+/// on arrival, and the drain drops it if the controller of that
+/// generation is no longer the live one by the time it runs.
+pub(crate) fn stamp(batch: &[Arrival], mut generation: u64, mut attached: bool) -> Stamps {
+    let of = batch
+        .iter()
+        .map(|arrival| match arrival {
+            Arrival::Attached => {
+                generation += 1;
+                attached = true;
+                None
+            }
+            Arrival::Departed => {
+                attached = false;
+                None
+            }
+            Arrival::Text => attached.then_some(generation),
+            Arrival::Other => None,
+        })
+        .collect();
+    Stamps {
+        of,
+        current: attached.then_some(generation),
+    }
+}
+
+/// `url` with everything after its first path segment replaced by `…`:
+/// `ws://127.0.0.1:41816/app/<token>` → `ws://127.0.0.1:41816/app/…`.
+/// What a log line shows of the relay URL. The token is the one guard
+/// on the relay's port, and on the browser a `warn!`/`error!` during a
+/// command is also captured into the reply's `warnings` — so no log
+/// line carries it. `mandalactl::redacted` is the same rule for the
+/// client's errors (the page cannot link the client), and a test in
+/// `ipc::commands` holds the two equal.
+pub(crate) fn redacted(url: &str) -> String {
+    let authority = url.find("://").map_or(0, |at| at + 3);
+    let Some(path) = url[authority..].find('/').map(|at| authority + at) else {
+        return url.to_string();
+    };
+    match url[path + 1..].find('/') {
+        Some(at) => format!("{}/…", &url[..path + 1 + at]),
+        None => url.to_string(),
+    }
+}
+
 /// The relay's URL from the page's query string (`location.search`,
 /// with or without its leading `?`): `Ok(None)` when no `ipc` key is
 /// present — the default, and IPC stays off — `Ok(Some(url))` for a
@@ -101,7 +197,8 @@ pub(crate) fn ipc_url_from_query(search: &str) -> Result<Option<String>, String>
     }
     if !(url.starts_with("ws://") || url.starts_with("wss://")) {
         return Err(format!(
-            "`?{QUERY_KEY}={url}` is not a WebSocket URL: it must start with ws:// or wss://"
+            "`?{QUERY_KEY}={}` is not a WebSocket URL: it must start with ws:// or wss://",
+            redacted(&url)
         ));
     }
     Ok(Some(url))
@@ -228,6 +325,45 @@ mod tests {
         ] {
             assert_eq!(BridgeFrame::parse(text), None, "{text}");
         }
+    }
+
+    /// **A request whose controller left before the pump reached it is
+    /// not owed an answer** — the queue a throttled tab really finds.
+    /// The control is the same request with no departure behind it,
+    /// which is owed, and the next controller's request in the same
+    /// batch, which is owed too.
+    #[test]
+    fn test_a_request_from_a_departed_controller_is_not_owed_in_its_batch() {
+        use Arrival::{Attached, Departed, Text};
+        let stamps = stamp(&[Text, Departed, Attached, Text], 1, true);
+        assert_eq!(stamps.of, vec![Some(1), None, None, Some(2)]);
+        assert_eq!(stamps.current, Some(2));
+        assert!(!stamps.owed(0), "A's request: A left behind it");
+        assert!(stamps.owed(3), "B's request: B is current");
+
+        // Control: nothing departs behind it, and it is owed.
+        let stamps = stamp(&[Text], 1, true);
+        assert!(stamps.owed(0));
+    }
+
+    /// The socket closing is a departure as `detached` is, a text sent
+    /// while no controller is attached belongs to none, and a batch
+    /// that only attaches leaves its controller current.
+    #[test]
+    fn test_a_close_retires_and_an_unattached_text_belongs_to_no_one() {
+        use Arrival::{Attached, Departed, Other, Text};
+        let stamps = stamp(&[Text, Other, Departed], 4, true);
+        assert!(!stamps.owed(0), "the socket closed behind it");
+        assert_eq!(stamps.current, None);
+
+        let stamps = stamp(&[Text, Attached], 4, false);
+        assert_eq!(stamps.of[0], None, "nobody was attached when it came");
+        assert!(!stamps.owed(0));
+        assert_eq!(stamps.current, Some(5));
+
+        // Control: attached before it, and still attached at the end.
+        let stamps = stamp(&[Attached, Other, Text], 4, false);
+        assert!(stamps.owed(2));
     }
 
     #[test]

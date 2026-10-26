@@ -22,7 +22,10 @@
 //! when it detaches — the accept/disconnect lifecycle of the native
 //! acceptor, mapped onto a connection that stays up across
 //! controllers. A controller's text that arrives while none is
-//! attached is dropped: nothing is owed to nobody.
+//! attached is dropped: nothing is owed to nobody. So is one whose
+//! controller left before the pump reached it: the pump stamps its
+//! whole queue first ([`super::stamp`]), and answers only the current
+//! controller, as native's drain checks a request's generation.
 //!
 //! **Caps.** A text message over the inbound line cap is answered
 //! `parse_error`, as the native reader answers an overlong line; a
@@ -40,7 +43,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
-use super::{Backoff, BridgeFrame};
+use super::{redacted, stamp, Arrival, Backoff, BridgeFrame};
 use crate::application::ipc::envelope::{
     decode_line, Decoded, Event, Frame, IpcRequest, Reply, INBOUND_LINE_CAP, OUTBOUND_FRAME_CAP,
 };
@@ -59,6 +62,21 @@ enum Inbound {
     Closed,
     /// The reconnect pause is over: open a new socket.
     Reconnect,
+}
+
+impl Inbound {
+    /// What [`stamp`] needs to know of it.
+    fn arrival(&self) -> Arrival {
+        match self {
+            Inbound::Closed => Arrival::Departed,
+            Inbound::Text(text) => match BridgeFrame::parse(text) {
+                Some(BridgeFrame::Attached) => Arrival::Attached,
+                Some(BridgeFrame::Detached) => Arrival::Departed,
+                None => Arrival::Text,
+            },
+            Inbound::Opened | Inbound::Reconnect => Arrival::Other,
+        }
+    }
 }
 
 /// A `setTimeout` kept alive until it fires or is dropped, which
@@ -127,8 +145,12 @@ pub(crate) struct BrowserIpc {
     /// A controller is attached behind the relay.
     attached: bool,
     /// Bumped per attached controller: what a request is stamped
-    /// with, so one from a departed controller is never executed.
+    /// with ([`stamp`]), so one from a departed controller is never
+    /// executed.
     generation: u64,
+    /// The current controller's message count, for `parse_error`'s
+    /// `data.line`; reset per controller, as native's reader starts
+    /// each connection at 0.
     line_index: u64,
     inbound: Rc<RefCell<VecDeque<Inbound>>>,
     wake: Rc<dyn Fn()>,
@@ -174,7 +196,10 @@ impl BrowserIpc {
                 // A URL the browser refuses to even try (a malformed
                 // one, or an insecure one from a secure page) will not
                 // get better: say so once and stop.
-                log::error!("ipc: cannot open a WebSocket to {}: {e:?}; IPC is off", self.url);
+                log::error!(
+                    "ipc: cannot open a WebSocket to {}: {e:?}; IPC is off",
+                    redacted(&self.url)
+                );
                 return;
             }
         };
@@ -202,7 +227,7 @@ impl BrowserIpc {
         socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
         // An error is always followed by a close, which is what is
         // acted on; the handler only keeps the console quiet.
-        log::info!("ipc: connecting to {}", self.url);
+        log::info!("ipc: connecting to {}", redacted(&self.url));
         self.live = Some(Live {
             socket,
             _on_open: on_open,
@@ -229,12 +254,18 @@ impl BrowserIpc {
                 self.session.observe(&observed, Driver::App);
             }
         }
-        loop {
-            let next = self.inbound.borrow_mut().pop_front();
-            let Some(message) = next else { break };
+        // The whole queue at once, stamped before anything runs: a
+        // request is answered only if its controller is still the
+        // current one once every queued arrival has happened
+        // (`super::stamp`). The callbacks cannot push during a pump —
+        // they are tasks of their own on this one thread.
+        let batch: Vec<Inbound> = self.inbound.borrow_mut().drain(..).collect();
+        let arrivals: Vec<Arrival> = batch.iter().map(Inbound::arrival).collect();
+        let stamps = stamp(&arrivals, self.generation, self.attached);
+        for (index, message) in batch.into_iter().enumerate() {
             match message {
                 Inbound::Opened => {
-                    log::info!("ipc: connected to the relay at {}", self.url);
+                    log::info!("ipc: connected to the relay at {}", redacted(&self.url));
                     self.backoff.reset();
                 }
                 Inbound::Closed => {
@@ -266,13 +297,19 @@ impl BrowserIpc {
                         }
                         continue;
                     }
-                    if !self.attached {
+                    // The generation check, native's drain's twin: a
+                    // text sent while no controller was attached, or by
+                    // one that has left behind it in this batch, is
+                    // dropped unexecuted and unanswered — a parse error
+                    // included, which on this transport would otherwise
+                    // reach the next controller.
+                    let Some(sender) = stamps.of[index].filter(|_| stamps.owed(index)) else {
                         log::debug!(
-                            "ipc: dropped {} bytes sent while no controller is attached",
+                            "ipc: dropped {} bytes whose controller is not attached",
                             text.len()
                         );
                         continue;
-                    }
+                    };
                     let line_index = self.line_index;
                     self.line_index += 1;
                     let decoded = if text.len() > INBOUND_LINE_CAP {
@@ -284,12 +321,13 @@ impl BrowserIpc {
                             ),
                         ))
                     } else {
-                        decode_line(text.as_bytes(), line_index, self.generation)
+                        decode_line(text.as_bytes(), line_index, sender)
                     };
                     match decoded {
                         Decoded::Blank => {}
                         Decoded::Rejected(reply) => self.send(Frame::Reply(reply)),
                         Decoded::Request(request) => {
+                            debug_assert_eq!(request.generation, self.generation);
                             // Re-wrapped to shorten the trait object's
                             // lifetime to this one call: `&mut` is
                             // invariant (as `registry::Call::drive`).
@@ -304,6 +342,7 @@ impl BrowserIpc {
                 }
             }
         }
+        debug_assert_eq!(stamps.current, self.attached.then_some(self.generation));
         if let (Some(app), Some(settling)) = (app.as_deref().map(|app| app as &dyn CommandTarget), settling) {
             self.evaluate_wait(app, settling);
             self.publish_map(app);
@@ -317,6 +356,7 @@ impl BrowserIpc {
     fn attach(&mut self, app: Option<&dyn CommandTarget>) {
         self.generation += 1;
         self.attached = true;
+        self.line_index = 0;
         self.session.reset_controller();
         if let Some(app) = app {
             self.publish_map(app);

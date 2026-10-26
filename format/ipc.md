@@ -238,12 +238,21 @@ JSON object with that one key and no other, which no request is:
 - *detached*: the controller left. The page resets its session the way
   the native acceptor's `Gone` does; a request still in flight from
   the departed controller is dropped by generation, never executed
-  for the next one.
+  for the next one. The page receives on callbacks and executes later,
+  in order, so its queue can hold a departed controller's request
+  ahead of the `detached` that retires it (a throttled background tab
+  pumps seconds late): it stamps each queued message with the
+  controller attached when it arrived, and executes only those whose
+  controller is still current once every queued arrival has happened —
+  native's generation check, which compares a request's stamp against
+  the live controller when the request runs. A dropped message is not
+  answered, a `parse_error` included, so nothing the departed
+  controller sent reaches the next one ahead of its `hello`.
 - The page leaving (tab closed, reload, the relay's socket lost): the
   controller receives `{"event":"shutdown","data":{}}` and is closed,
-  the shape an exiting native app gives. A new page attaches to the
-  waiting relay and is told `attached` at once if a controller is
-  already there.
+  the shape an exiting native app gives. A new page that connects
+  waits for a new controller: no controller outlives the page it was
+  attached to, so there is never one already there to tell it about.
 - A controller's frame that has the relay's shape is dropped by the
   relay, never forwarded, so the page cannot be told about a
   controller by anyone but the relay.
@@ -278,7 +287,12 @@ Beside those, `act.action` with an `Action` whose body is
 `WasmCompatibility::NativeOnly` is answered `unsupported` naming the
 action — the cross-platform dispatcher would answer `unhandled`,
 which also means "nothing to do", so the honest answer is the
-refusal. `query.*`, `scene.*`, `input.*`, `act.macro`, `clock.*` and
+refusal. A `NativeOnly` `Action` reached as an `act.macro` step is
+not refused: a macro step is a keystroke-level instruction, and it is
+answered as a keystroke bound to that `Action` is on the browser — it
+does not run, and does not count toward `ran` — while the macro's other
+steps run. The refusal belongs to `act.action`, where the `Action` is
+the whole request. `query.*`, `scene.*`, `input.*`, `act.macro`, `clock.*` and
 `events.*` are at parity, with these per-target shapes: `query.mode`
 reports `drag_state.kind: "None"` (the browser has no drag-state
 machine) and `modals` from the one modal it has, the node text editor;
@@ -301,7 +315,8 @@ loopback port has no such owner: **any page in any browser on this
 machine can open a WebSocket to `127.0.0.1:<port>`**, and a browser's
 same-origin policy does not apply to WebSocket connects. The relay's
 answer is the token: 128 bits from the OS (`getrandom`), or `token=`
-if given, required on both roles, printed once at startup and
+if given (at least 16 characters of `A-Z a-z 0-9 - _`, so a
+convenience token cannot quietly be no guard), required on both roles, printed once at startup and
 otherwise unguessable — so a page that does not hold it cannot attach
 as a controller and cannot impersonate the app. The token is a
 **same-user secret, the tier the socket path is**, not a network one:
@@ -1796,8 +1811,23 @@ different engine and a narrower shape, and `describe` declares exactly
 the per-target parameters and result fields: the page draws the live
 view into its canvas — the same prepare / encode pair, at the canvas's
 own size and through the live camera — and reads it back in the same
-task (`toDataURL`, before the browser composites), so the picture is
-the frame the user would see. There is no file: the PNG comes back
+task (`toDataURL`), before that task yields to the browser's rendering
+update. What that read-back holds is **established for WebGL's
+presentation model only, and unverified for WebGPU** — and WebGPU is
+the backend the bundle takes whenever the browser defines
+`navigator.gpu`; there is no WebGL fallback until #220 lands. On WebGL
+without `preserveDrawingBuffer`, a same-task `toDataURL` reads the
+frame just drawn and a read one frame later reads a cleared buffer
+(observed in headless Chromium's WebGL2 on a plain canvas, not on this
+bundle), which is why the read-back runs in the draw's task. A WebGPU canvas
+presents its current texture at the rendering update instead, and
+whether a same-task `toDataURL` returns the frame just submitted or
+the previously presented one has not been observed: headless
+Chromium's SwiftShader WebGPU reads transparent at every moment, which
+is consistent with either answer, and no GPU-backed browser has run
+it. Until one has, treat the browser's PNG as unverified, and its
+`sidecar` — computed from the scene, not read from pixels — as the
+reliable half. There is no file: the PNG comes back
 inline as `png_base64`, and the geometry sidecar inline as `sidecar`,
 and `mandalactl --ws capture.screenshot <path>` writes both
 ([Client](#client-mandalactl)). The framing parameters — `path`,
@@ -1806,7 +1836,8 @@ are not declared there and are refused as stray; `format` and
 `sidecar` are. `rendered`/`skipped`, `width`/`height`/`scale`/`camera`
 and `settled` mean what they mean below, `settled` reading the
 browser's two sources (an animation ticking, injected input queued,
-each in real time). The engine's write guards and `busy` do not arise.
+each in real time). `busy` does not arise; the write guards are the
+client's, which writes on the page's behalf (below).
 
 | param | type | default | meaning |
 |---|---|---|---|
@@ -2529,8 +2560,12 @@ a client does:
   same, with one client-side difference: `capture.screenshot <path>`
   requires the path, takes `path` and `overwrite` off the request, and
   writes the PNG the page returns inline — and its sidecar, as
-  `<path>.geometry.json` — refusing a file in the way unless
-  `overwrite=true` (exit `1`; the capture may be repeated); its output,
+  `<path>.geometry.json` — with the native writer's guards: a symlink
+  at either path is never followed, `overwrite=true` included; an
+  existing file is refused unless `overwrite=true`; and the write is
+  atomic (a sibling file, synced, then moved or linked into place), so
+  a failure leaves what was there. A refusal is exit `1`, and the
+  capture may be repeated; its output,
   `--json` included, then names `path` and `sidecar_path` as a native
   reply does, in place of `png_base64` and `sidecar`. A `rendered: false`
   reply writes nothing. The framing parameters are sent as given, for

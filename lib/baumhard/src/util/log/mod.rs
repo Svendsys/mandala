@@ -94,7 +94,10 @@ pub fn init() {
 /// The browser's runtime filter: `Info`, as `console_log::init_with_level`
 /// was called with before the capture tap replaced it — looser than
 /// native's `warn`, and harmless, since the release cap compiles
-/// `info!` out before this filter sees it.
+/// `info!` out before this filter sees it. At or above `Warn`, which is
+/// what lets [`WasmCapturingLogger::enabled`] admit every record the
+/// capture wants on this filter alone; native's logger needs a second
+/// clause for that, because its inner filter can sit above `Warn`.
 #[cfg(target_arch = "wasm32")]
 const WASM_MAX_LEVEL: log::LevelFilter = log::LevelFilter::Info;
 
@@ -111,7 +114,7 @@ static WASM_LOGGER: WasmCapturingLogger = WasmCapturingLogger;
 #[cfg(target_arch = "wasm32")]
 impl log::Log for WasmCapturingLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= WASM_MAX_LEVEL || (metadata.level() <= log::Level::Warn && capture::active())
+        metadata.level() <= WASM_MAX_LEVEL
     }
 
     fn log(&self, record: &log::Record) {

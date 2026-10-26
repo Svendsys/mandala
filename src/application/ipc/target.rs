@@ -243,8 +243,10 @@ pub(crate) trait CommandTarget {
     ) -> Option<Result<Screenshot, CaptureError>>;
 
     /// The browser's capture: draw the frame into the canvas and read
-    /// the canvas back as a PNG, in one task, so the drawing buffer is
-    /// still what was drawn (`format/ipc.md` §Transport "Browser"). The
+    /// the canvas back as a PNG, in one task (`format/ipc.md`
+    /// §`capture.screenshot`). That the read holds the frame just drawn
+    /// is proven for WebGL's presentation model and unverified for
+    /// WebGPU's, which presents at the rendering update: see there. The
     /// live camera, at the canvas's size: the browser cannot draw
     /// offscreen for another framing. `sidecar` asks for the geometry
     /// sidecar inline. `None` when the app has no document; `Err` names

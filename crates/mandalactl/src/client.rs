@@ -586,7 +586,7 @@ mod ws {
     use tungstenite::{Message, WebSocket};
 
     use super::{cap_error, send_error, send_failure, Line, Link, Outcome, BRIDGE_HINT};
-    use crate::wire::{Outgoing, FRAME_CAP};
+    use crate::wire::{redacted, Outgoing, FRAME_CAP};
 
     /// The WebSocket transport: one text message per frame, through
     /// `mandalactl bridge` (`format/ipc.md` §Transport "Browser").
@@ -747,10 +747,13 @@ mod ws {
     /// of it.
     pub(super) fn connect(url: &str, timeout: Duration) -> Result<Box<dyn Link>, String> {
         let deadline = Instant::now() + timeout;
+        // What the errors below show of `url`: the token stays out of
+        // every message (`wire::redacted`).
+        let shown = redacted(url);
         let (host, port) = host_port(url)?;
         let addresses: Vec<SocketAddr> = (host.as_str(), port)
             .to_socket_addrs()
-            .map_err(|e| format!("cannot resolve {host}:{port} from {url}: {e}"))?
+            .map_err(|e| format!("cannot resolve {host}:{port} from {shown}: {e}"))?
             .collect();
         let mut last = None;
         let mut stream = None;
@@ -770,10 +773,10 @@ mod ws {
         let Some(stream) = stream else {
             return Err(match last {
                 Some(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => format!(
-                    "nothing is listening at {host}:{port} ({url}): the relay is not running. {BRIDGE_HINT}"
+                    "nothing is listening at {host}:{port} ({shown}): the relay is not running. {BRIDGE_HINT}"
                 ),
-                Some(e) => format!("could not connect to {url}: {e}. {BRIDGE_HINT}"),
-                None => format!("{url} resolves to no address"),
+                Some(e) => format!("could not connect to {shown}: {e}. {BRIDGE_HINT}"),
+                None => format!("{shown} resolves to no address"),
             });
         };
         let _ = stream.set_nodelay(true);
@@ -785,7 +788,7 @@ mod ws {
         let config = WebSocketConfig::default().max_message_size(Some(FRAME_CAP));
         let (socket, _response) =
             tungstenite::client::client_with_config(url, Counted { stream, written: 0 }, Some(config))
-                .map_err(|e| handshake_failed(url, e))?;
+                .map_err(|e| handshake_failed(&shown, e))?;
         Ok(Box::new(WsLink { socket }))
     }
 
@@ -793,14 +796,15 @@ mod ws {
     /// refused: the relay is loopback and plain, and this client links
     /// no TLS.
     fn host_port(url: &str) -> Result<(String, u16), String> {
+        let shown = redacted(url);
         let Some(rest) = url.strip_prefix("ws://") else {
             if url.starts_with("wss://") {
                 return Err(format!(
-                    "{url}: wss:// is not supported; the relay is a plain ws:// on loopback"
+                    "{shown}: wss:// is not supported; the relay is a plain ws:// on loopback"
                 ));
             }
             return Err(format!(
-                "{url} is not a WebSocket URL: it must start with ws://, e.g. ws://127.0.0.1:41816/controller/<token>"
+                "{shown} is not a WebSocket URL: it must start with ws://, e.g. ws://127.0.0.1:41816/controller/<token>"
             ));
         };
         let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
@@ -808,22 +812,22 @@ mod ws {
             Some((host, port)) if !host.ends_with(']') || host.starts_with('[') => (
                 host,
                 port.parse::<u16>()
-                    .map_err(|_| format!("{url}: `{port}` is not a port number"))?,
+                    .map_err(|_| format!("{shown}: `{port}` is not a port number"))?,
             ),
             _ => (authority, 80),
         };
         let host = host.trim_start_matches('[').trim_end_matches(']');
         if host.is_empty() {
-            return Err(format!("{url} names no host"));
+            return Err(format!("{shown} names no host"));
         }
         Ok((host.to_string(), port))
     }
 
     /// Why the handshake failed, in words that name the next step: a
     /// refused role (the relay's 4xx) is told apart from a peer that
-    /// is not a relay at all.
+    /// is not a relay at all. `shown` is the URL as errors show it.
     fn handshake_failed(
-        url: &str,
+        shown: &str,
         error: tungstenite::handshake::HandshakeError<tungstenite::ClientHandshake<Counted>>,
     ) -> String {
         use tungstenite::handshake::HandshakeError;
@@ -835,7 +839,7 @@ mod ws {
                     .map(|bytes| String::from_utf8_lossy(bytes).trim().to_string())
                     .unwrap_or_default();
                 format!(
-                    "the relay refused the WebSocket handshake for {url} ({}): {body}",
+                    "the relay refused the WebSocket handshake for {shown} ({}): {body}",
                     response.status()
                 )
             }
@@ -845,13 +849,13 @@ mod ws {
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                format!("no WebSocket handshake reply from {url} in time. Is that a mandalactl bridge? {BRIDGE_HINT}")
+                format!("no WebSocket handshake reply from {shown} in time. Is that a mandalactl bridge? {BRIDGE_HINT}")
             }
             HandshakeError::Interrupted(_) => {
-                format!("the WebSocket handshake with {url} did not complete in time")
+                format!("the WebSocket handshake with {shown} did not complete in time")
             }
             HandshakeError::Failure(e) => {
-                format!("the WebSocket handshake with {url} failed: {e}. {BRIDGE_HINT}")
+                format!("the WebSocket handshake with {shown} failed: {e}. {BRIDGE_HINT}")
             }
         }
     }

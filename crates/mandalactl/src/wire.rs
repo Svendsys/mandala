@@ -52,6 +52,26 @@ pub fn is_bridge_frame(text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// `url` with everything after its first path segment replaced by `…`:
+/// `ws://127.0.0.1:41816/controller/<token>` → `ws://127.0.0.1:41816/controller/…`.
+/// What an error line shows of a relay URL, so the token — the one
+/// guard on the relay's port (`format/ipc.md` §Transport "Browser") —
+/// is printed once, by the relay at startup, and never echoed into a
+/// diagnostic a user pastes into a bug report. The app's browser socket
+/// redacts its own logs by the same rule (`ipc::browser::redacted`;
+/// the page cannot link this crate), and a test in the app crate holds
+/// the two equal.
+pub fn redacted(url: &str) -> String {
+    let authority = url.find("://").map_or(0, |at| at + 3);
+    let Some(path) = url[authority..].find('/').map(|at| authority + at) else {
+        return url.to_string();
+    };
+    match url[path + 1..].find('/') {
+        Some(at) => format!("{}/…", &url[..path + 1 + at]),
+        None => url.to_string(),
+    }
+}
+
 /// Decode standard base64 (`A-Z a-z 0-9 + /`, `=` padding, no line
 /// breaks): what a browser's `canvas.toDataURL` carries after its
 /// `data:image/png;base64,` prefix, and what `capture.screenshot`'s

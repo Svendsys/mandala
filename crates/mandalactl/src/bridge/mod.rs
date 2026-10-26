@@ -208,6 +208,13 @@ pub fn bind(listen: &str) -> Result<TcpListener, String> {
     })
 }
 
+/// The shortest `token=` the relay accepts. The token is the only guard
+/// on a port every page on this machine can reach; a convenience token
+/// of a few characters would quietly be no guard at all. Sixteen
+/// characters of the accepted alphabet (64 symbols) are 96 bits — short
+/// of the 128 a generated token carries, long past guessing by a page.
+const MIN_TOKEN_LEN: usize = 16;
+
 /// 128 bits from the OS, as 32 hex digits.
 fn fresh_token() -> Result<String, String> {
     let mut bytes = [0u8; 16];
@@ -232,6 +239,13 @@ fn parse_args(words: &[String]) -> Result<Args, String> {
                         return Err(
                             "`token=` takes letters, digits, `-` and `_`, and cannot be empty".to_string()
                         );
+                    }
+                    if value.len() < MIN_TOKEN_LEN {
+                        return Err(format!(
+                            "`token=` is {} characters; it is the relay's only guard, so it takes at least \
+                             {MIN_TOKEN_LEN}. Leave it out for 128 random bits",
+                            value.len()
+                        ));
                     }
                     token = Some(value);
                 }
@@ -455,16 +469,27 @@ mod tests {
 
     #[test]
     fn test_arguments_are_listen_and_token_only() {
-        let args =
-            parse_args(&["listen=127.0.0.1:5000".to_string(), "token=abc-1".to_string()]).expect("parses");
+        let args = parse_args(&[
+            "listen=127.0.0.1:5000".to_string(),
+            "token=abc-1_abc-1_abc-".to_string(),
+        ])
+        .expect("parses");
         assert_eq!(
             (args.listen.as_str(), args.token.as_deref()),
-            ("127.0.0.1:5000", Some("abc-1"))
+            ("127.0.0.1:5000", Some("abc-1_abc-1_abc-"))
         );
         let defaults = parse_args(&[]).expect("parses");
         assert_eq!((defaults.listen.as_str(), defaults.token), (DEFAULT_LISTEN, None));
         assert!(parse_args(&["token=".to_string()]).is_err());
         assert!(parse_args(&["token=a b".to_string()]).is_err());
+        // The length floor, at its edge: one short is refused by name,
+        // the floor itself is accepted.
+        let short = "a".repeat(MIN_TOKEN_LEN - 1);
+        let Err(refused) = parse_args(&[format!("token={short}")]) else {
+            panic!("a {}-character token was accepted", short.len());
+        };
+        assert!(refused.contains("at least 16"), "{refused}");
+        assert!(parse_args(&[format!("token={}", "a".repeat(MIN_TOKEN_LEN))]).is_ok());
         assert!(parse_args(&["port=1".to_string()]).is_err());
         assert!(parse_args(&["5000".to_string()]).is_err());
         assert!(parse_args(&["x:=1".to_string()]).is_err());

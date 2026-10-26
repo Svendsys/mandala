@@ -174,9 +174,12 @@ impl Drop for Restore {
     }
 }
 
-/// Whether a window is open on this thread. A logger asks this from
-/// `enabled`, so a record its own filter would discard still reaches
-/// [`observe`] while someone is listening.
+/// Whether a window is open on this thread. The native logger asks
+/// this from `enabled`, so a record its own filter would discard still
+/// reaches [`observe`] while someone is listening. The browser logger
+/// does not need to: its filter already admits every level the capture
+/// keeps (`WASM_MAX_LEVEL`).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn active() -> bool {
     WINDOW.with(|w| {
         let window = w.take();

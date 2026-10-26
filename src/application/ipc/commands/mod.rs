@@ -215,6 +215,30 @@ mod tests {
         );
     }
 
+    /// The relay token is redacted by one rule on both sides of the
+    /// relay: the page's logs (`ipc::browser::redacted`) and the
+    /// client's errors (`mandalactl::redacted`). Each case is checked
+    /// against both, and against the literal it must produce, so the
+    /// two cannot agree on a rule that leaks.
+    #[test]
+    fn test_the_page_and_the_client_redact_a_relay_url_alike() {
+        use crate::application::ipc::browser::redacted;
+        for (url, shown) in [
+            ("ws://127.0.0.1:41816/app/s3cr3t", "ws://127.0.0.1:41816/app/…"),
+            (
+                "ws://127.0.0.1:41816/controller/s3cr3t",
+                "ws://127.0.0.1:41816/controller/…",
+            ),
+            ("ws://[::1]:7/app/s3cr3t/extra", "ws://[::1]:7/app/…"),
+            // Control: nothing past the role, nothing to hide.
+            ("ws://127.0.0.1:41816/app", "ws://127.0.0.1:41816/app"),
+            ("ws://127.0.0.1:41816", "ws://127.0.0.1:41816"),
+        ] {
+            assert_eq!(redacted(url), shown, "{url}");
+            assert_eq!(mandalactl::redacted(url), shown, "{url}");
+        }
+    }
+
     /// The convention `ParamSpec::doc` states, held across the *whole*
     /// registry and not only the commands `mandalactl` has a verb for:
     /// a parameter named like a file location documents itself as an

@@ -19,7 +19,7 @@ use tungstenite::{Message, WebSocket};
 
 use crate::bridge::{self, Role};
 use crate::run::Env;
-use crate::testing::{hello, invoke, invoke_env, ok, split, Outcome};
+use crate::testing::{hello, invoke, invoke_env, ok, Outcome};
 use crate::wire::{BRIDGE_ATTACHED, BRIDGE_DETACHED};
 use crate::Exit;
 
@@ -455,6 +455,47 @@ fn test_a_screenshot_over_ws_needs_a_path_and_refuses_a_file_in_the_way() {
     assert_eq!(app.requests().len(), 2, "overwrite stayed on the client's side");
 }
 
+/// **The client's write never follows a symlink**, the guarantee
+/// native's writer gives (`format/ipc.md` §`capture.screenshot`): a
+/// dangling one is not resolved into a new file at its target, and one
+/// pointing at a file is not written through even with `overwrite`.
+/// The control is the neighbor test's plain file, which `overwrite`
+/// does replace.
+#[cfg(unix)]
+#[test]
+fn test_a_screenshot_over_ws_never_writes_through_a_symlink() {
+    let relay = Relay::start();
+    let app = screenshot_app(&relay, true);
+    let dir = tempfile::tempdir().expect("a directory");
+
+    let dangling = dir.path().join("dangling.png");
+    let nowhere = dir.path().join("nowhere.png");
+    std::os::unix::fs::symlink(&nowhere, &dangling).expect("symlinks");
+    for extra in ["", " overwrite=true"] {
+        let outcome = relay.invoke(&format!("capture.screenshot {}{extra}", dangling.display()));
+        assert_eq!(outcome.exit, Exit::CommandError, "{extra}: {}", outcome.err);
+        assert!(outcome.err.contains("symlink"), "{}", outcome.err);
+        assert!(!nowhere.exists(), "{extra}: the link's target was not created");
+    }
+
+    let target = dir.path().join("precious.png");
+    std::fs::write(&target, b"keep").expect("writes");
+    let link = dir.path().join("link.png");
+    std::os::unix::fs::symlink(&target, &link).expect("symlinks");
+    let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", link.display()));
+    assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
+    assert_eq!(std::fs::read(&target).expect("kept"), b"keep");
+    assert!(std::fs::symlink_metadata(&link)
+        .expect("still there")
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        app.requests().len(),
+        3,
+        "each capture ran; only the write was refused"
+    );
+}
+
 #[test]
 fn test_a_screenshot_the_page_did_not_render_writes_nothing() {
     let relay = Relay::start();
@@ -486,5 +527,4 @@ fn test_the_bridge_command_refuses_client_flags_and_bad_arguments_without_listen
         let outcome = invoke(line, None, "");
         assert_eq!(outcome.exit, Exit::UsageError, "`{line}`: {}", outcome.err);
     }
-    let _ = split;
 }

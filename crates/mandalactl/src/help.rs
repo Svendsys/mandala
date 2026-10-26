@@ -42,7 +42,7 @@ pub const LOCAL: &[&str] = &[
 /// this crate has no relay.
 pub const BRIDGE: &[&str] = &[
     "mandalactl bridge",
-    "mandalactl bridge listen=127.0.0.1:41816 token=s3cr3t",
+    "mandalactl bridge listen=127.0.0.1:41816 token=0123456789abcdef",
 ];
 
 /// Argument spellings the overview teaches, one per line. Also parsed
@@ -271,7 +271,8 @@ mandalactl bridge [listen=<addr:port>] [token=<token>]
     app_url          ws://<listen>/app/<token>: open the page as  http://<trunk host>/?map=<map>&ipc=<app_url>
     controller_url   ws://<listen>/controller/<token>: pass it as --ws, or  export MANDALA_WS=<controller_url>
 
-    token=           the secret both roles must name in their URL; 128 random bits from the OS unless given.
+    token=           the secret both roles must name in their URL; 128 random bits from the OS unless given,
+                     and at least 16 letters, digits, `-` or `_` when it is.
                      Anything on this machine can reach a loopback port — every page in every browser
                      included, which is what the token guards against; it is a same-user secret, the
                      tier the socket path is, and never a network one.

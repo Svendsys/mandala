@@ -86,11 +86,12 @@ impl Hub {
                 if self.app.is_some() {
                     return vec![Effect::Close(id)];
                 }
+                // No controller can be waiting: one is admitted only
+                // while an app is here, and the app leaving takes it
+                // (`closed`). A new page waits for a new controller.
+                debug_assert!(self.controller.is_none(), "a controller never outlives its app");
                 self.app = Some(id);
-                match self.controller {
-                    Some(_) => vec![Effect::Send(id, BRIDGE_ATTACHED.to_string())],
-                    None => vec![],
-                }
+                vec![]
             }
             Role::Controller => {
                 if self.controller.is_some() {
@@ -195,26 +196,49 @@ mod tests {
         );
     }
 
+    /// **The app leaving frees the controller slot at once**, before
+    /// the shut-down controller's own close reaches the relay: in that
+    /// window a fresh controller is refused `no_app` (not `busy`), a
+    /// fresh page is told nothing, and the late close of the old
+    /// controller tells the new page nothing either. The control is the
+    /// same sequence with the old controller's close first, which ends
+    /// identically: the window changes nothing.
     #[test]
-    fn test_a_controller_then_an_app_is_told_at_once_that_its_controller_is_there() {
-        // The order matters only to who is told what: a page that
-        // reconnects under a waiting controller is attached as soon
-        // as it arrives.
+    fn test_a_departing_app_frees_the_controller_slot_before_the_controller_closes() {
         let mut hub = Hub::default();
         hub.connected(1, Role::App);
         hub.connected(2, Role::Controller);
         assert_eq!(hub.closed(1), vec![send(2, SHUTDOWN), Effect::Close(2)]);
-        hub.closed(2);
-        hub.connected(3, Role::Controller);
-        let mut later = Hub::default();
-        later.connected(5, Role::App);
+        // Controller 2's own `closed` has not arrived yet.
         assert_eq!(
-            later.connected(6, Role::Controller),
-            vec![send(5, BRIDGE_ATTACHED)]
+            hub.connected(3, Role::Controller),
+            vec![send(3, &connection_rejected("no_app")), Effect::Close(3)],
+            "no app: the slot is free, so the refusal names the missing app"
         );
-        assert_eq!(later.closed(5), vec![send(6, SHUTDOWN), Effect::Close(6)]);
-        later.closed(6);
-        assert_eq!(later, Hub::default());
+        assert_eq!(
+            hub.connected(4, Role::App),
+            vec![],
+            "a new page waits for a new controller"
+        );
+        assert_eq!(
+            hub.closed(2),
+            vec![],
+            "the old controller's late close is nobody's news"
+        );
+        assert_eq!(hub.connected(5, Role::Controller), vec![send(4, BRIDGE_ATTACHED)]);
+
+        // Control: the old controller's close first.
+        let mut ordered = Hub::default();
+        ordered.connected(1, Role::App);
+        ordered.connected(2, Role::Controller);
+        ordered.closed(1);
+        assert_eq!(ordered.closed(2), vec![]);
+        assert_eq!(ordered.connected(4, Role::App), vec![]);
+        assert_eq!(
+            ordered.connected(5, Role::Controller),
+            vec![send(4, BRIDGE_ATTACHED)]
+        );
+        assert_eq!(ordered, hub);
     }
 
     #[test]
