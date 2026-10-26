@@ -21,8 +21,10 @@
 //! This cache does **not** subscribe to a dirty signal. It keeps,
 //! per shaped element, a verbatim copy of every input the shaper
 //! read, and re-validates against the live tree on each pass. An
-//! element's output is reused only when all of the following still
-//! hold at the same position in the walk:
+//! element's output is reused as it stands only when all of the
+//! following still hold at the same position in the walk — and,
+//! when only the placement ones fail, moved rather than re-shaped
+//! (see "Moved is not stale" below):
 //!
 //! - the same tree ([`SceneTreeId`]),
 //! - the same `GfxElement::unique_id`,
@@ -35,7 +37,7 @@
 //! reads: `element.glyph_area()`, `element.unique_id()`, and its
 //! `offset` argument. Nothing else reaches the emitted buffers — or
 //! the background fill, which
-//! [`extract_background_rect`](super::tree_walker::extract_background_rect)
+//! [`extract_background_rect`]
 //! derives from `background_color`, `background_padding`,
 //! `position`, `render_bounds`, `shape` and `zoom_visibility` of the
 //! same area plus the same `unique_id` and `offset`.
@@ -53,6 +55,50 @@
 //! A caller that touched no tree at all re-shapes nothing; a caller
 //! that re-registered one role re-shapes the elements of that role
 //! whose shaping inputs actually moved.
+//!
+//! ## Moved is not stale
+//!
+//! Two of those inputs never reach cosmic-text: `GlyphArea::position`
+//! and the registered tree offset. The walker adds them to each
+//! emitted buffer's `pos` and to the fill rect's `position` *after*
+//! shaping, and nothing else reads them. So the key splits in two,
+//! and [`ShapedSceneElement::classify`] answers in three:
+//!
+//! - **must re-shape** — the tree, the `unique_id`, and every area
+//!   field but `position` (text, scale, line height, bounds, regions,
+//!   outline, shape, alignment, fill inputs, zoom window). Any
+//!   difference here is [`Verdict::Stale`], and the element goes back
+//!   through [`shape_one_element_into_buffers`];
+//! - **may be patched** — `position` and the tree offset. When these
+//!   are the *only* difference the verdict is [`Verdict::Moved`], and
+//!   [`ShapedSceneElement::patch_placement`] rewrites the held
+//!   buffers' positions and the held fill in place, with no shaping
+//!   and no `FONT_SYSTEM` lock;
+//! - **neither differs** — [`Verdict::Current`], nothing to do.
+//!
+//! The must-re-shape side is not a field list. It is the derived
+//! equality with the recorded position aligned to the live one for
+//! the length of the comparison, so a field added to `GlyphArea`
+//! lands on the must-re-shape side by default — the conservative
+//! one — and only `position` is singled out by name: once in
+//! `classify`, to mask it, and once in `patch_placement`, to apply it.
+//!
+//! A picker wheel-move is what this is for. It re-runs the
+//! layout-phase mutator, which writes every cell's position and
+//! leaves every other field as it was; before the split each of the
+//! wheel's outlined cells went back through the shaper once per halo
+//! stamp plus once for its glyph, to come back with identical glyphs.
+//! An edge-label drag on the canvas pass is the same shape of change.
+//!
+//! The patch has one hazard, and it is the overlay pass's common case
+//! rather than an edge: an outlined element's buffers do not all sit
+//! at its anchor. Its eight halo stamps sit at
+//! [`OutlineStyle::offsets`](baumhard::gfx_structs::area_fields::OutlineStyle::offsets)
+//! around it, so a patch that wrote the anchor flat would collapse
+//! the halo under the glyph. The walker records each stamp's offset
+//! in [`MindMapTextBuffer::emission_offset`] and the patch re-derives
+//! `pos` from it — the same fix `Renderer::patch_drag_positions`
+//! carries on the mindmap path.
 //!
 //! `GlyphArea`'s `PartialEq` is derived, so a field added to the
 //! area joins the comparison by default rather than by anyone
@@ -142,7 +188,11 @@
 //!
 //! The reuse rule is pinned by
 //! `test_scene_shape_cache_invalidates_on_every_writable_area_field`
-//! and its neighbors in `renderer::tests`.
+//! and its neighbors in `renderer::tests`; the split by
+//! `test_a_position_only_change_patches_and_shapes_nothing`,
+//! `test_a_patch_places_halo_stamps_from_their_recorded_offsets`,
+//! `test_a_shaping_change_re_shapes_even_alongside_a_move` and
+//! `test_picker_drag_move_patches_every_cell_and_shapes_none`.
 
 use glam::Vec2;
 
@@ -151,7 +201,7 @@ use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
 
-use super::tree_walker::shape_one_element_into_buffers;
+use super::tree_walker::{extract_background_rect, shape_one_element_into_buffers};
 use super::{MindMapTextBuffer, NodeBackgroundRect};
 
 /// Which of the two sub-scenes a [`refresh`] pass is walking.
@@ -215,10 +265,41 @@ pub(crate) struct ScenePassCounts {
     /// Walk positions visited across every visible tree of the
     /// sub-scene — the number of elements the pass had to consider.
     pub(crate) walked: usize,
-    /// How many of those were re-shaped because their shaping inputs
-    /// no longer matched what the cached output was produced from.
-    /// The rest kept the buffers and the fill they already had.
+    /// How many of those were re-shaped because an input that
+    /// reaches the shaped glyphs no longer matched what the cached
+    /// output was produced from — [`Verdict::Stale`]. Each one is
+    /// exactly one [`shape_one_element_into_buffers`] call: this
+    /// counter is incremented at that call's only site.
     pub(crate) reshaped: usize,
+    /// Walk positions whose placement changed and nothing else —
+    /// [`Verdict::Moved`] — so whatever output they hold (buffers, a
+    /// fill, or for a `Void` / `GlyphModel` element nothing but the
+    /// recorded offset) was re-placed in place and no shaping ran for
+    /// them. Counted the way `reshaped` counts: per walk position, a
+    /// `Void` whose tree moved included. The rest,
+    /// `walked - reshaped - patched`, kept their output untouched.
+    pub(crate) patched: usize,
+}
+
+/// What [`ShapedSceneElement::classify`] found at one walk position.
+///
+/// Three answers rather than a yes/no because the reuse key has two
+/// halves: the inputs that reach the *shaped glyphs* and the inputs
+/// that only decide *where* those glyphs are placed. See the module
+/// header's "Moved is not stale".
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum Verdict {
+    /// Every input matches; the cached output is exactly what
+    /// shaping the live element would produce.
+    Current,
+    /// Only the placement inputs — `GlyphArea::position` and the
+    /// registered tree offset — differ. The cached glyphs are still
+    /// right; their positions are not, and
+    /// [`ShapedSceneElement::patch_placement`] re-derives them.
+    Moved,
+    /// An input the shaped glyphs depend on differs, or the walk
+    /// position now holds a different element. Must be re-shaped.
+    Stale,
 }
 
 /// One scene element's shaped output plus the inputs it was shaped
@@ -269,9 +350,19 @@ impl ShapedSceneElement {
         }
     }
 
-    /// Whether the output held here is still what shaping `element`
-    /// — at walk position `tree` / `offset` — would produce. See the
-    /// module header for what this set is and why it is complete.
+    /// Decide whether the output held here is still what shaping
+    /// `element` — at walk position `tree` / `offset` — would
+    /// produce, would produce *somewhere else*, or would not produce
+    /// at all. See the module header for what the input set is, why
+    /// it is complete, and how it splits.
+    ///
+    /// Takes `&mut self` for an allocation-free comparison, and
+    /// leaves `self` exactly as it found it: the recorded position is
+    /// aligned to the live one for the length of one `==`, so that
+    /// the derived equality — which a new `GlyphArea` field joins by
+    /// default — answers "is anything *but* the position different?"
+    /// without a clone of the area or a hand-written field list that
+    /// a new field would silently miss.
     ///
     /// # Costs
     ///
@@ -279,17 +370,77 @@ impl ShapedSceneElement {
     /// equality and one region-content walk — together
     /// O(text length + region count) and allocation-free. Cheap
     /// against the cosmic-text shaping it stands in for.
-    pub(super) fn still_matches(&self, tree: SceneTreeId, element: &GfxElement, offset: Vec2) -> bool {
-        if self.tree != tree || self.unique_id != element.unique_id() || self.offset != offset {
-            return false;
+    pub(super) fn classify(&mut self, tree: SceneTreeId, element: &GfxElement, offset: Vec2) -> Verdict {
+        if self.tree != tree || self.unique_id != element.unique_id() {
+            return Verdict::Stale;
         }
-        match (self.area.as_ref(), element.glyph_area()) {
-            (None, None) => true,
-            // `==` covers every area field; `same_content` covers
-            // what `==` cannot see inside `regions` — see the module
-            // header's "The one place `==` is not enough".
-            (Some(cached), Some(live)) => cached == live && cached.regions.same_content(&live.regions),
-            _ => false,
+        let offset_moved = self.offset != offset;
+        match (self.area.as_mut(), element.glyph_area()) {
+            (None, None) if offset_moved => Verdict::Moved,
+            (None, None) => Verdict::Current,
+            (Some(cached), Some(live)) => {
+                let recorded = cached.position;
+                cached.position = live.position;
+                // `==` covers every area field; `same_content` covers
+                // what `==` cannot see inside `regions` — see the
+                // module header's "The one place `==` is not enough".
+                let shaping_unchanged = *cached == *live && cached.regions.same_content(&live.regions);
+                cached.position = recorded;
+                if !shaping_unchanged {
+                    Verdict::Stale
+                } else if offset_moved || recorded != live.position {
+                    Verdict::Moved
+                } else {
+                    Verdict::Current
+                }
+            }
+            _ => Verdict::Stale,
+        }
+    }
+
+    /// Move the output held here to where shaping `element` at
+    /// `offset` would have placed it, without shaping anything. Only
+    /// meaningful after [`classify`](Self::classify) answered
+    /// [`Verdict::Moved`] for the same `element` and `offset`.
+    ///
+    /// **Halos.** An outlined element holds one buffer per halo stamp
+    /// plus its main glyph, and every one of them sits at a different
+    /// distance from the anchor. Each buffer's position is therefore
+    /// re-derived through [`MindMapTextBuffer::place_at`] — the same
+    /// [`MindMapTextBuffer::stamp_pos`] the walker placed it with —
+    /// from the
+    /// [`emission_offset`](MindMapTextBuffer#structfield.emission_offset)
+    /// the walker recorded when it stamped it. Writing the anchor
+    /// flat would stack all eight halos under the glyph — the hazard
+    /// `Renderer::patch_drag_positions` was fixed for on the mindmap
+    /// path, and the common case here: the picker's wheel cells are
+    /// outlined.
+    ///
+    /// **The fill** is re-derived by
+    /// [`extract_background_rect`],
+    /// the same function the walker emits it through, so a moved
+    /// fill and a freshly shaped one cannot drift. Whether there is
+    /// one cannot have changed — every fill input but the position is
+    /// on the must-re-shape side — so only a fill already held is
+    /// re-derived, which is also what keeps an overlay entry at
+    /// `None`.
+    ///
+    /// # Costs
+    ///
+    /// O(halos + 1) position writes and one fill re-derivation. No
+    /// shaping, no `FONT_SYSTEM` lock, no allocation.
+    pub(super) fn patch_placement(&mut self, element: &GfxElement, offset: Vec2) {
+        self.offset = offset;
+        let (Some(cached), Some(live)) = (self.area.as_mut(), element.glyph_area()) else {
+            return;
+        };
+        cached.position = live.position;
+        let anchor = (live.position.x.0, live.position.y.0);
+        for buffer in &mut self.buffers {
+            buffer.place_at(anchor, offset);
+        }
+        if self.background.is_some() {
+            self.background = extract_background_rect(element, live, offset);
         }
     }
 }
@@ -299,21 +450,23 @@ impl ShapedSceneElement {
 ///
 /// `ids` is the sub-scene's tree handles in layer order; the walk
 /// visits every descendant of every *visible* one, in that order, so
-/// entry `i` of `shaped` describes walk position `i`. A position
-/// whose live element still matches the entry sitting there keeps
-/// its buffers and its fill untouched; every other position is
-/// re-shaped in place. Positions past the end of the walk belong to
-/// a tree that has since been unregistered or shortened and are
-/// dropped.
+/// entry `i` of `shaped` describes walk position `i`. Each position
+/// is [classified](ShapedSceneElement::classify) against the entry
+/// sitting there: a current one keeps its buffers and its fill
+/// untouched, a moved one has their positions patched in place, and
+/// only a stale one is re-shaped — also in place. Positions past the
+/// end of the walk belong to a tree that has since been unregistered
+/// or shortened and are dropped.
 ///
 /// # Costs
 ///
 /// O(sum of descendants) across every tree named in `ids` for the
 /// walk and the equality checks, plus one `cosmic_text::Buffer`
-/// allocation and shaping per *changed* non-empty `GlyphArea`
-/// (times `halos + 1`). The `FONT_SYSTEM` write guard is acquired
+/// allocation and shaping per *stale* non-empty `GlyphArea`
+/// (times `halos + 1`); a *moved* one costs `halos + 1` position
+/// writes and no shaping. The `FONT_SYSTEM` write guard is acquired
 /// lazily on the first element that actually needs shaping, so a
-/// pass in which nothing moved takes no lock at all — which is the
+/// pass in which nothing went stale takes no lock at all — which is the
 /// steady state for every sub-scene tree a given caller did not
 /// touch. Empty sub-scenes short-circuit cheaply.
 pub(crate) fn refresh(
@@ -329,6 +482,7 @@ pub(crate) fn refresh(
     let mut counts = ScenePassCounts {
         walked: 0,
         reshaped: 0,
+        patched: 0,
     };
     for &id in ids {
         let Some(entry) = scene.get(id) else {
@@ -345,11 +499,16 @@ pub(crate) fn refresh(
             };
             let slot = counts.walked;
             counts.walked += 1;
-            if shaped
-                .get(slot)
-                .is_some_and(|cached| cached.still_matches(id, element, offset))
-            {
-                continue;
+            if let Some(cached) = shaped.get_mut(slot) {
+                match cached.classify(id, element, offset) {
+                    Verdict::Current => continue,
+                    Verdict::Moved => {
+                        cached.patch_placement(element, offset);
+                        counts.patched += 1;
+                        continue;
+                    }
+                    Verdict::Stale => {}
+                }
             }
             let font_system =
                 font_system.get_or_insert_with(|| fonts::acquire_font_system_write(kind.font_system_site()));

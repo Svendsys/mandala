@@ -154,10 +154,7 @@ pub(super) fn shape_one_element_into_buffers(
         buffer.shape_until_scroll(fs, false);
         let text_buffer = MindMapTextBuffer {
             buffer,
-            pos: (
-                area.position.x.0 + x_off + offset.x,
-                area.position.y.0 + y_off + offset.y,
-            ),
+            pos: MindMapTextBuffer::stamp_pos((area.position.x.0, area.position.y.0), (x_off, y_off), offset),
             emission_offset: (x_off, y_off),
             bounds: (bound_x, bound_y),
             zoom_visibility: area.zoom_visibility,

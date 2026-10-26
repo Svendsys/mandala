@@ -745,7 +745,7 @@ use baumhard::gfx_structs::tree::Tree;
 use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
 use strum::IntoEnumIterator;
 
-use super::scene_shape_cache::{self, ScenePassKind, ShapedSceneElement};
+use super::scene_shape_cache::{self, ScenePassKind, ShapedSceneElement, Verdict};
 
 /// A styled, outlined, background-filled area — every field the
 /// shaper reads set to something other than its default, so a
@@ -807,8 +807,8 @@ fn overlay_cache_field_for(tag: GlyphAreaFieldType) -> GlyphAreaField {
 }
 
 /// Every `GlyphAreaField` a mutator can write invalidates the cached
-/// shaping — and the one control variant that writes nothing does
-/// not.
+/// shaping — `Position` by moving it, every other one by making it
+/// stale — and the one control variant that writes nothing does not.
 ///
 /// This is the guard the narrowing rests on.
 /// `rebuild_overlay_scene_buffers` skips re-shaping an element whose
@@ -822,9 +822,10 @@ fn overlay_cache_field_for(tag: GlyphAreaFieldType) -> GlyphAreaField {
 fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
     for tag in GlyphAreaFieldType::iter() {
         let (_scene, id, element) = overlay_cache_fixture();
-        let cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
-        assert!(
-            cached.still_matches(id, &element, Vec2::ZERO),
+        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+        assert_eq!(
+            cached.classify(id, &element, Vec2::ZERO),
+            Verdict::Current,
             "an untouched element must match what it was shaped from"
         );
 
@@ -838,7 +839,7 @@ fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
 
         // "Did the area actually change?" is asked through derived
         // `Debug`, not through `PartialEq`. `PartialEq` is half of
-        // what `still_matches` consults, so using it here would make
+        // what `classify` consults, so using it here would make
         // the guard below circular — and it is specifically blind to
         // a region recolor, the exact change a picker hover makes.
         // `Debug` is derived over every field, so it sees whatever
@@ -850,8 +851,9 @@ fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
                 described(&element),
                 "GlyphAreaField::{tag} is documented as writing no field, but it changed the area"
             );
-            assert!(
-                cached.still_matches(id, &mutated, Vec2::ZERO),
+            assert_eq!(
+                cached.classify(id, &mutated, Vec2::ZERO),
+                Verdict::Current,
                 "GlyphAreaField::{tag} changes nothing the shaper reads, so it must not force a re-shape"
             );
             continue;
@@ -866,10 +868,21 @@ fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
             "the representative payload for GlyphAreaField::{tag} does not differ from the \
              fixture, so this iteration cannot prove anything"
         );
-        assert!(
-            !cached.still_matches(id, &mutated, Vec2::ZERO),
-            "GlyphAreaField::{tag} changed the area but the overlay shape cache would have \
-             reused the old buffers — the element would render stale"
+        // `Position` is the one writable field that never reaches
+        // cosmic-text — the walker adds it to `pos` after shaping —
+        // so it is the one that may move a cached element instead
+        // of re-shaping it. Every other field reaches the glyphs or
+        // the fill and must re-shape.
+        let expected = if tag == GlyphAreaFieldType::Position {
+            Verdict::Moved
+        } else {
+            Verdict::Stale
+        };
+        assert_eq!(
+            cached.classify(id, &mutated, Vec2::ZERO),
+            expected,
+            "GlyphAreaField::{tag} changed the area, so the cached buffers may not be reused as \
+             they stand — and only a placement change may skip the shaper"
         );
     }
 }
@@ -882,29 +895,33 @@ fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
 #[test]
 fn test_scene_shape_cache_invalidates_on_identity_and_offset() {
     let (mut scene, id, element) = overlay_cache_fixture();
-    let cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+    let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
 
     // `unique_id` reaches the emitted buffer through the walker's
     // yield, and is how a caller finds the buffer again.
     let renamed = GfxElement::new_area_non_indexed_with_id(overlay_cache_fixture_area(), 7, 8);
-    assert!(
-        !cached.still_matches(id, &renamed, Vec2::ZERO),
+    assert_eq!(
+        cached.classify(id, &renamed, Vec2::ZERO),
+        Verdict::Stale,
         "a different element at this walk position must not inherit the cached buffers"
     );
 
     // The registered tree offset is added to every emitted buffer's
-    // `pos`, so moving the overlay must re-shape rather than leave
-    // buffers at the old screen slot.
-    assert!(
-        !cached.still_matches(id, &element, Vec2::new(0.0, 30.0)),
-        "a shifted tree offset must not reuse buffers positioned for the old one"
+    // `pos` after shaping, so moving the overlay must re-place the
+    // buffers rather than leave them at the old screen slot — and
+    // need not re-shape them to do it.
+    assert_eq!(
+        cached.classify(id, &element, Vec2::new(0.0, 30.0)),
+        Verdict::Moved,
+        "a shifted tree offset must not reuse buffers positioned for the old one as they stand"
     );
 
     // A second tree in the same scene is a different overlay.
     let other_tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
     let other_id = scene.insert(other_tree, 1, Vec2::ZERO);
-    assert!(
-        !cached.still_matches(other_id, &element, Vec2::ZERO),
+    assert_eq!(
+        cached.classify(other_id, &element, Vec2::ZERO),
+        Verdict::Stale,
         "cached buffers belong to the tree they were walked from"
     );
 }
@@ -917,7 +934,7 @@ fn test_scene_shape_cache_invalidates_on_identity_and_offset() {
 #[test]
 fn test_scene_shape_cache_reuses_when_only_the_hitbox_moved() {
     let (_scene, id, element) = overlay_cache_fixture();
-    let cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+    let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
 
     let mut moved_hitbox = element.clone();
     let area = moved_hitbox.glyph_area_mut().expect("fixture is an area element");
@@ -930,8 +947,9 @@ fn test_scene_shape_cache_reuses_when_only_the_hitbox_moved() {
         element.glyph_area().map(|a| a.hitbox().rectangles.len()),
         "the hit box has to actually differ, or this test proves nothing"
     );
-    assert!(
-        cached.still_matches(id, &moved_hitbox, Vec2::ZERO),
+    assert_eq!(
+        cached.classify(id, &moved_hitbox, Vec2::ZERO),
+        Verdict::Current,
         "the hit box does not reach cosmic-text, so changing it must not cost a re-shape"
     );
 }
@@ -1066,7 +1084,7 @@ fn test_glyph_area_equality_ignores_only_the_hitbox() {
 
 /// Snapshot a registered overlay tree exactly the way
 /// `rebuild_overlay_scene_buffers` does — one cache entry per walked
-/// element, in walk order. Buffers are left empty: `still_matches`
+/// element, in walk order. Buffers are left empty: `classify`
 /// never inspects them, and shaping real ones would buy the test
 /// nothing it could assert on (§T8).
 fn snapshot_overlay(scene: &Scene, id: SceneTreeId) -> Vec<ShapedSceneElement> {
@@ -1078,13 +1096,13 @@ fn snapshot_overlay(scene: &Scene, id: SceneTreeId) -> Vec<ShapedSceneElement> {
         .collect()
 }
 
-/// Which walk positions of a registered overlay tree no longer match
-/// `cached` — i.e. exactly the elements
+/// Which walk positions of a registered overlay tree `cached` holds
+/// stale output for — i.e. exactly the elements
 /// `rebuild_overlay_scene_buffers` would re-shape.
 fn overlay_elements_needing_reshape<'a>(
     scene: &'a Scene,
     id: SceneTreeId,
-    cached: &[ShapedSceneElement],
+    cached: &mut [ShapedSceneElement],
 ) -> Vec<&'a GfxElement> {
     let tree = scene.tree(id).expect("tree registered");
     tree.root()
@@ -1092,9 +1110,9 @@ fn overlay_elements_needing_reshape<'a>(
         .filter_map(|d| tree.arena.get(d).map(|n| n.get()))
         .enumerate()
         .filter(|(i, element)| {
-            !cached
-                .get(*i)
-                .is_some_and(|c| c.still_matches(id, element, Vec2::ZERO))
+            cached
+                .get_mut(*i)
+                .is_none_or(|c| c.classify(id, element, Vec2::ZERO) == Verdict::Stale)
         })
         .map(|(_, element)| element)
         .collect()
@@ -1143,7 +1161,7 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
     };
     let mut scene = Scene::new();
     let id = scene.insert(tree, 0, Vec2::ZERO);
-    let cached = snapshot_overlay(&scene, id);
+    let mut cached = snapshot_overlay(&scene, id);
     assert!(
         cached.len() > 10,
         "the console fixture must have many slots, or \"only one changed\" says nothing: {} slots",
@@ -1159,7 +1177,7 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
     };
     scene.apply_mutator(id, &idempotent);
     assert!(
-        overlay_elements_needing_reshape(&scene, id, &cached).is_empty(),
+        overlay_elements_needing_reshape(&scene, id, &mut cached).is_empty(),
         "a mutator that writes the state already on screen must not cost a single re-shape"
     );
 
@@ -1169,7 +1187,7 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
     };
     scene.apply_mutator(id, &keystroke);
 
-    let changed = overlay_elements_needing_reshape(&scene, id, &cached);
+    let changed = overlay_elements_needing_reshape(&scene, id, &mut cached);
     let texts: Vec<&str> = changed
         .iter()
         .filter_map(|e| e.glyph_area())
@@ -1198,7 +1216,7 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
 /// for all of them.
 ///
 /// Nothing here is environment-dependent — the fixture and the
-/// layout are deterministic, and `still_matches` compares
+/// layout are deterministic, and `classify` compares
 /// `GlyphArea`s without shaping anything — so there is no reason to
 /// spend the assertion on a fraction. A `changed * 4 < len` bound
 /// would have tolerated fourteen dirty cells out of fifty-nine and
@@ -1219,7 +1237,7 @@ fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
     let built = color_picker_overlay::build(&geometry, &layout);
     let mut scene = Scene::new();
     let id = scene.insert(built.tree, 0, Vec2::ZERO);
-    let cached = snapshot_overlay(&scene, id);
+    let mut cached = snapshot_overlay(&scene, id);
     assert!(
         cached.len() > 30,
         "the picker fixture must have many cells, or a fraction says nothing: {} cells",
@@ -1231,7 +1249,7 @@ fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
     let idempotent = color_picker_overlay::build_dynamic_mutator(&geometry, &layout);
     scene.apply_mutator(id, &idempotent);
     assert!(
-        overlay_elements_needing_reshape(&scene, id, &cached).is_empty(),
+        overlay_elements_needing_reshape(&scene, id, &mut cached).is_empty(),
         "a hover frame that changed nothing must not re-shape a single cell"
     );
 
@@ -1240,7 +1258,7 @@ fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
     let hover = color_picker_overlay::build_dynamic_mutator(&hovered, &layout);
     scene.apply_mutator(id, &hover);
 
-    let changed = overlay_elements_needing_reshape(&scene, id, &cached).len();
+    let changed = overlay_elements_needing_reshape(&scene, id, &mut cached).len();
     assert_eq!(
         changed,
         1,
@@ -1356,9 +1374,12 @@ fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
         "each leaf authors one fill; the void roots author none"
     );
 
-    // Move the *first* element in draw order — the one a re-append
-    // would lift above all three others, which is the direction the
-    // mindmap path's bug went.
+    // Recolor the fill of the *first* element in draw order — the
+    // one a re-append would lift above all three others, which is
+    // the direction the mindmap path's bug went. A fill color rather
+    // than a position, because a position change alone is patched in
+    // place and never re-shapes; this test is about what a re-shape
+    // does to the streams.
     let first_leaf = {
         let tree = scene.tree(ids[0]).expect("tree registered");
         tree.root()
@@ -1375,14 +1396,14 @@ fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
             .get_mut()
             .glyph_area_mut()
             .expect("leaf is an area element");
-        area.set_position((7.0, 11.0));
+        area.background_color = Some([200, 100, 50, 255]);
     }
 
     let partial = scene_shape_cache::refresh(&scene, &ids, &mut warm, ScenePassKind::Canvas);
     assert_eq!(
-        (partial.walked, partial.reshaped),
-        (6, 1),
-        "one element moved, so one walk position may re-shape"
+        (partial.walked, partial.reshaped, partial.patched),
+        (6, 1, 0),
+        "one element was recolored, so one walk position may re-shape"
     );
 
     let mut full: Vec<ShapedSceneElement> = Vec::new();
@@ -1472,12 +1493,29 @@ fn test_canvas_fill_inputs_are_all_visible_to_the_reuse_key() {
              leaves the emitted rect identical — the row proves nothing as written"
         );
 
-        let cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
-        assert!(
-            !cached.still_matches(id, &changed, Vec2::ZERO),
-            "`GlyphArea::{name}` changed the background fill but the scene shape cache would \
-             have kept the old one — the fill would render stale"
-        );
+        // `position` is the one fill input that may be patched
+        // rather than re-shaped, so for it "not kept" has to be
+        // shown on the output rather than on the verdict: the
+        // patched fill must be the one the walker would emit.
+        let fresh_fill = super::tree_walker::extract_background_rect(&element, &base, Vec2::ZERO);
+        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), fresh_fill);
+        let verdict = cached.classify(id, &changed, Vec2::ZERO);
+        if name == "position" {
+            assert_eq!(verdict, Verdict::Moved, "a position change is a placement change");
+            cached.patch_placement(&changed, Vec2::ZERO);
+            assert_eq!(
+                format!("{:?}", cached.background),
+                described_fill(&changed),
+                "a moved fill must be re-derived where the walker would have emitted it"
+            );
+        } else {
+            assert_eq!(
+                verdict,
+                Verdict::Stale,
+                "`GlyphArea::{name}` changed the background fill but the scene shape cache would \
+                 have kept the old one — the fill would render stale"
+            );
+        }
     }
 }
 
@@ -1671,11 +1709,12 @@ fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
              glyph by more than {shift} — the row proves nothing as written"
         );
 
-        let cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
-        assert!(
-            !cached.still_matches(id, &changed, Vec2::ZERO),
-            "`GlyphArea::{name}` re-laid-out the glyphs but the scene shape cache would have \
-             kept the old buffers — the text would render at the old alignment"
+        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+        assert_eq!(
+            cached.classify(id, &changed, Vec2::ZERO),
+            Verdict::Stale,
+            "`GlyphArea::{name}` re-laid-out the glyphs but the scene shape cache would not have \
+             re-shaped them — the text would render at the old alignment"
         );
     }
 }
@@ -1883,6 +1922,455 @@ fn test_walker_records_the_stamp_offset_of_every_emitted_buffer() {
             "a buffer's position must be its anchor plus its recorded stamp offset"
         );
     }
+}
+
+// ====================================================================
+// Moved is not stale — the position patch
+// ====================================================================
+//
+// `scene_shape_cache::refresh` splits its reuse key into the inputs
+// that reach cosmic-text and the two that only place its output —
+// `GlyphArea::position` and the registered tree offset — and routes
+// a placement-only mismatch to `ShapedSceneElement::patch_placement`
+// instead of the shaper. These tests drive the real `refresh`, real
+// shaping included, and assert on its counts and on the positions of
+// the buffers it hands the render pass.
+
+/// One outlined element and one plain one, in a single overlay tree
+/// — the smallest scene in which "the halo kept its ring" and "the
+/// plain glyph moved too" are both visible. Walk order: the `Void`
+/// root, the outlined leaf (`unique_id` 7), the plain leaf (8).
+fn patch_fixture_scene() -> (Scene, SceneTreeId) {
+    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let outlined = overlay_cache_fixture_area();
+    let mut plain = GlyphArea::new_with_str("plain", 16.0, 18.0, Vec2::new(90.0, 5.0), Vec2::new(60.0, 20.0));
+    plain.regions = ColorFontRegions::single_span(5, Some([0.4, 0.5, 0.6, 1.0]), None);
+    for (area, unique_id) in [(outlined, 7usize), (plain, 8usize)] {
+        let leaf = tree
+            .arena
+            .new_node(GfxElement::new_area_non_indexed_with_id(area, 1, unique_id));
+        tree.root.append(leaf, &mut tree.arena);
+    }
+    let mut scene = Scene::new();
+    let id = scene.insert(tree, 0, Vec2::ZERO);
+    (scene, id)
+}
+
+/// Mutate the area of the `nth` leaf of `id`'s tree in place — the
+/// write a mutator apply makes, without a mutator to build.
+fn edit_leaf_area(scene: &mut Scene, id: SceneTreeId, nth: usize, edit: impl FnOnce(&mut GlyphArea)) {
+    let tree = scene.tree_mut(id).expect("tree registered");
+    let leaf = tree
+        .root
+        .children(&tree.arena)
+        .nth(nth)
+        .expect("fixture has that many leaves");
+    edit(
+        tree.arena
+            .get_mut(leaf)
+            .expect("leaf resolves")
+            .get_mut()
+            .glyph_area_mut()
+            .expect("leaf is an area element"),
+    );
+}
+
+/// The buffers one walk position holds, as `(emission_offset, pos)`.
+fn stamps_of(shaped: &[ShapedSceneElement], slot: usize) -> Vec<((f32, f32), (f32, f32))> {
+    shaped[slot]
+        .buffers
+        .iter()
+        .map(|buffer| (buffer.emission_offset, buffer.pos))
+        .collect()
+}
+
+/// A position-only change patches the element's buffers and shapes
+/// nothing.
+///
+/// Shaping is ruled out twice over. The counts say no walk position
+/// reached `shape_one_element_into_buffers` — `reshaped` is
+/// incremented at that call's only site. And the pass runs while this
+/// thread holds a `FONT_SYSTEM` read guard, so the write guard the
+/// shaper needs would be a re-entrant acquire, which panics: reaching
+/// the shaper at all fails this test, whatever the counters say.
+///
+/// The positions are compared against a pass through an *empty*
+/// cache over the same scene — the full re-shape this pass used to
+/// do — so the patch is held to what shaping would have produced,
+/// halo stamps and tree offset included, rather than to an
+/// expectation computed from the patch itself.
+#[test]
+fn test_a_position_only_change_patches_and_shapes_nothing() {
+    baumhard::font::fonts::init();
+
+    let (mut scene, id) = patch_fixture_scene();
+    let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+    let cold = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+    assert_eq!(
+        (cold.walked, cold.reshaped, cold.patched),
+        (3, 3, 0),
+        "an empty cache shapes everything it walks"
+    );
+    assert_eq!(
+        shaped[1].buffers.len(),
+        9,
+        "the outlined leaf is eight halo stamps plus its glyph, or the halo half of this test \
+         is about nothing"
+    );
+
+    // Move both leaves, and the whole tree, between two passes.
+    edit_leaf_area(&mut scene, id, 0, |a| a.set_position((40.0, 70.0)));
+    edit_leaf_area(&mut scene, id, 1, |a| a.set_position((130.0, 75.0)));
+    scene.set_offset(id, Vec2::new(12.0, -8.0));
+
+    let moved = {
+        let _shaping_would_panic =
+            baumhard::font::fonts::acquire_font_system_read("renderer::tests (no shaping)");
+        scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay)
+    };
+    assert_eq!(
+        (moved.walked, moved.reshaped, moved.patched),
+        (3, 0, 3),
+        "two leaves moved and the tree offset moved under all three positions: every one of \
+         them is a patch, and none of them is a shaping"
+    );
+
+    let mut full: Vec<ShapedSceneElement> = Vec::new();
+    let reference = scene_shape_cache::refresh(&scene, &[id], &mut full, ScenePassKind::Overlay);
+    assert_eq!(
+        reference.reshaped, 3,
+        "the reference must actually shape, or it is not one"
+    );
+    assert_eq!(
+        canvas_text_stream(&shaped),
+        canvas_text_stream(&full),
+        "a patched pass must place every buffer — every halo stamp of the outlined leaf \
+         included — where re-shaping the moved scene places it"
+    );
+    assert_eq!(
+        canvas_text_stream(&shaped)[..9],
+        outline_ring_at((40.0 + 12.0, 70.0 - 8.0)),
+        "and that is the halo ring around the moved anchor, not the old one"
+    );
+
+    // Control on the same path: a non-position change between the
+    // same two passes does reach the shaper, so the zero above is
+    // the split's doing and not a counter that never moves.
+    edit_leaf_area(&mut scene, id, 1, |a| a.text.push('!'));
+    let edited = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+    assert_eq!(
+        (edited.reshaped, edited.patched),
+        (1, 0),
+        "a text edit is a shaping change and must re-shape the one leaf it touched"
+    );
+}
+
+/// A patch re-derives a kept fill where the walker would emit it,
+/// tree offset included.
+///
+/// The overlay pass keeps no fills, so the sibling test above cannot
+/// reach this half of `patch_placement`: it is the canvas pass that
+/// holds a fill on a moved element. Same fixture, same move — both
+/// leaves and the tree offset — run as `Canvas`, and the fill stream
+/// is held to a cold pass over the moved scene, the way the text
+/// stream is above. The outlined leaf carries a `background_color`
+/// and the plain one does not, so exactly one fill is in play, and
+/// the literal below says where it has to sit without asking the
+/// code under test.
+#[test]
+fn test_a_patched_canvas_fill_follows_the_move_and_the_tree_offset() {
+    baumhard::font::fonts::init();
+
+    let (mut scene, id) = patch_fixture_scene();
+    let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+    scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Canvas);
+    assert_eq!(
+        canvas_fill_stream(&shaped).len(),
+        1,
+        "the outlined leaf authors the one fill this test follows"
+    );
+
+    edit_leaf_area(&mut scene, id, 0, |a| a.set_position((40.0, 70.0)));
+    edit_leaf_area(&mut scene, id, 1, |a| a.set_position((130.0, 75.0)));
+    let tree_offset = Vec2::new(12.0, -8.0);
+    scene.set_offset(id, tree_offset);
+
+    let moved = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Canvas);
+    assert_eq!(
+        (moved.reshaped, moved.patched),
+        (0, 3),
+        "a pure move is patched on the canvas pass too"
+    );
+
+    let mut full: Vec<ShapedSceneElement> = Vec::new();
+    scene_shape_cache::refresh(&scene, &[id], &mut full, ScenePassKind::Canvas);
+    assert_eq!(
+        canvas_fill_stream(&shaped),
+        canvas_fill_stream(&full),
+        "a patched fill must be the one re-shaping the moved scene emits"
+    );
+
+    // Independent of both passes: the fixture's fill rect, read off
+    // the moved area itself, plus the tree offset.
+    let mut moved_area = overlay_cache_fixture_area();
+    moved_area.set_position((40.0, 70.0));
+    let (rect_pos, _) = moved_area.background_rect().expect("the fixture area has a fill");
+    let fill = scene_shape_cache::background_fills(&shaped)
+        .next()
+        .expect("the fill survived the patch");
+    assert_eq!(
+        fill.position,
+        rect_pos + tree_offset,
+        "the patched fill sits at the moved rect plus the tree offset"
+    );
+}
+
+/// Where the walker stamps the outlined fixture leaf's nine buffers
+/// for an anchor at `anchor` (tree offset folded in): the eight halo
+/// offsets, then the glyph. Read off `OutlineStyle::offsets`, the
+/// walker's own source of stamp geometry, not off any buffer.
+fn outline_ring_at(anchor: (f32, f32)) -> Vec<(f32, f32)> {
+    overlay_cache_fixture_area()
+        .outline
+        .expect("the fixture area is outlined")
+        .offsets()
+        .chain(std::iter::once((0.0, 0.0)))
+        .map(|(dx, dy)| (anchor.0 + dx, anchor.1 + dy))
+        .collect()
+}
+
+/// A patched outlined element keeps its halo ring, because the patch
+/// re-derives each stamp from the offset the walker recorded for it.
+///
+/// The negative control is the hazard itself: zero the recorded
+/// `emission_offset` on every buffer of the same entry, make the
+/// same move, run the same pass, and the eight halo stamps collapse
+/// onto the glyph — the state `patch_drag_positions` shipped on the
+/// mindmap path before it carried the offset. That the control
+/// collapses is what shows the ring above came from the recorded
+/// offsets, and not from somewhere the control cannot reach.
+#[test]
+fn test_a_patch_places_halo_stamps_from_their_recorded_offsets() {
+    baumhard::font::fonts::init();
+
+    let run = |zero_the_recorded_offsets: bool| {
+        let (mut scene, id) = patch_fixture_scene();
+        let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+        scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+        if zero_the_recorded_offsets {
+            for buffer in &mut shaped[1].buffers {
+                buffer.emission_offset = (0.0, 0.0);
+            }
+        }
+        edit_leaf_area(&mut scene, id, 0, |a| a.set_position((40.0, 70.0)));
+        let moved = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+        assert_eq!(
+            (moved.reshaped, moved.patched),
+            (0, 1),
+            "the move must be patched in both runs, or the two are not on the same path"
+        );
+        stamps_of(&shaped, 1)
+            .into_iter()
+            .map(|(_, pos)| pos)
+            .collect::<Vec<_>>()
+    };
+
+    let ring = run(false);
+    assert_eq!(
+        ring,
+        outline_ring_at((40.0, 70.0)),
+        "each of the eight halo stamps must land at its own offset around the moved anchor, \
+         with the glyph at the anchor itself"
+    );
+    let distinct: std::collections::HashSet<_> =
+        ring.iter().map(|(x, y)| (x.to_bits(), y.to_bits())).collect();
+    assert_eq!(distinct.len(), 9, "nine buffers, nine different places: {ring:?}");
+
+    let collapsed = run(true);
+    assert!(
+        collapsed.iter().all(|pos| *pos == (40.0, 70.0)),
+        "with the recorded offsets zeroed, every stamp must collapse onto the anchor — if they \
+         did not, the ring above did not come from the recorded offsets: {collapsed:?}"
+    );
+}
+
+/// A change to any input that reaches the shaped glyphs re-shapes —
+/// including, and above all, when the position moved in the same
+/// write.
+///
+/// That combination is the one path where the split can go wrong:
+/// with the position equal, `classify` falls through to the same `==`
+/// the one-key cache used, and a shaping change cannot hide; with the
+/// position *moved*, the comparison runs with it masked out, and only
+/// the rest of the key stands between a recolor and a patch that
+/// would leave the old colors on screen.
+///
+/// Each row runs on the full `refresh` path, real shaping included,
+/// and carries its own control on that same path. The control
+/// removes the shaping change and keeps everything else — the same
+/// scene, the same cache, the same move, the same pass — so the only
+/// thing left to tell the two runs apart is the discrimination
+/// between a placement input and a shaping one. The row passes only
+/// if that discrimination is what decides: the control patches, the
+/// row re-shapes.
+///
+/// Rows come from the strum tag enum, so a new `GlyphAreaField`
+/// variant reaches this loop by construction. `Position` is the
+/// placement input itself and `Operation` writes no field; neither
+/// is a shaping change, so both are skipped by name.
+#[test]
+fn test_a_shaping_change_re_shapes_even_alongside_a_move() {
+    baumhard::font::fonts::init();
+
+    let run = |tag: GlyphAreaFieldType, with_shaping_change: bool| {
+        let (mut scene, id) = patch_fixture_scene();
+        let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+        scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+        edit_leaf_area(&mut scene, id, 0, |area| {
+            if with_shaping_change {
+                // The row's own precondition: the payload must differ
+                // from the fixture, or this run is the control under
+                // another name. Asked through derived `Debug`, for the
+                // reason the field-loop test gives — `PartialEq` is
+                // half of what `classify` consults.
+                let before = format!("{area:?}");
+                DeltaGlyphArea::new(vec![
+                    GlyphAreaField::Operation(ApplyOperation::Assign),
+                    overlay_cache_field_for(tag),
+                ])
+                .apply_to(area);
+                assert_ne!(
+                    format!("{area:?}"),
+                    before,
+                    "the representative payload for GlyphAreaField::{tag} does not differ from \
+                     the fixture, so this row cannot prove anything"
+                );
+            }
+            area.set_position((40.0, 70.0));
+        });
+        let counts = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+        (counts.reshaped, counts.patched)
+    };
+
+    for tag in GlyphAreaFieldType::iter() {
+        if tag == GlyphAreaFieldType::Position || tag == GlyphAreaField::OPERATION_KEY {
+            continue;
+        }
+        assert_eq!(
+            run(tag, false),
+            (0, 1),
+            "control for GlyphAreaField::{tag}: the move alone must be patched, or the row \
+             below is not exercising the patch path"
+        );
+        assert_eq!(
+            run(tag, true),
+            (1, 0),
+            "GlyphAreaField::{tag} changed alongside the move, but the pass patched the old \
+             glyphs instead of re-shaping — the element would render stale at its new position"
+        );
+    }
+}
+
+/// A color-picker drag-move — the case the split exists for — shapes
+/// nothing, and lands every buffer of every cell where re-shaping the
+/// moved wheel would.
+///
+/// A drag-move changes `center_override` and nothing else, and the
+/// app answers it with the layout-phase mutator, which writes every
+/// variable field of every cell. Before the split, every cell whose
+/// position that moved went back through the shaper — once per halo
+/// stamp, plus once for its glyph — to come back with identical
+/// glyphs. The counts below are literals in the direction that
+/// matters: `reshaped` is zero, and the positions are compared
+/// against a cold pass over the moved wheel.
+#[test]
+fn test_picker_drag_move_patches_every_cell_and_shapes_none() {
+    use crate::application::color_picker::compute_color_picker_layout;
+    use crate::application::color_picker::tests::fixtures::sample_geometry;
+    use crate::application::color_picker_overlay;
+
+    baumhard::font::fonts::init();
+
+    let geometry = sample_geometry();
+    let layout = compute_color_picker_layout(&geometry, 1280.0, 720.0);
+    let built = color_picker_overlay::build(&geometry, &layout);
+    let mut scene = Scene::new();
+    let id = scene.insert(built.tree, 0, Vec2::ZERO);
+    let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+    let cold = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+
+    let halo_stamps = scene_shape_cache::text_buffers(&shaped)
+        .filter(|buffer| buffer.emission_offset != (0.0, 0.0))
+        .count();
+    assert!(
+        halo_stamps > 8 * 50,
+        "the wheel's cells must be outlined, or this test says nothing about halos: \
+         {halo_stamps} halo stamps"
+    );
+
+    // Precondition: the layout-phase mutator for the layout already
+    // on screen changes nothing, so what the move below costs is the
+    // move's.
+    let idempotent = color_picker_overlay::build_mutator(&geometry, &layout);
+    scene.apply_mutator(id, &idempotent);
+    let still = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+    assert_eq!(
+        (still.reshaped, still.patched),
+        (0, 0),
+        "re-asserting the current layout must neither shape nor move a single cell"
+    );
+
+    // Every walk position's anchor, read straight off the tree, so
+    // the patch count below is held to what the drag actually moved
+    // rather than to a fraction.
+    let anchors = |scene: &Scene| -> Vec<Option<(f32, f32)>> {
+        let tree = scene.tree(id).expect("tree registered");
+        tree.root()
+            .descendants(&tree.arena)
+            .filter_map(|d| tree.arena.get(d).map(|n| n.get()))
+            .map(|element| element.glyph_area().map(|a| (a.position.x.0, a.position.y.0)))
+            .collect()
+    };
+    let before = anchors(&scene);
+
+    let mut dragged = sample_geometry();
+    let (cx, cy) = layout.center;
+    dragged.center_override = Some((cx + 40.0, cy + 25.0));
+    let dragged_layout = compute_color_picker_layout(&dragged, 1280.0, 720.0);
+    let drag = color_picker_overlay::build_mutator(&dragged, &dragged_layout);
+    scene.apply_mutator(id, &drag);
+
+    let moved = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
+    assert_eq!(
+        moved.reshaped, 0,
+        "a drag-move repositions the wheel and changes nothing cosmic-text reads, so not one of \
+         its {} walked positions may re-shape",
+        moved.walked
+    );
+    let repositioned = before
+        .iter()
+        .zip(anchors(&scene))
+        .filter(|(a, b)| **a != *b)
+        .count();
+    assert!(
+        repositioned > 50,
+        "the drag must actually reposition the wheel's cells, or the zero above is a drag that \
+         never happened: {repositioned} of {} positions moved",
+        cold.walked
+    );
+    assert_eq!(
+        moved.patched, repositioned,
+        "every cell the drag repositioned must have been moved, and nothing else"
+    );
+
+    let mut full: Vec<ShapedSceneElement> = Vec::new();
+    scene_shape_cache::refresh(&scene, &[id], &mut full, ScenePassKind::Overlay);
+    assert_eq!(
+        canvas_text_stream(&shaped),
+        canvas_text_stream(&full),
+        "every buffer of the patched wheel — every halo stamp of every outlined cell included — \
+         must sit where re-shaping the dragged wheel puts it"
+    );
 }
 
 // ====================================================================

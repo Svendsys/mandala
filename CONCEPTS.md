@@ -3012,8 +3012,8 @@ rebuilds (in `scene_rebuild.rs`) and overlay-role rebuilds
 ### Scene shape cache
 
 The rule that decides, per walked element, whether
-its cosmic-text buffers and background fill are re-shaped or
-reused — one mechanism serving both of
+its cosmic-text buffers and background fill are re-shaped, moved,
+or reused — one mechanism serving both of
 [`AppScene`](#appscene-and-scene-host)'s sub-scenes.
 
 Rebuild dispatch stops at the arena. A mutator
@@ -3045,6 +3045,21 @@ disturb the index order the rect pipeline paints in; the mindmap's
 own keyed re-shape, whose fills *are* flat, needs
 `BackgroundRectSlot` to hold that line by bookkeeping instead
 (`renderer/tree_buffers.rs`).
+
+The key has two halves, and a mismatch is classified rather than
+merely detected (`ShapedSceneElement::classify` → `Verdict`).
+`GlyphArea::position` and the registered tree offset never reach
+cosmic-text — the walker adds them to each buffer's `pos` after
+shaping — so when they are the *only* difference the entry is
+`Moved`, and `patch_placement` rewrites its buffers' positions and
+its fill in place with no shaping and no `FONT_SYSTEM` lock. Any
+other difference is `Stale` and re-shapes. The patch re-derives
+each buffer from the stamp offset the walker recorded
+(`MindMapTextBuffer::emission_offset`), the same fix the mindmap's
+`patch_drag_positions` carries: an outlined element's eight halo
+stamps do not sit at its anchor, and writing the anchor flat would
+collapse them under the glyph. A picker drag-move — every cell
+repositioned, nothing else changed — is the case this exists for.
 
 `ScenePassKind` is the whole difference between the two passes:
 the canvas keeps the walker's fills because they reach a draw
