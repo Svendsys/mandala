@@ -178,24 +178,17 @@ pub(in crate::application::app) fn open_picker_inner(
         preview_ink_offset,
     ) = {
         let mut font_system = baumhard::font::fonts::acquire_font_system_write("color_picker_flow::open");
-        // The bottom arm draws in its own pinned face, so it is
-        // measured in that face; the other three arms draw unpinned.
         let mut unpinned_arms: Vec<&str> = Vec::with_capacity(30);
         unpinned_arms.extend(arm_top_glyphs().iter().copied());
         unpinned_arms.extend(arm_left_glyphs().iter().copied());
         unpinned_arms.extend(arm_right_glyphs().iter().copied());
-        let cell = crate::application::renderer::measure_max_glyph_advance(
+        let cell = measure_crosshair_cell(
             &mut font_system,
-            None,
             &unpinned_arms,
-            measurement_font_size,
-        )
-        .max(crate::application::renderer::measure_max_glyph_advance(
-            &mut font_system,
-            arm_bottom_font(),
             arm_bottom_glyphs(),
+            arm_bottom_font(),
             measurement_font_size,
-        ));
+        );
         let ring_glyphs: Vec<&str> = hue_ring_glyphs().to_vec();
         let ring = crate::application::renderer::measure_max_glyph_advance(
             &mut font_system,
@@ -286,6 +279,31 @@ pub(in crate::application::app) fn open_picker_inner(
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
 }
 
+/// The picker's crosshair cell: the widest arm glyph, each arm
+/// measured in the face it is drawn in. Three arms draw unpinned; the
+/// bottom arm draws in its own pin (`arm_bottom_font`, Egyptian
+/// hieroglyphs that cosmic-text needs a hint for), so a measurement in
+/// the default face is a measurement of a face that is never drawn.
+/// Today's shipped fonts happen to agree — the default fallback lands
+/// on the same hieroglyph face — which is exactly why the pin has to
+/// be passed rather than assumed.
+#[cfg(not(target_arch = "wasm32"))]
+fn measure_crosshair_cell(
+    font_system: &mut baumhard::font::FontSystem,
+    unpinned: &[&str],
+    pinned: &[&str],
+    pinned_face: Option<baumhard::font::fonts::AppFont>,
+    font_size: f32,
+) -> f32 {
+    use crate::application::renderer::measure_max_glyph_advance;
+    measure_max_glyph_advance(font_system, None, unpinned, font_size).max(measure_max_glyph_advance(
+        font_system,
+        pinned_face,
+        pinned,
+        font_size,
+    ))
+}
+
 /// Helper: write the initial HSV into `doc.color_picker_preview` on
 /// picker open so the first rendered frame already shows the
 /// previewed color instead of the model's stored one.
@@ -319,5 +337,50 @@ pub(in crate::application::app) fn seed_initial_preview(
             // Section text preview not plumbed through the scene
             // builder either — commit-only, same shape as Node.
         }
+    }
+}
+
+// The helper under test is native-gated with the open path it serves.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::measure_crosshair_cell;
+    use crate::application::renderer::measure_max_glyph_advance;
+
+    /// The pinned arm is measured in its pin. The shipped picker cannot
+    /// show this — its pin and the default fallback agree on the
+    /// hieroglyphs — so the test pins a glyph to a face that draws it
+    /// wider than the default does, where the two measurements differ
+    /// and only the pinned one can make the cell that wide.
+    #[test]
+    fn test_crosshair_cell_measures_the_pinned_arm_in_its_pin() {
+        baumhard::font::fonts::init();
+        let size = 24.0;
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("color_picker_flow::open tests");
+        let unpinned = ["\u{00B7}"];
+        let (glyph, face, pinned_w) = ["\u{2500}", "M", "W", "\u{2588}"]
+            .into_iter()
+            .find_map(|glyph| {
+                let default_w = measure_max_glyph_advance(&mut fs, None, &[glyph], size);
+                baumhard::font::fonts::loaded_families_iter()
+                    .filter_map(baumhard::font::fonts::app_font_by_family)
+                    .find_map(|face| {
+                        let w = measure_max_glyph_advance(&mut fs, Some(face), &[glyph], size);
+                        (w > default_w).then_some((glyph, face, w))
+                    })
+            })
+            .expect("some shipped face draws one of the probe glyphs wider than the default face");
+        let unpinned_w = measure_max_glyph_advance(&mut fs, None, &unpinned, size);
+        assert!(
+            unpinned_w < pinned_w,
+            "the unpinned arm must be the narrower one, or it decides the cell and proves nothing"
+        );
+
+        assert_eq!(
+            measure_crosshair_cell(&mut fs, &unpinned, &[glyph], Some(face), size),
+            pinned_w
+        );
+        // Control: the same arm unpinned measures narrower, so the
+        // width above is the pin's doing.
+        assert!(measure_crosshair_cell(&mut fs, &unpinned, &[glyph], None, size) < pinned_w);
     }
 }

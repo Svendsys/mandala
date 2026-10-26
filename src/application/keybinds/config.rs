@@ -634,6 +634,15 @@ impl KeybindConfig {
 /// Costs one scan of the loaded-family index, plus a second on the
 /// miss path for the case-insensitive candidate.
 pub(super) fn resolve_console_font(name: &str) -> Option<AppFont> {
+    // The remedy names the `font list` verb, which lives in the
+    // console — native-only, so the browser's warning stops at the
+    // fallback. The warning itself fires on both targets: `resolve`
+    // runs on both, and the family is unloaded on both.
+    #[cfg(not(target_arch = "wasm32"))]
+    const LOADED_FAMILIES_HINT: &str = " (the `font list` console verb lists the loaded families)";
+    #[cfg(target_arch = "wasm32")]
+    const LOADED_FAMILIES_HINT: &str = "";
+
     if name.is_empty() {
         return None;
     }
@@ -642,11 +651,11 @@ pub(super) fn resolve_console_font(name: &str) -> Option<AppFont> {
         match loaded_families_iter().find(|family| family.eq_ignore_ascii_case(name)) {
             Some(canonical) => warn!(
                 "keybinds: console_font '{name}' is not a loaded family (did you mean \
-                 '{canonical}'? family names are case-sensitive); the console uses the default face"
+                 '{canonical}'? family names are case-sensitive); falling back to the default face"
             ),
             None => warn!(
-                "keybinds: console_font '{name}' is not a loaded family; the console uses the \
-                 default face (the `font list` console verb lists the loaded families)"
+                "keybinds: console_font '{name}' is not a loaded family; falling back to the \
+                 default face{LOADED_FAMILIES_HINT}"
             ),
         }
     }

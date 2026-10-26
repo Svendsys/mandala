@@ -657,25 +657,31 @@ fn test_completion_row_regions_split_and_clamp_to_the_shown_width() {
     assert_eq!(spans_of(2, 5, 0), vec![]);
 }
 
-/// A shipped face that draws the console's box-drawing rule at a
-/// different advance from cosmic-text's default, with that advance.
-/// Without one, "measured in the configured face" and "measured in the
-/// default face" are the same number and nothing below can tell them
-/// apart.
+/// A shipped face that tiles the console's border at a different
+/// pitch from cosmic-text's default, with that pitch. The pitch is the
+/// wider of the two rules the border draws — `─` and `│`, as
+/// `console_overlay_areas` measures it — computed here from the
+/// per-glyph advances rather than through `measure_max_glyph_advance`,
+/// so the expectation does not quote the subject. Without such a face,
+/// "measured in the configured face" and "measured in the default
+/// face" are the same number and nothing below can tell them apart.
 fn face_with_distinct_rule_advance(fs: &mut baumhard::font::FontSystem, size: f32) -> (AppFont, f32) {
     use baumhard::font::metric_cache::glyph_advance_with;
-    let default_w = measure_max_glyph_advance(fs, None, &["\u{2500}"], size);
+    let mut pitch = |face: Option<AppFont>| {
+        glyph_advance_with(fs, face, size, "\u{2500}").max(glyph_advance_with(fs, face, size, "\u{2502}"))
+    };
+    let default_w = pitch(None);
     baumhard::font::fonts::loaded_families_iter()
         .filter_map(baumhard::font::fonts::app_font_by_family)
         .find_map(|face| {
-            let w = glyph_advance_with(fs, Some(face), size, "\u{2500}");
+            let w = pitch(Some(face));
             (w > 0.0 && w != default_w).then_some((face, w))
         })
-        .expect("some shipped face draws the box-drawing rule at a different advance than the default")
+        .expect("some shipped face tiles the border rules at a different pitch than the default")
 }
 
 /// `measure_max_glyph_advance` measures in the face it is given. A
-/// face whose box-drawing rule has a different advance from the
+/// face whose box-drawing rules have a different advance from the
 /// default must measure differently, or a configured `console_font`
 /// tiles its border at the wrong pitch.
 #[test]
@@ -685,13 +691,13 @@ fn test_measure_max_glyph_advance_measures_in_the_given_face() {
     let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (face advance)");
     let (face, face_w) = face_with_distinct_rule_advance(&mut fs, size);
     assert_eq!(
-        measure_max_glyph_advance(&mut fs, Some(face), &["\u{2500}"], size),
+        measure_max_glyph_advance(&mut fs, Some(face), &["\u{2500}", "\u{2502}"], size),
         face_w
     );
     // Control: the same call without the face answers the default's
     // width, so the line above is the face pin's doing.
     assert_ne!(
-        measure_max_glyph_advance(&mut fs, None, &["\u{2500}"], size),
+        measure_max_glyph_advance(&mut fs, None, &["\u{2500}", "\u{2502}"], size),
         face_w
     );
 }
