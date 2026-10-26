@@ -78,6 +78,17 @@ pub trait Interpolable: TreeElement {
     /// At `t == 0` the result must hold the [same
     /// state](TreeElement::same_state) as `before`, and at `t == 1` as
     /// `after`, whatever the snap.
+    ///
+    /// **The fields that make up [`TreeElement::key`] never
+    /// interpolate**: they come from `snap.pick(before, after, t)`
+    /// ([`Snap::pick`]), decided by the same [`Snap::takes_after`] that
+    /// [`Journal::write_interpolated`](crate::engine::journal::Journal::write_interpolated)
+    /// uses to choose between the before and the after arrangement of
+    /// the moved elements. An element's key and its place among its
+    /// siblings therefore always come from the same side, which is what
+    /// keeps every row sorted at every `t`. The simplest conforming
+    /// implementation starts from a clone of `snap.pick(before, after,
+    /// t)` and overwrites only the interpolating fields.
     fn interpolate(before: &Self, after: &Self, t: f32, snap: Snap) -> Self;
 }
 

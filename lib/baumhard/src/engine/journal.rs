@@ -134,12 +134,23 @@ struct Recorded<E> {
 /// [`MutatorTree::apply_at_journaled`](crate::engine::tree::MutatorTree::apply_at_journaled) and
 /// [`Tree::update_journaled`](crate::engine::tree::Tree::update_journaled)
 /// calls on **one** tree, then [`close`](Self::close) it against that
-/// tree.
+/// tree — or [`abandon`](Self::abandon) it to undo everything it
+/// recorded.
+///
+/// **Contract:** the positions a builder records are exact only if the
+/// tree changes through nothing but journaled calls on this builder
+/// from its creation until it is closed. A plain [`Tree::update`] that
+/// moves an element, an [`insert_child`](Tree::insert_child) or a
+/// [`remove_subtree`](Tree::remove_subtree) in between changes a
+/// neighbor's previous sibling without the builder noting it, and no
+/// check can detect that afterwards: [`Journal::revert`] refuses stale
+/// ids only.
 ///
 /// A builder is all or nothing: when a journaled call on it fails, the
 /// call reverts everything the builder recorded — the tree returns to
 /// where it stood when the builder was created — and leaves the
-/// builder empty.
+/// builder empty. [`abandon`](Self::abandon) is the same step for a
+/// failure the caller detects itself.
 ///
 /// Cost: one entry per element applied to — a clone of the element and
 /// a hash-map slot — never per element visited. A walk that changes no
@@ -224,7 +235,13 @@ impl<E: TreeElement> JournalBuilder<E> {
             Some(&i) => self.recorded[i].moved = true,
             // Only an element whose key an apply changed is moved, and
             // every apply records first.
-            None => error!("engine: node {node} moved without a journal entry; its move cannot be reverted"),
+            None => {
+                error!("engine: node {node} moved without a journal entry; its move cannot be reverted");
+                debug_assert!(
+                    false,
+                    "engine invariant: node {node} moved without a journal entry"
+                );
+            }
         }
         if let Some(next) = arena.get(node).and_then(|n| n.next_sibling()) {
             self.displace(next, Some(node));
@@ -264,8 +281,9 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// did not move. An entry whose node is no longer in `tree` cannot
     /// be read; it is dropped with an error logged.
     ///
-    /// Cost: one clone of each recorded element; for elements that
-    /// moved, hash maps over the moved elements alone.
+    /// Cost: one clone of each recorded element and an O(entries) scan;
+    /// only when an element moved, O(entries) flags and hash maps over
+    /// the moved elements alone.
     pub fn close(self, tree: &Tree<E>) -> Journal<E> {
         let arena = &tree.arena;
         let mut read: Vec<(Recorded<E>, E, Option<At>)> = Vec::with_capacity(self.recorded.len());
@@ -285,7 +303,8 @@ impl<E: TreeElement> JournalBuilder<E> {
         let displaced = out_of_place(&read);
         let mut entries = Vec::with_capacity(read.len());
         let mut index = FxHashMap::default();
-        for ((recorded, after, after_at), out) in read.into_iter().zip(displaced) {
+        for (i, (recorded, after, after_at)) in read.into_iter().enumerate() {
+            let out = displaced.get(i).copied().unwrap_or(false);
             let position = match (out, recorded.at, after_at) {
                 (true, Some(before_at), Some(after_at)) => Some((before_at, after_at)),
                 _ => None,
@@ -309,6 +328,24 @@ impl<E: TreeElement> JournalBuilder<E> {
             to_before,
             to_after,
         }
+    }
+
+    /// Undo everything this builder recorded, consuming it: `tree`
+    /// returns to where it stood when the builder was created. The
+    /// all-or-nothing step for a request that fails outside an engine
+    /// call — a check its caller makes after the journaled calls have
+    /// run — and the same step a failing journaled call takes itself
+    /// ([`Self::unwind`]), so a request is undone by one function
+    /// whoever detects the failure.
+    ///
+    /// `tree` must be the tree the builder's calls applied to, changed
+    /// by nothing else since (see the contract on [`JournalBuilder`]). A
+    /// revert that is refused even so is logged, not raised: there is
+    /// nothing left for the caller to do with the builder.
+    ///
+    /// Cost: [`Self::close`] plus [`Journal::revert`].
+    pub fn abandon(mut self, tree: &mut Tree<E>) {
+        self.unwind(tree);
     }
 
     /// Revert everything this builder recorded and leave it empty: the
@@ -335,9 +372,16 @@ impl<E: TreeElement> JournalBuilder<E> {
 /// row), so it is out of place exactly when the sibling it follows is:
 /// that is propagated from the elements known to be out of place.
 ///
-/// Cost: O(moved elements) with two hash maps over them; nothing when
-/// nothing moved.
+/// Returns one flag per element of `read`, or an empty `Vec` — every
+/// flag `false` — when nothing moved.
+///
+/// Cost: an O(entries) scan for a moved element, which allocates
+/// nothing; when one moved, O(entries) for the flags plus two hash maps
+/// over the moved elements alone.
 fn out_of_place<E>(read: &[(Recorded<E>, E, Option<At>)]) -> Vec<bool> {
+    if !read.iter().any(|(recorded, _, _)| recorded.moved) {
+        return Vec::new();
+    }
     let mut out = vec![false; read.len()];
     let mut worklist: Vec<usize> = Vec::new();
     // Moved elements that ended where they started, by the sibling

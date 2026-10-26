@@ -1685,6 +1685,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         "a_failing_journaled_call_leaves_the_tree_as_the_builder_found_it",
         |b| b.iter(do_a_failing_journaled_call_leaves_the_tree_as_the_builder_found_it),
     );
+    c.bench_function("abandon_reverts_everything_the_builder_recorded", |b| {
+        b.iter(do_abandon_reverts_everything_the_builder_recorded)
+    });
     c.bench_function("revert_and_replay_refuse_a_stale_node_before_writing", |b| {
         b.iter(do_revert_and_replay_refuse_a_stale_node_before_writing)
     });

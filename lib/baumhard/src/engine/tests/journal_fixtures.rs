@@ -112,13 +112,13 @@ pub struct Scenario {
     pub calls: Vec<Call>,
 }
 
-/// The scenario for `seed`: a random tree and one to five calls, each a
+/// The scenario for `seed`: a random tree and one to six calls, each a
 /// walk or an update.
 ///
 /// The calls crowd one **busy row** — the children of a random node
 /// that has at least two — and a small focus set of anchors: walks are
 /// often anchored at the busy row's parent or at the focus set, and
-/// updates mostly pick a busy-row child and half the time change its
+/// updates mostly pick a busy-row child and usually change its
 /// channel. So one builder often applies to an element in several
 /// calls, and often moves an element in one call next to an element
 /// another call moves later — the case where a position read at the
@@ -139,10 +139,10 @@ pub fn scenario(seed: u64) -> Scenario {
     };
     let row: Vec<NodeId> = busy.children(tree.arena()).collect();
     let focus = random_anchors(&mut rng, &nodes);
-    let count = rng.random_range(1..=5);
+    let count = rng.random_range(1..=6);
     let calls = (0..count)
         .map(|_| {
-            if rng.random_bool(0.55) {
+            if rng.random_bool(0.5) {
                 let anchors = match rng.random_range(0..5) {
                     0 | 1 => Anchors::Nodes(vec![busy]),
                     2 | 3 => focus.clone(),
@@ -154,11 +154,11 @@ pub fn scenario(seed: u64) -> Scenario {
                 }
             } else {
                 let pool = match rng.random_range(0..5) {
-                    0..=2 if !row.is_empty() => &row,
+                    0..=3 if !row.is_empty() => &row,
                     3 => focus_nodes(&focus),
                     _ => &nodes,
                 };
-                let mutation = if rng.random_bool(0.5) {
+                let mutation = if rng.random_bool(0.7) {
                     TestMutation::SetChannel(rng.random_range(0..CHANNELS))
                 } else {
                     random_mutation(&mut rng)

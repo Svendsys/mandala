@@ -65,18 +65,28 @@ fn test_journal_revert_and_replay_are_exact() {
 /// expected values share no code with what is under test. The run is
 /// required to have exercised what the property is about: seeds whose
 /// calls changed values, seeds whose calls moved elements, and seeds
-/// where elements moved across several calls of one builder.
+/// where **at least two calls of one builder each** changed the sibling
+/// order — the case in which a later call records elements whose
+/// neighbors an earlier call already moved.
 pub fn do_journal_revert_and_replay_are_exact() {
     let mut changed = 0;
     let mut reordered = 0;
-    let mut reordered_across_calls = 0;
+    let mut reordered_by_two_calls = 0;
     for seed in 0..SEEDS {
         let Scenario { mut tree, calls } = scenario(seed);
         let before = snapshot(&tree);
         let mut builder = JournalBuilder::new();
+        let mut reordering_calls = 0;
         for call in &calls {
+            let order_before_call = order(&snapshot(&tree));
             call.run(&mut tree, &mut builder)
                 .unwrap_or_else(|e| panic!("seed {seed}: a generated call is valid, got {e}"));
+            if order(&snapshot(&tree)) != order_before_call {
+                reordering_calls += 1;
+            }
+        }
+        if reordering_calls >= 2 {
+            reordered_by_two_calls += 1;
         }
         let after = snapshot(&tree);
         tree.check_sorted().unwrap();
@@ -87,9 +97,6 @@ pub fn do_journal_revert_and_replay_are_exact() {
         }
         if order(&before) != order(&after) {
             reordered += 1;
-            if calls.len() > 1 {
-                reordered_across_calls += 1;
-            }
         }
         assert_eq!(
             journal.is_empty(),
@@ -117,13 +124,15 @@ pub fn do_journal_revert_and_replay_are_exact() {
         changed > SEEDS / 2,
         "most seeds must change something, or this proves little: {changed}"
     );
+    // Checked before the plain reorder count: it is the stronger of the
+    // two, and the one a run that moves elements in one call only fails.
+    assert!(
+        reordered_by_two_calls >= SEEDS / 20,
+        "seeds must reorder siblings in at least two calls of one builder: {reordered_by_two_calls}"
+    );
     assert!(
         reordered >= SEEDS / 10,
         "seeds must move elements among their siblings: {reordered}"
-    );
-    assert!(
-        reordered_across_calls >= SEEDS / 20,
-        "seeds must move elements across several calls of one builder: {reordered_across_calls}"
     );
 }
 
@@ -558,6 +567,44 @@ pub fn do_a_failing_journaled_call_leaves_the_tree_as_the_builder_found_it() {
         "a failing update reverts the builder too"
     );
     assert_eq!(builder.recorded_len(), 0);
+}
+
+#[test]
+fn test_abandon_reverts_everything_the_builder_recorded() {
+    do_abandon_reverts_everything_the_builder_recorded();
+}
+
+/// A request that fails a check of its own after its journaled calls
+/// succeeded abandons the builder: a walk that raised every child by 10
+/// and an update that moved one of them, both on one builder, are
+/// undone together, and the tree is exactly as it was before the first
+/// call — values and sibling order.
+pub fn do_abandon_reverts_everything_the_builder_recorded() {
+    let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (1, 3)]);
+    let root = tree.root;
+    let before = snapshot(&tree);
+    let mut adds = MutatorTree::new();
+    let mroot = adds.root;
+    add_mutator(&mut adds, mroot, Mutator::new(TestMutation::Add(10), plain(0)));
+    add_mutator(&mut adds, mroot, Mutator::new(TestMutation::Add(10), plain(1)));
+    let mut builder = JournalBuilder::new();
+    adds.apply_at_journaled(&mut tree, &Anchors::Nodes(vec![root]), |_, _| 0, &mut builder)
+        .unwrap();
+    tree.update_journaled(t[0], &mut builder, |e| e.channel = 2)
+        .unwrap();
+    assert_eq!(
+        row_values(&tree, root),
+        vec![12, 13, 11],
+        "the calls changed values and order"
+    );
+
+    builder.abandon(&mut tree);
+    assert_eq!(
+        snapshot(&tree),
+        before,
+        "abandoning undoes every call on the builder"
+    );
+    tree.check_sorted().unwrap();
 }
 
 #[test]
