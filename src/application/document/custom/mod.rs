@@ -177,6 +177,48 @@ impl MindMapDocument {
         });
     }
 
+    /// [`Self::apply_custom_mutation`] for a caller that may hold no
+    /// tree: the instant path, in full, whatever the caller has.
+    ///
+    /// The declarative flat-apply path needs a tree to apply through;
+    /// the handler path does not touch one. So: through
+    /// `installed_tree` when the caller has one (the app's interactive
+    /// tree, which then carries the change until the next rebuild);
+    /// with none, through a scratch tree built here for the call and
+    /// discarded, skipping that build when a Rust handler owns the id
+    /// ([`Self::will_dispatch_to_handler`]). The scratch tree is a
+    /// medium, not a state: the model is what the apply syncs into,
+    /// and the caller's next rebuild projects it from there. Every
+    /// caller rebuilds after firing a mutation, so no frame is drawn
+    /// from a tree this method did not see.
+    ///
+    /// **This is the no-tree decision of #144.** Lacking a tree is not
+    /// a reason to apply less. Before it, the console verb built its
+    /// own scratch tree, the click-trigger loop skipped the mutator
+    /// silently and the keystroke tier reported "nothing applied";
+    /// three routes, three answers. Cost without a tree: one
+    /// `build_tree` (the console verb paid it already), in a window
+    /// that is reachable on native only between a console document
+    /// swap and the rebuild that follows it in the same line, and
+    /// never in the browser.
+    pub fn apply_custom_mutation_instantly(
+        &mut self,
+        custom: &CustomMutation,
+        node_id: &str,
+        installed_tree: Option<&mut MindMapTree>,
+    ) {
+        match installed_tree {
+            Some(tree) => self.apply_custom_mutation(custom, node_id, Some(tree)),
+            None if self.will_dispatch_to_handler(&custom.id) => {
+                self.apply_custom_mutation(custom, node_id, None)
+            }
+            None => {
+                let mut scratch = self.build_tree();
+                self.apply_custom_mutation(custom, node_id, Some(&mut scratch));
+            }
+        }
+    }
+
     /// The body of [`Self::apply_custom_mutation`], run with the
     /// document's change source declared.
     fn apply_custom_mutation_body(

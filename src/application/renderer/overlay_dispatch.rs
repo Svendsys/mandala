@@ -140,11 +140,15 @@ impl Renderer {
     /// still use [`Self::rebuild_color_picker_overlay_buffers`]
     /// because the arena needs to be created or torn down. Calls
     /// `rebuild_overlay_scene_buffers` afterward, which re-shapes
-    /// the cells this mutator actually moved and leaves the rest of
-    /// the wheel's buffers as they are — see
-    /// [`super::scene_shape_cache`] for how it tells them apart.
-    /// A layout-phase mutator typically moves all of them, since a
-    /// resize or a reposition writes new positions everywhere.
+    /// only the cells whose glyphs this mutator actually changed,
+    /// moves the cells whose *position* alone it changed without
+    /// shaping them, and leaves the rest of the wheel's buffers as
+    /// they are — see [`super::scene_shape_cache`] for how it tells
+    /// the three apart. A drag-move repositions every cell and
+    /// changes nothing else, so it lands entirely on the move side:
+    /// each outlined cell's halo stamps are re-placed from their
+    /// recorded offsets rather than shaped again. A resize changes
+    /// the cells' scale and bounds too, so it re-shapes them.
     pub fn apply_color_picker_overlay_mutator(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,

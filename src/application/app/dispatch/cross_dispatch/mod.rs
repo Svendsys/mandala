@@ -52,11 +52,14 @@
 //!   route resolver plus the apply half that matches on it.
 //!
 //! `mod.rs` itself only carries the shared types
-//! ([`RebuildContext`], [`DispatchOutcome`]), the two
-//! cross-cutting helpers ([`apply_with_rebuild`],
-//! [`apply_keybind_custom_mutation`]), and the re-exports that
-//! keep the existing `super::cross_dispatch::apply_*` import
-//! surface working unchanged.
+//! ([`RebuildContext`], [`DispatchOutcome`]), the cross-cutting
+//! helper [`apply_with_rebuild`], and the re-exports that keep the
+//! existing `super::cross_dispatch::apply_*` import surface
+//! working unchanged. (How a fired `CustomMutation` lands is not a
+//! dispatch concern and lives in
+//! `crate::application::app::fire_custom_mutation`, reached from
+//! [`lifecycle`]'s keystroke tier, both macro targets and the
+//! click-trigger loop alike.)
 
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
@@ -87,65 +90,6 @@ pub(in crate::application::app) use lifecycle::*;
 pub(in crate::application::app) use pointer::*;
 pub(in crate::application::app) use selection::*;
 pub(in crate::application::app) use style::*;
-
-/// Pure inner helper for the keybind-triggered custom-mutation path.
-/// Runs the same animation-aware apply + `apply_document_actions`
-/// sequence the click-trigger path (`click_triggers::fire_onclick_triggers`)
-/// uses, but without touching the renderer, and with the differences
-/// the body below names. Returns `true` when the mutation was applied.
-///
-/// Cross-platform: takes only `MindMapDocument`, `Option<MindMapTree>`,
-/// `SceneConnectionCache`, `CustomMutation`, `node_id`, `now_ms`.
-/// The caller is responsible for the post-apply scene rebuild
-/// (`rebuild_after_geometry_change` for both targets). Lifted from
-/// `dispatch.rs` (native-gated) for Track B so the WASM macro
-/// dispatch path can reach the same animation-envelope contract
-/// native uses.
-///
-/// `pub(crate)` because the parity tests in
-/// `crate::application::document::tests_mutations` import it
-/// (via the back-compat re-export in `super::dispatch`).
-pub(crate) fn apply_keybind_custom_mutation(
-    doc: &mut crate::application::document::MindMapDocument,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-    cm: &baumhard::mindmap::custom_mutation::CustomMutation,
-    node_id: &str,
-    now_ms: u64,
-) -> bool {
-    if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
-        // Queues the envelope only. Advancing it is
-        // `drain_frame::drain_animation_tick`, which is native-only —
-        // so on WASM this branch starts an animation that never ticks.
-        // A sanctioned carve-out, registered in CLAUDE.md's
-        // "Dual-target status". This function is the keystroke tier's
-        // entry (`run_wasm/event_keyboard.rs` on the browser side,
-        // `native.rs` / `lifecycle.rs` on the desktop's).
-        //
-        // The **click-trigger** path does not come through here:
-        // `click_triggers::fire_onclick_triggers` carries its own copy
-        // of this animated-vs-instant routing and calls
-        // `start_animation_at` (section-aware) instead. Same stall,
-        // reached by a second body. Named pre-existing duplication,
-        // not unified in this PR because the two copies genuinely
-        // differ in the no-tree case — this one returns `false` and
-        // skips `apply_document_actions`, the trigger loop applies
-        // them anyway — so collapsing them is a behavior decision, not
-        // a refactor. Whoever takes it owns picking which of the two
-        // is right.
-        doc.start_animation(cm, node_id, now_ms);
-    } else if let Some(tree) = mindmap_tree.as_mut() {
-        doc.apply_custom_mutation(cm, node_id, Some(tree));
-        scene_cache.clear();
-    } else {
-        // No tree available and no animation requested — nothing to apply.
-        return false;
-    }
-    // Phase-7 parity: always invoke document actions, regardless of
-    // whether the mutation animated or applied directly.
-    doc.apply_document_actions(cm);
-    true
-}
 
 /// Outcome of a `dispatch_action` call. The two variants let
 /// callers branch on whether the dispatcher recognized and ran

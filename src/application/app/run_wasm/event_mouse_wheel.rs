@@ -76,8 +76,10 @@ impl super::WasmApp {
             );
         }
         // Native picks the post-camera-change reprojection up in its
-        // per-frame drain; the browser has no drain loop, so every
-        // camera mover on this target runs the same body. See
+        // per-frame input drain; the browser's frame runs the
+        // time-driven half alone (the animation tick,
+        // `event_redraw_requested`), so every camera mover on this
+        // target runs the same body at the mover. See
         // `WasmInputState::reproject_after_camera_change` for the
         // three ways it is *not* identical to native's drain.
         input.reproject_after_camera_change(renderer);

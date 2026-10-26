@@ -1973,7 +1973,7 @@ each id, so `mutation help <id>` can report it.
 
 WASM:
 - App from the same embedded JSON.
-- User from `?mutations=` query param or `localStorage`.
+- User from `localStorage` (never a URL query param).
 
 Map and inline are loaded from the document on every load. Each
 layer is best-effort — user file parse failures log a warning
@@ -2333,9 +2333,10 @@ one.
 
 The per-frame heartbeat: land one injected-input sample, drive the
 throttled drag and the picker hover, re-derive the rubber band,
-rebuild camera-driven geometry, tick animations. It does **not**
-render — the frame is drawn from winit's `RedrawRequested` (or the
-headless driver's owed-frame check), never from the drain.
+rebuild camera-driven geometry, tick animations (`animation_drain`,
+the body the browser's frame runs too). It does **not** render — the
+frame is drawn from winit's `RedrawRequested` (or the headless
+driver's owed-frame check), never from the drain.
 
 Inputs arriving between frames mutate the document; the
 throttled-interaction shells and the renderer's
@@ -2351,9 +2352,14 @@ rebuild trigger.
 
 `src/application/app/heartbeat.rs` holds the frame:
 `InputHandlerContext::drain_frame(beat)` lands the injected sample
-and calls `drain_inputs`, whose body is the drain. Three of its steps
-are the helpers in `src/application/app/drain_frame.rs`; the rest
-are inline. It is called once per iteration of the loop body both
+and calls `drain_inputs`, whose body is the drain. Two of its steps
+are the helpers in `src/application/app/drain_frame.rs` (native-only,
+like the drag state they read); the animation tick is
+`animation_drain::drain_animation_tick` in
+`src/application/app/animation_drain.rs`, which is not native's alone
+— the browser's frame (`run_wasm/event_redraw_requested.rs`) runs the
+same body from `RedrawRequested` since #144; the rest are inline. It
+is called once per iteration of the loop body both
 native drivers run (`pump::iterate` in `app/pump.rs`, see
 [Headless driver](#headless-driver)) — winit's `about_to_wait`, or
 the headless pump's pass. Step order, as the code runs it:
@@ -2375,10 +2381,12 @@ the headless pump's pass. Step order, as the code runs it:
    of the zoom-dependent roles, under the renderer's
    `connection_geometry_dirty` flag, suppressed while a node is
    being moved.
-6. Animation pause/resume bookkeeping around tree-mutating drags,
-   then `drain_animation_tick` — advance running animations, commit
-   on completion (an undo entry is pushed there) — when the frame
-   moves time and no tree-mutating drag is live.
+6. Animation pause/resume bookkeeping around tree-mutating drags
+   (native's alone: there is no drag to pause for without a drag
+   state), then `animation_drain::drain_animation_tick` — advance
+   running animations, commit on completion (an undo entry is pushed
+   there) — when the frame moves time and no tree-mutating drag is
+   live.
 
 What the loop body does *around* the drain is `pump::iterate`'s
 business and is pinned by its tests: the IPC drain runs after
@@ -3156,8 +3164,8 @@ rebuilds (in `scene_rebuild.rs`) and overlay-role rebuilds
 ### Scene shape cache
 
 The rule that decides, per walked element, whether
-its cosmic-text buffers and background fill are re-shaped or
-reused — one mechanism serving both of
+its cosmic-text buffers and background fill are re-shaped, moved,
+or reused — one mechanism serving both of
 [`AppScene`](#appscene-and-scene-host)'s sub-scenes.
 
 Rebuild dispatch stops at the arena. A mutator
@@ -3189,6 +3197,21 @@ disturb the index order the rect pipeline paints in; the mindmap's
 own keyed re-shape, whose fills *are* flat, needs
 `BackgroundRectSlot` to hold that line by bookkeeping instead
 (`renderer/tree_buffers.rs`).
+
+The key has two halves, and a mismatch is classified rather than
+merely detected (`ShapedSceneElement::classify` → `Verdict`).
+`GlyphArea::position` and the registered tree offset never reach
+cosmic-text — the walker adds them to each buffer's `pos` after
+shaping — so when they are the *only* difference the entry is
+`Moved`, and `patch_placement` rewrites its buffers' positions and
+its fill in place with no shaping and no `FONT_SYSTEM` lock. Any
+other difference is `Stale` and re-shapes. The patch re-derives
+each buffer from the stamp offset the walker recorded
+(`MindMapTextBuffer::emission_offset`), the same fix the mindmap's
+`patch_drag_positions` carries: an outlined element's eight halo
+stamps do not sit at its anchor, and writing the anchor flat would
+collapse them under the glyph. A picker drag-move — every cell
+repositioned, nothing else changed — is the case this exists for.
 
 `ScenePassKind` is the whole difference between the two passes:
 the canvas keeps the walker's fills because they reach a draw
@@ -3634,10 +3657,15 @@ stored on the axis is ever rebased. Driven by the IPC `clock` family
 and the `clock` console verb; `clock.wait` is its settling primitive
 (`format/ipc.md` §`clock`).
 
-Native and the browser each hold one; the browser's stays real,
-because what advances a virtual clock is the per-frame drain, which is
-native today (`CLAUDE.md` "Dual-target status"). Both read the wall
-clock through `web_time`, which is `performance.now()` in the browser.
+Native and the browser each hold one; the browser's stays real. What
+it lacks is not the tick — since #144 the browser's frame runs the
+same `animation_drain` body and, like native's loop frame, ticks on a
+real clock only, so it would stand still under a virtual one — but the
+step driver (`heartbeat::step`, a method on native's
+`InputHandlerContext`) and the IPC transport to command it
+(`CLAUDE.md` "Dual-target status", "Virtual-clock stepping"). Both
+read the wall clock through `web_time`, which is `performance.now()`
+in the browser.
 
 ---
 
@@ -3672,7 +3700,7 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    `~/.config/mandala/macros.json` on native. See
    `crate::application::macros` for `Macro`, `MacroStep`,
    `MacroRegistry`, and `dispatch_macro`. Steps fan out to
-   `dispatch_action`, `apply_keybind_custom_mutation`, or
+   `dispatch_action`, `fire_custom_mutation`, or
    `execute_console_line` depending on `MacroStep` kind, so plugin
    authors and macro recorders share one runtime path. That path is
    `run_macro_steps`, the gated step loop `dispatch_macro` calls
@@ -3741,15 +3769,14 @@ ships unbound. Users opt back in via:
 { "create_orphan_node_and_edit": ["DoubleClick"] }
 ```
 
-**Custom-mutation parity.** `apply_keybind_custom_mutation`
-(`dispatch/cross_dispatch/mod.rs`) carries the same
-animated-vs-instant routing as the click-trigger path,
-`click_triggers::fire_onclick_triggers`: `start_animation` when
-`timing.duration_ms > 0`, and `apply_document_actions` after. That
-closed the silent gap where keyboard-triggered custom mutations
-skipped both. The two bodies are not byte-for-byte the same; both
-sites and `CLAUDE.md`'s "Dual-target status" record the
-differences.
+**Custom-mutation parity.** `dispatch_custom_mutation_for_key`
+and the click-trigger loop (`click_triggers::fire_onclick_triggers`)
+land through one body, `app::fire_custom_mutation`: animation-aware
+(`start_animation_at` when `timing.duration_ms > 0`, ticked by both
+targets' frames since #144), always invokes
+`apply_document_actions`, and applies with or without an installed
+tree (the no-tree decision on #144). Closes the silent feature gap
+where keyboard-triggered custom mutations skipped both.
 
 ---
 
@@ -4296,10 +4323,11 @@ the finding is written once in
   composition wrapper that sits on the driver:
   `desktop::load_desktop_layered(label, filename, explicit, parse)`
   for the explicit CLI path before the XDG path, and
-  `web_storage::load_web_layered(label, param, key, parse)` for
-  `?<param>=<json>` before `localStorage[key]`. All six platform
-  loaders (three configs × two targets) are now a filename and a
-  parser.
+  `web_storage::load_web_storage_only(label, key, parse)` for
+  `localStorage[key]` alone — deliberately no URL layer, since a
+  `?<name>=<json>` param belongs to whoever composed the link. All
+  six platform loaders (three configs × two targets) are now a
+  filename or storage key and a parser.
 - The one deliberate asymmetry lives in the desktop wrapper: only
   the XDG layer is filtered on `exists()`. An absent user config
   is the normal case and stays silent, whereas an explicit
@@ -4307,7 +4335,7 @@ the finding is written once in
   a warning. Changing that is a change to one function.
 
 Adding a fourth user-tier config file is a matter of naming its
-filename, query param, and storage key, then handing each
+filename and storage key, then handing each
 wrapper a parser — no new read, cap, layer, or fallback code.
 
 ### `SourceTier`

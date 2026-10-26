@@ -1,75 +1,31 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! WASM-side `?<name>=` query-param + `localStorage` access. The
-//! three user-tier JSON loaders (keybinds, mutations, macros) all
-//! reach for the same shape: pull the named string from the URL,
-//! fall back to a localStorage key. Same shape; same machinery —
-//! [`load_web_layered`] is that shape, wired onto the shared
-//! [`super::layered::load_layered`] driver.
+//! WASM-side `localStorage` access for the user-tier JSON configs.
 //!
-//! **The query-param layer is built but not reached.** All three
-//! browser loaders (`keybinds::platform_web`,
+//! The three browser loaders (`keybinds::platform_web`,
 //! `macros::loader::platform_web`,
-//! `document::mutations_loader::platform_web`) call
-//! [`load_web_storage_only`], so `?keybinds=<json>` and its siblings
-//! do nothing today. #41 found the two-layer chain dead and kept it
-//! rather than delete a working implementation: switching the three
-//! call sites over is a decision about what URL surface the app
-//! offers, not a cleanup. Until then this module documents a
-//! capability the app does not have, and that is recorded here
-//! rather than left for the next reader to discover.
+//! `document::mutations_loader::platform_web`) read their config from
+//! one place, `localStorage`, through [`load_web_storage_only`] — the
+//! browser peer of `desktop::load_desktop_layered`, running on the
+//! same [`super::layered::load_layered`] driver so the size cap and
+//! the "absent is silent, broken is logged" policy are the native
+//! ones. The function's doc carries the reason there is no URL layer
+//! above it: a `?<name>=<json>` parameter belongs to whoever composed
+//! the link, not to the user, and these configs run at the trusted
+//! `User` tier.
 
 use super::{load_layered, ConfigLayer};
-
-/// Name the query-param layer answers to in log lines. Unreached —
-/// see the module header.
-#[allow(dead_code)]
-const QUERY_PARAM_SOURCE: &str = "URL query param";
 
 /// Name the `localStorage` layer answers to in log lines.
 const LOCAL_STORAGE_SOURCE: &str = "localStorage";
 
-/// The browser's user-tier fallback chain: `?<param_name>=<json>`
-/// first, then `localStorage[storage_key]`, then nothing.
+/// The browser's user-tier chain: `localStorage[storage_key]`, then
+/// nothing. Returns the parsed value plus the name of the layer that
+/// produced it, for the caller's success log; `None` means nothing
+/// usable was stored, and any failure has already been logged by the
+/// shared driver, so the caller only has to substitute its defaults.
 ///
-/// Returns the parsed value plus the name of the layer that produced
-/// it, so the caller's success log can say where the config came
-/// from. `None` means no layer produced anything usable; every
-/// failure along the way has already been logged by the shared
-/// driver, so the caller only has to substitute its defaults.
-///
-/// Costs: at most one `window.location` read and one `localStorage`
-/// round-trip, both skipped once a higher layer wins.
-/// Unreached today — see the module header. The consumers in
-/// waiting are the three `platform_web` loaders, each of which calls
-/// [`load_web_storage_only`] instead.
-#[allow(dead_code)]
-pub fn load_web_layered<T>(
-    label: &str,
-    param_name: &str,
-    storage_key: &str,
-    parse: impl Fn(&str) -> Result<T, String>,
-) -> Option<(T, &'static str)> {
-    let query = || read_query_param(param_name).map(Ok);
-    let storage = || read_local_storage(storage_key).map(Ok);
-    load_layered(
-        label,
-        [
-            ConfigLayer {
-                source: QUERY_PARAM_SOURCE,
-                fetch: &query,
-            },
-            ConfigLayer {
-                source: LOCAL_STORAGE_SOURCE,
-                fetch: &storage,
-            },
-        ],
-        parse,
-    )
-}
-
-/// The browser's fallback chain **without** the query-param layer:
-/// `localStorage[storage_key]`, then nothing.
+/// Costs: one `localStorage` round-trip.
 ///
 /// **A URL query param is not the user's own configuration.** The
 /// trusted [`SourceTier::User`](crate::application::source_tier::SourceTier::User)
@@ -88,7 +44,11 @@ pub fn load_web_layered<T>(
 /// two trust levels, decided by nothing but which parameter name the
 /// sender chose.
 ///
-/// So the configs that can *execute* use this chain. The blast radius
+/// So no user-tier config reads the URL, and no URL layer exists to
+/// opt into: the argument is strongest for macros, which run console
+/// verbs, and holds unchanged for keybinds and mutations, which reach
+/// the same `User` tier (each loader states its own case). The blast
+/// radius
 /// was bounded by the browser sandbox — no filesystem, no process —
 /// but "anyone who can send you a link can run editor commands against
 /// your open document" is not a boundary worth keeping.
@@ -106,27 +66,6 @@ pub fn load_web_storage_only<T>(
         }],
         parse,
     )
-}
-
-/// Read a URL query parameter by name, percent-decoding the value.
-/// Returns `None` if `web_sys::window()`/location is missing, the
-/// query string is empty, the param is absent, or the decode fails.
-/// Recognizes `?name=value` and `&name=value` (interior).
-///
-/// Allocates the formatted prefix and the decoded `String` on the
-/// success path. O(n) over the query-string length.
-#[allow(dead_code)]
-pub fn read_query_param(name: &str) -> Option<String> {
-    let window = web_sys::window()?;
-    let search = window.location().search().ok()?;
-    let trimmed = search.trim_start_matches('?');
-    let prefix = format!("{}=", name);
-    for pair in trimmed.split('&') {
-        if let Some(val) = pair.strip_prefix(prefix.as_str()) {
-            return js_sys::decode_uri_component(val).ok()?.as_string();
-        }
-    }
-    None
 }
 
 /// Read a value from the browser's `localStorage` by key. Returns

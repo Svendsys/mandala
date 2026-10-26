@@ -48,8 +48,9 @@ pub fn load_app_and_user(
     (app, user)
 }
 
-/// WASM companion — reads the user slice from the `?mutations=` query
-/// param or `localStorage` instead of the filesystem.
+/// WASM companion — reads the user slice from `localStorage` instead
+/// of the filesystem (never from a URL query param — see
+/// `platform_web::load_user`).
 #[cfg(target_arch = "wasm32")]
 pub fn load_app_and_user() -> (Vec<CustomMutation>, Vec<CustomMutation>) {
     let app = builtin::load_app();

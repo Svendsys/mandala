@@ -190,6 +190,10 @@ declared explicitly with `harness = false` to exist at all.
   `#[should_panic(expected = "...")]` so a future reword cannot
   silently weaken the test.
 
+- **Every assertion must be able to fail on its subject.** Naming the
+  input that turns it red, and having seen it red, is part of writing
+  it — §T13 is the checklist and the control rule.
+
 ## §T6 Benchmark-reuse discipline
 
 Any `do_*()` function exported through a `pub mod tests;` tree is part
@@ -390,3 +394,169 @@ When in doubt, write the test. An untested fundamental is technical
 debt (§T1, §T7), and a featureful path with no error-case coverage is
 half a feature.
 
+Aggressive is not the same as numerous. A test that cannot fail on
+its subject (§T13) adds one to the count and nothing to the coverage,
+and it is worse than the gap it hides, because the gap no longer
+looks like one.
+
+## §T13 Assertions that cannot fail
+
+A test that cannot fail for the reason it claims to exist is worse
+than no test: it passes CI, reads as coverage, and stops the next
+person from writing the real one. The defect is invisible by
+construction — a vacuous assertion looks exactly like a satisfied
+one — so no amount of re-reading the green output finds it. Across
+the six PRs of the July 2026 review epic (#54: #126, #127, #128,
+#131, #132, #133) it was the most common real defect found, ahead of
+wrong code, and four of the six instances below were found by a
+reviewer rather than by the author. #138 is the record for that count
+and for the instances whose defective form is no longer in the tree.
+Two rules carry most of this section:
+
+> **Before committing an assertion, name the input that makes it
+> fail.** If you cannot, it is not a test.
+>
+> **An assertion whose expected value is computed by the code under
+> test is a mirror.** Compute it independently, or assert a literal.
+
+### §T13.1 The six shapes
+
+Check every new or changed assertion against each of these. Each
+names the instance that taught it.
+
+1. **No true positive available.** A clause whose only reachable
+   inputs are correct ones. A line-model test in
+   `lib/baumhard/src/util/tests/grapheme_chad_tests.rs` asserted
+   `i + 1 == count || !line.ends_with('\r')`, aimed at a line that
+   swallowed its own terminator. Under the test's own cluster-index
+   reconstruction the terminator's CR always belongs to the cluster
+   *after* the line's range, so no input could make the clause fire on
+   broken code — while it *would* have fired on correct code the day a
+   `\r\r\n` fixture was added. The clause was later shown to be
+   redundant outright: the test's other properties already determine
+   the whole range table uniquely, so no predicate over that table
+   could have added coverage. `test_line_model_is_coherent` is the
+   fixed shape: instead of a predicate over its own reconstruction,
+   it holds the byte-level `slice_to_newline` — the member of the
+   family that *can* swallow a terminator — against the cluster
+   bounds. The question that finds this shape is *what does the
+   broken output look like, and can the test produce it?*
+
+2. **Default-shadowed.** The value under test also arrives from a
+   fallback. Resolving the shipped keybinds template and asserting
+   Escape → `ExitMode` passed with the template's key renamed, and
+   would have passed with the template reduced to `{}`, because the
+   built-in `exit_mode` default is Escape too.
+   `test_shipped_keybinds_template_escape_exits_the_mode` is the fixed
+   shape: it first moves the file's binding to a combo no default
+   carries and demands the move be visible, which proves the value
+   comes from the file, and only then asserts the shipped binding.
+   Whenever a value has a default, a fallback, an inherited tier or a
+   cascade behind it, the fixture must make the tier under test differ
+   from every tier behind it.
+
+3. **Only a universal prefix.** An error assertion satisfied by every
+   failure. `err.contains("parse keybinds JSON")` matches the prefix
+   `KeybindConfig::from_json` puts on a bare `{`, on a wrong value
+   type, and on text that is not JSON at all, so it would still pass
+   had the input started failing for an unrelated reason —
+   `clear_zoom` deleted from the table, say.
+   `test_clear_zoom_rejects_the_parametric_binding_shape` keeps the
+   prefix and adds the discriminating half — serde naming the value
+   shape it refused. Assert the part of the message only *this*
+   failure produces.
+
+4. **Captured but never asserted.** A field rendered into a fixture,
+   signature or comparison that no row ever exercises. The console
+   oracle (`src/application/console/tests/oracle.rs`) rendered
+   `font_family` into each candidate's signature, but no corpus row
+   produced a candidate carrying one: a mutant setting it to a
+   sentinel left every oracle test green, and so did checking it with
+   `is_some()` alone.
+   `test_console_oracle_font_vocabularies_track_the_loaded_families`
+   is the fixed shape: every family row must carry *its own* family,
+   not merely some family. Rendering a field is a promise to check it;
+   a row that makes it non-default, asserted against the value it
+   should hold, is what keeps the promise.
+
+5. **Two tables at different depths.** When one behavior is pinned
+   from two sides — a corpus of lines that execute and a corpus of
+   lines that complete, say — the shallower table's silence hides the
+   gap. `EXEC_CORPUS` pinned `canvas border side top reset` as working
+   while `COMPLETION_CORPUS` had no matching row, so the path looked
+   pinned and its completion side was never examined. Paired tables
+   are compared row against row, or by a test that holds one to the
+   other; their row counts are not evidence of anything.
+
+6. **Two derivations sharing a source — the mirror.** `serde_coverage`
+   published a list of field spellings and checked it with a walker,
+   but both came from the same token matching, so the doc and the
+   walker could agree on being wrong and nothing was left to
+   disagree. `test_the_scan_and_the_derived_impls_agree_on_a_planted_shape`
+   is the fixed shape: the scan is held against what `serde_derive`
+   actually accepts, a source that shares no code with it. The same
+   epic hit the shape twice at smaller scale — a plant macro whose two
+   halves were described as generated from one list while the field
+   list was duplicated as a literal, and a test computing its expected
+   width through the same metric-cache path as the code under test.
+   `test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing`
+   is the fixed shape of the second: its expectations come from
+   shaping each cluster in a scratch `cosmic_text::Buffer`, not from
+   the `glyph_advance` the subject calls, so an algorithm that agreed
+   with itself no longer passes by doing so. That is the *compute it
+   independently* half of the second rule above, which is this shape
+   stated as a requirement.
+
+### §T13.2 The negative control is a requirement
+
+**Every assertion reported as passing has been seen failing**: break
+the thing it guards, watch it go red for the reason its message
+gives, revert. That holds for every assertion, not a sample of
+them. The pull request that adds or changes the test then says what
+was broken and what went red, for every assertion whose failing input
+is not self-evident from its own text — a reviewer cannot rerun a
+control they were never told about. The control is run, not
+committed; what is committed is the test it vouches for.
+
+Two refinements, each paid for in that epic:
+
+- **The control must disable the mechanism on the path the test
+  exercises.** A panic-safety test was "controlled" with
+  `std::mem::forget` placed after the body. On the unwind path that
+  line is never reached, so the guard still ran, the test stayed
+  green, and the control read as proof that the test was vacuous — a
+  false negative about the test rather than a false positive about
+  the code. The correct control restored the pre-fix shape. A control
+  that does not go red has proved something only once you know it
+  actually broke what it meant to break.
+- **A control that goes red for the wrong reason has not controlled
+  anything.** If the failure message is not the one the assertion
+  carries, the test failed on a precondition, a fixture load or a
+  neighboring assertion, and the one under review is still unseen.
+
+### §T13.3 Precondition assertions are not ceremony
+
+A test whose meaning depends on its fixture holding some property
+asserts that property before the assertion that depends on it, with
+a message that says what the test would otherwise prove.
+`test_border_show_reports_the_effective_frame_color` guards its
+readout assertion with `assert_ne!(effective, node.style.frame_color,
+"the fixture must keep its tiers apart or this test proves nothing")`,
+and
+`test_the_console_source_scan_reads_what_it_claims_to` exists because
+a scan that read nothing finds nothing. These guards are the cheap,
+committed half of §T13.2: they turn shape 2 and shape 4 from a silent
+pass into a red run the day the fixture drifts. One of them caught a
+wrong premise in its own test's first draft — the author had assumed
+an empty override left no themed tier, when it falls through to the
+group's. Do not delete one as redundant because it has never fired;
+that is what it looks like while it is working.
+
+### §T13.4 The same defect one level up
+
+A gate that cannot fail is this defect applied to the suite instead
+of to a test. #130 and #134 are its siblings — #134 an instance: a red
+doc gate that printed one line and exited 0 for a full review round.
+The same two rules apply to anything in `test.sh` or CI: name the
+input that turns it red, and make sure a red result changes the exit
+code.

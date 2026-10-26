@@ -195,15 +195,15 @@ Three funnel gaps closed with them:
   which is safe only while `WasmInputState` carries no `drag_state`.
 - **The keyboard chain reaches the custom-mutation tier on WASM.** It
   stopped at Macro, so a `custom_mutation_bindings` entry worked on
-  the desktop and was dead on the web. **Instant mutations only** —
-  an entry with `timing.duration_ms > 0` takes
-  `apply_keybind_custom_mutation`'s `start_animation` branch, which
-  only queues the envelope. `drain_animation_tick` is the sole
-  advance site and `drain_frame.rs` is native-gated, so a browser
-  animation starts and never ticks. Pre-existing on the click-trigger
-  path; the keystroke tier widens it. Registered in CLAUDE.md's
-  "Dual-target status"; parity is a browser drain hung off the
-  existing rAF render loop, pumping the same body.
+  the desktop and was dead on the web. Animated entries too, since
+  #144: the tier and the click-trigger loop land through one body,
+  `app::fire_custom_mutation`, and the browser's frame
+  (`run_wasm/event_redraw_requested.rs`) ticks a started instance
+  through the same `animation_drain::drain_animation_tick` native's
+  heartbeat runs, asking for the next frame until it completes.
+  Before that `drain_animation_tick` lived in the native-gated
+  `drain_frame.rs`, so a browser animation started and never
+  ticked — first on the click-trigger path, then on this tier.
 
 `DoubleClickActivate` stays `wasm = NativeOnly`: its `EdgeLabel`
 branch still reaches the single-line editor, and the "ANY NativeOnly

@@ -17,11 +17,12 @@ use super::RebuildContext;
 /// inline editor.
 const MULTI_TARGET_SEPARATOR: &str = "\n\n";
 
-/// Resolve a custom-mutation key binding and apply it through the same
-/// path the click-trigger handler in `click.rs` uses: animation-aware
-/// (`start_animation` when `timing.duration_ms > 0`), and always
-/// invoking `apply_document_actions`. Returns `true` when a mutation
-/// was found and applied.
+/// Resolve a custom-mutation key binding and fire it through
+/// [`fire_custom_mutation`](crate::application::app::fire_custom_mutation::fire_custom_mutation),
+/// the body the click-trigger route lands through too. Returns `true`
+/// when a mutation was found and fired: the binding resolves, the
+/// selection is a single node and the id is in the registry. Firing
+/// itself cannot decline (the no-tree decision of #144).
 ///
 /// This is the third and lowest tier of the keyboard resolution chain
 /// (Action → Macro → CustomMutation, CONCEPTS §5). It takes
@@ -34,11 +35,10 @@ const MULTI_TARGET_SEPARATOR: &str = "\n\n";
 ///
 /// Rebuilds via bare `rebuild_all`, deliberately **not**
 /// [`RebuildContext::rebuild_after_geometry_change`]:
-/// [`super::apply_keybind_custom_mutation`] already clears the
-/// connection cache on the non-animated branch, and the animated
-/// branch leaves the cache for the animation envelope to invalidate —
-/// an extra clear here would cost a full re-sample on every animated
-/// keystroke.
+/// `fire_custom_mutation` already clears the connection cache on the
+/// instant branch, and the animated branch leaves the cache for the
+/// animation envelope to invalidate — an extra clear here would cost
+/// a full re-sample on every animated keystroke.
 pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
     core: &mut super::super::super::input_context_core::InputContextCore<'_>,
     key_name: &str,
@@ -60,19 +60,24 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
         return false;
     };
     let now = core.clock.now_whole_ms();
-    let applied =
-        super::apply_keybind_custom_mutation(doc, core.mindmap_tree, core.scene_cache, &cm, &nid, now);
-    if applied {
-        crate::application::app::scene_rebuild::rebuild_all(
-            doc,
-            core.interaction_mode,
-            core.mindmap_tree,
-            core.app_scene,
-            core.renderer,
-            core.scene_cache,
-        );
-    }
-    applied
+    crate::application::app::fire_custom_mutation::fire_custom_mutation(
+        doc,
+        core.mindmap_tree,
+        core.scene_cache,
+        &cm,
+        &nid,
+        None,
+        now,
+    );
+    crate::application::app::scene_rebuild::rebuild_all(
+        doc,
+        core.interaction_mode,
+        core.mindmap_tree,
+        core.app_scene,
+        core.renderer,
+        core.scene_cache,
+    );
+    true
 }
 
 /// Walk the undo stack one step back. If an animation is in flight
