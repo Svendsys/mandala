@@ -22,7 +22,11 @@
 //! not simulation time: a frozen virtual clock must not disable it.
 
 use std::ops::RangeInclusive;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant` on native; `performance.now()` in the browser,
+// where `std`'s traps (`application::clock`).
+use web_time::Instant;
 
 use serde_json::{json, Value};
 

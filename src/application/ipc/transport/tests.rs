@@ -329,7 +329,7 @@ fn test_ipc_loopback_mandalactl_round_trips_a_ping() {
     let mut stdin: &[u8] = b"";
     let exit = mandalactl::run(
         &args,
-        None,
+        mandalactl::Env::default(),
         &mut mandalactl::Io {
             out: &mut out,
             err: &mut err,

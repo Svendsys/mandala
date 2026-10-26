@@ -36,6 +36,15 @@ pub const LOCAL: &[&str] = &[
     "mandalactl record assemble zoom format=mp4 overwrite=true",
 ];
 
+/// The relay's command lines, parsed in the tests like [`LOCAL`]'s.
+/// Kept apart from it because the relay is read by its own argument
+/// reader, and because it is not native-less: the browser build of
+/// this crate has no relay.
+pub const BRIDGE: &[&str] = &[
+    "mandalactl bridge",
+    "mandalactl bridge listen=127.0.0.1:41816 token=0123456789abcdef",
+];
+
 /// Argument spellings the overview teaches, one per line. Also parsed
 /// in the tests.
 pub const SPELLINGS: &[&str] = &[
@@ -63,7 +72,7 @@ pub fn overview() -> String {
     }
     text.push_str(RAW_EXAMPLE);
     text.push_str(LOCAL_HEAD);
-    for line in LOCAL {
+    for line in LOCAL.iter().chain(BRIDGE) {
         text.push_str(&format!("  {line}\n"));
     }
     text.push_str("\nCOMMANDS  ([mutates] = changes the app, so --wait-settled applies)\n");
@@ -97,6 +106,9 @@ pub fn command_help(name: &str) -> Result<String, String> {
     }
     if name == crate::assemble::COMMAND {
         return Ok(RECORD_HELP.to_string());
+    }
+    if name == "bridge" {
+        return Ok(BRIDGE_HELP.to_string());
     }
     let Some(verb) = verbs::lookup(name) else {
         return Err(format!(
@@ -157,10 +169,11 @@ pub fn usage(verb: &Verb) -> String {
 }
 
 const HEAD: &str = "\
-mandalactl - drive a running Mandala from the shell, over its --ipc socket
+mandalactl - drive a running Mandala from the shell, over its --ipc socket or, for the browser build,
+             through a WebSocket relay this tool also is (mandalactl bridge)
 
 USAGE
-  mandalactl [--ipc <socket>] [--json] [--wait-settled] [--timeout <secs>] [--count <n>] <command> [args...]
+  mandalactl [--ipc <socket> | --ws <url>] [--json] [--wait-settled] [--timeout <secs>] [--count <n>] <command> [args...]
   mandalactl raw '<json request>'     send one request frame as written ('raw -' reads stdin)
   mandalactl help [<command>]         this text, or one command's parameters
 
@@ -186,6 +199,14 @@ const SOCKET: &str = "  With no display (a container, CI), add --headless: no wi
   On Windows the value is a pipe name, the app's own --ipc value: --ipc mandala is \\\\.\\pipe\\mandala-mandala
   One client is served at a time. A refusal for that is retried for 2 s, then reported.
 
+BROWSER
+  A browser build cannot listen, so it connects out to a relay: run `mandalactl bridge` (prints an app
+  URL and a controller URL, both on loopback, both behind one token), open the page with
+  ?ipc=<app URL> beside ?map=, then name the controller URL here with --ws <url> or once per shell
+  with:  export MANDALA_WS=<url>. Same commands, same replies; `describe` says which commands the
+  browser does not serve (act.console, capture.record_*), and capture.screenshot comes back inline and
+  is written to the <path> given here. `mandalactl help bridge` has the rest.
+
 ARGUMENTS
   <value>        a bare word fills the command's next positional parameter (<name> in the list below)
   name=value     a parameter, typed as the command declares it: x=412 is a number, text=412 a string,
@@ -198,7 +219,9 @@ ARGUMENTS
 
 const MIDDLE: &str = "
 FLAGS (anywhere before a bare --)
-  --ipc <path>      the socket, or on Windows the pipe name (else $MANDALA_IPC)
+  --ipc <path>      the socket of a native app, or on Windows its pipe name (else $MANDALA_IPC)
+  --ws <url>        the controller URL of a `mandalactl bridge` a browser app is behind (else $MANDALA_WS);
+                    exclusive with --ipc, and so are the two variables
   --json            print the app's reply exactly as received, one JSON line per request, instead of a summary
   --wait-settled    after a command that changes the app, wait until its consequences are rendered
                     (clock.wait until=settled), so the next read or screenshot sees them; refused on
@@ -244,6 +267,33 @@ CLIENT-SIDE (read files, never the socket: no app needs to be running, no --ipc)
   mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps=<n>] [max_frames=<n>] [overwrite=true]
       Turn a recording's frames and manifest.json (made by capture.record_start / capture.record_stop)
       into an animated GIF, which GitHub shows inline in a PR. `mandalactl help record` says how.
+  mandalactl bridge [listen=127.0.0.1:41816] [token=<token>]
+      The relay a browser build is driven through: prints its app URL (for the page's ?ipc=) and its
+      controller URL (for --ws), then relays until stopped. `mandalactl help bridge` says how.
+";
+
+const BRIDGE_HELP: &str = "\
+mandalactl bridge [listen=<addr:port>] [token=<token>]
+    The relay between a browser build of Mandala and this tool (format/ipc.md \"Browser\"). A page
+    cannot listen, so it connects out to the relay's app role, and `mandalactl --ws` connects to its
+    controller role; the relay passes frames between the two verbatim and serves one controller at a
+    time, as the native socket does. It runs until the process is ended (Ctrl+C) and prints, first,
+    one `path: value` line each (or one JSON object with --json):
+
+    listen           the address it listens on, loopback only (listen=127.0.0.1:41816 by default)
+    app_url          ws://<listen>/app/<token>: open the page as  http://<trunk host>/?map=<map>&ipc=<app_url>
+    controller_url   ws://<listen>/controller/<token>: pass it as --ws, or  export MANDALA_WS=<controller_url>
+
+    token=           the secret both roles must name in their URL; 128 random bits from the OS unless given,
+                     and at least 16 letters, digits, `-` or `_` when it is.
+                     Anything on this machine can reach a loopback port — every page in every browser
+                     included, which is what the token guards against; it is a same-user secret, the
+                     tier the socket path is, and never a network one.
+
+    A controller that connects before the page is refused (connection_rejected, reason no_app: exit 2
+    here, with the remedy). When the page leaves, its controller is sent `shutdown` and closed; when the
+    controller leaves, the page resets its session and the next controller is greeted afresh. Over
+    --ws, `capture.screenshot <path>` writes the PNG the page returns inline, and its sidecar beside it.
 ";
 
 const RECORD_HELP: &str = "\
@@ -360,6 +410,25 @@ mod tests {
             .contains("never\n    opens the socket"));
     }
 
+    /// The relay's command lines are read by the real parser, and the
+    /// overview teaches them.
+    #[test]
+    fn test_every_bridge_example_parses_and_is_taught() {
+        let overview = overview();
+        for line in BRIDGE {
+            let words = split(line);
+            let Parsed::Invoke(call) = parse(&words[1..]).unwrap_or_else(|e| panic!("`{line}`: {e}")) else {
+                panic!("`{line}` is not an invocation");
+            };
+            assert_eq!(call.command, "bridge", "{line}");
+        }
+        assert!(
+            overview.contains("mandalactl bridge [listen="),
+            "the overview never teaches the relay"
+        );
+        assert!(command_help("bridge").expect("known").contains("app_url"));
+    }
+
     #[test]
     fn test_the_overview_lists_every_verb_with_its_summary_and_example() {
         let text = overview();
@@ -379,6 +448,8 @@ mod tests {
         let text = overview();
         for needle in [
             "--ipc",
+            "--ws",
+            "MANDALA_WS",
             "--json",
             "--wait-settled",
             "--timeout",

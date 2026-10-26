@@ -4761,8 +4761,10 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
         ),
         (
             "MAX_SECTIONS_PER_NODE",
-            &["add_section"],
-            "add_section refuses past the cap",
+            &["add_section", "split_section"],
+            "both refuse at the cap through validate::room_for_another_section, and \
+             test_every_section_growth_checks_the_cap holds every shipped growth of \
+             node.sections to that guard — split_section had none until #208",
         ),
         (
             "MAX_MAP_BYTES",

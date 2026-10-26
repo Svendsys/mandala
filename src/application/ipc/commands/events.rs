@@ -13,7 +13,9 @@ use serde_json::{json, Value};
 
 use crate::application::ipc::envelope::Reply;
 use crate::application::ipc::events::{is_transport_event, Class, Classes, Driver};
-use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
+use crate::application::ipc::registry::{
+    Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support,
+};
 
 const SUBSCRIBED: ResultSpec = ResultSpec::new(
     "subscribed",
@@ -58,6 +60,7 @@ pub(super) const FAMILY: Family = Family {
                 REVISION,
                 DOCUMENT_REVISION,
             ],
+            support: Support::Everywhere,
             run: subscribe,
         },
         CommandSpec {
@@ -70,6 +73,7 @@ pub(super) const FAMILY: Family = Family {
                 "Class names to drop. Omit to drop them all.",
             )],
             result: &[SUBSCRIBED],
+            support: Support::Everywhere,
             run: unsubscribe,
         },
         CommandSpec {
@@ -77,6 +81,7 @@ pub(super) const FAMILY: Family = Family {
             summary: "Read the revision counters without subscribing to anything.",
             params: &[],
             result: &[REVISION, DOCUMENT_REVISION],
+            support: Support::Everywhere,
             run: revision,
         },
     ],

@@ -33,9 +33,8 @@ mod edges;
 // compiles unreferenced; the lint stays armed on the host.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod hit_test;
-// Native-only with the IPC module that reads it (`CLAUDE.md` "Dual-target
-// status"): the browser serves no socket.
-#[cfg(not(target_arch = "wasm32"))]
+// Both targets': the IPC module reads it on native over the socket
+// and in the browser over its WebSocket (`format/ipc.md` §Transport).
 mod ipc_state;
 pub mod mutations;
 pub mod mutations_loader;
@@ -111,17 +110,14 @@ pub use types::{
 // callers across the application crate that already
 // `use crate::application::document::*` for the doc API don't have
 // to reach across into baumhard's tree_builder for the value type.
-pub use baumhard::mindmap::model::MAX_SECTIONS_PER_NODE;
 pub use baumhard::mindmap::tree_builder::InteractionModeOverrides;
+pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
-#[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
-// Named outside `document/` only by the native funnels and the IPC
-// event layer.
+// Named outside `document/` only by the native funnels.
 #[cfg(not(target_arch = "wasm32"))]
 pub use revision::ChangeSource;
 pub use undo_action::UndoAction;

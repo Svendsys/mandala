@@ -20,7 +20,7 @@ use std::thread;
 
 use serde_json::{json, Value};
 
-use crate::run::{run, Io};
+use crate::run::{run, Env, Io};
 use crate::Exit;
 
 /// The working directory every [`invoke`] pretends to run in, spelled
@@ -41,12 +41,24 @@ pub struct Outcome {
 /// Run `mandalactl <line>` in-process with `env_ipc` as `$MANDALA_IPC`
 /// and `stdin` as standard input.
 pub fn invoke(line: &str, env_ipc: Option<&str>, stdin: &str) -> Outcome {
+    invoke_env(
+        line,
+        Env {
+            ipc: env_ipc,
+            ws: None,
+        },
+        stdin,
+    )
+}
+
+/// [`invoke`] with the whole environment given.
+pub fn invoke_env(line: &str, env: Env<'_>, stdin: &str) -> Outcome {
     let words = split(line);
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut input = stdin.as_bytes();
     let exit = run(
         &words,
-        env_ipc,
+        env,
         &mut Io {
             out: &mut out,
             err: &mut err,

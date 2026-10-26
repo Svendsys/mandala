@@ -119,9 +119,10 @@ pub(in crate::application::app) enum DispatchOutcome {
     /// nothing (#194).
     ///
     /// Native-only, as its constructors are (the `FastResizeStart` and
-    /// `PanCanvas` arms in `dispatch::native`) and as its one reader
-    /// is (IPC). A browser arm that wants to say why it declined takes
-    /// the `cfg` off.
+    /// `PanCanvas` arms in `dispatch::native`). Its reader, IPC's
+    /// `ipc_scene::action_outcome`, serves both targets and gates its
+    /// arm for this variant the same way. A browser arm that wants to
+    /// say why it declined takes both `cfg`s off.
     #[cfg(not(target_arch = "wasm32"))]
     Refused(&'static str),
 }

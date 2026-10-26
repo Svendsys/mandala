@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `WindowEvent::Touch` arm for WASM. Mirrors the native shape
-//! at `run_native.rs::dispatch_touch_event` — feed the
+//! at `input_context.rs::dispatch_touch_event` — feed the
 //! [`crate::application::app::touch_gesture::TouchGestureRecognizer`]
 //! state machine, then run whichever of the two routes the
 //! recognized gesture takes.
@@ -17,8 +17,9 @@
 
 use crate::application::app::dispatch::{self, DispatchOutcome, TouchStep};
 use crate::application::app::touch_gesture::Phase;
+use crate::application::platform::input::TouchPhase;
+use crate::application::platform::window::PhysicalPosition;
 use std::sync::atomic::AtomicBool;
-use winit::event::Touch;
 
 /// One-shot warn-log latch: fires the first time a recognized
 /// touch gesture maps to an Action whose body is `NativeOnly`,
@@ -34,19 +35,23 @@ use winit::event::Touch;
 /// input on the browser can produce a dead gesture.
 static WARNED_NATIVE_ONLY: AtomicBool = AtomicBool::new(false);
 
-impl super::WasmApp {
-    /// Handle one `WindowEvent::Touch`. Returns true when the
-    /// runtime should request a redraw (always true for
+impl super::Borrowed<'_> {
+    /// Handle one `WindowEvent::Touch`, by its payload — the same
+    /// three values native's `dispatch_touch_event` takes, which is
+    /// what lets an injected `touch` sample reach this body. Returns
+    /// true when the runtime should request a redraw (always true for
     /// Started/Moved so future cursor-following overlays update;
     /// true for Ended only when a gesture actually ran).
-    pub(super) fn handle_touch_event(&mut self, touch: Touch) -> bool {
-        let phase = dispatch::touch_phase(touch.phase);
-        let pos = (touch.location.x, touch.location.y);
-        let mut input_borrow = self.input.borrow_mut();
-        let mut renderer_borrow = self.renderer.borrow_mut();
-        let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) else {
-            return false;
-        };
+    pub(super) fn dispatch_touch_event(
+        &mut self,
+        phase: TouchPhase,
+        id: u64,
+        location: PhysicalPosition<f64>,
+    ) -> bool {
+        let phase = dispatch::touch_phase(phase);
+        let pos = (location.x, location.y);
+        let input = &mut *self.input;
+        let renderer = &mut *self.renderer;
         // The app clock's instant, as native's recognizer is fed.
         let now = input.clock.instant();
         // Phase translation, recognizer ingest + tick, and the
@@ -56,14 +61,9 @@ impl super::WasmApp {
         // gesture: `dispatch_compatible` plus the `NativeOnly`
         // warn-log.
         let idle_redraw = matches!(phase, Phase::Started | Phase::Moved);
-        let Some(step) = dispatch::drive_touch_event(
-            &mut input.touch_recognizer,
-            &self.keybinds,
-            phase,
-            touch.id,
-            pos,
-            now,
-        ) else {
+        let Some(step) =
+            dispatch::drive_touch_event(&mut input.touch_recognizer, self.keybinds, phase, id, pos, now)
+        else {
             return idle_redraw;
         };
         match step {
@@ -75,7 +75,7 @@ impl super::WasmApp {
                 let Some(a) = d.action else {
                     return idle_redraw;
                 };
-                let mut core = input.input_context_core(renderer, &self.keybinds);
+                let mut core = input.input_context_core(renderer, self.keybinds);
                 let outcome = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
                 // When the bound Action is `NativeOnly` — the
                 // shipped `LongPress` default, `EnterResizeMode`, is
@@ -103,7 +103,7 @@ impl super::WasmApp {
             }
             TouchStep::Effect(effect) => {
                 {
-                    let mut core = input.input_context_core(renderer, &self.keybinds);
+                    let mut core = input.input_context_core(renderer, self.keybinds);
                     dispatch::apply_touch_effect(effect, &mut core);
                 }
                 input.reproject_after_camera_change(renderer);

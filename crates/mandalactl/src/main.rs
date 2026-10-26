@@ -7,7 +7,7 @@
 
 use std::process::ExitCode;
 
-use mandalactl::{run, Exit, Io};
+use mandalactl::{run, Env, Exit, Io};
 
 fn main() -> ExitCode {
     let mut stdout = std::io::stdout().lock();
@@ -32,7 +32,16 @@ fn main() -> ExitCode {
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => return refuse(&mut io, "MANDALA_IPC is not valid UTF-8"),
     };
-    ExitCode::from(run(&args, env_ipc.as_deref(), &mut io).code())
+    let env_ws = match std::env::var("MANDALA_WS") {
+        Ok(url) => Some(url),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => return refuse(&mut io, "MANDALA_WS is not valid UTF-8"),
+    };
+    let env = Env {
+        ipc: env_ipc.as_deref(),
+        ws: env_ws.as_deref(),
+    };
+    ExitCode::from(run(&args, env, &mut io).code())
 }
 
 /// A usage error found before `run` could be asked.

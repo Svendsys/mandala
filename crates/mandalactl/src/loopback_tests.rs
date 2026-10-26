@@ -1056,7 +1056,7 @@ fn test_a_reader_that_went_away_does_not_change_the_outcome() {
     let mut input: &[u8] = b"";
     let exit = crate::run(
         &words,
-        None,
+        crate::run::Env::default(),
         &mut crate::Io {
             out: &mut Gone,
             err: &mut Gone,
@@ -1195,7 +1195,7 @@ fn test_a_relative_path_with_no_working_directory_is_a_usage_error() {
     let mut input: &[u8] = b"";
     let exit = crate::run(
         &words,
-        None,
+        crate::run::Env::default(),
         &mut crate::Io {
             out: &mut out,
             err: &mut err,

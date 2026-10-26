@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `WindowEvent::MouseInput` arm (left button only). Splits into
-//! Pressed and Released paths via [`super::WasmApp::handle_mouse_input`]:
+//! `WindowEvent::MouseInput` arm. The left button splits into
+//! Pressed and Released paths via [`super::Borrowed::on_mouse_input`];
+//! the right button reaches [`super::Borrowed::handle_right_button`],
+//! and any other button is dropped, as native drops it:
 //!
-//! - **Pressed** ([`super::WasmApp::handle_mouse_pressed`]): runs the cross-platform
+//! - **Pressed** ([`super::Borrowed::handle_mouse_pressed`]): runs the cross-platform
 //!   `compute_click_hit` priority chain (node > portal text > portal
 //!   icon > edge label > empty), distinguishes single vs double
 //!   click, commits double-click outcomes immediately, and otherwise
 //!   stashes a [`super::PendingClick`] plus a `LastClick` snapshot
 //!   for the eventual release.
-//! - **Released** ([`super::WasmApp::handle_mouse_released`]): consumes the pending
+//! - **Released** ([`super::Borrowed::handle_mouse_released`]): consumes the pending
 //!   click — click-outside on an open editor commits the edit via
 //!   the funnel, otherwise the pending tag becomes a fresh
 //!   `SelectionState` and the scene is rebuilt at the tier
@@ -21,7 +23,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use crate::application::platform::input::ElementState;
+use crate::application::platform::input::{ElementState, MouseButton};
 
 use super::PendingClick;
 use crate::application::app::click_triggers::fire_onclick_triggers;
@@ -39,12 +41,38 @@ use std::sync::atomic::AtomicBool;
 /// line in the console.
 static WARNED_NATIVE_ONLY_DOUBLE_CLICK: AtomicBool = AtomicBool::new(false);
 
-impl super::WasmApp {
-    pub(super) fn handle_mouse_input(&mut self, state: ElementState) {
-        if state == ElementState::Pressed {
-            self.handle_mouse_pressed();
-        } else {
-            self.handle_mouse_released();
+impl super::Borrowed<'_> {
+    /// `WindowEvent::MouseInput`, by button. Returns whether to
+    /// request a redraw: a left or right button always asks for one,
+    /// as native's `on_mouse_input` does; a button the browser routes
+    /// nowhere asks for nothing.
+    pub(super) fn on_mouse_input(&mut self, state: ElementState, button: MouseButton) -> bool {
+        match button {
+            MouseButton::Left => {
+                if state == ElementState::Pressed {
+                    self.handle_mouse_pressed();
+                } else {
+                    self.handle_mouse_released();
+                }
+                true
+            }
+            MouseButton::Right => {
+                // WASM right-button: `DragState` machinery is
+                // `cfg(not(target_arch = "wasm32"))` so there's no
+                // `PendingRight` → `FastResizeStart` pipeline yet
+                // (it lands with the browser's drag-state machine;
+                // the touch vocabulary no longer waits on it).
+                // Today this arm does **not** dispatch anything: a
+                // bound `MouseGesture::RightClick` action is not
+                // looked up on the browser. `handle_right_button`
+                // logs a one-shot warning on the first release so
+                // the gap is observable rather than a silent drop;
+                // dispatching the bound action on release needs no
+                // DragState and is the obvious next step.
+                self.handle_right_button(state);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -78,19 +106,11 @@ impl super::WasmApp {
 
     fn handle_mouse_pressed(&mut self) {
         // --- Left mouse Pressed ---
-        let mut input_borrow = self.input.borrow_mut();
-        let Some(input) = input_borrow.as_mut() else {
-            return;
-        };
+        let input = &mut *self.input;
+        let renderer = &mut *self.renderer;
 
         // Compute canvas position via renderer
-        let canvas_pos = {
-            let renderer_borrow = self.renderer.borrow();
-            match renderer_borrow.as_ref() {
-                Some(r) => r.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32),
-                None => return,
-            }
-        };
+        let canvas_pos = renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
 
         // Hit test against nodes + portal sub-parts + edge
         // labels. Cross-platform helper — the priority chain
@@ -128,11 +148,6 @@ impl super::WasmApp {
         if is_dblclick {
             input.last_click = None;
 
-            let mut renderer_borrow = self.renderer.borrow_mut();
-            let Some(renderer) = renderer_borrow.as_mut() else {
-                return;
-            };
-
             // Look up which Action the user has bound to
             // `DoubleClick` — the same `action_for_gesture` lookup
             // native runs, with the same modifier fallback, so
@@ -153,7 +168,7 @@ impl super::WasmApp {
                     canvas_pos,
                 };
                 let outcome = {
-                    let mut core = input.input_context_core(renderer, &self.keybinds);
+                    let mut core = input.input_context_core(renderer, self.keybinds);
                     dispatch::action_core::dispatch_compatible(&a, &mut core, Some(&dispatch_hit))
                 };
                 // `Unhandled` here means the browser could not finish
@@ -254,10 +269,8 @@ impl super::WasmApp {
 
     fn handle_mouse_released(&mut self) {
         // --- Left mouse Released ---
-        let mut input_borrow = self.input.borrow_mut();
-        let Some(input) = input_borrow.as_mut() else {
-            return;
-        };
+        let input = &mut *self.input;
+        let renderer = &mut *self.renderer;
 
         let pending = std::mem::replace(&mut input.pending_click, PendingClick::None);
         if matches!(pending, PendingClick::None) {
@@ -265,10 +278,6 @@ impl super::WasmApp {
         }
 
         if input.text_edit_state.is_open() {
-            let mut renderer_borrow = self.renderer.borrow_mut();
-            let Some(renderer) = renderer_borrow.as_mut() else {
-                return;
-            };
             let release_canvas =
                 renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
             // Same predicate native's modal-release ladder runs.
@@ -285,7 +294,7 @@ impl super::WasmApp {
             // call the same `dispatch_compatible` that
             // native uses for this Compatible Action.
             {
-                let mut core = input.input_context_core(renderer, &self.keybinds);
+                let mut core = input.input_context_core(renderer, self.keybinds);
                 let _ = dispatch::action_core::dispatch_compatible(&Action::TextEditCommit, &mut core, None);
             }
             self.suppress_keys.set(false);
@@ -296,10 +305,7 @@ impl super::WasmApp {
             // editor-commit path's `lift_anchor_to_section_range`
             // leaves `SelectionState::SectionRange` standing
             // even though the user clicked away to a different
-            // node. Drop the renderer borrow first so the
-            // re-borrow at the bottom of this function
-            // doesn't panic.
-            drop(renderer_borrow);
+            // node.
         }
 
         // Fire any `OnClick` triggers BEFORE the selection
@@ -345,16 +351,12 @@ impl super::WasmApp {
         // release against the release position, exactly as native's
         // `handle_click` does.
         let empty_hit_selection = if matches!(pending, PendingClick::Empty) {
-            let renderer_borrow = self.renderer.borrow();
-            renderer_borrow.as_ref().map(|renderer| {
-                let canvas_pos =
-                    renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
-                dispatch::edge_under_pointer(
-                    canvas_pos,
-                    &input.document.mindmap,
-                    dispatch::CanvasPerPixel::of(renderer),
-                )
-            })
+            let canvas_pos = renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
+            Some(dispatch::edge_under_pointer(
+                canvas_pos,
+                &input.document.mindmap,
+                dispatch::CanvasPerPixel::of(renderer),
+            ))
         } else {
             None
         };
@@ -411,16 +413,13 @@ impl super::WasmApp {
         // so never had the hole; `RebuildTier::for_click` is now
         // the one rule both targets read (CODE_CONVENTIONS §4).
         let tier = RebuildTier::for_click(triggers_fired, &prev_selection, &input.document.selection);
-        let mut renderer_borrow = self.renderer.borrow_mut();
-        if let Some(renderer) = renderer_borrow.as_mut() {
-            tier.execute(&mut RebuildContext {
-                document: &mut input.document,
-                mindmap_tree: &mut input.mindmap_tree,
-                app_scene: &mut input.app_scene,
-                renderer,
-                scene_cache: &mut input.scene_cache,
-                interaction_mode: &mut input.interaction_mode,
-            });
-        }
+        tier.execute(&mut RebuildContext {
+            document: &mut input.document,
+            mindmap_tree: &mut input.mindmap_tree,
+            app_scene: &mut input.app_scene,
+            renderer,
+            scene_cache: &mut input.scene_cache,
+            interaction_mode: &mut input.interaction_mode,
+        });
     }
 }

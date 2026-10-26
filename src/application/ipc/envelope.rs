@@ -42,6 +42,7 @@ pub(crate) mod code {
     pub(crate) const PARSE_ERROR: &str = "parse_error";
     pub(crate) const UNKNOWN_CMD: &str = "unknown_cmd";
     pub(crate) const INVALID_PARAMS: &str = "invalid_params";
+    pub(crate) const UNSUPPORTED: &str = "unsupported";
     pub(crate) const BUSY: &str = "busy";
     pub(crate) const OVERLOADED: &str = "overloaded";
     pub(crate) const REPLY_TOO_LARGE: &str = "reply_too_large";
@@ -57,6 +58,7 @@ pub(crate) mod code {
         PARSE_ERROR,
         UNKNOWN_CMD,
         INVALID_PARAMS,
+        UNSUPPORTED,
         BUSY,
         OVERLOADED,
         REPLY_TOO_LARGE,
@@ -241,6 +243,9 @@ impl Reply {
     }
 
     /// The `parse_error` for a line that blew [`INBOUND_LINE_CAP`].
+    /// Native's transports read lines; the browser's frames are
+    /// messages, and it words its own (`browser::socket`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn oversized_line(line: u64) -> Self {
         Reply::parse_error(
             line,
@@ -254,7 +259,9 @@ impl Reply {
 
     /// `overloaded`: the request queue already holds its cap of
     /// unexecuted requests. The request is not queued; the client
-    /// resends once it has drained replies.
+    /// resends once it has drained replies. Native's transports queue
+    /// requests; the browser executes each as it is pumped.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn overloaded(id: Value, cap: usize) -> Self {
         Reply::error(
             id,
@@ -284,7 +291,7 @@ impl Event {
                 "protocol": PROTOCOL_VERSION,
                 "app": "mandala",
                 "version": env!("CARGO_PKG_VERSION"),
-                "pid": std::process::id(),
+                "pid": process_id(),
                 "map": map,
             }),
         }
@@ -303,7 +310,9 @@ impl Event {
     }
 
     /// Best-effort notice that the app is exiting, so a client can
-    /// tell "app exited" from "connection died".
+    /// tell "app exited" from "connection died". Native's transports
+    /// send it; on the browser the relay does, when the page leaves.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn shutdown() -> Self {
         Event {
             event: "shutdown",
@@ -312,13 +321,29 @@ impl Event {
     }
 
     /// The single frame a refused connection receives instead of any
-    /// greeting: a controller is already attached.
+    /// greeting: a controller is already attached. Native's transports
+    /// send it; on the browser the relay owns the single-controller rule.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn connection_rejected_busy() -> Self {
         Event {
             event: "connection_rejected",
             data: serde_json::json!({ "reason": "busy" }),
         }
     }
+}
+
+/// The process id `hello` reports: the app's, where there is a
+/// process to name, and `null` on the browser, where a page has none
+/// (`format/ipc.md` §Transport "Browser"). Additive for a client — the
+/// field is there on both targets, and a client reads it as optional.
+#[cfg(not(target_arch = "wasm32"))]
+fn process_id() -> Option<u32> {
+    Some(std::process::id())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn process_id() -> Option<u32> {
+    None
 }
 
 /// A frame bound for the wire. The outbound thread serializes it, so
