@@ -1,18 +1,15 @@
 # CLAUDE.md
-§1 When launching sub-agents for investigation or reviews, always use the most powerful agent you have available, 
-not whatever is the default. Opus or if available Mythos
+§1 NEVER skip changes because they are "merely cosmetic". 
 
-§2 NEVER skip changes because they are "merely cosmetic". 
+§2 When proposing multiple options, if any of those options strays from the original task then make that absolutely clear
 
-§3 When proposing multiple options, if any of those options strays from the original task then make that absolutely clear
+§3 NEVER use "Not introduced by me" as excuse. No one cares, just address it.
 
-§4 NEVER use "Not introduced by me" as excuse. No one cares, just address it.
+§4 NEVER defer the hard parts until later, and then proceed to ship a "good enough" or "approximate" now unless specifically instructed to. The hard parts are the work, there is nothing else.
 
-§5 NEVER defer the hard parts until later, and then proceed to ship a "good enough" or "approximate" now unless specifically instructed to. The hard parts are the work, there is nothing else.
+§5 Use American English for consistency, not British English
 
-§6 Use American English for consistency, not British English
-
-§7 NEVER run benchmarks — no `cargo bench`, no `./bench.sh`, no `./test.sh --bench`. Run the tests.
+§6 NEVER run benchmarks — no `cargo bench`, no `./bench.sh`, no `./test.sh --bench`. Run the tests.
 `./test.sh` is the gate. Changing benchmark code is fine (§B3 requires a bench entry alongside a new
 primitive); executing it is not — `cargo check --workspace --benches` proves the target still builds.
 Say `--workspace`, and say it every time: without it cargo selects only the root package, which
