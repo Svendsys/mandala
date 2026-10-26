@@ -1,15 +1,39 @@
 # Sections, Borders & Resize — UX Overhaul Plan
 
-> **Status.** Under development. This document is the contract that
-> follow-up sessions execute against. Every batch is a discrete commit
-> (or a small commit chain) that leaves the tree in `./test.sh`-green
-> shape. Tick boxes flip as items land.
+> **Status.** Batches 1–8 have shipped; every batch heading in §8.2
+> is tagged SHIPPED. The plan is not finished: the unchecked boxes
+> are open work — Batch 2's `RESIZE_HANDLE_INSET_PX` corner inset,
+> Batch 3's §4.7 hover affordance (which Batch 8 lists again), and
+> the Batch 8 follow-ups (refactors, resource caps, WASM gaps, tests)
+> under §8.2 "Batch 8 — Documentation, polish, drive-by fixes".
+> `rg -c '^\s*- \[ \]'` on this file gives the live count. This file stays live until
+> each of those is closed, moved to an issue, or explicitly dropped.
+> Each batch was a discrete commit (or a small commit chain) that left
+> the tree `./test.sh`-green. Tick boxes flip as items land; a box
+> ticked during the #51 reconciliation names the code that proves it.
 >
-> **Relationship to other plans.** `REFACTOR_PLAN.md` is the
-> infrastructure-debt plan; some of its deferred items (DragState
-> Pending refactor, ModalState carve-out, KeybindConfig derive) sit
-> adjacent to this one. Where they overlap, this plan calls them out
-> and either depends on the work or fences it as out-of-scope.
+> **Paths have moved since this was written.** The design sections
+> (§2–§7) describe the tree as it stood before implementation. Since
+> then `lib/baumhard/src/mindmap/scene_builder/` became
+> `lib/baumhard/src/mindmap/tree_builder/`; `scene_builder/node_pass.rs`
+> is gone (NodeEdit dimming is `apply_inactive_node_dimming` in
+> `src/application/document/hit_test.rs`, plus the border dim in
+> `tree_builder/border.rs`); `console/commands/canvas.rs` became the
+> `console/commands/canvas/` directory and `section/frame.rs` the
+> `section/frame/` directory. The files the design proposed as
+> `console/commands/section/show.rs`, `console/commands/section/complete.rs`,
+> `console/tests/integration.rs`, `scene_builder/tests/resize_mode.rs`
+> and the cited `border/complete.rs` do not exist in the tree. Read
+> those sections for intent; the checklists in §8.2 and the list in
+> §11 cite current paths.
+>
+> **Relationship to other plans.** An earlier infrastructure-debt
+> plan, `REFACTOR_PLAN.md`, is no longer in the tree. Three of its
+> deferred items sat adjacent to this one: the DragState `Pending`
+> refactor, the ModalState carve-out, and the KeybindConfig derive.
+> Where they overlap, this plan states the dependency or fences it
+> out of scope itself — the DragState `Pending` deferral is audited
+> in Batch 8 below.
 >
 > **Authoring discipline.** Every change must respect:
 > - `CODE_CONVENTIONS.md` — single dispatch funnel, mutation-first,
@@ -2296,7 +2320,7 @@ on existing benches; new benches establish baselines.
 
 ### 8.2 Batches
 
-#### Batch 1 — Mode infrastructure (mechanical foundation)
+#### Batch 1 — Mode infrastructure (mechanical foundation) — SHIPPED
 
 Lands the `InteractionMode` enum and migrates `AppMode` consumers to
 it. **Does not change visible behavior** — `Reparent` and `Connect`
@@ -2343,30 +2367,33 @@ unused-import warnings on the platform shim — separate concern).
 #### Batch 2 — Resize mode (the urgent UX fix) — SHIPPED
 
 Tasks (status):
-- [x] Mode-driven gate at `document/mod.rs:520-523` reads from
-      `ResizeHandleOverrides` populated from `InteractionMode`. Auto-
+- [x] Mode-driven gate: the scene build reads handle targets from
+      `InteractionModeOverrides`, populated by
+      `InteractionMode::resize_handle_overrides` (`app/scene_rebuild.rs`
+      passes it in). Auto-
       anchor-on-selection bug FIXED — `Single`/`Section` selections
       in `Default` mode emit zero handles.
 - [x] Press-time handle hit-test gates moved from selection
-      (`event_mouse_click.rs:309-345`) to mode
+      (`event_mouse_click.rs`) to mode
       (`interaction_mode.resize_handle_*()`).
 - [x] `Action::EnterResizeMode` + `apply_enter_resize_mode` helper
       in `cross_dispatch::lifecycle`.
 - [x] Default keybind `enter_resize_mode: vec!["r".into()]`.
 - [x] `CancelMode` (Esc) extended to exit Resize → Default. The
-      `CancelMode → ExitMode` rename is **deferred** — the
-      functional behavior ships now; the rename is a separate
-      drive-by since user keybinds.json files would break and the
-      semantic value is small.
+      `CancelMode → ExitMode` rename, first deferred here, has since
+      shipped: `Action::ExitMode` in `keybinds/action/mod.rs`
+      (bound as `exit_mode = ["Escape"]` in `keybinds/config.rs`),
+      with no `CancelMode` left in the tree.
 - [x] `HANDLE_HIT_TOLERANCE_PX` 12 → 8.
 - [x] Corner inset 2px **deferred** (per plan §6.9 itself flags this
       as "minor follow-up; not strictly required to fix the bug").
       Existing `resize_handle_positions` tests pin specific
       positions; insetting requires a coordinated test update.
+      Still open: the unticked `RESIZE_HANDLE_INSET_PX` box below.
 - [x] `mode` console verb with `show | default | resize` subverbs
       via new `ConsoleSideEffect::SetInteractionMode`.
-- [x] Tests: 9 new (regression `default_mode_with_single_selection_emits_no_resize_handles`,
-      counterpart `resize_mode_node_target_emits_eight_handles`,
+- [x] Tests: 9 new (regression `test_default_mode_with_single_selection_emits_no_resize_handles`,
+      counterpart `test_resize_mode_node_target_emits_eight_node_handles`,
       6 `mode` console verb tests, 1 InteractionMode predicate test
       for resize_handle_overrides).
 
@@ -2381,27 +2408,53 @@ Wires NodeEdit-and-Resize-mode-driven handle gating, lands the
 NodeEdit visuals yet (Batch 3) — handles are reachable in Resize
 mode only. The auto-anchor-on-selection bug is fixed here.
 
-Tasks:
-- [ ] Wire `InteractionMode::Resize` predicates in
+Tasks (the original pre-implementation list, reconciled against the
+code in #51):
+- [x] Wire `InteractionMode::Resize` predicates in
       `interaction_mode.rs`. Add `Resize { target: ResizeTarget }`
-      handling.
-- [ ] Change `document/mod.rs:520-523` to gate on
+      handling. — shipped: `src/application/app/interaction_mode.rs`
+      (`resize_handle_node`, `resize_handle_section`,
+      `resize_handle_overrides`)
+- [x] Change `document/mod.rs:520-523` to gate on
       `interaction_mode.resize_handle_*()` (this is the one-line
-      bugfix).
-- [ ] Change `event_mouse_click.rs:298-345` resize-handle hit
-      gating to mode-driven (per §6.8).
-- [ ] Add `Action::EnterResizeMode` + dispatch arm in
-      `cross_dispatch/lifecycle.rs::apply_enter_resize_mode`.
-- [ ] Add `Action::ExitMode` (rename from `CancelMode`) + dispatch
+      bugfix). — shipped, not at that site: the gate is
+      `InteractionModeOverrides` (`tree_builder/overrides.rs`), fed
+      by `resize_handle_overrides()` from `app/scene_rebuild.rs`;
+      `test_default_mode_with_single_selection_emits_no_resize_handles`
+      in `document/tests_resize.rs`
+- [x] Change `event_mouse_click.rs:298-345` resize-handle hit
+      gating to mode-driven (per §6.8). — shipped:
+      `src/application/app/event_mouse_click.rs` reads
+      `ctx.interaction_mode.resize_handle_section()` /
+      `resize_handle_node()` before the handle hit-tests
+- [x] Add `Action::EnterResizeMode` + dispatch arm in
+      `cross_dispatch/lifecycle.rs::apply_enter_resize_mode`. —
+      shipped: `app/dispatch/cross_dispatch/lifecycle.rs`
+      (`apply_enter_resize_mode`)
+- [x] Add `Action::ExitMode` (rename from `CancelMode`) + dispatch
       arm; route from-Resize → Default; from-Reparent / Connect →
-      Default (today's `CancelMode` body).
-- [ ] Default keybind: `enter_resize_mode: vec!["r".into()]`.
-- [ ] Reduce `HANDLE_HIT_TOLERANCE_PX` 12 → 8.
-- [ ] Inset corner handles by `RESIZE_HANDLE_INSET_PX = 2.0`.
-- [ ] Add `mode` console verb (just `show | default | resize`
+      Default (today's `CancelMode` body). — shipped:
+      `Action::ExitMode` in `keybinds/action/mod.rs`, arms in
+      `app/dispatch/action_core.rs` and `app/dispatch/native.rs`
+- [x] Default keybind: `enter_resize_mode: vec!["r".into()]`. —
+      shipped: `keybinds/config.rs` (`enter_resize_mode = ["r",
+      "LongPress"]`)
+- [x] Reduce `HANDLE_HIT_TOLERANCE_PX` 12 → 8. — shipped:
+      `src/application/app/mod.rs` (`HANDLE_HIT_TOLERANCE_PX: f32 = 8.0`)
+- [ ] Inset corner handles by `RESIZE_HANDLE_INSET_PX = 2.0`. No
+      such constant exists; `resize_handle_positions` in
+      `lib/baumhard/src/mindmap/tree_builder/section_resize_handle.rs`
+      still places corners at the exact AABB corner.
+- [x] Add `mode` console verb (just `show | default | resize`
       subverbs in this batch — the rest are added in their respective
-      batches).
-- [ ] Tests per §7.1 (resize handle gating, EnterResizeMode resolution).
+      batches). — shipped: `console/commands/mode.rs`
+      (`test_mode_default_emits_set_default_side_effect`,
+      `test_mode_resize_with_single_node_selection_targets_node`)
+- [x] Tests per §7.1 (resize handle gating, EnterResizeMode resolution).
+      — shipped: `test_resize_mode_node_target_emits_eight_node_handles`
+      (`document/tests_resize.rs`),
+      `test_resize_mode_lifecycle_default_to_resize_to_default`
+      (`console/tests/resize_mode_lifecycle.rs`)
 
 Verification: tests green; manual smoke — open testament, click a
 node, verify NO handles appear; press `r`, verify 8 handles appear;
@@ -2443,8 +2496,13 @@ Tasks (status post-Tier-1/2 review fixes):
       plan called for `edit_selection` to be deleted; we kept
       it as the umbrella entry point, which is functionally
       equivalent and avoids forcing an existing-config rebind.)
-- [x] `scene_builder/section_frame.rs` section-frame pass.
-- [x] Inactive-node dimming in `scene_builder/node_pass.rs`.
+- [x] `scene_builder/section_frame.rs` section-frame pass (now
+      `lib/baumhard/src/mindmap/tree_builder/section_frame.rs`,
+      `build_section_frames`).
+- [x] Inactive-node dimming in `scene_builder/node_pass.rs` (that file
+      is gone: the dim is `apply_inactive_node_dimming` in
+      `document/hit_test.rs`, plus the border dim in
+      `tree_builder/border.rs`).
 - [x] Status-bar overlay in `scene_host.rs`.
 - [x] `section edit` console subverb shipped (Batch 5 deferred
       3/N, commit `b84c00f`). `node edit` console subverb
@@ -2462,8 +2520,11 @@ Open follow-ups (deferred to next PR):
       on `InitState` plus a 1.2× brightness section-frame pass.
       Not load-bearing for the NodeEdit UX (the editor cycle
       works without hover); ship in a follow-up Batch-3.5 or
-      fold into Batch 7's touch parity work.
-- [ ] `node edit` console subverb (sugar over `mode node-edit`).
+      fold into Batch 7's touch parity work. Still open: Batch 7
+      shipped without it, and no `hovered_section` field exists.
+- [x] `node edit` console subverb (sugar over `mode node-edit`). —
+      shipped: `console/commands/node.rs` (`edit` subverb,
+      `execute_edit`; test `node_edit_emits_set_interaction_mode_node_edit`)
 
 Verification (post-Tier-1/2 review fixes): 2544 tests green;
 wasm32 cross-compile clean.
@@ -2488,7 +2549,8 @@ Tasks (status post-9-agent review fixes):
       anchor via `infer_resize_anchor`; transitions DragState
       into `Throttled(NodeResize | SectionResize)`. Marked
       `destructive` per §6.10.
-- [x] `infer_resize_anchor` in `scene_builder/section_resize_handle.rs`.
+- [x] `infer_resize_anchor` in `scene_builder/section_resize_handle.rs`
+      (now `tree_builder/section_resize_handle.rs`).
 - [x] Default keybind `fast_resize_start: ["Ctrl+RightDrag"]`
       (kept on `Vec<String>` since the Action takes no payload).
 - [x] Cursor icon plumbing via `cursor_icon_last: CursorIcon`
@@ -2508,8 +2570,9 @@ Lands the new `section` verb grammar and the `add_section` /
 
 Tasks (status post-Full-Nelson review):
 - [x] Section verb grammar lives in `console/commands/section/`
-      (`mod.rs` + `frame.rs`); per-subverb-file split deferred —
-      the single `mod.rs` ~700 LoC houses every subverb's
+      (`mod.rs` + `grammar.rs` + `target.rs` + `frame/`); per-subverb-file
+      split deferred — the single `mod.rs` (1890 lines today, tests
+      included) houses every subverb's
       `execute_*` and the shared parsers, mirroring the shape
       Batch 6's `border/` settled on after its own evolution.
 - [x] Doc setters `add_section` / `delete_section` /
@@ -2524,7 +2587,7 @@ Tasks (status post-Full-Nelson review):
       new `set_section_text_preserving_runs` helper; clear
       collapses via `set_section_text`).
 - [x] `node_or_section_selected` predicate added in
-      `predicates.rs:33`; `Multi(_)` excluded to avoid
+      `console/predicates.rs` (`node_or_section_selected`); `Multi(_)` excluded to avoid
       predicate-vs-runtime mismatch flagged by the Full-Nelson
       review.
 - [x] §4.5 rule 3: `Single(id)` on a single-section node
@@ -2599,8 +2662,8 @@ Tasks (status post-Batch-6 ship):
       macro consumers and the kv form continue to work; the
       verb-layer pre-check makes the user-facing positional
       path error explicitly per Plan §5.4 #3.
-- [x] `canvas` top-level verb already shipped (`canvas.rs`,
-      pre-Batch-6) with `border` and `section-frame [focused]`
+- [x] `canvas` top-level verb already shipped (`canvas.rs`, now
+      `console/commands/canvas/`, pre-Batch-6) with `border` and `section-frame [focused]`
       subjects. B6.10 extends the verb with the Plan §5.7
       positional subverb grammar matching the per-node `border`
       verb.
@@ -2776,20 +2839,24 @@ Tasks (status post-Batch-8 ship):
 - [x] `cargo doc --workspace --no-deps`: 12 warnings pre-fix → 0
       warnings post-fix. Each broken-link / private-item-link /
       unclosed-html-tag site fixed at the source (B8.1+5 commit).
-- [x] REFACTOR_PLAN.md Batch 5.2 (DragState `Pending` enum
-      conversion) audited — the deferral note's release-UX
-      rationale still stands; the Section/Border PR didn't
-      touch `Pending` (Batch 4 added a parallel `PendingRight`
-      variant; Batch 5/6 ride the `Throttled(SectionResize)`
-      path). Time isn't right; deferral re-confirmed.
+- [x] DragState `Pending` enum conversion audited. It was a
+      deferred item (Batch 5.2) of an earlier infrastructure-debt
+      plan, `REFACTOR_PLAN.md`, which is no longer in the tree; its
+      deferral rested on release-time UX, and that rationale still
+      stood at Batch 8: the Section/Border PR didn't touch
+      `Pending` (Batch 4 added a parallel `PendingRight` variant;
+      Batch 5/6 ride the `Throttled(SectionResize)` path). Time
+      wasn't right; deferral re-confirmed. (Today `DragState::Pending`
+      carries a boxed `PendingPress`, `src/application/app/mod.rs`.)
 - [x] `// FIXME` / `// TODO` / `// HACK` sweep — zero hits across
       `src/` and `lib/baumhard/src/`.
-- [x] `cargo bench` for the Plan §7.4 benches:
-      `fast_resize_anchor_inference` ~360 ps/call (no regression
-      vs Batch 4 baseline); `scene_rebuild_node_edit_mode_active`
-      ~30 µs/rebuild on the 50-node × 5-section synthetic;
-      `section_frame_emission_50x5_with_node_edit_active`
-      ~3.3 µs.
+- [x] `cargo bench` was run over the Plan §7.4 benches
+      (`fast_resize_anchor_inference`,
+      `scene_rebuild_node_edit_mode_active`,
+      `section_frame_emission_50x5_with_node_edit_active`). The
+      figures recorded here at the time had no main-against-main
+      control row, which `lib/baumhard/CONVENTIONS.md` §B7 requires
+      before a number means anything, so they are not repeated.
 
 Drive-by fixes from the Batch-6 opus review folded in:
 - [x] §5.7 doc-setter rename `set_canvas_default_border_config`
@@ -2811,6 +2878,10 @@ Open follow-ups deferred to a future PR (acknowledged in plan's
 §5.B6 "Open follow-ups" block):
 - [ ] §5.5 `BorderEditOutcome` removal + `helpers::ApplyTally::finalize`
       reuse — substantial refactor across every border setter.
+      `BorderEditOutcome` is still returned by every setter in
+      `document/nodes/border.rs`; what did land is one shared
+      consumer of it, `BorderEdit::finish` in
+      `console/commands/border/finish.rs`.
 - [ ] §5.5 typed `Outcome::Lines` from `preset` subverb — depends
       on `BorderEditOutcome` removal.
 - [ ] §5.8 7 of 9 typed `Action` variants (`SetBorderPreset(String)` /
@@ -2826,19 +2897,30 @@ Open follow-ups deferred to a future PR (acknowledged in plan's
       show path uses a custom formatter (no node `size`, no dual
       color cascade), so adding the per-node flags would force-
       fit a different output shape. Documented as honest
-      asymmetry.
-- [ ] §3.8 `enter_node_edit` keybind default — kept
+      asymmetry. Still true: only `border show` reads `side=` /
+      `verbose` (`console/commands/border/show.rs`).
+- [x] §3.8 `enter_node_edit` keybind default — kept
       `edit_selection` as the umbrella entry point instead of
       deleting it; functionally equivalent, avoids a forced
-      config rebind on existing users.
+      config rebind on existing users. — dropped: deliberate,
+      recorded in the `EnterNodeEdit` entry's doc comment in
+      `keybinds/config.rs` ("Default unbound"; the umbrella `Enter`
+      fans out to it) and in Batch 3's status list above.
 - [ ] §4.7 hover affordance — per-frame brightness modulation;
-      better folded into Batch 7's touch-parity work.
+      better folded into Batch 7's touch-parity work. Batch 7
+      shipped without it; same item as Batch 3's open follow-up.
 - [ ] `Arc<str>` migration for `SectionFrameElement.node_id`
-      (Performance #2 from the §4.6 review).
+      (Performance #2 from the §4.6 review). Still `String` in
+      `tree_builder/section_frame.rs`.
 - [ ] Resource caps on text length / sections per node / undo
-      depth (Security I-1/2/3 from the §4.6 review).
-- [ ] §3.9 `node edit` console subverb — sugar over `mode
-      node-edit`; landed.
+      depth (Security I-1/2/3 from the §4.6 review). Sections per
+      node is capped (`MAX_SECTIONS_PER_NODE` in
+      `lib/baumhard/src/mindmap/model/node.rs`, though
+      `split_section` bypasses it — see below); text length and
+      undo depth are not.
+- [x] §3.9 `node edit` console subverb — sugar over `mode
+      node-edit`; landed. — shipped: `console/commands/node.rs`
+      (`edit` subverb; test `node_edit_emits_set_interaction_mode_node_edit`)
 - [x] `SectionRange` grapheme-vs-section type confusion —
       resolved by #47 part C: the variant now carries
       `section_span: SectionSpan` and `grapheme_range:
@@ -2852,18 +2934,27 @@ acknowledged honestly, deferred because each is invasive (touches
 
 - [ ] **Layering inversion** — `app/dispatch/cross_dispatch/style.rs`
       reaches *up* into `console::commands::border` for its mutation
-      cores (`apply_border_field_to_selection`, `nodes_in_selection`,
-      `stage_kv`, `BorderConfigEdits`, `BorderPreviewTarget`). The
+      cores (today `apply_border_field_to_selection`,
+      `cycle_border_preset_on_selection`,
+      `toggle_border_visible_on_selection`, `stage_kv`,
+      `nodes_in_selection`; `BorderConfigEdits` and
+      `BorderPreviewTarget` already live in `document/nodes/border.rs`). The
       "correct" shape moves these to `document/nodes/border.rs` (or
       a new `mutation_cores` module) and makes the verb layer a thin
       shell over them. The verb layer doubling as the mutation-core
-      registry is a known seam — `style.rs:22/32/55/65/104/122` shows
-      6 reach-ups today. Pure refactor; no behavior change.
+      registry is a known seam — `style.rs` shows 10 code reach-ups
+      today (border, color, font, spacing and section-target cores).
+      Pure refactor; no behavior change.
 - [ ] **border/canvas/section apply-path dedup** — the three apply
       paths (`border/execute.rs::apply_edits`,
-      `section/frame.rs::apply_section_frame_edits`, the inline
-      canvas.rs apply paths) share kv-staging + auto-promote +
-      bare-custom-hint logic. `stage_kv` is already shared
+      `section/frame/mod.rs::apply_edits`, the
+      `canvas/mod.rs` apply paths) share kv-staging + auto-promote +
+      bare-custom-hint logic. Partly closed since: the
+      auto-promote note and bare-custom hint are one
+      `BorderEdit::finish` (`border/finish.rs`), and the positional
+      grammar is one `positional_subverb_to_edits`
+      (`border/positional.rs`); target resolution and dispatch are
+      still three. `stage_kv` is already shared
       (post-Batch-6 review-fix); the dispatcher shapes are 80%
       identical but each parses targets differently
       (per-node ids / per-section pairs / canvas slot). A unified
@@ -2873,9 +2964,11 @@ acknowledged honestly, deferred because each is invasive (touches
       refactor needs a `BorderEditTarget` enum that none of the
       three call sites authored.
 - [ ] **`Result<Option<T>, E>` simplification** —
-      `canvas.rs::positional_subverb_to_edits` returns
-      `Result<Option<BorderConfigEdits>, ExecResult>` to express
-      three outcomes (apply edits / verb self-handled / error).
+      `positional_subverb_to_edits` (moved from `canvas.rs` to
+      `border/positional.rs`) returns
+      `Result<Option<PositionalEdits>, String>` to express
+      three outcomes (apply edits / no positional subverb matched /
+      error).
       Cleaner with a 3-arm enum like `enum Ctl<T> { Apply(T),
       Done(ExecResult), Error(ExecResult) }`. Smell flagged once
       but not on a hot path; cosmetic.
@@ -2915,6 +3008,11 @@ The remainder are deferred here:
       `WheelUp/Down` ignores the keybind table, hard-coding
       `factor = 1.1`; `RightClick` only logs and never dispatches
       `action_for_gesture`. Both diverge from native semantics.
+      **Half closed**: the wheel now resolves through
+      `action_for_gesture` (`run_wasm/event_mouse_wheel.rs`,
+      `handle_mouse_wheel`). `RightClick` is still open —
+      `run_wasm/event_mouse_click.rs::handle_right_button` only
+      warns once.
 - [ ] **Long-press wake-up gap is broken not theoretical** (touch
       deep-dive CRITICAL): `tick()` is only invoked on
       `WindowEvent::Touch` events. iOS Safari coalesces events so
@@ -3009,15 +3107,21 @@ The remainder are deferred here:
 - [ ] **`split_section` ignores 1024 cap** (correctness MEDIUM):
       `add_section` checks `MAX_SECTIONS_PER_NODE` but `split_section`
       doesn't, so repeated splits past the cap bypass the
-      protection. `crates/maptool/src/verify/sections.rs:101` also
-      hardcodes 1024 instead of importing the const — drift risk.
-- [ ] **LMB-release origin gate asymmetry** (correctness HIGH):
+      protection. Still open in `document/nodes/section_structure.rs`.
+      The second half is closed: `maptool verify` no longer hardcodes
+      1024 — `verify/sections.rs` calls `validate::section_count`
+      (`lib/baumhard/src/mindmap/model/validate.rs`), which reads the
+      const.
+- [x] **LMB-release origin gate asymmetry** (correctness HIGH):
       `event_mouse_click.rs:697-702` left-button release finalises
       a Throttled NodeResize/SectionResize regardless of
       `started_with_right`. The right-button release path correctly
       gates on the flag (T2 fix); LMB path doesn't. User holding
       RMB for fast-resize then fumbling LMB ends the gesture
-      prematurely.
+      prematurely. — shipped (#37): `resolve_release` in
+      `app/throttled_interaction/release.rs` commits only on the
+      button that owns the gesture and puts the drag back otherwise;
+      `test_resolve_release_covers_both_buttons_and_both_origins`.
 - [x] **`SectionRange::range` dual semantics** (correctness HIGH):
       resolved by #47 part C — the variant was split into two
       distinctly-typed fields (`section_span: SectionSpan`,
@@ -3027,52 +3131,72 @@ The remainder are deferred here:
 - [ ] **`split_section` undo doesn't pin `text_runs`** (test coverage
       CRITICAL): `split_section_pushes_undo_and_dirty` checks
       `sections.len()` and `text` after undo, not `text_runs`.
-      A regression in run-restoration would slip past.
+      A regression in run-restoration would slip past. Still true
+      of the test in `document/nodes/section_structure.rs`.
 - [ ] **MultiSection `section move` phase-1 atomicity untested**
       (test coverage CRITICAL): the "first rejection aborts the
-      whole fan-out" guarantee at `section/mod.rs:765-790` has no
+      whole fan-out" guarantee in `section/mod.rs`
+      (`execute_move_fan_out_multisection`) has no
       test pinning the partial-mutation-impossible invariant.
-- [ ] **Section count cap (1024) verify-side test missing** (test
+- [x] **Section count cap (1024) verify-side test missing** (test
       coverage CRITICAL): `crates/maptool/src/verify/sections.rs::check_section_count_cap`
       added in T5 has no test asserting a 1025-section node trips
-      the violation.
+      the violation. — shipped: `section_count_cap_uses_shared_constant`
+      in `crates/maptool/src/verify/sections.rs` builds a
+      `MAX_SECTIONS_PER_NODE + 1`-section node and asserts the
+      violation (the check is now `validate::section_count`).
 - [ ] **`section frame` VERBS asymmetry** (API/UX HIGH):
-      `section frame::VERBS = ["show", "reset", "preview"]` ships
+      `FRAME_SUBVERBS` in `section/frame/grammar.rs` declares only
+      `show` / `reset` / `preview`, so it ships
       no positional per-field subverbs while sibling
       `border` / `canvas border` / `canvas section-frame` ship
       `preset / color / padding / palette / font / side / corner`.
       The unknown-subverb error already acknowledges this as a
       follow-up.
-- [ ] **`section: unknown subverb '{}'` second site** (API/UX HIGH):
+- [x] **`section: unknown subverb '{}'` second site** (API/UX HIGH):
       the late-fall-through arm at `section/mod.rs:336` still emits
       the bare-line shape; the upstream early-validation arm
       shipped in this commit emits the grouped listing. The two
-      should converge on a shared formatter.
+      should converge on a shared formatter. — shipped: one site
+      left in `section/mod.rs`, through the console-wide
+      `usage::unknown_subverb_message` (`console/spec/usage.rs`);
+      test `section_typo_against_single_selection_surfaces_unknown_subverb_not_selection_error`.
 - [ ] **Border preview "is one active?" surface** (API/UX HIGH):
       `border preview show` doesn't exist; staged previews are
       silently cancelled by any committing edit. A status verb
-      would close the trap state.
+      would close the trap state. Still open: `PREVIEW_TERMINATORS`
+      (`border/grammar.rs`) is `commit` / `cancel` only.
 - [ ] **Inconsistent "preset custom first" hint phrasing** (API/UX
       MEDIUM): `border` says "run \`border preset custom\` first";
       `section frame` says "Run \`section frame preset=custom\`
       first"; canvas says "run \`<label> preset custom\` first".
-      Same gate, three phrasings — single shared formatter.
-- [ ] **`fast_resize_start` LMB-release origin gate test** (touch
+      Same gate, three phrasings — single shared formatter. Now two:
+      `border` and both canvas subjects share the message in
+      `border/positional.rs` (`stage_side` / `stage_corner`);
+      `section frame/mod.rs` keeps its own.
+- [x] **`fast_resize_start` LMB-release origin gate test** (touch
       deep-dive HIGH): the symmetric flag check on the right
       release arm is pinned (T2) but the left release arm's
-      missing check (HI-1 above) has no negative test.
+      missing check (HI-1 above) has no negative test. — shipped:
+      the `(Left, true)` row of
+      `test_resolve_release_covers_both_buttons_and_both_origins`
+      (`app/throttled_interaction/release.rs`) asserts `PutBack`.
 - [ ] **Layering inversion is wider than T4 admits** (architecture
       CRITICAL): 22 reach-up sites across `app/dispatch/cross_dispatch/`
       not just `style.rs` — `edges.rs` (8), `camera.rs` (2),
       `action_core.rs` (1). Update T4 follow-up to reflect the
-      pattern, not the localised seam.
-- [ ] **`parse_section_kv` byte-duplicated** (architecture HIGH):
+      pattern, not the localised seam. Today: 21 code sites —
+      `style.rs` (10), `edges.rs` (8), `camera.rs` (2),
+      `app/dispatch/action_core.rs` (1).
+- [x] **`parse_section_kv` byte-duplicated** (architecture HIGH):
       across `section/mod.rs:373-380` and `section/frame.rs:432-439`.
-      §5 violation; should `use super::parse_section_kv`.
+      §5 violation; should `use super::parse_section_kv`. — shipped:
+      one definition, `parse_section_kv` in
+      `console/commands/range_kv.rs`.
 - [ ] **Three parallel `BorderPreviewTarget*` enums** (architecture
       HIGH): `keybinds::BorderPreviewTargetKind`,
       `document::BorderPreviewTarget`,
-      `baumhard::scene_builder::BorderPreviewTargetRef<'a>`.
+      `baumhard::mindmap::tree_builder::BorderPreviewTargetRef<'a>`.
       The keybinds-side discriminator exists for `Hash + Eq`
       reasons; visible enum tax.
 - [ ] **`Action` grew +29 variants** (architecture MEDIUM): the
@@ -3083,12 +3207,16 @@ The remainder are deferred here:
       rather than at dispatch.
 - [ ] **`InitState` / `WasmInputState` god-struct creep**
       (architecture MEDIUM): InitState 22 → 25 fields;
-      WasmInputState 10 → 12. The cross-platform mirror fields
+      WasmInputState 10 → 12 (today 31 and 13). The cross-platform mirror fields
       (`interaction_mode`, `touch_recognizer`) double the
       construct/borrow ceremony.
-- [ ] **`canvas.rs::positional_subverb_to_edits` 165 LOC**
+- [x] **`canvas.rs::positional_subverb_to_edits` 165 LOC**
       (code-quality HIGH): three deeply-nested `match verb` arms
-      with shared logic. Split per verb-class.
+      with shared logic. Split per verb-class. — shipped: the
+      function left `canvas.rs` for `border/positional.rs`, where one
+      flat `match subverb.name` serves all four surfaces and the
+      `side` / `corner` arms are their own `stage_side` /
+      `stage_corner`.
 - [ ] **`_config` suffix rename inconsistency** (code-quality HIGH):
       T5 (whole-PR T6) renamed `set_canvas_default_border_config →
       set_canvas_default_border` cleanly, but
@@ -3096,55 +3224,81 @@ The remainder are deferred here:
       `set_section_frame_border_config`, and
       `set_node_border_config` keep the suffix. Either rename
       consistently or document why partial.
-- [ ] **§5 dup of `parse_side_selector` / `parse_corner_selector`**
+- [x] **§5 dup of `parse_side_selector` / `parse_corner_selector`**
       (code-quality CRITICAL): reproduced inline in `canvas.rs:350-360,
       413-423` instead of using the `border/execute.rs` originals.
-      The non-custom-preset gate is also duplicated.
+      The non-custom-preset gate is also duplicated. — shipped: one
+      `parse_side_selector` / `parse_corner_selector` pair in
+      `border/positional.rs`, and one gate,
+      `BorderSurface::first_non_custom_preset`, which canvas reaches
+      through `positional_subverb_to_edits`.
 - [ ] **§5 dup between `node_resize.rs` and `section_resize.rs`**
-      (code-quality CRITICAL): differ on ~30 of 290 lines; same
+      (code-quality CRITICAL): differ on ~30 of 290 lines (today
+      355 and 370 lines in `app/throttled_interaction/`); same
       struct shape, same `ThrottledInteraction` impl, mostly
       identical drain/release. Generic-ify or share.
 - [ ] **`expect()` in scene-build path** (code-quality CRITICAL):
-      `lib/baumhard/src/mindmap/scene_builder/section_frame.rs:201`
+      `lib/baumhard/src/mindmap/tree_builder/section_frame.rs`
+      (`build_section_frames`)
       `expect("section_targeted implies preview is Some")`. Per-
       frame and §9 forbids panic; swap to `if let Some(...)`.
-- [ ] **`expect()` in interactive click path** (code-quality
+- [x] **`expect()` in interactive click path** (code-quality
       MEDIUM): `app/click.rs:224, 234` `hit_section.expect("guarded
-      above")`. Convert to `if let Some(idx)`.
+      above")`. Convert to `if let Some(idx)`. — shipped: the
+      selection logic moved to `compute_node_click_selection`
+      (`app/dispatch/cross_dispatch/pointer.rs`), which binds
+      `routed_section` once and reads it with `if let Some(section_idx)`;
+      `app/click.rs` has no `expect` outside its test module.
 - [ ] **Active-preview-rebuild bench missing** (performance
-      MEDIUM): `cargo bench` covers the steady state but not the
-      `build_node_elements` path with `border_preview = Some(...)`.
-      Add a criterion bench.
+      MEDIUM): the benches cover the steady state but not the
+      border build with a preview active — the shared rebuild in
+      `lib/baumhard/benches/test_bench.rs` passes
+      `tree_builder::border_node_data` a `BorderChromeOverrides`
+      with `preview: None`. Add a criterion bench.
 - [ ] **`preview_node_ids` linear scan in `node_pass.rs`**
       (performance HIGH): O(N·K) per active preview. Hoist the
-      target ids to a `HashSet<&str>` once per call.
+      target ids to a `HashSet<&str>` once per call. `node_pass.rs`
+      is gone; the scan (`ids.iter().any(..)` per node) now sits in
+      two places, `tree_builder/border.rs` (`border_node_data`) and
+      `tree_builder/node_clip.rs`.
 - [ ] **`live_selection_node_ids` / `live_selection_section_pairs`
       clone allocations** (performance MEDIUM): the drift check
       allocates `Vec<String>` / `Vec<(String, usize)>` per frame
       while a preview is active. Borrowing variants would be a
-      small win.
+      small win. Both still allocate, in `document/nodes/border.rs`.
 - [ ] **`do_*()` benchmark-reuse for `apply_view_to_slot`** (test
       coverage HIGH): hot path in `lib/baumhard/src/mindmap/border.rs`
       lacks the bench-reuse shape `TEST_CONVENTIONS §T6` calls for.
-- [ ] **Touch recognizer → Action wiring untested end-to-end**
+- [x] **Touch recognizer → Action wiring untested end-to-end**
       (test coverage HIGH): three layers tested, the seams aren't.
+      — shipped: #29's `dispatch::drive_touch_event` is the
+      recognizer-to-keybind seam as one function, tested end to end
+      in `app/dispatch/cross_dispatch/pointer.rs`
+      (`test_drive_touch_event_resolves_a_long_press_through_the_keybind_table`,
+      `test_drive_touch_event_honors_a_rebound_gesture`,
+      `test_drive_touch_event_routes_a_tap_to_the_selection_effect`).
 - [ ] **`resize_mode_lifecycle.rs` is a flag round-trip** (test
       coverage HIGH): manually flips `mode` instead of dispatching
       the side effect — drops side-effect-consumer regressions.
-- [ ] **Documentation drift in plan** (docs MEDIUM): plan Batch 5
+- [x] **Documentation drift in plan** (docs MEDIUM): plan Batch 5
       cites `section/mod.rs` as ~700 LoC (actually 2037);
       `predicates.rs:33` (actually `:35`); `document/mod.rs:520-523`
       gate cite (now spread across 88, 93, 516, 545, 608, 635);
       `CancelMode → ExitMode` rename marked deferred but actually
-      shipped. Spot-fix or add a once-over follow-up.
-- [ ] **`format/sections.md` 9-subverb table omits `frame`** (docs
+      shipped. Spot-fix or add a once-over follow-up. — closed by
+      the #51 reconciliation: all four spots in Batches 2 and 5 now
+      name the current code (fn names rather than line numbers), and
+      the header records the path moves.
+- [x] **`format/sections.md` 9-subverb table omits `frame`** (docs
       MEDIUM): table says "Nine subverbs" then renders 10 rows
-      with no `frame` row.
+      with no `frame` row. — shipped: the table in `format/sections.md`
+      has a `section frame` row; its 11 rows cover nine distinct
+      subverbs (`move` and `resize` take two forms each).
 
 Verification (post-Batch-8 ship): 2629 tests pass on
 `./test.sh`; wasm32 cross-compile clean; `cargo doc --workspace
---no-deps` clean; `cargo bench` runs all Plan §7.4 benches
-without regression.
+--no-deps` clean; the Plan §7.4 benches build and ran (no
+controlled comparison was recorded, per §B7).
 
 ### 8.3 Cross-batch dependencies
 
@@ -3293,10 +3447,12 @@ work.
 - `src/application/console/commands/section/*` (Batch 5)
 - `src/application/console/commands/mod.rs` (Batches 5, 6)
 - `src/application/console/commands/node.rs` (Batches 2, 4)
-- `src/application/console/commands/canvas.rs` (NEW — Batch 6)
+- `src/application/console/commands/canvas/` (NEW — Batch 6; was
+  `canvas.rs`)
 - `src/application/console/predicates.rs` (Batches 5, 6 —
   `node_or_section_selected`)
-- `src/application/document/mod.rs` (Batch 2 — the one-line gate)
+- `src/application/document/mod.rs` (Batch 2 — the gate; it now
+  arrives as `InteractionModeOverrides`, see `tree_builder/overrides.rs`)
 - `src/application/document/types.rs` (preserved as-is, but tests
   expand)
 - `src/application/document/nodes/mod.rs` (Batch 5 — add/delete/split
@@ -3304,16 +3460,20 @@ work.
 - `src/application/document/nodes/border.rs` (Batch 6 — auto-promote
   removal)
 - `src/application/document/hit_test.rs` (Batches 2, 4)
-- `lib/baumhard/src/mindmap/scene_builder/section_resize_handle.rs`
+- `lib/baumhard/src/mindmap/tree_builder/section_resize_handle.rs`
   (Batches 2, 4)
-- `lib/baumhard/src/mindmap/scene_builder/section_frame.rs` (NEW —
+- `lib/baumhard/src/mindmap/tree_builder/section_frame.rs` (NEW —
   Batch 3)
-- `lib/baumhard/src/mindmap/scene_builder/builder.rs` (Batches 2, 3,
-  6)
-- `lib/baumhard/src/mindmap/scene_builder/mod.rs` (Batches 2, 3, 6
-  — `SceneSelectionContext` extensions)
-- `lib/baumhard/src/mindmap/scene_builder/node_pass.rs` (Batch 3 —
-  dimming)
+- `lib/baumhard/src/mindmap/tree_builder/overrides.rs` (Batches 2, 3,
+  6 — `SceneSelectionContext`, `InteractionModeOverrides`,
+  `BorderPreviewTargetRef`). The `scene_builder/builder.rs` and
+  `scene_builder/mod.rs` this list used to name went with the
+  `scene_builder/` → `tree_builder/` move.
+- `lib/baumhard/src/mindmap/tree_builder/border.rs` (Batches 3, 6 —
+  border chrome, NodeEdit border dim, preview fold-in) and
+  `src/application/document/hit_test.rs`
+  (`apply_inactive_node_dimming`). These replace
+  `scene_builder/node_pass.rs`, which no longer exists.
 - `format/sections.md` (Batches 5, 8)
 - `format/border-patterns.md` (Batches 6, 8)
 - `CONCEPTS.md` (Batch 8)
@@ -3330,8 +3490,11 @@ After every batch:
 3. `./test.sh` also type-checks `wasm32-unknown-unknown`; cross-
    platform drift fails the run. Critical for Batches 1, 3, 7.
 4. `./build.sh` — both native and WASM artifacts build cleanly.
-5. `./test.sh --bench` for Batches 2, 3 in particular (handle gating
-   path, scene-builder section-frame pass).
+5. `cargo check --workspace --benches` (which `./test.sh` already
+   runs) for Batches 2, 3 in particular (handle gating path,
+   scene-builder section-frame pass) — the bench targets must still
+   build. Running them (`./test.sh --bench`) is for maintainers only;
+   CLAUDE.md §6 forbids it to agents.
 6. Manual smoke: `./run.sh maps/testament.mindmap.json` on native
    AND WASM, walk through the relevant integration scenarios from
    §7.2.
@@ -3363,7 +3526,7 @@ After every batch:
   (`baumhard/.../model/node.rs:446-482`).
 - **`SceneSelectionContext`**: The struct passed into the scene
   builder carrying selection / mode / preview overrides
-  (`baumhard/.../scene_builder/mod.rs`).
+  (`baumhard/.../tree_builder/overrides.rs`).
 - **`Throttled(NodeResize)` / `Throttled(SectionResize)`**: Variants
   of `DragState::Throttled(ThrottledDrag)` carrying the in-flight
   resize gesture state.
