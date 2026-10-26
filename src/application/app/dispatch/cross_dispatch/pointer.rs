@@ -12,7 +12,7 @@
 //!
 //! [`resolve_double_click_route`] is the pure half of the
 //! double-click behavior — the decision, with no renderer in sight,
-//! so `cargo test` can pin every branch (`TEST_CONVENTIONS §T8`).
+//! so a renderer-free test pins every branch (`TEST_CONVENTIONS §T8`).
 //! [`apply_double_click_activate`] is the renderer-driving half and
 //! matches exhaustively on the route, so a new [`DoubleClickRoute`]
 //! variant is a build error rather than a silently-dropped gesture.
@@ -605,10 +605,10 @@ pub(in crate::application::app) fn edge_under_pointer(
 /// actually scaled.
 ///
 /// Split out of [`apply_touch_effect`] because it is the half with a
-/// rule in it, and the half a test can reach: `apply_touch_effect`
-/// drives a live `Renderer`, which `TEST_CONVENTIONS §T8` keeps out
-/// of the harness, while *which decrees a step asks for* is plain
-/// values in and plain values out.
+/// rule in it, and the half a renderer-free test can reach:
+/// `apply_touch_effect` drives a live `Renderer`, which only the
+/// GPU-backed tier (`TEST_CONVENTIONS §T8`) builds, while *which
+/// decrees a step asks for* is plain values in and plain values out.
 ///
 /// **The rule: a step that only panned must not emit `CameraZoom`.**
 /// `CameraZoom` is the only decree that raises the renderer's
@@ -818,8 +818,8 @@ mod tests {
     //! that differed between the two pre-unification
     //! implementations, and it is the half that runs without a
     //! renderer — so it carries the coverage. The apply half is a
-    //! renderer-driving `match` over these routes and is out of
-    //! scope per `TEST_CONVENTIONS §T8`.
+    //! renderer-driving `match` over these routes, reachable only
+    //! from the GPU-backed tier (`TEST_CONVENTIONS §T8`).
 
     use super::*;
     use crate::application::document::SectionSel;
@@ -1134,8 +1134,8 @@ mod tests {
     // dispatcher arm and the browser's mouse handler used to make
     // inline, where a `Renderer` (`TEST_CONVENTIONS §T8`) and a
     // `#[cfg(target_arch = "wasm32")]` module respectively put them
-    // out of the suite's reach. §T9: platform-shared pure logic has
-    // to be reachable without a wgpu instance.
+    // out of a renderer-free test's reach. §T9: platform-shared pure
+    // logic has to be reachable without a wgpu instance.
     // -------------------------------------------------------------
 
     /// Every residual maps to exactly one outcome, and the `None`

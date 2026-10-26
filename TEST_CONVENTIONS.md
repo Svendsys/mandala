@@ -265,12 +265,29 @@ on hardware, and so does the suite.
   `mandala --headless` takes — on whatever adapter the machine has,
   and drive it through the real funnels: the IPC `act.*` commands via
   `ipc::run_attached`, the keyboard via
-  `InputHandlerContext::on_keyboard_input`, the frame via
-  `drain_frame` and `draw_frame`. They exist for what no renderer-free
-  test can reach: the arms behind `&mut Renderer` end to end —
-  `dispatch_action` with the rebuilds it runs, the console's
-  side-effect drain, a camera decree through the frame's reprojection,
-  a frame through `Renderer::process`.
+  `InputHandlerContext::on_keyboard_input`, the frame's input half via
+  `drain_frame`, a drawn frame via `capture.screenshot`. They exist
+  for what no renderer-free test can reach: the arms behind
+  `&mut Renderer` end to end — `dispatch_action` with the rebuilds it
+  runs, the console's side-effect drain, a camera decree through the
+  frame's reprojection, a frame drawn on the adapter and read back by
+  the capture engine. Not the window's frame: under `Shell::Headless`
+  there is no surface to present to, so `draw_frame` keeps the redraw
+  ledger and draws nothing, and the capture is the one route a
+  headless app draws through.
+
+**The requirement, and what holds it.** A GPU-backed test obtains its
+app through `gpu_harness::headless_app` (or `headless_app_with`) and
+returns on `None`. No test under `src/`, `lib/` or `crates/` opens a
+wgpu instance or device, or builds the app on one, by any other
+route — not `Instance::new`, not `request_adapter` / `request_device`,
+not `Renderer::bootstrap_*`, not `run_native_init::build` — because a
+test that did would have no skip note, no `MANDALA_REQUIRE_GPU` and no
+place in the one-at-a-time line.
+`test_only_the_bootstrap_path_and_the_harness_open_a_device`
+(`gpu_harness`) reads every Rust file in the workspace, comments and
+string literals blanked, and holds the list of files that may spell
+those calls: the production bootstrap path and the harness.
 
 **Skipped with a note where no adapter exists, never silently, and
 never in CI.** The harness probes once per process for an adapter
@@ -279,7 +296,13 @@ that can open a device, under the plan every bootstrap uses
 GPU-less box on lavapipe. With none, each GPU-backed test prints a
 `SKIPPED:` note and passes having proved nothing — the same
 conditional-locally, unconditional-in-CI arrangement as `test.sh`'s
-wasm32 gate and the font-lock probe (§T9). `MANDALA_REQUIRE_GPU` turns
+wasm32 gate and the font-lock probe (§T9). "Prints" means it reaches
+the terminal: libtest shows a passing test's `eprintln!` only under
+`--nocapture`, which `./test.sh` does not pass, so the note is
+written through `baumhard::util::test_skip`, straight to the
+process's stderr past the per-test capture — the font-lock probe
+writes its note the same way — and `test.sh` counts the `SKIPPED:`
+lines in its summary beside the pass count. `MANDALA_REQUIRE_GPU` turns
 the skip into a failure; CI installs lavapipe and sets it
 (`.github/workflows/test.yml`), so a runner that lost its driver goes
 red instead of quietly shrinking the suite (§T13.4). An agent
@@ -367,8 +390,9 @@ re-litigate them without a strong reason.
   `CLAUDE.md`). Tests stay that way.
 - **No `wasm-bindgen-test`.** See §T9.
 - **No test may require a hardware GPU.** The GPU-backed tests run
-  on a software adapter and skip with a note where there is none
-  (§T8); nothing in the suite asserts on pixels, and nothing needs a
+  on whatever adapter the machine has, a software one where there is
+  no GPU, and skip with a note where there is none at all (§T8);
+  nothing in the suite asserts on pixels, and nothing needs a
   display. The bullet used to read "no GPU / live-wgpu test
   infrastructure"; #171 replaced the ban with the requirement once a
   software adapter turned out to run the real app.

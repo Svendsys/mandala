@@ -175,7 +175,7 @@ use glam::Vec2;
 /// in lock-step, and
 /// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
 /// is what holds them there — it reads this string as text, so no
-/// GPU is involved and §T8 is untouched. That it is *this* string
+/// GPU is involved (§T8's renderer-free tier). That it is *this* string
 /// `Renderer::new` compiles, rather than another const beside it, is
 /// pinned by
 /// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`:

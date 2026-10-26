@@ -1894,9 +1894,9 @@ mod tests {
 // real `CanvasFrame` off the canonical fixture, then the real pass
 // run over them.
 //
-// The pass lives on `Renderer`, which no test may construct
-// (§T8) — but it takes a `&Scene`, so it can be run here without
-// one. That is what `renderer`'s `#[cfg(test)]` reach-through
+// The pass lives on `Renderer`, which only the GPU-backed tier
+// builds (§T8) — but it takes a `&Scene`, so it can be run here
+// without one. That is what `renderer`'s `#[cfg(test)]` reach-through
 // exists for.
 // -----------------------------------------------------------------
 

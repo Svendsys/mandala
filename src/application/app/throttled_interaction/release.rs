@@ -11,8 +11,8 @@
 //! first two are gesture-specific; the last two are a decree the
 //! body *names* rather than performs, so the whole commit stays
 //! renderer-free and therefore pinnable without a device (the
-//! renderer-free tier of TEST_CONVENTIONS §T8). [`ReleaseRefresh::execute`] is the
-//! shell that runs the decree.
+//! renderer-free tier of TEST_CONVENTIONS §T8).
+//! [`ReleaseRefresh::execute`] is the shell that runs the decree.
 
 #![cfg(not(target_arch = "wasm32"))]
 

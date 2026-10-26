@@ -3301,11 +3301,11 @@ two as a value, with `execute` as the only place either is
 actually called. The reason is the same one
 [`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
 the drag-release path: both tiers need `&mut Renderer`, so an
-interaction that *decides* a tier could not be tested at all
-while deciding and performing were one statement in a renderer-free
-test (TEST_CONVENTIONS §T8). Handing the decision back
-as a value is what lets a test ask which tier a given interaction
-picks.
+interaction that *decides* a tier could not be tested without
+a device while deciding and performing were one statement
+(TEST_CONVENTIONS §T8). Handing the decision back as a value
+is what lets a renderer-free test ask which tier a given
+interaction picks.
 
 Two constructors carry the rules:
 
@@ -3872,8 +3872,8 @@ click-outside commit and the dispatch arms do not grow.
 
 The lifecycle core is renderer-free and returns an `EditRefresh`
 naming the canvas work it owes, so the whole open / type /
-commit / cancel sequence is driven directly in tests (§T8 keeps
-live wgpu out of the harness).
+commit / cancel sequence is driven directly in renderer-free
+tests (§T8).
 
 One asymmetry survives on purpose: a portal caption stops being
 editable once its edge is deleted or leaves portal mode, and a

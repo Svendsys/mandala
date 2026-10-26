@@ -258,7 +258,7 @@ mod tests {
     //! The press route table. Every branch that decides whether a
     //! press reaches the §3 funnel, reaches the canvas, or is
     //! swallowed — none of which needs a layout, a document or a
-    //! renderer, so §T8's no-wgpu rule doesn't shield them.
+    //! renderer, so the renderer-free tier (§T8) reaches every one.
 
     use super::*;
     use crate::application::color_picker::PickerHit;

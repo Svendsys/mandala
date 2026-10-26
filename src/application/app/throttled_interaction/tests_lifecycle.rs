@@ -27,8 +27,9 @@
 //!
 //! **What a `Drain` step models.** The real `drain()` bodies need a
 //! live `Renderer`, which these renderer-free tests do not stand up
-//! (TEST_CONVENTIONS §T8). A `Drain` step here performs exactly the part of the
-//! real drain that the *release* path can observe, and nothing else:
+//! (TEST_CONVENTIONS §T8). A `Drain` step here performs exactly the
+//! part of the real drain that the *release* path can observe, and
+//! nothing else:
 //!
 //! - `MovingNode` — folds `pending_delta` into the tree, clears
 //!   pending. The release path reads both (it re-flushes any
@@ -1083,7 +1084,8 @@ mod edge_label {
 /// `event_mouse_click::finalize_or_put_back` drives it.
 ///
 /// The full shell takes `&mut InputHandlerContext` — a live wgpu
-/// device — so it stays out of reach (TEST_CONVENTIONS §T8).
+/// device — so only the GPU-backed tier reaches it (TEST_CONVENTIONS
+/// §T8).
 /// [`commit_if_resolved`] is its renderer-free half, and it is the
 /// half that decides whether anything is written at all. Pinned here
 /// because a gate that committed on *both* branches would end a

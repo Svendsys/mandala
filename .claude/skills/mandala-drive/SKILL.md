@@ -458,6 +458,8 @@ down.
 Its launch, preflight and teardown live in `scripts/lib/mandala_app.sh`,
 which `scripts/record_demo.sh` sources too — change the recipe there.
 
-It is deliberately **not** part of `./test.sh` (TEST_CONVENTIONS §T8/§T10: no
-live GPU in the suite). Run it after changing anything on the
-launch/IPC/capture path, and whenever this skill is edited.
+It is deliberately **not** part of `./test.sh`: it needs the built
+binaries, a socket and a process to drive, where the suite's
+GPU-backed tests build the app in-process (TEST_CONVENTIONS §T8).
+Run it after changing anything on the launch/IPC/capture path, and
+whenever this skill is edited.

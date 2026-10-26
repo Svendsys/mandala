@@ -1263,8 +1263,8 @@ pub(crate) fn project_scene_for_tests(
 }
 
 // Unit tests for pure helpers (cursor math, caret insertion,
-// double-click detection, Baumhard mutation round-trip). Event-loop
-// integration is verified manually via `cargo run`.
+// double-click detection, Baumhard mutation round-trip). What needs
+// the renderer is `tests_gpu`'s, below.
 
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]

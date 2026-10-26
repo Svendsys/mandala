@@ -199,7 +199,7 @@ fn macro_source_allows_action_passes_navigation_for_non_user() {
 /// Pure-logic test for the fail-closed step-iteration contract
 /// in `dispatch_macro`: walking a macro's steps stops at the
 /// first rejected step. The dispatcher itself is renderer-
-/// touching and runs only under the suite's GPU-backed tier
+/// touching and can run only under the suite's GPU-backed tier
 /// (TEST_CONVENTIONS §T8); this test simulates the per-step
 /// policy decision so the load-bearing security claim
 /// ("fail-closed: a rejected privileged step aborts the rest

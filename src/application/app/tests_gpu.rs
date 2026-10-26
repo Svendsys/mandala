@@ -16,18 +16,24 @@
 //! arms behind `&mut Renderer` run end to end — `dispatch_action`'s
 //! `DeleteSelection` and `Undo` with their rebuilds, the console's
 //! document swap through its side-effect drain, a camera decree
-//! through the frame's reprojection, and a frame drawn through
-//! `Renderer::process` — and leave the state they promise.
+//! through the frame's reprojection, and a frame drawn on the adapter
+//! and read back by `capture.screenshot` — and leave the state they
+//! promise. The window's own frame is not among them: under
+//! `Shell::Headless` there is no surface to present to, so
+//! `draw_frame` keeps the redraw ledger and draws nothing
+//! (`Sink::presents`); the one route a headless app draws through is
+//! the capture engine, which is why the third test captures.
 
 use std::path::Path;
 
 use serde_json::{json, Value};
 
-use super::gpu_harness::headless_app;
+use super::gpu_harness::{headless_app, HARNESS_SIZE};
 use super::heartbeat::Beat;
 use super::ipc_target::IpcCommandTarget;
 use super::run_native_init::InitState;
 use super::InteractionMode;
+use crate::application::capture::png;
 use crate::application::document::tests_common::first_testament_node_id;
 use crate::application::document::SelectionState;
 use crate::application::ipc::run_attached;
@@ -200,14 +206,23 @@ fn test_delete_selection_then_undo_through_act_action_matches_the_keyboard_path(
 struct TempFile(std::path::PathBuf);
 
 impl TempFile {
-    fn new(stem: &str) -> Self {
+    /// A fresh path under the temp dir, `mandala-tests-gpu-<stem>-…
+    /// .<ext>`, unique to this process and test thread; whatever was
+    /// there is removed first.
+    fn new(stem: &str, ext: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "mandala-tests-gpu-{stem}-{}-{}.mindmap.json",
+            "mandala-tests-gpu-{stem}-{}-{}.{ext}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test").replace("::", "-")
         ));
         let _ = std::fs::remove_file(&path);
         TempFile(path)
+    }
+
+    /// The file `suffix` appended to this one's path names — the
+    /// geometry sidecar beside a PNG — so it is removed with it.
+    fn sibling(&self, suffix: &str) -> Self {
+        TempFile(std::path::PathBuf::from(format!("{}{suffix}", self.as_str())))
     }
 
     fn as_str(&self) -> &str {
@@ -290,7 +305,7 @@ fn test_act_console_open_and_new_replace_the_document_through_the_side_effect_dr
     }
 
     // `save <path>` clears the guard and binds the path.
-    let saved = TempFile::new("saved");
+    let saved = TempFile::new("saved", "mindmap.json");
     let (reply, _) = act(
         &mut app.init,
         json!({"id": 4, "cmd": "act.console", "line": format!("save {}", saved.as_str())}),
@@ -390,20 +405,27 @@ fn test_act_console_open_and_new_replace_the_document_through_the_side_effect_dr
     );
 }
 
-/// **The issue's third consumer: a scene rebuild that needs a device
-/// to run.** `act.action ZoomIn` moves the camera through a
+/// **The issue's third consumer: a scene rebuild and a frame that
+/// need a device.** `act.action ZoomIn` moves the camera through a
 /// `CameraZoom` decree and flags the connection geometry dirty; the
-/// frame's drain reprojects and clears the flag; then a frame is
-/// asked for and drawn through `Renderer::process` on the adapter,
-/// and the redraw ledger reads current — the "rendered" half of
-/// `clock.wait until=settled`.
+/// frame's drain reprojects and clears the flag; then
+/// `capture.screenshot` draws the window's view on the adapter —
+/// `Renderer::prepare_frame`, `encode_frame`, the readback — and
+/// writes the PNG and its geometry sidecar. The headless app's own
+/// `draw_frame` is asked for too, and asserted for what it is:
+/// bookkeeping. With no surface to present to it marks the redraw
+/// ledger current and draws nothing, which is the "rendered" half of
+/// `clock.wait until=settled` on a headless launch.
 ///
-/// Controls: the zoom before the action, the dirty flag clear after
-/// the first frame's drain, set by the zoom and clear again after the
-/// next drain, and the ledger owing a frame before `draw_frame` and
+/// Assertions are on state, never pixels (§T10): the reply, the PNG's
+/// dimensions, the sidecar's nodes against the document, the live
+/// camera the capture promised to leave alone. Controls: the zoom
+/// before the action, the dirty flag clear after the first drain, set
+/// by the zoom and clear again after the next; the PNG absent before
+/// the capture; and the ledger owing a frame before `draw_frame` and
 /// none after.
 #[test]
-fn test_a_zoom_through_act_action_reprojects_and_a_headless_frame_settles() {
+fn test_a_zoom_through_act_action_reprojects_and_a_capture_draws_the_frame() {
     let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
         return;
     };
@@ -423,10 +445,10 @@ fn test_a_zoom_through_act_action_reprojects_and_a_headless_frame_settles() {
     );
     assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
     assert!(repaint);
+    let zoomed = app.init.renderer.camera_zoom();
     assert!(
-        app.init.renderer.camera_zoom() > zoom_before,
-        "ZoomIn moved the camera: {} from {zoom_before}",
-        app.init.renderer.camera_zoom()
+        zoomed > zoom_before,
+        "ZoomIn moved the camera: {zoomed} from {zoom_before}"
     );
     assert!(
         app.init.renderer.connection_geometry_dirty(),
@@ -441,15 +463,113 @@ fn test_a_zoom_through_act_action_reprojects_and_a_headless_frame_settles() {
         "the drain reprojected the connections and consumed the flag"
     );
 
-    // The frame itself, on the adapter.
+    // The frame itself, drawn on the adapter and read back: the one
+    // route a headless app draws through.
+    let shot = TempFile::new("zoomed", "png");
+    let sidecar = shot.sibling(".geometry.json");
+    assert!(
+        !Path::new(shot.as_str()).exists(),
+        "control: no PNG before the capture"
+    );
+    let reply = capture_screenshot(&mut app.init, shot.as_str());
+    assert_eq!(reply["ok"], true, "{reply}");
+    let result = &reply["result"];
+    assert_eq!(result["rendered"], true, "the frame was drawn: {reply}");
+    assert_eq!(
+        (result["width"].as_u64(), result["height"].as_u64()),
+        (Some(u64::from(HARNESS_SIZE.0)), Some(u64::from(HARNESS_SIZE.1))),
+        "the window's view is the harness surface: {reply}"
+    );
+    assert_eq!(result["path"], shot.as_str(), "{reply}");
+    assert_eq!(result["sidecar_path"], sidecar.as_str(), "{reply}");
+
+    let png_bytes = std::fs::read(shot.as_str()).expect("the PNG was written where the reply says");
+    let (width, height, rgba) = png::tests::decode(&png_bytes);
+    assert_eq!(
+        (width, height),
+        HARNESS_SIZE,
+        "the PNG decodes to the harness surface's size"
+    );
+    assert_eq!(
+        rgba.len(),
+        (width * height * 4) as usize,
+        "one RGBA pixel per surface pixel"
+    );
+
+    let sidecar_json: Value = serde_json::from_slice(
+        &std::fs::read(sidecar.as_str()).expect("the sidecar was written beside the PNG"),
+    )
+    .expect("the sidecar is JSON");
+    assert_eq!(
+        (
+            sidecar_json["surface"]["width"].as_u64(),
+            sidecar_json["surface"]["height"].as_u64()
+        ),
+        (Some(u64::from(HARNESS_SIZE.0)), Some(u64::from(HARNESS_SIZE.1))),
+        "the sidecar maps the surface the PNG shows"
+    );
+    let shown: Vec<&str> = sidecar_json["nodes"]
+        .as_array()
+        .expect("the sidecar lists nodes")
+        .iter()
+        .map(|node| node["id"].as_str().expect("every entry names a node"))
+        .collect();
+    assert!(
+        !shown.is_empty(),
+        "the capture framed the map: at least one node is in view"
+    );
+    {
+        let doc = app.init.document.as_ref().expect("document");
+        for id in &shown {
+            assert!(
+                doc.mindmap.nodes.contains_key(*id),
+                "sidecar node {id} is a node of the document"
+            );
+        }
+        assert_eq!(
+            sidecar_json["document_revision"].as_u64(),
+            Some(doc.revision()),
+            "the sidecar is tied to the revision it was drawn from"
+        );
+    }
+    assert_eq!(
+        app.init.renderer.camera_zoom(),
+        zoomed,
+        "a capture draws through a camera of its own and leaves the live one alone"
+    );
+    assert!(
+        !app.init.renderer.connection_geometry_dirty(),
+        "and leaves the geometry as it found it"
+    );
+
+    // The headless app's own frame: ledger bookkeeping, no drawing.
     app.init.request_redraw();
     assert!(
         app.init.settling().redraw_owed,
-        "control: a frame is owed before it is drawn"
+        "control: a frame is owed before draw_frame runs"
     );
     app.init.draw_frame();
     assert!(
         !app.init.settling().redraw_owed,
-        "the frame drew through Renderer::process and the ledger reads current"
+        "draw_frame settled the ledger — with no surface to present to, that is all it does"
     );
+}
+
+/// `capture.screenshot path=<path>` through the real decoder and
+/// executor, retried while the engine reports the one transient skip
+/// — `font_system_contended`, the font lock held by another test's
+/// shaping in this process — the way the heartbeat retries a skipped
+/// frame on the next beat. Any other outcome is returned as is.
+fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
+    const ATTEMPTS: usize = 200;
+    let request = json!({"id": 2, "cmd": "capture.screenshot", "path": path});
+    let mut reply = Value::Null;
+    for _ in 0..ATTEMPTS {
+        reply = act(init, request.clone()).0;
+        if reply["result"]["skipped"] != "font_system_contended" {
+            return reply;
+        }
+        std::thread::yield_now();
+    }
+    panic!("the font system stayed contended through {ATTEMPTS} capture attempts: {reply}");
 }

@@ -1079,7 +1079,7 @@ recorder, the redraw decision, the FPS flip, the clock wait, the map
 publication — because the issue's own rule was to reuse the functions
 and not fork a second heartbeat. The one-shot check is the eleventh
 step, at the point the clock wait is evaluated. `pump::tests` pins the
-order against a recording fake (§T8: no GPU).
+order against a recording fake (renderer-free, §T8).
 
 **Waiting and waking.** The headless driver parks its thread — until
 the iteration's deadline, or indefinitely — and the IPC boundary

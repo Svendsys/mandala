@@ -163,9 +163,10 @@ pub(super) fn drain_rect_select(
 /// finds and whether a covered set is currently installed.
 ///
 /// Pure so the invariant is pinnable at `DragState` level — the
-/// drain takes a `&mut Renderer`, i.e. a live wgpu device, which only
-/// the suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8). Same shape, and
-/// for the same reason, as `event_mouse_click::route_middle_button`.
+/// drain takes a `&mut Renderer`, i.e. a live wgpu device, which
+/// only the suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8).
+/// Same shape, and for the same reason, as
+/// `event_mouse_click::route_middle_button`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RectSelectFrame {
     /// A gesture is live: move the rectangle to the pointer and
@@ -383,9 +384,10 @@ mod tests {
                 .is_some_and(|d| d.rect_select_preview().is_some()),
         );
         // The drain's own body, minus the half that needs a live wgpu
-        // device (the renderer-free tier of TEST_CONVENTIONS §T8): the frame's answer is what
-        // decides whether the covered set is handed back, so a wrong
-        // answer strands it here exactly as it would on screen.
+        // device (the renderer-free tier of TEST_CONVENTIONS §T8): the
+        // frame's answer is what decides whether the covered set is
+        // handed back, so a wrong answer strands it here exactly as it
+        // would on screen.
         if matches!(frame, RectSelectFrame::End { repaint: true }) {
             document.as_mut().and_then(|d| d.take_rect_select_preview());
         }
