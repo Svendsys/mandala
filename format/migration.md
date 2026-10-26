@@ -329,7 +329,9 @@ change.
 - **Unknown enum values** fall silently to defaults. If you had a custom
   shape code that meant something specific, it becomes `"rectangle"`.
 - **Palette collisions** (two level-0 nodes with the same palette name +
-  variant but different `groups`): first-writer-wins. Rare in practice
+  variant but different `groups`): first-writer-wins, where first is
+  the node met first in outline order (Dewey order on the converted
+  ID, so `x.2` before `x.10`). Rare in practice
   because miMind produces consistent palettes across nodes in the same
   theme.
 - **A palette name that already ends in its own variant suffix** is

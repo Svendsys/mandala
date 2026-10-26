@@ -4,6 +4,7 @@
 //! map; rewrite each node to reference its palette by key. `theme_id`
 //! is dropped; `variant != 2` is folded into the key (`coral-v3`).
 
+use baumhard::mindmap::model::dewey_cmp;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -39,7 +40,13 @@ fn collect_palettes(root: &Value, defined: &HashSet<String>) -> HashMap<String, 
         None => return palettes,
     };
 
-    for node in nodes.values() {
+    // Outline order, so "first" in first-writer-wins means the node a
+    // reader meets first. `nodes` is a `BTreeMap` and iterates its keys
+    // as strings, which put `x.10` ahead of `x.2` (#211 review).
+    let mut ordered: Vec<(&String, &Value)> = nodes.iter().collect();
+    ordered.sort_by(|(a, _), (b, _)| dewey_cmp(a, b));
+
+    for (_, node) in ordered {
         let schema = match node.get("color_schema") {
             Some(Value::Object(obj)) => obj,
             _ => continue,
@@ -55,7 +62,7 @@ fn collect_palettes(root: &Value, defined: &HashSet<String>) -> HashMap<String, 
             _ => continue,
         };
 
-        // First-writer-wins on a name collision, as
+        // First-writer-wins on a name collision, in outline order, as
         // `format/migration.md` §"Known limitations" documents. One
         // hash lookup via `entry` rather than the `contains_key` +
         // `insert` pair this used to do (clippy::map_entry).
@@ -391,5 +398,33 @@ mod tests {
         root["nodes"]["0"]["color_schema"]["variant"] = json!(3);
         hoist_palettes(&mut root);
         assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
+    }
+
+    /// On a palette-name collision the first node in outline order
+    /// wins, not the first in the map's string order: `0.2` before
+    /// `0.10`.
+    #[test]
+    fn test_hoist_palettes_collision_goes_to_the_first_node_in_outline_order() {
+        let mut root = legacy_map_with_level(json!(0));
+        let nodes = root["nodes"].as_object_mut().unwrap();
+        nodes.remove("0");
+        for (id, color) in [("0.2", "#222222"), ("0.10", "#101010")] {
+            nodes.insert(
+                id.into(),
+                json!({ "color_schema": {
+                    "palette": "autumn", "variant": 3, "level": 0,
+                    "groups": [{ "background": color }]
+                } }),
+            );
+        }
+        assert!(
+            "0.10" < "0.2",
+            "the fixture relies on string order putting 0.10 first"
+        );
+        hoist_palettes(&mut root);
+        assert_eq!(
+            root["palettes"]["autumn-v3"]["groups"][0]["background"],
+            "#222222"
+        );
     }
 }
