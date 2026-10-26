@@ -91,7 +91,9 @@ path. The one sanctioned exception running today is the native
 [`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* an
 `AtomicU64` ping; CODE_CONVENTIONS §3 additionally sanctions the
 [IPC boundary threads](#ipc-server-ipcserver), which run only under
-`--ipc`, move protocol values and never touch app state. Lock
+`--ipc`, move protocol values and never touch app state (on Windows,
+with one tokio runtime worker driving the named pipe's I/O beneath
+them). Lock
 scopes stay trivial because of this.
 
 ### Model / view separation
@@ -1520,8 +1522,12 @@ parametric positions along the border perimeter.
 - `font: Option<String>` — font family override; `None` =
   system default.
 - `font_size_pt: f32` — glyph size.
-- `color: Option<String>` — `#RRGGBB` override; `None` =
-  inherit from `style.frame_color`.
+- `color: Option<String>` — `#RRGGBB` override. `None` on a
+  node border falls through the node's theme frame color, then
+  `canvas.default_border.color`, then `style.frame_color` (the one
+  field-level tier of an otherwise slot-level cascade); `None` on
+  a section frame is the selection-highlight cyan, with no theme
+  or canvas tier.
 - `glyphs: Option<CustomBorderGlyphs>` — per-side glyph
   overrides (top / bottom / left / right / four corners); only
   consulted when `preset = "custom"`.
@@ -2714,14 +2720,36 @@ and it was wrong in both clauses. What is true:
   are what the mode or the selection *is for*, so a press near
   one is read as aimed at it whatever the chain says.
 - **Promotion, at threshold-cross.** `event_cursor_moved.rs`
-  consumes the captured hits in the order edge-label →
-  portal-label → edge-handle → node-resize-handle →
-  section-resize-handle → section-move → node-move →
-  Shift-rect-select → pan. Over the label hits this order decides
-  nothing, since the capture rule above leaves at most one of them
-  and the node populated. What it does decide is **all three
-  handle families versus the node**: each is ranked ahead of
-  `hit_node`, and each was captured without asking about it.
+  consumes the captured hits in the order node-resize-handle →
+  section-resize-handle → edge-label → portal-label → edge-handle
+  → section-move → node-move → Shift-rect-select → pan
+  (`Grab::PRECEDENCE`). Between the two label hits this order
+  decides nothing, since the capture rule above leaves at most one
+  of them. What it does decide is **all three handle families
+  versus the node**: each is ranked ahead of `hit_node`, and each
+  was captured without asking about it. It also decides **a
+  resize handle versus a label lying over it**: in Resize mode the
+  mode's own handles outrank the label grabs, since the mode
+  exists for them, and a label stays grabbable outside it (#218).
+  The resize handles are captured only in that mode, so outside it
+  the order is the label-first one it always was.
+- **Double-click, read off the same order.** What a press would
+  drag is what it is: when `first_grab()` in `Grab::PRECEDENCE` is
+  a handle (`NodeResizeHandle`, `SectionResizeHandle`,
+  `EdgeHandle`), the press takes no part in double-click detection,
+  neither completing one nor starting one
+  (`PendingPress::is_handle_press`, #218). So a second press on a
+  handle inside the double-click window grabs it rather than
+  opening the editor on the node behind it. A press whose first
+  grab is a label double-clicks as any press does, which is why a
+  double-click on an edge's label keeps opening its editor even
+  where the label sits on the selected edge's midpoint handle. The
+  same rule reaches a node: with an edge selected, a press where
+  one of its anchors or control points sits on a node is that
+  handle's press, so a double-click there does not open the node's
+  editor. The first release selects the node, which deselects the
+  edge, and the next pair double-clicks as usual. That press does
+  drag the anchor, so it is what it would drag.
 - **The gesture starts at the press.** The threshold decides
   *whether* a press is a drag, not where the drag begins: the move
   that promotes it seeds the new gesture with the travel from the
@@ -3470,7 +3498,11 @@ newline-delimited JSON (`format/ipc.md`).
 The app's feedback loop for an agent: attach to an instance a human
 launched (or one the agent launched itself), send commands, read
 structured replies. Off unless `--ipc <path>` is passed; without the
-flag no socket exists and no thread runs.
+flag no socket exists and no thread runs. The browser build speaks
+the same protocol over a WebSocket toward `mandalactl bridge`, a
+loopback relay, when the page is opened with `?ipc=<its app URL>`
+(`ipc/browser/`, `app/run_wasm/ipc.rs`; `format/ipc.md` §Transport
+"Browser"); `describe` says per command what each target serves.
 
 `src/application/ipc/`. Boundary threads own the socket — a
 persistent acceptor (one controller at a time; a second client is
@@ -3556,9 +3588,9 @@ and `document_revision`.
 module and one line to the registry's family table; recording
 (IPC-08) and headless mode (IPC-10) draw through the same
 parameterized frame the screenshot engine does.
-**Caveat:** Unix-only today — Windows fails `--ipc` at startup until
-the named-pipe adapter lands, and the browser has no socket at all
-(`CLAUDE.md` "Dual-target status").
+**Caveat:** native only — a Unix socket, or a named pipe on Windows
+(#169) — and the browser has no socket at all (`CLAUDE.md`
+"Dual-target status").
 
 ### Screenshot capture
 

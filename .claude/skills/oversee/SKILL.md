@@ -18,7 +18,8 @@ First step is to prepare. Look over the issues, they should be well-defined, but
 or assumptions that are no longer true. There may be multiple issues that share the same concerns, and thus should be 
 merged into a single issue. Before you start assigning issues to workers, you must ensure that you have a crystal clear
 vision of what is to be done and why. If any issues need to be updated or further refined it falls on you to do so.
-If any more information from the human is needed, you must consult the human. 
+If any more information from the human is needed, you must consult the human. Never arbitrarily change the specification
+of an issue, or cut corners to reduce amount of work. 
 
 ### 2. Create the delegation plan
 What issues can run in parallel? What issues block other issues? Create a concrete plan that you can follow

@@ -544,7 +544,7 @@ fn test_tick_animations_completes_and_clears() {
 /// undo pops it — net effect is that Ctrl+Z during an
 /// animated transition reverses the animation in one
 /// keystroke, same as Ctrl+Z after natural completion. Pins
-/// the §4 "no half-features" contract the review called
+/// the §5 "no half-features" contract the review called
 /// out: without this, Ctrl+Z during an animation pops the
 /// *previous* action, a silent user-visible regression.
 #[test]

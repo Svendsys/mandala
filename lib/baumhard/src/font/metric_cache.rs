@@ -12,11 +12,15 @@
 //! alignment + tiling defects users see in the Border Toolkit
 //! demo on `maps/testament.mindmap.json`.
 //!
-//! The fix is structural: every callsite that asks "how wide
-//! will this glyph end up?" or "how tall will this row of glyphs
-//! be?" routes through this cache. The cache returns the value
-//! cosmic-text actually uses when shaping, so the math + the
-//! layout agree at sub-pixel precision.
+//! The fix is structural: a callsite that asks "how wide will this
+//! glyph end up?" or "how tall will this row of glyphs be?" with a
+//! face in scope routes through this cache, which returns the
+//! value cosmic-text actually uses when shaping. Callers with no
+//! face, and the border-extent estimates that skip the face by
+//! choice (background padding, the clip AABB), still use the
+//! face-independent estimates — `metrics::monospace_advance` and
+//! the border's `BORDER_APPROX_CHAR_WIDTH_FRAC` — so this is the
+//! measured answer where a face is asked for, not every answer.
 //!
 //! ## Cache discipline
 //!

@@ -44,12 +44,11 @@ pub struct EdgeColorPreview<'a> {
 /// [`FrameOverrides`] and consumed by the border, section-frame,
 /// and handle passes.
 ///
-/// `Default` is no handles + no dimming. Pre-Batch-2 of the
-/// sections / borders / resize UX overhaul, the scene builder read
-/// selection directly (`Single` → handles, `Section` → handles),
-/// which produced the "accidental resize on selection" UX bug.
-/// Decoupling the gate from selection — and putting it next to its
-/// consumer `SceneSelectionContext` — keeps the model/view boundary
+/// `Default` is no handles + no dimming. A scene builder that read
+/// selection directly (`Single` → handles, `Section` → handles)
+/// would resize by accident on every selection. Decoupling the
+/// gate from selection — and putting it next to its consumer
+/// `SceneSelectionContext` — keeps the model/view boundary
 /// clean: the document doesn't know about modes, the app translates
 /// mode to override, the scene builder consumes the override.
 ///
@@ -76,9 +75,9 @@ pub struct InteractionModeOverrides<'a> {
     /// Section currently inside the inline text editor, if any.
     /// `Some((node_id, section_idx))` causes the matching
     /// `SectionFrameElement` to emit `focused = true` so the
-    /// renderer draws its perimeter at a thicker stroke (Plan
-    /// §4.4). `None` is the no-op — every emitted frame draws at
-    /// the standard stroke. Read by the section-frame builder via
+    /// renderer draws its perimeter at a thicker stroke. `None`
+    /// is the no-op — every emitted frame draws at the standard
+    /// stroke. Read by the section-frame builder via
     /// [`SceneSelectionContext::focused_section`].
     pub focused_section: Option<(&'a str, usize)>,
 }
@@ -156,9 +155,8 @@ pub enum BorderPreviewTargetRef<'a> {
 /// Per-field tri-state edit, mirroring the application crate's
 /// `OptionEdit<T>` (`Keep` / `Clear` / `Set`). The scene-side
 /// view carries this so `OptionEdit::Clear` round-trips into the
-/// preview pipeline — pre-fix `BorderConfigEditsView` collapsed
-/// `Clear` to "no edit" and the rendered preview diverged from
-/// what commit produced (Risk #1 in the plan).
+/// preview pipeline; collapsing `Clear` to "no edit" would make
+/// the rendered preview diverge from what commit produces.
 ///
 /// `Keep` = no edit (steady-state default); `Clear` = drop the
 /// field on the slot; `Set(v)` = write the borrowed value.

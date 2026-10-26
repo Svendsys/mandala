@@ -89,41 +89,75 @@ Native desktop and the browser build are first-class peers
 sanctioned native-only carve-outs; each entry names the reason and
 the parity trajectory (or why none is owed):
 
-- **IPC** (`--ipc`, `src/application/ipc/`; transport since
-  IPC-02/#62, command registry and `act` bridge since IPC-03/#63,
-  event stream since IPC-14/#74) — native-only by transport nature: browsers cannot
-  serve local sockets, and the consumer is an agent driving a
-  desktop/Xvfb instance. The document revision the event stream
-  observes (`document/revision.rs`) is not gated: it is a counter on
-  the model, and compiles for both targets. The client,
-  `crates/mandalactl`, compiles on every target (the workspace is
-  type-checked for wasm32) but connects over Unix sockets only: off
-  Unix its connect fails naming the same gap (#169) the server's
-  `--ipc` does. Protocol: `format/ipc.md`; design:
-  `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
-  transport + browser-side capture, same envelope and commands) is
-  parked in IPC-15 (#75). Within native the transport is Unix-only
-  for now: `--ipc` on Windows fails at startup naming the gap, until
-  the named-pipe adapter lands (#169).
-- **Screenshot capture** (`src/application/capture/`,
-  `src/application/renderer/capture.rs`,
+- **IPC: the native transports** (`--ipc`,
+  `src/application/ipc/transport/`; IPC-02/#62, #169) — native-only by
+  nature: a browser cannot serve a local socket or pipe. Within native
+  the transport is a Unix socket, or on Windows a named pipe
+  (`\\.\pipe\mandala-<name>`, `ipc/transport/pipe.rs`; #169) behind the
+  same boundary threads. The pipe is owner-only, except that an
+  elevated (run-as-administrator) launch makes the Administrators
+  group its owner, so any other elevated process of a member of that
+  group can connect too. The Windows half runs on CI's `windows-ipc`
+  job (`.github/workflows/test.yml`: clippy, the `ipc::` tests and
+  `mandalactl`'s whole test target), not in `./test.sh`, which cannot
+  run it from Linux; locally
+  `cargo check --target x86_64-pc-windows-gnu -p mandala` type-checks
+  it. **The protocol is not gated, since IPC-15 (#75)**: the
+  envelope, the registry, every command family and the event stream
+  (`src/application/ipc/`, `app/ipc_target.rs` on native,
+  `app/run_wasm/ipc_target.rs` on the browser) compile and run on
+  both targets — as does the document revision the event stream
+  observes (`document/revision.rs`), a counter on the model — and the
+  browser has a transport of its own: a WebSocket *toward* a loopback
+  relay, `mandalactl bridge`, opened when the page is loaded with
+  `?ipc=<the relay's app URL>` (`ipc/browser/`, `run_wasm/ipc.rs`;
+  `format/ipc.md` §Transport "Browser"). What the browser does not
+  serve, `describe` reports per command (`supported`,
+  `unsupported_reason`) and a request for it is answered
+  `unsupported`: `act.console` (the console shell is native, below)
+  and the two `capture.record_*` commands (no recorder, no files);
+  `act.action` refuses a `NativeOnly` `Action` the same way. The
+  client, `crates/mandalactl`, compiles on every target (the
+  workspace is type-checked for wasm32), speaks the socket, the pipe
+  and the WebSocket (`--ipc` / `--ws`) with one command surface, and
+  is the relay. Protocol: `format/ipc.md`; design:
+  `work_plans/LLM_IPC.md` §D6 (as amended by IPC-15).
+- **The screenshot engine, and recording** (`src/application/capture/`
+  minus `geometry.rs`, `src/application/renderer/capture.rs`,
   `src/application/app/capture_flow.rs`,
-  `src/application/app/capture_scene.rs`; IPC-07/#67, #178) — the engine
-  behind `capture.screenshot` and the `screenshot` console verb, and
+  `src/application/app/capture_scene.rs`; IPC-07/#67, #178) — the offscreen
+  engine behind native's `capture.screenshot` and the `screenshot`
+  console verb (its own camera, its own size, a file on disk), and
   with it frame-sequence recording (`capture/record.rs`,
   `app/record_flow.rs`; IPC-08/#68: `capture.record_start` /
   `capture.record_stop` and the `record` console verb), is
   native-only: the readback blocks the main thread on a GPU buffer
   map, which a browser cannot do (wgpu's `poll` is a no-op on WebGPU,
-  and the map resolves only when the event loop yields). The frame it
-  draws is not gated: `Renderer::prepare_frame` / `encode_frame` are
-  the browser's render path too, so a browser capture would draw the
-  same frame — including the composed canvas a capture at another
-  zoom reads (`CanvasSource::Composed`, `renderer/scene_shape_cache.rs`),
+  and the map resolves only when the event loop yields), and a
+  recording is files. The frame it draws is not gated:
+  `Renderer::prepare_frame` / `encode_frame` are the browser's render
+  path too — including the composed canvas a capture at another zoom
+  reads (`CanvasSource::Composed`, `renderer/scene_shape_cache.rs`),
   which compiles for both targets and is simply never asked for by
-  the window. Parity is the browser canvas capture parked with the
-  WebSocket transport in IPC-15 (#75), resolving asynchronously
-  rather than blocking.
+  the window. **`capture.screenshot` itself is served on both
+  targets since IPC-15 (#75)**: the browser draws the live view into
+  its canvas and reads it back in the same task (`to_data_url`,
+  `run_wasm/ipc_target.rs::capture_canvas`) — whether that read holds
+  the frame just drawn is established on WebGL and unverified on
+  WebGPU, which the bundle takes whenever the browser's WebGPU offers
+  an adapter (a browser whose WebGPU offers none falls back to WebGL2
+  since #224; `format/ipc.md` §`capture.screenshot`) — returning the
+  PNG inline
+  (`png_base64`) with the geometry sidecar — `capture/geometry.rs`,
+  one body for both — inline beside it, which `mandalactl --ws`
+  writes to the path given. What the browser's capture lacks is the
+  engine's framing (`width`/`height`/`region`/`fit`/`scale`): it is
+  the canvas as drawn, at its own size, and `describe` declares
+  exactly the parameters each target takes. Recording stays native;
+  `describe` says so. What any browser frame shows is limited by #228
+  (open): the browser has no Latin text face for the default family,
+  so edge labels draw as `.notdef` boxes and connection dots vanish, on
+  every backend.
 - **Headless and one-shot launches** (`--headless`, `--size`,
   `--adapter`, `--screenshot`; `src/application/app/run_headless.rs`,
   `app/pump.rs`, `app/shell.rs`, `renderer/adapter.rs`; IPC-10/#70) —
@@ -142,8 +176,9 @@ the parity trajectory (or why none is owed):
 - **Console modal shell** (`src/application/app/console_input/`) —
   the modal shell and its exec path are native-gated; the
   verb/parser layer (`src/application/console/`) is
-  cross-platform. Parity is the named next step in CONCEPTS §6
-  "Console", not yet scheduled.
+  cross-platform. Over IPC this is `act.console`, which the browser
+  reports unsupported (`describe`) and refuses by name. Parity is
+  the named next step in CONCEPTS §6 "Console", not yet scheduled.
 - **FreezeWatchdog** (`src/application/app/freeze_watchdog.rs`) —
   native-only by design: browsers ship their own unresponsive-tab
   dialog; no parity owed.
@@ -264,21 +299,24 @@ the parity trajectory (or why none is owed):
   semantics are decided on #144. Parity for the pause rides with
   the browser's drag-state machine (**Rubber-band select** above):
   there is no drag to pause for until there is a drag.
-- **Virtual-clock stepping** (`src/application/app/heartbeat.rs`;
-  IPC-09/#69) — `clock.step` and the `clock step` console verb run
-  the frame at virtual instants through a step driver
-  (`heartbeat::step` / `run_step`) that lives on native's
-  `InputHandlerContext` and is commanded over IPC and the console,
-  both native. **Neither the clock nor the tick is gated**:
-  `AppClock` (`src/application/clock.rs`) and its two modes compile
-  for both targets, the browser holds one (`WasmInputState.clock`),
-  every browser reader of app time — double-click, touch, an
-  `OnClick` trigger's start — reads it, and since #144 the
-  browser's frame stands still under a virtual clock the way
-  native's loop frame does (`event_redraw_requested` ticks on a
-  real clock only). What a virtual clock there still lacks is a
-  driver — the step loop over the browser's state — and the IPC-15
-  transport (#75) to command it.
+- **Virtual-clock stepping: the native frame it steps**
+  (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
+  runs at each heartbeat on native is native's whole frame: the
+  throttled drag and picker drains, the recorder's frame, the freeze
+  watchdog's tick. **The step itself is not gated, since IPC-15
+  (#75)**: the schedule (`app/step.rs`: `run_step`, the `Steps`
+  trait, `Beat`) is one body both targets run, the browser
+  implements it over its own frame (`run_wasm/step.rs`: one injected
+  sample, then the animation tick, at each virtual instant), and
+  `clock.set_mode` / `clock.step` / `clock.wait` are served over the
+  browser transport. Neither the clock nor the tick was ever gated:
+  `AppClock` (`src/application/clock.rs`) compiles for both targets,
+  the browser holds one (`WasmInputState.clock`), every browser
+  reader of app time reads it, and since #144 the browser's frame
+  stands still under a virtual clock the way native's loop frame
+  does (`event_redraw_requested` reads `Beat::Loop`'s predicates).
+  The `clock step` *console* verb is native because the console
+  shell is.
 
 ## Common tasks
 
@@ -386,9 +424,11 @@ the parity trajectory (or why none is owed):
   of this file, and every other document, is on your own care.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
-- **Drive the running app over IPC** (native, Unix): launch with
+- **Drive the running app over IPC** (native): launch with
   `--ipc <socket-path>` — `$XDG_RUNTIME_DIR/mandala.sock` is the
-  recommended place — then speak newline-delimited JSON to it, e.g.
+  recommended place; on Windows the value is a pipe name instead,
+  `--ipc mandala` serving `\\.\pipe\mandala-mandala`, and `mandalactl`
+  takes the same name — then speak newline-delimited JSON to it, e.g.
   `printf '{"id":1,"cmd":"ping"}\n' | nc -N -U $XDG_RUNTIME_DIR/mandala.sock`
   (`-N` closes the write half after the request; the server answers
   everything it received, then closes).

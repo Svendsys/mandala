@@ -14,9 +14,11 @@
 //! release and a touch tap run, which is the whole of the parity
 //! guarantee: there is no second hit test to drift.
 //!
-//! Native-only, with `ipc_target.rs` that consumes it.
-
-#![cfg(not(target_arch = "wasm32"))]
+//! Both targets' — each target's command target consumes it over the
+//! same trees, which is what keeps `scene.hit_test` one answer. The
+//! point resolver beside it ([`resolve_point`], [`surface_of`]) is
+//! shared for the same reason: an IPC point lands where the camera
+//! says, on either target.
 
 use glam::Vec2;
 use serde_json::{json, Value};
@@ -27,8 +29,52 @@ use baumhard::mindmap::tree_builder::{MindMapTree, PortalPart};
 use crate::application::document::{f32_json, SelectionState};
 use crate::application::scene_host::AppScene;
 
-use super::dispatch::{edge_under_pointer, CanvasPerPixel};
+use crate::application::ipc::injected::Surface;
+use crate::application::ipc::space::{Point, Space};
+use crate::application::ipc::ActionOutcome;
+use crate::application::renderer::Renderer;
+
+use super::dispatch::{edge_under_pointer, CanvasPerPixel, DispatchOutcome};
 use super::{compute_click_hit, ClickHit, ClickHitParts};
+
+/// `point` in both spaces, `(surface, canvas)`, through `renderer`'s
+/// camera as it stands now. One body for both targets' command targets
+/// and both targets' injected-input landing: where an IPC point lands
+/// is the camera's answer, and the camera is the same type on both.
+pub(super) fn resolve_point(renderer: &Renderer, point: Point) -> (Vec2, Vec2) {
+    match point.space {
+        Space::Surface => (
+            Vec2::new(point.x, point.y),
+            renderer.screen_to_canvas(point.x, point.y),
+        ),
+        Space::Canvas => {
+            let canvas = Vec2::new(point.x, point.y);
+            (renderer.canvas_to_screen(canvas), canvas)
+        }
+    }
+}
+
+/// Where `point` lands on the surface, through `renderer`'s camera as
+/// it stands now: how an injected event's position is resolved.
+pub(super) fn surface_of(renderer: &Renderer, point: Point) -> Surface {
+    let (surface, _) = resolve_point(renderer, point);
+    (f64::from(surface.x), f64::from(surface.y))
+}
+
+/// The funnel's verdict in the protocol's vocabulary. A refusal keeps
+/// its reason, which `act.action` returns (#194). One body for both
+/// targets' command targets, so the browser's `act.action` reports a
+/// refusal the way native's does — once it has one: `Refused` is
+/// native-only, as its constructors are, so the browser's match has no
+/// arm for it until a browser arm declines for a stated reason.
+pub(super) fn action_outcome(outcome: DispatchOutcome) -> ActionOutcome {
+    match outcome {
+        DispatchOutcome::Handled => ActionOutcome::Handled,
+        DispatchOutcome::Unhandled => ActionOutcome::Unhandled,
+        #[cfg(not(target_arch = "wasm32"))]
+        DispatchOutcome::Refused(reason) => ActionOutcome::Refused(reason),
+    }
+}
 
 impl ClickHit {
     /// The collapsed hit as `scene.hit_test` reports it: `kind` is the
@@ -345,5 +391,23 @@ mod tests {
             Value::Null,
             "the last rung runs only on an empty ladder"
         );
+    }
+
+    /// **A refusal reaches IPC with its reason intact** (#194), the
+    /// link between `fast_resize_drag`'s named refusal and the
+    /// `act.action` reply that shows it. The controls are the other two
+    /// verdicts: neither invents a reason, and a `Handled` stays one.
+    #[test]
+    fn test_a_refused_dispatch_keeps_its_reason_for_ipc() {
+        use crate::application::app::dispatch::native::FastResizeRefusal;
+        assert_eq!(
+            action_outcome(DispatchOutcome::Refused(FastResizeRefusal::NO_HOLDER)),
+            ActionOutcome::Refused(FastResizeRefusal::NO_HOLDER)
+        );
+        assert_eq!(
+            action_outcome(DispatchOutcome::Unhandled),
+            ActionOutcome::Unhandled
+        );
+        assert_eq!(action_outcome(DispatchOutcome::Handled), ActionOutcome::Handled);
     }
 }

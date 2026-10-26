@@ -14,54 +14,63 @@
 //! on the main thread, between winit events, with the same access an
 //! input handler has, so IPC never races the user and a command's
 //! effects are ordered with theirs. The threads wake the parked event
-//! loop through a winit user event ([`IpcWake`]), which is what lets
+//! loop through a winit user event (`IpcWake`, native), which is what lets
 //! an idle app — parked in `ControlFlow::Wait`, the state an agent
 //! most often finds it in — answer with no polling and no idle cost.
 //!
-//! Native-only at this module boundary, the `console_input`
-//! precedent: browsers cannot serve local sockets (`CLAUDE.md`
-//! "Dual-target status"). Within native, the transport is Unix-only
-//! until the Windows named-pipe adapter lands; until then `--ipc` on
-//! Windows fails at startup rather than doing nothing.
+//! **Two targets, one protocol.** The envelope, the registry and every
+//! command compile for both targets; what differs is the transport
+//! and the handful of commands the browser cannot serve, which the
+//! registry refuses by name (`registry::Support`). Native listens on a
+//! Unix socket, or a named pipe on Windows (#169) (`transport`); the
+//! browser, which cannot listen, opens a WebSocket toward `mandalactl
+//! bridge` (`format/ipc.md` §Transport "Browser").
 
-// The envelope is transport-agnostic, but the only code that reads
-// what it builds is the Unix transport. Off Unix the module compiles
-// with nothing draining it — the same shape as the wasm32 allows in
-// `application/mod.rs`, scoped the same way so the Unix lint stays
-// fully armed, and gone when the named-pipe transport (#169) lands.
+// The browser transport's protocol half compiles on native under
+// `test` alone: its only native reader is the test suite, which is
+// what proves it (`browser/mod.rs`); the socket half is wasm32's.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod browser;
 mod commands;
-#[cfg_attr(not(unix), allow(dead_code))]
 mod envelope;
 pub(crate) mod events;
 pub(crate) mod injected;
 mod registry;
 pub(crate) mod space;
 mod target;
-#[cfg(unix)]
+#[cfg(not(target_arch = "wasm32"))]
 mod transport;
 mod wait;
 
 pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use target::Screenshot;
+pub(crate) use target::{ActionOutcome, CommandTarget, Injected, SceneView, ShellState, IPC_STEPS_LABEL};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use target::{CanvasCapture, CanvasOutcome};
 // The decoder-to-wire test runner, for the app's GPU-backed tests
 // (`app::tests_gpu`): an `act.*` request run against a real app the
 // way the socket would run it, minus the socket.
 #[cfg(test)]
 pub(crate) use registry::tests::run_attached;
-pub(crate) use target::{ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState};
-#[cfg(unix)]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use transport::IpcServer;
-pub(crate) use wait::{Settling, Until};
+pub(crate) use wait::Settling;
+// Read by the one-shot capture's settle wait (`app/capture_flow.rs`),
+// a native launch; the browser's waits name their `Until` inside `wait`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use wait::Until;
 
 /// The winit user event the boundary threads send to wake the event
 /// loop. It carries nothing: the work is on the server's ordered
 /// queue, and a wake only says "drain it". Several wakes for one
 /// drain are harmless — an empty drain is a no-op.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct IpcWake;
 
 /// What executing one request produced.
-#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct Executed {
     /// The reply, or `None` for one held back: a `clock.wait` whose
     /// reply the transport sends when it resolves (`wait`).
@@ -74,6 +83,7 @@ pub(crate) struct Executed {
 }
 
 /// What one `IpcServer::drain` did that the event loop must act on.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct DrainOutcome {
     /// Some executed command changed pixels; request a redraw.
@@ -81,50 +91,4 @@ pub(crate) struct DrainOutcome {
     /// The drain budget ran out with messages still queued; keep the
     /// loop iterating rather than parking.
     pub(crate) backlog: bool,
-}
-
-/// Stand-in for the transport where it does not exist yet. `start`
-/// is the only way to obtain one and always fails, so the other
-/// methods are unreachable by construction — the uninhabited field
-/// proves it to the compiler.
-#[cfg(not(unix))]
-pub(crate) struct IpcServer {
-    never: std::convert::Infallible,
-}
-
-#[cfg(not(unix))]
-impl IpcServer {
-    pub(crate) fn start(
-        _path: &std::path::Path,
-        _wake: impl Fn() + Send + Sync + 'static,
-    ) -> Result<IpcServer, String> {
-        Err(
-            "the `--ipc` transport is not available on this platform yet: Windows needs the \
-             named-pipe adapter, tracked in #169 (format/ipc.md \"Windows\")"
-                .to_string(),
-        )
-    }
-
-    pub(crate) fn drain(
-        &mut self,
-        _execute: impl FnMut(&envelope::IpcRequest, &mut events::Session) -> Executed,
-    ) -> DrainOutcome {
-        match self.never {}
-    }
-
-    pub(crate) fn publish_map(&mut self, _path: Option<&str>) {
-        match self.never {}
-    }
-
-    pub(crate) fn wait_deadline(&self) -> Option<std::time::Instant> {
-        match self.never {}
-    }
-
-    pub(crate) fn evaluate_wait(&mut self, _app: Settling, _now: &events::Observed<'_>) {
-        match self.never {}
-    }
-
-    pub(crate) fn shutdown(self) {
-        match self.never {}
-    }
 }

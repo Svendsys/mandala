@@ -28,15 +28,18 @@ pub mod fonts;
 /// quantization.
 pub mod hex;
 /// Per-`(face, size, grapheme)` measured glyph advances + ink
-/// heights, cached. Replaces `metrics::monospace_advance` at every
-/// border-rail callsite.
+/// heights, cached: the measured answer for any caller with a face
+/// in scope.
 pub mod metric_cache;
 /// Font-metric approximations (`monospace_advance` + the underlying
-/// `MONOSPACE_ADVANCE_RATIO`) usable without a live `FontSystem`.
-/// Deprecated in favor of [`metric_cache::glyph_advance`] for any
-/// caller that has an `AppFont` in scope — the cache returns the
-/// measured advance from cosmic-text and the ratio's static
-/// calibration drift goes away.
+/// `MONOSPACE_ADVANCE_RATIO`) usable without a live `FontSystem`:
+/// the sanctioned face-independent estimate, for callers with no
+/// face in scope or that are deliberately face-independent
+/// (connection sample spacing, console geometry, picker sizing, the
+/// zero-advance fallback). A caller that has an `AppFont` in scope
+/// prefers [`metric_cache::glyph_advance`], which returns the
+/// advance cosmic-text measured rather than the ratio's static
+/// calibration.
 pub mod metrics;
 /// Naming and ordering rules for the compiled-in font table.
 ///

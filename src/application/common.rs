@@ -55,9 +55,10 @@ pub enum RenderDecree {
 /// - `Off` — no overlay; the default.
 /// - `Snapshot` — single per-frame FPS number rendered in the
 ///   corner. Useful for casual monitoring.
-/// - `Debug` — extra per-stage timing breakdown (event drain,
-///   scene build, GPU submit). Heavier to render; gated behind
-///   `Action::ToggleFpsDebug`.
+/// - `Debug` — the FPS number as a rolling average over recent
+///   frames rather than a single frame's, steadier to read while
+///   profiling; gated behind `Action::ToggleFpsDebug`. It is not a
+///   per-stage breakdown: no stage timings are collected.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FpsDisplayMode {
     Off,

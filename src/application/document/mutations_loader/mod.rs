@@ -18,7 +18,7 @@
 //! and cargo doc would warn under "unresolved link" for the inactive
 //! one if they were intra-doc links.
 //!
-//! Resilience posture (§7): every layer is best-effort. Failures log
+//! Resilience posture (§9): every layer is best-effort. Failures log
 //! `warn!` and fall through to the next source; the app never crashes
 //! on a bad user file. The application bundle, by contrast, is a
 //! build-time invariant and is parsed with `expect()` — a malformed

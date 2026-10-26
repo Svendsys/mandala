@@ -80,9 +80,9 @@ misread — come back here.
 **Decision.** Newline-delimited JSON over a Unix domain socket
 (`SOCK_STREAM`) at a user-owned path, enabled per launch by
 `--ipc <path>` (mirroring `--keybinds`). Windows: the same byte
-protocol over a named pipe restricted to the current user; IPC-02
-ships the Unix adapter and `--ipc` fails fast at startup on Windows
-until the pipe adapter lands. Single controller at a time; the
+protocol over a named pipe restricted to its owner, `--ipc <name>`
+naming the pipe; IPC-02 shipped the Unix adapter and #169 the pipe,
+behind the same boundary threads. Single controller at a time; the
 listener outlives client connections; no session state survives a
 disconnect. Full wire detail: `format/ipc.md` §Transport.
 
@@ -340,6 +340,19 @@ entire body is "blocking call, forward, repeat" are the most
 auditable shape this boundary can have; the single-controller
 promise (D-transport) is exactly why accept and read are *separate*
 blocking loops rather than one.
+
+*As built for Windows (#169):* the named pipe's transport runs a
+one-worker tokio runtime (`mandala-ipc-io`, `ipc/transport/pipe.rs`)
+under the same three threads, and it is not the loop rejected above.
+Each boundary thread still makes one blocking call at a time — the
+acceptor waits for one client, a reader for one read, a writer for one
+write step — through `Runtime::block_on`, so each body is still
+"blocking call, forward, repeat", written once above a four-trait seam
+(`ipc/transport/connection.rs`) that the Unix socket implements
+unchanged. No readiness state machine or partial-write buffering is
+written here: the worker is tokio's driver, and it exists because a
+pipe has neither a write timeout nor a safe way to disconnect a client
+stalled on one without it.
 
 **Watchdog interplay (pinned invariants).** Commands execute inside
 `about_to_wait`, which ticks `unparked()` on entry like every
@@ -658,6 +671,51 @@ parked* trajectory with an owner: IPC-15. `Action`'s
 `wasm_compatibility` taxonomy already gives IPC-15 its per-command
 compatibility answers. `./test.sh`'s wasm32 type-check gate keeps
 the boundary honest at every merge.
+
+**Amended by IPC-15 (#75): the carve-out is now the Unix-socket
+transport alone.** The module boundary moved: `src/application/ipc/`
+compiles on both targets — envelope, registry, every family, the
+event stream — and only `ipc/transport/` (the socket and its threads)
+stays native. What was parked landed as pinned: a WebSocket transport
+reusing the envelope verbatim, with framing and caps re-expressed per
+message (`format/ipc.md` §Transport "Browser"), and the browser-side
+capture. Two things the parked sketch did not say, decided here:
+
+1. **The page is a client, not a server.** A browser cannot listen,
+   so "a WebSocket transport" is a relay: `mandalactl bridge` on
+   loopback, with an app role the page connects to (`?ipc=`, opt-in
+   per load, never a default) and a controller role `mandalactl --ws`
+   connects to. The relay forwards frames verbatim and owns the
+   single-controller rule; it adds two control frames
+   (`{"bridge":"attached"|"detached"}`) that map the acceptor's
+   accept/disconnect lifecycle onto a connection that outlives
+   controllers. The threat delta — any page on the machine can open
+   a loopback WebSocket, where the socket had `0600` — is met with a
+   per-relay token on both roles and a loopback-only bind, and is
+   written up in `format/ipc.md` §Transport "Browser"; the trust
+   tier (D4) is unchanged.
+2. **Per-target honesty is the registry's, not a second table.** A
+   `CommandSpec` carries `Support::{Everywhere, NativeOnly(reason)}`;
+   `describe` renders `supported` and `unsupported_reason`, and
+   `execute` answers `unsupported` before the parameters. The
+   `wasm_compatibility` taxonomy this section promised IPC-15 is
+   used for exactly one thing: `act.action` refuses a `NativeOnly`
+   `Action` by name instead of answering `unhandled`. Parameters a
+   target does not take are `#[cfg]`'d out of the one spec, so the
+   table `describe` renders is honest per target by construction.
+
+The browser's command target (`app/run_wasm/ipc_target.rs`) is the
+same `CommandTarget` seam D5 pinned, built per command over the
+event-handler context the browser's winit arms were refactored onto
+(`Borrowed`), so an IPC action on the browser takes the keystroke's
+arms as on native. Its capture is the canvas read back in the task
+that drew it (`to_data_url`), returned inline with the geometry
+sidecar (`capture/geometry.rs`, now cross-platform); the offscreen
+engine and recording stay native, and `describe` says so. The clock
+step's schedule was lifted out of native's heartbeat into
+`app/step.rs` and the browser implements its `Steps` over its own
+frame, so a stepped run is one function of its commands on both
+targets.
 
 ## D7 — Capture and determinism surface: shapes pinned, engines owned downstream
 
@@ -1348,6 +1406,31 @@ Moved later, by the issue that found the need:
   fails loudly**: exit `1`, nothing written, for a map that did not
   load, a frame that cannot be drawn, and an app that ends before the
   capture.
+
+- **IPC-15 (#75)** — the design is D6 as amended by this issue (the
+  "Amended by IPC-15" note there), with the per-transport framing D1
+  reserved and the per-target table D5 implied. Decided while
+  building it, each in `format/ipc.md` §Transport "Browser" in the
+  same PR. (1) **The page connects out, through `mandalactl bridge`**:
+  a loopback relay with an app role and a controller role behind one
+  token, since a browser cannot listen. (2) **Opt-in per load**
+  (`?ipc=<app URL>`), never a default; without it no socket opens.
+  (3) **One frame per text message**, caps the app's, events held
+  behind a full send buffer. (4) **Two relay control frames** map the
+  acceptor's lifecycle: `attached` greets a fresh session with
+  `hello` (`pid: null`), `detached` resets it, a departing page sends
+  the controller `shutdown`. (5) **Honesty is the registry's**:
+  `Support` per command, `supported`/`unsupported_reason` in
+  `describe`, `unsupported` before params; `act.console` and the two
+  `capture.record_*` are the browser's unsupported set, and
+  `act.action` refuses a `NativeOnly` action by name. (6)
+  **`capture.screenshot` on the browser is the canvas as drawn**,
+  read back in the same task, returned inline with the sidecar; the
+  client writes the file and rewrites the reply to name it. (7) **The
+  step schedule is cross-platform** (`app/step.rs`); the browser steps
+  one injected sample and the animation tick per heartbeat. (8) **The
+  token is a same-user secret** at the socket path's tier; the relay
+  binds loopback only.
 
 ## Change governance
 

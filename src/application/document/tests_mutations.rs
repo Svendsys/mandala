@@ -43,7 +43,7 @@ fn make_set_bg_doc_mutation(value: &str) -> CM {
 /// Round-trip regression for `UndoAction::CanvasSnapshot`. The
 /// `apply_document_actions` path is the only producer of this
 /// variant, and prior to chunk 5 it had zero test coverage —
-/// CODE_CONVENTIONS.md §6 says every undo variant ships with at
+/// CODE_CONVENTIONS.md §11 says every undo variant ships with at
 /// least a forward-and-back test.
 #[test]
 fn test_apply_document_actions_undo_round_trip() {
@@ -483,9 +483,9 @@ fn test_collect_affected_node_ids_parent_of_root_is_empty() {
 // `test_siblings_of_a_root_node_is_the_empty_set`. Those versions sweep
 // *every* qualifying node and *every* root of the testament map
 // rather than the first child found and the hard-coded id `"0"`, so
-// they strictly subsume these; keeping both would be the §10
-// duplicate shape (one property, two homes, only one of them
-// maintained).
+// they strictly subsume these; keeping both would be the
+// CODE_CONVENTIONS §5 duplicate shape (one property, two homes,
+// only one of them maintained).
 
 /// `SectionsOnly` returns the triggering node id only — section-
 /// level fan-out happens inside `apply_to_tree`, but the undo

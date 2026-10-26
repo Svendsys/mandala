@@ -97,7 +97,7 @@ pub const EXEC_EXPECTED: &[&str] = &[
     "ERR canvas: unknown subverb 'nope'\\n  subject: border | section-frame",
     "ERR canvas: unknown subverb 'NOPE'\\n  subject: border | section-frame",
     "ERR usage: canvas border\\n  readout:   show\\n  override:  reset\\n  staged:    preview\\n  per-field: preset | color | padding | palette | font\\n  glyphs:    side | corner\\n  composed:  <key>=<value> …",
-    "LINES canvas border: (no map-wide default — every framed node falls back to its per-node `style.frame_color` / hardcoded glyph defaults)",
+    "LINES canvas border: (no map-wide default — every framed node uses its own border config, else the hardcoded glyph defaults; an unset color takes its theme frame color, then `style.frame_color`)",
     "OK canvas border: no change",
     "OK canvas border updated",
     "ERR canvas border: preset 'nope' unknown; pick one of light | heavy | double | rounded | custom | cycle",

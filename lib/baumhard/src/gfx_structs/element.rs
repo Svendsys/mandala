@@ -363,7 +363,8 @@ impl GfxElement {
     /// * `GlyphModel` / `Void` — returns `None` (no colour-font
     ///   regions on these variants).
     ///
-    /// O(1) region lookup (hash map).
+    /// O(log n) region lookup: `ColorFontRegions` is a `BTreeSet`
+    /// keyed by range.
     pub fn color_at_region(&self, range: Range) -> Option<FloatRgba> {
         match self {
             GfxElement::GlyphArea { glyph_area, .. } => {

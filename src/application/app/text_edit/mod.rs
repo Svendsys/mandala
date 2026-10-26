@@ -48,7 +48,7 @@ pub(in crate::application::app) enum TextEditState {
         /// Valid range `[0, count_grapheme_clusters(buffer)]`. Stored
         /// in graphemes (not chars or bytes) so backspace over an
         /// emoji or ZWJ cluster removes the whole user-visible
-        /// character — see `CODE_CONVENTIONS.md §2`/`§B2`.
+        /// character — see `CODE_CONVENTIONS.md §1`/`§B3`.
         cursor_grapheme_pos: usize,
         /// Char-range `ColorFontRegions` over `buffer` (no caret
         /// coverage). Seeded from the node's `GlyphArea::regions` at
@@ -185,7 +185,7 @@ const TEXT_EDIT_CARET: char = '|';
 //
 // These all operate on **grapheme-cluster indices** (not chars or
 // bytes), routing through `baumhard::util::grapheme_chad`. This is
-// what `CODE_CONVENTIONS.md §2` and `§B2` mandate for any code that
+// what `CODE_CONVENTIONS.md §1` and `§B3` mandate for any code that
 // touches user-typed text — char indexing splits emoji and combining
 // marks mid-cluster, leaving a corrupted buffer the next time the
 // renderer shapes it.

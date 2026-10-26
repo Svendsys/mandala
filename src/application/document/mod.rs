@@ -33,9 +33,8 @@ mod edges;
 // compiles unreferenced; the lint stays armed on the host.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod hit_test;
-// Native-only with the IPC module that reads it (`CLAUDE.md` "Dual-target
-// status"): the browser serves no socket.
-#[cfg(not(target_arch = "wasm32"))]
+// Both targets': the IPC module reads it on native over the socket
+// and in the browser over its WebSocket (`format/ipc.md` §Transport).
 mod ipc_state;
 pub mod mutations;
 pub mod mutations_loader;
@@ -111,17 +110,14 @@ pub use types::{
 // callers across the application crate that already
 // `use crate::application::document::*` for the doc API don't have
 // to reach across into baumhard's tree_builder for the value type.
-pub use baumhard::mindmap::model::MAX_SECTIONS_PER_NODE;
 pub use baumhard::mindmap::tree_builder::InteractionModeOverrides;
+pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
-#[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
-// Named outside `document/` only by the native funnels and the IPC
-// event layer.
+// Named outside `document/` only by the native funnels.
 #[cfg(not(target_arch = "wasm32"))]
 pub use revision::ChangeSource;
 pub use undo_action::UndoAction;
@@ -1046,14 +1042,6 @@ fn build_border_preview_scene_view<'a>(bp: &'a BorderPreview) -> tree_builder::B
     }
 }
 
-/// Convert an owned `BorderConfigEdits` (from the application
-/// crate) into a borrowed scene-side `BorderConfigEditsView<'a>`
-/// the scene builder consumes. Per-field tri-state: `Keep` →
-/// `EditView::Keep`, `Clear` → `EditView::Clear`, `Set(v)` →
-/// `EditView::Set(&v)`. Pre-fix this projection collapsed both
-/// `Keep` and `Clear` to a single "no edit" sentinel, dropping
-/// the `Clear` axis entirely and breaking the parity contract
-/// with `apply_glyph_border_edits_to_slot` (Risk #1 in the plan).
 /// Test-only re-export of [`build_border_config_edits_view`].
 /// Used by the parity test in `tests_nodes.rs` that exercises
 /// `apply_view_to_slot` (baumhard) vs `apply_glyph_border_edits_to_slot`
@@ -1079,6 +1067,13 @@ pub(crate) fn nodes_border_apply_glyph_border_edits_to_slot_for_test(
     nodes::apply_glyph_border_edits_to_slot(slot, edits, outcome)
 }
 
+/// Convert an owned `BorderConfigEdits` (from the application
+/// crate) into a borrowed scene-side `BorderConfigEditsView<'a>`
+/// the scene builder consumes. Per-field tri-state: `Keep` →
+/// `EditView::Keep`, `Clear` → `EditView::Clear`, `Set(v)` →
+/// `EditView::Set(&v)`. `Clear` must stay distinct from `Keep`:
+/// collapsing them would drop the `Clear` axis and break the
+/// parity contract with `apply_glyph_border_edits_to_slot`.
 fn build_border_config_edits_view(edits: &BorderConfigEdits) -> tree_builder::BorderConfigEditsView<'_> {
     use crate::application::document::OptionEdit;
     use tree_builder::EditView;

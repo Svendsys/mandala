@@ -211,17 +211,16 @@ pub(in crate::application::app) fn dispatch_compatible(
     match action {
         Action::ExitMode => {
             // Cross-platform slice runs first:
-            // 0. Cancel any active border preview. The plan's
-            //    intended Esc shape was "if a preview is up, Esc
-            //    cancels it; otherwise Esc falls through to the
-            //    rest of ExitMode". Since `cancel_border_preview`
+            // 0. Cancel any active border preview. Esc means "if a
+            //    preview is up, cancel it; otherwise fall through to
+            //    the rest of ExitMode". Since `cancel_border_preview`
             //    can't share Esc with `exit_mode` through the
             //    keybind resolver (first match wins, no chaining),
             //    we collapse the chain into ExitMode's body — Esc
             //    on a preview cancels the preview AND skips the
             //    mode-clear, so a user previewing while in Resize
             //    doesn't lose their resize mode just because they
-            //    typed Esc to drop a preview. C7 fix.
+            //    typed Esc to drop a preview.
             if let Some(doc) = core.document.as_deref_mut() {
                 if doc.cancel_border_preview() {
                     let mut rc = super::cross_dispatch::RebuildContext {
@@ -237,15 +236,16 @@ pub(in crate::application::app) fn dispatch_compatible(
                 }
             }
             // 1. Clear `last_click` so a post-Esc click isn't paired
-            //    with a pre-Esc one (was already in the pre-Batch-2
-            //    `ExitMode` cross-platform body).
+            //    with a pre-Esc one.
             // 2. Clear `interaction_mode` to `Default` and rebuild
             //    when the active mode is `Resize { .. }` or
-            //    `NodeEdit { .. }`. Both modes need a way out: Resize
-            //    used to be NativeOnly (review-fix in Batch 2), and
-            //    NodeEdit was added by Batch 3 with no Esc-handler at
-            //    all — multi-section users got trapped (no outside-
-            //    click on WASM, no NodeEdit-context Esc binding). On
+            //    `NodeEdit { .. }`. Both modes need an exit that does
+            //    not depend on the pointer: on native, Esc is the
+            //    keyboard's exit beside the pointer ones (a body click
+            //    for Resize, `maybe_exit_node_edit_on_outside_click`
+            //    for NodeEdit). The arm runs on both targets so the
+            //    browser, which has no outside-click exit, has it once
+            //    it can enter either mode (#229). On
             //    NodeEdit exit also lift selection back to
             //    `Single(node_id)` so per-node verbs stay usable
             //    after exit; a stale Section selection would point

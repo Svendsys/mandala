@@ -316,7 +316,7 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
             }
             CellField::ColorFontRegions => {}
             other => {
-                // Per CODE_CONVENTIONS §7 the picker overlay is an
+                // Per CODE_CONVENTIONS §9 the picker overlay is an
                 // interactive path and must not abort the process.
                 // The dynamic spec is pinned by a test
                 // (`spec_dynamic_mutator_spec_per_section_fields_are_slim`)

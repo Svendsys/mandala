@@ -38,7 +38,7 @@
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value};
@@ -602,6 +602,12 @@ pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>) -> 
     args
 }
 
+/// Create `path` for writing only if nothing is there: no file, no
+/// symlink (dangling or not), no hard link to someone else's file.
+fn open_exclusive(path: &Path) -> std::io::Result<File> {
+    File::options().write(true).create_new(true).open(path)
+}
+
 /// A new file for `ffmpeg`'s frame list in the temp dir, made
 /// exclusively — `O_EXCL` neither follows a symlink nor reuses a name
 /// someone planted — under a name that is this process's and this
@@ -610,12 +616,20 @@ fn create_temp_list() -> Result<(PathBuf, File), String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    for attempt in 0..16u32 {
-        let path = std::env::temp_dir().join(format!(
+    claim_first((0..16u32).map(|attempt| {
+        std::env::temp_dir().join(format!(
             "mandalactl-{}-{nanos}-{attempt}-frames.txt",
             std::process::id()
-        ));
-        match File::options().write(true).create_new(true).open(&path) {
+        ))
+    }))
+}
+
+/// The first of `candidates` nothing is at yet, created and opened
+/// through [`open_exclusive`]; one that is taken — planted or not — is
+/// passed over, never opened.
+fn claim_first(candidates: impl IntoIterator<Item = PathBuf>) -> Result<(PathBuf, File), String> {
+    for path in candidates {
+        match open_exclusive(&path) {
             Ok(file) => return Ok((path, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => {
@@ -1003,14 +1017,31 @@ pub(crate) fn parse_args(words: &[String], cwd: Option<&Path>) -> Result<Args, S
             "`record {SUBCOMMAND}` takes one directory; `{extra}` is a second"
         ));
     }
+    // Joined the way a socket command's path parameter is
+    // (`params::absolute`): component by component, `.` dropped, so the
+    // path reads in the platform's own separators — not `C:\w\shots/a.gif`
+    // on Windows, nor `/w/./rec` anywhere.
     let resolve = |path: &str| -> Result<PathBuf, String> {
         let path = Path::new(path);
         if path.is_absolute() {
             return Ok(path.to_path_buf());
         }
-        cwd.map(|cwd| cwd.join(path)).ok_or_else(|| {
+        let join = |cwd: &Path| {
+            let mut joined = cwd.to_path_buf();
+            joined.extend(path.components().filter(|c| !matches!(c, Component::CurDir)));
+            joined
+        };
+        cwd.map(join).ok_or_else(|| {
+            // As `params::absolute` says it: a rooted path without a drive
+            // is the one non-absolute path Windows can have that is not
+            // relative.
+            let why = if path.has_root() {
+                "has no drive"
+            } else {
+                "is relative"
+            };
             format!(
-                "`{}` is relative and the working directory could not be read; pass an absolute path",
+                "`{}` {why} and the working directory could not be read; pass an absolute path",
                 path.display()
             )
         })
@@ -1031,6 +1062,7 @@ pub(crate) fn parse_args(words: &[String], cwd: Option<&Path>) -> Result<Args, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::native;
 
     /// The manifest `format/ipc.md` shows, with `frames` filled in.
     fn manifest_text(frames: &str) -> String {
@@ -1485,11 +1517,20 @@ mod tests {
             frame(250.0, "it's.png")
         )))
         .expect("manifest");
-        assert_eq!(
-            ffmpeg_list(Path::new("/rec"), &manifest),
+        let expected = native(
             "file '/rec/frame_00000.png'\nduration 0.250\n\
              file '/rec/it'\\''s.png'\nduration 0.150\n\
-             file '/rec/it'\\''s.png'\n"
+             file '/rec/it'\\''s.png'\n",
+            // A backslash inside single quotes is literal to ffmpeg's
+            // concat reader, so a Windows path needs no escaping of its
+            // own.
+            "file 'C:\\rec\\frame_00000.png'\nduration 0.250\n\
+             file 'C:\\rec\\it'\\''s.png'\nduration 0.150\n\
+             file 'C:\\rec\\it'\\''s.png'\n",
+        );
+        assert_eq!(
+            ffmpeg_list(Path::new(native("/rec", r"C:\rec")), &manifest),
+            expected
         );
     }
 
@@ -1546,27 +1587,86 @@ mod tests {
         assert!(unscaled.contains(&"pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p".to_string()));
     }
 
-    /// The frame list is made exclusively: a name someone planted — as
-    /// a symlink to a file of yours, say — is never written through.
+    /// The frame list lands in the temp dir under a name of its own each
+    /// time, opened through [`open_exclusive`].
     #[test]
-    #[cfg(unix)]
-    fn test_the_ffmpeg_list_is_never_written_through_a_planted_name() {
+    fn test_each_ffmpeg_list_is_a_new_file_of_its_own_in_the_temp_dir() {
         let (path, mut file) = create_temp_list().expect("a list");
         file.write_all(b"x").expect("written");
         assert!(path.starts_with(std::env::temp_dir()));
         let again = create_temp_list().expect("another");
         assert_ne!(path, again.0, "each is a name of its own");
-        let target = tempfile::NamedTempFile::new().expect("a victim");
-        std::fs::write(target.path(), "precious").expect("seed");
-        let planted = std::env::temp_dir().join("mandalactl-planted-frames.txt");
-        let _ = std::fs::remove_file(&planted);
-        std::os::unix::fs::symlink(target.path(), &planted).expect("plant");
-        let refused = File::options().write(true).create_new(true).open(&planted);
-        assert!(refused.is_err(), "O_EXCL refuses a symlink, dangling or not");
-        assert_eq!(std::fs::read_to_string(target.path()).expect("read"), "precious");
-        for p in [&path, &again.0, &planted] {
+        for p in [&path, &again.0] {
             let _ = std::fs::remove_file(p);
         }
+    }
+
+    /// A victim file of yours, a name in the temp dir someone planted to
+    /// point at it, and whether the list's open wrote through it.
+    fn planted(kind: &str, plant: impl FnOnce(&Path, &Path) -> std::io::Result<()>) -> (bool, String) {
+        let victim = tempfile::NamedTempFile::new().expect("a victim");
+        std::fs::write(victim.path(), "precious").expect("seed");
+        let name = std::env::temp_dir().join(format!("mandalactl-planted-{kind}-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&name);
+        plant(victim.path(), &name).expect("plant");
+        let refused = open_exclusive(&name)
+            .map(|mut f| f.write_all(b"overwritten"))
+            .is_err();
+        let _ = std::fs::remove_file(&name);
+        (refused, std::fs::read_to_string(victim.path()).expect("read"))
+    }
+
+    /// The list's open never writes through a name someone planted as a
+    /// hard link to a file of yours — the planting that needs no
+    /// privilege on either platform. The failing input is
+    /// `open_exclusive` with `create(true)` in place of
+    /// `create_new(true)`: it opens the link and writes into the victim.
+    #[test]
+    fn test_the_ffmpeg_list_is_never_written_through_a_planted_hard_link() {
+        let (refused, victim) = planted("link", |victim, name| std::fs::hard_link(victim, name));
+        assert!(refused, "a name that exists is refused");
+        assert_eq!(victim, "precious");
+    }
+
+    /// The list's names are claimed through the seam: a first candidate
+    /// planted as a hard link to a file of yours is passed over for the
+    /// next, and the victim is never written. The failing input is a
+    /// `claim_first` that opens a name any other way than
+    /// [`open_exclusive`] — it takes the planted name and writes into the
+    /// victim — so the list cannot quietly stop going through the seam.
+    #[test]
+    fn test_the_ffmpeg_list_passes_over_a_planted_name_for_the_next() {
+        let dir = tempfile::tempdir().expect("a directory");
+        let victim = dir.path().join("yours.txt");
+        std::fs::write(&victim, "precious").expect("seed");
+        let planted = dir.path().join("frames-0.txt");
+        std::fs::hard_link(&victim, &planted).expect("plant");
+        let free = dir.path().join("frames-1.txt");
+        let (claimed, mut file) = claim_first([planted.clone(), free.clone()]).expect("a free name");
+        file.write_all(b"file 'a.png'\n").expect("written");
+        assert_eq!(claimed, free, "the planted name is passed over");
+        assert_eq!(std::fs::read_to_string(&victim).expect("read"), "precious");
+    }
+
+    /// The same for a planted symlink, dangling or not.
+    ///
+    /// Unix-only because planting a symlink on Windows takes a privilege
+    /// (`SeCreateSymbolicLinkPrivilege`, or developer mode) a test cannot
+    /// count on; the hard-link test above plants the name the way Windows
+    /// lets anyone, and runs on both.
+    #[test]
+    #[cfg(unix)]
+    fn test_the_ffmpeg_list_is_never_written_through_a_planted_symlink() {
+        let (refused, victim) = planted("symlink", |victim, name| std::os::unix::fs::symlink(victim, name));
+        assert!(refused, "create_new refuses a symlink");
+        assert_eq!(victim, "precious");
+        // Dangling: its target does not exist yet, in a directory that
+        // does, so an open that followed it would create the file there.
+        let dir = tempfile::tempdir().expect("a directory");
+        let target = dir.path().join("made-through-the-link.txt");
+        let (refused, _) = planted("dangling", |_, name| std::os::unix::fs::symlink(&target, name));
+        assert!(refused, "a dangling symlink is refused too");
+        assert!(!target.exists(), "nothing was created through it");
     }
 
     /// With a real `ffmpeg` on the host the MP4 is made and is a video;
@@ -1610,11 +1710,11 @@ mod tests {
 
     #[test]
     fn test_the_command_line_is_read_and_relative_paths_meet_the_working_directory() {
-        let cwd = Path::new("/work");
+        let cwd = Path::new(native("/work", r"C:\work"));
         let args = parse_args(
             &words(&[
                 "assemble",
-                "rec",
+                "./rec",
                 "out=shots/a.gif",
                 "width=640",
                 "fps=12",
@@ -1627,9 +1727,9 @@ mod tests {
         assert_eq!(
             args,
             Args {
-                dir: PathBuf::from("/work/rec"),
+                dir: PathBuf::from(native("/work/rec", r"C:\work\rec")),
                 options: Options {
-                    out: Some(PathBuf::from("/work/shots/a.gif")),
+                    out: Some(PathBuf::from(native("/work/shots/a.gif", r"C:\work\shots\a.gif"))),
                     format: Format::Gif,
                     width: Some(640),
                     fps: Some(12),
@@ -1638,13 +1738,30 @@ mod tests {
                 }
             }
         );
+        // Compared as text too: `Path`'s equality skips a `.` and reads
+        // `/` and `\` alike on Windows, and what the user is shown is the
+        // text. The failing input is a plain `cwd.join`, which keeps both.
+        assert_eq!(
+            args.dir.display().to_string(),
+            native("/work/rec", r"C:\work\rec"),
+            "a leading ./ is dropped"
+        );
+        assert_eq!(
+            args.options
+                .out
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .as_deref(),
+            Some(native("/work/shots/a.gif", r"C:\work\shots\a.gif"))
+        );
+        let absolute = native("/abs/rec", r"C:\abs\rec");
         let video =
-            parse_args(&words(&["assemble", "/abs/rec", "format=mp4"]), None).expect("absolute needs no cwd");
+            parse_args(&words(&["assemble", absolute, "format=mp4"]), None).expect("absolute needs no cwd");
         assert_eq!(
             (video.dir, video.options.format),
-            (PathBuf::from("/abs/rec"), Format::Mp4)
+            (PathBuf::from(absolute), Format::Mp4)
         );
-        let defaults = parse_args(&words(&["assemble", "/abs/rec"]), None)
+        let defaults = parse_args(&words(&["assemble", absolute]), None)
             .expect("parsed")
             .options;
         assert_eq!(
@@ -1655,6 +1772,26 @@ mod tests {
                 defaults.fps
             ),
             (DEFAULT_MAX_FRAMES, false, None, None)
+        );
+    }
+
+    /// As `params`' path parameters: a directory rooted without a drive
+    /// takes the working directory's, and with none to take, the refusal
+    /// says it has no drive rather than calling it relative.
+    #[cfg(windows)]
+    #[test]
+    fn test_a_directory_rooted_without_a_drive_takes_the_working_directorys() {
+        let args = parse_args(&words(&["assemble", r"\rec"]), Some(Path::new(r"D:\work"))).expect("parsed");
+        assert_eq!(args.dir.display().to_string(), r"D:\rec");
+        let refused = parse_args(&words(&["assemble", r"\rec"]), None);
+        assert!(
+            matches!(&refused, Err(m) if m.contains("has no drive")),
+            "{refused:?}"
+        );
+        let relative = parse_args(&words(&["assemble", "rec"]), None);
+        assert!(
+            matches!(&relative, Err(m) if m.contains("is relative")),
+            "{relative:?}"
         );
     }
 
@@ -1727,10 +1864,14 @@ mod tests {
 
         let (exit, out, err) = run_line(&["assemble", &relative], &cwd, false);
         assert_eq!(exit, Exit::Success, "{err}");
-        assert!(
-            out.contains(&format!("out: \"{}\"", dir.join("recording.gif").display())),
-            "{out}"
-        );
+        // The value is a JSON string, so a Windows path's backslashes
+        // print doubled. Escaped here by hand rather than by the
+        // serializer `render` uses, so the expectation does not agree
+        // with the code by construction; a temp path holds no `"` or
+        // control character for JSON to escape besides.
+        let written = dir.join("recording.gif").display().to_string();
+        let expected = format!("out: \"{}\"", written.replace('\\', r"\\"));
+        assert!(out.contains(&expected), "{out}");
         assert!(
             out.contains("frames_out: 2") && out.contains("format: \"gif\""),
             "{out}"

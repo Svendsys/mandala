@@ -80,15 +80,16 @@ serde_ignored = "0.1.14"
 # else: `env_logger` was the only crate enabling `log/std` on the
 # wasm32 leg, and cargo unions features per target, so the browser
 # build's `log` is now `release_max_level_warn` alone where it used to
-# be `release_max_level_warn,std`. That is survivable today only
-# because `console_log 1.1.0` installs a `static LOGGER` through
-# `log::set_logger(&LOGGER)` (`console_log-1.1.0/src/lib.rs:222`)
-# rather than `log::set_boxed_logger`, which is the API `log`'s
-# `std`/`alloc` features gate. A wasm arm that reached for
-# `set_boxed_logger`, or a replacement for `console_log` that boxes its
-# logger, needs `log = { workspace = true, features = ["std"] }` here —
-# without it the browser build stops compiling with an error naming
-# `log`, not this line.
+# be `release_max_level_warn,std`. That is survivable because the
+# wasm arm of `init()` installs its own `static` capturing wrapper
+# through `log::set_logger(&WASM_LOGGER)` — the same shape `console_log
+# 1.1.0`'s `init_with_level` takes (`console_log-1.1.0/src/lib.rs:222`)
+# — and forwards each record to `console_log::log`; neither reaches for
+# `log::set_boxed_logger`, which is the API `log`'s `std`/`alloc`
+# features gate. A wasm arm that did, or a replacement for `console_log`
+# that boxes its logger, needs `log = { workspace = true, features =
+# ["std"] }` here — without it the browser build stops compiling with
+# an error naming `log`, not this line.
 #
 # The asymmetry with `rand` is deliberate and is not an oversight: see
 # the `getrandom` note in the root manifest. `rand` cannot move into a
@@ -123,7 +124,11 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # from `strum_macros` and `wasm-bindgen-backend`. Asking for less there
 # does not mean compiling against less — see
 # `lib/mandala_derive/Cargo.toml`.
-syn = { workspace = true, features = ["full"] }
+# `visit` is for `util::source_scan::section_growths_in`, which walks
+# fn bodies as syntax rather than as lines, so a rustfmt-wrapped
+# `node.sections\n    .push(` chain is the same growth as the one-line
+# spelling (#208). Test-only, like the rest of this entry.
+syn = { workspace = true, features = ["full", "visit"] }
 # `util::source_scan` excises `#[cfg(test)]` items from a file's text
 # and has to leave the surviving lines *at their own line numbers*, so
 # a guard reporting an offender can say `file:line`. That needs the

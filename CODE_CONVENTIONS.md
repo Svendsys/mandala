@@ -136,6 +136,15 @@ decision, not a drive-by edit.
     never trip the `FreezeWatchdog`. A full outbound queue pauses that
     controller's execution until its writer makes room, and a write
     that makes no progress for ten seconds tears the connection down.
+    On Windows (the named pipe, #169) the same threads run, plus one
+    more: a single tokio runtime worker, `mandala-ipc-io`, which
+    exists only while `--ipc` is active and touches no app state —
+    it drives the pipe's overlapped I/O, because a pipe has no write
+    timeout and a stalled client can be disconnected only through
+    tokio's safe API. Every boundary thread still blocks on one call
+    at a time (`Runtime::block_on`); nothing above the transport seam
+    is async, and the runtime is not a license for `tokio` anywhere
+    else (`work_plans/LLM_IPC.md` §D2).
 - **Model / view separation.** `MindMapDocument` owns the data model;
   `Renderer` owns GPU resources. The renderer reads intermediate
   representation (`Tree<GfxElement, GfxMutator>`, one per canvas
@@ -523,8 +532,8 @@ industrial cost/benefit reasoning. This is not license for speculation.
   mutation. Degrade the frame, log via `log::warn!`/`log::error!`, keep
   running. A crash during editing is the one user-visible failure this
   codebase cannot tolerate. Defensive `let Some(...) else { return; }`
-  in interactive paths is the sanctioned exception to §7's "trust
-  internal invariants".
+  in interactive paths is the sanctioned exception to trusting
+  internal invariants.
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
   the winit event loop and its window (or, under `--headless`,

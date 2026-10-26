@@ -1230,8 +1230,8 @@ name = "test_bench"
     /// trade: manifest edits in this workspace are rare and are
     /// exactly what these tests exist to look at.
     const DECLARATIONS_PER_MANIFEST: [(&str, usize); 5] = [
-        ("Cargo.toml", 25),
-        ("crates/mandalactl/Cargo.toml", 4),
+        ("Cargo.toml", 28),
+        ("crates/mandalactl/Cargo.toml", 7),
         ("crates/maptool/Cargo.toml", 4),
         ("lib/baumhard/Cargo.toml", 27),
         ("lib/mandala_derive/Cargo.toml", 3),

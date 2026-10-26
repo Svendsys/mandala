@@ -509,11 +509,11 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     ]);
     delta.apply_to(area);
 
-    // `Flag::Focused` write deferred until the section-frame scene
-    // pass (Plan §4.4) lands — the flag has no renderer consumer
-    // today, so a writer here would be a half-feature per
-    // CODE_CONVENTIONS §5. Re-add the `set_flag(Flag::Focused)`
-    // call alongside the consumer.
+    // No `Flag::Focused` write: the section-frame pass takes the
+    // edited section from `SectionFrameElement::focused`, so the
+    // flag has no renderer consumer and a writer here would be a
+    // half-feature per CODE_CONVENTIONS §5. Add the
+    // `set_flag(Flag::Focused)` call alongside a consumer.
 
     // Re-shape only the edited section's buffer — the keyed reshape
     // drops the per-keystroke cost on a multi-section node from

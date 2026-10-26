@@ -84,14 +84,13 @@ pub(crate) mod fire_custom_mutation;
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]
 mod heartbeat;
+mod step;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use heartbeat::{step_document, SteppedDocument};
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
 mod interaction_mode;
-#[cfg(not(target_arch = "wasm32"))]
 mod ipc_scene;
-#[cfg(not(target_arch = "wasm32"))]
 mod ipc_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod ipc_target;
@@ -102,7 +101,6 @@ mod record_flow;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `work_plans/WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
-#[cfg(not(target_arch = "wasm32"))]
 mod modal_editor;
 #[cfg(not(target_arch = "wasm32"))]
 mod portal_label_drag;
@@ -635,8 +633,9 @@ pub(in crate::application) use interaction_mode::{
 // (the resolver returns it); production consumers pattern-match
 // the result without naming the type. Tests assert on the variant
 // shape, so the re-export is `#[cfg(test)]`-gated to avoid an
-// unused-import warning on non-test builds. When Batch 4 (fast
-// resize) lands a non-test consumer, the gate moves.
+// unused-import warning on non-test builds. Production code
+// (`ipc_state.rs`) imports it from `interaction_mode` directly; the
+// gate moves when a non-test consumer needs this path.
 #[cfg(test)]
 pub(in crate::application) use interaction_mode::ResizeTarget;
 
@@ -705,6 +704,14 @@ struct PendingPress {
 /// `query.mode` reports [`PendingPress::grabs`] in it, so the three
 /// cannot disagree. Portal *text* is intentionally absent: dragging a
 /// portal's text sub-part is not a gesture, the icon carries the drag.
+///
+/// The two resize handles lead (#218). They are captured only in
+/// `InteractionMode::Resize`, on the target's own handles, so outside
+/// that mode the order is what it was. Inside it, the mode exists for
+/// those handles, while a label is grabbable in every mode and stays so
+/// once the mode is left. The press reads the same list for
+/// double-click detection ([`PendingPress::is_handle_press`]), so what a
+/// press would drag is what it is.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Grab {
@@ -719,12 +726,21 @@ enum Grab {
 impl Grab {
     /// Every grab, first-resolved first.
     const PRECEDENCE: [Grab; 5] = [
+        Grab::NodeResizeHandle,
+        Grab::SectionResizeHandle,
         Grab::EdgeLabel,
         Grab::PortalLabel,
         Grab::EdgeHandle,
-        Grab::NodeResizeHandle,
-        Grab::SectionResizeHandle,
     ];
+
+    /// Whether this grab is a handle: a drag affordance with no click
+    /// meaning of its own, unlike a label, which a double-click edits.
+    fn is_handle(self) -> bool {
+        match self {
+            Grab::NodeResizeHandle | Grab::SectionResizeHandle | Grab::EdgeHandle => true,
+            Grab::EdgeLabel | Grab::PortalLabel => false,
+        }
+    }
 
     /// The grab's name as `query.mode` reports it.
     fn word(self) -> &'static str {
@@ -761,6 +777,17 @@ impl PendingPress {
     /// to the node-move / rect-select / pan arms.
     fn first_grab(&self) -> Option<Grab> {
         self.grabs().next()
+    }
+
+    /// Whether the drag this press would become is a handle's (#218).
+    /// Such a press never takes part in double-click detection: it
+    /// neither completes a double-click nor starts one, so a second
+    /// press on a handle grabs it rather than opening an editor, and a
+    /// handle grab followed by a quick press elsewhere is no
+    /// double-click either. A press whose first grab is a label, or
+    /// that grabbed nothing, double-clicks as any press does.
+    fn is_handle_press(&self) -> bool {
+        self.first_grab().is_some_and(Grab::is_handle)
     }
 }
 
@@ -882,9 +909,9 @@ enum DragState {
         /// converted via `Renderer::screen_to_canvas`). Carried
         /// through to `Action::FastResizeStart` so the corner
         /// anchor is computed from where the user *pressed*, not
-        /// from where the cursor sat at threshold-cross — plan
-        /// §6.3: "Quadrant determined at press time, not
-        /// continuously". Without this snapshot the user gets
+        /// from where the cursor sat at threshold-cross: the
+        /// quadrant is determined at press time, not continuously.
+        /// Without this snapshot the user gets
         /// whichever corner they happened to drag *toward*, which
         /// inverts the gesture's intent on small nodes.
         start_canvas: glam::Vec2,
@@ -1249,9 +1276,10 @@ pub struct Options {
     /// defaults). The event loop resolves this into a `ResolvedKeybinds`
     /// at startup and dispatches keyboard events through it.
     pub keybind_config: crate::application::keybinds::KeybindConfig,
-    /// `--ipc <path>`: the Unix socket to serve the IPC protocol on
-    /// (`format/ipc.md`). `None` — the default — means no socket and
-    /// no IPC thread. Native-only: browsers cannot serve sockets.
+    /// `--ipc <path>`: the Unix socket to serve the IPC protocol on, or
+    /// on Windows the name of the pipe, `\\.\pipe\mandala-<name>`
+    /// (`format/ipc.md`). `None` — the default — means no endpoint and
+    /// no IPC thread. Native-only: browsers cannot serve either.
     #[cfg(not(target_arch = "wasm32"))]
     pub ipc_socket: Option<std::path::PathBuf>,
     /// `--headless`: no window, no display and no event loop — the

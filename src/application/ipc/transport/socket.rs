@@ -34,7 +34,10 @@ use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+
+use super::unix::SocketAcceptor;
 
 /// The socket file this process bound, identified by inode as well
 /// as by name. Unlinking checks the identity first, so a graceful exit
@@ -42,13 +45,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 ///
 /// The inode number is a sound identity only while it cannot be
 /// recycled, and it cannot while the listener is open: a bound socket
-/// holds a reference to its inode. [`BoundSocket::unlink`] therefore
-/// runs while the acceptor thread still owns the listener.
+/// holds a reference to its inode. This keeps a clone of the listener
+/// for exactly that, so the identity holds even once the acceptor has
+/// stopped and dropped its own.
 #[derive(Debug)]
 pub(super) struct BoundSocket {
     path: PathBuf,
     dev: u64,
     ino: u64,
+    _listener: UnixListener,
+    /// The acceptor's stop flag; set once, by [`BoundSocket::close`].
+    stop: Arc<AtomicBool>,
 }
 
 impl BoundSocket {
@@ -56,12 +63,35 @@ impl BoundSocket {
         &self.path
     }
 
+    /// Whether the file at the path is still the socket this process
+    /// bound.
+    fn is_ours(&self) -> bool {
+        fs::symlink_metadata(&self.path).is_ok_and(|m| m.dev() == self.dev && m.ino() == self.ino)
+    }
+
+    /// Stop the acceptor and remove the socket file. Idempotent; run at
+    /// a graceful exit and again, as a no-op, on drop.
+    ///
+    /// The acceptor is woken by one connection to the socket, made only
+    /// while the path is still ours, so a successor's socket at the same
+    /// path is never dialed. When the path is no longer ours the
+    /// acceptor stays in `accept()`; nothing can reach it to wake it,
+    /// and it ends with the process.
+    pub(super) fn close(&self) {
+        if self.stop.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if self.is_ours() {
+            let _ = UnixStream::connect(&self.path);
+        }
+        self.unlink();
+    }
+
     /// Remove the socket file if it is still the one this process
     /// bound. Best-effort: exit proceeds either way, and the next
     /// launch's stale-socket check heals anything left behind.
     pub(super) fn unlink(&self) {
-        let ours = fs::symlink_metadata(&self.path).is_ok_and(|m| m.dev() == self.dev && m.ino() == self.ino);
-        if ours {
+        if self.is_ours() {
             if let Err(e) = fs::remove_file(&self.path) {
                 log::warn!(
                     "ipc: could not remove socket {}: {e}",
@@ -72,12 +102,18 @@ impl BoundSocket {
     }
 }
 
+impl Drop for BoundSocket {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 /// Bind the listening socket at `path`, running the whole vetted
 /// sequence: directory chain, existing path, staged owner-only bind.
 ///
 /// Cost: a handful of syscalls per ancestor directory, once per
 /// launch, before the event loop runs.
-pub(super) fn bind(path: &Path) -> Result<(UnixListener, BoundSocket), String> {
+pub(super) fn bind(path: &Path) -> Result<(SocketAcceptor, BoundSocket), String> {
     if path.as_os_str().is_empty() {
         return Err("`--ipc` needs a socket path, e.g. `--ipc $XDG_RUNTIME_DIR/mandala.sock`".to_string());
     }
@@ -301,7 +337,7 @@ static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 /// `bind` sees; a path within a few bytes of the limit with a very
 /// short file name can still overflow it, and is then refused in terms
 /// of the path the user gave.
-fn bind_staged(path: &Path, parent: &Path) -> Result<(UnixListener, BoundSocket), String> {
+fn bind_staged(path: &Path, parent: &Path) -> Result<(SocketAcceptor, BoundSocket), String> {
     let staging = loop {
         let candidate = parent.join(format!(".m{}", NEXT_STAGING.fetch_add(1, Ordering::Relaxed)));
         match DirBuilder::new().mode(0o700).create(&candidate) {
@@ -327,7 +363,7 @@ fn bind_staged(path: &Path, parent: &Path) -> Result<(UnixListener, BoundSocket)
     bound
 }
 
-fn bind_in(staging: &Path, path: &Path) -> Result<(UnixListener, BoundSocket), String> {
+fn bind_in(staging: &Path, path: &Path) -> Result<(SocketAcceptor, BoundSocket), String> {
     let staged = staging.join("s");
     if staged.as_os_str().len() > SOCKET_PATH_MAX {
         return Err(format!(
@@ -355,12 +391,21 @@ fn bind_in(staging: &Path, path: &Path) -> Result<(UnixListener, BoundSocket), S
     })?;
     let metadata =
         fs::symlink_metadata(path).map_err(|e| format!("cannot inspect {}: {e}", path.display()))?;
+    let kept = listener
+        .try_clone()
+        .map_err(|e| format!("cannot hold the socket at {}: {e}", path.display()))?;
+    let stop = Arc::new(AtomicBool::new(false));
     Ok((
-        listener,
+        SocketAcceptor {
+            listener,
+            stop: Arc::clone(&stop),
+        },
         BoundSocket {
             path: path.to_path_buf(),
             dev: metadata.dev(),
             ino: metadata.ino(),
+            _listener: kept,
+            stop,
         },
     ))
 }

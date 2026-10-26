@@ -28,7 +28,9 @@ use crate::application::ipc::envelope::{code, Reply};
 use crate::application::ipc::injected::{
     button_from_word, button_words_prose, InputEvent, Pacing, Sample, INJECTED_QUEUE_CAP,
 };
-use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
+use crate::application::ipc::registry::{
+    Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support,
+};
 use crate::application::ipc::space::{Point, Space};
 use crate::application::ipc::Injected;
 use crate::application::platform::input::{
@@ -101,6 +103,7 @@ pub(super) const FAMILY: Family = Family {
                       behavior follow.",
             params: &[X, Y, SPACE, MODS],
             result: &[APPLIED, PENDING],
+            support: Support::Everywhere,
             run: mouse_move,
         },
         CommandSpec {
@@ -125,6 +128,7 @@ pub(super) const FAMILY: Family = Family {
                 MODS,
             ],
             result: &[APPLIED, PENDING],
+            support: Support::Everywhere,
             run: mouse_button,
         },
         CommandSpec {
@@ -144,6 +148,7 @@ pub(super) const FAMILY: Family = Family {
                 MODS,
             ],
             result: &[APPLIED, PENDING],
+            support: Support::Everywhere,
             run: wheel,
         },
         CommandSpec {
@@ -168,6 +173,7 @@ pub(super) const FAMILY: Family = Family {
                 MODS,
             ],
             result: &[APPLIED, PENDING],
+            support: Support::Everywhere,
             run: key,
         },
         CommandSpec {
@@ -182,6 +188,7 @@ pub(super) const FAMILY: Family = Family {
                  Space, Enter and Tab keys, as winit delivers them.",
             )],
             result: &[APPLIED, PENDING],
+            support: Support::Everywhere,
             run: text,
         },
         CommandSpec {
@@ -206,6 +213,7 @@ pub(super) const FAMILY: Family = Family {
                 SPACE,
             ],
             result: &[APPLIED, PENDING],
+            support: Support::Everywhere,
             run: touch,
         },
         CommandSpec {
@@ -228,6 +236,7 @@ pub(super) const FAMILY: Family = Family {
                 MODS,
             ],
             result: &[APPLIED, PENDING],
+            support: Support::Everywhere,
             run: drag,
         },
         CommandSpec {
@@ -251,6 +260,7 @@ pub(super) const FAMILY: Family = Family {
                 ResultSpec::new("x", ParamType::Number, "Surface x the click landed at."),
                 ResultSpec::new("y", ParamType::Number, "Surface y the click landed at."),
             ],
+            support: Support::Everywhere,
             run: click_node,
         },
         CommandSpec {
@@ -259,6 +269,7 @@ pub(super) const FAMILY: Family = Family {
                       queued gesture did.",
             params: &[],
             result: &[PENDING],
+            support: Support::Everywhere,
             run: pending,
         },
     ],

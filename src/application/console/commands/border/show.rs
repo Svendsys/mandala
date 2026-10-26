@@ -18,8 +18,8 @@ use crate::application::console::spec::{kvs, Descent, Vocabulary};
 use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
 use crate::application::document::SelectionState;
 
-/// `border show [side=<top|bottom|left|right|all>] [verbose]`
-/// —/ §5.3.
+/// `border show [side=<top|bottom|left|right|all>] [verbose]` —
+/// the multi-line readout of the selection's resolved border.
 ///
 /// `side=` filters to one of the four sides plus the matching
 /// corners — useful when the user only wants to see what a
@@ -29,8 +29,8 @@ use crate::application::document::SelectionState;
 /// `verbose` is a bare positional that surfaces the dual color
 /// surface (`style.frame_color` set via `color border=…` vs
 /// `style.border.color` set via `border color`) so the user can
-/// see why their border color doesn't match —calls
-/// this out as a UX bug bake-in.
+/// see why their border color doesn't match: two verbs write two
+/// different fields, and only the readout shows which one won.
 pub fn execute_border_show(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // `side=` is a key of the *readout*, not of the border
     // configuration, so the grammar declares it on this subverb
@@ -240,7 +240,7 @@ fn format_border_readout(
 
     let face = style.font_name.clone();
     let mut lines: Vec<OutputLine> = Vec::with_capacity(12);
-    //inline action hints: each row's right-hand side
+    // Inline action hints: each row's right-hand side
     // surfaces the verb that flips that field, so the readout
     // doubles as a discoverability surface — users learn the
     // verb shape from the show output.

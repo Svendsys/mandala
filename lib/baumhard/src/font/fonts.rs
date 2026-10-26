@@ -398,7 +398,7 @@ pub(crate) fn face_family_name_for_pin(
 ///
 /// This bound is for cross-thread waits only. A thread that already
 /// holds the lock and asks for it again never waits at all: it is
-/// refused on the spot (see [`refuse_reentry`]), because that case is
+/// refused on the spot (see `refuse_reentry`), because that case is
 /// decidable and a timeout is a poor way to decide it. The earlier
 /// design used a 5 s timeout for both, which turned ordinary
 /// parallel-test contention into a spurious crash — two tests hold the
@@ -411,9 +411,10 @@ pub(crate) fn face_family_name_for_pin(
 /// the `FreezeWatchdog` aborts a silent UI thread after 10 s, so for
 /// the main thread that backstop fires first.
 ///
-/// `pub(crate)` so the metric cache reuses the *same* budget for its
-/// miss-path acquires rather than duplicating the literal.
-pub(crate) const FONT_SYSTEM_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
+/// `pub` so every waiter on this lock reuses the *same* budget rather
+/// than duplicating the literal: the metric cache's miss-path acquires,
+/// and the app's GPU tests waiting out a capture skipped on a held lock.
+pub const FONT_SYSTEM_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// What the current thread holds of `FONT_SYSTEM`.
 ///
@@ -790,8 +791,6 @@ where
 // nobody will ever read is the other thing. `do_for_all_sources`
 // above is the live way to reach [`FONT_SOURCES`].
 
-/// Opaque black. The default foreground color for newly-built
-/// `AttrsList`s.
 /// Ink bounding box of a shaped glyph string, measured at a specific
 /// font size. Sibling of the `measure_max_glyph_advance` scalar
 /// measurement (currently in the app-level renderer as pre-existing

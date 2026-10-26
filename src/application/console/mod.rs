@@ -390,7 +390,7 @@ pub enum ConsoleState {
         /// helpers (`insert_str_at_grapheme`, `delete_grapheme_at`,
         /// `count_grapheme_clusters`, `find_byte_index_of_grapheme`)
         /// so ZWJ emoji / flag sequences / combining marks are
-        /// treated as single cursor cells — per CODE_CONVENTIONS §2.
+        /// treated as single cursor cells — per CODE_CONVENTIONS §1.
         cursor: usize,
         /// Past commands, oldest first. Up/Down scrolls an index into
         /// this vec; appended on every `Enter`.
@@ -403,12 +403,13 @@ pub enum ConsoleState {
         /// Rendered scrollback (echoed commands + output). The
         /// renderer shows the trailing N lines.
         scrollback: Vec<ConsoleLine>,
-        /// Computed completion candidates. Populated lazily on Tab;
-        /// cleared on every input change so a stale popup doesn't
-        /// shadow the new context.
+        /// Computed completion candidates. Recomputed on every input
+        /// change (and after Tab accepts one) so the popup always
+        /// matches the current context; cleared on submit and on Esc.
         completions: Vec<completion::Completion>,
-        /// Which completion is highlighted. `None` when the popup is
-        /// closed (no completions computed yet); `Some(idx)` after Tab.
+        /// Which completion is highlighted. `None` when there are no
+        /// completions; `Some(0)`, the top row, whenever a recompute
+        /// finds any.
         completion_idx: Option<usize>,
         /// Scrollback view offset. `0` means "pinned to the bottom"
         /// (the trailing N lines fill the visible window). `N` means

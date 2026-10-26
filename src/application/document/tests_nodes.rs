@@ -2776,9 +2776,9 @@ fn test_committing_set_node_border_config_clears_active_preview() {
 /// **Parity contract:** `apply_view_to_slot` (baumhard, scene-side)
 /// and `apply_glyph_border_edits_to_slot` (application, commit-side)
 /// must produce byte-identical post-states for any committing edit.
-/// Pre-fix `BorderConfigEditsView` collapsed both `Keep` and
-/// `Clear` to "no edit" — preview rendered the field unchanged
-/// while commit dropped it (Risk #1 in the plan). This test
+/// A projection that collapses `Keep` and `Clear` to "no edit"
+/// would render a cleared field unchanged in the preview while
+/// commit dropped it. This test
 /// runs every per-field axis (Set + Clear) through both helpers
 /// and asserts the resulting `Option<GlyphBorderConfig>` matches
 /// shape-for-shape.
@@ -2823,28 +2823,28 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
             },
         ),
         (
-            "Clear font (Risk #1 case)",
+            "Clear font",
             BorderConfigEdits {
                 font: OptionEdit::Clear,
                 ..Default::default()
             },
         ),
         (
-            "Clear color (Risk #1 case)",
+            "Clear color",
             BorderConfigEdits {
                 color: OptionEdit::Clear,
                 ..Default::default()
             },
         ),
         (
-            "Clear color_palette (Risk #1 case)",
+            "Clear color_palette",
             BorderConfigEdits {
                 color_palette: OptionEdit::Clear,
                 ..Default::default()
             },
         ),
         (
-            "Clear color_palette_field (Risk #1 case)",
+            "Clear color_palette_field",
             BorderConfigEdits {
                 color_palette_field: OptionEdit::Clear,
                 ..Default::default()
@@ -4761,8 +4761,10 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
         ),
         (
             "MAX_SECTIONS_PER_NODE",
-            &["add_section"],
-            "add_section refuses past the cap",
+            &["add_section", "split_section"],
+            "both refuse at the cap through validate::room_for_another_section, and \
+             test_every_section_growth_checks_the_cap holds every shipped growth of \
+             node.sections to that guard — split_section had none until #208",
         ),
         (
             "MAX_MAP_BYTES",

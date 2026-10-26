@@ -68,7 +68,7 @@ export MANDALA_IPC="$XDG_RUNTIME_DIR/mandala.sock"
 mandalactl ping                                  # now_ms: 4100.5
 mandalactl scene.find_text Introduction          # where is it, on screen or not?
 mandalactl input.click_node 1.2                  # act on the node
-mandalactl capture.screenshot /tmp/after.png fit=true width=1920 height=1080
+mandalactl capture.screenshot after.png fit=true width=1920 height=1080
 mandalactl query.selection --json                # the reply envelope, as received
 ```
 

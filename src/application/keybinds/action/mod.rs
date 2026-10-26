@@ -125,6 +125,7 @@ pub enum ZoomBound {
 /// would silently bypass the gate from non-User macro tiers. The
 /// `#[non_exhaustive]` is the structural signal that "review the
 /// gate when extending."
+///
 /// Some variants carry payload (e.g. `String` paths, kv-shaped
 /// `(field, value)` tuples) so `Copy` is impossible — payload-bearing
 /// variants are cloned at lookup time in
@@ -201,9 +202,6 @@ pub enum Action {
     /// rebuild slice runs on both targets via `dispatch_compatible`;
     /// the native-only residual (clearing `hovered_node` for the
     /// Reparent/Connect overlay rebuild) runs in the native arm.
-    /// Replaces the pre-Batch-2 `CancelMode` per
-    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
-    /// (rename rather than alias).
     #[action(context = Document, wasm = Compatible)]
     ExitMode,
     /// Create a new unattached (orphan) node at the cursor position.
@@ -239,11 +237,13 @@ pub enum Action {
     ///   a section followed by Enter).
     /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
     ///
-    /// **WASM: NativeOnly** — opening the text editor depends on
-    /// `TextEditState`, which is part of the native modal-stealer
-    /// cascade. The `apply_enter_node_edit` helper itself is
-    /// cross-platform-shaped; reclassification is a one-line change
-    /// once WASM gains the modal pipeline.
+    /// **WASM: NativeOnly** — not for the text editor, which the
+    /// browser already runs (`CreateOrphanNodeAndEdit` opens it
+    /// there through the same `open_text_edit`), but for the section
+    /// half of NodeEdit the browser lacks: section click routing
+    /// (`InteractionMode::click_resolves_to_section`), the
+    /// outside-click exit, and the section-edit entry
+    /// ([`Action::EnterSectionEdit`]). #229 tracks porting them.
     ///
     /// `destructive` — the single-section short-circuit opens the
     /// editor, which can clear text on the spot. User-tier-only via
@@ -384,7 +384,7 @@ pub enum Action {
     /// Marked `destructive` so the macro privilege gate
     /// (`SourceTier::allows_action`) blocks System / Plugin /
     /// Project tiers; only User-tier macros (the user's keybind
-    /// config + interactive console) can fire it.   
+    /// config + interactive console) can fire it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     FastResizeStart,
 
@@ -741,13 +741,12 @@ pub enum Action {
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
     ///
-    ///calls for replacing this with per-field
-    /// variants (`SetBorderPreset` / `SetBorderColor` / ...)
-    /// for keybind ergonomics — `SetBorderField` stays as the
-    /// generic catch-all for the kv form and for callers that
-    /// want one-binding-many-fields semantics; deletion is a
-    /// follow-up breaking-change commit pending the full
-    /// parametric-binding migration.
+    /// The field name is a string checked at dispatch, not at
+    /// bind time: a misspelled `field` loads, and only a press
+    /// reveals it (a logged warning, no edit). Typed per-field
+    /// variants (`SetBorderPreset`, `SetBorderColor`, ...) that
+    /// would catch it at load do not exist yet; #227 tracks adding
+    /// them and retiring this one.
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
     /// Mirror `border preset cycle` — advance the selected
@@ -888,10 +887,8 @@ pub enum Action {
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeAbs { w: String, h: String },
     /// Mirror `section resize fill` — flip the selected section
-    /// back to fill-parent (`size = None`). Renamed from `none`
-    /// in Batch 5 (the prior literal misleadingly read as "remove
-    /// the section"); this Action's name stays `FillParent` for
-    /// keybind-stability.
+    /// back to fill-parent (`size = None`). The verb literal is
+    /// `fill`, not `none`, which read as "remove the section".
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
     /// Mirror `section move x=<x> y=<y> [section=<idx>]` — pin the

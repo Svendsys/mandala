@@ -16,7 +16,7 @@
 //! - [`applicability`] — per-command `applicable` predicates.
 //! - [`completion`] — completion engine.
 //! - [`resize_mode_lifecycle`] — end-to-end Default → Resize → Default
-//!   driven by `mode resize` / `mode default`. Plan §7.2.4.
+//!   driven by `mode resize` / `mode default`.
 //! - [`oracle`] — the differential oracle: signatures, the three
 //!   comparisons, and what the signatures deliberately do not see.
 //! - [`revision`] — the document revision held against the oracle's

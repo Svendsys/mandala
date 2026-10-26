@@ -23,9 +23,10 @@
 //! the dispatcher arms that open / close the editor; this module only
 //! defines the mode shape.
 //!
-//! The `click_resolves_to_section` predicate is consumed by
-//! `app/click.rs` per-frame to route clicks to the active section
-//! while in NodeEdit mode.
+//! The `click_resolves_to_section` predicate is consumed by the
+//! native click router (`cross_dispatch/pointer.rs`) and the
+//! section-drag resolver (`event_cursor_moved.rs`) to route clicks
+//! and drags to the active section while in NodeEdit mode.
 
 /// What the user is doing right now at the canvas level.
 ///
@@ -59,16 +60,12 @@ pub enum InteractionMode {
     /// the section relative to the node. Section-text editing is reached
     /// by opening `TextEditState::Open` on a section while in this mode.
     /// Out-of-AABB click exits to `Default`.
-    ///
-    /// Wired in Batch 3 of the plan.
     NodeEdit { node_id: String },
 
     /// Resize anchors are visible on `target`. Anchor drag transitions
     /// `DragState` through the existing `Throttled(NodeResize)` /
     /// `Throttled(SectionResize)` gestures. Click on the body (not on
     /// an anchor) exits to `Default`. Esc also exits.
-    ///
-    /// Wired in Batch 2 of the plan.
     Resize { target: ResizeTarget },
 }
 
@@ -88,8 +85,9 @@ impl InteractionMode {
     /// `Single(node)` (single-section nodes via the `hit_test_target`
     /// fold; multi-section nodes via the click router's mode gate).
     /// Inside `NodeEdit { node_id }` for the matching node, clicks on
-    /// section-areas resolve to `Section`. Consumed by Batch 3's
-    /// rewrite of `app/click.rs`'s click-routing fork.
+    /// section-areas resolve to `Section`. Consumed by the click
+    /// router (`cross_dispatch/pointer.rs`) and the section-drag
+    /// resolver (`event_cursor_moved.rs`).
     // Native-driver-only: consulted by the native click router.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn click_resolves_to_section(&self, hit_node: &str) -> bool {
@@ -193,9 +191,7 @@ pub enum ResizeTargetError {
 ///
 /// Single source of truth shared by [`Action::EnterResizeMode`]'s
 /// dispatch arm (`apply_enter_resize_mode`) and the `mode resize`
-/// console verb. Pre-fix Batch 2 of
-/// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` had this logic duplicated
-/// across both call sites, with subtly different error wording.
+/// console verb, so both report the same error wording.
 ///
 /// Reads only the document's selection + the `MindMap` model
 /// (specifically section sizes). Cross-platform — no GPU, no

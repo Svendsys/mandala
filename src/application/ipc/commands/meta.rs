@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use crate::application::ipc::envelope::{Reply, PROTOCOL_VERSION};
 use crate::application::ipc::events::{Class, TRANSPORT_EVENTS};
 use crate::application::ipc::registry::{
-    self, Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, BOOTSTRAP_FAMILY,
+    self, Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support, BOOTSTRAP_FAMILY,
 };
 
 pub(super) const FAMILY: Family = Family {
@@ -51,6 +51,7 @@ pub(super) const FAMILY: Family = Family {
                     "The complete event catalog: name and doc per class.",
                 ),
             ],
+            support: Support::Everywhere,
             run: describe,
         },
         CommandSpec {
@@ -62,6 +63,7 @@ pub(super) const FAMILY: Family = Family {
                 ParamType::Number,
                 "The app clock, in milliseconds: virtual time under clock.set_mode virtual.",
             )],
+            support: Support::Everywhere,
             run: ping,
         },
     ],

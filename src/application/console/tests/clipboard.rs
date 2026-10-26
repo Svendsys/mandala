@@ -130,11 +130,11 @@ fn node_cut_clears_every_section_on_multi_section_node() {
 
 /// Section paste collapses the section's `text_runs` to a single
 /// run, inheriting the first original run's `font` / `size_pt` /
-/// `color` / `bold` / `italic` / `underline`. Pre-Tier-2B the
-/// clipboard payload is `String`-only; structured per-run paste
-/// is captured in the plan tracker. This test pins the CURRENT
-/// lossy behaviour so a future structured payload doesn't
-/// regress to the unstructured branch silently — the assertion
+/// `color` / `bold` / `italic` / `underline`, when the clipboard
+/// holds plain text with no matching structured payload (text from
+/// outside the app, or a stale buffer — see
+/// `read_section_clipboard`). This pins the lossy fall-back so it
+/// stays distinct from `apply_section_payload` — the assertion
 /// is "if you paste plain text into a section that had multi-run
 /// formatting, you lose the per-run structure but keep the
 /// first-run template's formatting on the new single run."

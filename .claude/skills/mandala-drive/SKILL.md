@@ -142,6 +142,7 @@ cargo run --release -- maps/testament.mindmap.json --ipc "$MANDALA_IPC"   # a wi
 | (a) desktop with a display (X11, Wayland, macOS) | launch the binary directly; nothing else | the windowed path is validated against an already-running X server (`DISPLAY` set, `scripts/ipc_smoke.sh` passing in its window mode); not yet run on a physical desktop — run the smoke script there and update this cell |
 | (b) container or CI, no display, no GPU | `target/release/mandala --headless <map> --ipc <sock>`, with the packages below | validated in this repo's cloud container (Ubuntu 24.04, Mesa 25.2): no X server, no `DISPLAY`; its captures are byte-identical to recipe (c)'s on the same machine, PNG and sidecar |
 | (c) a real window with no display (Xvfb) | `xvfb-run -a -s "-screen 0 1280x800x24" target/release/mandala <map> --ipc <sock>`, with recipe (b)'s packages plus `xvfb libxkbcommon-x11-0` | validated in the same container, from a state with the packages removed. Reach for it only when the question is about the window itself — a window manager's resize, a real `RedrawRequested` — since (b) draws the same pixels |
+| (d) the browser build, in a browser | `mandalactl bridge`, then the page opened with `?ipc=<its app URL>`, then `mandalactl --ws <its controller URL>`; see **Browser build** below | the loop is the same commands; what the browser does not serve, `describe` says. Status of the proof is in that section |
 
 **Packages** (Debian/Ubuntu names):
 
@@ -383,11 +384,110 @@ image actually shows, with rects **in image pixels**:
 Look at the PNG yourself before you describe it — your file-reading tool
 renders images.
 
+## Browser build
+
+The browser build (`trunk build` / `trunk serve`, `web/index.html`) speaks
+the same protocol over a WebSocket, through a relay this tool also is
+(`format/ipc.md` §Transport "Browser"). A page cannot listen, so the order
+is: start the relay, open the page with the relay's app URL, then drive the
+relay's controller URL. Same commands, same replies; one `mandalactl`
+invocation is still one command.
+
+```sh
+BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
+export PATH="$BIN:$PATH"
+cargo build --release -p mandalactl
+
+# 1. The relay: loopback only, both roles behind one token. It prints the two
+#    URLs first and then runs until stopped; keep it in the background.
+mandalactl bridge > /tmp/bridge.txt &          # listen: "127.0.0.1:41816"  app_url: "ws://…/app/<token>"  controller_url: "ws://…/controller/<token>"
+sleep 0.5
+APP_URL="$(sed -n 's/^app_url: "\(.*\)"$/\1/p' /tmp/bridge.txt)"
+export MANDALA_WS="$(sed -n 's/^controller_url: "\(.*\)"$/\1/p' /tmp/bridge.txt)"
+
+# 2. The page, served by trunk (port 41815, Trunk.toml) and opened with ?ipc=
+#    beside ?map=. In a desktop browser, paste the URL; from a script, any
+#    browser automation does (the repo's cloud container has Playwright's Chromium).
+trunk serve --release &                        # or: trunk build --release && python3 -m http.server -d dist 41815
+echo "http://127.0.0.1:41815/?map=maps/testament.mindmap.json&ipc=$APP_URL"
+
+# 3. Drive it. A controller before the page is refused `no_app` (exit 2) with the remedy.
+for i in $(seq 1 30); do mandalactl --timeout 2 ping >/dev/null 2>&1 && break; sleep 0.5; done
+mandalactl ping                                # now_ms: …   (exit 0)
+mandalactl describe act.console                # "act.console - …" then "unsupported on this target - the browser has no console runtime; …"
+mandalactl scene.find_text Introduction
+mandalactl act.action ZoomIn --wait-settled
+mandalactl capture.screenshot /tmp/browser.png # the client writes the PNG the page returns inline, and /tmp/browser.png.geometry.json
+```
+
+**What is different in the browser.**
+
+- **The screenshot is the canvas as drawn**, at its own size, through the
+  live camera: no `width=`/`height=`/`region=`/`fit=`/`scale=` — the page
+  refuses them as stray parameters. Frame with the camera instead
+  (`act.action ZoomIn`, `input.drag` on empty canvas), then capture. The
+  sidecar is the same file beside the PNG.
+- **Not served, and said so:** `act.console` (no console runtime),
+  `capture.record_start`/`record_stop` (no files, no recorder), and
+  `act.action` with a native-only `Action` (`OpenConsole`, the picker, the
+  single-line editors) — each answers `error: unsupported: …` naming why
+  (exit 1). `mandalactl describe` shows `supported` per command.
+- **`query.mode` has no drag state** (`drag_state.kind: "None"`) and one
+  modal, the node text editor; `query.document`/`scene.dump` have no
+  `to_file=` (no filesystem), so keep `include=` narrow under the 8 MiB cap.
+- **The clock starts real** (a page is a window, not a headless launch);
+  `clock.set_mode virtual` and `clock.step` work as on native, with the
+  page's own frames standing still until the clock is real again.
+- **One page per relay.** A reload reconnects the page to the relay; a
+  controller attached across the reload is sent `shutdown` and exits `4`
+  (the command may have run) — rerun it. A second page is closed at once.
+- **The token is the guard.** Anything on this machine, any browser tab
+  included, can reach a loopback port; both URLs carry the relay's token,
+  and the relay refuses any other path at the handshake. Treat the URLs as
+  you treat the socket path: same user, same machine.
+
+**Status of the proof.** The relay, the `--ws` client and the screenshot
+file path are proven in `cargo test -p mandalactl` against a stand-in page
+on real loopback sockets. The page's own side — its WebSocket, its command
+target, the canvas read-back — is type-checked and clippy-clean for wasm32
+by `./test.sh --lint`, and was driven in this repo's cloud container through
+Playwright's Chromium (`--enable-unsafe-webgpu --use-webgpu-adapter=swiftshader`;
+the PR that landed it, #75's, records the run): attach and greet, `ping`,
+`describe`, `scene.*`, `act.action` with `--wait-settled`, the three
+refusals, `clock.set_mode`/`step`, `input.click_node`, and
+`capture.screenshot` writing a 1024×640 PNG with a sidecar naming nodes.
+What that run could **not** prove is the pixels: on headless Chromium's
+SwiftShader WebGPU the canvas composites nothing — Chromium's own page
+screenshot is blank and `toDataURL` reads transparent at any moment — so
+the PNG the client wrote was transparent. The image half of the browser
+capture needs a browser with a GPU; run the block above on a desktop and
+look. Until then the PNG is unverified on WebGPU — whether a same-task
+`toDataURL` holds the frame just drawn or the last presented one is the
+open question (`format/ipc.md` §`capture.screenshot`) — and the sidecar,
+computed from the scene, is the half to trust. **A browser whose WebGPU
+offers no adapter** — Chromium on Linux, headless Chromium without the
+unsafe-WebGPU flags — falls back to WebGL2 since #224 (#220): the page
+probes `requestAdapter` before it touches the canvas and, finding none,
+builds a GL-only instance with one `warn!`
+(`renderer/adapter.rs::browser_instance`). So plain headless Chromium
+now renders the bundle, on WebGL2. Two limits remain. First, the
+same-task read is established for WebGL's model on a plain canvas; on
+this bundle under the fallback it has not been run through
+`capture.screenshot` yet. Second, the browser has no Latin text face for
+the default family, so edge labels draw as `.notdef` boxes and
+connection dots vanish (#228, open) — on every backend, and on a native
+machine with no system fonts too. Nothing in `./test.sh` runs a browser
+(TEST_CONVENTIONS §T8).
+
 ## Tear down
 
 ```sh
 mandalactl act.action Quit      # the graceful exit, a closed window's: exits 0, removes the socket and the artifacts dir
 ```
+
+A browser session ends by closing the tab (or the `trunk serve`) and the
+relay (`kill %1`, or Ctrl+C where it runs); there is no socket file and no
+artifacts dir to clean up.
 
 `Quit` is how a headless app ends (it has no window to close), and it works
 on a windowed one too. If the app no longer answers, kill it — SIGTERM is not
@@ -409,7 +509,7 @@ cleans up after itself: it exits on its own, through the graceful path.
 
 | symptom | meaning | fix |
 |---|---|---|
-| app log: `mandala: --headless needs --ipc <socket> or --screenshot <path>` (panic, exit 101) | a headless launch nothing could drive or see | add `--ipc <sock>` or `--screenshot <png>`; every refused flag panics the same way, naming itself |
+| app log: `mandala: --headless needs --ipc <socket, or pipe name on Windows> or --screenshot <path>` (panic, exit 101) | a headless launch nothing could drive or see | add `--ipc <sock>` or `--screenshot <png>`; every refused flag panics the same way, naming itself |
 | app log: `renderer: no GPU adapter could be used without a window: …` (exit 101) | headless, and no adapter at all: no Vulkan ICD, no EGL | install `libvulkan1 mesa-vulkan-drivers`; the message lists what each attempt hit |
 | `--screenshot` exits `1`, log: `screenshot: … exists; set overwrite to replace it` | the one-shot's write guard: the PNG or its sidecar is already there | add `--overwrite`, or pick another path |
 | app log: `Library libxkbcommon-x11.so could not be loaded` (panic, exit 101) | a window (recipe (c)) in a container missing winit's X11 keyboard library | install `libxkbcommon-x11-0`, or launch `--headless`, which loads no winit backend |

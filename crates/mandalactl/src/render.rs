@@ -128,6 +128,15 @@ fn describe(result: &Value, out: &mut String) {
             text(command, "name"),
             text(command, "summary")
         ));
+        // Per-target honesty (`format/ipc.md` §`describe`): a command
+        // the connected build does not serve says so before its
+        // parameters, with the words a request for it is refused with.
+        if command.get("supported").and_then(Value::as_bool) == Some(false) {
+            out.push_str(&format!(
+                "  unsupported on this target - {}\n",
+                text(command, "unsupported_reason")
+            ));
+        }
         for param in command
             .get("params")
             .and_then(Value::as_array)
@@ -264,6 +273,34 @@ mod tests {
             "wait.elapsed_ms: 31\n"
         );
         assert_eq!(prefixed("wait", &json!({})), "wait: {}\n");
+    }
+
+    /// A command the connected build refuses is marked before its
+    /// parameters; one it serves (`supported: true`, or an older
+    /// server's reply without the key) gets no such line.
+    #[test]
+    fn test_describe_marks_a_command_the_target_does_not_serve() {
+        let result = json!({
+            "protocol": 1, "app": "mandala", "version": "0.1.0",
+            "commands": [
+                {"name": "act.console", "family": "act", "summary": "Run a line.",
+                 "params": [{"name": "line", "type": "string", "required": true, "doc": "The line."}],
+                 "result": [], "supported": false, "unsupported_reason": "no console runtime"},
+                {"name": "ping", "family": "bootstrap", "summary": "Liveness.", "params": [], "result": [],
+                 "supported": true},
+                {"name": "old.verb", "family": "old", "summary": "From before.", "params": [], "result": []}
+            ],
+            "events": []
+        });
+        assert_eq!(
+            result_text(Render::Describe, &result),
+            "mandala 0.1.0 (protocol 1), 3 command(s)\n\
+             act.console - Run a line.\n\
+             \x20 unsupported on this target - no console runtime\n\
+             \x20 param line string required - The line.\n\
+             ping - Liveness.\n\
+             old.verb - From before.\n"
+        );
     }
 
     #[test]

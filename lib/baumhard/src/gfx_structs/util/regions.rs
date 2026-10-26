@@ -20,7 +20,7 @@ pub use super::region_indexer::RegionIndexer;
 /// Failure modes returned by [`RegionParams`] accessors and computation
 /// methods.
 ///
-/// Per `CODE_CONVENTIONS.md` §7, baumhard does not implement `Display` or
+/// Per `CODE_CONVENTIONS.md` §9, baumhard does not implement `Display` or
 /// `std::error::Error` for its own enums — call sites match on the
 /// variant directly. Variants:
 ///
@@ -33,7 +33,7 @@ pub use super::region_indexer::RegionIndexer;
 ///
 /// **Removed:** an earlier `Updating` variant signalled
 /// "lock-would-block" from the per-field `RwLock::try_read` shape. After the
-/// 6-locks → 1-lock collapse (Batch 6 §6.4a), reads use a blocking
+/// 6-locks → 1-lock collapse, reads use a blocking
 /// `RwLock::read` that always succeeds (or returns `Poisoned`), so
 /// there is no longer a non-blocking failure mode to surface. Zero
 /// external callers matched on `Updating` at the time of removal.

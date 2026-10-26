@@ -72,3 +72,92 @@ jobs:
           MANDALA_REQUIRE_WASM_PROBE: "1"
           MANDALA_REQUIRE_GPU: "1"
         run: ./test.sh --lint
+
+  # The Windows named-pipe transport for `--ipc` (#169) and everything
+  # above it that compiles there. Its own job because the code it holds
+  # is `cfg(windows)`: a Linux run compiles none of it, and the Linux
+  # host can type-check it (`cargo check --target x86_64-pc-windows-gnu`)
+  # but cannot run it.
+  #
+  # Deliberately not `./test.sh` on Windows. That script is bash, its
+  # wasm32 legs need node and the wasm target, and the rest of the suite
+  # has never run on Windows: making all of it pass there is a port of
+  # its own, not part of a transport. What this job holds instead:
+  #
+  # - clippy over the app crate and `mandalactl`, every target,
+  #   `-D warnings` — a hard gate as on Linux, and the only lint the
+  #   `cfg(windows)` code on either side gets;
+  # - the `ipc::` tests: the transport's loopback suite against a real
+  #   pipe (and `mandalactl` round-tripping a `ping` over it), the
+  #   pipe's own unit tests, and the protocol tests above the
+  #   transport;
+  # - `mandalactl`'s whole test target (#221): its unit tests, the
+  #   loopback scenarios against a fake app on a real pipe, and
+  #   `tests/binary.rs` driving the shipped binary over one. Path
+  #   expectations are spelled per platform, and the handful of tests
+  #   that are Unix-only by nature say why beside their `cfg`.
+  #
+  # Same triggers as the Linux job, so a pull request cannot merge red on
+  # the platform this code is for.
+  #
+  # `timeout-minutes` is a backstop, not the guard: every wait in the
+  # transport and in its tests has a deadline of its own, and a hang is
+  # a bug to fix there. It only caps what a regression can cost a run
+  # (the default is six hours) — this job takes a few minutes, mostly
+  # the build.
+  windows-ipc:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # `rust-toolchain.toml` pins the same channel the Linux job uses.
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup show
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy, Windows (hard)
+        run: cargo clippy -p mandala -p mandalactl --all-targets -- -D warnings
+
+      # A filter that matches nothing passes with "0 passed", which would
+      # turn this job green while testing nothing — a renamed module, a
+      # moved test. The step counts what ran and fails on zero.
+      - name: The ipc tests, Windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p mandala ipc:: 2>&1 | tee ipc-tests.log
+          count=$(grep -Eo 'test result: ok\. [0-9]+ passed' ipc-tests.log | awk '{ sum += $4 } END { print sum + 0 }')
+          echo "ipc:: tests passed: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "FAILED: the ipc:: filter selected no tests"
+            exit 1
+          fi
+
+      # Beyond a zero count, the step checks that the two halves that
+      # used to be Unix-only actually ran: a `cfg` that quietly dropped
+      # them again would still leave a non-zero count behind.
+      # `--no-fail-fast` so a red lib target does not hide what the
+      # binary target would have said: one run reports every target.
+      - name: The mandalactl tests, Windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p mandalactl --no-fail-fast 2>&1 | tee mandalactl-tests.log
+          count=$(grep -Eo 'test result: ok\. [0-9]+ passed' mandalactl-tests.log | awk '{ sum += $4 } END { print sum + 0 }')
+          echo "mandalactl tests passed: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "FAILED: mandalactl ran no tests"
+            exit 1
+          fi
+          for ran in 'loopback_tests::test_ping_prints_the_result_fields_and_exits_zero ... ok' \
+                     'test_exit_zero_and_a_greppable_line_when_the_app_says_ok ... ok'; do
+            if ! grep -qF "$ran" mandalactl-tests.log; then
+              echo "FAILED: expected \"$ran\" in the mandalactl run"
+              exit 1
+            fi
+          done

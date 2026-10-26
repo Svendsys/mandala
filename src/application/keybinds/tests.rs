@@ -504,10 +504,10 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
     }
 }
 
-/// Plan §5.B6.9: pin the new no-payload border Action variants
-/// as Compatible so a future contributor flipping any of them
-/// to NativeOnly trips this test instead of silently breaking
-/// WASM keybind reach for the cycle / toggle one-press flows.
+/// Pin the no-payload border Action variants as Compatible so a
+/// future contributor flipping any of them to NativeOnly trips
+/// this test instead of silently breaking WASM keybind reach for
+/// the cycle / toggle one-press flows.
 #[test]
 fn test_wasm_compatibility_border_no_payload_actions_are_compatible() {
     use crate::application::keybinds::WasmCompatibility::Compatible;
@@ -566,9 +566,9 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
         Action::ConnectToTarget(None),
         Action::EnterResizeMode,
         Action::FastResizeStart,
-        // EnterNodeEdit / EnterSectionEdit reach `open_text_edit`,
-        // which depends on the native modal-stealer cascade
-        // (`TextEditState`). Reclassification waits on Batch 4/7.
+        // EnterNodeEdit / EnterSectionEdit: the browser runs the
+        // text editor but lacks NodeEdit's section click routing,
+        // outside-click exit and section-edit entry (#229).
         Action::EnterNodeEdit,
         Action::EnterNodeEditClean,
         Action::EnterSectionEdit,
@@ -690,11 +690,11 @@ fn test_is_destructive_destructive_set_is_pinned() {
         ActionKind::NewDocumentAt,
         // FastResizeStart commits through `set_node_aabb` /
         // `set_section_aabb` on the right-button release that
-        // ends the gesture — destructive per plan §6.10.
+        // ends the gesture, so it is destructive.
         ActionKind::FastResizeStart,
-        // Plan §4.6 — section text + structural mutators are
-        // destructive (rewrite text content, change the
-        // sections vector length).
+        // Section text + structural mutators are destructive
+        // (rewrite text content, change the sections vector
+        // length).
         ActionKind::SetSectionText,
         ActionKind::AddSection,
         ActionKind::DeleteSection,
@@ -975,7 +975,7 @@ fn test_action_for_gesture_falls_back_to_unmodified_binding() {
 }
 
 /// Default `Ctrl+RightDrag` resolves to `FastResizeStart`. Pins
-/// the Batch 4 gesture binding — without it, threshold-cross on
+/// the gesture binding — without it, threshold-cross on
 /// PendingRight would no-op silently.
 #[test]
 fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
@@ -1030,7 +1030,7 @@ fn test_user_rebind_to_bare_right_drag_works() {
 }
 
 /// `LongPress` resolves to `EnterResizeMode` by default — the
-/// touch peer of the keyboard's `r`. Plan §6.6 / Batch 7.
+/// touch peer of the keyboard's `r`.
 #[test]
 fn test_default_long_press_resolves_to_enter_resize_mode() {
     let r = KeybindConfig::default().resolve();

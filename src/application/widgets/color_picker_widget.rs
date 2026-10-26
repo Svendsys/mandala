@@ -28,15 +28,15 @@ pub struct ColorPickerWidgetSpec {
     pub geometry: GeometrySpec,
     /// 24 glyphs, one per hue-ring slot, clockwise from 12 o'clock.
     pub hue_ring_glyphs: Vec<String>,
-    /// 10 glyphs for the val-bar top arm (brightest → mid).
+    /// 8 glyphs for the val-bar top arm (brightest → mid).
     pub arm_top_glyphs: Vec<String>,
-    /// 10 glyphs for the val-bar bottom arm (mid → darkest).
+    /// 8 glyphs for the val-bar bottom arm (mid → darkest).
     /// Typically Egyptian hieroglyphs; `arm_bottom_font` pins the
     /// exact face cosmic-text should shape them with.
     pub arm_bottom_glyphs: Vec<String>,
-    /// 10 glyphs for the sat-bar left arm (desaturated → mid).
+    /// 8 glyphs for the sat-bar left arm (desaturated → mid).
     pub arm_left_glyphs: Vec<String>,
-    /// 10 glyphs for the sat-bar right arm (mid → saturated).
+    /// 8 glyphs for the sat-bar right arm (mid → saturated).
     pub arm_right_glyphs: Vec<String>,
     /// The central glyph on the wheel. Doubles as the commit button.
     pub center_preview_glyph: String,

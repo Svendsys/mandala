@@ -41,8 +41,28 @@ license = "MPL-2.0"
 # featureless here is about where the *declaration* lives, not about
 # what gets compiled.
 [workspace.dependencies]
+# Declared once because two manifests read it: the root turns its
+# `wasm_js` feature on for the browser build (see the wasm32 table
+# below), and `mandalactl` calls it for the relay's token
+# (`crates/mandalactl/src/bridge/mod.rs`).
+getrandom = "0.4.3"
 glam = { version = "0.34.1", features = ["serde"] }
 indextree = { version = "4.9.2", features = ["serde"] }
+# Two members name it, both only on Windows: the app's `--ipc` named-pipe
+# server (`src/application/ipc/transport/pipe.rs`) and `mandalactl`'s
+# client for it (`crates/mandalactl/src/client.rs`). Neither crate has
+# `unsafe`, and std has no named-pipe server and no pipe security
+# descriptor; this crate supplies both, for the server's first instance
+# and for `mandalactl`'s client. (The server's write timeouts and
+# disconnects are tokio's — see the `cfg(windows)` dependencies below.)
+# Pinned exactly (`=`) because what the server relies on was verified
+# in this version's source, not inferred from its docs: the first
+# instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE` and
+# `PIPE_REJECT_REMOTE_CLIENTS`, and the security descriptor comes from
+# an SDDL string with no `unsafe` on our side
+# (`listener/create_instance.rs`, `security_descriptor/owned.rs`). A
+# bump re-verifies those three.
+interprocess = "=2.4.7"
 # `release_max_level_warn`: `warn!`/`error!` survive into release
 # builds so CODE_CONVENTIONS §9's "log and degrade" posture is real in
 # the binaries users run; `info!`/`debug!`/`trace!` still compile to
@@ -214,11 +234,29 @@ png.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["process", "fs"] }
 
+# The `--ipc` named-pipe transport (`src/application/ipc/transport/pipe.rs`,
+# #169). `interprocess` creates the pipe — its first instance, with the
+# owner-only security descriptor. Every later instance, and every
+# connection, is a `tokio` named-pipe server: the only safe API in the
+# graph that can time a pipe write out and disconnect a client stalled
+# on one (`NamedPipeServer::disconnect`), which a blocking pipe write
+# offers no way to do. `tokio` runs on one worker for the pipe I/O, with
+# each boundary thread blocking on one call at a time, the shape
+# `work_plans/LLM_IPC.md` §D2 asks for. `widestring` spells the SDDL
+# string the way `SecurityDescriptor::deserialize` takes it.
+# Windows-only, so neither the Unix nor the wasm32 graph changes.
+[target.'cfg(windows)'.dependencies]
+interprocess.workspace = true
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
+widestring = "1.2.1"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"
 js-sys = "0.3.106"
-web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response"] }
+# `WebSocket`, `MessageEvent` and `CloseEvent` are the browser IPC
+# transport's (`src/application/ipc/browser/socket.rs`).
+web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response", "WebSocket", "MessageEvent", "CloseEvent"] }
 # Load-bearing despite having no call site anywhere in `src/`, which
 # is exactly why it is worth a comment: this entry exists to turn a
 # *feature* on, and the next dead-dependency sweep will otherwise find
@@ -229,8 +267,9 @@ web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "H
 # 'backends'`, reproduced by removing this line and running the
 # `./test.sh` wasm32 gate). Cargo unions features across the
 # workspace, so declaring it in the crate that *is* the wasm binary
-# is what makes the browser build resolve.
-getrandom = { version = "0.4.3", features = ["wasm_js"] }
+# is what makes the browser build resolve. The version is the
+# workspace table's; the feature is this manifest's.
+getrandom = { workspace = true, features = ["wasm_js"] }
 
 # No `criterion` here, and no `[dev-dependencies]` for a benchmark
 # harness: this crate has no benchmark harness (TEST_CONVENTIONS §T2.3)

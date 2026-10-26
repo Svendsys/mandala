@@ -33,13 +33,15 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 
 use crate::assemble;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::bridge;
 use crate::cli::{self, Invocation, Options, Parsed};
-use crate::client::{Connection, Exchange, Outcome, Watched};
+use crate::client::{Connection, Exchange, Outcome, Target, Watched};
 use crate::help;
 use crate::params::{build_params, tokenize, Signature, Token};
 use crate::render;
 use crate::verbs::{self, Effect, Render};
-use crate::wire::{self, ErrorBody, Outgoing, Reply, PROTOCOL, REQUEST_CAP};
+use crate::wire::{self, base64_decode, ErrorBody, Outgoing, Reply, PROTOCOL, REQUEST_CAP};
 
 /// How an invocation ended; [`Exit::code`] is the process exit status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,12 +101,33 @@ const WAIT_MAX_MS: u128 = 60_000;
 /// The `timeout_ms` the server gives a `clock.wait` that names none.
 const WAIT_DEFAULT_MS: u64 = 10_000;
 
-const NO_SOCKET: &str = "no socket path. Pass --ipc <path> or set MANDALA_IPC. Start the app with: \
-                         mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"";
+/// No app named, with the launch spelled for this platform, as
+/// `client::LAUNCH_HINT` is.
+#[cfg(not(windows))]
+const NO_SOCKET: &str = "no app named. Pass --ipc <path> or set MANDALA_IPC for a native \
+                         app (start it with: mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"), or \
+                         --ws <url> or MANDALA_WS for a browser app behind `mandalactl bridge`";
+#[cfg(windows)]
+const NO_SOCKET: &str = "no app named. Pass --ipc <name> (a pipe name) or set MANDALA_IPC for a native \
+                         app (start it with: mandala <map.mindmap.json> --ipc mandala), or \
+                         --ws <url> or MANDALA_WS for a browser app behind `mandalactl bridge`";
+
+/// The command the client writes the browser's inline screenshot for
+/// (`format/ipc.md` §Transport "Browser").
+const SCREENSHOT_COMMAND: &str = "capture.screenshot";
+
+/// The environment, as [`run`] reads it: the two discovery variables.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Env<'a> {
+    /// `$MANDALA_IPC`: a native app's socket, or its pipe name on Windows.
+    pub ipc: Option<&'a str>,
+    /// `$MANDALA_WS`: a browser app's relay, its controller URL.
+    pub ws: Option<&'a str>,
+}
 
 /// Run one invocation. `args` are the command line without the
-/// program name; `env_ipc` is `$MANDALA_IPC`, if set.
-pub fn run(args: &[String], env_ipc: Option<&str>, io: &mut Io<'_>) -> Exit {
+/// program name; `env` is what the environment names.
+pub fn run(args: &[String], env: Env<'_>, io: &mut Io<'_>) -> Exit {
     match cli::parse(args) {
         Err(why) => usage(io, &why),
         Ok(Parsed::Version) => {
@@ -125,7 +148,7 @@ pub fn run(args: &[String], env_ipc: Option<&str>, io: &mut Io<'_>) -> Exit {
             }
             Err(why) => usage(io, &why),
         },
-        Ok(Parsed::Invoke(invocation)) => invoke(invocation, env_ipc, io),
+        Ok(Parsed::Invoke(invocation)) => invoke(invocation, env, io),
     }
 }
 
@@ -147,27 +170,38 @@ enum Prepared {
     Undescribed { command: String, tokens: Vec<Token> },
 }
 
-fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exit {
-    // The one command that is the client's own: it reads a recording's
-    // files and never opens the socket, so it needs no app to be
-    // running and no `--ipc`.
+fn invoke(invocation: Invocation, env: Env<'_>, io: &mut Io<'_>) -> Exit {
+    // The commands that are the client's own: `record assemble` reads
+    // a recording's files, `bridge` relays for a browser app; neither
+    // opens the socket, so neither needs an app to be running.
     if invocation.command == assemble::COMMAND {
         return assemble::run(&invocation, io);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if invocation.command == bridge::COMMAND {
+        return bridge::run(&invocation, io);
     }
     let Invocation {
         options,
         command,
         words,
     } = invocation;
-    let prepared = match prepare(&command, &words, &options, io.cwd, io.stdin) {
+    let target = match target(&options, env) {
+        Ok(target) => target,
+        Err(why) => return usage(io, &why),
+    };
+    let mut prepared = match prepare(&command, &words, &options, io.cwd, io.stdin) {
         Ok(prepared) => prepared,
         Err(why) => return usage(io, &why),
     };
-    let socket = match socket_path(&options, env_ipc) {
-        Ok(path) => path,
+    // A browser app returns its screenshot inline: the file is this
+    // client's to write, so the file parameters are taken off the
+    // request here and the path is required up front.
+    let sink = match screenshot_sink(&target, &mut prepared) {
+        Ok(sink) => sink,
         Err(why) => return usage(io, &why),
     };
-    let (mut connection, note) = match Connection::open(&socket, options.timeout, options.force) {
+    let (mut connection, note) = match Connection::open(&target, options.timeout, options.force) {
         Ok(opened) => opened,
         Err(why) => return transport(io, &why),
     };
@@ -197,6 +231,16 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
         Outcome::Answered(exchange) => exchange,
         Outcome::NotSent(why) => return transport(io, &why),
         Outcome::Unanswered(why) => return unconfirmed(io, &why),
+    };
+    let exchange = match sink {
+        Some(sink) if exchange.reply.ok => match sink.write(exchange) {
+            Ok(exchange) => exchange,
+            Err(why) => {
+                emit(io.err, &format!("mandalactl: {why}\n"));
+                return Exit::CommandError;
+            }
+        },
+        _ => exchange,
     };
     if !report(io, &options, render, &exchange.reply, &exchange.line, None) {
         return Exit::CommandError;
@@ -475,13 +519,204 @@ fn settle_request(id: Value, timeout: Duration) -> Result<Outgoing, String> {
     wire::outgoing(&json!({"id": id, "cmd": "clock.wait", "until": "settled", "timeout_ms": wait_ms as u64}))
 }
 
-fn socket_path(options: &Options, env_ipc: Option<&str>) -> Result<PathBuf, String> {
-    let chosen = options
-        .ipc
-        .as_deref()
-        .filter(|p| !p.is_empty())
-        .or(env_ipc.filter(|p| !p.is_empty()));
-    chosen.map(PathBuf::from).ok_or_else(|| NO_SOCKET.to_string())
+/// Where the app is: a flag first, then the environment. The two
+/// flags are exclusive at the parser; the two variables are exclusive
+/// here, since a shell with both set names two apps and this client
+/// will not guess which.
+fn target(options: &Options, env: Env<'_>) -> Result<Target, String> {
+    let given = |value: Option<&str>| value.filter(|v| !v.is_empty()).map(str::to_string);
+    if let Some(path) = given(options.ipc.as_deref()) {
+        return Ok(Target::Ipc(PathBuf::from(path)));
+    }
+    if let Some(url) = given(options.ws.as_deref()) {
+        return Ok(Target::Ws(url));
+    }
+    match (given(env.ipc), given(env.ws)) {
+        (Some(_), Some(_)) => Err(
+            "both MANDALA_IPC and MANDALA_WS are set, naming two apps; pass --ipc <path> or --ws <url> to say which"
+                .to_string(),
+        ),
+        (Some(path), None) => Ok(Target::Ipc(PathBuf::from(path))),
+        (None, Some(url)) => Ok(Target::Ws(url)),
+        (None, None) => Err(NO_SOCKET.to_string()),
+    }
+}
+
+/// The file a browser app's screenshot is written to by this client.
+struct ScreenshotSink {
+    path: PathBuf,
+    overwrite: bool,
+}
+
+/// For `capture.screenshot` over `--ws`: the `path` the typed arguments
+/// carry (absolute by now), required, and `overwrite`, both taken off
+/// the request — the browser app declares neither and would refuse
+/// them. `raw` frames are sent as written. `None` for every other
+/// command and transport.
+fn screenshot_sink(target: &Target, prepared: &mut Prepared) -> Result<Option<ScreenshotSink>, String> {
+    let Prepared::Typed { command, params, .. } = prepared else {
+        return Ok(None);
+    };
+    if !(target.is_ws() && command == SCREENSHOT_COMMAND) {
+        return Ok(None);
+    }
+    let path = match params.remove("path") {
+        Some(Value::String(path)) if !path.is_empty() => PathBuf::from(path),
+        _ => {
+            return Err(format!(
+            "`{SCREENSHOT_COMMAND}` over --ws needs a path: the browser app returns the PNG inline and this \
+                 client writes it, e.g. mandalactl {SCREENSHOT_COMMAND} /tmp/shot.png"
+        ))
+        }
+    };
+    let overwrite = params
+        .remove("overwrite")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    Ok(Some(ScreenshotSink { path, overwrite }))
+}
+
+/// Why `path` cannot take a screenshot file, if it cannot: a symlink
+/// (never followed, with or without `overwrite`), a directory, or an
+/// existing file without `overwrite`. The guarantees of native's
+/// writer (`guarded_file::publish` in the app, `format/ipc.md`
+/// §`capture.screenshot`), given by the client that writes on the
+/// browser's behalf. `symlink_metadata`, not `exists`, which is
+/// `false` for a dangling symlink.
+fn in_the_way(path: &Path, overwrite: bool) -> Option<String> {
+    let shown = path.display();
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Some(format!(
+            "{shown} is a symlink, which is never followed (the capture succeeded and may be repeated)"
+        )),
+        Ok(meta) if meta.is_dir() => Some(format!("{shown} is a directory")),
+        Ok(_) if !overwrite => Some(format!(
+            "{shown} exists; pass overwrite=true to replace it (the capture succeeded and may be repeated)"
+        )),
+        _ => None,
+    }
+}
+
+/// Write `bytes` at `path` without following a symlink there and
+/// without replacing a file unless `overwrite`, atomically: the bytes
+/// go to a sibling file created exclusively (`create_new`, which a
+/// symlink at that name fails too), are synced, and are then published
+/// under `path` — by `rename` with `overwrite`, which replaces the
+/// directory entry and cannot write through a symlink; without it by
+/// `hard_link`, which fails if the name exists, so a file created
+/// since [`in_the_way`] looked is not clobbered. A failure leaves
+/// whatever was at `path` as it was, and whatever was at the sibling
+/// name too: one this call did not create is refused, never removed.
+fn write_guarded(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {
+    let shown = path.display();
+    let partial = {
+        let mut name = path.as_os_str().to_owned();
+        name.push(format!(".{}.partial", std::process::id()));
+        PathBuf::from(name)
+    };
+    // Whatever is already at the sibling name is not this call's: it
+    // is refused by name and left alone, never removed.
+    let synced = {
+        let mut file = std::fs::File::options()
+            .write(true)
+            .create_new(true)
+            .open(&partial)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => format!(
+                "{} is in the way of writing {shown}: something is already at that name, and it is left as \
+                 it is. Remove it and repeat the capture",
+                partial.display()
+            ),
+                _ => format!(
+                    "could not write {shown}: could not create {}: {e}",
+                    partial.display()
+                ),
+            })?;
+        // Synced, and closed at the end of this block before it is
+        // published: Windows refuses to rename an open file.
+        file.write_all(bytes).and_then(|()| file.sync_all())
+    };
+    let published = synced.and_then(|()| {
+        if overwrite {
+            std::fs::rename(&partial, path)
+        } else {
+            std::fs::hard_link(&partial, path)
+        }
+    });
+    // This call created the partial: gone already after a rename; the
+    // link's twin, or a failure's leftover, otherwise.
+    let _ = std::fs::remove_file(&partial);
+    published.map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => in_the_way(path, overwrite)
+            .unwrap_or_else(|| format!("{shown} appeared while it was being written")),
+        _ => format!("could not write {shown}: {e}"),
+    })
+}
+
+impl ScreenshotSink {
+    /// Write the PNG the reply carries, and its sidecar beside it, and
+    /// rewrite the reply the way a native app's reads: `path` and
+    /// `sidecar_path` in place of `png_base64` and `sidecar`, so the
+    /// output, `--json` included, names files on either transport. A
+    /// reply with `rendered: false` writes nothing, as a native app
+    /// writes nothing. `Err` when the file is in the way or the write
+    /// fails: the capture read nothing from the app's state, so
+    /// repeating it is safe.
+    fn write(self, exchange: Exchange) -> Result<Exchange, String> {
+        let Exchange { mut reply, line } = exchange;
+        let Some(encoded) = reply.result.get("png_base64").and_then(Value::as_str) else {
+            return Ok(Exchange { reply, line });
+        };
+        let png =
+            base64_decode(encoded).map_err(|why| format!("the app's png_base64 did not decode: {why}"))?;
+        let sidecar_path = self.path.with_file_name(format!(
+            "{}.geometry.json",
+            self.path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default()
+        ));
+        let sidecar = reply.result.get("sidecar").map(Value::to_string);
+        // Both refused before either is written, so a sidecar in the
+        // way leaves no orphan PNG behind.
+        for file in std::iter::once(&self.path).chain(sidecar.as_ref().map(|_| &sidecar_path)) {
+            if let Some(why) = in_the_way(file, self.overwrite) {
+                return Err(why);
+            }
+        }
+        write_guarded(&self.path, &png, self.overwrite)?;
+        if let Some(sidecar) = &sidecar {
+            write_guarded(&sidecar_path, sidecar.as_bytes(), self.overwrite)?;
+        }
+        let rewrite = |result: &mut Value| {
+            if let Some(object) = result.as_object_mut() {
+                object.remove("png_base64");
+                object.insert(
+                    "path".to_string(),
+                    Value::String(self.path.to_string_lossy().into_owned()),
+                );
+                if object.remove("sidecar").is_some() {
+                    object.insert(
+                        "sidecar_path".to_string(),
+                        Value::String(sidecar_path.to_string_lossy().into_owned()),
+                    );
+                }
+            }
+        };
+        rewrite(&mut reply.result);
+        // `--json` prints the line; rewritten the same way, so it names
+        // the files rather than carrying the image a second time.
+        let line = match serde_json::from_str::<Value>(&line) {
+            Ok(mut frame) => {
+                if let Some(result) = frame.get_mut("result") {
+                    rewrite(result);
+                }
+                frame.to_string()
+            }
+            Err(_) => line,
+        };
+        Ok(Exchange { reply, line })
+    }
 }
 
 /// Print one reply the way the mode asks. `true` when it was
