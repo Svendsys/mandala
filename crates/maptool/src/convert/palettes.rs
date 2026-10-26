@@ -5,18 +5,29 @@
 //! is dropped; `variant != 2` is folded into the key (`coral-v3`).
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub fn hoist_palettes(root: &mut Value) {
-    let palettes = collect_palettes(root);
+    let defined = defined_palettes(root);
+    let palettes = collect_palettes(root, &defined);
     inject_palettes(root, &palettes);
-    simplify_node_schemas(root);
+    simplify_node_schemas(root, &defined);
+}
+
+/// The names the input's own `palettes` table defines, before any
+/// hoisting adds to it. A legacy map has no such table, so this is
+/// empty for one and only names already-current palettes.
+fn defined_palettes(root: &Value) -> HashSet<String> {
+    root.get("palettes")
+        .and_then(Value::as_object)
+        .map(|table| table.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// Scan all nodes for level-0 color_schema entries with non-empty groups.
 /// Build a palette map keyed by palette name. When variant differs, fold
 /// it into the name (e.g. "coral", "coral-alt").
-fn collect_palettes(root: &Value) -> HashMap<String, Value> {
+fn collect_palettes(root: &Value, defined: &HashSet<String>) -> HashMap<String, Value> {
     let mut palettes: HashMap<String, Value> = HashMap::new();
 
     let nodes = match root.get("nodes").and_then(|v| v.as_object()) {
@@ -44,7 +55,7 @@ fn collect_palettes(root: &Value) -> HashMap<String, Value> {
         // `format/migration.md` §"Known limitations" documents. One
         // hash lookup via `entry` rather than the `contains_key` +
         // `insert` pair this used to do (clippy::map_entry).
-        let palette_name = palette_key(schema);
+        let palette_name = palette_key(schema, defined);
         palettes
             .entry(palette_name)
             .or_insert_with(|| json!({ "groups": groups }));
@@ -55,16 +66,24 @@ fn collect_palettes(root: &Value) -> HashMap<String, Value> {
 
 /// Derive a palette key from a color_schema object. Uses the palette
 /// name, with variant folded in for non-standard variants.
-fn palette_key(schema: &serde_json::Map<String, Value>) -> String {
+///
+/// The fold happens once. A `palette` that already names a palette in
+/// `defined` (the input's own table) or already ends in `-v{variant}`
+/// was folded on an earlier pass, so it is the key as it stands. The
+/// loader keeps a stray `variant` on a current map as an unknown key,
+/// and folding again turned `coral-v3` into `coral-v3-v3`, a name no
+/// table defines (#211 review).
+fn palette_key(schema: &serde_json::Map<String, Value>, defined: &HashSet<String>) -> String {
     let base = schema
         .get("palette")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let variant = schema.get("variant").and_then(|v| v.as_i64()).unwrap_or(2);
-    if variant == 2 {
+    let suffix = format!("-v{variant}");
+    if variant == 2 || defined.contains(base) || base.ends_with(&suffix) {
         base.to_string()
     } else {
-        format!("{}-v{}", base, variant)
+        format!("{base}{suffix}")
     }
 }
 
@@ -127,7 +146,7 @@ fn nonnegative_level(raw: Option<&Value>, node_id: &str) -> u64 {
 /// the loader would carry too. This used to rebuild the object from
 /// the four keys above, so a second pass over a current map deleted
 /// the overrides the first pass's documentation recommended.
-fn simplify_node_schemas(root: &mut Value) {
+fn simplify_node_schemas(root: &mut Value, defined: &HashSet<String>) {
     let Some(nodes) = super::nodes_obj_mut(root) else { return };
 
     for (node_id, node) in nodes.iter_mut() {
@@ -135,7 +154,7 @@ fn simplify_node_schemas(root: &mut Value) {
             continue;
         };
 
-        let key = palette_key(schema);
+        let key = palette_key(schema, defined);
         let level = nonnegative_level(schema.get("level"), node_id);
         for legacy in ["groups", "theme_id", "variant"] {
             schema.remove(legacy);
@@ -262,5 +281,36 @@ mod tests {
                 "fresh": { "groups": [{ "background": "#fresh" }] },
             })
         );
+    }
+
+    /// A stray `variant` on a current map does not fold a second time.
+    /// The loader keeps it as an unknown key, so an app-saved map can
+    /// carry one; folding `coral-v3` again gave `coral-v3-v3`, which
+    /// no table defines. Both guards are checked: a name the table
+    /// already defines, and a name that already ends in the suffix.
+    #[test]
+    fn test_hoist_palettes_folds_a_variant_once() {
+        // Defined in the table; the suffix would not match `-v5`.
+        let mut root = legacy_map_with_level(json!(0));
+        root["palettes"] = json!({ "coral-v3": { "groups": [] } });
+        let schema = root["nodes"]["0"]["color_schema"].as_object_mut().unwrap();
+        schema.insert("palette".into(), json!("coral-v3"));
+        schema.insert("variant".into(), json!(5));
+        hoist_palettes(&mut root);
+        assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
+
+        // Not in any table, but already folded with this variant.
+        let mut root = legacy_map_with_level(json!(0));
+        let schema = root["nodes"]["0"]["color_schema"].as_object_mut().unwrap();
+        schema.insert("palette".into(), json!("coral-v3"));
+        schema.insert("variant".into(), json!(3));
+        hoist_palettes(&mut root);
+        assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
+
+        // The legacy fold itself still happens.
+        let mut root = legacy_map_with_level(json!(0));
+        root["nodes"]["0"]["color_schema"]["variant"] = json!(3);
+        hoist_palettes(&mut root);
+        assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
     }
 }

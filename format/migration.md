@@ -230,7 +230,10 @@ path and move the result into place yourself.
    defined once; per-node `color_schema` becomes a lightweight reference.
    The `groups`, `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
-   `"coral-v3"`). A schema with no `palette` name is keyed
+   `"coral-v3"`) — unless `palette` already names a palette the
+   input's `palettes` table defines, or already ends in that `-vN`,
+   either of which means the fold happened on an earlier pass. A schema
+   with no `palette` name is keyed
    `"default"`, and missing `starts_at_root` / `connections_colored`
    default to `true`. A negative `level` is floored to 0 with a
    message — the model types it `usize`, so emitting one would produce
@@ -357,10 +360,15 @@ double-hoist (step 4 merges into the table), and a node's
 `color_schema.overrides` rides through the palette pass. A map that
 fails the condition is renumbered throughout, which changes IDs even
 where the map was otherwise current: one symbolic ID (`"title"`), or
-an `index` key left on a node, is enough. (A map the app saved meets
-it: the app writes Dewey IDs and none of the legacy shapes. "Saved"
-matters only for a key the app writes and a hand-written file may
-omit, such as a node's `channel`, which step 6 fills in.)
+an `index` key left on a node, is enough. (A map the app wrote from
+scratch meets it. A map it loaded carrying one of the legacy keys the
+loader tolerates — node `index`, `style.shape_type`, or
+`color_schema.groups` / `theme_id` / `variant` — keeps that key across
+saves, as every unknown key is kept, and is renumbered; `maptool
+verify` reports each one under `unknown_keys`. The other markers the
+loader refuses outright, so no saved map carries them. Separately, a
+key the app always writes and a hand-written file may omit, such as a
+node's `channel`, is filled in by step 6.)
 `test_run_convert_legacy_leaves_a_current_map_unchanged` holds that
 against testament with a ten-plus sibling group, a deletion gap, a
 drifted ID and an override; a map on the renumbering path keeps its

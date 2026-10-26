@@ -1157,12 +1157,14 @@ mod tests {
     /// Testament is contiguous and consistent, so renumbering it in
     /// Dewey order gives every node back its own id; two planted
     /// legacy markers send it down that path — an empty top-level
-    /// `portals`, and a stray `groups` on the root's `color_schema`.
+    /// `portals`, and a stray `groups` and `variant` on the root's
+    /// `color_schema`, whose palette is the already-folded `coral-v3`.
     /// Both passes remove their marker, so the output must be
     /// testament exactly. Fails when sibling ties fall back to map
     /// order (`"x.10"` before `"x.2"` moves content between ids in the
-    /// 11-, 12- and 13-child groups), and when hoisting the stray
-    /// `groups` replaces the `palettes` table instead of merging.
+    /// 11-, 12- and 13-child groups), when hoisting the stray `groups`
+    /// replaces the `palettes` table instead of merging, and when the
+    /// stray `variant` folds a second time (`coral-v3-v3`).
     #[test]
     fn test_run_convert_legacy_renumbering_keeps_dewey_order_and_palettes() {
         let text = fs::read_to_string(repo_path("maps/testament.mindmap.json")).unwrap();
@@ -1170,6 +1172,11 @@ mod tests {
         let mut marked = testament.clone();
         marked["portals"] = serde_json::json!([]);
         marked["nodes"]["0"]["color_schema"]["groups"] = serde_json::json!([{ "background": "#stray" }]);
+        marked["nodes"]["0"]["color_schema"]["variant"] = serde_json::json!(3);
+        assert_eq!(
+            marked["nodes"]["0"]["color_schema"]["palette"], "coral-v3",
+            "the stray variant must sit on an already-folded name"
+        );
         assert_eq!(
             marked["nodes"]["0"]["color_schema"]["level"], 0,
             "the stray groups must be hoistable"
