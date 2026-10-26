@@ -481,7 +481,7 @@ impl Renderer {
     /// checker permits this within a single `&mut self` body but
     /// would reject it across a method boundary, which is why the
     /// prepare call lives in this method rather than splitting into
-    /// a `collect_text_areas` helper.
+    /// a separate collection helper.
     fn prepare_text_for_pass(
         &mut self,
         camera: &Camera2D,
@@ -656,15 +656,15 @@ impl Renderer {
     /// SPIR-V→GPU-ISA on first pipeline bind, Mesa especially) that
     /// would otherwise land on the user's first interaction.
     ///
-    /// The original `prewarm_atlas` skipped the render pass to
+    /// The original `prewarm_atlas` (gone) skipped the render pass to
     /// avoid `atlas.trim()` evicting freshly warmed glyphs. The
     /// concern was unfounded but for a reason worth stating
     /// precisely: glyphon's `TextAtlas::trim()` doesn't evict at
-    /// all — it just clears the per-frame `glyphs_in_use` set
+    /// all — it just clears the per-frame `InnerAtlas::glyphs_in_use` set
     /// (text_atlas.rs `mask_atlas.trim` / `color_atlas.trim`
     /// are `self.glyphs_in_use.clear()`). The glyph cache itself
-    /// only evicts under packer pressure inside `try_allocate`,
-    /// and the `glyphs_in_use` set is populated by
+    /// only evicts under packer pressure inside `InnerAtlas::try_allocate`,
+    /// and the `InnerAtlas::glyphs_in_use` set is populated by
     /// `text_renderer.prepare()` — not `render()`. So warmed
     /// glyphs sit in the LRU cache regardless of whether a draw
     /// happened, and the prior atlas-only path was already safe;

@@ -165,7 +165,7 @@ pub(super) fn is_kv_token(t: &str) -> bool {
 ///
 /// Borrow-returning so cursor-time completion paths can call this
 /// without forcing an allocation; owned-`String` callers
-/// (`completion::compute_completion_state`) `.to_string()` at the
+/// (`completion::complete`) `.to_string()` at the
 /// boundary.
 pub(super) fn split_kv(t: &str) -> Option<(&str, &str)> {
     let eq = t.find('=')?;

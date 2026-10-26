@@ -42,7 +42,11 @@
 //! [`production_source`] rather than by deriving a fourth answer of
 //! its own. It did pay for one correction here — see that function
 //! on the `#![cfg(test)]` *inner*-attribute form, which gates a whole
-//! file and which nothing here had been reading.
+//! file and which nothing here had been reading. A fifth,
+//! [`crate::util::doc_identifiers`], asks whether every `snake_case`
+//! identifier a doc comment writes in backticks still exists, and
+//! reads the sources through [`workspace_rust_sources`] and the item
+//! walk's attribute helpers here.
 //!
 //! **Both excisions fail toward noise.** [`production_source`] does
 //! not descend into function bodies, so a `#[cfg(test)] mod` written
@@ -278,7 +282,7 @@ fn blank_span(span: proc_macro2::Span, blanked: &mut [bool]) {
 
 /// The attributes of any `Item` form that carries them. `Verbatim`
 /// is tokens syn declined to parse and has none.
-fn item_attrs(item: &Item) -> &[Attribute] {
+pub(crate) fn item_attrs(item: &Item) -> &[Attribute] {
     match item {
         Item::Const(item) => &item.attrs,
         Item::Enum(item) => &item.attrs,
@@ -300,7 +304,7 @@ fn item_attrs(item: &Item) -> &[Attribute] {
 }
 
 /// See [`item_attrs`]; the same for the members of an `impl` block.
-fn impl_item_attrs(item: &ImplItem) -> &[Attribute] {
+pub(crate) fn impl_item_attrs(item: &ImplItem) -> &[Attribute] {
     match item {
         ImplItem::Const(item) => &item.attrs,
         ImplItem::Fn(item) => &item.attrs,
@@ -311,7 +315,7 @@ fn impl_item_attrs(item: &ImplItem) -> &[Attribute] {
 }
 
 /// See [`item_attrs`]; the same for the members of a `trait` body.
-fn trait_item_attrs(item: &TraitItem) -> &[Attribute] {
+pub(crate) fn trait_item_attrs(item: &TraitItem) -> &[Attribute] {
     match item {
         TraitItem::Const(item) => &item.attrs,
         TraitItem::Fn(item) => &item.attrs,
@@ -1356,7 +1360,7 @@ pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
 /// Every shipped `NodeId::append(` call under `mindmap/tree_builder/`,
 /// as `(repo-relative file, 1-based line, the line's text)`.
 ///
-/// `indextree`'s `append` is a wrapper over `checked_append`, whose
+/// `indextree`'s `append` is a wrapper over `NodeId::checked_append`, whose
 /// third act is `self.ancestors(arena).any(|a| new_child == a)` —
 /// an O(depth) walk, on every append. The scene builder appends once
 /// per node and once per section, and a `.mindmap.json` may declare a

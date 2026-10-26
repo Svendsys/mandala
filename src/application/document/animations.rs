@@ -424,20 +424,20 @@ impl MindMapDocument {
     /// model-sync + undo path an instant mutation would take.
     ///
     /// **Why the reset.** By the completing frame the *model* already
-    /// carries the last lerped position — `from + delta·t_prev`,
-    /// where `t_prev` is the easing value of the last advancing tick.
+    /// carries the last lerped position — `from + delta·t`,
+    /// where `t` is the easing value of the last advancing tick.
     /// Routing the full mutation through `apply_custom_mutation` from
     /// *that* state was wrong on two counts:
     ///
     /// 1. **Double-apply.** `apply_custom_mutation` builds its sync
     ///    tree from the model, so a relative mutation (e.g. a +50
-    ///    nudge) applied on top of `from + delta·t_prev` lands at
-    ///    `from + delta·(1 + t_prev)` — approaching double the delta
+    ///    nudge) applied on top of `from + delta·t` lands at
+    ///    `from + delta·(1 + t)` — approaching double the delta
     ///    for any animation longer than one frame.
     /// 2. **Mid-lerp undo baseline.** The undo snapshot
     ///    `apply_custom_mutation` takes reads the model, so it
     ///    captured the mid-lerp position, not `from`. Ctrl-Z restored
-    ///    `from + delta·t_prev` instead of the true pre-animation
+    ///    `from + delta·t` instead of the true pre-animation
     ///    state.
     ///
     /// Resetting the target's `position` — the sole interpolated

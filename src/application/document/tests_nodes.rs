@@ -269,7 +269,7 @@ fn test_set_section_size_rejects_astronomical_height_with_verify_mirror_message(
         .is_err_and(|m| m.contains("over 100× the node's height")));
 }
 
-/// Non-finite size component rejected by `validate_section_aabb`.
+/// Non-finite size component rejected by `validate::section_candidate_aabb`.
 /// Pin both width and height branches so a regression that drops
 /// one ships visibly.
 #[test]
@@ -943,7 +943,7 @@ fn test_fit_node_to_content_rejects_unmeasurable_floor() {
 /// Pinned `section.size` past the absolute typo ceiling
 /// (`MAX_NODE_AXIS = 1_000_000`) propagates through the floor.
 /// `fit_node_to_content` must route the candidate through
-/// `check_node_size_typo` like the sibling node-size setters,
+/// `validate::node_size` like the sibling node-size setters,
 /// so the typo is caught even when it arrives via a pinned
 /// section rather than a direct setter argument.
 #[test]
@@ -2676,7 +2676,7 @@ fn test_asking_for_preset_custom_is_not_reported_as_a_promotion_to_custom() {
 }
 
 /// Selection drift: when the live selection no longer covers the
-/// preview's `selection_snapshot`, the scene-build path renders
+/// preview's `BorderPreviewTarget`, the scene-build path renders
 /// as if no preview were active. The actual slot empties at the
 /// next `set_*` / `cancel_*` / `commit_*` call (defer-clear).
 #[test]

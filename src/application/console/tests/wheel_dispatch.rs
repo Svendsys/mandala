@@ -6,7 +6,7 @@
 //! selected, and each component type decides which channel that
 //! color lands on. These tests lock in the per-variant choice so a
 //! future refactor can't silently migrate a node's default to
-//! `text_color` or an edge's default to a non-existent `bg_color`.
+//! `text_color` or an edge's default to a background-color field edges do not have.
 
 use super::fixtures::{first_node_id, load_test_doc, select_first_edge, two_testament_node_ids};
 use crate::application::console::traits::{view_for, AcceptsWheelColor, ColorValue, Outcome, TargetId};

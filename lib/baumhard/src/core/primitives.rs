@@ -523,7 +523,7 @@ impl ColorFontRegions {
     ///
     /// Contrast with [`Self::shift_regions_after`], whose "replace
     /// and shift" semantics leave straddling regions in place — that
-    /// primitive exists for `GlyphMatrix::copy_from`, which explicitly
+    /// primitive exists for `GlyphMatrix::copy_from` (gone), which explicitly
     /// follows up with a `submit_region` for the inserted span — and
     /// with [`Self::split_and_separate`], which shares this
     /// primitive's `start >= idx` shift but does **not** absorb: a

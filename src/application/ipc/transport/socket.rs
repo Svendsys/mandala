@@ -118,7 +118,7 @@ fn directory_is_trusted(uid: u32, mode: u32, me: u32) -> bool {
 /// gives up — the kernel's own `ELOOP` limit on Linux.
 const MAX_SYMLINK_HOPS: usize = 40;
 
-/// The longest socket path the platform's `sun_path` holds, excluding
+/// The longest socket path the platform's `sockaddr_un.sun_path` holds, excluding
 /// its terminating NUL.
 const SOCKET_PATH_MAX: usize = if cfg!(any(target_os = "linux", target_os = "android")) {
     107

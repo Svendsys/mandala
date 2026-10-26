@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Selection-changing apply_* helpers — `select_all` / `deselect_all`
-//! / `invert` / `select_parent` / `select_child` / `select_sibling`.
+//! Selection-changing apply_* helpers — `select_all_in` /
+//! `deselect_all_in` / `invert_selection_in` / `select_parent_in` /
+//! `select_child_in` / `select_sibling_in`.
 //! Each pairs a pure-doc inner (`*_in`) function that returns
 //! whether the selection actually changed with an outer wrapper
 //! that triggers `rebuild_after_selection_change` on a real

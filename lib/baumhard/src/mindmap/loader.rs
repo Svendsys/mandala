@@ -2976,8 +2976,8 @@ mod tests {
         "to_value",
     ];
 
-    /// Whether a name reads as holding a map: `map`, `mind_map`,
-    /// `stress_map`.
+    /// Whether a name reads as holding a map: `"map"`, `"mind_map"`,
+    /// `"stress_map"`.
     fn reads_as_a_map(name: &str) -> bool {
         name.to_ascii_lowercase().ends_with("map")
     }
@@ -4292,7 +4292,7 @@ mod tests {
     }
 
     /// **The zero that aborted the process.** A border font size of
-    /// zero reaches cosmic-text's `Buffer::new`, whose
+    /// zero reaches `cosmic_text::Buffer::new`, whose
     /// `assert_ne!(line_height, 0.0)` fires on the scene-build path
     /// — outside any `catch_unwind`, so the editor dies on the frame
     /// after the map opens.

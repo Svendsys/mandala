@@ -1047,7 +1047,7 @@ mod tests {
     /// **Conservative in one direction, by design.** The needle is the
     /// constant's *name*, so aliasing it first — `let budget_sq =
     /// super::POINTER_DRAG_THRESHOLD_SQ_PX;` above the arms, then
-    /// comparing against `budget_sq` — reddens this test even though
+    /// comparing against the alias — reddens this test even though
     /// the arms still read the shared number. That is a false positive
     /// on a legitimate refactor, and it is the direction to fail in:
     /// the message quotes the offending comparison in full ("not a
