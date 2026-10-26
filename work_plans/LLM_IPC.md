@@ -80,9 +80,9 @@ misread — come back here.
 **Decision.** Newline-delimited JSON over a Unix domain socket
 (`SOCK_STREAM`) at a user-owned path, enabled per launch by
 `--ipc <path>` (mirroring `--keybinds`). Windows: the same byte
-protocol over a named pipe restricted to the current user; IPC-02
-ships the Unix adapter and `--ipc` fails fast at startup on Windows
-until the pipe adapter lands. Single controller at a time; the
+protocol over a named pipe restricted to its owner, `--ipc <name>`
+naming the pipe; IPC-02 shipped the Unix adapter and #169 the pipe,
+behind the same boundary threads. Single controller at a time; the
 listener outlives client connections; no session state survives a
 disconnect. Full wire detail: `format/ipc.md` §Transport.
 

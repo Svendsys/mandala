@@ -94,16 +94,22 @@ the parity trajectory (or why none is owed):
   serve local sockets, and the consumer is an agent driving a
   desktop/Xvfb instance. The document revision the event stream
   observes (`document/revision.rs`) is not gated: it is a counter on
-  the model, and compiles for both targets. The client,
-  `crates/mandalactl`, compiles on every target (the workspace is
-  type-checked for wasm32) but connects over Unix sockets only: off
-  Unix its connect fails naming the same gap (#169) the server's
-  `--ipc` does. Protocol: `format/ipc.md`; design:
+  the model, and compiles for both targets. Within native the
+  transport is a Unix socket, or on Windows a named pipe
+  (`\\.\pipe\mandala-<name>`, `ipc/transport/pipe.rs`; #169) behind the
+  same boundary threads. The pipe is owner-only, except that an
+  elevated (run-as-administrator) launch makes the Administrators
+  group its owner, so any other elevated process of a member of that
+  group can connect too. The client, `crates/mandalactl`, compiles on
+  every target (the workspace is type-checked for wasm32) and
+  connects over the socket or the pipe. The Windows half runs on CI's
+  `windows-ipc` job (`.github/workflows/test.yml`: clippy and the
+  `ipc::` tests), not in `./test.sh`, which cannot run it from Linux;
+  locally `cargo check --target x86_64-pc-windows-gnu -p mandala`
+  type-checks it. Protocol: `format/ipc.md`; design:
   `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
   transport + browser-side capture, same envelope and commands) is
-  parked in IPC-15 (#75). Within native the transport is Unix-only
-  for now: `--ipc` on Windows fails at startup naming the gap, until
-  the named-pipe adapter lands (#169).
+  parked in IPC-15 (#75).
 - **Screenshot capture** (`src/application/capture/`,
   `src/application/renderer/capture.rs`,
   `src/application/app/capture_flow.rs`,

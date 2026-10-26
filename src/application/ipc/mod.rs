@@ -20,31 +20,22 @@
 //!
 //! Native-only at this module boundary, the `console_input`
 //! precedent: browsers cannot serve local sockets (`CLAUDE.md`
-//! "Dual-target status"). Within native, the transport is Unix-only
-//! until the Windows named-pipe adapter lands; until then `--ipc` on
-//! Windows fails at startup rather than doing nothing.
+//! "Dual-target status"). Within native, the transport is a Unix
+//! socket, or a named pipe on Windows (#169).
 
-// The envelope is transport-agnostic, but the only code that reads
-// what it builds is the Unix transport. Off Unix the module compiles
-// with nothing draining it — the same shape as the wasm32 allows in
-// `application/mod.rs`, scoped the same way so the Unix lint stays
-// fully armed, and gone when the named-pipe transport (#169) lands.
 mod commands;
-#[cfg_attr(not(unix), allow(dead_code))]
 mod envelope;
 pub(crate) mod events;
 pub(crate) mod injected;
 mod registry;
 pub(crate) mod space;
 mod target;
-#[cfg(unix)]
 mod transport;
 mod wait;
 
 pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
 pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
-#[cfg(unix)]
 pub(crate) use transport::IpcServer;
 pub(crate) use wait::{Settling, Until};
 
@@ -56,7 +47,6 @@ pub(crate) use wait::{Settling, Until};
 pub(crate) struct IpcWake;
 
 /// What executing one request produced.
-#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct Executed {
     /// The reply, or `None` for one held back: a `clock.wait` whose
     /// reply the transport sends when it resolves (`wait`).
@@ -76,50 +66,4 @@ pub(crate) struct DrainOutcome {
     /// The drain budget ran out with messages still queued; keep the
     /// loop iterating rather than parking.
     pub(crate) backlog: bool,
-}
-
-/// Stand-in for the transport where it does not exist yet. `start`
-/// is the only way to obtain one and always fails, so the other
-/// methods are unreachable by construction — the uninhabited field
-/// proves it to the compiler.
-#[cfg(not(unix))]
-pub(crate) struct IpcServer {
-    never: std::convert::Infallible,
-}
-
-#[cfg(not(unix))]
-impl IpcServer {
-    pub(crate) fn start(
-        _path: &std::path::Path,
-        _wake: impl Fn() + Send + Sync + 'static,
-    ) -> Result<IpcServer, String> {
-        Err(
-            "the `--ipc` transport is not available on this platform yet: Windows needs the \
-             named-pipe adapter, tracked in #169 (format/ipc.md \"Windows\")"
-                .to_string(),
-        )
-    }
-
-    pub(crate) fn drain(
-        &mut self,
-        _execute: impl FnMut(&envelope::IpcRequest, &mut events::Session) -> Executed,
-    ) -> DrainOutcome {
-        match self.never {}
-    }
-
-    pub(crate) fn publish_map(&mut self, _path: Option<&str>) {
-        match self.never {}
-    }
-
-    pub(crate) fn wait_deadline(&self) -> Option<std::time::Instant> {
-        match self.never {}
-    }
-
-    pub(crate) fn evaluate_wait(&mut self, _app: Settling, _now: &events::Observed<'_>) {
-        match self.never {}
-    }
-
-    pub(crate) fn shutdown(self) {
-        match self.never {}
-    }
 }

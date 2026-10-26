@@ -9,19 +9,24 @@
 //! thread with a poll(2)/mio readiness loop"). None of them touches
 //! app state; what crosses to the main thread is an [`Inbound`]
 //! message, and what comes back is an [`Outbound`] frame.
+//!
+//! **The seam.** The bodies are written against four small traits —
+//! [`Listen`], [`Conn`], [`Outlet`], [`HangUp`] — rather than against a
+//! socket type, so the Unix socket (`unix.rs`) and the Windows named
+//! pipe (`pipe.rs`) run the same three loops. The traits name exactly
+//! what the loops ask of the byte stream: a read half, a write half
+//! whose writes fail once they stop making progress, and a way for
+//! another thread to end the connection. Framing, caps, generations,
+//! the ordered inbound queue and reply pacing are above the seam and
+//! do not know which transport is underneath.
 
-use std::io::{self, BufRead, BufReader, ErrorKind, Write};
-use std::net::Shutdown;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::io::{self, BufRead, BufReader, ErrorKind};
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{
-    Controller, Inbound, Link, Outbound, EVENT_QUEUE_CAP, OUTBOUND_QUEUE_CAP, REQUEST_QUEUE_CAP,
-    STALLED_WRITE_TIMEOUT,
-};
+use super::{Controller, Inbound, Link, Outbound, EVENT_QUEUE_CAP, OUTBOUND_QUEUE_CAP, REQUEST_QUEUE_CAP};
 use crate::application::ipc::envelope::{
     decode_line, Decoded, Event, Frame, Reply, INBOUND_LINE_CAP, OUTBOUND_FRAME_CAP,
 };
@@ -36,14 +41,59 @@ const WRITE_BATCH_BYTES: usize = 64 << 10;
 /// persistent failure (descriptor exhaustion) cannot spin a core.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
+/// A listening endpoint: hands out one connection per client, in the
+/// order they arrived.
+pub(super) trait Listen: Send + 'static {
+    type Conn: Conn;
+
+    /// Block until the next client connects.
+    fn accept(&self) -> io::Result<Self::Conn>;
+}
+
+/// One accepted connection, before it is anybody's.
+pub(super) trait Conn: Send + 'static {
+    type Reader: io::Read + Send + 'static;
+    type Writer: Outlet;
+    type Hangup: HangUp;
+
+    /// Split the connection for a controller: its read half, its write
+    /// half with the stalled-write rule armed, and a handle the main
+    /// thread can end the connection with.
+    fn into_controller(self) -> io::Result<(Self::Reader, Self::Writer, Self::Hangup)>;
+
+    /// Refuse the connection while a controller is attached: offer it
+    /// `frame` (`connection_rejected`), then close, without the
+    /// acceptor ever waiting on the refused client.
+    fn reject(self, frame: &[u8]);
+}
+
+/// A connection's write half.
+pub(super) trait Outlet: Send + 'static {
+    /// Write all of `bytes`, or fail. A write that makes no progress for
+    /// `STALLED_WRITE_TIMEOUT` is a failure: the client has stopped
+    /// reading (`format/ipc.md` §Threading contract).
+    fn send_all(&mut self, bytes: &[u8]) -> io::Result<()>;
+
+    /// End the connection after the last write, waking a reader still
+    /// blocked on it. What was written in order still reaches the
+    /// client.
+    fn close(self);
+}
+
+/// A handle another thread can end a connection through: both halves
+/// see it and finish.
+pub(super) trait HangUp: Send + 'static {
+    fn hang_up(&self);
+}
+
 /// The acceptor: install the first connection as controller, refuse
 /// every other one while it stays, forever. Runs for the process
 /// lifetime on `mandala-ipc-acceptor`.
-pub(super) fn accept_loop(listener: UnixListener, link: Arc<Link>) {
+pub(super) fn accept_loop<L: Listen>(listener: L, link: Arc<Link>) {
     let mut generation = 0u64;
     loop {
         let stream = match listener.accept() {
-            Ok((stream, _)) => stream,
+            Ok(stream) => stream,
             Err(e) => {
                 log::warn!("ipc: accept failed: {e}");
                 std::thread::sleep(ACCEPT_BACKOFF);
@@ -51,7 +101,7 @@ pub(super) fn accept_loop(listener: UnixListener, link: Arc<Link>) {
             }
         };
         if link.controller_live.load(Ordering::Acquire) {
-            reject_busy(&stream);
+            reject_busy(stream);
             continue;
         }
         generation += 1;
@@ -61,15 +111,12 @@ pub(super) fn accept_loop(listener: UnixListener, link: Arc<Link>) {
     }
 }
 
-/// Refuse a connection while a controller is attached: one
-/// non-blocking write of `connection_rejected`, then close. A rejectee
-/// that never reads cannot stall the acceptor — on a full buffer the
-/// write simply fails and the connection is closed without the frame.
-fn reject_busy(stream: &UnixStream) {
-    let _ = stream.set_nonblocking(true);
+/// Refuse a connection while a controller is attached: offer it
+/// `connection_rejected`, then close. A rejectee that never reads
+/// cannot stall the acceptor ([`Conn::reject`]).
+fn reject_busy(stream: impl Conn) {
     if let Some(bytes) = Frame::Event(Event::connection_rejected_busy()).encode(OUTBOUND_FRAME_CAP) {
-        let mut writer = stream;
-        let _ = writer.write(&bytes);
+        stream.reject(&bytes);
     }
 }
 
@@ -81,10 +128,8 @@ fn reject_busy(stream: &UnixStream) {
 /// before the reader exists, so it precedes every request on the
 /// main thread's queue — a request whose controller the main thread
 /// has not met would be dropped as stale.
-fn install_controller(stream: UnixStream, generation: u64, link: &Arc<Link>) -> io::Result<()> {
-    stream.set_write_timeout(Some(STALLED_WRITE_TIMEOUT))?;
-    let read_half = stream.try_clone()?;
-    let hangup = stream.try_clone()?;
+fn install_controller<C: Conn>(stream: C, generation: u64, link: &Arc<Link>) -> io::Result<()> {
+    let (read_half, stream, hangup) = stream.into_controller()?;
     let (outbound_tx, outbound_rx) = mpsc::sync_channel(OUTBOUND_QUEUE_CAP + EVENT_QUEUE_CAP);
     let (flushed_tx, flushed_rx) = mpsc::channel();
     let waiting = Arc::new(AtomicBool::new(false));
@@ -111,7 +156,7 @@ fn install_controller(stream: UnixStream, generation: u64, link: &Arc<Link>) -> 
         outbound: outbound_tx.clone(),
         waiting,
         events_queued,
-        hangup,
+        hangup: Box::new(hangup),
         flushed: flushed_rx,
     }));
 
@@ -130,8 +175,8 @@ fn install_controller(stream: UnixStream, generation: u64, link: &Arc<Link>) -> 
 }
 
 /// The outbound writer for one controller and everything it owns.
-struct Writer {
-    stream: UnixStream,
+struct Writer<W: Outlet> {
+    stream: W,
     frames: Receiver<Outbound>,
     /// The main thread's "paused on a full queue" flag, shared with
     /// its `Controller`.
@@ -147,7 +192,7 @@ struct Writer {
     _flushed: Sender<()>,
 }
 
-impl Writer {
+impl<W: Outlet> Writer<W> {
     /// Serialize each frame (cap check and `reply_too_large`
     /// substitution included) and write it, gathering every frame
     /// already queued into one write. Ends when every sender is
@@ -158,7 +203,7 @@ impl Writer {
     /// wakes up.
     fn run(self) {
         let Writer {
-            stream,
+            mut stream,
             frames,
             waiting,
             events_queued,
@@ -172,7 +217,6 @@ impl Writer {
                 link.rouse();
             }
         };
-        let mut writer = &stream;
         let mut batch = Vec::new();
         while let Ok(first) = frames.recv() {
             // Everything already queued goes out in one write: a burst
@@ -208,7 +252,7 @@ impl Writer {
                 }
                 next = frames.try_recv().ok();
             }
-            if let Err(e) = writer.write_all(&batch) {
+            if let Err(e) = stream.send_all(&batch) {
                 log::debug!("ipc: write to controller failed, closing: {e}");
                 break;
             }
@@ -216,7 +260,7 @@ impl Writer {
                 break;
             }
         }
-        let _ = stream.shutdown(Shutdown::Both);
+        stream.close();
         // A main thread paused on this connection must learn it is
         // over. The queue goes first, so the retry the wake triggers
         // finds it disconnected rather than still full — waking first
@@ -236,8 +280,8 @@ impl Writer {
 /// or a read error, announces the disconnect (after every request it
 /// queued, by FIFO) and frees the acceptor to install the next
 /// controller.
-fn reader_loop(stream: UnixStream, generation: u64, outbound: SyncSender<Outbound>, link: Arc<Link>) {
-    let mut reader = BufReader::new(&stream);
+fn reader_loop(stream: impl io::Read, generation: u64, outbound: SyncSender<Outbound>, link: Arc<Link>) {
+    let mut reader = BufReader::new(stream);
     let mut line = Vec::new();
     let mut index = 0u64;
     loop {

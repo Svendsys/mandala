@@ -3540,9 +3540,9 @@ and `document_revision`.
 module and one line to the registry's family table; recording
 (IPC-08) and headless mode (IPC-10) draw through the same
 parameterized frame the screenshot engine does.
-**Caveat:** Unix-only today — Windows fails `--ipc` at startup until
-the named-pipe adapter lands, and the browser has no socket at all
-(`CLAUDE.md` "Dual-target status").
+**Caveat:** native only — a Unix socket, or a named pipe on Windows
+(#169) — and the browser has no socket at all (`CLAUDE.md`
+"Dual-target status").
 
 ### Screenshot capture
 

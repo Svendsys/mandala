@@ -1,15 +1,25 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Loopback tests: a real socket in a scratch directory, real
-//! boundary threads, and a fake main thread that does exactly what
-//! the event loop does — wait for a wake, drain, repeat — with the
-//! bootstrap commands as its executor. No window and no GPU
-//! (TEST_CONVENTIONS §T8), no async harness (§T10): `std` threads and
-//! blocking client I/O with read timeouts, so a regression fails
-//! rather than hangs.
+//! Loopback tests: a real endpoint — a socket in a scratch directory,
+//! or on Windows a uniquely named pipe — real boundary threads, and a
+//! fake main thread that does exactly what the event loop does — wait
+//! for a wake, drain, repeat — with the bootstrap commands as its
+//! executor. No window and no GPU (TEST_CONVENTIONS §T8), no async
+//! harness (§T10): `std` threads and blocking client I/O with read
+//! timeouts, so a regression fails rather than hangs.
+//!
+//! The same scenarios run against both transports; only [`Client`]'s
+//! connect and the endpoint's name differ. One scenario is Unix-only
+//! by nature — half-closing a connection, which a named pipe cannot do
+//! — and one assertion is: that a graceful exit removes the socket
+//! file, where a pipe has no file to remove.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
+#[cfg(unix)]
+use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::net::Shutdown;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -64,7 +74,10 @@ impl Harness {
     /// until [`Harness::run_main`], or the test drains by hand.
     fn paused(label: &str) -> Self {
         let dir = TempDir::new(label);
+        #[cfg(unix)]
         let path = dir.join("m.sock");
+        #[cfg(windows)]
+        let path = unique_endpoint(label);
         let (wake, wakes) = mpsc::channel::<()>();
         let server_wake = wake.clone();
         let mut server = IpcServer::start(&path, move || {
@@ -137,13 +150,41 @@ impl Drop for Harness {
     }
 }
 
+/// An `--ipc` value no other test, and no other test run, uses: a pipe
+/// name is machine-wide, where a socket lives in its test's own
+/// scratch directory.
+#[cfg(windows)]
+pub(super) fn unique_endpoint(label: &str) -> PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    PathBuf::from(format!(
+        "test-{label}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ))
+}
+
+/// A hang-up handle for a hand-built [`Controller`] whose connection
+/// the test never ends: offering frames does not touch it.
+struct NoHangup;
+
+impl connection::HangUp for NoHangup {
+    fn hang_up(&self) {}
+}
+
 /// One client connection with line-oriented helpers.
 struct Client {
+    #[cfg(unix)]
     reader: BufReader<UnixStream>,
+    #[cfg(windows)]
+    reader: pipe_client::LineReader,
+    #[cfg(unix)]
     writer: UnixStream,
+    #[cfg(windows)]
+    writer: pipe_client::Writer,
 }
 
 impl Client {
+    #[cfg(unix)]
     fn connect(path: &Path) -> Self {
         let stream = UnixStream::connect(path).expect("connect to the server");
         stream
@@ -153,6 +194,12 @@ impl Client {
             reader: BufReader::new(stream.try_clone().expect("clone")),
             writer: stream,
         }
+    }
+
+    #[cfg(windows)]
+    fn connect(path: &Path) -> Self {
+        let (reader, writer) = pipe_client::connect(path);
+        Client { reader, writer }
     }
 
     /// Connect as the controller and return the `hello` greeting.
@@ -213,6 +260,41 @@ fn test_ipc_loopback_greets_with_hello_then_answers_ping() {
     assert_eq!(reply["id"], json!(1));
     assert_eq!(reply["ok"], json!(true));
     assert!(reply["result"]["now_ms"].is_number());
+}
+
+/// The project's own client round-trips a `ping` against the real
+/// server — on Windows over the named pipe, which is #169's acceptance
+/// criterion, and on Unix over the socket. The failing inputs are the
+/// two sides disagreeing on where the endpoint is (`mandalactl` maps an
+/// `--ipc` value to a pipe on its own), the client's bounded reads or
+/// writes over the pipe, and the greeting either side checks.
+#[test]
+fn test_ipc_loopback_mandalactl_round_trips_a_ping() {
+    let harness = Harness::running("ipc-mandalactl");
+    let args = [
+        "--ipc".to_string(),
+        harness
+            .path
+            .to_str()
+            .expect("test endpoints are Unicode")
+            .to_string(),
+        "ping".to_string(),
+    ];
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut stdin: &[u8] = b"";
+    let exit = mandalactl::run(
+        &args,
+        None,
+        &mut mandalactl::Io {
+            out: &mut out,
+            err: &mut err,
+            cwd: None,
+            stdin: &mut stdin,
+        },
+    );
+    let (out, err) = (String::from_utf8_lossy(&out), String::from_utf8_lossy(&err));
+    assert_eq!(exit, mandalactl::Exit::Success, "stdout: {out}\nstderr: {err}");
+    assert!(out.starts_with("now_ms: "), "{out}");
 }
 
 #[test]
@@ -312,6 +394,7 @@ fn test_ipc_loopback_a_new_controller_starts_a_fresh_session() {
     assert_eq!(second.next()["id"], json!(2));
 }
 
+#[cfg(unix)]
 #[test]
 fn test_ipc_loopback_half_close_still_gets_every_reply() {
     // `printf '{"id":1,"cmd":"ping"}\n' | nc -U sock` closes its write
@@ -454,7 +537,10 @@ fn test_ipc_loopback_shutdown_says_so_and_removes_the_socket() {
     harness.shutdown();
     assert_eq!(client.next(), json!({ "event": "shutdown", "data": {} }));
     assert!(client.at_eof(), "the connection closes after `shutdown`");
+    #[cfg(unix)]
     assert!(!path.exists(), "a graceful exit removes the socket file");
+    #[cfg(windows)]
+    let _ = path;
 }
 
 #[test]
@@ -496,14 +582,13 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
 #[test]
 fn test_controller_offer_pauses_on_a_full_queue_and_reports_a_closed_one() {
     let (outbound, frames) = mpsc::sync_channel::<Outbound>(1);
-    let (hangup, _peer) = UnixStream::pair().expect("pair");
     let (_flushed_tx, flushed) = mpsc::channel();
     let controller = Controller {
         generation: 1,
         outbound,
         waiting: Arc::new(AtomicBool::new(false)),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup,
+        hangup: Box::new(NoHangup),
         flushed,
     };
     let frame = || Outbound::Frame(Frame::Event(crate::application::ipc::envelope::Event::shutdown()));
@@ -691,11 +776,8 @@ fn test_ipc_loopback_a_new_controller_starts_unsubscribed_and_the_revision_carri
 
 #[test]
 fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() {
-    use std::os::unix::net::UnixStream;
-
     let mut harness = Harness::paused("ipc-event-full");
     let (queue, room) = mpsc::sync_channel(1);
-    let (hangup, _peer) = UnixStream::pair().expect("a socket pair");
     let (_flushed_tx, flushed) = mpsc::channel();
     let waiting = Arc::new(AtomicBool::new(false));
     let server = harness.server();
@@ -704,7 +786,7 @@ fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() 
         outbound: queue.clone(),
         waiting: Arc::clone(&waiting),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup,
+        hangup: Box::new(NoHangup),
         flushed,
     });
     // The controller's queue is full of something it has not read.
@@ -749,7 +831,6 @@ fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() 
 fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
     let mut harness = Harness::paused("ipc-event-behind-reply");
     let (queue, room) = mpsc::sync_channel(8);
-    let (hangup, _peer) = UnixStream::pair().expect("a socket pair");
     let (_flushed_tx, flushed) = mpsc::channel();
     let server = harness.server();
     server.controller = Some(Controller {
@@ -757,7 +838,7 @@ fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
         outbound: queue,
         waiting: Arc::new(AtomicBool::new(false)),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup,
+        hangup: Box::new(NoHangup),
         flushed,
     });
     let mut app = EventsApp::new();
@@ -789,14 +870,13 @@ fn test_events_have_a_lane_of_their_own_and_never_take_a_replys_slot() {
     use crate::application::ipc::envelope::Reply;
 
     let (outbound, frames) = mpsc::sync_channel::<Outbound>(OUTBOUND_QUEUE_CAP + EVENT_QUEUE_CAP);
-    let (hangup, _peer) = UnixStream::pair().expect("pair");
     let (_flushed_tx, flushed) = mpsc::channel();
     let controller = Controller {
         generation: 1,
         outbound,
         waiting: Arc::new(AtomicBool::new(false)),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup,
+        hangup: Box::new(NoHangup),
         flushed,
     };
     let event = || Event::change("camera_changed", json!({ "revision": 1 }));
@@ -837,4 +917,101 @@ fn test_events_have_a_lane_of_their_own_and_never_take_a_replys_slot() {
         EVENT_QUEUE_CAP - 1,
         "a failed offer gives its slot back"
     );
+}
+
+/// The Windows test client: `interprocess`'s blocking pipe client, with
+/// the read timeout a pipe does not have supplied by a reader thread.
+///
+/// The thread reads one line only when [`LineReader::read_line`] asks
+/// for one. A thread draining the pipe eagerly would read on the
+/// client's behalf, and the scenarios that need a client that is *not*
+/// reading — the paused reader, the dead reader, the controller paused
+/// at exit — would then test nothing.
+#[cfg(windows)]
+mod pipe_client {
+    use std::io::{self, BufRead, BufReader, ErrorKind, Write};
+    use std::path::Path;
+    use std::sync::mpsc::{self, Receiver, Sender};
+    use std::sync::Arc;
+
+    use interprocess::os::windows::named_pipe::{pipe_mode, DuplexPipeStream, SendPipeStream};
+
+    use super::FRAME_TIMEOUT;
+
+    pub(super) fn connect(path: &Path) -> (LineReader, Writer) {
+        let name = path.to_str().expect("test endpoints are Unicode");
+        let pipe = super::super::pipe_name::pipe_path(name).expect("test endpoints name a pipe");
+        let stream = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path(pipe.as_str())
+            .expect("connect to the server");
+        let (recv, send) = stream.split();
+        let (requests, wanted) = mpsc::channel::<()>();
+        let (lines_tx, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(recv);
+            for () in wanted {
+                let mut line = String::new();
+                let read = reader.read_line(&mut line).map(|_| line);
+                if lines_tx.send(read).is_err() {
+                    return;
+                }
+            }
+        });
+        (
+            LineReader {
+                requests,
+                lines,
+                pending: false,
+            },
+            Writer(Arc::new(send)),
+        )
+    }
+
+    pub(super) struct LineReader {
+        requests: Sender<()>,
+        lines: Receiver<io::Result<String>>,
+        /// A line was asked for and has not arrived: the next call
+        /// waits for it rather than asking for another.
+        pending: bool,
+    }
+
+    impl LineReader {
+        /// [`BufRead::read_line`], failing after `FRAME_TIMEOUT`.
+        pub(super) fn read_line(&mut self, out: &mut String) -> io::Result<usize> {
+            if !self.pending {
+                self.requests
+                    .send(())
+                    .map_err(|_| io::Error::from(ErrorKind::BrokenPipe))?;
+                self.pending = true;
+            }
+            match self.lines.recv_timeout(FRAME_TIMEOUT) {
+                Ok(read) => {
+                    self.pending = false;
+                    let line = read?;
+                    out.push_str(&line);
+                    Ok(line.len())
+                }
+                Err(_) => Err(io::Error::from(ErrorKind::TimedOut)),
+            }
+        }
+    }
+
+    /// The write half, shareable the way a cloned `UnixStream` is.
+    #[derive(Clone)]
+    pub(super) struct Writer(Arc<SendPipeStream<pipe_mode::Bytes>>);
+
+    impl Writer {
+        pub(super) fn try_clone(&self) -> io::Result<Writer> {
+            Ok(self.clone())
+        }
+    }
+
+    impl Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            (&*self.0).write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 }

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The Unix-socket transport: the boundary threads that own the
-//! socket, and [`IpcServer`], the main thread's handle onto them.
+//! The `--ipc` transport: the boundary threads that own the endpoint —
+//! a Unix socket, or on Windows a named pipe (`pipe.rs`, #169) — and
+//! [`IpcServer`], the main thread's handle onto them. Everything in
+//! this file and in `connection.rs` is the same on both; the endpoint's
+//! lifecycle and its byte stream are the only per-platform parts.
 //!
 //! **Who owns what** (`work_plans/LLM_IPC.md` §D2). A persistent
 //! *acceptor* always waits in `accept()`, so a second client learns it
@@ -40,15 +43,28 @@
 //! to flush.
 
 mod connection;
+#[cfg(windows)]
+mod pipe;
+// Compiled under test everywhere, not only on Windows: `mandalactl`
+// maps an `--ipc` value to a pipe by the same rule, and the test that
+// holds the two together runs on every platform CI does.
+#[cfg(any(windows, test))]
+mod pipe_name;
+#[cfg(unix)]
 mod socket;
+#[cfg(unix)]
+mod unix;
+
+#[cfg(windows)]
+use pipe::{bind, BoundPipe as Endpoint};
+#[cfg(unix)]
+use socket::{bind, BoundSocket as Endpoint};
 
 use std::path::Path;
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-use std::os::unix::net::UnixStream;
 
 use super::envelope::{Event, Frame, IpcRequest};
 use super::events::{Observed, Queued, Session};
@@ -72,13 +88,13 @@ const EVENT_QUEUE_CAP: usize = 64;
 
 /// How long one write may make no progress before the client is
 /// declared dead and its connection dropped. A write blocks only once
-/// the kernel's socket buffer is full of output the client has not
-/// read, so this measures a client that has stopped reading, not one
-/// that is merely thinking.
+/// the kernel's socket buffer (or the pipe's) is full of output the
+/// client has not read, so this measures a client that has stopped
+/// reading, not one that is merely thinking.
 #[cfg(not(test))]
 const STALLED_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Shortened under test so the dead-client path runs in seconds rather
-/// than ten; the mechanism is the same socket option. Still long enough
+/// than ten; the mechanism is the same one. Still long enough
 /// that a test client descheduled on a loaded runner is not mistaken
 /// for a dead one — the paused-reader test pauses for a small,
 /// independent fraction of it.
@@ -137,9 +153,9 @@ struct Controller {
     /// Change events in the queue and not yet taken by the outbound
     /// thread: the main thread adds, the outbound thread subtracts.
     events_queued: Arc<AtomicUsize>,
-    /// A handle on the connection used only to shut it down — the
-    /// reader and the outbound thread unblock with an error and exit.
-    hangup: UnixStream,
+    /// A handle on the connection used only to end it — the reader and
+    /// the outbound thread unblock and exit.
+    hangup: Box<dyn connection::HangUp>,
     /// Disconnects when the outbound thread exits; waited on at exit
     /// so the `shutdown` event can flush.
     flushed: Receiver<()>,
@@ -278,20 +294,21 @@ pub(crate) struct IpcServer {
     /// controller changes, except for the counters, which are the
     /// process's.
     session: Session,
-    socket: socket::BoundSocket,
+    endpoint: Endpoint,
 }
 
 impl IpcServer {
-    /// Bind the socket at `path` and start the acceptor. `wake` is
-    /// called from boundary threads whenever the main thread has
-    /// messages to drain; it must be cheap and must not block.
+    /// Bind the endpoint `path` names and start the acceptor: the
+    /// socket at `path`, or on Windows the pipe `\\.\pipe\mandala-<path>`.
+    /// `wake` is called from boundary threads whenever the main thread
+    /// has messages to drain; it must be cheap and must not block.
     ///
     /// Every failure — an untrusted parent directory, a path that is
-    /// not a stale socket of ours, a live listener, a bind error — is
-    /// returned as a message naming the path, for the caller's startup
-    /// `expect`.
+    /// not a stale socket of ours, a live listener, a pipe name already
+    /// served, a bind error — is returned as a message naming the
+    /// endpoint, for the caller's startup `expect`.
     pub(crate) fn start(path: &Path, wake: impl Fn() + Send + Sync + 'static) -> Result<IpcServer, String> {
-        let (listener, socket) = socket::bind(path)?;
+        let (listener, endpoint) = bind(path)?;
         let (inbound_tx, inbound) = mpsc::channel();
         let link = Arc::new(Link {
             inbound: inbound_tx,
@@ -306,7 +323,7 @@ impl IpcServer {
             .name("mandala-ipc-acceptor".into())
             .spawn(move || connection::accept_loop(listener, acceptor_link))
             .map_err(|e| format!("cannot start the IPC acceptor thread: {e}"))?;
-        log::info!("ipc: listening on {}", socket.path().display());
+        log::info!("ipc: listening on {}", endpoint.path().display());
         Ok(IpcServer {
             link,
             inbound,
@@ -314,7 +331,7 @@ impl IpcServer {
             stalled: None,
             published_map: None,
             session: Session::default(),
-            socket,
+            endpoint,
         })
     }
 
@@ -552,9 +569,9 @@ impl IpcServer {
                 drop(outbound);
                 let _ = flushed.recv_timeout(deadline.saturating_duration_since(Instant::now()));
             }
-            let _ = hangup.shutdown(std::net::Shutdown::Both);
+            hangup.hang_up();
         }
-        self.socket.unlink();
+        self.endpoint.unlink();
     }
 }
 
