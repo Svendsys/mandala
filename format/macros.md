@@ -48,8 +48,9 @@ precedence (later writers override earlier ones with the same `id`):
    `SourceTier::App`. Cross-platform (native + WASM).
 2. **User file** — `$XDG_CONFIG_HOME/mandala/macros.json` on native
    (falls back to `$HOME/.config/mandala/macros.json`). On WASM,
-   `?macros=<urlencoded-json>` query param > `localStorage` under
-   the `mandala_macros` key > empty. Both targets parse through
+   `localStorage` under the `mandala_macros` key > empty. There is
+   no `?macros=` URL parameter: a link is composed by whoever sent
+   it, and this tier may run console verbs. Both targets parse through
    the shared `loader::parse_user_macros_json`. Tier:
    `SourceTier::User`.
 3. **Map-inline** — `MindMap.macros` on the loaded document.

@@ -576,8 +576,8 @@ pub(super) fn run(mut app: Application) {
 
     baumhard::font::fonts::init();
 
-    // Load keybindings from the WASM environment (URL query param or
-    // localStorage) with a defaults fallback. Failure is non-fatal —
+    // Load keybindings from localStorage (never the URL — see
+    // `load_web_storage_only`) with a defaults fallback. Failure is non-fatal —
     // see KeybindConfig::load_for_web().
     app.options.keybind_config = crate::application::keybinds::KeybindConfig::load_for_web();
 
@@ -755,7 +755,7 @@ pub(super) fn run(mut app: Application) {
 
         // Four-source mutation registry, matching the native
         // path: app bundle (shipped in the binary) < user
-        // source (?mutations= query param + localStorage) <
+        // source (localStorage, never the URL) <
         // map (custom_mutations in the .mindmap.json) <
         // inline (on individual nodes). Plus the Rust-backed
         // handlers for layouts too structural for pure data.
@@ -806,8 +806,8 @@ pub(super) fn run(mut app: Application) {
         // Populate the shared state now that init is complete.
         *renderer_for_init.borrow_mut() = Some(renderer);
 
-        // App + User tiers from the bundled JSON / `?macros=` /
-        // localStorage, then the document-derived Map and Inline
+        // App + User tiers from the bundled JSON / localStorage,
+        // then the document-derived Map and Inline
         // tiers. Body is `macros::loader::build_macro_registry`,
         // which native's init calls too — including the
         // `log::info!` shape, so cross-target log triage stays

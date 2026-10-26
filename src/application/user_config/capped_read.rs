@@ -3,9 +3,9 @@
 //! Size-capped filesystem read for user-tier config files.
 //!
 //! Native-only, for the same reason `xdg` is: the filesystem tier of
-//! a user config exists only on desktop. The browser's peer tiers
-//! (`?<name>=` query param, `localStorage`) live in `web_storage`
-//! and reach the same cap through [`super::check_cap`], so both
+//! a user config exists only on desktop. The browser's peer tier
+//! (`localStorage`) lives in `web_storage`
+//! and reaches the same cap through [`super::check_cap`], so both
 //! targets enforce one rule from one place.
 //!
 //! The cap is checked against the file's stat size *before*

@@ -7,7 +7,7 @@
 //! `$XDG_CONFIG_HOME/mandala/<filename>` (with the `$HOME/.config`
 //! fallback) — in that order. [`load_desktop_layered`] is that
 //! composition, and it is the native peer of
-//! `web_storage::load_web_layered`: both name their platform's
+//! `web_storage::load_web_storage_only`: both name their platform's
 //! layers once and hand them to the shared
 //! [`super::layered::load_layered`] driver.
 //!

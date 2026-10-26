@@ -1901,7 +1901,7 @@ each id, so `mutation help <id>` can report it.
 
 WASM:
 - App from the same embedded JSON.
-- User from `?mutations=` query param or `localStorage`.
+- User from `localStorage` (never a URL query param).
 
 Map and inline are loaded from the document on every load. Each
 layer is best-effort — user file parse failures log a warning
@@ -4135,10 +4135,11 @@ the finding is written once in
   composition wrapper that sits on the driver:
   `desktop::load_desktop_layered(label, filename, explicit, parse)`
   for the explicit CLI path before the XDG path, and
-  `web_storage::load_web_layered(label, param, key, parse)` for
-  `?<param>=<json>` before `localStorage[key]`. All six platform
-  loaders (three configs × two targets) are now a filename and a
-  parser.
+  `web_storage::load_web_storage_only(label, key, parse)` for
+  `localStorage[key]` alone — deliberately no URL layer, since a
+  `?<name>=<json>` param belongs to whoever composed the link. All
+  six platform loaders (three configs × two targets) are now a
+  filename or storage key and a parser.
 - The one deliberate asymmetry lives in the desktop wrapper: only
   the XDG layer is filtered on `exists()`. An absent user config
   is the normal case and stays silent, whereas an explicit
@@ -4146,7 +4147,7 @@ the finding is written once in
   a warning. Changing that is a change to one function.
 
 Adding a fourth user-tier config file is a matter of naming its
-filename, query param, and storage key, then handing each
+filename and storage key, then handing each
 wrapper a parser — no new read, cap, layer, or fallback code.
 
 ### `SourceTier`

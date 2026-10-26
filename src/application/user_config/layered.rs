@@ -4,8 +4,8 @@
 //!
 //! Each user-tier config (`keybinds.json`, `mutations.json`,
 //! `macros.json`) is looked up across an ordered list of candidate
-//! sources — explicit CLI path before the XDG path on native, URL
-//! query param before `localStorage` on web — and the first source
+//! sources — explicit CLI path before the XDG path on native,
+//! `localStorage` alone on web — and the first source
 //! that yields a payload which fits the size cap *and* parses wins.
 //! A source that is simply absent is skipped silently; a source that
 //! is present but unreadable, oversized, or malformed is logged and
@@ -15,19 +15,19 @@
 //! The driver itself is platform-neutral: it only knows how to walk
 //! [`ConfigLayer`]s. The filesystem-backed layers are built by
 //! `super::desktop::load_desktop_layered` on top of
-//! `super::read_capped`; the query-param / `localStorage` layers are
-//! built by `super::web_storage::load_web_layered`. Both of those
+//! `super::read_capped`; the `localStorage` layer is built by
+//! `super::web_storage::load_web_storage_only`. Both of those
 //! wrappers are cfg-gated to their target, so this header names them
 //! in plain backticks rather than intra-doc links. That split keeps
 //! the precedence logic testable on native (TEST_CONVENTIONS §T9)
-//! even though half the layers only exist in a browser.
+//! even though the browser's layer only exists in a browser.
 
 use super::check_cap;
 
 /// Result of asking one layer for its payload:
 ///
 /// - `None` — the layer is not present at all (no CLI path given, no
-///   such file, no query param). Not an error; the walk moves on
+///   such file, no `localStorage` key). Not an error; the walk moves on
 ///   without logging.
 /// - `Some(Err(msg))` — the layer is present but could not be turned
 ///   into a payload (stat failed, read failed, over the size cap).
@@ -38,8 +38,7 @@ pub type LayerPayload = Option<Result<String, String>>;
 /// One candidate source in a layered user-config lookup.
 ///
 /// `source` is the human-readable name the loader's log lines use —
-/// a resolved path on native, `"URL query param"` / `"localStorage"`
-/// on web. It is what [`load_layered`] hands back to the caller so
+/// a resolved path on native, `"localStorage"` on web. It is what [`load_layered`] hands back to the caller so
 /// the caller's success log can name the winning layer.
 ///
 /// `fetch` is deliberately lazy: a lower-precedence layer must not
