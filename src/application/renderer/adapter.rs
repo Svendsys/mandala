@@ -36,8 +36,46 @@
 //! ([`match_name`]) ahead of the plan. Each is wgpu's own variable with
 //! wgpu's own meaning; with none set, the adapter is the one the
 //! renderer has always asked for.
+//!
+//! **The browser.** The browser bundle carries two backends — WebGPU,
+//! and WebGL2 through wgpu-core's GL backend (`wgpu/webgl` →
+//! `wgpu-core/webgl` → `wgpu-core-deps-wasm/webgl` → `wgpu-hal/gles`;
+//! wgpu-core's `build.rs:12-16` sets the `gles` cfg from `webgl`) — and
+//! the const assertions below this doc hold both in the wasm32 check.
+//! What used to keep WebGL from ever being reached (#220) is how wgpu 30
+//! picks between them: its web `Instance::new` (`src/api/instance.rs:71-83`)
+//! builds a WebGPU-only instance whenever the descriptor asks for
+//! `BROWSER_WEBGPU` and `navigator.gpu` is merely *defined*, without
+//! asking whether `requestAdapter` answers. A browser that defines the
+//! property and has no WebGPU adapter — Chromium on Linux, every
+//! headless Chromium without the unsafe-WebGPU flags — then fails every
+//! attempt with an error the WebGPU context hard-codes
+//! (`src/backend/webgpu.rs:1018-1028`: `supported_backends` is
+//! `BROWSER_WEBGPU` alone, under an upstream TODO), which prints as
+//! "gl support not compiled in" although GL is. So the browser's
+//! instance comes from [`browser_instance`], which asks first: one
+//! `requestAdapter` through `wgpu::util::is_browser_webgpu_supported`,
+//! and, when it finds none, an instance over [`fallback_backends`] — GL
+//! — with one `warn!` saying so. The probe runs **before the canvas is
+//! touched**, and must: a canvas holds one context type for life, and a
+//! WebGPU surface's creation calls `getContext("webgpu")` on it, after
+//! which no WebGL2 context can be had from that canvas.
 
-use wgpu::{Adapter, Device, DeviceType, Instance, PowerPreference, Queue, Surface};
+use wgpu::{Adapter, Backends, Device, DeviceType, Instance, PowerPreference, Queue, Surface};
+
+// The browser build must carry both of its backends: WebGPU, and WebGL2
+// for the browsers whose WebGPU offers no adapter ([`browser_instance`]).
+// Held at compile time by the wasm32 check leg of `./test.sh`.
+#[cfg(target_arch = "wasm32")]
+const _: () = assert!(
+    Instance::enabled_backend_features().contains(Backends::GL),
+    "the browser build has no WebGL backend: wgpu's `webgl` feature is missing"
+);
+#[cfg(target_arch = "wasm32")]
+const _: () = assert!(
+    Instance::enabled_backend_features().contains(Backends::BROWSER_WEBGPU),
+    "the browser build has no WebGPU backend: wgpu's `webgpu` feature is missing"
+);
 
 /// Which adapters the renderer may run on: the `--adapter` flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -122,6 +160,39 @@ pub(super) fn match_name(names: &[String], wanted: &str) -> Result<usize, String
 /// and no display handle, as `Instance::default()` had.
 pub(super) fn instance_descriptor() -> wgpu::InstanceDescriptor {
     wgpu::InstanceDescriptor::new_without_display_handle().with_env()
+}
+
+/// The backends a browser instance falls back to when WebGPU offers no
+/// adapter: those `requested` that this build has `enabled`, WebGPU
+/// aside — GL, on the browser build. `None` when nothing is left, so
+/// the caller keeps the instance it asked for and the startup panic
+/// names the WebGPU failure rather than an empty backend set. Pure.
+// Browser-only consumer ([`browser_instance`]); the tests read it on
+// every target.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(super) fn fallback_backends(requested: Backends, enabled: Backends) -> Option<Backends> {
+    let left = requested
+        .intersection(enabled)
+        .difference(Backends::BROWSER_WEBGPU);
+    (!left.is_empty()).then_some(left)
+}
+
+/// The browser's instance (module doc, "The browser"): `desc` as it
+/// is when WebGPU answers a `requestAdapter` or was not asked for, and
+/// otherwise `desc` over [`fallback_backends`], with one `warn!`.
+/// Callers create the canvas surface only after this returns: the
+/// probe must not find the canvas already holding a WebGPU context.
+#[cfg(target_arch = "wasm32")]
+pub(super) async fn browser_instance(mut desc: wgpu::InstanceDescriptor) -> Instance {
+    if desc.backends.contains(Backends::BROWSER_WEBGPU) && !wgpu::util::is_browser_webgpu_supported().await {
+        if let Some(fallback) = fallback_backends(desc.backends, Instance::enabled_backend_features()) {
+            log::warn!(
+                "renderer: WebGPU offers no adapter in this browser; falling back to backends {fallback:?}"
+            );
+            desc.backends = fallback;
+        }
+    }
+    Instance::new(desc)
 }
 
 /// The power preference every attempt carries: `WGPU_POWER_PREF`, or
@@ -323,5 +394,33 @@ mod tests {
         assert!(match_name(&[], "x")
             .expect_err("nothing to match")
             .contains("no adapter qualifies"));
+    }
+
+    /// A browser whose WebGPU offers no adapter falls back to what is
+    /// left of the request once WebGPU is set aside, among what the
+    /// build compiled in — GL on the browser build — and to nothing,
+    /// keeping the first instance, when that is empty.
+    #[test]
+    fn test_the_browser_falls_back_to_gl_only_when_gl_was_asked_for_and_built() {
+        let browser_build = Backends::GL | Backends::BROWSER_WEBGPU;
+        assert_eq!(
+            fallback_backends(Backends::all(), browser_build),
+            Some(Backends::GL)
+        );
+        assert_eq!(
+            fallback_backends(Backends::BROWSER_WEBGPU, browser_build),
+            None,
+            "the request excluded GL"
+        );
+        assert_eq!(
+            fallback_backends(Backends::all(), Backends::BROWSER_WEBGPU),
+            None,
+            "a WebGPU-only build has nothing to fall back to"
+        );
+        assert_eq!(
+            fallback_backends(Backends::GL | Backends::VULKAN, browser_build),
+            Some(Backends::GL),
+            "a backend the build lacks is not offered"
+        );
     }
 }

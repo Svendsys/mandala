@@ -831,10 +831,13 @@ impl Renderer {
     /// WASM bootstrap: same as `bootstrap_native` but binds the
     /// surface to the supplied `<canvas>` element. The browser's
     /// adapter/device init is Promise-backed so this stays async
-    /// like the native form.
+    /// like the native form. The instance comes from
+    /// [`adapter::browser_instance`], which falls back to WebGL when
+    /// WebGPU offers no adapter, and it must come before the surface:
+    /// creating a surface claims the canvas for one context type.
     #[cfg(target_arch = "wasm32")]
     pub async fn bootstrap_wasm(window: Arc<Window>, canvas: web_sys::HtmlCanvasElement) -> Renderer {
-        let instance = Instance::new(adapter::instance_descriptor());
+        let instance = adapter::browser_instance(adapter::instance_descriptor()).await;
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
             .expect("failed to create wgpu surface for canvas");
