@@ -26,7 +26,7 @@ use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
-use crate::engine::walker::{walk_anchor, Walk};
+use crate::engine::walker::{run_walk, walk_anchor};
 use indextree::{Arena, NodeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -63,8 +63,9 @@ impl Anchors {
 /// The body of [`MutatorTree::apply_at`] and
 /// [`MutatorTree::apply_at_journaled`]: validate, resolve to the root's
 /// kind, drop nested anchors, order, seed every anchor, then walk each
-/// one, recording into `journal` when there is one. See `apply_at` for
-/// the contract and its cost.
+/// one and run the structural commands collected, recording into
+/// `journal` when there is one. See `apply_at` for the contract and its
+/// cost.
 pub(in crate::engine) fn apply_anchored<E, M, F>(
     mutator_tree: &MutatorTree<E, M>,
     tree: &mut Tree<E>,
@@ -83,7 +84,7 @@ where
     // once.
     let mut given: FxHashSet<NodeId> = FxHashSet::default();
     for &id in anchors.given() {
-        if given.insert(id) && !is_in_tree(&tree.arena, tree.root, id) {
+        if given.insert(id) && !tree.contains(id) {
             return Err(TreeError::StaleNode(id));
         }
     }
@@ -125,24 +126,13 @@ where
         })
         .collect();
 
-    let mut walk = Walk::new(journal);
-    for (anchor, seed) in &seeded {
-        walk_anchor(tree, mutator_tree, *anchor, seed, &mut walk);
-    }
-    walk.settle(tree);
+    let result = run_walk(tree, mutator_tree, journal, |tree, walk| {
+        for (anchor, seed) in &seeded {
+            walk_anchor(tree, mutator_tree, *anchor, seed, walk);
+        }
+    });
     tree.cache.invalidate();
-    Ok(())
-}
-
-/// Whether `id` is a node of the arena that has `root` among its
-/// ancestors (or is `root`). A removed node, a reused slot under an old
-/// stamp, and a node detached from the tree all answer `false`.
-/// O(depth of `id`).
-fn is_in_tree<E>(arena: &Arena<E>, root: NodeId, id: NodeId) -> bool {
-    if arena.get(id).is_none() {
-        return false;
-    }
-    id.ancestors(arena).last() == Some(root)
+    result
 }
 
 /// The distinct nodes `anchors` names that have the kind `root_kind`,

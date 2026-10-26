@@ -15,7 +15,8 @@ use crate::engine::anchor::Anchors;
 use crate::engine::element::TreeElement;
 use crate::engine::interpolate::Snap;
 use crate::engine::journal::JournalBuilder;
-use crate::engine::tree::Placement;
+use crate::engine::structure::{StructOp, Subtree};
+use crate::engine::tree::{Placement, TreeError};
 use crate::gfx_structs::area::{DeltaGlyphArea, EdgePadding, GlyphArea, GlyphAreaField, OutlineStyle};
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::model::{GlyphLine, GlyphModel};
@@ -449,4 +450,83 @@ pub fn do_gfx_interpolates_geometry_and_color_and_snaps_the_rest() {
     journal.write_interpolated(&mut tree, 0.5, Snap::Start).unwrap();
     let area = tree.arena()[ids[0]].get().glyph_area().unwrap();
     assert_eq!(area.background_color, None);
+}
+
+// ── structural commands ───────────────────────────────────────────
+
+#[test]
+fn test_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges() {
+    do_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges();
+}
+
+/// The glyph instantiation takes the generic structural commands and
+/// refuses the two it does not define. A split and a merge — the
+/// default `split` and `merge`, which answer `None` — are
+/// `Unsplittable` and `Unmergeable` and change nothing; the merge's
+/// target has a childless next sibling of its key, so only the
+/// element's own refusal is left to refuse it. Then, on the same row,
+/// one journaled builder inserts an area, removes another and moves
+/// the third under the inserted one; `revert` restores the snapshot
+/// from before and `replay` the one from after, with the same ids.
+pub fn do_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges() {
+    let (mut tree, ids) = glyph_row();
+    let root = tree.root;
+    let command = |op| GfxMutatorTree::new_with(GfxMutator::new_structure(op, 0));
+    let before = snapshot(&tree);
+    let result = command(StructOp::Split { at: () }).apply_at_journaled(
+        &mut tree,
+        &Anchors::Nodes(vec![ids[0]]),
+        |_, _| (),
+        &mut JournalBuilder::new(),
+    );
+    assert_eq!(result, Err(TreeError::Unsplittable(ids[0])));
+    assert_eq!(
+        tree.arena()[ids[0]].get().key(),
+        tree.arena()[ids[1]].get().key(),
+        "the merge target's next sibling has its key"
+    );
+    assert!(tree.arena()[ids[1]].first_child().is_none(), "and no children");
+    let result = command(StructOp::Merge).apply_at_journaled(
+        &mut tree,
+        &Anchors::Nodes(vec![ids[0]]),
+        |_, _| (),
+        &mut JournalBuilder::new(),
+    );
+    assert_eq!(result, Err(TreeError::Unmergeable(ids[0])));
+    assert!(
+        same_snapshot(&snapshot(&tree), &before),
+        "the refusals change nothing"
+    );
+
+    let mut inserted = rich_area();
+    set_channel(&mut inserted, 0);
+    inserted.set_unique_id(9);
+    let mut builder = JournalBuilder::new();
+    command(StructOp::Insert {
+        subtree: Subtree::leaf(inserted),
+        at: Placement::Last,
+    })
+    .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![root]), |_, _| (), &mut builder)
+    .unwrap();
+    let new = root.children(tree.arena()).nth(2).unwrap();
+    command(StructOp::Remove)
+        .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![ids[1]]), |_, _| (), &mut builder)
+        .unwrap();
+    command(StructOp::Move {
+        to: new,
+        at: Placement::Last,
+    })
+    .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![ids[2]]), |_, _| (), &mut builder)
+    .unwrap();
+    assert_eq!(root.children(tree.arena()).collect::<Vec<_>>(), vec![ids[0], new]);
+    assert_eq!(new.children(tree.arena()).collect::<Vec<_>>(), vec![ids[2]]);
+    let after = snapshot(&tree);
+    let journal = builder.close(&tree);
+    journal.revert(&mut tree).unwrap();
+    assert!(
+        same_snapshot(&snapshot(&tree), &before),
+        "revert restores the glyph row"
+    );
+    journal.replay(&mut tree).unwrap();
+    assert!(same_snapshot(&snapshot(&tree), &after), "replay reproduces it");
 }

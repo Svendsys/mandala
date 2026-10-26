@@ -15,5 +15,6 @@ pub mod journal_fixtures;
 pub mod journal_tests;
 pub mod routing_tests;
 pub mod sorted_tests;
+pub mod structure_tests;
 pub mod test_element;
 pub mod walker_tests;

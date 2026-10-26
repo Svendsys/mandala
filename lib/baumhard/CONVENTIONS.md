@@ -113,9 +113,10 @@ it with respect.
   is kept by construction: add with `insert_child` (the key picks the
   run, the `Placement` the spot in it), change an element outside a
   walk with `update` (which moves it if its key changed), remove with
-  `remove_subtree`, read with `arena()`. There is no `&mut` access to
-  an element or the arena outside the engine, and `check_sorted`
-  verifies the invariant.
+  `remove_subtree` while building a tree, change structure with a
+  `Mutator::Structure` command (`StructOp`), read with `arena()`.
+  There is no `&mut` access to an element or the arena outside the
+  engine, and `check_sorted` verifies the invariant.
 - **A tree that keeps history changes through a journal.**
   `MutatorTree::apply_at_journaled` and `Tree::update_journaled` are
   `apply_at` and `update` recorded in a `JournalBuilder`: the walker
@@ -127,7 +128,12 @@ it with respect.
   mutation can forget it. The plain entry points are for trees that
   need no history (glyph layers that are rebuilt). An element's
   `Clone` must copy its whole state and its `same_state` compare all
-  of it, or a journal loses what they leave out.
+  of it, or a journal loses what they leave out. Structure changes
+  the same way: a structural command removes a subtree by detaching
+  it, and the journal that recorded the removal owns it until
+  `Journal::discard` — never free a node a journal may put back, and
+  never write a second structural path (hand-written topology code)
+  beside the commands.
 - **Iterate with `NodeId::children(tree.arena())` and `descendants(tree.arena())`.**
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if

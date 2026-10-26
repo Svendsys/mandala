@@ -39,6 +39,16 @@
 //! children to their sorted places. A walk that changes no key records
 //! nothing and allocates nothing for it.
 //!
+//! # Structural commands
+//!
+//! A [`Mutator::Structure`](crate::engine::mutator::Mutator::Structure)
+//! the walk reaches changes nothing while the walk runs: the walk
+//! collects it with its target, in the order it reaches them, and runs
+//! the [commands](crate::engine::structure) once it has settled its
+//! keys — its second phase. A walk whose mutator tree has a command
+//! always records into a journal, its caller's or one of its own, so
+//! that a failing command undoes the whole walk.
+//!
 //! # Journaled walks
 //!
 //! A journaled walk carries a
@@ -60,9 +70,10 @@
 //! The entry points are [`walk_tree`](crate::engine::walker::walk_tree()) and [`walk_tree_from`](crate::engine::walker::walk_tree_from()),
 //! beside [`MutatorTree::apply_to`](crate::engine::tree::MutatorTree::apply_to) and
 //! [`MutatorTree::apply_at`](crate::engine::tree::MutatorTree::apply_at). Every one of them settles
-//! the keys its walk changed before it returns, so a walk can only be
-//! started where the sorted-children invariant is restored at its end;
-//! everything else in this module is internal to the engine.
+//! the keys its walk changed and runs its structural commands before it
+//! returns (`run_walk`), so a walk can only be started where the
+//! sorted-children invariant is restored at its end; everything else in
+//! this module is internal to the engine.
 
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
@@ -70,26 +81,68 @@ use crate::engine::mutation::Mutation;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::Predicate;
 use crate::engine::siblings;
-use crate::engine::tree::{MutatorTree, Tree};
+use crate::engine::structure::apply_ops;
+use crate::engine::tree::{MutatorTree, Tree, TreeError};
 use crate::util::geometry::aabb_contains;
 use crate::util::ordered_vec2::OrderedVec2;
 use indextree::{Arena, Node, NodeId};
-use log::{debug, warn};
+use log::{debug, error, warn};
 use std::cmp::Ordering;
 
 /// What a walk keeps beside the two trees: the children whose key it
 /// changed, recorded so they can be moved to their sorted places once
-/// the walk is over ([`Walk::settle`]), and — for a journaled walk —
+/// the walk is over ([`Walk::settle`]); the structural commands it
+/// reached, collected for its second phase; and — for a journaled walk —
 /// the [`JournalBuilder`] every apply is recorded in.
 ///
-/// Each re-keyed record is `(parent, child)`. The `Vec` stays empty —
-/// and unallocated — for a walk that changes no key, which is the
+/// Each re-keyed record is `(parent, child)`, and each command
+/// `(target, mutator node)`. Both `Vec`s stay empty — and unallocated —
+/// for a walk that changes no key and reaches no command, which is the
 /// common path. A child recorded twice (its key changed by two applies)
 /// is moved once.
 #[derive(Debug)]
 pub(in crate::engine) struct Walk<'j, E: TreeElement> {
     rekeyed: Vec<(NodeId, NodeId)>,
+    ops: Vec<(NodeId, NodeId)>,
     journal: Option<&'j mut JournalBuilder<E>>,
+}
+
+/// Run one walk to its end against `tree`: `body` walks — from the
+/// root, or from each anchor — then the walk settles the keys it
+/// changed and runs the [structural commands](crate::engine::structure)
+/// it collected. Every walk entry point goes through here.
+///
+/// With `journal`, everything is recorded there, and an error is
+/// returned with the builder as it stands: the journaled entry point
+/// unwinds it. Without one, a mutator tree with no structural command
+/// walks unrecorded, as it always has. One with structural commands
+/// records into a builder of its own, because a failing command has to
+/// undo the whole walk: on an error that builder is unwound — the tree
+/// is as it was — and on success its journal is discarded, freeing
+/// every subtree the walk removed, which nothing could put back.
+///
+/// Cost: the walk's, plus the settle and the commands; for an
+/// unjournaled structural walk, what a journaled walk costs.
+pub(in crate::engine) fn run_walk<E: TreeElement, M: Mutation<E>>(
+    tree: &mut Tree<E>,
+    mutator_tree: &MutatorTree<E, M>,
+    journal: Option<&mut JournalBuilder<E>>,
+    body: impl FnOnce(&mut Tree<E>, &mut Walk<'_, E>),
+) -> Result<(), TreeError> {
+    if journal.is_some() || !mutator_tree.is_structural() {
+        let mut walk = Walk::new(journal);
+        body(tree, &mut walk);
+        return walk.finish(tree, mutator_tree);
+    }
+    let mut own = JournalBuilder::new();
+    let mut walk = Walk::new(Some(&mut own));
+    body(tree, &mut walk);
+    let result = walk.finish(tree, mutator_tree);
+    match result {
+        Ok(()) => own.close(tree).discard(tree),
+        Err(_) => own.unwind(tree),
+    }
+    result
 }
 
 impl<'j, E: TreeElement> Walk<'j, E> {
@@ -98,8 +151,36 @@ impl<'j, E: TreeElement> Walk<'j, E> {
     pub(in crate::engine) fn new(journal: Option<&'j mut JournalBuilder<E>>) -> Self {
         Walk {
             rekeyed: Vec::new(),
+            ops: Vec::new(),
             journal,
         }
+    }
+
+    /// End the walk: [settle](Self::settle) the keys it changed, then
+    /// run the structural commands it collected, in the order it
+    /// reached them, recorded in its journal. A command's error is
+    /// returned as is; undoing what came before it is the caller's.
+    ///
+    /// A walk can collect a command only from a mutator tree that has
+    /// one, and such a walk always has a journal ([`run_walk`]). One
+    /// without is an engine defect: its commands are dropped with an
+    /// error logged, since nothing could undo them.
+    fn finish<M: Mutation<E>>(
+        mut self,
+        tree: &mut Tree<E>,
+        mutator_tree: &MutatorTree<E, M>,
+    ) -> Result<(), TreeError> {
+        let ops = std::mem::take(&mut self.ops);
+        let journal = self.settle(tree);
+        if ops.is_empty() {
+            return Ok(());
+        }
+        let Some(journal) = journal else {
+            error!("engine: a walk without a journal reached structural commands; they are not applied");
+            debug_assert!(false, "engine invariant: a structural walk has a journal");
+            return Ok(());
+        };
+        apply_ops(tree, mutator_tree, &ops, journal)
     }
 
     /// Move every re-keyed child to its sorted place under its parent:
@@ -112,17 +193,20 @@ impl<'j, E: TreeElement> Walk<'j, E> {
     /// notes each detach and attach in its journal, which is how the
     /// journal can put the children back.
     ///
+    /// Hands back the walk's journal, for the commands that follow.
+    ///
     /// Invalidates `tree`'s cache when it moved anything. Cost: nothing
     /// when nothing was recorded; otherwise, per recorded child, a
     /// detach, a scan from the end of its row and an O(depth)
     /// re-attach.
-    pub(in crate::engine) fn settle(self, tree: &mut Tree<E>) {
+    fn settle(self, tree: &mut Tree<E>) -> Option<&'j mut JournalBuilder<E>> {
         let Walk {
             mut rekeyed,
             mut journal,
+            ..
         } = self;
         if rekeyed.is_empty() {
-            return;
+            return journal;
         }
         let arena = &mut tree.arena;
         // `retain` visits every record once, in order: the first record
@@ -147,6 +231,7 @@ impl<'j, E: TreeElement> Walk<'j, E> {
             siblings::attach_at(arena, parent, child, prev);
         }
         tree.cache.invalidate();
+        journal
     }
 }
 
@@ -220,7 +305,10 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 /// of `target_id`'s parent.
 ///
 /// Children whose key the walk changed are moved to their sorted places
-/// when it returns (`Walk::settle`). Not journaled.
+/// when it returns (`Walk::settle`), and the
+/// [structural commands](crate::engine::structure) it reached run then.
+/// Not journaled: a command that fails undoes the whole walk, and the
+/// error is logged, as [`MutatorTree::apply_to`] does.
 ///
 /// Cost: O(sum of matching (target, mutator) pairs) — every pairwise
 /// match is one apply; pruned branches are free.
@@ -233,17 +321,20 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
 ) {
     let keys_match = get_mutator(&mutator_tree.arena, mutator_id).get().key()
         == get_target(&tree.arena, target_id).get().key();
-    let mut walk = Walk::new(None);
-    walk_from(
-        tree,
-        mutator_tree,
-        target_id,
-        mutator_id,
-        parent_state,
-        keys_match,
-        &mut walk,
-    );
-    walk.settle(tree);
+    let result = run_walk(tree, mutator_tree, None, |tree, walk| {
+        walk_from(
+            tree,
+            mutator_tree,
+            target_id,
+            mutator_id,
+            parent_state,
+            keys_match,
+            walk,
+        )
+    });
+    if let Err(e) = result {
+        error!("engine: a structural command failed, so the walk was undone: {e}");
+    }
 }
 
 /// Walk `mutator_tree` from its root at one anchor of an anchored walk:
@@ -287,10 +378,10 @@ fn walk_from<E: TreeElement, M: Mutation<E>>(
     let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
 
     match mutator {
-        Mutator::Single { .. } | Mutator::Macro { .. } => {
+        Mutator::Single { .. } | Mutator::Macro { .. } | Mutator::Structure { .. } => {
             debug!("Processing Delta Node...");
             if apply_here {
-                apply_mutator(tree, target_id, mutator, parent_state, walk);
+                apply_mutator(tree, target_id, mutator_id, mutator, parent_state, walk);
             }
         }
         Mutator::Void { .. } => {
@@ -304,7 +395,7 @@ fn walk_from<E: TreeElement, M: Mutation<E>>(
             debug!("Processing Instruction node...");
             if apply_here && mutation.is_some() {
                 debug!("This instruction node has a Delta..");
-                apply_mutator(tree, target_id, mutator, parent_state, walk);
+                apply_mutator(tree, target_id, mutator_id, mutator, parent_state, walk);
             }
             process_instruction_node(
                 tree,
@@ -325,15 +416,22 @@ fn walk_from<E: TreeElement, M: Mutation<E>>(
 /// A mutator with no payload ([`Mutator::has_payload`]) — a `Void`, an
 /// empty `Macro`, an `Instruction` without a mutation — applies
 /// nothing, so it does not reach `apply_recorded`: the element it is
-/// paired with is visited, not applied to, and is not journaled.
+/// paired with is visited, not applied to, and is not journaled. A
+/// [`Mutator::Structure`] — the node `mutator_id` — is not applied
+/// either: the walk collects it with its target for its second phase.
 #[inline]
 fn apply_mutator<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     target_id: NodeId,
+    mutator_id: NodeId,
     mutator: &Mutator<E, M>,
     parent_state: &E::Inherited,
     walk: &mut Walk<'_, E>,
 ) {
+    if let Mutator::Structure { .. } = mutator {
+        walk.ops.push((target_id, mutator_id));
+        return;
+    }
     if !mutator.has_payload() {
         return;
     }
@@ -623,7 +721,7 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
         // borrowed from `mutator_tree`, which the dispatch below only
         // reads, so a nested instruction is handed on by reference.
         let mutator = get_mutator(&mutator_tree.arena, mutator_child_id).get();
-        apply_mutator(tree, target_child_id, mutator, &state, walk);
+        apply_mutator(tree, target_child_id, mutator_child_id, mutator, &state, walk);
         match mutator {
             Mutator::Instruction { instruction, .. } => {
                 // Nested instruction: dispatch at the paired target.
@@ -640,7 +738,10 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
                     walk,
                 );
             }
-            Mutator::Single { .. } | Mutator::Macro { .. } | Mutator::Void { .. } => {
+            Mutator::Single { .. }
+            | Mutator::Macro { .. }
+            | Mutator::Void { .. }
+            | Mutator::Structure { .. } => {
                 // Descend via key-based align at the next level down.
                 // A user who wants the deeper level to also zip nests
                 // MapChildren inside.
@@ -715,7 +816,7 @@ pub(in crate::engine) fn repeat_while<E: TreeElement, M: Mutation<E>>(
             mutator_id, target_id
         );
         let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
-        apply_mutator(tree, target_id, mutator, parent_state, walk);
+        apply_mutator(tree, target_id, mutator_id, mutator, parent_state, walk);
         apply_repeat_while_to_children(
             tree,
             mutator_tree,

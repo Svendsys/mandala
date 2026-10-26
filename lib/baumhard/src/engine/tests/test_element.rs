@@ -120,6 +120,8 @@ impl TreeElement for TestElement {
     type Kind = TestKind;
     type Cache = TestCache;
     type Inherited = i64;
+    /// The value the first part keeps.
+    type SplitPoint = i64;
     const SPATIAL: bool = false;
 
     fn kind(&self) -> TestKind {
@@ -141,6 +143,36 @@ impl TreeElement for TestElement {
 
     fn inherit(&self, parent: &i64) -> i64 {
         parent + self.value
+    }
+
+    /// Split at a value threshold: the first part keeps `at`, the
+    /// second the rest, `value - at`, both on this element's key. Only
+    /// a threshold strictly between 0 and the value cuts anything, so
+    /// an element whose value is 1 or less is never splittable.
+    fn split(&self, at: &i64) -> Option<(Self, Self)> {
+        if *at <= 0 || *at >= self.value {
+            return None;
+        }
+        let part = |value| TestElement {
+            kind: self.kind,
+            channel: self.channel,
+            value,
+        };
+        Some((part(*at), part(self.value - at)))
+    }
+
+    /// Two elements of the same kind merge into one holding the sum of
+    /// their values, on this element's key; a sum that overflows does
+    /// not merge.
+    fn merge(&self, next: &Self) -> Option<Self> {
+        if self.kind != next.kind {
+            return None;
+        }
+        Some(TestElement {
+            kind: self.kind,
+            channel: self.channel,
+            value: self.value.checked_add(next.value)?,
+        })
     }
 }
 
@@ -278,6 +310,7 @@ impl TreeElement for SpatialTestElement {
     type Kind = ();
     type Cache = TestCache;
     type Inherited = i64;
+    type SplitPoint = ();
     const SPATIAL: bool = true;
 
     fn kind(&self) {}

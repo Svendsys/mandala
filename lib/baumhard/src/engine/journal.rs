@@ -19,6 +19,12 @@
 //! in the one function every walker apply goes through. An element the
 //! walk visits but applies nothing to is not recorded.
 //!
+//! The walk's [structural commands](crate::engine::structure) record
+//! the same way: a removed or moved node is recorded before it is
+//! detached, and a node a command creates — the root of an inserted
+//! subtree, the second part of a split — is recorded as it was created,
+//! with no position, since it was not in the tree.
+//!
 //! # What closing does
 //!
 //! [`JournalBuilder::close`](crate::engine::journal::JournalBuilder::close)
@@ -27,31 +33,51 @@
 //! [same state](crate::engine::element::TreeElement::same_state) it
 //! started with and whose position did not change. So
 //! [`Journal::is_empty`](crate::engine::journal::Journal::is_empty) means
-//! "nothing changed".
+//! "nothing changed" — nothing in the tree: a change inside a subtree
+//! the builder created and removed again is kept, so that the journal
+//! restores that subtree consistently, but no one can see it.
 //!
 //! # Positions
 //!
 //! An element whose key a walk changed is moved to its sorted place
-//! among its siblings (the sorted-children invariant), so a journal
-//! restores positions as well as values. Each moved element carries
-//! two: where it stood **when the builder was created**, and where it
-//! stands when the builder closes. The first is its position at its
-//! first apply, unless an earlier move in the same builder had already
-//! shifted it — taking a sibling out from in front of it, or putting
-//! one there — in which case the builder kept its earlier position
-//! when that move happened. Recording every position against the one
-//! arrangement the builder started from is what makes the restore
-//! exact however many applies the builder spans: a position taken at
-//! a later moment would name a neighbor that has since moved.
+//! among its siblings (the sorted-children invariant), and a structural
+//! command inserts, removes and re-parents nodes, so a journal restores
+//! positions as well as values. Each moved element carries two: where
+//! it stood **when the builder was created**, and where it stands when
+//! the builder closes. Either can be *nowhere* — not in the tree: an
+//! inserted node has only a close position, a removed one only a start
+//! position, and a re-parented one has one in each parent.
+//!
+//! The start position is the element's position at its first apply,
+//! unless an earlier change in the same builder had already shifted it
+//! — taking a sibling out from in front of it, or putting one there —
+//! in which case the builder kept its earlier position when that change
+//! happened. Recording every position against the one arrangement the
+//! builder started from is what makes the restore exact however many
+//! calls the builder spans: a position taken at a later moment would
+//! name a neighbor that has since moved. (A node the builder created
+//! starts out of the tree, and the nodes below it where it created them.)
 //!
 //! Restoring an arrangement detaches every moved element and puts
 //! each back after its recorded previous sibling, in the order the
 //! arrangement has them, so each one's previous sibling is in place
-//! before it is. Elements the builder never moved keep their order
-//! among themselves throughout — only moved elements move — so they
-//! are the frame the moved ones are put back into. A moved element
-//! that ends where it started, behind a sibling that is itself in
-//! place, did not move at all, and is treated as unmoved.
+//! before it is; an element the arrangement has out of the tree stays
+//! detached. Elements the builder never moved keep their parent and
+//! their order among themselves throughout — only moved elements move —
+//! so they are the frame the moved ones are put back into. A moved
+//! element that ends where it started, behind a sibling that is itself
+//! in place, did not move at all, and is treated as unmoved.
+//!
+//! Restoring arrangement, not history, is what lets structural and key
+//! changes mix in one builder: positions carry no time, so there is no
+//! order of moves to replay — only two arrangements to restore.
+//!
+//! # Detached subtrees
+//!
+//! A subtree out of the tree in one of a journal's arrangements stays
+//! allocated, so the other arrangement can put back the same `NodeId`s.
+//! The journal owns it: [`Journal::discard`](crate::engine::journal::Journal::discard)
+//! frees what the journal holds detached, and nothing else frees it.
 //!
 //! # Exactness
 //!
@@ -60,12 +86,6 @@
 //! no [`TreeElement::inherit`](crate::engine::element::TreeElement::inherit),
 //! no key comparison. Both validate every node they refer to before
 //! writing anything.
-//!
-//! Structural entries — [`Touch::Inserted`](crate::engine::journal::Touch::Inserted),
-//! [`Touch::Removed`](crate::engine::journal::Touch::Removed),
-//! [`Touch::Moved`](crate::engine::journal::Touch::Moved) — belong to the
-//! structural commands, which no walk performs yet; no journal
-//! produces them.
 
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::interpolate::{Interpolable, Snap};
@@ -74,25 +94,29 @@ use crate::engine::tree::{Tree, TreeError};
 use indextree::{Arena, NodeId};
 use log::error;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::Cell;
 use std::collections::hash_map::Entry as MapEntry;
 
-/// What a journal entry says happened to its node, as
-/// [`Journal::touched`] reports it.
+/// What happened to a node, as [`Journal::touched`] reports it: how its
+/// place in the tree differs between the journal's two arrangements.
+///
+/// A touch names the change, not the direction: after a
+/// [`revert`](Journal::revert) an `Inserted` node is out of the tree
+/// again, so a reader of the tree finds the node's current place there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Touch {
     /// The element's state changed, its position among its siblings
-    /// changed (its key moved it), or both. The only touch a journal
-    /// produces today.
+    /// changed (a key change or a move within its row), or both. It is
+    /// in the tree before and after, under the same parent.
     Field,
-    /// The node and its subtree were inserted. Reserved for the
-    /// structural commands; no journal produces it yet.
+    /// The node is in the tree after the journal and was not before:
+    /// inserted, or under a subtree that was.
     Inserted,
-    /// The node and its subtree were removed. Reserved for the
-    /// structural commands; no journal produces it yet.
+    /// The node was in the tree before the journal and is not after:
+    /// removed, or under a subtree that was.
     Removed,
-    /// The node was re-parented. Reserved for the structural commands;
-    /// no journal produces it yet — a move among siblings caused by a
-    /// key change is part of a [`Touch::Field`] entry.
+    /// The node is in the tree before and after, under another parent:
+    /// re-parented, its subtree with it.
     Moved,
 }
 
@@ -106,7 +130,7 @@ struct At {
 
 impl At {
     /// Where `node` stands in `arena` now, or `None` for a node with
-    /// no parent (the root). O(1).
+    /// no parent: the root, or the top of a detached subtree. O(1).
     fn of<E>(arena: &Arena<E>, node: NodeId) -> Option<At> {
         let current = arena.get(node)?;
         Some(At {
@@ -122,10 +146,12 @@ impl At {
 struct Recorded<E> {
     node: NodeId,
     before: E,
-    /// `None` for the root, which has no siblings and never moves.
+    /// `None` for a node with no parent when the builder was created:
+    /// the root, which never moves, or a node the builder created.
     at: Option<At>,
-    /// Whether the engine has moved the element among its siblings
-    /// since it was recorded.
+    /// Whether the engine has moved the element — among its siblings,
+    /// to another parent, into the tree or out of it — since it was
+    /// recorded.
     moved: bool,
 }
 
@@ -148,13 +174,14 @@ struct Recorded<E> {
 ///
 /// A builder is all or nothing: when a journaled call on it fails, the
 /// call reverts everything the builder recorded — the tree returns to
-/// where it stood when the builder was created — and leaves the
+/// where it stood when the builder was created, and every node the
+/// builder's structural commands created is freed — and leaves the
 /// builder empty. [`abandon`](Self::abandon) is the same step for a
 /// failure the caller detects itself.
 ///
 /// Cost: one entry per element applied to — a clone of the element and
 /// a hash-map slot — never per element visited. A walk that changes no
-/// key records no position beyond each entry's own.
+/// key and no structure records no position beyond each entry's own.
 #[derive(Clone, Debug)]
 pub struct JournalBuilder<E: TreeElement> {
     recorded: Vec<Recorded<E>>,
@@ -226,15 +253,29 @@ impl<E: TreeElement> JournalBuilder<E> {
         });
     }
 
-    /// Note that the engine is about to detach `node` to move it among
-    /// its siblings: mark its entry moved, and keep the previous
-    /// sibling of the node behind it, whose previous sibling the detach
-    /// is about to change. Call before the detach.
+    /// Record `node`, which a structural command has just created and
+    /// is about to attach: as it was created, with no start position —
+    /// it was not in the tree when the builder was created — and as
+    /// moved, since it is about to enter the tree. The nodes below it
+    /// are not recorded: they stand where it was created with them.
+    ///
+    /// Cost: one clone of the element and one `Vec` / hash-map slot.
+    pub(in crate::engine) fn record_created(&mut self, arena: &Arena<E>, node: NodeId) {
+        self.record(arena, node);
+        if let Some(&i) = self.index.get(&node) {
+            self.recorded[i].moved = true;
+        }
+    }
+
+    /// Note that the engine is about to detach `node` — to move it
+    /// among its siblings, to another parent or out of the tree: mark
+    /// its entry moved, and keep the previous sibling of the node
+    /// behind it, whose previous sibling the detach is about to change.
+    /// Call before the detach.
     pub(in crate::engine) fn note_detach(&mut self, arena: &Arena<E>, node: NodeId) {
         match self.index.get(&node) {
             Some(&i) => self.recorded[i].moved = true,
-            // Only an element whose key an apply changed is moved, and
-            // every apply records first.
+            // Only a node the engine recorded first is ever moved.
             None => {
                 error!("engine: node {node} moved without a journal entry; its move cannot be reverted");
                 debug_assert!(
@@ -278,12 +319,14 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// Reads each recorded element's state and position from `tree` as
     /// its *after*, and drops every entry whose element holds the
     /// [same state](TreeElement::same_state) as its before-image and
-    /// did not move. An entry whose node is no longer in `tree` cannot
-    /// be read; it is dropped with an error logged.
+    /// did not move. An entry whose node is no longer in `tree`'s arena
+    /// cannot be read; it is dropped with an error logged.
     ///
     /// Cost: one clone of each recorded element and an O(entries) scan;
     /// only when an element moved, O(entries) flags and hash maps over
-    /// the moved elements alone.
+    /// the moved elements alone; only when a node entered, left or
+    /// changed parent, the [touches](Journal::touched) of every node of
+    /// each subtree that entered or left, at O(depth) each at worst.
     pub fn close(self, tree: &Tree<E>) -> Journal<E> {
         let arena = &tree.arena;
         let mut read: Vec<(Recorded<E>, E, Option<At>)> = Vec::with_capacity(self.recorded.len());
@@ -301,17 +344,40 @@ impl<E: TreeElement> JournalBuilder<E> {
         }
 
         let displaced = out_of_place(&read);
+        let out = |i: usize| displaced.get(i).copied().unwrap_or(false);
+        let keep: Vec<bool> = read
+            .iter()
+            .enumerate()
+            .map(|(i, (recorded, after, _))| out(i) || !recorded.before.same_state(after))
+            .collect();
+
+        // What the journal holds detached on either side: every node
+        // other than the root with no parent at that end.
+        let mut detached_before = Vec::new();
+        let mut detached_after = Vec::new();
+        for (recorded, _, after_at) in &read {
+            if recorded.node == tree.root {
+                continue;
+            }
+            if recorded.at.is_none() {
+                detached_before.push(recorded.node);
+            }
+            if after_at.is_none() {
+                detached_after.push(recorded.node);
+            }
+        }
+        let touched = structural_touches(arena, tree.root, &read, &out, &keep);
+
         let mut entries = Vec::with_capacity(read.len());
         let mut index = FxHashMap::default();
         for (i, (recorded, after, after_at)) in read.into_iter().enumerate() {
-            let out = displaced.get(i).copied().unwrap_or(false);
-            let position = match (out, recorded.at, after_at) {
-                (true, Some(before_at), Some(after_at)) => Some((before_at, after_at)),
-                _ => None,
-            };
-            if position.is_none() && recorded.before.same_state(&after) {
+            if !keep[i] {
                 continue;
             }
+            let position = out(i).then_some(Position {
+                before: recorded.at,
+                after: after_at,
+            });
             index.insert(recorded.node, entries.len());
             entries.push(Entry {
                 node: recorded.node,
@@ -320,18 +386,29 @@ impl<E: TreeElement> JournalBuilder<E> {
                 position,
             });
         }
-        let to_before = arrangement_order(&entries, |(before, _)| before);
-        let to_after = arrangement_order(&entries, |(_, after)| after);
+        let out = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| entry.position.map(|_| i))
+            .collect();
+        let to_before = arrangement_order(&entries, Position::before);
+        let to_after = arrangement_order(&entries, Position::after);
         Journal {
             entries,
             index,
+            out,
             to_before,
             to_after,
+            touched,
+            detached_before,
+            detached_after,
+            side: Cell::new(Side::After),
         }
     }
 
     /// Undo everything this builder recorded, consuming it: `tree`
-    /// returns to where it stood when the builder was created. The
+    /// returns to where it stood when the builder was created, and every
+    /// node the builder's structural commands created is freed. The
     /// all-or-nothing step for a request that fails outside an engine
     /// call — a check its caller makes after the journaled calls have
     /// run — and the same step a failing journaled call
@@ -342,22 +419,25 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// `tree` must be the tree the builder's calls applied to, changed
     /// by nothing else since (see the contract on [`JournalBuilder`]). A
     /// revert that is refused even so is logged, not raised: there is
-    /// nothing left for the caller to do with the builder.
+    /// nothing left for the caller to do with the builder, and nothing
+    /// is freed.
     ///
-    /// Cost: [`Self::close`] plus [`Journal::revert`].
+    /// Cost: [`Self::close`] plus [`Journal::revert`] plus
+    /// [`Journal::discard`].
     pub fn abandon(mut self, tree: &mut Tree<E>) {
         self.unwind(tree);
     }
 
-    /// Revert everything this builder recorded and leave it empty: the
-    /// all-or-nothing step a journaled call takes when it fails. A
-    /// revert that is refused — which only a tree changed behind the
-    /// builder's back can cause — is logged; the builder is left empty
-    /// either way.
+    /// Revert everything this builder recorded, free what its commands
+    /// created, and leave it empty: the all-or-nothing step a journaled
+    /// call takes when it fails. A revert that is refused — which only a
+    /// tree changed behind the builder's back can cause — is logged, and
+    /// then nothing is freed; the builder is left empty either way.
     pub(in crate::engine) fn unwind(&mut self, tree: &mut Tree<E>) {
         let journal = std::mem::take(self).close(tree);
-        if let Err(e) = journal.revert(tree) {
-            error!("engine: could not revert a failed journaled call: {e}");
+        match journal.revert(tree) {
+            Ok(()) => journal.discard(tree),
+            Err(e) => error!("engine: could not revert a failed journaled call: {e}"),
         }
     }
 }
@@ -367,10 +447,12 @@ impl<E: TreeElement> JournalBuilder<E> {
 ///
 /// An element the engine never moved stands where it stood, relative
 /// to every other unmoved element. A moved element whose position
-/// differs between the two arrangements changed. A moved element whose
-/// recorded positions are equal — the same parent, behind the same
-/// sibling — is in place if that sibling is (or it is first in its
-/// row), so it is out of place exactly when the sibling it follows is:
+/// differs between the two arrangements changed — a node that entered
+/// or left the tree included, whose position is nowhere at one end. A
+/// moved element whose recorded positions are equal — the same parent,
+/// behind the same sibling, or out of the tree at both ends — is in
+/// place if that sibling is (or it is first in its row, or out of the
+/// tree), so it is out of place exactly when the sibling it follows is:
 /// that is propagated from the elements known to be out of place.
 ///
 /// Returns one flag per element of `read`, or an empty `Vec` — every
@@ -416,9 +498,186 @@ fn out_of_place<E>(read: &[(Recorded<E>, E, Option<At>)]) -> Vec<bool> {
     out
 }
 
+/// The [touches](Journal::touched) of a journal whose nodes entered or
+/// left the tree or changed parent — `None` for one where none did,
+/// whose every entry is a [`Touch::Field`].
+///
+/// Each node's touch is read from whether it is in the tree — under
+/// the root — in the arrangement before and in the arrangement after:
+/// [`Touch::Inserted`] for a node in only the after, [`Touch::Removed`]
+/// for one in only the before, and for one in both, [`Touch::Moved`]
+/// when its parent changed and [`Touch::Field`] when only its state or
+/// its place in its row did. A node in neither is outside what anyone
+/// can see — created and removed again — and is not reported.
+///
+/// The entries are reported oldest first, and an entry that entered or
+/// left the tree is reported with its whole subtree as it stands at
+/// close, in pre-order: every node of it whose own membership changed
+/// — all of them, unless one was moved in from elsewhere — each once.
+///
+/// `read` holds every element recorded, `out(i)` whether element `i`
+/// changed position, and `keep[i]` whether it is an entry of the
+/// journal.
+///
+/// Cost: an O(entries) scan; when something entered, left or changed
+/// parent, hash maps over the recorded nodes and the nodes looked at,
+/// and each subtree that entered or left walked once.
+fn structural_touches<E>(
+    arena: &Arena<E>,
+    root: NodeId,
+    read: &[(Recorded<E>, E, Option<At>)],
+    out: &impl Fn(usize) -> bool,
+    keep: &[bool],
+) -> Option<Vec<(NodeId, Touch)>> {
+    let structural = read.iter().any(|(recorded, _, after_at)| {
+        recorded.node != root
+            && !matches!((recorded.at, after_at), (Some(b), Some(a)) if b.parent == a.parent)
+    });
+    if !structural {
+        return None;
+    }
+    // A node's parent before the journal is its recorded one if it
+    // changed position, and its parent now otherwise: nothing else
+    // changes parent.
+    let mut before_parent: FxHashMap<NodeId, Option<NodeId>> = FxHashMap::default();
+    let mut entry_of: FxHashMap<NodeId, usize> = FxHashMap::default();
+    for (i, (recorded, _, _)) in read.iter().enumerate() {
+        if out(i) {
+            before_parent.insert(recorded.node, recorded.at.map(|at| at.parent));
+        }
+        if keep[i] {
+            entry_of.insert(recorded.node, i);
+        }
+    }
+    let mut presence = Presence {
+        arena,
+        root,
+        before_parent,
+        before: FxHashMap::default(),
+        after: FxHashMap::default(),
+    };
+    // The touch of a node in the tree at both ends: what its own entry
+    // says, or none when it has no entry.
+    let own = |node: NodeId| -> Option<Touch> {
+        let &i = entry_of.get(&node)?;
+        let (recorded, _, after_at) = &read[i];
+        let reparented = out(i) && recorded.at.map(|at| at.parent) != after_at.map(|at| at.parent);
+        Some(if reparented { Touch::Moved } else { Touch::Field })
+    };
+    let mut seen: FxHashSet<NodeId> = FxHashSet::default();
+    let mut touched = Vec::new();
+    for (i, (recorded, _, _)) in read.iter().enumerate() {
+        if !keep[i] {
+            continue;
+        }
+        let node = recorded.node;
+        match (presence.before(node), presence.after(node)) {
+            (false, false) => {}
+            (true, true) => {
+                if seen.insert(node) {
+                    touched.extend(own(node).map(|touch| (node, touch)));
+                }
+            }
+            _ => {
+                for member in node.descendants(arena) {
+                    if !seen.insert(member) {
+                        continue;
+                    }
+                    let touch = match (presence.before(member), presence.after(member)) {
+                        (false, true) => Some(Touch::Inserted),
+                        (true, false) => Some(Touch::Removed),
+                        (true, true) => own(member),
+                        (false, false) => None,
+                    };
+                    touched.extend(touch.map(|touch| (member, touch)));
+                }
+            }
+        }
+    }
+    Some(touched)
+}
+
+/// Whether nodes are in the tree before and after a journal, memoized:
+/// a node is in the tree when its chain of parents reaches the root.
+/// After is read from the arena at close; before follows each node's
+/// parent before the journal.
+struct Presence<'a, E> {
+    arena: &'a Arena<E>,
+    root: NodeId,
+    /// The parent before the journal of every node whose position
+    /// changed; every other node's is its parent now.
+    before_parent: FxHashMap<NodeId, Option<NodeId>>,
+    before: FxHashMap<NodeId, bool>,
+    after: FxHashMap<NodeId, bool>,
+}
+
+impl<E> Presence<'_, E> {
+    /// Whether `node` was in the tree before the journal.
+    fn before(&mut self, node: NodeId) -> bool {
+        let arena = self.arena;
+        let before_parent = &self.before_parent;
+        resolve(
+            self.root,
+            arena.len(),
+            &mut self.before,
+            node,
+            |id| match before_parent.get(&id) {
+                Some(&parent) => parent,
+                None => arena.get(id).and_then(|n| n.parent()),
+            },
+        )
+    }
+
+    /// Whether `node` is in the tree as the journal left it.
+    fn after(&mut self, node: NodeId) -> bool {
+        let arena = self.arena;
+        resolve(self.root, arena.len(), &mut self.after, node, |id| {
+            arena.get(id).and_then(|n| n.parent())
+        })
+    }
+}
+
+/// Whether the chain of `parent_of` from `node` reaches `root`, with
+/// every node on the chain memoized in `memo`. A chain longer than the
+/// arena's `limit` nodes is a cycle — no real arrangement has one — and
+/// answers `false` with an error logged. O(chain up to a memoized node).
+fn resolve(
+    root: NodeId,
+    limit: usize,
+    memo: &mut FxHashMap<NodeId, bool>,
+    node: NodeId,
+    parent_of: impl Fn(NodeId) -> Option<NodeId>,
+) -> bool {
+    let mut chain = Vec::new();
+    let mut cursor = Some(node);
+    let answer = loop {
+        let Some(id) = cursor else {
+            break false;
+        };
+        if id == root {
+            break true;
+        }
+        if let Some(&known) = memo.get(&id) {
+            break known;
+        }
+        if chain.len() > limit {
+            error!("engine: a journal's recorded parents form a cycle at node {id}");
+            break false;
+        }
+        chain.push(id);
+        cursor = parent_of(id);
+    };
+    for id in chain {
+        memo.insert(id, answer);
+    }
+    answer
+}
+
 /// The order in which to put the moved entries back so that each one's
 /// previous sibling, in the arrangement `pick` selects, is in place
-/// before it is: indices into `entries`, row by row, front to back.
+/// before it is: indices into `entries`, row by row, front to back. An
+/// entry that arrangement has out of the tree is not put anywhere, and
+/// is not in the order.
 ///
 /// An entry whose previous sibling is not itself moved (or which is
 /// first in its row) heads a run; each run is followed through the
@@ -426,19 +685,21 @@ fn out_of_place<E>(read: &[(Recorded<E>, E, Option<At>)]) -> Vec<bool> {
 ///
 /// Cost: O(moved entries) with a hash map and a hash set over them;
 /// nothing when nothing moved.
-fn arrangement_order<E>(entries: &[Entry<E>], pick: impl Fn(&(At, At)) -> &At) -> Vec<usize> {
+fn arrangement_order<E>(entries: &[Entry<E>], pick: fn(&Position) -> Option<At>) -> Vec<usize> {
     let moved: Vec<(usize, At)> = entries
         .iter()
         .enumerate()
-        .filter_map(|(i, entry)| entry.position.as_ref().map(|position| (i, *pick(position))))
+        .filter_map(|(i, entry)| entry.position.as_ref().and_then(pick).map(|at| (i, at)))
         .collect();
     if moved.is_empty() {
         return Vec::new();
     }
     let moved_nodes: FxHashSet<NodeId> = moved.iter().map(|&(i, _)| entries[i].node).collect();
     let mut follows: FxHashMap<(NodeId, NodeId), usize> = FxHashMap::default();
+    let mut parent_of: FxHashMap<usize, NodeId> = FxHashMap::default();
     let mut heads: Vec<usize> = Vec::new();
     for &(i, at) in &moved {
+        parent_of.insert(i, at.parent);
         match at.prev {
             Some(prev) if moved_nodes.contains(&prev) => {
                 follows.insert((at.parent, prev), i);
@@ -451,8 +712,9 @@ fn arrangement_order<E>(entries: &[Entry<E>], pick: impl Fn(&(At, At)) -> &At) -
         let mut cursor = Some(head);
         while let Some(i) = cursor {
             order.push(i);
-            let parent = moved_parent(entries, i, &pick);
-            cursor = parent.and_then(|parent| follows.remove(&(parent, entries[i].node)));
+            cursor = parent_of
+                .get(&i)
+                .and_then(|&parent| follows.remove(&(parent, entries[i].node)));
         }
     }
     if order.len() != moved.len() {
@@ -460,8 +722,9 @@ fn arrangement_order<E>(entries: &[Entry<E>], pick: impl Fn(&(At, At)) -> &At) -
         // every moved entry is reached from a head. Should one not be,
         // putting it back anyway beats leaving it detached.
         error!("engine: a journal's recorded positions form a cycle; restoring them in recorded order");
+        let placed: FxHashSet<usize> = order.iter().copied().collect();
         for &(i, _) in &moved {
-            if !order.contains(&i) {
+            if !placed.contains(&i) {
                 order.push(i);
             }
         }
@@ -469,9 +732,24 @@ fn arrangement_order<E>(entries: &[Entry<E>], pick: impl Fn(&(At, At)) -> &At) -
     order
 }
 
-/// The parent of moved entry `i` in the arrangement `pick` selects.
-fn moved_parent<E>(entries: &[Entry<E>], i: usize, pick: &impl Fn(&(At, At)) -> &At) -> Option<NodeId> {
-    entries[i].position.as_ref().map(|position| pick(position).parent)
+/// Where a moved element stands in the arrangement before the journal
+/// and in the one after it; `None` where it is out of the tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Position {
+    before: Option<At>,
+    after: Option<At>,
+}
+
+impl Position {
+    /// The position before the journal.
+    fn before(&self) -> Option<At> {
+        self.before
+    }
+
+    /// The position after the journal.
+    fn after(&self) -> Option<At> {
+        self.after
+    }
 }
 
 /// One closed entry: an element whose state or position the journal
@@ -481,50 +759,107 @@ struct Entry<E> {
     node: NodeId,
     before: E,
     after: E,
-    /// `(before, after)` positions when the element's position changed;
-    /// `None` when only its state did.
-    position: Option<(At, At)>,
+    /// Its positions when its position changed; `None` when only its
+    /// state did.
+    position: Option<Position>,
+}
+
+/// Which of its two arrangements a journal last wrote to the tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    /// The arrangement before the journal: after a revert, or a
+    /// [`Journal::write_interpolated`] that took the before side.
+    Before,
+    /// The arrangement after it: as closed, after a replay, or a
+    /// `write_interpolated` that took the after side.
+    After,
 }
 
 /// A closed journal: exactly what a builder's calls changed, as
-/// before and after values per element. Immutable; made by
-/// [`JournalBuilder::close`].
+/// before and after values and positions per element. Made by
+/// [`JournalBuilder::close`]; what it records never changes.
 ///
 /// Undo is [`revert`](Self::revert) and redo is
 /// [`replay`](Self::replay); [`touched`](Self::touched) names what
 /// changed, for whatever has to follow the change. A journal belongs to
 /// the tree its builder was used on; applying it to another tree is
 /// refused only as far as a stale id can be detected.
+///
+/// A journal **owns** the subtrees its structural commands took out of
+/// the tree: the ones it removed, while it is applied, and the ones it
+/// inserted, while it is reverted. They stay allocated so that the same
+/// `NodeId`s come back, until [`discard`](Self::discard) frees them. A
+/// journal dropped without `discard` leaves them allocated, unreachable,
+/// for as long as the tree lives.
 #[derive(Clone, Debug)]
 pub struct Journal<E: TreeElement> {
     entries: Vec<Entry<E>>,
     /// `NodeId` → index into `entries`.
     index: FxHashMap<NodeId, usize>,
-    /// The moved entries, in the order that restores the arrangement
-    /// before the journal.
+    /// The entries whose position changed: the ones a restore detaches.
+    out: Vec<usize>,
+    /// The moved entries in the tree before the journal, in the order
+    /// that restores that arrangement.
     to_before: Vec<usize>,
-    /// The moved entries, in the order that restores the arrangement
-    /// after it.
+    /// The moved entries in the tree after it, in the order that
+    /// restores that arrangement.
     to_after: Vec<usize>,
+    /// Every touch, when a node entered, left or changed parent; `None`
+    /// when every entry is a [`Touch::Field`].
+    touched: Option<Vec<(NodeId, Touch)>>,
+    /// The tops of the subtrees out of the tree before the journal.
+    detached_before: Vec<NodeId>,
+    /// The tops of the subtrees out of the tree after it.
+    detached_after: Vec<NodeId>,
+    /// The arrangement last written, which decides what
+    /// [`Self::discard`] frees.
+    side: Cell<Side>,
 }
 
 impl<E: TreeElement> Journal<E> {
-    /// Whether the journal records no change at all: every element its
-    /// calls applied to holds the state it started with, in the place
-    /// it started at. O(1).
+    /// Whether the journal records no change to the tree: every node in
+    /// the tree before or after it holds the state it started with, in
+    /// the place it started at — exactly when [`Self::touched`] names
+    /// nothing. O(1).
+    ///
+    /// A subtree its builder's commands created and removed again was
+    /// never in the tree, so what was done inside it is no change; but
+    /// the journal owns that subtree, so a caller that drops an empty
+    /// journal frees it with [`Self::discard`] all the same.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        match &self.touched {
+            None => self.entries.is_empty(),
+            Some(touched) => touched.is_empty(),
+        }
     }
 
-    /// Every node the journal changed, with what happened to it, oldest
-    /// entry first. Today every entry is a [`Touch::Field`]. No
-    /// allocation.
+    /// Every node the journal changed, with what happened to it
+    /// ([`Touch`]), each once.
+    ///
+    /// The entries come oldest first. A node that entered or left the
+    /// tree comes with every node of its subtree, in pre-order, each
+    /// with its own touch — the same one, unless a node was moved into
+    /// that subtree from elsewhere. A node that was neither in the tree
+    /// before nor after — created and removed again — is not reported.
+    ///
+    /// No allocation: a journal with no structural change reports its
+    /// entries as they are, and one with a structural change computed
+    /// its touches when it closed.
     pub fn touched(&self) -> impl Iterator<Item = (NodeId, Touch)> + '_ {
-        self.entries.iter().map(|entry| (entry.node, Touch::Field))
+        let fields = match self.touched {
+            None => Some(self.entries.iter().map(|entry| (entry.node, Touch::Field))),
+            Some(_) => None,
+        };
+        self.touched
+            .iter()
+            .flatten()
+            .copied()
+            .chain(fields.into_iter().flatten())
     }
 
     /// The element at `node` as it was before the journal, or `None`
-    /// when the journal did not change it. O(1).
+    /// when the journal did not change it. For a node the journal's
+    /// commands created, the element as it was created. O(1).
     pub fn before(&self, node: NodeId) -> Option<&E> {
         self.index.get(&node).map(|&i| &self.entries[i].before)
     }
@@ -536,27 +871,31 @@ impl<E: TreeElement> Journal<E> {
     }
 
     /// Undo the journal: write every entry's before-image, newest entry
-    /// first, then put every moved element back where it stood. `tree`
-    /// must be the journal's tree as the journal left it — after the
-    /// journaled calls, or after a [`replay`](Self::replay).
+    /// first, then put every moved element back where it stood — a node
+    /// the journal inserted is detached again, and one it removed is
+    /// attached again, with the same ids. `tree` must be the journal's
+    /// tree as the journal left it — after the journaled calls, or after
+    /// a [`replay`](Self::replay).
     ///
     /// Writes recorded values only: no mutation is applied and nothing
-    /// is inherited or compared. Errors (nothing is written):
-    /// [`TreeError::StaleNode`] for a node the journal names that is no
-    /// longer in the tree, [`TreeError::NotAChild`] for a moved node or
-    /// a recorded sibling no longer under its recorded parent.
+    /// is inherited or compared, and nothing is freed. Errors (nothing
+    /// is written): [`TreeError::StaleNode`] for a node the journal
+    /// names that is no longer in the arena, [`TreeError::NotAChild`]
+    /// for a moved node under neither of its recorded parents, or a
+    /// recorded sibling no longer under its recorded parent.
     ///
     /// Invalidates the tree's cache. Cost: one clone per entry; for
     /// moved elements a detach and an O(depth) re-attach each.
     pub fn revert(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
         self.validate(tree)?;
+        self.side.set(Side::Before);
         if self.entries.is_empty() {
             return Ok(());
         }
         for entry in self.entries.iter().rev() {
             write(&mut tree.arena, entry.node, entry.before.clone());
         }
-        self.arrange(&mut tree.arena, &self.to_before, |(before, _)| before);
+        self.arrange(&mut tree.arena, &self.to_before, Position::before);
         tree.cache.invalidate();
         Ok(())
     }
@@ -570,44 +909,99 @@ impl<E: TreeElement> Journal<E> {
     /// The same guarantees, errors and cost as [`Self::revert`].
     pub fn replay(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
         self.validate(tree)?;
+        self.side.set(Side::After);
         if self.entries.is_empty() {
             return Ok(());
         }
         for entry in &self.entries {
             write(&mut tree.arena, entry.node, entry.after.clone());
         }
-        self.arrange(&mut tree.arena, &self.to_after, |(_, after)| after);
+        self.arrange(&mut tree.arena, &self.to_after, Position::after);
         tree.cache.invalidate();
         Ok(())
     }
 
+    /// Free every subtree this journal holds out of the tree, consuming
+    /// it: the subtrees it removed when it was last written forward
+    /// (closed, [`replay`](Self::replay)ed, or written past the snap
+    /// point by [`write_interpolated`](Self::write_interpolated)), the
+    /// ones it inserted when it was last [`revert`](Self::revert)ed. A
+    /// subtree is freed only if it is still detached — no parent, and
+    /// not the root. Every id in a freed subtree becomes stale; nothing
+    /// in the tree changes.
+    ///
+    /// The step for a journal leaving the history: the oldest entry
+    /// falling off the end (applied), or a redo branch being cleared
+    /// (reverted). A subtree the journal took out of the tree is held by
+    /// it alone — no walk reaches it, and no other journal can put it
+    /// back — so freeing it here leaves no id that anything could still
+    /// restore. One that a later journal took out is that journal's, and
+    /// this one does not free it.
+    ///
+    /// Invalidates the tree's cache when it frees anything. Cost:
+    /// O(subtrees held) plus O(nodes freed).
+    pub fn discard(self, tree: &mut Tree<E>) {
+        let held = match self.side.get() {
+            Side::Before => &self.detached_before,
+            Side::After => &self.detached_after,
+        };
+        let mut freed = false;
+        for &node in held {
+            let detached = tree.arena.get(node).is_some_and(|n| n.parent().is_none());
+            if detached && node != tree.root {
+                node.remove_subtree(&mut tree.arena);
+                freed = true;
+            }
+        }
+        if freed {
+            tree.cache.invalidate();
+        }
+    }
+
+    /// Whether entry `node` changed position. O(1).
+    fn is_out(&self, node: NodeId) -> bool {
+        self.index
+            .get(&node)
+            .is_some_and(|&i| self.entries[i].position.is_some())
+    }
+
     /// Check that every node the journal will write or move, and every
     /// sibling and parent it will place against, is in `tree` where the
-    /// journal expects it. Reads only; O(entries).
+    /// journal expects it: a moved node under one of its two recorded
+    /// parents (or detached, where one end has it out of the tree), and
+    /// each recorded sibling that does not move itself under the parent
+    /// it was recorded under. Reads only; O(entries).
     fn validate(&self, tree: &Tree<E>) -> Result<(), TreeError> {
         let arena = &tree.arena;
         for entry in &self.entries {
             let Some(node) = arena.get(entry.node) else {
                 return Err(TreeError::StaleNode(entry.node));
             };
-            let Some((before, after)) = entry.position else {
+            let Some(position) = entry.position else {
                 continue;
             };
-            for at in [before, after] {
+            let parents = [
+                position.before.map(|at| at.parent),
+                position.after.map(|at| at.parent),
+            ];
+            if !parents.contains(&node.parent()) {
+                let Some(parent) = parents.into_iter().flatten().next() else {
+                    return Err(TreeError::StaleNode(entry.node));
+                };
+                return Err(TreeError::NotAChild {
+                    parent,
+                    node: entry.node,
+                });
+            }
+            for at in [position.before, position.after].into_iter().flatten() {
                 if arena.get(at.parent).is_none() {
                     return Err(TreeError::StaleNode(at.parent));
-                }
-                if node.parent() != Some(at.parent) {
-                    return Err(TreeError::NotAChild {
-                        parent: at.parent,
-                        node: entry.node,
-                    });
                 }
                 if let Some(prev) = at.prev {
                     let Some(sibling) = arena.get(prev) else {
                         return Err(TreeError::StaleNode(prev));
                     };
-                    if sibling.parent() != Some(at.parent) {
+                    if !self.is_out(prev) && sibling.parent() != Some(at.parent) {
                         return Err(TreeError::NotAChild {
                             parent: at.parent,
                             node: prev,
@@ -620,18 +1014,17 @@ impl<E: TreeElement> Journal<E> {
     }
 
     /// Put the moved entries in the arrangement `pick` selects: detach
-    /// every one, then attach each after its recorded previous sibling,
-    /// in `order` — the order that has each previous sibling in place
-    /// first. Unmoved siblings never leave their rows. Nothing to do
-    /// when nothing moved.
-    fn arrange(&self, arena: &mut Arena<E>, order: &[usize], pick: impl Fn(&(At, At)) -> &At) {
-        for &i in order {
+    /// every one, then attach each that arrangement has in the tree
+    /// after its recorded previous sibling, in `order` — the order that
+    /// has each previous sibling in place first. Unmoved nodes never
+    /// leave their rows. Nothing to do when nothing moved.
+    fn arrange(&self, arena: &mut Arena<E>, order: &[usize], pick: fn(&Position) -> Option<At>) {
+        for &i in &self.out {
             self.entries[i].node.detach(arena);
         }
         for &i in order {
             let entry = &self.entries[i];
-            if let Some(position) = &entry.position {
-                let at = pick(position);
+            if let Some(at) = entry.position.as_ref().and_then(pick) {
                 siblings::attach_at(arena, at.parent, entry.node, at.prev);
             }
         }
@@ -644,7 +1037,9 @@ impl<E: Interpolable> Journal<E> {
     /// [`Interpolable::interpolate`]d, and moved elements stand in the
     /// before or the after arrangement by the same `snap` rule that
     /// decides the element's non-interpolating fields — key included —
-    /// so the rows stay sorted.
+    /// so the rows stay sorted. Structure snaps with them: with
+    /// [`Snap::Start`] the journal's inserts, removals and moves are in
+    /// place for every `t > 0`, with [`Snap::End`] only at `t = 1`.
     ///
     /// `t` is clamped to `0..=1`, and a `NaN` reads as `0`. At `t = 0`
     /// the tree is left as [`revert`](Self::revert) leaves it, and at
@@ -658,10 +1053,12 @@ impl<E: Interpolable> Journal<E> {
     /// O(depth) re-attach each.
     pub fn write_interpolated(&self, tree: &mut Tree<E>, t: f32, snap: Snap) -> Result<(), TreeError> {
         self.validate(tree)?;
+        let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+        let after = snap.takes_after(t);
+        self.side.set(if after { Side::After } else { Side::Before });
         if self.entries.is_empty() {
             return Ok(());
         }
-        let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
         for entry in &self.entries {
             write(
                 &mut tree.arena,
@@ -669,10 +1066,10 @@ impl<E: Interpolable> Journal<E> {
                 E::interpolate(&entry.before, &entry.after, t, snap),
             );
         }
-        if snap.takes_after(t) {
-            self.arrange(&mut tree.arena, &self.to_after, |(_, after)| after);
+        if after {
+            self.arrange(&mut tree.arena, &self.to_after, Position::after);
         } else {
-            self.arrange(&mut tree.arena, &self.to_before, |(before, _)| before);
+            self.arrange(&mut tree.arena, &self.to_before, Position::before);
         }
         tree.cache.invalidate();
         Ok(())

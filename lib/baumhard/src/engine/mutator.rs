@@ -9,6 +9,7 @@ use crate::engine::element::TreeElement;
 use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
 use crate::engine::predicate::Predicate;
+use crate::engine::structure::StructOp;
 use crate::util::ordered_vec2::OrderedVec2;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -130,6 +131,23 @@ pub enum Mutator<E: TreeElement, M: Mutation<E>> {
         /// body. `None` when the node only steers the walk.
         mutation: Option<M>,
     },
+    /// A [structural command](crate::engine::structure) — insert,
+    /// remove, move, split or merge — on the element with the matching
+    /// key. The walk collects it with its target and applies nothing;
+    /// the command runs once the walk is over, in the walk's second
+    /// phase. Below this node the walk continues by key, as below a
+    /// [`Void`](Mutator::Void).
+    ///
+    /// Not serializable: structure is never authored as JSON, so the
+    /// variant is skipped by serde — serializing it is an error, and no
+    /// JSON deserializes to it — and [`StructOp`] asks nothing of serde.
+    #[serde(skip)]
+    Structure {
+        /// The key the walker aligns this node on.
+        key: BranchKey<E::Kind>,
+        /// The command.
+        op: StructOp<E>,
+    },
 }
 
 impl<E: TreeElement, M: Mutation<E>> Mutator<E, M> {
@@ -167,13 +185,20 @@ impl<E: TreeElement, M: Mutation<E>> Mutator<E, M> {
         }
     }
 
+    /// A `Structure` mutator carrying the structural command `op` on
+    /// `key`. The command is moved, not cloned.
+    pub fn new_structure(op: StructOp<E>, key: impl Into<BranchKey<E::Kind>>) -> Self {
+        Mutator::Structure { key: key.into(), op }
+    }
+
     /// The key the walker aligns this node on. O(1).
     pub fn key(&self) -> BranchKey<E::Kind> {
         match self {
             Mutator::Void { key }
             | Mutator::Single { key, .. }
             | Mutator::Macro { key, .. }
-            | Mutator::Instruction { key, .. } => *key,
+            | Mutator::Instruction { key, .. }
+            | Mutator::Structure { key, .. } => *key,
         }
     }
 
@@ -186,20 +211,23 @@ impl<E: TreeElement, M: Mutation<E>> Mutator<E, M> {
     /// Whether [`Self::apply_to`] would apply any mutation: a `Single`,
     /// a non-empty `Macro`, or an `Instruction` carrying a mutation.
     /// The walker applies — and journals — only a mutator that does.
-    /// O(1).
+    /// A `Structure` carries a command, not a mutation, so it has no
+    /// payload: the walk collects it instead. O(1).
     pub fn has_payload(&self) -> bool {
         match self {
             Mutator::Single { .. } => true,
             Mutator::Macro { mutations, .. } => !mutations.is_empty(),
             Mutator::Instruction { mutation, .. } => mutation.is_some(),
-            Mutator::Void { .. } => false,
+            Mutator::Void { .. } | Mutator::Structure { .. } => false,
         }
     }
 
     /// Apply this node's payload to `target`: the one mutation of a
     /// `Single`, every mutation of a `Macro` in order, an
     /// `Instruction`'s mutation when it has one, nothing for `Void`.
-    /// `inherited` is the target's parent's inherited state, passed
+    /// Nothing for `Structure` either: a structural command changes
+    /// the tree, not one element, and only the walk's second phase runs
+    /// it. `inherited` is the target's parent's inherited state, passed
     /// through to every [`Mutation::apply_to`]. Does not consult
     /// keys — the walker decides whether this node reaches
     /// `target`. O(k) in the number of mutations applied.
@@ -215,7 +243,9 @@ impl<E: TreeElement, M: Mutation<E>> Mutator<E, M> {
                     mutation.apply_to(target, inherited);
                 }
             }
-            Mutator::Void { .. } | Mutator::Instruction { mutation: None, .. } => {}
+            Mutator::Void { .. }
+            | Mutator::Instruction { mutation: None, .. }
+            | Mutator::Structure { .. } => {}
         }
     }
 }
