@@ -15,12 +15,21 @@
 //! | PortalEnd | Span\* (the marker), Label (≤ 1) |
 //! | Span, Theme, Palette, Defaults | none |
 //!
-//! [`validate_shape`](crate::document::shape::validate_shape) checks one
-//! element against the table: its own children, and, for a node, its
-//! own connector rule. The loader
-//! (V1-B2) calls it for every element it builds; a structural mutation
-//! (V1-B3, V1-B4) calls it for every parent it changed and every node
-//! it moved. A check is one pass over one row, with no allocation.
+//! One function holds the table:
+//! [`validate_row`](crate::document::shape::validate_row) judges one
+//! element and the kinds of its children, in any order, naming no arena
+//! id — so it serves a row of the tree and a row of a detached subtree
+//! alike. [`validate_shape`](crate::document::shape::validate_shape) is
+//! that check for an element of the tree: the loader (V1-B2) calls it
+//! for every element it builds; a structural mutation (V1-B3, V1-B4)
+//! calls it for every parent it changed and every node it moved. A
+//! check is one pass over one row, with no allocation.
+//!
+//! **A node's connector rule belongs to where it sits**: exactly one
+//! connector under a node, none on a root node. A subtree's root has no
+//! parent until it is inserted, so its row is judged with the parent it
+//! will be inserted under (`under_node`), or by `validate_shape` once it
+//! is in place.
 
 use crate::document::element::{DocElement, DocKind};
 use crate::document::values::LinkKind;
@@ -49,33 +58,29 @@ impl Cardinality {
     }
 }
 
-/// Why an element breaks the shape rules.
+/// Why one row breaks the shape rules. Names kinds and positions, never
+/// an arena id, so a row with no ids — a detached subtree's — can be
+/// judged too.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ShapeError {
-    /// The id is not in the tree.
-    StaleNode(NodeId),
+pub enum RowError {
     /// The tree's root is not a [`Map`](DocKind::Map).
     RootNotMap {
         /// The root's kind.
         kind: DocKind,
     },
     /// A [`Map`](DocKind::Map) that is not the tree's root.
-    MapNotRoot(NodeId),
+    MapNotRoot,
     /// A child of a kind its parent may not hold.
     ChildNotAllowed {
-        /// The parent.
-        parent: NodeId,
         /// The parent's kind.
         parent_kind: DocKind,
-        /// The child.
-        child: NodeId,
+        /// The child's position among the children as given.
+        position: usize,
         /// The child's kind.
         child_kind: DocKind,
     },
     /// The wrong number of children of one kind.
     Count {
-        /// The parent.
-        parent: NodeId,
         /// The kind counted.
         kind: DocKind,
         /// How many there are.
@@ -83,10 +88,47 @@ pub enum ShapeError {
         /// How many the parent may have.
         allowed: Cardinality,
     },
-    /// A portal link's two ends are not channel 0 and channel 1.
-    PortalEnds {
-        /// The link.
-        link: NodeId,
+    /// A portal link's two ends are not one on channel 0 and one on
+    /// channel 1.
+    PortalEnds,
+}
+
+impl std::fmt::Display for RowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RowError::RootNotMap { kind } => write!(f, "the root is a {kind:?}, not a Map"),
+            RowError::MapNotRoot => f.write_str("a map below the root"),
+            RowError::ChildNotAllowed {
+                parent_kind,
+                position,
+                child_kind,
+            } => write!(
+                f,
+                "a {parent_kind:?} cannot hold a {child_kind:?} (child {position})"
+            ),
+            RowError::Count { kind, found, allowed } => {
+                write!(f, "{found} {kind:?} children; {allowed:?} allowed")
+            }
+            RowError::PortalEnds => {
+                f.write_str("a portal link needs one end on channel 0 and one on channel 1")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RowError {}
+
+/// Why an element of a tree breaks the shape rules.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShapeError {
+    /// The id is not in the tree.
+    StaleNode(NodeId),
+    /// The row of `element` breaks a rule.
+    Row {
+        /// The element whose row was judged.
+        element: NodeId,
+        /// What is wrong with it.
+        error: RowError,
     },
 }
 
@@ -94,26 +136,7 @@ impl std::fmt::Display for ShapeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ShapeError::StaleNode(id) => write!(f, "node {id} is not in the tree"),
-            ShapeError::RootNotMap { kind } => write!(f, "the root is a {kind:?}, not a Map"),
-            ShapeError::MapNotRoot(id) => write!(f, "map {id} is not the root"),
-            ShapeError::ChildNotAllowed {
-                parent,
-                parent_kind,
-                child,
-                child_kind,
-            } => write!(f, "{parent_kind:?} {parent} cannot hold {child_kind:?} {child}"),
-            ShapeError::Count {
-                parent,
-                kind,
-                found,
-                allowed,
-            } => write!(f, "{parent} has {found} {kind:?} children; {allowed:?} allowed"),
-            ShapeError::PortalEnds { link } => {
-                write!(
-                    f,
-                    "portal link {link} needs one end on channel 0 and one on channel 1"
-                )
-            }
+            ShapeError::Row { element, error } => write!(f, "{element}: {error}"),
         }
     }
 }
@@ -153,14 +176,66 @@ pub fn cardinality(parent: &DocElement, under_node: bool, child: DocKind) -> Opt
     }
 }
 
-/// Check the element at `id` against the shape rules: that it is a map
-/// exactly when it is the root, that each of its children is of a kind
-/// it may hold, that each kind appears as often as it may, and — for a
-/// portal link — that its ends are channels 0 and 1. A node's connector
-/// rule is its own: exactly one under a node, none on a root node.
+/// Judge one row: `parent` and its children, given in any order. The
+/// parent is a map exactly when `is_root`; each child is of a kind the
+/// parent may hold; each kind appears as often as it may; a portal
+/// link's ends are one on channel 0 and one on channel 1. `under_node`
+/// is whether the parent's own parent is a node, which decides a node's
+/// connector: exactly one under a node, none on a root node.
 ///
-/// The children are not checked below their own row; call this for each
-/// element whose row changed.
+/// The children are not judged below their own row. Cost: one pass over
+/// the children and one over the kinds; no allocation.
+pub fn validate_row<'a>(
+    parent: &DocElement,
+    is_root: bool,
+    under_node: bool,
+    children: impl IntoIterator<Item = &'a DocElement>,
+) -> Result<(), RowError> {
+    if is_root && parent.kind() != DocKind::Map {
+        return Err(RowError::RootNotMap { kind: parent.kind() });
+    }
+    if !is_root && parent.kind() == DocKind::Map {
+        return Err(RowError::MapNotRoot);
+    }
+    let mut counts = [0usize; DocKind::ALL.len()];
+    let mut ends = [false; 2];
+    for (position, child) in children.into_iter().enumerate() {
+        let child_kind = child.kind();
+        if cardinality(parent, under_node, child_kind).is_none() {
+            return Err(RowError::ChildNotAllowed {
+                parent_kind: parent.kind(),
+                position,
+                child_kind,
+            });
+        }
+        counts[child_kind as usize] += 1;
+        if let DocElement::PortalEnd(end) = child {
+            if let Some(seen) = ends.get_mut(usize::from(end.end)) {
+                *seen = true;
+            }
+        }
+    }
+    for kind in DocKind::ALL {
+        let Some(allowed) = cardinality(parent, under_node, kind) else {
+            continue;
+        };
+        let found = counts[kind as usize];
+        if !allowed.admits(found) {
+            return Err(RowError::Count { kind, found, allowed });
+        }
+    }
+    if let DocElement::Link(link) = parent {
+        // Exactly two ends, counted above; together they must be the
+        // set {0, 1}, in whatever order they come.
+        if link.kind == LinkKind::Portal && ends != [true, true] {
+            return Err(RowError::PortalEnds);
+        }
+    }
+    Ok(())
+}
+
+/// [`validate_row`] for the element at `id` of `tree`: its own row, and
+/// a node's connector rule from its place in the tree.
 ///
 /// Cost: one pass over `id`'s children and one over the kinds; no
 /// allocation.
@@ -168,52 +243,10 @@ pub fn validate_shape(tree: &Tree<DocElement>, id: NodeId) -> Result<(), ShapeEr
     let Some(node) = tree.get(id) else {
         return Err(ShapeError::StaleNode(id));
     };
-    let element = node.get();
-    let is_root = id == tree.root();
-    if is_root && element.kind() != DocKind::Map {
-        return Err(ShapeError::RootNotMap { kind: element.kind() });
-    }
-    if !is_root && element.kind() == DocKind::Map {
-        return Err(ShapeError::MapNotRoot(id));
-    }
     let under_node = node
         .parent()
         .is_some_and(|p| tree.arena()[p].get().kind() == DocKind::Node);
-
-    let mut counts = [0usize; DocKind::ALL.len()];
-    for child in id.children(tree.arena()) {
-        let child_kind = tree.arena()[child].get().kind();
-        if cardinality(element, under_node, child_kind).is_none() {
-            return Err(ShapeError::ChildNotAllowed {
-                parent: id,
-                parent_kind: element.kind(),
-                child,
-                child_kind,
-            });
-        }
-        counts[child_kind as usize] += 1;
-    }
-    for kind in DocKind::ALL {
-        let Some(allowed) = cardinality(element, under_node, kind) else {
-            continue;
-        };
-        let found = counts[kind as usize];
-        if !allowed.admits(found) {
-            return Err(ShapeError::Count {
-                parent: id,
-                kind,
-                found,
-                allowed,
-            });
-        }
-    }
-    if let DocElement::Link(link) = element {
-        if link.kind == LinkKind::Portal {
-            let mut ends = id.children(tree.arena()).map(|c| tree.arena()[c].get().channel());
-            if (ends.next(), ends.next()) != (Some(0), Some(1)) {
-                return Err(ShapeError::PortalEnds { link: id });
-            }
-        }
-    }
-    Ok(())
+    let children = id.children(tree.arena()).map(|c| tree.arena()[c].get());
+    validate_row(node.get(), id == tree.root(), under_node, children)
+        .map_err(|error| ShapeError::Row { element: id, error })
 }

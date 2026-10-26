@@ -1754,6 +1754,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_shape_map_row", |b| b.iter(do_document_shape_map_row));
     c.bench_function("document_shape_node_row", |b| b.iter(do_document_shape_node_row));
+    c.bench_function(
+        "document_validate_row_is_order_independent_and_names_no_id",
+        |b| b.iter(do_document_validate_row_is_order_independent_and_names_no_id),
+    );
     c.bench_function("document_geometry_touches_no_input", |b| {
         b.iter(do_document_geometry_touches_no_input)
     });

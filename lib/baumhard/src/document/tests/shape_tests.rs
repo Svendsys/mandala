@@ -8,15 +8,31 @@
 use crate::document::element::{
     CapData, DocElement, DocKind, FrameData, LabelData, MapData, PortalEndData, RingData, ThemeData,
 };
-use crate::document::shape::{validate_shape, Cardinality, ShapeError};
+use crate::document::shape::{validate_row, validate_shape, Cardinality, RowError, ShapeError};
 use crate::document::tests::test_support::{example, span, DocumentBuilder};
 use crate::document::values::LinkKind;
 use crate::engine::tree::Tree;
 use indextree::NodeId;
 
-/// `validate_shape` at `id` in `builder`'s tree.
-fn check(builder: &DocumentBuilder, id: NodeId) -> Result<(), ShapeError> {
-    validate_shape(builder.tree(), id)
+/// `validate_shape` at `id` in `builder`'s tree, as the row error it
+/// reports for `id` — it never reports one for another element.
+fn check(builder: &DocumentBuilder, id: NodeId) -> Result<(), RowError> {
+    match validate_shape(builder.tree(), id) {
+        Ok(()) => Ok(()),
+        Err(ShapeError::Row { element, error }) => {
+            assert_eq!(element, id, "the error names the element judged");
+            Err(error)
+        }
+        Err(other) => panic!("not a row error: {other:?}"),
+    }
+}
+
+/// `child`'s position among `parent`'s children.
+fn position(builder: &DocumentBuilder, parent: NodeId, child: NodeId) -> usize {
+    parent
+        .children(builder.tree().arena())
+        .position(|c| c == child)
+        .unwrap()
 }
 
 #[test]
@@ -66,8 +82,7 @@ pub fn do_document_shape_map_row() {
     builder.add(root, DocElement::Theme(ThemeData::default()));
     assert_eq!(
         check(&builder, root),
-        Err(ShapeError::Count {
-            parent: root,
+        Err(RowError::Count {
             kind: DocKind::Theme,
             found: 2,
             allowed: Cardinality::Exactly(1),
@@ -80,33 +95,37 @@ pub fn do_document_shape_map_row() {
     tree.remove_subtree(defaults).unwrap();
     assert_eq!(
         validate_shape(&tree, root),
-        Err(ShapeError::Count {
-            parent: root,
-            kind: DocKind::Defaults,
-            found: 0,
-            allowed: Cardinality::Exactly(1),
+        Err(ShapeError::Row {
+            element: root,
+            error: RowError::Count {
+                kind: DocKind::Defaults,
+                found: 0,
+                allowed: Cardinality::Exactly(1),
+            },
         })
     );
 
     let section = builder.add(root, DocElement::Section(Default::default()));
     assert_eq!(
         check(&builder, root),
-        Err(ShapeError::ChildNotAllowed {
-            parent: root,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::Map,
-            child: section,
+            position: position(&builder, root, section),
             child_kind: DocKind::Section,
         })
     );
 
     let (mut builder, _) = example();
     let inner = builder.add(ids.a, DocElement::Map(MapData::default()));
-    assert_eq!(check(&builder, inner), Err(ShapeError::MapNotRoot(inner)));
+    assert_eq!(check(&builder, inner), Err(RowError::MapNotRoot));
 
     let not_a_map: Tree<DocElement> = Tree::new_non_indexed_with(span("x"));
     assert_eq!(
         validate_shape(&not_a_map, not_a_map.root()),
-        Err(ShapeError::RootNotMap { kind: DocKind::Span })
+        Err(ShapeError::Row {
+            element: not_a_map.root(),
+            error: RowError::RootNotMap { kind: DocKind::Span },
+        })
     );
 }
 
@@ -123,8 +142,7 @@ pub fn do_document_shape_node_row() {
     builder.add(ids.a, DocElement::Frame(FrameData::default()));
     assert_eq!(
         check(&builder, ids.a),
-        Err(ShapeError::Count {
-            parent: ids.a,
+        Err(RowError::Count {
             kind: DocKind::Frame,
             found: 2,
             allowed: Cardinality::AtMost(1),
@@ -137,10 +155,9 @@ pub fn do_document_shape_node_row() {
     let connector = builder.connector(ids.d);
     assert_eq!(
         check(&builder, ids.d),
-        Err(ShapeError::ChildNotAllowed {
-            parent: ids.d,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::Node,
-            child: connector,
+            position: position(&builder, ids.d, connector),
             child_kind: DocKind::Connector,
         })
     );
@@ -152,19 +169,20 @@ pub fn do_document_shape_node_row() {
     tree.remove_subtree(ids.c_connector).unwrap();
     assert_eq!(
         validate_shape(&tree, ids.c),
-        Err(ShapeError::Count {
-            parent: ids.c,
-            kind: DocKind::Connector,
-            found: 0,
-            allowed: Cardinality::Exactly(1),
+        Err(ShapeError::Row {
+            element: ids.c,
+            error: RowError::Count {
+                kind: DocKind::Connector,
+                found: 0,
+                allowed: Cardinality::Exactly(1),
+            },
         })
     );
     let (mut builder, ids) = example();
     builder.connector(ids.c);
     assert_eq!(
         check(&builder, ids.c),
-        Err(ShapeError::Count {
-            parent: ids.c,
+        Err(RowError::Count {
             kind: DocKind::Connector,
             found: 2,
             allowed: Cardinality::Exactly(1),
@@ -176,7 +194,8 @@ pub fn do_document_shape_node_row() {
     let stray = builder.span(ids.d, "stray");
     assert!(matches!(
         check(&builder, ids.d),
-        Err(ShapeError::ChildNotAllowed { child, child_kind: DocKind::Span, .. }) if child == stray
+        Err(RowError::ChildNotAllowed { position: p, child_kind: DocKind::Span, .. })
+            if p == position(&builder, ids.d, stray)
     ));
 }
 
@@ -193,10 +212,9 @@ pub fn do_document_shape_section_row() {
     let ring = builder.add(ids.a_title, DocElement::Ring(RingData::default()));
     assert_eq!(
         check(&builder, ids.a_title),
-        Err(ShapeError::ChildNotAllowed {
-            parent: ids.a_title,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::Section,
-            child: ring,
+            position: position(&builder, ids.a_title, ring),
             child_kind: DocKind::Ring,
         })
     );
@@ -221,10 +239,9 @@ pub fn do_document_shape_frame_row() {
     let stray = builder.span(ids.frame, "stray");
     assert_eq!(
         check(&builder, ids.frame),
-        Err(ShapeError::ChildNotAllowed {
-            parent: ids.frame,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::Frame,
-            child: stray,
+            position: position(&builder, ids.frame, stray),
             child_kind: DocKind::Span,
         })
     );
@@ -253,10 +270,9 @@ pub fn do_document_shape_span_holder_rows() {
         let kind = builder.tree().arena()[holder].get().kind();
         assert_eq!(
             check(&builder, holder),
-            Err(ShapeError::ChildNotAllowed {
-                parent: holder,
+            Err(RowError::ChildNotAllowed {
                 parent_kind: kind,
-                child: label,
+                position: position(&builder, holder, label),
                 child_kind: DocKind::Label,
             })
         );
@@ -275,8 +291,7 @@ pub fn do_document_shape_connector_row() {
     builder.add(ids.b_connector, DocElement::CapStart(CapData::default()));
     assert_eq!(
         check(&builder, ids.b_connector),
-        Err(ShapeError::Count {
-            parent: ids.b_connector,
+        Err(RowError::Count {
             kind: DocKind::CapStart,
             found: 2,
             allowed: Cardinality::AtMost(1),
@@ -286,10 +301,9 @@ pub fn do_document_shape_connector_row() {
     let end = builder.add(ids.b_connector, DocElement::PortalEnd(PortalEndData::default()));
     assert_eq!(
         check(&builder, ids.b_connector),
-        Err(ShapeError::ChildNotAllowed {
-            parent: ids.b_connector,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::Connector,
-            child: end,
+            position: position(&builder, ids.b_connector, end),
             child_kind: DocKind::PortalEnd,
         })
     );
@@ -308,8 +322,7 @@ pub fn do_document_shape_line_link_row() {
     builder.add(ids.line, DocElement::Label(LabelData::default()));
     assert_eq!(
         check(&builder, ids.line),
-        Err(ShapeError::Count {
-            parent: ids.line,
+        Err(RowError::Count {
             kind: DocKind::Label,
             found: 2,
             allowed: Cardinality::AtMost(1),
@@ -319,10 +332,9 @@ pub fn do_document_shape_line_link_row() {
     let end = builder.add(ids.line, DocElement::PortalEnd(PortalEndData::default()));
     assert_eq!(
         check(&builder, ids.line),
-        Err(ShapeError::ChildNotAllowed {
-            parent: ids.line,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::Link,
-            child: end,
+            position: position(&builder, ids.line, end),
             child_kind: DocKind::PortalEnd,
         })
     );
@@ -347,8 +359,7 @@ pub fn do_document_shape_portal_link_row() {
     );
     assert_eq!(
         check(&builder, ids.portal),
-        Err(ShapeError::Count {
-            parent: ids.portal,
+        Err(RowError::Count {
             kind: DocKind::PortalEnd,
             found: 3,
             allowed: Cardinality::Exactly(2),
@@ -359,10 +370,9 @@ pub fn do_document_shape_portal_link_row() {
     let stray = builder.span(ids.portal, "stray");
     assert_eq!(
         check(&builder, ids.portal),
-        Err(ShapeError::ChildNotAllowed {
-            parent: ids.portal,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::Link,
-            child: stray,
+            position: position(&builder, ids.portal, stray),
             child_kind: DocKind::Span,
         })
     );
@@ -374,10 +384,7 @@ pub fn do_document_shape_portal_link_row() {
             end.end = 0;
         }
     });
-    assert_eq!(
-        check(&builder, ids.portal),
-        Err(ShapeError::PortalEnds { link: ids.portal })
-    );
+    assert_eq!(check(&builder, ids.portal), Err(RowError::PortalEnds));
 
     // The same row is a line link's when the kind says so.
     let (mut builder, ids) = example();
@@ -388,7 +395,7 @@ pub fn do_document_shape_portal_link_row() {
     });
     assert!(matches!(
         check(&builder, ids.portal),
-        Err(ShapeError::ChildNotAllowed {
+        Err(RowError::ChildNotAllowed {
             child_kind: DocKind::PortalEnd,
             ..
         })
@@ -407,8 +414,7 @@ pub fn do_document_shape_portal_end_row() {
     builder.add(ids.portal_source, DocElement::Label(LabelData::default()));
     assert_eq!(
         check(&builder, ids.portal_source),
-        Err(ShapeError::Count {
-            parent: ids.portal_source,
+        Err(RowError::Count {
             kind: DocKind::Label,
             found: 2,
             allowed: Cardinality::AtMost(1),
@@ -418,10 +424,9 @@ pub fn do_document_shape_portal_end_row() {
     let cap = builder.add(ids.portal_source, DocElement::CapStart(CapData::default()));
     assert_eq!(
         check(&builder, ids.portal_source),
-        Err(ShapeError::ChildNotAllowed {
-            parent: ids.portal_source,
+        Err(RowError::ChildNotAllowed {
             parent_kind: DocKind::PortalEnd,
-            child: cap,
+            position: position(&builder, ids.portal_source, cap),
             child_kind: DocKind::CapStart,
         })
     );
@@ -452,14 +457,76 @@ pub fn do_document_shape_leaf_rows() {
         let kind = builder.tree().arena()[leaf].get().kind();
         assert_eq!(
             check(&builder, leaf),
-            Err(ShapeError::ChildNotAllowed {
-                parent: leaf,
+            Err(RowError::ChildNotAllowed {
                 parent_kind: kind,
-                child,
+                position: position(&builder, leaf, child),
                 child_kind: DocKind::Span,
             })
         );
     }
+}
+
+#[test]
+fn test_document_validate_row_is_order_independent_and_names_no_id() {
+    do_document_validate_row_is_order_independent_and_names_no_id();
+}
+
+/// `validate_row` judges a row given as elements, in any order, as a
+/// detached subtree's row is: portal ends are accepted as the set
+/// {0, 1} whichever comes first, and refused as {0, 0}; a node's
+/// connector rule follows the `under_node` it is given; a child out of
+/// place is named by its position in the row as given.
+pub fn do_document_validate_row_is_order_independent_and_names_no_id() {
+    use crate::document::element::{LinkData, PortalEndData};
+    use crate::document::tests::test_support::{node_data, path_data};
+    use crate::document::values::LinkKind;
+    let (builder, ids) = example();
+    let portal = DocElement::Link(LinkData {
+        to: ids.d,
+        kind: LinkKind::Portal,
+        path: path_data(),
+    });
+    let end = |end| {
+        DocElement::PortalEnd(PortalEndData {
+            end,
+            ..PortalEndData::default()
+        })
+    };
+    assert_eq!(validate_row(&portal, false, true, [&end(1), &end(0)]), Ok(()));
+    assert_eq!(validate_row(&portal, false, true, [&end(0), &end(1)]), Ok(()));
+    assert_eq!(
+        validate_row(&portal, false, true, [&end(0), &end(0)]),
+        Err(RowError::PortalEnds)
+    );
+
+    let node = DocElement::Node(node_data(9));
+    let connector = builder.tree().arena()[ids.b_connector].get().clone();
+    assert_eq!(validate_row(&node, false, true, [&connector]), Ok(()));
+    assert_eq!(
+        validate_row(&node, false, true, []),
+        Err(RowError::Count {
+            kind: DocKind::Connector,
+            found: 0,
+            allowed: Cardinality::Exactly(1),
+        })
+    );
+    assert_eq!(
+        validate_row(&node, false, false, [&span("x"), &connector]),
+        Err(RowError::ChildNotAllowed {
+            parent_kind: DocKind::Node,
+            position: 0,
+            child_kind: DocKind::Span,
+        })
+    );
+    assert_eq!(
+        validate_row(&node, false, false, [&connector]),
+        Err(RowError::ChildNotAllowed {
+            parent_kind: DocKind::Node,
+            position: 0,
+            child_kind: DocKind::Connector,
+        }),
+        "a root node holds no connector"
+    );
 }
 
 #[test]
