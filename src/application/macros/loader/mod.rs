@@ -5,7 +5,7 @@
 //! The format reference is in `format/macros.md`. Each tier has a
 //! pinned `SourceTier`; the registry picks the highest-tier macro
 //! by id when collisions happen. All four tiers ship on both native
-//! and WASM (Track B in `WASM_CONVERGENCE.md`):
+//! and WASM (Track B in `work_plans/WASM_CONVERGENCE.md`):
 //! - **App** — `assets/macros/application.json`, embedded with
 //!   `include_str!`. Cross-platform.
 //! - **User** — `~/.config/mandala/macros.json` on native;

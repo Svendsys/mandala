@@ -213,9 +213,11 @@ fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result<(), String
 /// user asked *what is wrong with it*.
 ///
 /// So this keeps everything that decides what the document *is* —
-/// serde's typed parse, the closed-object rejection, the
-/// legacy-shape migration pointers — and drops only the checks
-/// about whether it is safe to render. The returned model may
+/// serde's typed parse, the unknown-key and skipped-construct
+/// capture, the legacy-shape migration pointers — plus the two
+/// ceilings on what reading it costs ([`MAX_MAP_BYTES`],
+/// [`crate::mindmap::unknown_keys::MAX_UNKNOWN_KEYS`]), and drops
+/// only the checks about whether it is safe to render. The returned model may
 /// therefore hold a cycle, non-finite geometry, or a zero font
 /// size: **do not build a scene from it.** `maptool verify` is the
 /// intended caller.

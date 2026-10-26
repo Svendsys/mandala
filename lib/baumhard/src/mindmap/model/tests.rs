@@ -1357,8 +1357,9 @@ fn test_clamp_canvas_coord_is_total() {
 
 // ──────────────────────────────────────────────────────────
 // TextRun serde: only `start` / `end` are required. Every
-// styling field defaults to the value that renders like the
-// uncovered text around it, and the saver omits fields still
+// styling field defaults to *no opinion* (false flags, no font
+// pin, the node's effective text color, `DEFAULT_TEXT_RUN_SIZE_PT`),
+// and the saver omits fields still
 // sitting at those defaults (issue #47 part A).
 // ──────────────────────────────────────────────────────────
 

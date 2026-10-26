@@ -305,11 +305,18 @@ writes won't be reverted by `Ctrl+Z` and won't reach the saved model.
 | `Siblings` | The anchor's siblings (excluding itself). **Empty on a root**: "sibling" means "shares my parent", and a root shares none, so the other roots of a multi-root map are *not* siblings. A `Siblings` mutation on a root snapshots nothing, mutates nothing, and pushes no undo entry. |
 | `SectionsOnly` | Every section of the anchor — bypasses the chrome-only container fan-out so text / font / region mutations land on the section-areas only. The anchor `MindNode` is still the snapshot window (whole-node clone covers per-section state). Use this when a mutation must avoid colliding with a sibling mind-node sharing the section's channel. |
 
-For scope-helper-generated MutatorNodes (via
-`baumhard::mindmap::custom_mutation::scope::*`) the helper name
-matches the `target_scope` value — `scope::self_and_descendants(...)`
-pairs with `SelfAndDescendants`, etc. For hand-authored MutatorNodes,
-pick the smallest scope that covers every node the AST will touch.
+`baumhard::mindmap::custom_mutation::scope` ships four helpers that
+bake a flat mutation list into a MutatorNode, and only three of them
+are named for a `target_scope` value: `self_only` pairs with
+`SelfOnly`, `descendants` with `Descendants`, `self_and_descendants`
+with `SelfAndDescendants`. The fourth, `at_anchor`, is the same
+anchor-only shape as `self_only` under a name that says the
+application, not the AST, picks the targets — which is how the
+remaining scopes work: `Children`, `Parent`, `Siblings` and
+`SectionsOnly` have no helper of their own, because the application
+resolves their target set and anchors the mutator at each target in
+turn (next section). For hand-authored MutatorNodes, pick the
+smallest scope that covers every node the AST will touch.
 
 ### Which scopes admit a tree-walking mutator
 

@@ -39,7 +39,7 @@
 //! native and WASM. The native vs. WASM divergence is largely
 //! confined to the run-loop entry point; cross-platform
 //! `Action` arms route through [`dispatch::action_core`]'s
-//! `dispatch_compatible`. See `WASM_CONVERGENCE.md` for the
+//! `dispatch_compatible`. See `work_plans/WASM_CONVERGENCE.md` for the
 //! current convergence status.
 
 mod animation_drain;
@@ -98,7 +98,7 @@ mod pump;
 #[cfg(not(target_arch = "wasm32"))]
 mod record_flow;
 // Cross-platform context-bundles for the unified `dispatch_action`
-// funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
+// funnel. Track C from `work_plans/WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
 #[cfg(not(target_arch = "wasm32"))]
 mod modal_editor;
