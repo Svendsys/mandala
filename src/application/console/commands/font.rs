@@ -139,8 +139,8 @@ pub const COMMAND: Command = Command {
 /// the positional `font` subverb both declare — so every border
 /// surface's font slot, kv or positional, preview level or not,
 /// reaches this body. The slots are not listed here on purpose: an
-/// enumeration of them in this comment was wrong four times, and
-/// the grammar tables are the list. The border slots once ran on a
+/// enumeration of them here kept going stale, and the grammar
+/// tables are the list. The border slots once ran on a
 /// byte-near copy in `border/complete.rs` that omitted the quoting
 /// above, so tab-accepting any of the whitespace-bearing families
 /// produced a line the verb then refused with "'DejaVu' is not a

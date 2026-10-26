@@ -2101,3 +2101,100 @@ fn test_border_font_reads_a_multi_word_family_whole() {
     );
     assert_eq!(font_of(&doc, &id).as_deref(), Some(SHORT));
 }
+
+/// The positional `side` / `corner` forms label a pattern the parser
+/// refuses with the surface and the subverb, so the message reads as
+/// the line that was typed (#136). A `canvas` surface rides along so
+/// it is the label that is pinned, not a literal `border`.
+#[test]
+fn test_border_side_and_corner_rejections_carry_their_surface() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "border preset custom",
+            "border side top \"a)\"",
+            "border side top: unmatched ')'",
+        ),
+        (
+            "border preset custom",
+            "border corner tl \"a)\"",
+            "border corner tl: unmatched ')'",
+        ),
+        (
+            "canvas border preset custom",
+            "canvas border side left \"a)\"",
+            "canvas border side left: unmatched ')'",
+        ),
+        (
+            "canvas border preset custom",
+            "canvas border corner br \"a)\"",
+            "canvas border corner br: unmatched ')'",
+        ),
+    ];
+    for (setup, line, want) in cases {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single(first_node_id(&doc));
+        assert_exec_ok(run(setup, &mut doc));
+        assert_exec_err_contains(run(line, &mut doc), want);
+    }
+}
+
+/// The permissive half of the `palette=` decision: a name a *file*
+/// carries that the map does not define still loads, still reads as
+/// `(not found in map)` in the readout, and does not block an
+/// unrelated edit to the same border — the refusal is the authoring
+/// path's alone (#136).
+#[test]
+fn test_a_dangling_palette_from_a_file_loads_reads_and_does_not_block_edits() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&id).expect("fixture node").style.border =
+        Some(baumhard::mindmap::model::GlyphBorderConfig {
+            color_palette: Some("ghost".to_string()),
+            ..Default::default()
+        });
+    // Round-trip through the loader, so "it loads" is the loader's
+    // answer and not an in-memory shortcut's.
+    let json = baumhard::mindmap::loader::to_json_value(&doc.mindmap)
+        .expect("the fixture serializes")
+        .to_string();
+    assert!(
+        json.contains("\"ghost\""),
+        "the dangling name must be in the file"
+    );
+    doc.mindmap = baumhard::mindmap::loader::load_from_str(&json).expect("a dangling palette name must load");
+    let cycling = |doc: &MindMapDocument| {
+        doc.mindmap.nodes[&id]
+            .style
+            .border
+            .as_ref()
+            .and_then(|c| c.color_palette.clone())
+    };
+    assert_eq!(
+        cycling(&doc).as_deref(),
+        Some("ghost"),
+        "the loader keeps the name"
+    );
+
+    doc.selection = SelectionState::Single(id.clone());
+    let readout = join_lines(&match run("border show", &mut doc) {
+        ExecResult::Lines(lines) => lines,
+        other => panic!("border show must print a readout, got {other:?}"),
+    });
+    assert!(
+        readout.contains("ghost (not found in map)"),
+        "the readout must say the name does not resolve: {readout}"
+    );
+
+    assert_exec_ok(run("border color=#ffffff", &mut doc));
+    let node = &doc.mindmap.nodes[&id];
+    assert_eq!(
+        node.style.border.as_ref().and_then(|c| c.color.as_deref()),
+        Some("#ffffff"),
+        "an edit that leaves the palette alone must apply"
+    );
+    assert_eq!(
+        cycling(&doc).as_deref(),
+        Some("ghost"),
+        "...and leave the name as it was"
+    );
+}

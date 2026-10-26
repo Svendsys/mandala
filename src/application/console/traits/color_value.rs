@@ -33,7 +33,8 @@ pub enum ColorValue {
 impl ColorValue {
     /// Parse `s` into a ColorValue. Accepts:
     /// - `"#rrggbb"` / `"#rrggbbaa"` / `"#rgb"` / `"#rgba"` — as hex
-    /// - `"accent"` / `"edge"` / `"fg"` / `"bg"` — as well-known vars
+    /// - `"accent"` / `"edge"` / `"fg"` — as well-known vars (`bg` is
+    ///   a `color` verb *key*, not a value, and is refused here)
     /// - `"reset"` — as Reset
     ///
     /// Returns `Err(msg)` on unrecognized input. Callers report the
@@ -55,7 +56,7 @@ impl ColorValue {
             "edge" => Ok(ColorValue::Var(VAR_EDGE)),
             "fg" => Ok(ColorValue::Var(VAR_FG)),
             "reset" => Ok(ColorValue::Reset),
-            _ => Err(format!("unknown color '{}'", t)),
+            _ => Err(format!("unknown color '{}'", s)),
         }
     }
 

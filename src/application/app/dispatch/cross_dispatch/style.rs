@@ -55,9 +55,9 @@ pub(in crate::application::app) fn apply_toggle_border_visible(rc: &mut RebuildC
 /// Stage a single-kv border preview against the live selection.
 /// `target_kind` discriminates between
 /// `node` / `section` / `canvas-border` / `canvas-sf` /
-/// `canvas-sf-focused`. Always returns `true` for the rebuild
-/// envelope (the scene needs to re-emit with the previewed
-/// edits visible). Unknown `target_kind` is a no-op + warn.
+/// `canvas-sf-focused`. The scene rebuilds when
+/// [`stage_border_preview_binding`] staged a preview, and does not
+/// when it refused.
 pub(in crate::application::app) fn apply_set_border_preview(
     target_kind: crate::application::keybinds::BorderPreviewTargetKind,
     field: &str,
@@ -65,67 +65,83 @@ pub(in crate::application::app) fn apply_set_border_preview(
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
-        use crate::application::console::commands::border::{check_palette_ref, stage_kv};
-        use crate::application::document::{BorderConfigEdits, BorderPreviewTarget};
-        use crate::application::keybinds::BorderPreviewTargetKind;
-
-        let mut edits = BorderConfigEdits::default();
-        if let Err(msg) = stage_kv(&mut edits, field, value) {
-            log::warn!("border: SetBorderPreview stage_kv error: {msg}");
-            return false;
-        }
-        if let Err(msg) = check_palette_ref(&edits, &doc.mindmap) {
-            log::warn!("border: SetBorderPreview {field}={value:?}: {msg}");
-            return false;
-        }
-
-        // Resolve `target_kind` → `BorderPreviewTarget`. The
-        // selection-bound variants (`Node`, `Section`) walk the
-        // live selection via the same resolvers the verb path
-        // uses; canvas variants are constants. Typed-enum
-        // dispatch — pre-fix this was a stringly-typed match
-        // with `unknown` arms warning at runtime.
-        let target = match target_kind {
-            BorderPreviewTargetKind::Node => {
-                let ids = match crate::application::console::commands::border::nodes_in_selection(
-                    &doc.selection,
-                    "border preview",
-                ) {
-                    Ok(ids) => ids,
-                    Err(_) => return false,
-                };
-                BorderPreviewTarget::Nodes(ids)
-            }
-            BorderPreviewTargetKind::Section => {
-                let pairs: Vec<(String, usize)> = match &doc.selection {
-                    crate::application::document::SelectionState::Section(s) => {
-                        vec![(s.node_id.clone(), s.section_idx)]
-                    }
-                    crate::application::document::SelectionState::SectionRange {
-                        sel, section_span, ..
-                    } => section_span.indices().map(|i| (sel.node_id.clone(), i)).collect(),
-                    crate::application::document::SelectionState::MultiSection(sels) => {
-                        sels.iter().map(|s| (s.node_id.clone(), s.section_idx)).collect()
-                    }
-                    _ => return false,
-                };
-                BorderPreviewTarget::Sections(pairs)
-            }
-            BorderPreviewTargetKind::CanvasBorder => BorderPreviewTarget::CanvasDefault,
-            BorderPreviewTargetKind::CanvasSf => BorderPreviewTarget::CanvasSectionFrame,
-            BorderPreviewTargetKind::CanvasSfFocused => BorderPreviewTarget::CanvasSectionFrameFocused,
-        };
-        let outcome = doc.set_border_preview(target, edits);
-        // The keybind path has no message surface, so a refusal that
-        // returned silently here would look like a preview that simply
-        // did not appear. Logged rather than swallowed, same posture as
-        // the other keybind-only stops (CODE_CONVENTIONS §9).
-        if !outcome.rejected.is_empty() {
-            log::warn!("border preview: {}", outcome.rejected.join("; "));
-            return false;
-        }
-        true
+        stage_border_preview_binding(doc, target_kind, field, value)
     });
+}
+
+/// The body of [`apply_set_border_preview`], on a bare document so a
+/// test can reach it without a `RebuildContext`. `true` when the
+/// preview was staged; `false` when the kv does not stage, names a
+/// palette the map does not define, finds no target in the
+/// selection, or the setter rejects it. A keybind has no scrollback,
+/// so every refusal but the empty selection — a stray keypress, not
+/// a defect — is logged at `warn!`.
+fn stage_border_preview_binding(
+    doc: &mut MindMapDocument,
+    target_kind: crate::application::keybinds::BorderPreviewTargetKind,
+    field: &str,
+    value: &str,
+) -> bool {
+    use crate::application::console::commands::border::{check_palette_ref, stage_kv};
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget};
+    use crate::application::keybinds::BorderPreviewTargetKind;
+
+    let mut edits = BorderConfigEdits::default();
+    if let Err(msg) = stage_kv(&mut edits, field, value) {
+        log::warn!("border: SetBorderPreview stage_kv error: {msg}");
+        return false;
+    }
+    if let Err(msg) = check_palette_ref(&edits, &doc.mindmap) {
+        log::warn!("border: SetBorderPreview {field}={value:?}: {msg}");
+        return false;
+    }
+
+    // Resolve `target_kind` → `BorderPreviewTarget`. The
+    // selection-bound variants (`Node`, `Section`) walk the
+    // live selection via the same resolvers the verb path
+    // uses; canvas variants are constants. Typed-enum
+    // dispatch — pre-fix this was a stringly-typed match
+    // with `unknown` arms warning at runtime.
+    let target = match target_kind {
+        BorderPreviewTargetKind::Node => {
+            let ids = match crate::application::console::commands::border::nodes_in_selection(
+                &doc.selection,
+                "border preview",
+            ) {
+                Ok(ids) => ids,
+                Err(_) => return false,
+            };
+            BorderPreviewTarget::Nodes(ids)
+        }
+        BorderPreviewTargetKind::Section => {
+            let pairs: Vec<(String, usize)> = match &doc.selection {
+                crate::application::document::SelectionState::Section(s) => {
+                    vec![(s.node_id.clone(), s.section_idx)]
+                }
+                crate::application::document::SelectionState::SectionRange {
+                    sel, section_span, ..
+                } => section_span.indices().map(|i| (sel.node_id.clone(), i)).collect(),
+                crate::application::document::SelectionState::MultiSection(sels) => {
+                    sels.iter().map(|s| (s.node_id.clone(), s.section_idx)).collect()
+                }
+                _ => return false,
+            };
+            BorderPreviewTarget::Sections(pairs)
+        }
+        BorderPreviewTargetKind::CanvasBorder => BorderPreviewTarget::CanvasDefault,
+        BorderPreviewTargetKind::CanvasSf => BorderPreviewTarget::CanvasSectionFrame,
+        BorderPreviewTargetKind::CanvasSfFocused => BorderPreviewTarget::CanvasSectionFrameFocused,
+    };
+    let outcome = doc.set_border_preview(target, edits);
+    // The keybind path has no message surface, so a refusal that
+    // returned silently here would look like a preview that simply
+    // did not appear. Logged rather than swallowed, same posture as
+    // the other keybind-only stops (CODE_CONVENTIONS §9).
+    if !outcome.rejected.is_empty() {
+        log::warn!("border preview: {}", outcome.rejected.join("; "));
+        return false;
+    }
+    true
 }
 
 /// Commit the active border preview through the matching
@@ -472,7 +488,46 @@ fn resolve_split_section_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::{SectionSel, SelectionState};
+    use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
+    use crate::application::document::{OptionEdit, SectionSel, SelectionState};
+    use crate::application::keybinds::BorderPreviewTargetKind;
+
+    fn previewed_palette(doc: &MindMapDocument) -> Option<String> {
+        doc.border_preview
+            .as_ref()
+            .and_then(|p| match &p.edits.color_palette {
+                OptionEdit::Set(name) => Some(name.clone()),
+                _ => None,
+            })
+    }
+
+    /// The `SetBorderPreview` binding refuses a palette the map does
+    /// not define, as every console surface and the
+    /// `SetBorderField` binding do (#136), and stages nothing.
+    #[test]
+    fn test_set_border_preview_binding_refuses_a_palette_the_map_does_not_define() {
+        let mut doc = load_test_doc();
+        doc.selection = SelectionState::Single(first_testament_node_id(&doc));
+        for kind in [
+            BorderPreviewTargetKind::Node,
+            BorderPreviewTargetKind::CanvasBorder,
+        ] {
+            assert!(!stage_border_preview_binding(&mut doc, kind, "palette", "preset"));
+            assert!(
+                doc.border_preview.is_none(),
+                "a refused binding must stage no preview"
+            );
+        }
+        // Control: a defined palette stages, so the refusal is about
+        // the name and not about the binding reaching nothing.
+        assert!(stage_border_preview_binding(
+            &mut doc,
+            BorderPreviewTargetKind::Node,
+            "palette",
+            "coral"
+        ));
+        assert_eq!(previewed_palette(&doc).as_deref(), Some("coral"));
+    }
 
     /// `target_section` resolves `Section { node_id, section_idx }`
     /// to its inner pair.
