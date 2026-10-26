@@ -1131,11 +1131,12 @@ mod section_cap_writer_tests {
     /// was not, for as long as the list of writers was kept in heads
     /// (#208). This parses the workspace's shipped source for every
     /// site that grows or replaces a `sections` vector and fails for a
-    /// growth not preceded, at the top of its fn, by a statement that
-    /// propagates the guard's refusal — so a third writer cannot miss
-    /// it the way the second did. A guard promises room for **one**
-    /// section, so it covers only a single `push` / `insert` outside a
-    /// loop; a multi-element growth or one in a loop always fails.
+    /// growth not preceded, at the top of its fn (or, in a loop, of its
+    /// loop body), by a statement that propagates the guard's refusal —
+    /// so a third writer cannot miss it the way the second did. A guard
+    /// promises room for **one** section, so it covers only a single
+    /// `push` / `insert`, and in a loop only a guard that runs every
+    /// iteration does; a multi-element growth always fails.
     ///
     /// Fails when: a growth site's fn drops the guard or swallows its
     /// refusal, a new growth site is added without one, or a wholesale
@@ -1358,6 +1359,39 @@ impl Doc {
         Ok(())
     }
 
+    pub fn guarded_per_iteration(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        for _ in 0..n {
+            validate::room_for_another_section(node)?;
+            node.sections.push(MindSection::default());
+        }
+        Ok(())
+    }
+
+    pub fn per_iteration_guard_after_push(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        loop {
+            node.sections.push(MindSection::default());
+            validate::room_for_another_section(node)?;
+        }
+    }
+
+    pub fn outer_iteration_guard_inner_loop(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        for _ in 0..n {
+            validate::room_for_another_section(node)?;
+            for _ in 0..n {
+                node.sections.push(MindSection::default());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn guard_inside_for_each(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        (0..n).try_for_each(|_| {
+            validate::room_for_another_section(node)?;
+            node.sections.push(MindSection::default());
+            Ok(())
+        })
+    }
+
     pub fn push_in_for_each_after_guard(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
         validate::room_for_another_section(node)?;
         (0..n).for_each(|_| node.sections.push(MindSection::default()));
@@ -1436,6 +1470,10 @@ impl Doc {
                 ("extend_after_guard", Multi, false),
                 ("extend_from_within_after_guard", Multi, false),
                 ("push_in_for_loop_after_guard", Single, false),
+                ("guarded_per_iteration", Single, true),
+                ("per_iteration_guard_after_push", Single, false),
+                ("outer_iteration_guard_inner_loop", Single, false),
+                ("guard_inside_for_each", Single, false),
                 ("push_in_for_each_after_guard", Single, false),
                 ("inverted_is_ok", Single, false),
                 ("swallowed_or_else", Single, false),
@@ -1446,8 +1484,8 @@ impl Doc {
                 ("clone_from", Assign, false),
             ],
             "each planted site must be found once, in its own fn, with its kind, and guarded \
-             only where it adds one element, outside a loop, after a top-level statement \
-             that propagates the guard's refusal; a read and a comment are not sites"
+             only where it adds one element after a top-level statement of its own fn \
+             or loop body that propagates the guard's refusal; a read and a comment are not sites"
         );
     }
 }

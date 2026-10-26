@@ -802,7 +802,7 @@ const ITERATING_CLOSURE_METHODS: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GrowthKind {
     /// `x.sections.push(…)` / `insert(…)`, however rustfmt wraps the
-    /// chain: one element, so guardable — unless it sits in a loop.
+    /// chain: one element, so guardable (in a loop, per iteration).
     Single,
     /// `extend` and the rest of [`SECTION_MULTI_GROWTH_METHODS`]: any
     /// number of elements, never guarded by a one-more check.
@@ -855,11 +855,16 @@ pub(crate) struct SectionGrowth {
 /// - it adds **one** element: `push` / `insert`, as a method or a path
 ///   call — `room_for_another_section` promises room for exactly one,
 ///   so a multi-element method is never guarded by it;
-/// - it is **not in a loop** — a `for` / `while` / `loop` body, or a
-///   closure passed to one of [`ITERATING_CLOSURE_METHODS`] — since a
-///   push repeated N times is N growths behind one check;
-/// - an earlier **top-level** statement of the same fn body propagates
-///   the guard's refusal, in one of four shapes: `room_for_another_section(…)`
+/// - an earlier **top-level** statement of the body that encloses it
+///   propagates the guard's refusal. For straight-line code that body
+///   is the fn's. For a site in a `for` / `while` / `loop` body it is
+///   that loop body — a guard **per iteration** — because a push
+///   repeated N times behind one check before the loop is N growths;
+///   a site in a loop nested deeper needs a guard in its own body. A
+///   site in a closure passed to one of [`ITERATING_CLOSURE_METHODS`]
+///   is never guarded: a `?` there ends the closure, not the fn.
+///
+///   The propagating shapes are four: `room_for_another_section(…)`
 ///   followed only by `map_err(…)` / `ok()` and then `?` (as a
 ///   statement or a `let` initializer); `let Ok(..) = room_for_another_section(…)
 ///   else { return … }`; `if room_for_another_section(…)….is_err() { return … }`
@@ -926,13 +931,18 @@ fn scan_fn_body(function: &str, body: &syn::Block, out: &mut Vec<SectionGrowth>)
             loop_depth: 0,
         };
         syn::visit::Visit::visit_stmt(&mut finder, stmt);
-        for (line, kind, in_loop) in finder.found {
+        for site in finder.found {
+            let covered = if site.loop_depth == 0 {
+                guard_seen
+            } else {
+                site.iteration_guarded
+            };
             out.push(SectionGrowth {
                 file: String::new(),
-                line,
+                line: site.line,
                 function: function.to_string(),
-                kind,
-                guarded: guard_seen && matches!(kind, GrowthKind::Single | GrowthKind::Ufcs) && !in_loop,
+                kind: site.kind,
+                guarded: covered && matches!(site.kind, GrowthKind::Single | GrowthKind::Ufcs),
             });
         }
         if propagates_section_guard(stmt) {
@@ -957,17 +967,62 @@ fn is_mut_ref_to_sections(expr: &syn::Expr) -> bool {
     matches!(expr, syn::Expr::Reference(r) if r.mutability.is_some() && is_sections_field(&r.expr))
 }
 
-/// Collects the sites inside one statement, each with whether it sits
-/// in a loop. Nested fn items are skipped — the outer visitor scans
-/// them as fns of their own.
+/// One site [`GrowthFinder`] found, before the fn-level guard is
+/// applied.
+struct FoundSite {
+    line: usize,
+    kind: GrowthKind,
+    /// How many loops enclose the site within its statement; 0 is
+    /// straight-line code, which only a fn-level guard can cover.
+    loop_depth: usize,
+    /// Whether an earlier top-level statement of the innermost
+    /// enclosing loop body propagates the guard — a per-iteration
+    /// guard. Meaningful only when `loop_depth > 0`.
+    iteration_guarded: bool,
+}
+
+/// Collects the sites inside one statement, each with its loop depth
+/// and whether its innermost loop body guards every iteration. Nested
+/// fn items are skipped — the outer visitor scans them as fns of their
+/// own.
 struct GrowthFinder {
-    found: Vec<(usize, GrowthKind, bool)>,
+    found: Vec<FoundSite>,
     loop_depth: usize,
 }
 
 impl GrowthFinder {
     fn record(&mut self, line: usize, kind: GrowthKind) {
-        self.found.push((line, kind, self.loop_depth > 0));
+        self.found.push(FoundSite {
+            line,
+            kind,
+            loop_depth: self.loop_depth,
+            iteration_guarded: false,
+        });
+    }
+
+    /// Visit a `for` / `while` / `loop` body one level deeper, the way
+    /// [`scan_fn_body`] walks a fn body: once a top-level statement of
+    /// the body propagates the guard, the sites after it **at this
+    /// depth** are guarded per iteration. A site in a loop nested
+    /// deeper still needs a guard in its own body.
+    fn visit_loop_body(&mut self, body: &syn::Block) {
+        self.loop_depth += 1;
+        let mut guard_seen = false;
+        for stmt in &body.stmts {
+            let start = self.found.len();
+            syn::visit::Visit::visit_stmt(self, stmt);
+            if guard_seen {
+                for site in &mut self.found[start..] {
+                    if site.loop_depth == self.loop_depth {
+                        site.iteration_guarded = true;
+                    }
+                }
+            }
+            if propagates_section_guard(stmt) {
+                guard_seen = true;
+            }
+        }
+        self.loop_depth -= 1;
     }
 }
 
@@ -975,21 +1030,22 @@ impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
     fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
 
     fn visit_expr_for_loop(&mut self, e: &'ast syn::ExprForLoop) {
-        self.loop_depth += 1;
-        syn::visit::visit_expr_for_loop(self, e);
-        self.loop_depth -= 1;
+        // The iterated expression runs once, before the loop.
+        self.visit_expr(&e.expr);
+        self.visit_loop_body(&e.body);
     }
 
     fn visit_expr_while(&mut self, e: &'ast syn::ExprWhile) {
+        // The condition runs every iteration, ahead of any guard in
+        // the body, so nothing in it is guarded per iteration.
         self.loop_depth += 1;
-        syn::visit::visit_expr_while(self, e);
+        self.visit_expr(&e.cond);
         self.loop_depth -= 1;
+        self.visit_loop_body(&e.body);
     }
 
     fn visit_expr_loop(&mut self, e: &'ast syn::ExprLoop) {
-        self.loop_depth += 1;
-        syn::visit::visit_expr_loop(self, e);
-        self.loop_depth -= 1;
+        self.visit_loop_body(&e.body);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
