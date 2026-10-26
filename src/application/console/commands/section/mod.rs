@@ -382,11 +382,11 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
 ///   (so the new text inherits the section's effective color /
 ///   font / size). Backed by `set_section_text`.
 ///
-/// Plan §9.8: closes the "console paths can't change a
-/// section's text" gap. Pre-fix `runs=preserve` was a phantom
-/// kv — both branches called `set_section_text` (which collapses
-/// runs unconditionally), so preserve and clear produced
-/// identical output.
+/// Closes the gap where console paths could not change a
+/// section's text. `runs=preserve` and `runs=clear` take
+/// different setters: `clear` calls `set_section_text`, which
+/// collapses the runs to one; `preserve` calls
+/// `set_section_text_preserving_runs`, which keeps them.
 fn execute_text(
     descent: &Descent,
     args: &Args,
@@ -457,8 +457,7 @@ fn execute_edit(eff: &mut ConsoleEffects, node_id: &str, idx: usize) -> ExecResu
 }
 
 /// `section add [at=<idx>] [text="<text>"]` — insert a new
-/// section. Routes through `MindMapDocument::add_section`. Plan
-/// §4.5.
+/// section. Routes through `MindMapDocument::add_section`.
 ///
 /// `at=` defaults to "append" (`None`); `text=` defaults to
 /// empty string. The new section inherits the AABB / channel /
@@ -542,10 +541,9 @@ fn execute_split(pairs: &[Pair], doc: &mut MindMapDocument, node_id: &str, idx: 
 
 /// `section move dx=X dy=Y` against a `MultiSection` selection:
 /// fan out the same `(dx, dy)` delta across every targeted
-/// `(node_id, section_idx)` pair. Per rule 4 of the plan's §9.1.3,
-/// this is the only form where multi-target makes semantic sense
-/// (every section shifts by the same delta; absolute coords
-/// would collide).
+/// `(node_id, section_idx)` pair. This is the only form where
+/// multi-target makes semantic sense (every section shifts by
+/// the same delta; absolute coords would collide).
 ///
 /// **Atomicity**: parse-then-dispatch — pre-validate every
 /// pair's would-be AABB via
@@ -856,8 +854,8 @@ mod tests {
 
     #[test]
     fn section_move_rejects_when_single_selection_lacks_section_kv() {
-        // Plan rule 3: `Single(id)` on a multi-section node
-        // requires explicit `section=K`. A single-section node
+        // `Single(id)` on a multi-section node requires an
+        // explicit `section=K`. A single-section node
         // would auto-resolve to (id, 0); the fixture here is
         // multi-section so the rejection branch runs.
         let (mut doc, id) = pinned_two_section_node();
@@ -865,9 +863,8 @@ mod tests {
         assert_exec_err_contains(run("section move dx=3 dy=4", &mut doc), "has 2 sections");
     }
 
-    /// Plan rule 3: `Single(id)` on a single-section node
-    /// implicitly resolves to `(id, 0)` — closes the §5.7
-    /// "hostile error" the plan flagged.
+    /// `Single(id)` on a single-section node auto-resolves to
+    /// `(id, 0)` rather than erroring for a missing `section=`.
     #[test]
     fn section_move_single_selection_auto_resolves_for_single_section_node() {
         // Use load_test_doc — many testament nodes are single-
@@ -1783,8 +1780,8 @@ mod tests {
     /// Selection-aware integer completion for `section=<TAB>`:
     /// surfaces `0..node.sections.len()` for the selection's
     /// primary node, with each row's hint showing a text
-    /// preview. Pre-fix the value side returned empty — Plan
-    /// §4.5 line 981 spec'd this as the discoverability path.
+    /// preview — the value side is how a user discovers which
+    /// indices exist.
     #[test]
     fn section_kv_value_completion_lists_indices_with_text_preview() {
         let (mut doc, id) = pinned_two_section_node();
@@ -1827,14 +1824,12 @@ mod tests {
         assert!(labels.contains(&"clear"));
     }
 
-    // ─── Plan rule 4: MultiSection fan-out for `move dx/dy` ───────
+    // ─── MultiSection fan-out for `move dx/dy` ───────────────────
 
     /// `section move dx=X dy=Y` against a `MultiSection`
     /// selection shifts each targeted section by the same
-    /// `(dx, dy)`. Pre-fix this rejected MultiSection
-    /// uniformly; the plan §4.5 line 917 spec'd the fan-out
-    /// for the delta form specifically (absolute coords would
-    /// pile up).
+    /// `(dx, dy)`. Only the delta form fans out: absolute
+    /// coords would pile every section onto one spot.
     #[test]
     fn section_move_delta_fan_out_across_multi_section() {
         let (mut doc, id) = pinned_two_section_node();

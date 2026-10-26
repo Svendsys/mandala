@@ -1329,8 +1329,7 @@ fn border_preset_cycle_falls_through_to_canvas_default() {
     );
 }
 
-/// **Verb-strict vs Action-permissive contract** (Plan §5.4 #3 +
-/// Architecture A5 from the Batch-6 opus review): the verb
+/// **Verb-strict vs Action-permissive contract**: the verb
 /// path (`border side`/`corner`) errors with the explicit
 /// "preset custom first" hint when the resolved preset isn't
 /// custom. The keybind / macro path (`Action::SetBorderField {

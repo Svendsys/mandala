@@ -584,10 +584,10 @@ mod tests {
         assert_eq!(target_section(&sel), Some(("n".into(), 3)));
     }
 
-    /// `Single(id)` is rejected — the verb path's rule-3
-    /// auto-resolve to `(id, 0)` lives at the verb layer (it
-    /// has the document to count sections); this helper does
-    /// not.
+    /// `Single(id)` is rejected — the auto-resolve of a
+    /// single-section node to `(id, 0)` lives at the verb layer
+    /// (it has the document to count sections); this helper
+    /// does not.
     #[test]
     fn target_section_rejects_single() {
         let sel = SelectionState::Single("n".into());

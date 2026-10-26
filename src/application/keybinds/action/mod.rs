@@ -742,13 +742,11 @@ pub enum Action {
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
     ///
-    /// The intended follow-up replaces this with per-field
-    /// variants (`SetBorderPreset` / `SetBorderColor` / ...)
-    /// for keybind ergonomics — `SetBorderField` stays as the
-    /// generic catch-all for the kv form and for callers that
-    /// want one-binding-many-fields semantics; deletion is a
-    /// follow-up breaking-change commit pending the full
-    /// parametric-binding migration.
+    /// The field name is a string checked at dispatch, not at
+    /// bind time: a misspelled `field` loads, and only a press
+    /// reveals it (a logged warning, no edit). Typed per-field variants (`SetBorderPreset`,
+    /// `SetBorderColor`, ...) that would catch it at load do not
+    /// exist yet; #227 tracks adding them and retiring this one.
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
     /// Mirror `border preset cycle` — advance the selected

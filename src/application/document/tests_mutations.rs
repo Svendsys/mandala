@@ -483,9 +483,9 @@ fn test_collect_affected_node_ids_parent_of_root_is_empty() {
 // `test_siblings_of_a_root_node_is_the_empty_set`. Those versions sweep
 // *every* qualifying node and *every* root of the testament map
 // rather than the first child found and the hard-coded id `"0"`, so
-// they strictly subsume these; keeping both would be the §10
-// duplicate shape (one property, two homes, only one of them
-// maintained).
+// they strictly subsume these; keeping both would be the
+// CODE_CONVENTIONS §5 duplicate shape (one property, two homes,
+// only one of them maintained).
 
 /// `SectionsOnly` returns the triggering node id only — section-
 /// level fan-out happens inside `apply_to_tree`, but the undo

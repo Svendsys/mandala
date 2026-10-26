@@ -86,7 +86,7 @@ fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 }
 
-/// `node edit` — sugar for `mode node-edit`. Plan §3.9. Same
+/// `node edit` — sugar for `mode node-edit`. Same
 /// `SetInteractionMode(NodeEdit { ... })` side-effect; the
 /// node-id resolves from the active selection (Single, Section,
 /// SectionRange, or MultiSection's primary). Closes the console.
@@ -296,7 +296,7 @@ mod tests {
 
     /// `node edit` is sugar for `mode node-edit` — emits the
     /// same `SetInteractionMode(NodeEdit { ... })` side effect
-    /// and closes the console. Plan §3.9.
+    /// and closes the console.
     #[test]
     fn node_edit_emits_set_interaction_mode_node_edit() {
         let mut doc = load_test_doc();

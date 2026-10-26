@@ -621,8 +621,8 @@ mod tests {
     }
 
     /// `SectionRange` selection (the post-shift-select close shape)
-    /// routes to its owning node — Plan §4.5 / `primary_node_id`
-    /// shape-equivalence.
+    /// routes to its owning node, as `primary_node_id` resolves
+    /// every section-shaped selection.
     #[test]
     fn test_resolve_enter_node_edit_section_range_routes_to_owner_node() {
         let (mut doc, id) = pinned_two_section_node();

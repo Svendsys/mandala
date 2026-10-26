@@ -328,7 +328,7 @@ fn execute_show_border(eff: &mut ConsoleEffects) -> ExecResult {
             cfg,
         )
     } else {
-        vec!["canvas border: (no map-wide default — every framed node falls back to its per-node `style.frame_color` / hardcoded glyph defaults)".into()]
+        vec!["canvas border: (no map-wide default — every framed node uses its own border config, else the hardcoded glyph defaults; an unset color takes its theme frame color, then `style.frame_color`)".into()]
     };
     ExecResult::lines(lines)
 }
@@ -861,8 +861,8 @@ mod positional_tests {
     use crate::application::console::ExecResult;
     use crate::application::document::tests_common::load_test_doc;
 
-    /// Plan B6.10: `canvas border preset NAME` writes through
-    /// to `canvas.default_border`.
+    /// `canvas border preset NAME` writes through to
+    /// `canvas.default_border`.
     #[test]
     fn canvas_border_preset_positional_writes_through() {
         let mut doc = load_test_doc();

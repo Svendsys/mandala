@@ -216,7 +216,7 @@ impl MindMapDocument {
         // old → new lookup, built once up front and shared by both the
         // collision guard (its keys are exactly the old ids being vacated)
         // and the parent_id / edge rewrites below. Replaces the former inner
-        // `for (ro, rn) in &renames` linear scans (CODE_CONVENTIONS §5):
+        // `for (ro, rn) in &renames` linear scans (CODE_CONVENTIONS §4):
         // O(renames) + O(edges) instead of O(renames²) + O(edges·renames).
         let rename_map: std::collections::HashMap<&str, &str> =
             renames.iter().map(|(o, n)| (o.as_str(), n.as_str())).collect();
