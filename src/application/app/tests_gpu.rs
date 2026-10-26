@@ -570,8 +570,10 @@ fn test_a_zoom_through_act_action_reprojects_and_a_capture_draws_the_frame() {
 /// failure this guards against — still fails, at the deadline.
 fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
     /// How long to wait out a held font lock: time, not attempts, bounds
-    /// it, because CI load decides how long one shaping pass holds it.
-    const PATIENCE: Duration = Duration::from_secs(60);
+    /// it, because CI load decides how long one shaping pass holds it. The
+    /// lock's own budget, so the helper waits exactly as long as any
+    /// blocking acquire treats a hold as legitimate rather than a deadlock.
+    const PATIENCE: Duration = baumhard::font::fonts::FONT_SYSTEM_LOCK_TIMEOUT;
     /// The pause between tries, so a wait spends its time asleep rather
     /// than spinning against the holder.
     const BACKOFF: Duration = Duration::from_millis(1);
