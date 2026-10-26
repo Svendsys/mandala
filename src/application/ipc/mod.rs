@@ -35,7 +35,12 @@ mod wait;
 
 pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
-pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
+// The decoder-to-wire test runner, for the app's GPU-backed tests
+// (`app::tests_gpu`): an `act.*` request run against a real app the
+// way the socket would run it, minus the socket.
+#[cfg(test)]
+pub(crate) use registry::tests::run_attached;
+pub(crate) use target::{ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState};
 pub(crate) use transport::IpcServer;
 pub(crate) use wait::{Settling, Until};
 

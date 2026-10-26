@@ -2793,7 +2793,13 @@ the arm (`dispatch::native::route_pan_canvas`, pure and pinned at
 `DragState` level the way `route_middle_button` is), which closes
 all three at once. `Pending` stays outside the refused class
 precisely because the `LeftDrag` threshold cross dispatches
-`PanCanvas` from it.
+`PanCanvas` from it. The `RightDrag` cross does not need the same
+exemption for `PendingRight`: it takes the press down to `None`
+before it dispatches, with a hit built from the press, so a
+`RightDrag`-bound `pan_canvas` arms from rest and the right release
+ends it. `FastResizeStart` reads its target, its anchor and its
+owning button off that hit rather than off `PendingRight` (#194),
+which is what let the state come down first.
 
 The release halves match, and the rule is the same one: **the
 button that started a gesture is the one that finalizes it.**
@@ -2929,14 +2935,24 @@ the camera instead, and the variant is gone rather than
 default-unbound, because a binding firing on the same event as
 the camera step would be a conflict rather than a choice.
 
-Two consequences of that deletion, neither fixed: a user whose
-only pointer is a touchscreen loses `FastResizeStart` (it ships
-bound to `Ctrl+RightDrag` alone, which needs a mouse), and an
-existing `keybinds.json` naming `"TwoFingerDrag"` is silently
-accepted and never matches, because `KeyBind::parse` takes any
-non-modifier word and cannot tell a retired gesture name from an
-ordinary key. `test_two_finger_drag_is_not_a_bindable_gesture`
-carries the reasoning.
+Two consequences of that deletion, both since closed (#160).
+**A touch-only user lost every resize, not only
+`FastResizeStart`**: the route this paragraph used to offer —
+long-press into `Resize`, then drag a handle — did not exist,
+because a one-finger drag is always the recognizer's `Pan` and
+moved the camera out from under the handle. Now a finger that
+starts a gesture on a handle in `Resize` mode is the left button
+until it lifts (`app/touch_handle.rs`): it drives the press,
+cursor-move and release handlers a mouse drives, so the handle drag
+is the one that already exists, and it is never fed to the
+recognizer. Every other touch is unchanged, so one-finger pan and
+pinch keep their meaning everywhere off a handle. That makes
+`FastResizeStart` a mouse accelerator by design rather than by
+accident. Native-only, as the drag state is. **And an existing
+`keybinds.json` naming `"TwoFingerDrag"` was silently accepted and
+never matched**, because `KeyBind::parse` takes any non-modifier
+word; a retired name is now refused at parse time through the
+`RETIRED_NAMES` table, with a diagnostic saying what replaced it.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
@@ -3302,11 +3318,11 @@ two as a value, with `execute` as the only place either is
 actually called. The reason is the same one
 [`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
 the drag-release path: both tiers need `&mut Renderer`, so an
-interaction that *decides* a tier could not be tested at all
-while deciding and performing were one statement (TEST_CONVENTIONS
-§T8 keeps live wgpu out of the harness). Handing the decision back
-as a value is what lets a test ask which tier a given interaction
-picks.
+interaction that *decides* a tier could not be tested without
+a device while deciding and performing were one statement
+(TEST_CONVENTIONS §T8). Handing the decision back as a value
+is what lets a renderer-free test ask which tier a given
+interaction picks.
 
 Two constructors carry the rules:
 
@@ -3887,8 +3903,8 @@ click-outside commit and the dispatch arms do not grow.
 
 The lifecycle core is renderer-free and returns an `EditRefresh`
 naming the canvas work it owes, so the whole open / type /
-commit / cancel sequence is driven directly in tests (§T8 keeps
-live wgpu out of the harness).
+commit / cancel sequence is driven directly in renderer-free
+tests (§T8).
 
 One asymmetry survives on purpose: a portal caption stops being
 editable once its edge is deleted or leaves portal mode, and a

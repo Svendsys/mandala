@@ -941,9 +941,23 @@ those also carries a warning saying why: `console_error` for the
 file-path Actions, `save_unbound` or `save_failed` for `SaveDocument`.
 Treat an unrecognized value as `"unhandled"`.
 
+`reason` (string or `null`): why an `unhandled` Action did not run,
+when its arm declined for a stated reason; `null` otherwise, and
+always `null` with `"handled"`. `FastResizeStart` is one: the resize
+it starts is finalized by the release of the mouse button holding the
+gesture, and a synthetic pointer holds none, so with `x`/`y` it is
+refused with a reason saying nothing holds the gesture rather than
+start a drag no release could end (without `x`/`y` there is no
+gesture to anchor at, which is a reason too). Drive it as a hand
+does instead, with the button it is bound to: `input.drag` with
+`button: "right"` and `mods: ["ctrl"]` for the default
+`Ctrl+RightDrag`.
+`PanCanvas` is another, while a drag owed a commit or a held pan
+runs.
+
 ```jsonc
 {"id": 1, "cmd": "act.action", "action": "ZoomIn"}
-{"id": 1, "ok": true, "result": {"outcome": "handled"}}
+{"id": 1, "ok": true, "result": {"outcome": "handled", "reason": null}}
 {"id": 2, "cmd": "act.action", "action": "DoubleClickActivate", "x": 412, "y": 96, "space": "surface"}
 ```
 
@@ -1567,10 +1581,15 @@ reports.
 
 ### `input.touch`
 
-One finger event, as `WindowEvent::Touch`, into the touch-gesture
-recognizer (tap, long-press, one-finger pan, pinch). The recognizer
-measures time on the real clock, so a long-press is a `started`, a
-wait, and the finger's next event.
+One finger event, as `WindowEvent::Touch`, through the native touch
+path: the touch-gesture recognizer (tap, long-press, one-finger pan,
+pinch), with one exception. A finger that *starts a gesture* on a
+resize handle in Resize mode drives the handle drag instead, as the
+left button would, until it lifts (#160): it resizes, commits with
+one undo entry on `ended` or `canceled`, and never reaches the
+recognizer, so it does not pan. Another finger landing meanwhile is
+ignored. The recognizer measures time on the real clock, so a
+long-press is a `started`, a wait, and the finger's next event.
 
 | param | type | required | meaning |
 |---|---|---|---|

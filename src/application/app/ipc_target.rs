@@ -29,7 +29,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::ipc::events::Observed;
 use crate::application::ipc::injected::{resolve_command, Delivery, Overloaded, Pacing, Sample, Surface};
 use crate::application::ipc::space::{camera_json, Point, Space};
-use crate::application::ipc::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
+use crate::application::ipc::{ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::renderer::Renderer;
@@ -90,7 +90,19 @@ impl<'a> IpcCommandTarget<'a> {
         DispatchHit {
             click_hit: parts.click_hit,
             canvas_pos: canvas,
+            // A synthetic pointer holds no button.
+            held_by: None,
         }
+    }
+}
+
+/// The funnel's verdict in the protocol's vocabulary. A refusal keeps
+/// its reason, which `act.action` returns (#194).
+fn action_outcome(outcome: DispatchOutcome) -> ActionOutcome {
+    match outcome {
+        DispatchOutcome::Handled => ActionOutcome::Handled,
+        DispatchOutcome::Unhandled => ActionOutcome::Unhandled,
+        DispatchOutcome::Refused(reason) => ActionOutcome::Refused(reason),
     }
 }
 
@@ -130,7 +142,7 @@ impl InitState {
 }
 
 impl CommandTarget for IpcCommandTarget<'_> {
-    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> bool {
+    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> ActionOutcome {
         // The synthetic pointer is part of this one dispatch, like the
         // `DispatchHit` it builds. The cursor goes back afterwards, so
         // the hover state, the cursor icon and the next real wheel
@@ -138,13 +150,10 @@ impl CommandTarget for IpcCommandTarget<'_> {
         // never moved.
         let real_cursor = self.init.cursor_pos;
         let hit = pointer.map(|point| self.place_pointer(point));
-        let handled = matches!(
-            dispatch::dispatch_action(action, &mut self.ctx(), hit.as_ref()),
-            DispatchOutcome::Handled
-        );
+        let outcome = action_outcome(dispatch::dispatch_action(action, &mut self.ctx(), hit.as_ref()));
         self.init.cursor_pos = real_cursor;
-        self.changed_view |= handled;
-        handled
+        self.changed_view |= outcome == ActionOutcome::Handled;
+        outcome
     }
 
     fn run_console_line(&mut self, line: &str) -> Option<LineOutcome> {
@@ -344,5 +353,28 @@ impl CommandTarget for IpcCommandTarget<'_> {
         // show where the step left the app.
         self.changed_view = true;
         Ok(stepped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::app::dispatch::native::FastResizeRefusal;
+
+    /// **A refusal reaches IPC with its reason intact** (#194), the
+    /// link between `fast_resize_drag`'s named refusal and the
+    /// `act.action` reply that shows it. The controls are the other two
+    /// verdicts: neither invents a reason, and a `Handled` stays one.
+    #[test]
+    fn test_a_refused_dispatch_keeps_its_reason_for_ipc() {
+        assert_eq!(
+            action_outcome(DispatchOutcome::Refused(FastResizeRefusal::NO_HOLDER)),
+            ActionOutcome::Refused(FastResizeRefusal::NO_HOLDER)
+        );
+        assert_eq!(
+            action_outcome(DispatchOutcome::Unhandled),
+            ActionOutcome::Unhandled
+        );
+        assert_eq!(action_outcome(DispatchOutcome::Handled), ActionOutcome::Handled);
     }
 }

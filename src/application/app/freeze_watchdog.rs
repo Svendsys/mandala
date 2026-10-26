@@ -81,6 +81,23 @@ impl FreezeWatchdog {
         }
     }
 
+    /// A handle with no thread behind it, for the GPU-backed test
+    /// harness (`app::gpu_harness`): the app it builds runs on a test
+    /// thread among dozens, inside a process that has no main loop to
+    /// guard, so a watchdog that aborted the process on ten seconds of
+    /// that thread's silence would be a false positive by
+    /// construction. Every `tick` / `parked` / `unparked` still writes
+    /// its atomics, so the code paths that ping the watchdog run
+    /// unchanged; nothing reads them.
+    #[cfg(test)]
+    pub fn unarmed() -> Self {
+        Self {
+            last_activity_ms: Arc::new(AtomicU64::new(0)),
+            parked: Arc::new(AtomicBool::new(false)),
+            epoch: Instant::now(),
+        }
+    }
+
     /// Ping the watchdog. Call once per frame at the top of
     /// `AboutToWait` (or anywhere else the main loop guarantees
     /// forward progress). Writing is `Relaxed` — we don't need

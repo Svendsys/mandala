@@ -58,8 +58,12 @@ or on a Linux box with no display at all, through `mandala --headless`
 — follow `.claude/skills/mandala-drive/SKILL.md`. It is written as a
 Claude Code skill, but it is plain Markdown and shell, and every step
 works from any harness. `scripts/ipc_smoke.sh` checks the loop end to
-end; it needs a GPU adapter — on a GPU-less box, Mesa's lavapipe
-(Vulkan) — so it is not part of `./test.sh`.
+end; it needs the built binaries, a socket and a GPU adapter — on a
+GPU-less box, Mesa's lavapipe (Vulkan) — so it is not part of
+`./test.sh`. The suite's own GPU-backed tests
+(`src/application/app/tests_gpu.rs`, TEST_CONVENTIONS §T8) run on the
+same adapter in-process and skip with a note where there is none; the
+skill's apt-over-HTTPS recipe is how an agent container gets one.
 
 ## Recording a demo
 
