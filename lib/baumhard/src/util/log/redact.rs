@@ -328,6 +328,20 @@ mod tests {
                 "{home:?}"
             );
         }
+        // A trailing slash on the home folds the same line the same
+        // way; the filesystem root is not a home (`usable_home`), so
+        // nothing folds and the line is only excerpted — the cases a
+        // machine's `$HOME` can be, pinned without reading it.
+        let line = format!("open {}/{tail}", short_home.display());
+        assert_eq!(
+            console_line_excerpt_with(&line, Path::new("/home/mikal/")),
+            format!("open ~/{tail}")
+        );
+        assert_eq!(console_line_excerpt_with(&line, Path::new("/")), excerpt(&line));
+        assert!(
+            console_line_excerpt_with(&line, Path::new("/")).starts_with("open /home/mikal/mmm"),
+            "control: with no usable home the account path stays, cut at the width"
+        );
         // Control, the other order: cutting first lands inside the
         // long home, so the fold that follows finds no home to fold
         // and the head of the account path is what the record keeps.
@@ -359,25 +373,28 @@ mod tests {
 
     /// The environment-reading pair is wired to the same composition.
     /// The expectation is derived from what `usable_home` makes of
-    /// this machine's `$HOME` — folded when there is a usable one,
-    /// untouched when there is none (unset, empty, `/`) — so the test
-    /// holds under any home and still goes red if either function
-    /// stops reading it.
+    /// this machine's `$HOME`, so it holds under any usable home and
+    /// still goes red if either function stops reading it. Where
+    /// there is no usable home — unset, empty, `/` — the wiring
+    /// cannot be exercised, and the test says so with a `SKIPPED:`
+    /// note (`util::test_skip`) rather than passing in silence; the
+    /// unusable-home behavior itself is pinned by the pure test
+    /// above, through `Path::new("/")`.
     #[test]
     fn test_console_line_and_failure_excerpts_read_the_home_the_collapse_helpers_read() {
         let home = home_dir();
-        match home.as_deref().and_then(usable_home) {
-            Some(home) => {
-                let shown = home.to_string_lossy();
-                let needle = shown.trim_end_matches(['/', '\\']);
-                assert_eq!(console_line_excerpt(&format!("open {needle}/x")), "open ~/x");
-                assert_eq!(failure_excerpt(&format!("{needle}/x: denied")), "~/x: denied");
-            }
-            None => {
-                assert_eq!(console_line_excerpt("open /x"), "open /x");
-                assert_eq!(failure_excerpt("/x: denied"), "/x: denied");
-            }
-        }
+        let Some(home) = home.as_deref().and_then(usable_home) else {
+            crate::util::test_skip::note_skipped(
+                "no usable home directory in this environment (HOME unset, empty or `/`), so the \
+                 environment-reading `console_line_excerpt` / `failure_excerpt` pair is not \
+                 exercised here; the pure `_with` pair is",
+            );
+            return;
+        };
+        let shown = home.to_string_lossy();
+        let needle = shown.trim_end_matches(['/', '\\']);
+        assert_eq!(console_line_excerpt(&format!("open {needle}/x")), "open ~/x");
+        assert_eq!(failure_excerpt(&format!("{needle}/x: denied")), "~/x: denied");
     }
 
     /// A path under the home directory folds to `~`, the home itself
