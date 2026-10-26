@@ -192,9 +192,12 @@ shipped the Unix transport):
   client that connects while a controller is attached gets
   `connection_rejected` at once and its connection is closed, as on
   Unix. The acceptor never waits on it: the frame is written on the
-  pipe's I/O runtime, and a refused client that has not taken it
-  within a second is disconnected (on Unix the frame is one
-  non-blocking write).
+  pipe's I/O runtime, whatever the refused client sends meanwhile is
+  read and dropped, and its instance is disconnected when the client
+  leaves or after a second, whichever comes first — so a refused
+  client that has not read the frame within that second loses it, and
+  one still writing gets an error rather than blocking (on Unix the
+  frame is one non-blocking write, then the socket is closed).
 - **Half-close** does not exist for a pipe. A client that closes its
   end still has a final unterminated line executed, but it cannot read
   the reply, so send a terminated line and read before closing.

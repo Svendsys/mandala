@@ -82,9 +82,45 @@ pub(super) trait Outlet: Send + 'static {
 }
 
 /// A handle another thread can end a connection through: both halves
-/// see it and finish.
+/// see it and finish. Idempotent.
 pub(super) trait HangUp: Send + 'static {
     fn hang_up(&self);
+}
+
+/// The main thread's hang-up handle for one controller, which also
+/// hangs up when it is dropped. A controller the server lets go of
+/// without retiring it — still queued on the inbound channel when the
+/// server goes, announced to a server already gone, or dropped with the
+/// server — ends its reader and writer with it, so none of them can
+/// outlive the server whatever the ordering.
+///
+/// Retiring is the one release that must not hang up
+/// ([`HangUpOnDrop::release`]): a controller is retired on its reader's
+/// `Gone`, when the reader has already ended and the writer still owes
+/// the replies queued ahead of it — the half-closing client's case.
+pub(super) struct HangUpOnDrop(Option<Box<dyn HangUp>>);
+
+impl HangUpOnDrop {
+    pub(super) fn new(hangup: impl HangUp) -> HangUpOnDrop {
+        HangUpOnDrop(Some(Box::new(hangup)))
+    }
+
+    pub(super) fn hang_up(&self) {
+        if let Some(hangup) = &self.0 {
+            hangup.hang_up();
+        }
+    }
+
+    /// Let go without hanging up: the connection ends on its own.
+    pub(super) fn release(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for HangUpOnDrop {
+    fn drop(&mut self) {
+        self.hang_up();
+    }
 }
 
 /// The acceptor: install the first connection as controller, refuse
@@ -159,7 +195,7 @@ fn install_controller<C: Conn>(stream: C, generation: u64, link: &Arc<Link>) -> 
         outbound: outbound_tx.clone(),
         waiting,
         events_queued,
-        hangup: Box::new(hangup),
+        hangup: HangUpOnDrop::new(hangup),
         flushed: flushed_rx,
     }));
 

@@ -156,8 +156,9 @@ struct Controller {
     /// thread: the main thread adds, the outbound thread subtracts.
     events_queued: Arc<AtomicUsize>,
     /// A handle on the connection used only to end it — the reader and
-    /// the outbound thread unblock and exit.
-    hangup: Box<dyn connection::HangUp>,
+    /// the outbound thread unblock and exit. It also ends it when the
+    /// controller is dropped.
+    hangup: connection::HangUpOnDrop,
     /// Disconnects when the outbound thread exits; waited on at exit
     /// so the `shutdown` event can flush.
     flushed: Receiver<()>,
@@ -510,7 +511,10 @@ impl IpcServer {
             .as_ref()
             .is_some_and(|c| c.generation == generation)
         {
-            self.controller = None;
+            // Its reader has ended; its writer still owes what is queued.
+            if let Some(Controller { hangup, .. }) = self.controller.take() {
+                hangup.release();
+            }
             self.stalled = None;
             self.session.reset_controller();
         }
@@ -581,19 +585,15 @@ impl IpcServer {
 impl Drop for IpcServer {
     /// Dropped without [`IpcServer::shutdown`] — a panic unwinding past
     /// the event loop, or a test — the server still leaves nothing
-    /// running: every controller it knows of, or has yet to hear about,
-    /// is hung up, and the endpoint is closed, which stops the
-    /// acceptor. After a graceful shutdown this finds nothing left to
-    /// do; closing the endpoint twice is a no-op.
+    /// running. The endpoint is closed, which stops the acceptor, and
+    /// every controller ends with the value that holds it: the live one
+    /// here, one still queued on the inbound channel with the channel,
+    /// and one the acceptor is installing at this instant when its
+    /// announcement finds the channel gone (`HangUpOnDrop`). After a
+    /// graceful shutdown this finds nothing left to do; closing the
+    /// endpoint twice is a no-op.
     fn drop(&mut self) {
-        if let Some(controller) = self.controller.take() {
-            controller.hangup.hang_up();
-        }
-        while let Ok(message) = self.inbound.try_recv() {
-            if let Inbound::Connected(controller) = message {
-                controller.hangup.hang_up();
-            }
-        }
+        self.controller = None;
         self.endpoint.close();
     }
 }

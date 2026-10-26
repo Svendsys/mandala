@@ -68,8 +68,9 @@
 //! write ends after [`STALLED_WRITE_TIMEOUT`] without progress, or at a
 //! hang-up. A read waits on the client for as long as it stays — an
 //! idle controller is a legal one — and ends at a hang-up, which the
-//! server sends on every exit, graceful or not. A refusal ends after
-//! [`REJECT_GRACE`].
+//! server sends on every exit, graceful or not. A refusal ends when the
+//! refused client leaves or after [`REJECT_GRACE`], whichever is first,
+//! and always with a disconnect.
 //!
 //! **Closing.** A connection that ended in order (after the `shutdown`
 //! event, or a client that left) is closed by dropping the instance:
@@ -98,9 +99,10 @@ use super::STALLED_WRITE_TIMEOUT;
 pub(super) const SDDL: &str = "D:P(A;;GA;;;OW)";
 
 /// How long a refused client is given to take its `connection_rejected`
-/// frame before the instance is disconnected anyway. The refusal runs
-/// on the runtime, not on the acceptor, so this bounds a task, never
-/// the next accept.
+/// frame and leave before its instance is disconnected — which happens
+/// either way, at the client's end-of-file or at this deadline. The
+/// refusal runs on the runtime, not on the acceptor, so this bounds a
+/// task, never the next accept.
 const REJECT_GRACE: Duration = Duration::from_secs(1);
 
 /// The pipe this process serves. Holding it keeps the I/O runtime alive
@@ -189,6 +191,13 @@ fn owner_only() -> io::Result<SecurityDescriptor> {
 /// One more instance of the pipe at `path`, which already exists: not
 /// the first, local clients only, byte mode — the parameters the first
 /// was made with. It inherits the pipe's descriptor.
+///
+/// `first_pipe_instance(false)` does not mean "join only": were the
+/// name ever to lapse, this would create a new pipe with the default
+/// DACL (Everyone may read), or join one somebody else made. What
+/// prevents that is the order `bind` and `accept` keep — this is only
+/// ever called while another instance of ours holds the pipe open, so
+/// the pipe object, and its owner-only descriptor, outlive the call.
 fn create_instance(runtime: &Runtime, path: &str) -> io::Result<NamedPipeServer> {
     // Tokio pipe objects register with the runtime they are made in.
     let _context = runtime.enter();
@@ -323,12 +332,31 @@ impl Conn for PipeConn {
         // On the runtime rather than here, so a refused client that
         // never reads cannot hold up the next accept.
         runtime.spawn(async move {
-            let offered = tokio::time::timeout(REJECT_GRACE, write_all(&pipe, &frame)).await;
-            if !matches!(offered, Ok(Ok(()))) {
-                let _ = pipe.disconnect();
-            }
-            // Dropped: the frame, if it went, stays readable.
+            let _ = tokio::time::timeout(REJECT_GRACE, refuse(&pipe, &frame)).await;
+            // Always, whether the client left or the grace ran out. A
+            // write that "completed" may only be queued in the driver,
+            // which a drop would leave pending with the instance still
+            // connected — see the module doc.
+            let _ = pipe.disconnect();
         });
+    }
+}
+
+/// Offer a refused client its frame, then read and drop whatever it
+/// sends until it leaves (end-of-file or an error). Reading keeps a
+/// client that pipelined requests before reading its first frame from
+/// blocking on its own writes; the caller bounds the whole of it.
+async fn refuse(pipe: &NamedPipeServer, frame: &[u8]) -> io::Result<()> {
+    write_all(pipe, frame).await?;
+    let mut discard = [0u8; 4096];
+    loop {
+        pipe.readable().await?;
+        match pipe.try_read(&mut discard) {
+            Ok(0) => return Ok(()),
+            Ok(_) => continue,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
+        }
     }
 }
 

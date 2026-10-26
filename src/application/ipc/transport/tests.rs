@@ -421,6 +421,40 @@ fn test_ipc_loopback_refuses_a_second_client_immediately() {
     assert_eq!(first.next()["id"], json!(1), "the controller is undisturbed");
 }
 
+/// A refused client that writes without ever reading its refusal is
+/// cut off, not left blocked once the connection's buffer is full. The
+/// failing input is a refusal that lets go of the connection without
+/// ending it — on the pipe, a drop with the frame's write still queued
+/// in the driver, which keeps the instance connected and nobody reading
+/// it; on the socket, one kept open.
+#[test]
+fn test_ipc_loopback_a_refused_client_that_only_writes_is_cut_off() {
+    let harness = Harness::running("ipc-busy-writer");
+    let (mut first, _) = Client::attach(&harness.path);
+    let second = Client::connect(&harness.path);
+    let mut writer = second.writer.try_clone().expect("clone");
+    let sender = thread::spawn(move || {
+        let request = format!(
+            "{{\"id\":1,\"cmd\":\"ping\",\"pad\":\"{}\"}}\n",
+            "x".repeat(1 << 10)
+        );
+        // Far past any buffer either transport keeps for one connection.
+        for _ in 0..(1 << 14) {
+            if writer.write_all(request.as_bytes()).is_err() {
+                return true;
+            }
+        }
+        false
+    });
+    assert!(
+        join_within(sender, "the refused client's writes"),
+        "16 MiB went into a refused connection without an error"
+    );
+    drop(second);
+    first.send(r#"{"id":1,"cmd":"ping"}"#);
+    assert_eq!(first.next()["id"], json!(1), "the controller is undisturbed");
+}
+
 #[test]
 fn test_ipc_loopback_a_new_controller_starts_a_fresh_session() {
     let harness = Harness::running("ipc-reconnect");
@@ -656,6 +690,41 @@ fn test_ipc_loopback_no_boundary_thread_outlives_a_dropped_server() {
     drop(client);
 }
 
+/// The same when the main thread never met the controller: its
+/// `Connected` is still queued when the server goes, which is where a
+/// controller installed during teardown also ends up. The failing input
+/// is a controller whose connection ends only when the main thread
+/// hangs it up by hand — a queued one nobody drains is never reached.
+#[test]
+fn test_ipc_loopback_no_boundary_thread_outlives_a_server_that_never_met_its_controller() {
+    let mut harness = Harness::paused("ipc-outlive-unmet");
+    let link = harness.link.clone();
+    let mut client = Client::connect(&harness.path);
+    assert_eq!(
+        client.next()["event"],
+        json!("hello"),
+        "the controller is installed"
+    );
+    drop(harness.server.take());
+    assert_no_boundary_thread_outlives(&link, "after a server dropped with its controller queued");
+    drop(client);
+}
+
+/// Dropping the main thread's hang-up handle ends the connection, as
+/// calling it does. The failing input is a handle without that `Drop`.
+#[test]
+fn test_a_dropped_hang_up_handle_hangs_up() {
+    struct Counting(Arc<AtomicUsize>);
+    impl connection::HangUp for Counting {
+        fn hang_up(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    drop(connection::HangUpOnDrop::new(Counting(Arc::clone(&calls))));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
     // The window closes while the controller is paused on a full queue:
@@ -701,7 +770,7 @@ fn test_controller_offer_pauses_on_a_full_queue_and_reports_a_closed_one() {
         outbound,
         waiting: Arc::new(AtomicBool::new(false)),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup: Box::new(NoHangup),
+        hangup: connection::HangUpOnDrop::new(NoHangup),
         flushed,
     };
     let frame = || Outbound::Frame(Frame::Event(crate::application::ipc::envelope::Event::shutdown()));
@@ -899,7 +968,7 @@ fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() 
         outbound: queue.clone(),
         waiting: Arc::clone(&waiting),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup: Box::new(NoHangup),
+        hangup: connection::HangUpOnDrop::new(NoHangup),
         flushed,
     });
     // The controller's queue is full of something it has not read.
@@ -951,7 +1020,7 @@ fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
         outbound: queue,
         waiting: Arc::new(AtomicBool::new(false)),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup: Box::new(NoHangup),
+        hangup: connection::HangUpOnDrop::new(NoHangup),
         flushed,
     });
     let mut app = EventsApp::new();
@@ -989,7 +1058,7 @@ fn test_events_have_a_lane_of_their_own_and_never_take_a_replys_slot() {
         outbound,
         waiting: Arc::new(AtomicBool::new(false)),
         events_queued: Arc::new(AtomicUsize::new(0)),
-        hangup: Box::new(NoHangup),
+        hangup: connection::HangUpOnDrop::new(NoHangup),
         flushed,
     };
     let event = || Event::change("camera_changed", json!({ "revision": 1 }));
