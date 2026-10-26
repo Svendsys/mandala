@@ -334,9 +334,10 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// returns to where it stood when the builder was created. The
     /// all-or-nothing step for a request that fails outside an engine
     /// call — a check its caller makes after the journaled calls have
-    /// run — and the same step a failing journaled call takes itself
-    /// ([`Self::unwind`]), so a request is undone by one function
-    /// whoever detects the failure.
+    /// run — and the same step a failing journaled call
+    /// ([`MutatorTree::apply_at_journaled`](crate::engine::tree::MutatorTree::apply_at_journaled),
+    /// [`Tree::update_journaled`]) takes itself, so a request is undone
+    /// by one function whoever detects the failure.
     ///
     /// `tree` must be the tree the builder's calls applied to, changed
     /// by nothing else since (see the contract on [`JournalBuilder`]). A
