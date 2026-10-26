@@ -39,7 +39,7 @@ pub(in crate::application::app) mod native;
 // callable without callers learning the sub-module split.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) use native::{
-    apply_label_edit_action_to_buffer, dispatch_action, dispatch_macro, run_macro_steps,
+    apply_label_edit_action_to_buffer, dispatch_action, dispatch_held_action, dispatch_macro, run_macro_steps,
 };
 
 // Cross-platform re-exports — both dispatchers and the

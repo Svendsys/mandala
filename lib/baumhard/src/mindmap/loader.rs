@@ -681,8 +681,8 @@ fn detect_legacy_shape(raw: &Value) -> Option<String> {
     // `convert --portals` is what removes it.
     if raw.get("portals").is_some() {
         return Some(
-            "legacy `portals` field present; run `maptool convert --portals <file>` \
-             to migrate to portal-mode edges"
+            "legacy `portals` field present; run `maptool convert --portals <file> <file>` \
+             to migrate to portal-mode edges in place"
                 .to_string(),
         );
     }
@@ -696,8 +696,8 @@ fn detect_legacy_shape(raw: &Value) -> Option<String> {
     {
         return Some(format!(
             "legacy `text` / `text_runs` on node {:?}; run \
-             `maptool convert --sections <file>` to migrate node \
-             text into `sections[]`",
+             `maptool convert --sections <file> <file>` to migrate node \
+             text into `sections[]` in place",
             id
         ));
     }
