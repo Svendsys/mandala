@@ -53,18 +53,21 @@
 //! (`src/backend/webgpu.rs:1018-1028`: `supported_backends` is
 //! `BROWSER_WEBGPU` alone, under an upstream TODO), which prints as
 //! "gl support not compiled in" although GL is. So the browser's
-//! instance comes from [`browser_instance`], which asks first: one
-//! `requestAdapter` through `wgpu::util::is_browser_webgpu_supported`,
-//! and, when it finds none, an instance over [`fallback_backends`] — GL
-//! — with one `warn!` saying so. The probe runs **before the canvas is
-//! touched**, and must: a canvas holds one context type for life, and a
-//! WebGPU surface's creation calls `getContext("webgpu")` on it, after
-//! which no WebGL2 context can be had from that canvas.
+//! instance comes from `browser_instance` (wasm32 only), which asks
+//! first: one `requestAdapter` through
+//! `wgpu::util::is_browser_webgpu_supported`, and, when it finds none,
+//! an instance over [`fallback_backends`] — GL — with one `warn!`
+//! saying so. The probe runs **before the canvas is touched**, and
+//! must: a canvas holds one context type for life, and a WebGPU
+//! surface's creation calls `getContext("webgpu")` on it, after which
+//! no WebGL2 context can be had from that canvas. The GL adapter it
+//! finds then opens its device under WebGL2's limits ([`base_limits`]):
+//! it has no compute shaders, and the downlevel defaults ask for them.
 
 use wgpu::{Adapter, Backends, Device, DeviceType, Instance, PowerPreference, Queue, Surface};
 
 // The browser build must carry both of its backends: WebGPU, and WebGL2
-// for the browsers whose WebGPU offers no adapter ([`browser_instance`]).
+// for the browsers whose WebGPU offers no adapter (`browser_instance`).
 // Held at compile time by the wasm32 check leg of `./test.sh`.
 #[cfg(target_arch = "wasm32")]
 const _: () = assert!(
@@ -167,7 +170,7 @@ pub(super) fn instance_descriptor() -> wgpu::InstanceDescriptor {
 /// aside — GL, on the browser build. `None` when nothing is left, so
 /// the caller keeps the instance it asked for and the startup panic
 /// names the WebGPU failure rather than an empty backend set. Pure.
-// Browser-only consumer ([`browser_instance`]); the tests read it on
+// Browser-only consumer (`browser_instance`); the tests read it on
 // every target.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(super) fn fallback_backends(requested: Backends, enabled: Backends) -> Option<Backends> {
@@ -301,14 +304,34 @@ pub(crate) async fn probe_adapter(policy: AdapterPolicy) -> Result<String, Strin
     Ok(adapter.get_info().name)
 }
 
+/// The limits a device is opened with before the adapter's resolution
+/// raises them ([`open_device`]): the downlevel defaults, or WebGL2's
+/// on an adapter without compute shaders. The downlevel defaults ask
+/// for compute limits — `max_compute_workgroups_per_dimension` among
+/// them — that such an adapter reports as zero, and wgpu refuses a
+/// device that asks for more than the adapter has; WebGL2 has no
+/// compute shaders at all, so without this the browser's fallback
+/// (module doc, "The browser") found its GL adapter and then could not
+/// open a device on it. The renderer dispatches no compute work, so
+/// nothing it does is lost with them. Pure.
+pub(super) fn base_limits(downlevel: wgpu::DownlevelFlags) -> wgpu::Limits {
+    if downlevel.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS) {
+        wgpu::Limits::downlevel_defaults()
+    } else {
+        wgpu::Limits::downlevel_webgl2_defaults()
+    }
+}
+
 /// A device and its queue on `adapter`, with the limits every target
-/// shares: the downlevel defaults, raised to what the adapter offers.
+/// shares: [`base_limits`] for its capabilities, raised to the
+/// resolution the adapter offers.
 async fn open_device(adapter: &Adapter) -> Result<(Device, Queue), wgpu::RequestDeviceError> {
+    let base = base_limits(adapter.get_downlevel_capabilities().flags);
     adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+            required_limits: base.using_resolution(adapter.limits()),
             memory_hints: Default::default(),
             trace: Default::default(),
             experimental_features: Default::default(),
@@ -394,6 +417,22 @@ mod tests {
         assert!(match_name(&[], "x")
             .expect_err("nothing to match")
             .contains("no adapter qualifies"));
+    }
+
+    /// An adapter with compute shaders is asked for the downlevel
+    /// defaults, as before; one without is asked for WebGL2's, which
+    /// ask for no compute at all — the limit a WebGL2 adapter refused.
+    #[test]
+    fn test_an_adapter_without_compute_is_asked_for_no_compute_limits() {
+        let with_compute = base_limits(wgpu::DownlevelFlags::all());
+        assert_eq!(with_compute, wgpu::Limits::downlevel_defaults());
+        assert!(
+            with_compute.max_compute_workgroups_per_dimension > 0,
+            "the control: the downlevel defaults do ask for compute"
+        );
+        let without = base_limits(wgpu::DownlevelFlags::all() - wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        assert_eq!(without, wgpu::Limits::downlevel_webgl2_defaults());
+        assert_eq!(without.max_compute_workgroups_per_dimension, 0);
     }
 
     /// A browser whose WebGPU offers no adapter falls back to what is
