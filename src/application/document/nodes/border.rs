@@ -1055,9 +1055,9 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
 /// It also refuses a cycling palette the map does not define
 /// ([`border_palette_violation`]), which is why it takes the map: the
 /// console stages one pair at a time with no document in hand, and
-/// six write paths — four surfaces, the preview, two keybinds —
-/// reach these five setters, so this screen is the one place every
-/// one of them passes.
+/// every write path — each border surface, the preview and its
+/// commit, both keybinds — reaches one of these five setters, so
+/// this screen is the one place all of them pass.
 fn refuse_border_edits(
     edits: &BorderConfigEdits,
     map: &baumhard::mindmap::model::MindMap,
