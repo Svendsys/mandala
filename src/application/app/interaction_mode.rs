@@ -23,9 +23,10 @@
 //! the dispatcher arms that open / close the editor; this module only
 //! defines the mode shape.
 //!
-//! The `click_resolves_to_section` predicate is consumed by
-//! `app/click.rs` per-frame to route clicks to the active section
-//! while in NodeEdit mode.
+//! The `click_resolves_to_section` predicate is consumed by the
+//! native click router (`cross_dispatch/pointer.rs`) and the
+//! section-drag resolver (`event_cursor_moved.rs`) to route clicks
+//! and drags to the active section while in NodeEdit mode.
 
 /// What the user is doing right now at the canvas level.
 ///

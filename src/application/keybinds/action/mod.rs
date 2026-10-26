@@ -237,11 +237,13 @@ pub enum Action {
     ///   a section followed by Enter).
     /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
     ///
-    /// **WASM: NativeOnly** — opening the text editor depends on
-    /// `TextEditState`, which is part of the native modal-stealer
-    /// cascade. The `apply_enter_node_edit` helper itself is
-    /// cross-platform-shaped; reclassification is a one-line change
-    /// once WASM gains the modal pipeline.
+    /// **WASM: NativeOnly** — not for the text editor, which the
+    /// browser already runs (`CreateOrphanNodeAndEdit` opens it
+    /// there through the same `open_text_edit`), but for the section
+    /// half of NodeEdit the browser lacks: section click routing
+    /// (`InteractionMode::click_resolves_to_section`), the
+    /// outside-click exit, and the section-edit entry
+    /// ([`Action::EnterSectionEdit`]). #229 tracks porting them.
     ///
     /// `destructive` — the single-section short-circuit opens the
     /// editor, which can clear text on the spot. User-tier-only via
@@ -741,9 +743,10 @@ pub enum Action {
     ///
     /// The field name is a string checked at dispatch, not at
     /// bind time: a misspelled `field` loads, and only a press
-    /// reveals it (a logged warning, no edit). Typed per-field variants (`SetBorderPreset`,
-    /// `SetBorderColor`, ...) that would catch it at load do not
-    /// exist yet; #227 tracks adding them and retiring this one.
+    /// reveals it (a logged warning, no edit). Typed per-field
+    /// variants (`SetBorderPreset`, `SetBorderColor`, ...) that
+    /// would catch it at load do not exist yet; #227 tracks adding
+    /// them and retiring this one.
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
     /// Mirror `border preset cycle` — advance the selected

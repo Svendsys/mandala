@@ -239,10 +239,13 @@ pub(in crate::application::app) fn dispatch_compatible(
             //    with a pre-Esc one.
             // 2. Clear `interaction_mode` to `Default` and rebuild
             //    when the active mode is `Resize { .. }` or
-            //    `NodeEdit { .. }`. Both modes need a way out on both
-            //    targets: the browser has no outside-click exit and
-            //    no NodeEdit-context Esc binding, so without this arm
-            //    a multi-section user would be trapped. On
+            //    `NodeEdit { .. }`. Both modes need an exit that does
+            //    not depend on the pointer: on native, Esc is the
+            //    keyboard's exit beside the pointer ones (a body click
+            //    for Resize, `maybe_exit_node_edit_on_outside_click`
+            //    for NodeEdit). The arm runs on both targets so the
+            //    browser, which has no outside-click exit, has it once
+            //    it can enter either mode (#229). On
             //    NodeEdit exit also lift selection back to
             //    `Single(node_id)` so per-node verbs stay usable
             //    after exit; a stale Section selection would point

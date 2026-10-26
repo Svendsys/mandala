@@ -160,8 +160,9 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
             Action::SplitSection {
                 at_grapheme: "".into(),
             },
-            // Destructive on commit — pin explicitly so the `set_node_aabb` / `set_section_aabb`
-            // commit on right-button release stays gated.
+            // Destructive on commit — pin explicitly so the
+            // `set_node_aabb` / `set_section_aabb` commit on
+            // right-button release stays gated.
             Action::FastResizeStart,
         ] {
             assert!(!tier.allows_action(&a), "{:?} tier should reject {:?}", tier, a);
@@ -280,8 +281,10 @@ fn dispatch_macro_user_tier_passes_destructive_steps() {
 
 #[test]
 fn dispatch_macro_inline_tier_rejects_label_edit_on_selection() {
-    // `LabelEditOnSelection` is on the Inline-tier denylist: a
-    // macro with this Action is rejected on the first step.
+    // `LabelEditOnSelection` is `destructive`, and
+    // `SourceTier::allows_action` admits a destructive Action only
+    // from the User tier, so an Inline-tier macro carrying it is
+    // rejected on the first step.
     let steps = vec![MacroStep::Action {
         action: Action::LabelEditOnSelection,
     }];

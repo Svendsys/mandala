@@ -1216,9 +1216,10 @@ mod tests {
         assert!(result.is_some(), "section_idx=0 on multi-section must promote");
     }
 
-    /// **Default mode never promotes.** Outside NodeEdit, drag-on-section behaves identically to drag-on-
-    /// node-body (whole-node drag). Same Multi-section node, same
-    /// hit, but mode is `Default` instead of `NodeEdit`.
+    /// **Default mode never promotes.** Outside NodeEdit,
+    /// drag-on-section behaves identically to drag-on-node-body
+    /// (whole-node drag). Same Multi-section node, same hit, but
+    /// mode is `Default` instead of `NodeEdit`.
     #[test]
     fn test_resolve_section_drag_target_default_mode_returns_none() {
         let (doc, id) = pinned_two_section_node();

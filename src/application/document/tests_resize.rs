@@ -19,8 +19,9 @@
 use super::tests_common::{first_testament_node_id, load_test_doc, pinned_two_section_node};
 use super::{InteractionModeOverrides, SelectionState};
 
-/// No handles on a plain selection: a `Single`-selection in `Default` mode (i.e. callers
-/// that pass `InteractionModeOverrides::none()`) emits zero handles.
+/// No handles on a plain selection: a `Single`-selection in
+/// `Default` mode (i.e. callers that pass
+/// `InteractionModeOverrides::none()`) emits zero handles.
 #[test]
 fn test_default_mode_with_single_selection_emits_no_resize_handles() {
     let mut doc = load_test_doc();

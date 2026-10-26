@@ -504,9 +504,10 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
     }
 }
 
-/// Pin the no-payload border Action variants as Compatible so a future contributor flipping any of them
-/// to NativeOnly trips this test instead of silently breaking
-/// WASM keybind reach for the cycle / toggle one-press flows.
+/// Pin the no-payload border Action variants as Compatible so a
+/// future contributor flipping any of them to NativeOnly trips
+/// this test instead of silently breaking WASM keybind reach for
+/// the cycle / toggle one-press flows.
 #[test]
 fn test_wasm_compatibility_border_no_payload_actions_are_compatible() {
     use crate::application::keybinds::WasmCompatibility::Compatible;
@@ -565,10 +566,9 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
         Action::ConnectToTarget(None),
         Action::EnterResizeMode,
         Action::FastResizeStart,
-        // EnterNodeEdit / EnterSectionEdit reach `open_text_edit`,
-        // which depends on the native modal-stealer cascade
-        // (`TextEditState`). Reclassification waits on the browser
-        // gaining that pipeline (see `Action::EnterNodeEdit`).
+        // EnterNodeEdit / EnterSectionEdit: the browser runs the
+        // text editor but lacks NodeEdit's section click routing,
+        // outside-click exit and section-edit entry (#229).
         Action::EnterNodeEdit,
         Action::EnterNodeEditClean,
         Action::EnterSectionEdit,
@@ -692,8 +692,9 @@ fn test_is_destructive_destructive_set_is_pinned() {
         // `set_section_aabb` on the right-button release that
         // ends the gesture, so it is destructive.
         ActionKind::FastResizeStart,
-        // Section text + structural mutators are destructive (rewrite text content, change the
-        // sections vector length).
+        // Section text + structural mutators are destructive
+        // (rewrite text content, change the sections vector
+        // length).
         ActionKind::SetSectionText,
         ActionKind::AddSection,
         ActionKind::DeleteSection,

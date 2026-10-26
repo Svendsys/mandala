@@ -911,9 +911,9 @@ enum DragState {
         /// converted via `Renderer::screen_to_canvas`). Carried
         /// through to `Action::FastResizeStart` so the corner
         /// anchor is computed from where the user *pressed*, not
-        /// from where the cursor sat at threshold-cross — plan
-        /// §6.3: "Quadrant determined at press time, not
-        /// continuously". Without this snapshot the user gets
+        /// from where the cursor sat at threshold-cross: the
+        /// quadrant is determined at press time, not continuously.
+        /// Without this snapshot the user gets
         /// whichever corner they happened to drag *toward*, which
         /// inverts the gesture's intent on small nodes.
         start_canvas: glam::Vec2,
