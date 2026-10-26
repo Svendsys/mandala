@@ -239,7 +239,7 @@ pub fn almost_equal_vec2(vec1: Vec2, vec2: Vec2) -> bool {
 ///
 /// Used by per-axis edge / portal-label setters to short-circuit
 /// "no-op writes" when the user re-types a value that's
-/// within-epsilon of the stored one. Centralised here so the
+/// within-epsilon of the stored one. Centralized here so the
 /// setter no-op contract is single-sourced across edges/style.rs,
 /// edge_label_drag, portal_label_drag, and the connection cache's
 /// font-size diff. Cost: O(1).

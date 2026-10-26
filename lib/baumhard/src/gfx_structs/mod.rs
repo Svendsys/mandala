@@ -10,7 +10,7 @@
 //! reshape them without rebuilding from scratch.
 
 /// `GlyphArea` — text-region element variant: text, scale,
-/// position, colour-font regions, hit-box.
+/// position, color-font regions, hit-box.
 pub mod area;
 /// Field-level delta types for `GlyphArea` — the mutation
 /// vocabulary that targets a single facet.

@@ -63,7 +63,7 @@ use crate::util::color_conversion::hex_to_color;
 /// `pub` rather than `pub(crate)` on purpose. While it was
 /// crate-private the app had no way to *reach* the canonical value
 /// and duplicated it instead — as `[0.0, 0.9, 1.0, 1.0]` in the
-/// document layer (which quantises to 229.5, not 229) and as
+/// document layer (which quantizes to 229.5, not 229) and as
 /// `Color::rgba(0, 230, 255, ..)` twice in the renderer. Three
 /// spellings of one color, and only one of them was this one.
 pub const SELECTION_HIGHLIGHT_HEX: &str = "#00E5FF";

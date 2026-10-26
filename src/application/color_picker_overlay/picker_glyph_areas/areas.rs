@@ -19,7 +19,7 @@ use crate::application::color_picker::{HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_
 /// without scanning or doing channel math. The arrays are inline on
 /// the struct (no per-frame heap allocation) — sized at compile time
 /// from the per-section constants in `color_picker.rs`. `None` slots
-/// mark intentionally-skipped indices (e.g. the centre crosshair cell
+/// mark intentionally-skipped indices (e.g. the center crosshair cell
 /// at `sat_bar[8]` / `val_bar[8]`); calling `area` on a skipped slot
 /// is a programming error.
 pub(super) struct PickerAreas {
@@ -90,7 +90,7 @@ impl PickerAreas {
     /// Resolve a `(section, index) → &GlyphArea` lookup. Panics if
     /// the section wasn't populated (the spec / builder disagree
     /// on what sections exist) or the requested index was deliberately
-    /// skipped (e.g. the crosshair centre slot at `sat_bar[8]`) —
+    /// skipped (e.g. the crosshair center slot at `sat_bar[8]`) —
     /// the picker apply path treats both as a programming error
     /// rather than a recoverable state.
     pub(super) fn area(&self, section: &str, index: usize) -> &GlyphArea {

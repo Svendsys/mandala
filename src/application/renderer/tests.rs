@@ -3720,7 +3720,7 @@ fn test_every_selection_highlight_form_carries_one_rgb_triple() {
     assert_eq!(
         [doc[0], doc[1], doc[2]],
         hex_rgb,
-        "document::HIGHLIGHT_COLOR quantises to a different cyan than the model emits"
+        "document::HIGHLIGHT_COLOR quantizes to a different cyan than the model emits"
     );
     assert_eq!(
         doc[3],

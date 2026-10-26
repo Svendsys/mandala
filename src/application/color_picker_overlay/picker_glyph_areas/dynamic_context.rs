@@ -99,17 +99,17 @@ struct ValCache {
 }
 
 thread_local! {
-    /// Sat-bar base-colour cache keyed by `(hue, val)`. Persistent
+    /// Sat-bar base-color cache keyed by `(hue, val)`. Persistent
     /// across picker open/close cycles.
     static SAT_CACHE: RefCell<Option<SatCache>> = const { RefCell::new(None) };
 
-    /// Val-bar base-colour cache keyed by `(hue, sat)`.
+    /// Val-bar base-color cache keyed by `(hue, sat)`.
     static VAL_CACHE: RefCell<Option<ValCache>> = const { RefCell::new(None) };
 }
 
 /// Return the sat-bar base-color table for `geometry`. On hit (same
 /// `(hue, val)` as the last call) hands back the cached array. On
-/// miss rebuilds it — one `hsv_to_rgb` per live cell (centre slot
+/// miss rebuilds it — one `hsv_to_rgb` per live cell (center slot
 /// skipped, matching the layout spec's `skip_indices: [8]`).
 fn sat_colors_for(geometry: &ColorPickerOverlayGeometry) -> [CellColor; SAT_CELL_COUNT] {
     let key = AxisKey(geometry.hue_deg.to_bits(), geometry.val.to_bits());
@@ -222,7 +222,7 @@ impl<'a> PickerDynamicContext<'a> {
         let current_val_cell = val_value_to_cell(geometry.val);
 
         // Sat-bar / val-bar base-color tables for every live cell.
-        // The crosshair centre keeps its `CellColor::zero()` sentinel
+        // The crosshair center keeps its `CellColor::zero()` sentinel
         // — the dynamic spec never queries it (pinned by
         // `debug_assert_ne!` in `field()`) and `skip_indices` in the
         // layout spec lists `8`. Two axis-specific caches: sat_colors
@@ -264,7 +264,7 @@ impl<'a> PickerDynamicContext<'a> {
     ///
     /// Converts the `&str` section name through [`PickerSection::from_name`]
     /// so the exhaustive enum match below stays total — unknown-section
-    /// panics are centralised in `from_name`.
+    /// panics are centralized in `from_name`.
     fn scale_for(&self, section: PickerSection, index: usize) -> f32 {
         let g = self.geometry;
         let layout = self.layout;
@@ -327,7 +327,7 @@ impl<'a> PickerDynamicContext<'a> {
                 // The dynamic spec is pinned by a test
                 // (`spec_dynamic_mutator_spec_per_section_fields_are_slim`)
                 // so reaching here means a future spec drift —
-                // log loudly, degrade the cell to an empty colour
+                // log loudly, degrade the cell to an empty color
                 // region, and keep the frame alive.
                 log::error!(
                     "color picker: dynamic context received unsupported field {other:?}; \
@@ -523,8 +523,8 @@ mod tests {
     }
 
     /// Changing `hue_deg` invalidates the sat cache. A hue shift
-    /// between two calls must produce a different cell colour at
-    /// any saturated cell (cell 0 is sat=0 = pure grey regardless
+    /// between two calls must produce a different cell color at
+    /// any saturated cell (cell 0 is sat=0 = pure gray regardless
     /// of hue, so probe the last cell where sat_cell_to_value = 1).
     #[test]
     fn sat_colors_for_invalidates_on_hue_change() {
@@ -558,7 +558,7 @@ mod tests {
         assert_ne!(a[0].rgb, b[0].rgb, "sat shift must produce a different val table");
     }
 
-    /// The crosshair centre slot is never populated on the dynamic
+    /// The crosshair center slot is never populated on the dynamic
     /// path — the layout spec's `skip_indices: [8]` keeps it off the
     /// mutator target set, and a `debug_assert_ne!` in
     /// `PickerDynamicContext::field` pins reads. Verify every
@@ -575,9 +575,9 @@ mod tests {
     }
 
     /// Hue-only change populates the maximally-saturated cell
-    /// (SAT_CELL_COUNT - 1 → sat = 1.0) with a different colour
+    /// (SAT_CELL_COUNT - 1 → sat = 1.0) with a different color
     /// on each call. Cheap regression that any future "cached the
-    /// wrong axis" bug will trip. Cell 0 is pure grey (sat=0) so
+    /// wrong axis" bug will trip. Cell 0 is pure gray (sat=0) so
     /// probe the saturated end.
     #[test]
     fn cache_produces_different_cell_colors_per_hue() {

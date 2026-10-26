@@ -63,7 +63,7 @@ pub struct GlyphTreeCache {
     /// The region index, when the tree is indexed.
     #[allow(dead_code)]
     region_index: Option<Rc<RegionIndexer>>,
-    /// Memoised result of [`Tree::descendants_aabb`](crate::engine::tree::Tree::descendants_aabb).
+    /// Memoized result of [`Tree::descendants_aabb`](crate::engine::tree::Tree::descendants_aabb).
     /// `None` = not yet computed (or invalidated by a mutation);
     /// `Some(None)` = computed and the tree has no visible areas;
     /// `Some(Some(_))` = computed, valid bbox.

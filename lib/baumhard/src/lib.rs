@@ -31,7 +31,7 @@
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-/// Low-level primitives: colour regions, outlines, apply-operations,
+/// Low-level primitives: color regions, outlines, apply-operations,
 /// and pure-data value types.
 pub mod core;
 /// The mutation engine, generic over the element type and the

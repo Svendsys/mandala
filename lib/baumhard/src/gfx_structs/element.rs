@@ -79,7 +79,7 @@ pub enum GfxElement {
     /// A text region rendered through cosmic-text layout.
     ///
     /// Wraps a heap-allocated [`GlyphArea`] that owns the text content,
-    /// scale, position, colour-font regions, and hit-box. This is the
+    /// scale, position, color-font regions, and hit-box. This is the
     /// primary renderable element for mindmap nodes, labels, and borders.
     GlyphArea {
         glyph_area: Box<GlyphArea>,
@@ -91,7 +91,7 @@ pub enum GfxElement {
         /// Computed lazily by
         /// [`Tree::ensure_subtree_aabbs`](crate::engine::tree::Tree::ensure_subtree_aabbs)
         /// and invalidated when a mutation touches the tree. Not
-        /// serialised — it is a runtime cache, not persistent state.
+        /// serialized — it is a runtime cache, not persistent state.
         subtree_aabb: Option<(Vec2, Vec2)>,
     },
     /// A composed glyph shape built from lines and components.
@@ -357,11 +357,11 @@ impl GfxElement {
         }
     }
 
-    /// Return the colour stored in the colour-font region at `range`,
+    /// Return the color stored in the color-font region at `range`,
     /// if one exists.
     ///
-    /// * `GlyphArea` — looks up the region and returns its colour.
-    /// * `GlyphModel` / `Void` — returns `None` (no colour-font
+    /// * `GlyphArea` — looks up the region and returns its color.
+    /// * `GlyphModel` / `Void` — returns `None` (no color-font
     ///   regions on these variants).
     ///
     /// O(log n) region lookup: `ColorFontRegions` is a `BTreeSet`

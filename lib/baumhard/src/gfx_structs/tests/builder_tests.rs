@@ -30,7 +30,7 @@ use crate::engine::element::TreeElement;
 type Node = MutatorNode<GfxElement, GfxMutation>;
 
 /// Stub context: yields one pre-built `GlyphArea` per index, and
-/// honours runtime-count queries out of a `HashMap`. Per-section
+/// honors runtime-count queries out of a `HashMap`. Per-section
 /// routing is deliberately minimal — the tests below don't need
 /// distinct areas per section, only per index.
 #[allow(dead_code)]

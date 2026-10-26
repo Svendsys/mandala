@@ -7,7 +7,7 @@
 //! mutator with no payload, `Instruction::RepeatWhile`, an
 //! `Instruction` carrying a mutation, `GfxMutator::Macro`,
 //! `GfxMutator::Void`, and `MutatorTree::apply_to` forward-apply
-//! behaviour.
+//! behavior.
 //!
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.

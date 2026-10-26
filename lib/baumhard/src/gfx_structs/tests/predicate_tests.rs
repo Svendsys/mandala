@@ -305,7 +305,7 @@ fn test_predicate_region_color_with_less_than_degrades_to_false() {
     do_predicate_region_color_with_less_than_degrades_to_false();
 }
 
-/// Colours are opaque too — same degrade posture as font. O(1).
+/// Colors are opaque too — same degrade posture as font. O(1).
 pub fn do_predicate_region_color_with_less_than_degrades_to_false() {
     let range = Range::new(0, 1);
     let pred = Predicate {

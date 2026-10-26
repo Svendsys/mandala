@@ -257,7 +257,7 @@ decision, not a drive-by edit.
     mouse gesture.
 
     The line this carve-out draws is therefore "is the effect a
-    continuous camera delta?", not "did a funnelled press start it".
+    continuous camera delta?", not "did a funneled press start it".
     A continuous gesture that *mutates the document* per frame is a
     different question and is not covered here — see the
     `ThrottledDrag` ladder.

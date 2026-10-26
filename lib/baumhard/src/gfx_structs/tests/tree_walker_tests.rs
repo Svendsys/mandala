@@ -382,7 +382,7 @@ pub fn do_applying_same_delta_twice_accumulates() {
     fonts::init();
     // Delta-style mutations are NOT idempotent — they compose additively.
     // Pinning this down protects against a future "dedupe identical
-    // mutations" optimisation that would silently change semantics of
+    // mutations" optimization that would silently change semantics of
     // repeated nudges (which the drag path emits on purpose every frame).
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;

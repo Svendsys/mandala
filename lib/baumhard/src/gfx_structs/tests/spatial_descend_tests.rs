@@ -4,7 +4,7 @@
 //! (§T1).
 //!
 //! Covers event delivery, miss/no-op, innermost-node selection,
-//! deep/wide trees, channel-override behaviour, an instruction with
+//! deep/wide trees, channel-override behavior, an instruction with
 //! no payload, and MouseEventData construction/equality. Follows the
 //! `do_*()` / `test_*()` benchmark-reuse split (§T2.2).
 //!

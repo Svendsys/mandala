@@ -260,7 +260,7 @@ fn test_text_edit_preserves_multi_run_regions_on_insertion() {
 }
 
 /// Backspace inside a multi-run node shrinks the containing run
-/// without bleeding the neighbour run's color in. Exercises the
+/// without bleeding the neighbor run's color in. Exercises the
 /// new `shrink_regions_after` primitive through the text-edit
 /// path's delete handler contract.
 #[test]

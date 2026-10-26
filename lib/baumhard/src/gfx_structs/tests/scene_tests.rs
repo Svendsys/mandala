@@ -29,7 +29,7 @@ fn tree_with_area(position: Vec2, bounds: Vec2, channel: usize) -> (GfxTree, Nod
 }
 
 /// A tree containing two overlapping glyph areas: an outer 100x100
-/// and an inner 20x20 centred in the outer. Used to verify
+/// and an inner 20x20 centered in the outer. Used to verify
 /// smallest-first hit semantics.
 fn tree_outer_inner() -> (GfxTree, NodeId, NodeId) {
     fonts::init();

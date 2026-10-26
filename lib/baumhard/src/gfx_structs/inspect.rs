@@ -4,7 +4,7 @@
 //! instantiation of [`Inspect`](crate::engine::predicate::Inspect). A
 //! [`Predicate<GfxElement>`](crate::engine::predicate::Predicate)
 //! names facets of an element through [`GfxElementField`](crate::gfx_structs::element::GfxElementField) — the
-//! `GlyphArea` / `GlyphModel` field enums, a colour-font region, the
+//! `GlyphArea` / `GlyphModel` field enums, a color-font region, the
 //! channel, the id or a flag — so a mutator can express things like
 //! "repeat on every child whose text starts empty" without hand-coding
 //! a walker. O(1) evaluations, no allocation.

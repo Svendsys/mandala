@@ -100,7 +100,7 @@ pub struct GeometrySpec {
     /// Bar-tip to ring-edge padding as a multiple of
     /// `ring_font_size`.
     pub bar_to_ring_padding_scale: f32,
-    /// Minimum clearance between the centre preview glyph and the
+    /// Minimum clearance between the center preview glyph and the
     /// nearest arm cell, expressed as a multiple of `font_size`.
     /// `compute_color_picker_layout` floors `cell_advance` at
     /// `preview_size / 2 + font_size * bar_to_preview_padding_scale`

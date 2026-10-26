@@ -31,7 +31,7 @@ pub use super::region_indexer::RegionIndexer;
 ///   panicked while holding it. The region state may be inconsistent;
 ///   the caller should not retry.
 ///
-/// **Removed:** an earlier `Updating` variant signalled
+/// **Removed:** an earlier `Updating` variant signaled
 /// "lock-would-block" from the per-field `RwLock::try_read` shape. After the
 /// 6-locks → 1-lock collapse, reads use a blocking
 /// `RwLock::read` that always succeeds (or returns `Poisoned`), so

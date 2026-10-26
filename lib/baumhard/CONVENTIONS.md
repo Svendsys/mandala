@@ -167,7 +167,7 @@ access to it.
   has been called. The init lives in `lib/baumhard/src/font/fonts.rs`.
 - **`FONT_SYSTEM` is a global `RwLock<FontSystem>`.** Acquire the
   guard for the minimum scope needed for a single layout pass. Holding
-  the write lock across a long computation serialises the whole
+  the write lock across a long computation serializes the whole
   renderer — which on a single-threaded event loop means stalling the
   entire frame.
 - **`FONT_SYSTEM` is private; the lock is reached through three
