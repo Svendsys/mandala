@@ -1233,7 +1233,7 @@ name = "test_bench"
         ("Cargo.toml", 28),
         ("crates/mandalactl/Cargo.toml", 7),
         ("crates/maptool/Cargo.toml", 4),
-        ("lib/baumhard/Cargo.toml", 27),
+        ("lib/baumhard/Cargo.toml", 28),
         ("lib/mandala_derive/Cargo.toml", 3),
     ];
 

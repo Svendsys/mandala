@@ -57,6 +57,13 @@ derivative = "2.2.0"
 # consumer, and the only crate member that loads `.mindmap.json` is
 # this one — so it stays out of `[workspace.dependencies]` per §13.
 serde_ignored = "0.1.14"
+# Where a `.mandala.json` load went wrong. serde reports *what* was
+# wrong with a value and nothing about *where* in the file it sat;
+# `document::format::load` wraps its deserializer in this to answer
+# that, so every strict-loader error names its JSON path
+# (`nodes[3].frame.rings[0].spans[2].color`). `document::format` is the
+# only consumer, so it stays out of `[workspace.dependencies]` per §13.
+serde_path_to_error = "0.1.20"
 
 # `env_logger` is load-bearing, not a leftover — and it is the native
 # half of a matched pair with `console_log` below. `util::log::init()`
