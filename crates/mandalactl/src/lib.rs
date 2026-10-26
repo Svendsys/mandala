@@ -21,10 +21,10 @@
 //! `record assemble <dir>` (the `assemble` module) reads a *recording's* frames
 //! and manifest — never a map, and never the socket.
 //!
-//! Native Unix only in effect: the transport is a Unix socket, and the
-//! crate compiles elsewhere (the workspace is type-checked for
-//! `wasm32-unknown-unknown`) with the connection stubbed to fail
-//! naming the gap, as the server does.
+//! Native only in effect: the transport is a Unix socket, or the app's
+//! named pipe on Windows (#169), and the crate compiles elsewhere (the
+//! workspace is type-checked for `wasm32-unknown-unknown`) with the
+//! connection stubbed to fail naming the gap.
 //!
 //! The lints below are CODE_CONVENTIONS §9's `unwrap()` rule in its
 //! editor-time form; `baumhard::util::unwrap_posture` is the gate.
@@ -34,24 +34,26 @@
 mod assemble;
 mod cli;
 // The frame reader, the greeting check and the connection's constants
-// are read only by the Unix client. Off Unix the modules compile with
-// nothing draining them — the same shape as `ipc`'s envelope in the app
-// crate, scoped the same way so the Unix lint stays fully armed, and
-// gone when a named-pipe transport (#169) lands.
-#[cfg_attr(not(unix), allow(dead_code))]
+// are read only by the Unix and Windows clients. Elsewhere (the wasm32
+// type-check) the modules compile with nothing draining them, scoped so
+// the native lint stays fully armed.
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 mod client;
 mod help;
 mod params;
 mod render;
 mod run;
 pub mod verbs;
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 mod wire;
 
 #[cfg(all(test, unix))]
 mod loopback_tests;
 #[cfg(all(test, unix))]
 mod testing;
+#[cfg(test)]
+mod words;
 
+pub use client::pipe_path;
 pub use run::{run, Exit, Io};
 pub use wire::{FRAME_CAP, PROTOCOL, REQUEST_CAP};

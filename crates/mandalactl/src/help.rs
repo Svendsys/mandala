@@ -171,6 +171,7 @@ SOCKET
   With no display (a container, CI), add --headless: no window, and a clock that moves only by
   clock.step until clock.set_mode real (format/ipc.md \"Headless and one-shot launches\")
   Name it here with --ipc <path>, or once per shell with:  export MANDALA_IPC=<path>
+  On Windows the value is a pipe name, the app's own --ipc value: --ipc mandala is \\\\.\\pipe\\mandala-mandala
   One client is served at a time. A refusal for that is retried for 2 s, then reported.
 
 ARGUMENTS
@@ -185,7 +186,7 @@ ARGUMENTS
 
 const MIDDLE: &str = "
 FLAGS (anywhere before a bare --)
-  --ipc <path>      the socket (else $MANDALA_IPC)
+  --ipc <path>      the socket, or on Windows the pipe name (else $MANDALA_IPC)
   --json            print the app's reply exactly as received, one JSON line per request, instead of a summary
   --wait-settled    after a command that changes the app, wait until its consequences are rendered
                     (clock.wait until=settled), so the next read or screenshot sees them; refused on
@@ -276,7 +277,7 @@ mod tests {
     use super::*;
     use crate::cli::{parse, Parsed};
     use crate::params::{build_params, tokenize, Signature};
-    use crate::testing::split;
+    use crate::words::split;
 
     /// Run a taught command line through the real parser and argument
     /// builder, returning the command it names.
