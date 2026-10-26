@@ -321,6 +321,119 @@ pub fn do_siblings_of_resolves_to_same_kind_siblings() {
     assert_eq!(value(&f.tree, root), 0);
 }
 
+// ── kind before nesting ───────────────────────────────────────────
+
+#[test]
+fn test_apply_at_decides_nesting_among_anchors_of_the_root_kind() {
+    do_apply_at_decides_nesting_among_anchors_of_the_root_kind();
+}
+
+/// With `[a, b]` as anchors — `a` of kind `Marked`, `b` a `Plain`
+/// child of it — a reaching mutator rooted at `Plain` does not apply at
+/// `a`, so `a` cannot stand in for `b`: `b` stays an anchor and is
+/// walked, its child with it, whichever order the anchors are listed
+/// in. Only `b` is seeded. The contrast: with `a` of the root's kind,
+/// `b` is dropped and reached once through `a`.
+pub fn do_apply_at_decides_nesting_among_anchors_of_the_root_kind() {
+    let fixture = |a_element: TestElement| {
+        let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
+        let root = tree.root;
+        let a = add(&mut tree, root, a_element);
+        let b = add(&mut tree, a, TestElement::new(0, 10));
+        let below = add(&mut tree, b, TestElement::new(0, 100));
+        (tree, a, b, below)
+    };
+    let mut reaching = only(Mutator::new(TestMutation::Add(1), plain(0)));
+    let mroot = reaching.root;
+    add_mutator(&mut reaching, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
+
+    for listed_b_first in [false, true] {
+        let (mut tree, a, b, below) = fixture(TestElement::marked(0, 1));
+        let anchors = if listed_b_first { vec![b, a] } else { vec![a, b] };
+        let seeded = Cell::new(0);
+        let seed_for = |tree: &Tree<TestElement>, id: NodeId| {
+            seeded.set(seeded.get() + 1);
+            ancestors_sum(tree, id)
+        };
+        reaching
+            .apply_at(&mut tree, &Anchors::Nodes(anchors), seed_for)
+            .unwrap();
+        assert_eq!(value(&tree, a), 1, "the Marked anchor is not the root's kind");
+        assert_eq!(
+            value(&tree, b),
+            11,
+            "b is walked though a lists above it ({listed_b_first})"
+        );
+        assert_eq!(value(&tree, below), 101, "and the walk continues below b");
+        assert_eq!(seeded.get(), 1, "only the anchor walked is seeded");
+    }
+
+    let (mut tree, a, b, below) = fixture(TestElement::new(0, 1));
+    reaching
+        .apply_at(&mut tree, &Anchors::Nodes(vec![a, b]), ancestors_sum)
+        .unwrap();
+    assert_eq!(value(&tree, a), 2, "the contrast: a of the root's kind is walked");
+    assert_eq!(value(&tree, b), 11, "and b is reached once, through a");
+    assert_eq!(value(&tree, below), 100);
+}
+
+// ── resolution ────────────────────────────────────────────────────
+
+#[test]
+fn test_anchors_are_resolved_once_and_walked_in_tree_order() {
+    do_anchors_are_resolved_once_and_walked_in_tree_order();
+}
+
+/// Anchors are seeded — and walked — in tree order, whatever order they
+/// are named in: siblings of different keys by key, siblings of one key
+/// by their place in the row, an ancestor before its subtree. A node
+/// named by several of the given nodes is one anchor: `SiblingsOf`
+/// three siblings names each of them twice, and each is seeded once.
+pub fn do_anchors_are_resolved_once_and_walked_in_tree_order() {
+    let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
+    let root = tree.root;
+    let high = add(&mut tree, root, TestElement::new(1, 1));
+    let first = add(&mut tree, root, TestElement::new(0, 2));
+    let second = add(&mut tree, root, TestElement::new(0, 3));
+    let inner = add(&mut tree, first, TestElement::new(0, 4));
+    assert_eq!(
+        row(&tree, root),
+        vec![2, 3, 1],
+        "precondition: the row is Plain 0 (first), Plain 0 (second), Plain 1 (high)"
+    );
+
+    let order = std::cell::RefCell::new(Vec::new());
+    let seed_for = |tree: &Tree<TestElement>, id: NodeId| {
+        order.borrow_mut().push(id);
+        ancestors_sum(tree, id)
+    };
+    let root_only = only(Mutator::new(TestMutation::Add(1000), plain(0)));
+    root_only
+        .apply_at(
+            &mut tree,
+            &Anchors::Nodes(vec![high, inner, second, first, high]),
+            seed_for,
+        )
+        .unwrap();
+    assert_eq!(*order.borrow(), vec![first, inner, second, high]);
+    assert_eq!(value(&tree, high), 1001, "named twice, walked once");
+
+    order.borrow_mut().clear();
+    root_only
+        .apply_at(
+            &mut tree,
+            &Anchors::SiblingsOf(vec![high, first, second]),
+            seed_for,
+        )
+        .unwrap();
+    assert_eq!(
+        *order.borrow(),
+        vec![first, second, high],
+        "each sibling once, in tree order"
+    );
+    assert_eq!(row(&tree, root), vec![2002, 2003, 2001]);
+}
+
 // ── seeds ─────────────────────────────────────────────────────────
 
 #[test]

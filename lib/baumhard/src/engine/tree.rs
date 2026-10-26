@@ -371,9 +371,10 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// Apply this mutator tree anchored at `tree`'s root:
     /// [`Self::apply_at`] with the root as its one anchor and `seed` as
     /// the root's parent's inherited state. The mutator's root applies
-    /// to the tree's root when their **kinds** match; the root's
-    /// channel is not compared. An element type whose `Inherited` is
-    /// `()` passes `&()`.
+    /// to the tree's root when their **kinds** match — the root's
+    /// channel is not compared — and when they do not, nothing is
+    /// applied anywhere. An element type whose `Inherited` is `()`
+    /// passes `&()`.
     ///
     /// The root is always in the tree, so there is nothing to refuse
     /// and nothing to return. Invalidates `tree`'s cache once more when
@@ -393,32 +394,47 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// Apply this mutator tree at each of `anchors` — typically the
     /// selection — reaching only the anchored subtrees.
     ///
-    /// 1. `anchors` resolves to a concrete, de-duplicated list in tree
-    ///    order; [`Anchors`] says how each form resolves.
-    /// 2. If this mutator reaches below its root
-    ///    ([`Self::reaches_below_root`]), every anchor that has an
-    ///    ancestor in the list is dropped, so a subtree mutation reaches
-    ///    each element exactly once. A mutator that touches only its
-    ///    root keeps every anchor.
-    /// 3. `seed_for(tree, anchor)` is called once per remaining anchor,
+    /// 1. `anchors` resolves to a concrete set of nodes, without
+    ///    repeats; [`Anchors`] says how each form resolves.
+    /// 2. Only the nodes whose **kind** is the mutator root's stay
+    ///    anchors — the root's channel is not compared. A mutator's
+    ///    shape is relative to its root, so at a node of another kind it
+    ///    does not apply, and nothing below that node is reached.
+    /// 3. If this mutator reaches below its root
+    ///    ([`Self::reaches_below_root`]), every anchor with another
+    ///    anchor among its ancestors is dropped, so a subtree mutation
+    ///    reaches each element exactly once. Nesting is decided among
+    ///    the anchors of step 2 alone: an anchor is never dropped for an
+    ///    ancestor the root would not apply at. A mutator that touches
+    ///    only its root keeps every anchor.
+    /// 4. `seed_for(tree, anchor)` is called once per remaining anchor,
     ///    **before any anchor is walked**, and returns the inherited
     ///    state of the anchor's **parent**. Every seed therefore
     ///    reflects the tree as it was before the call.
-    /// 4. At each anchor, in tree order, the mutator's root applies to
-    ///    the anchor element if their **kinds** match — the root's
-    ///    channel is not compared — and the walk continues below as
-    ///    any walk does. At an anchor of another kind nothing is
-    ///    applied, at the anchor or below it.
+    /// 5. The remaining anchors are walked in tree order: the root
+    ///    applies to the anchor element and the walk continues below as
+    ///    any walk does.
     ///
-    /// All or nothing: every anchor is validated before any is walked,
-    /// and one that is not in the tree is [`TreeError::StaleNode`],
-    /// with nothing applied.
+    /// All or nothing: every given node is validated — in the tree,
+    /// under its root — before anything is resolved or walked, and one
+    /// that is not is [`TreeError::StaleNode`], with nothing applied
+    /// and no seed taken.
     ///
-    /// Invalidates `tree`'s cache when it applied anything. Cost:
-    /// resolving is O(anchors × (depth + the siblings before each
-    /// ancestor)), with one path `Vec` per anchor and one seed per
-    /// kept anchor; then one walk per kept anchor — O(matching pairs
-    /// below it).
+    /// Invalidates `tree`'s cache. Cost, with `g` given nodes, `k`
+    /// resolved anchors and `d` the depth they sit at:
+    /// - validating is O(g × d) — one walk up to the root per distinct
+    ///   given node;
+    /// - resolving is O(g) for [`Anchors::Nodes`] and
+    ///   [`Anchors::ParentOf`]; [`Anchors::SiblingsOf`] scans the row of
+    ///   each distinct parent of the given nodes once, which is what it
+    ///   resolves to;
+    /// - a single anchor needs nothing more; for `k > 1`, one path
+    ///   `Vec` of length `d` per anchor, O(k × d) to drop nested
+    ///   anchors, and an O(k log k × d) sort — siblings of different
+    ///   keys order by key in O(1), and a row is scanned once, the
+    ///   first time two anchors part on equal keys in it;
+    /// - then one seed and one walk per kept anchor, O(matching pairs
+    ///   below it). Nothing is proportional to the rest of the tree.
     pub fn apply_at<F>(&self, tree: &mut Tree<E>, anchors: &Anchors, seed_for: F) -> Result<(), TreeError>
     where
         F: Fn(&Tree<E>, NodeId) -> E::Inherited,

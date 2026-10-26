@@ -1687,6 +1687,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("apply_at_drops_anchors_nested_in_another", |b| {
         b.iter(do_apply_at_drops_anchors_nested_in_another)
     });
+    c.bench_function("apply_at_decides_nesting_among_anchors_of_the_root_kind", |b| {
+        b.iter(do_apply_at_decides_nesting_among_anchors_of_the_root_kind)
+    });
+    c.bench_function("anchors_are_resolved_once_and_walked_in_tree_order", |b| {
+        b.iter(do_anchors_are_resolved_once_and_walked_in_tree_order)
+    });
     c.bench_function("apply_at_walks_a_repeated_anchor_once", |b| {
         b.iter(do_apply_at_walks_a_repeated_anchor_once)
     });

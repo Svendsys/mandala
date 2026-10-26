@@ -226,13 +226,17 @@ Two entry points, both over the walker. `apply_at(&mut target,
 &anchors, seed_for)` walks from **anchors** — typically the
 selection: `Anchors::Nodes`, `ParentOf` (the distinct parents) or
 `SiblingsOf` (each node's same-kind siblings). The anchors resolve to
-a de-duplicated list in tree order; when the mutator reaches below its
-root, an anchor inside another anchor's subtree is dropped, so a
-subtree mutation reaches each element once; at each anchor the
-mutator's root applies when the **kinds** match, channels not
-compared. Every anchor's seed is taken before any anchor is walked,
-and a stale anchor refuses the whole call with nothing applied.
-`apply_to(&mut target, &seed)` is `apply_at` anchored at the root.
+a de-duplicated set, of which only the nodes of the mutator root's
+**kind** stay anchors (channels not compared): a mutator's shape is
+relative to its root, so at a node of another kind it applies nothing,
+there or below. Among those, when the mutator reaches below its root,
+an anchor inside another anchor's subtree is dropped, so a subtree
+mutation reaches each element once; the rest are walked in tree order.
+Every anchor's seed is taken before any anchor is walked, and a stale
+anchor refuses the whole call with nothing applied. The resolution
+costs work in the anchors and their rows, never in the rest of the
+tree. `apply_to(&mut target, &seed)` is `apply_at` anchored at the
+root.
 
 **Inherited state.** Some mutations need a value their element
 inherits rather than stores. The walker carries `E::Inherited` down
