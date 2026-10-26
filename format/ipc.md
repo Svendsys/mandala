@@ -364,6 +364,16 @@ is what a hostile map can do (nothing more than on native). Nothing is
 exposed beyond this machine, and nothing without a user who started a
 relay and loaded a page with its URL.
 
+**Where the token is printed.** The relay prints both URLs once, at
+startup. Every line the app and `mandalactl` write shows a relay URL
+redacted past its role (`ws://127.0.0.1:41816/app/…`) — the page's
+logs, a browser message the page logs, and every `--ws` error. One
+line is outside the page's control: the browser itself writes
+`WebSocket connection to 'ws://…/app/<token>' failed` to its own
+console on every failed connect and reconnect. It is not captured into
+a reply's `warnings`, but it is in the console, so treat a console
+capture from an IPC-enabled page as holding the token.
+
 ### Headless and one-shot launches
 
 `--ipc` is one of four launch flags this protocol's users reach for;
