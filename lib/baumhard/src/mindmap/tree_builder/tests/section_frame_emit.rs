@@ -346,8 +346,9 @@ fn test_section_frames_focused_uses_focused_canvas_default() {
 }
 
 /// `focused = true` with only the unfocused canvas default set
-/// falls through to the unfocused config. Pins the `default_focused.or(default_unfocused)`
-/// branch in `resolve_section_frame_border`.
+/// falls through to the unfocused config. Pins the
+/// `default_focused.or(default_unfocused)` branch in
+/// `resolve_section_frame_border`.
 #[test]
 fn test_section_frames_focused_falls_back_to_unfocused_canvas_default() {
     use crate::mindmap::model::GlyphBorderConfig;

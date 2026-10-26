@@ -2071,9 +2071,8 @@ fn node_edit_mode_rebuild_benchmark(c: &mut Criterion) {
     });
 }
 
-/// The pure
-/// quadrant-math helper; sub-microsecond per call. Pin against
-/// the eight quadrant cases.
+/// The pure quadrant-math helper; sub-microsecond per call. Pin
+/// against the eight quadrant cases.
 fn fast_resize_anchor_inference_benchmark(c: &mut Criterion) {
     use baumhard::mindmap::tree_builder::infer_resize_anchor;
     use glam::Vec2;
@@ -2098,10 +2097,9 @@ fn fast_resize_anchor_inference_benchmark(c: &mut Criterion) {
     });
 }
 
-/// Isolates the
-/// section-frame scene-builder pass against a 50×5 synthetic
-/// map; pins the chrome-emission cost separate from the rest of
-/// the scene rebuild.
+/// Isolates the section-frame scene-builder pass against a 50×5
+/// synthetic map; pins the chrome-emission cost separate from the
+/// rest of the scene rebuild.
 fn section_frame_emission_benchmark(c: &mut Criterion) {
     use baumhard::mindmap::tree_builder::build_section_frames;
     let bench_map = synthetic_multi_section_map(50, 5);

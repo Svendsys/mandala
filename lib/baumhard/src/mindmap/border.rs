@@ -1374,8 +1374,8 @@ pub fn resolve_section_frame_border(
 ) -> BorderStyle {
     // Slot-level cascade — same shape as `resolve_border_style`.
     // The per-section override wins whole; otherwise the
-    // canvas-level default for the focused / unfocused state. When neither is set we
-    // synthesize a hardcoded floor `GlyphBorderConfig` so the
+    // canvas-level default for the focused / unfocused state.
+    // When neither is set we synthesize a hardcoded floor `GlyphBorderConfig` so the
     // returned `BorderStyle` flows through the same resolver every
     // other border consumes — the floor is just another author
     // default that authors can override at any cascade level.
