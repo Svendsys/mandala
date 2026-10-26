@@ -5,7 +5,7 @@
 [`UNIFIED_ARCHITECTURE_ISSUES.md`](./UNIFIED_ARCHITECTURE_ISSUES.md).
 **Delivery:** an integration branch, `epic/unified-mutations`; `main`
 receives one switch-over merge when V1 is complete (§17).
-**Compatibility:** none (CODE_CONVENTIONS §10). The app has no users. The file format, the
+**Compatibility:** none. The app has no users. The file format, the
 mutation format, the in-memory model and every internal API are
 redesigned to fit one architecture; nothing is kept to cater to the
 current shape.
@@ -34,13 +34,18 @@ develops it.
 | D7 | A map exposes **verbs**: named step sequences that triggers, links, the console and IPC invoke. Map verbs replace the map- and node-level macro tiers. | §11 |
 | D8 | Frames, connections, sections and labels are all **TextFlows**: spans laid out in a box or along a path. A frame is text along the node's outline; a connection is text along its curve. | §6 |
 | D9 | Glyphs are never rotated. Curves are made by **positioning** upright glyphs, the way ASCII art makes curves. | §6 |
-| D10 | Frame fit mode, start point and direction are per-frame settings. Frames hold rings (stanzas). Frame font size is relative to the node's size. | §6 |
+| D10 | Frame fit mode, start point and direction are per-frame settings. Frames hold rings (stanzas). Frame font size is relative to the node's size. There is no "grow the node" fit mode for frames; `fit` scales both font size and spacing so the text goes around exactly once. | §6 |
 | D11 | Corner radius is a percentage of half the node's shorter side: 0% sharp, 100% fully round (circle on a square, pill on a rectangle). Capped at 100. | §6 |
 | D12 | The node background stays a shader fill, shaped to match the frame (rounded rectangle, ellipse), with a configurable soft fade at its edge. | §13 |
 | D13 | Deleted, not deferred: node `notes`, underline, node `layout`, `show_shadow` (shadow is deferred to V2), border `padding`, edge `width`, edge `line_style`, the `OnKey` trigger, `corner_radius_percent` / `frame_thickness` as they exist today (replaced by D10/D11). Edge width and line style are expressed through connection content and relative size. | §5 |
 | D14 | Kept and made real: bold, italic, per-span font size, hyperlinks (links target a URL or a verb), node-level hover. | §5, §11 |
 | D15 | Every stage after load does work proportional to what changed. No full-scene rebuild, scan or signature pass on an edit. | §2, §12, §13 |
-| D16 | Delivery on an integration branch; `main` gets one merge. Features may be temporarily absent on the branch between the cut-over and their sub-issue; `main` never sees that. | §17 |
+| D16 | Delivery on an integration branch; `main` gets one merge. `main` is frozen for the duration — no fixes land there. Features may be temporarily absent on the branch between the cut-over and their sub-issue; `main` never sees that. | §17 |
+| D17 | Presentations change fields only — never structure — but they may **hide** nodes and change their **opacity**, so a map can expand sequentially for the viewer. | §5.6, §10.2 |
+| D18 | Undo history is bounded: default 50 entries, configurable in the user's `settings.json`. | §8.2 |
+| D19 | The file extension is `.mandala.json`. | §7.2 |
+| D20 | Keys bound to map verbs wait for the V2 trigger design. | §11.2 |
+| D21 | The theme stores its variants and the *name* of the active one; the live values are read from the active variant, never stored as a second copy. | §5.3, §7 |
 
 ---
 
@@ -236,9 +241,10 @@ and sorts both rows at every visited node (`collect_sorted_children`).
 
 ```rust
 pub trait Mutation<E: TreeElement>: Clone {
-    /// Apply to one element. The journal sink records the element's
-    /// before-image the first time it is touched within a journal.
-    fn apply(&self, target: &mut E, sink: &mut JournalSink<'_, E>);
+    /// Apply to one element. Mutations know nothing about journals:
+    /// the walker records the element's before-image the first time
+    /// it touches the element within a journal (§4.5).
+    fn apply_to(&self, target: &mut E);
 }
 
 pub enum Mutator<E: TreeElement, M: Mutation<E>> {
@@ -251,8 +257,11 @@ pub enum Mutator<E: TreeElement, M: Mutation<E>> {
 pub type MutatorTree<E, M> = /* arena of Mutator<E, M> + root */;
 ```
 
-`GfxMutator` becomes `Mutator<GfxElement, GfxMutation>`; the document
-uses `Mutator<DocElement, DocMutation>` (§5). Instructions keep their
+`GfxMutator` becomes `Mutator<GfxElement, GfxMutation>` (today's
+`Mutation` enum is renamed `GfxMutation`); the document uses
+`Mutator<DocElement, DocMutation>` (§5). The glyph instantiation has a
+single element kind (`Kind = ()`), so glyph routing stays
+channel-only, exactly as today; kinds matter for the document. Instructions keep their
 meaning: `RepeatWhile(Predicate)`, `MapChildren`, and
 `SpatialDescend(point)` — the last available only for element types
 that implement `Spatial` (glyph elements do; document elements do
@@ -322,9 +331,11 @@ impl<E> Journal<E> {
 }
 ```
 
-- A field entry is written once per element per journal (the first
-  touch records `before`; `after` is filled when the journal closes),
-  so a mutator that touches a node many times costs one entry.
+- A field entry is written once per element per journal: the
+  **walker** records `before` immediately before its first
+  `apply_to` on that element, and `after` is read when the journal
+  closes. A mutator that touches a node many times costs one entry,
+  and no `Mutation` implementation can forget to journal.
 - `revert` and `replay` are exact. Undo and redo are `revert` and
   `replay`; nothing is re-evaluated, so an undo can never disagree
   with what the edit did.
@@ -354,7 +365,7 @@ animation code.
 - No string compares or hashing on the walk; keys are `Copy` integers.
 - Journals allocate per touched element, not per visited element.
 - Every new primitive in this section ships a bench entry beside it
-  (baumhard CONVENTIONS §B8); `cargo check --workspace --benches`
+  (baumhard CONVENTIONS §B3/§B7); `cargo check --workspace --benches`
   proves they build. Benchmarks are not run by agents (CLAUDE.md §6),
   and no performance claim is made — work removed is stated as a fact
   visible in the diff.
@@ -374,7 +385,7 @@ transaction, the presentation runtime — and holds a `Document`.
 
 ```
 Map                       (root; exactly one)
-├─ Theme                  variables (name → RGBA), variants (name → variable set)
+├─ Theme                  variants (name → variables: name → RGBA), active (a variant name)
 ├─ Palette*               ordered color groups (fill / frame / text / title per depth)
 ├─ Defaults               per-field defaults for frames, rings, connectors, links, labels, spans
 └─ Node*                  roots, in sibling order
@@ -468,8 +479,20 @@ V1); this is the shape.
 
 - **Node:** `id`, `position`, `min_size?`, `shape`, `fill?`,
   `fill_fade?` (edge fade width, D12), `palette?`, `zoom?` (min/max),
-  `folded`, `on { click?, hover? }` (verb refs, §11), and text
-  defaults (`font?`, `size?`, `color?`) inherited by its spans.
+  `folded`, `hidden`, `opacity`, `on { click?, hover? }` (verb refs,
+  §11), and text defaults (`font?`, `size?`, `color?`) inherited by
+  its spans.
+  - `hidden: bool` (default `false`): the node, its subtree, its
+    connector and every link touching the subtree are not projected
+    and cannot be hit. Unlike `folded`, which collapses a node's
+    descendants and keeps the node, `hidden` removes the node itself.
+  - `opacity: f32` in `0.0..=1.0` (default `1.0`): multiplies the
+    alpha of everything the node draws — fill, frame, sections,
+    connector — and **multiplies down the subtree**, so fading a
+    node fades its descendants. Interpolates.
+  - Both exist mainly for presentations (D17, §10.2): a sequential
+    reveal is a `hold` presentation that sets `hidden` / `opacity`
+    on the nodes still to come, stopped node by node.
 - **Section:** `offset`, `min_size?`, `align?`, text defaults.
 - **Frame:** `visible`, `start`, `direction`, `fit`, `gap` (between
   rings), `inset` (distance from the outline), text defaults.
@@ -550,7 +573,7 @@ When a flow's text is shorter or longer than its path:
 | `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing | ✓ | ✓ |
 | `repeat` | Text repeated until the path is full; the last repetition is cut at a grapheme boundary | ✓ | ✓ (default — a `─` pattern) |
 | `spread` | Text placed once with extra spacing distributed so it ends exactly at the path's end | ✓ | ✓ |
-| `fit` | The ring's font is scaled so the text fills the path exactly once | ✓ (default) | ✓ |
+| `fit { min, max }` | Font size **and** spacing are scaled so the text fills the path exactly once (algorithm below) | ✓ (default) | ✓ |
 
 **There is no "grow the node" mode for frames.** Ring font size is
 relative to the node's size (D10), so the text's length and the
@@ -558,6 +581,23 @@ outline's perimeter scale together; growing the node never makes the
 text fit. `fit` is the mode that answers "the poem, exactly once,
 all the way around." (Box flows — sections and labels — grow their
 box, D5.)
+
+**The `fit` algorithm.** Let `L` be the flow's natural length along
+the path at its declared size (the sum of §6.2 steps), and `P` the
+path's length. Every step scales linearly with font size, so a scale
+factor `s` gives length `s · L`.
+
+1. `s = clamp(P / L, min, max)` (defaults `min = 0.5`, `max = 2.0`;
+   both are multiples of the ring's declared size).
+2. Lay the text out at `s ×` the declared size.
+3. The remaining difference `P − s · L` — zero unless step 1 clamped
+   — is distributed as equal extra spacing between glyphs (negative
+   when the text is too long), so the last glyph ends exactly at the
+   path's end.
+4. If the text is still too long at `min` with spacing reduced to
+   zero gap between glyph extents, it is cut at the last grapheme
+   boundary that fits. Spacing never goes below zero gap: glyphs
+   never overlap.
 
 `start` (a point on the outline: a corner or a side plus a fraction)
 and `direction` (clockwise / counter-clockwise) are per frame;
@@ -652,9 +692,9 @@ structure of the tree: a node's children are nested inside it.
 - **Platform limits.** `MAX_MAP_BYTES` (wasm32 only, platform physics)
   stays as it is. `MAX_UNKNOWN_KEYS` is deleted with the mechanism it
   bounded.
-- **Extension.** Proposed: `.mandala.json`, so a file in the old
-  format is never mistaken for one in the new (open question in the
-  issues draft).
+- **Extension.** `.mandala.json` (D19), so a file in the old format
+  is never mistaken for one in the new. The WASM build's `?map=`
+  parameter and every tool accept only this extension.
 
 ### §7.3 What happens to existing maps and tools
 
@@ -712,8 +752,11 @@ build an `EditRequest` and call it (or the transaction API, §9).
   history entry: its journal, its `ChangeSource` and its label. Undo
   reverts, redo replays (§4.5); a new apply clears the redo branch.
   A multi-selection edit is one request with several anchors — one
-  entry. The history is bounded by a configured entry count; dropping
-  the oldest entry frees the subtrees its journal detached.
+  entry. The history holds at most `history_limit` entries (D18):
+  default **50**, set in the user's `settings.json` (a new file in the
+  existing `user_config` layering — the XDG config directory on
+  native, `localStorage` on wasm32). Dropping the oldest entry frees
+  the subtrees its journal detached.
 - **Revision and dirty.** Every apply, commit, undo and redo advances
   the revision. `dirty` is `revision != saved_revision`, so undoing
   back to the saved state is clean again.
@@ -795,7 +838,7 @@ different console commands, different rules.
 | Marks the map changed | Yes | No |
 | Document revision | Advances | Unchanged (has its own presentation epoch for IPC events) |
 | Animation | Optional — animates into place, then commits | The usual case |
-| Structural commands | Allowed | Not allowed (load error) |
+| Structural commands | Allowed | Not allowed (load error) — but `hidden` and `opacity` are fields, so presentations can hide, reveal and fade nodes (D17) |
 | Typical triggers | Key binding, console, command; a verb step | Hover, click, links, verbs |
 | Examples | flower layout, tree cascade, grow font | hover lift, click pulse, shimmer, reveal |
 
@@ -856,6 +899,27 @@ on the console. "Persistent", "Toggle" and `target_scope` are gone.
   target's projected glyph runs — per-glyph offsets, colors and scale
   within a TextFlow run (§13.2). These are effects with no meaning
   in the data: wave, shimmer, jitter.
+
+**Sequential reveal (D17).** A map that expands for the viewer is
+built from two verbs and one presentation, with no special mechanism:
+
+```json
+"presentations": [
+  { "id": "concealed", "play": "hold",
+    "mutator": { "…": "set hidden = true, opacity = 0" },
+    "return": { "ms": 400 } }
+],
+"verbs": [
+  { "id": "begin", "steps": [ { "present": "concealed", "on": { "channel": 1, "within": "map" } } ] },
+  { "id": "next-1", "steps": [ { "stop": "concealed", "on": { "nodes": [4] } } ] }
+]
+```
+
+`begin` conceals every channel-1 node; each `next-*` verb stops the
+presentation on one node, which plays its `return` — `hidden`
+switches off at the start of the return (`snap: start`) and `opacity`
+animates back to 1. The saved map always shows every node; the
+concealment exists only while it is being performed.
 
 **The presentation layer.** Active presentation instances form a
 layer on top of the document:
@@ -1005,6 +1069,10 @@ Typical chains:
   theme — and nothing else.
 - Palette or `Defaults` field → elements whose resolution read it.
 - `folded` → the descendants' projection is removed or added.
+- `hidden` → the node's subtree, its connector and links touching the
+  subtree are unprojected or projected.
+- `opacity` → the alpha of every glyph run and fill the node and its
+  descendants draw (opacity multiplies down the subtree).
 - Structural insert / remove / move → the subtree is projected,
   unprojected or re-placed; depth-dependent palette reads in a moved
   subtree are re-resolved.
@@ -1181,9 +1249,10 @@ structural command, sorted merge, placement) and are type-checked by
 ### §17.1 The branch
 
 `epic/unified-mutations` is cut from `main`. Every V1 sub-issue's PR
-targets it and leaves it green under `./test.sh --lint`. `main` takes
-only fixes during the epic; the branch merges `main` at each phase
-boundary. When V1 is complete, the branch merges into `main` once.
+targets it and leaves it green under `./test.sh --lint`. `main` is
+frozen for the duration of the epic (D16): nothing lands there, so
+the branch never needs to merge `main`. When V1 is complete, the
+branch merges into `main` once.
 
 Between the cut-over (phase C) and the behavior sub-issues (phase D),
 custom edits, animations and triggers may be absent on the branch.
@@ -1191,36 +1260,79 @@ Tests for absent features are deleted with the code they test and
 rewritten with the replacement — never skipped. `main` never sees the
 gap.
 
-### §17.2 Phases
+### §17.2 Sub-issues and order
 
-```
-A  Engine (baumhard only; the app is unchanged)
-   A1 generic engine ── A2 routing, sorted children, anchored walks
-                      ├─ A3 structural commands
-                      └─ A4 journals + interpolation
-B  Document and flows (baumhard only; built and tested, not yet wired)
-   B1 document types, typed values, inheritance ── B2 format: loader, saver
-   B3 document mutation vocabulary ── B4 one writer, history, transactions
-   B5 TextFlow layout and path placement
-   B6 projection, dependency index, oracle
-C  Cut-over (the app moves to the document)
-   C1 renderer: positioned glyph runs (spike first), fills, journal-driven buffers
-   C2 app cut-over: reads, writers, transactions, hit testing, IPC addressing,
-      map conversion, deletion of the old model
-D  Behavior
-   D1 edits on the walker; handlers return mutators; animated edits
-   D2 presentation layer
-   D3 verbs, triggers, links
-E  Tools, docs, merge
-   E1 maptool on Document
-   E2 docs rewrite (CONCEPTS, conventions, format/, CLAUDE.md)
-   E3 switch-over merge into main
+The V1 epic's sub-issues, with what each is blocked by. The epic
+issue carries the same graph with issue numbers; where they differ,
+the epic is updated, then this table.
+
+| Id | Sub-issue | Blocked by |
+|---|---|---|
+| A1 | Generic engine: tree, mutator, walker, predicate, AST | — |
+| A2 | Routing keys, sorted children, anchored walks | A1 |
+| A3 | Journals and interpolation | A2 |
+| A4 | Structural commands | A3 |
+| B1 | Document types, typed values, inheritance | A2 |
+| B2 | Format: schema, loader, saver | B1 |
+| B3 | Document mutation vocabulary | A4, B1 |
+| B4 | Document writer: apply, history, transactions | B3 |
+| B5 | TextFlow: layout and path placement | B1 |
+| B6 | Glyph instantiation: `GlyphRun` and `Fill` elements | B5 |
+| B7 | Projection: glyph layers, captured dependencies, oracle | B4, B6 |
+| C1 | Renderer spike: drawing positioned glyphs | B6 |
+| C2 | Renderer: runs, fills, journal-driven buffers | C1, B7 |
+| C3 | App cut-over: the app runs on the document | B2, B7, C2 |
+| C4 | Structure editing: create, delete, reparent, connect, clipboard | C3 |
+| C5 | Field editing I: nodes, sections, frames, theme, defaults | C3 |
+| C6 | Field editing II: connectors, links, portals, labels | C3 |
+| C7 | Transactions: drags, resizes, color picker, previews | C3 |
+| C8 | Text editing on spans | C3 |
+| D1 | Edits | C3 |
+| D2 | Presentations | C3 |
+| D3 | Map verbs, triggers, links | D1, D2 |
+| E1 | maptool on the document | C3 |
+| E2 | IPC: journal events, queries, protocol version | D3 |
+| E3 | Feature-parity audit | C4, C5, C6, C7, C8, D3, E1, E2 |
+| E4 | Documentation rewrite | E3 |
+| E5 | Switch-over merge into `main` | E4 |
+
+```mermaid
+graph LR
+  A1 --> A2 --> A3 --> A4
+  A2 --> B1
+  A4 --> B3
+  B1 --> B3 --> B4
+  B1 --> B2
+  B1 --> B5 --> B6
+  B4 --> B7
+  B6 --> B7
+  B6 --> C1
+  C1 --> C2
+  B7 --> C2
+  B2 --> C3
+  B7 --> C3
+  C2 --> C3
+  C3 --> C4 & C5 & C6 & C7 & C8 & D1 & D2 & E1
+  D1 --> D3
+  D2 --> D3
+  D3 --> E2
+  C4 & C5 & C6 & C7 & C8 & D3 & E1 & E2 --> E3
+  E3 --> E4 --> E5
 ```
 
-A and B can proceed in parallel lanes after A1/B1; C1's spike can
-start as soon as B5 defines a placed run. C2 is the one large PR;
-it is done by one owner, in ordered commits, because the app cannot
-hold two models at once.
+**Why this order.** The engine comes first because everything is
+built on it, and its journal precedes structural commands because a
+structural removal is only reversible once a journal can own the
+detached subtree. The document is built and tested in baumhard
+before the app touches it, so the cut-over (C3) wires finished,
+tested parts rather than designing them under pressure. The renderer
+spike (C1) runs as soon as the placed-run type exists, because it is
+the highest technical risk. C3 deletes every editing path of the old
+model along with the model; C4–C8 and D1–D2 then rebuild each family
+on the one writer in parallel, in files that do not overlap. The
+parity audit (E3) is the backstop that nothing the app could do was
+lost by accident, before the docs are rewritten to describe the
+result.
 
 ### §17.3 Definition of done for V1
 
@@ -1251,8 +1363,61 @@ triggers. Each is drafted as a V2 sub-issue so it is ready to pick up.
 
 ## §19 Open questions
 
-1. The file extension: `.mandala.json` (proposed) or keep
-   `.mindmap.json`.
-2. The default history bound (entries).
-3. Whether `edit_bindings` should also accept map verbs in V1, or
-   wait for the V2 trigger design (proposed: wait).
+None. The three questions raised in review were answered as D18
+(history limit), D19 (extension) and D20 (keys to map verbs wait for
+V2). A question that arises during implementation is asked on its
+sub-issue and answered by amending this document (see the header) —
+never by a worker choosing an answer.
+
+---
+
+## §20 Rules for every V1 sub-issue
+
+Every V1 sub-issue repeats these rules verbatim. They exist because
+the drift this design ends was made of reasonable local choices by
+workers who could not see the whole.
+
+1. **Branch and PR.** Branch from `epic/unified-mutations`; open the
+   PR against `epic/unified-mutations`. Never against `main` — this
+   overrides the "PR against the default branch" step of the
+   `implement` skill.
+2. **The design is decided.** This document, on
+   `epic/unified-mutations`, is authoritative together with the
+   issue. The `implement` skill's "clarify the possible paths forward"
+   step does not reopen it: the path is specified. If the
+   specification is wrong, contradictory or cannot be followed,
+   **stop**, comment on the issue with the exact conflict and a
+   proposed amendment, and wait for the overseer or the owner. Do not
+   choose an alternative, add a fallback, or keep an old path "for
+   now".
+3. **No compatibility.** Do not keep, wrap, adapt, alias, shim or
+   feature-flag code, formats or names the issue replaces. Replaced
+   code is deleted in the same PR with its tests; tests are rewritten
+   for the new code, never skipped, `#[ignore]`d or weakened.
+4. **One engine.** The document changes only through
+   `Document::apply` or a `Document` transaction — no setter
+   functions, no mutable access to document elements outside
+   `lib/baumhard/src/document/`. Nothing reads the glyph layers to
+   learn what the document is; nothing syncs from the view to the
+   data. No second mutation mechanism — ad-hoc patching, preview
+   slots, parallel caches — beside the mutator path.
+5. **No unnecessary work.** No full rebuild, scan or signature pass in
+   response to an edit; no string parsing outside load; no allocation
+   per visited node on a walk; caches are invalidated by journals and
+   the dependency index, never by convention. Work removed is stated
+   as a structural fact; no performance claims; no benchmark runs
+   (CLAUDE.md §6) — `cargo check --workspace --benches` proves bench
+   targets build.
+6. **Scope.** Do exactly the issue. A defect in code a later V1
+   sub-issue deletes is not fixed (note it on the epic if the
+   replacement must avoid it). A defect in code that survives is
+   fixed in the PR if it is in the issue's area, otherwise reported on
+   the epic.
+7. **Gate.** `./test.sh --lint` green on native and wasm32, GPU tests
+   included where present. The doc gates flag prose that names deleted
+   items; fix that prose in the same PR.
+8. **Docs move with code.** A format surface the issue defines is
+   documented under `format/` in the same PR. A change to this design
+   document needs the owner's approval on the issue first, and then
+   lands in the same commit as the code that needs it.
+9. **American English** (CLAUDE.md §5).
