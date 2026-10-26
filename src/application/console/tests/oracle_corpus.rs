@@ -60,6 +60,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // there for why they are not, and what a prefix let through.
     (Sel::Node, "border show"),
     (Sel::Node, "border show verbose"),
+    (Sel::Node, "border show verbos"),
     (Sel::Node, "border show side=top"),
     (Sel::Node, "border reset"),
     (Sel::Node, "border nope"),
@@ -302,6 +303,10 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "mutation"),
     (Sel::Node, "mutation list"),
     (Sel::Node, "mutation list --all"),
+    // A `--` word that is not the flag is refused by name, not taken
+    // for a filter that matches nothing (#135).
+    (Sel::Node, "mutation list --al"),
+    (Sel::Node, "mutation list sec dec"),
     (Sel::Node, "mutation apply"),
     (Sel::Node, "mutation apply no-such-mutation"),
     (Sel::Node, "mutation help"),
@@ -410,11 +415,15 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // spelling, but only five verbs honored it on the execute
     // side, so a word the popup listed could still be refused
     // when typed out. One row per verb whose dispatch normalizes,
-    // each the upper-case twin of a row above.
+    // each the upper-case twin of a row above — and one per
+    // closed-vocabulary slot word, which follows the same rule
+    // (`border show VERBOSE`, `mutation list --ALL`; the second
+    // answered as a substring filter until #135).
     (Sel::Node, "help ALL"),
     (Sel::Node, "help BORDER"),
     (Sel::Node, "border PRESET heavy"),
     (Sel::Node, "border PREVIEW COMMIT"),
+    (Sel::Node, "border show VERBOSE"),
     (Sel::Node, "canvas BORDER PRESET heavy"),
     (Sel::Node, "canvas SECTION-FRAME FOCUSED show"),
     (Sel::Node, "color PICKER ON"),
@@ -423,6 +432,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::EdgeLabel, "label CLEAR"),
     (Sel::Node, "mode DEFAULT"),
     (Sel::Node, "mutation LIST"),
+    (Sel::Node, "mutation list --ALL"),
     (Sel::Node, "node FIT"),
     (Sel::TwoSectionNode, "section FRAME SHOW"),
     (Sel::Section, "section frame PREVIEW commit"),
@@ -664,6 +674,7 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::EdgeLabel, "label CL"),
     (Sel::Node, "mode D"),
     (Sel::Node, "mutation LI"),
+    (Sel::Node, "mutation list --AL"),
     (Sel::Node, "node R"),
     (Sel::TwoSectionNode, "section FRAME "),
     (Sel::TwoSectionNode, "section frame PREVIEW "),
