@@ -124,7 +124,11 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # from `strum_macros` and `wasm-bindgen-backend`. Asking for less there
 # does not mean compiling against less — see
 # `lib/mandala_derive/Cargo.toml`.
-syn = { workspace = true, features = ["full"] }
+# `visit` is for `util::source_scan::section_growths_in`, which walks
+# fn bodies as syntax rather than as lines, so a rustfmt-wrapped
+# `node.sections\n    .push(` chain is the same growth as the one-line
+# spelling (#208). Test-only, like the rest of this entry.
+syn = { workspace = true, features = ["full", "visit"] }
 # `util::source_scan` excises `#[cfg(test)]` items from a file's text
 # and has to leave the surviving lines *at their own line numbers*, so
 # a guard reporting an offender can say `file:line`. That needs the

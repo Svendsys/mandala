@@ -110,7 +110,6 @@ pub use types::{
 // callers across the application crate that already
 // `use crate::application::document::*` for the doc API don't have
 // to reach across into baumhard's tree_builder for the value type.
-pub use baumhard::mindmap::model::MAX_SECTIONS_PER_NODE;
 pub use baumhard::mindmap::tree_builder::InteractionModeOverrides;
 pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode

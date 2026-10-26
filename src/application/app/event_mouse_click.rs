@@ -305,7 +305,8 @@ pub(super) fn handle_mouse_input(
                     .renderer
                     .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
 
-                // Double-click detection. If this press within the
+                // Double-click detection, below the grab captures that
+                // decide whether it runs. If this press within the
                 // double-click window matches the previous one (same
                 // hit target, within time + distance), dispatch:
                 //  - Double-click on a node → open the text editor.
@@ -329,70 +330,10 @@ pub(super) fn handle_mouse_input(
                     portal_icon_hit,
                     edge_label_hit,
                 } = parts;
-                // Suppress the double-click → open-editor gesture when
-                // an editor is already open on the click's target. The
-                // two editor states are mutually exclusive by
-                // construction (the event-keyboard dispatch steals on
-                // whichever is open first), so one match suffices.
-                // Without this guard for the single-line editor, a
-                // double-click while editing would call
-                // `open_single_line_edit` a second time, which
-                // re-seeds the buffer from the committed model
-                // value and silently destroys the in-progress edit.
-                let single_line_match = ctx
-                    .single_line_edit_state
-                    .target()
-                    .map(|t| t.matches_press_hit(edge_label_hit.as_ref(), portal_text_hit.as_ref()))
-                    .unwrap_or(false);
-                let already_editing_same_target = super::already_editing_same_target(
-                    ctx.text_edit_state.node_id(),
-                    hit_node.as_deref(),
-                    single_line_match,
-                );
-                let is_dblclick = !already_editing_same_target
-                    && ctx
-                        .last_click
-                        .as_ref()
-                        .map(|prev| is_double_click(prev, now, cursor_pos_val, &click_hit))
-                        .unwrap_or(false);
-                if is_dblclick {
-                    *ctx.last_click = None;
-                    // Look up which Action (if any) the user has bound
-                    // to `DoubleClick`. Default is `DoubleClickActivate`
-                    // which routes by `ClickHit`; `Empty` only fires
-                    // `CreateOrphanNodeAndEdit` when the user has
-                    // explicitly bound that Action somewhere
-                    // (off-by-default per user request).
-                    let dblclick_name = crate::application::keybinds::MouseGesture::DoubleClick.key_name();
-                    // Modifier-fallback so Shift+DoubleClick still
-                    // activates the bare DoubleClick binding when no
-                    // explicit Shift+DoubleClick binding exists.
-                    let action = ctx.keybinds.action_for_gesture(
-                        dblclick_name,
-                        ctx.modifiers.control_key(),
-                        ctx.modifiers.shift_key(),
-                        ctx.modifiers.alt_key(),
-                    );
-                    if let Some(a) = action {
-                        let dispatch_hit = super::dispatch::DispatchHit {
-                            click_hit: click_hit.clone(),
-                            canvas_pos,
-                            held_by: None,
-                        };
-                        let _ = super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
-                        return;
-                    }
-                    // No Action bound to DoubleClick: silently no-op.
-                    // (The double-click consumed `ctx.last_click`; we don't
-                    // fall through to the single-click selection path.)
-                    return;
-                }
-                *ctx.last_click = Some(LastClick {
-                    time: now,
-                    screen_pos: cursor_pos_val,
-                    hit: click_hit,
-                });
-
+                // Every grab the press can make, captured before
+                // double-click detection, because a press that would
+                // drag a handle takes no part in it (#218).
+                //
                 // If an edge is currently selected, check
                 // whether the cursor is over one of its
                 // grab-handles. This check has precedence
@@ -454,7 +395,95 @@ pub(super) fn handle_mouse_input(
                 // ranked ahead of it. That is also where a click
                 // and a drag on one press can name different
                 // targets; CONCEPTS `DragState` has the shape.
-                //
+                let press = super::PendingPress {
+                    start_pos: cursor_pos_val,
+                    hit_node,
+                    hit_section_idx,
+                    hit_edge_handle,
+                    hit_portal_label,
+                    hit_edge_label: edge_label_hit,
+                    hit_section_resize_handle,
+                    hit_node_resize_handle,
+                };
+
+                // Double-click detection — skipped for a press that
+                // would drag a handle (`PendingPress::is_handle_press`,
+                // #218). Such a press neither completes a double-click
+                // nor starts one: a second press on a resize handle,
+                // inside the window, grabs the handle instead of
+                // opening the editor on the node the handle's corner
+                // also hits. Read off the same precedence the drag
+                // uses, so a press whose first grab is a label still
+                // double-clicks into that label's editor.
+                if press.is_handle_press() {
+                    *ctx.last_click = None;
+                } else {
+                    // Suppress the double-click → open-editor gesture when
+                    // an editor is already open on the click's target. The
+                    // two editor states are mutually exclusive by
+                    // construction (the event-keyboard dispatch steals on
+                    // whichever is open first), so one match suffices.
+                    // Without this guard for the single-line editor, a
+                    // double-click while editing would call
+                    // `open_single_line_edit` a second time, which
+                    // re-seeds the buffer from the committed model
+                    // value and silently destroys the in-progress edit.
+                    let single_line_match = ctx
+                        .single_line_edit_state
+                        .target()
+                        .map(|t| t.matches_press_hit(press.hit_edge_label.as_ref(), portal_text_hit.as_ref()))
+                        .unwrap_or(false);
+                    let already_editing_same_target = super::already_editing_same_target(
+                        ctx.text_edit_state.node_id(),
+                        press.hit_node.as_deref(),
+                        single_line_match,
+                    );
+                    let is_dblclick = !already_editing_same_target
+                        && ctx
+                            .last_click
+                            .as_ref()
+                            .map(|prev| is_double_click(prev, now, cursor_pos_val, &click_hit))
+                            .unwrap_or(false);
+                    if is_dblclick {
+                        *ctx.last_click = None;
+                        // Look up which Action (if any) the user has bound
+                        // to `DoubleClick`. Default is `DoubleClickActivate`
+                        // which routes by `ClickHit`; `Empty` only fires
+                        // `CreateOrphanNodeAndEdit` when the user has
+                        // explicitly bound that Action somewhere
+                        // (off-by-default per user request).
+                        let dblclick_name =
+                            crate::application::keybinds::MouseGesture::DoubleClick.key_name();
+                        // Modifier-fallback so Shift+DoubleClick still
+                        // activates the bare DoubleClick binding when no
+                        // explicit Shift+DoubleClick binding exists.
+                        let action = ctx.keybinds.action_for_gesture(
+                            dblclick_name,
+                            ctx.modifiers.control_key(),
+                            ctx.modifiers.shift_key(),
+                            ctx.modifiers.alt_key(),
+                        );
+                        if let Some(a) = action {
+                            let dispatch_hit = super::dispatch::DispatchHit {
+                                click_hit: click_hit.clone(),
+                                canvas_pos,
+                                held_by: None,
+                            };
+                            let _ = super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
+                            return;
+                        }
+                        // No Action bound to DoubleClick: silently no-op.
+                        // (The double-click consumed `ctx.last_click`; we don't
+                        // fall through to the single-click selection path.)
+                        return;
+                    }
+                    *ctx.last_click = Some(LastClick {
+                        time: now,
+                        screen_pos: cursor_pos_val,
+                        hit: click_hit,
+                    });
+                }
+
                 // Don't clobber a gesture that nothing else will
                 // finish — see `DragState::would_abandon_gesture` for
                 // which two states those are and why the other three
@@ -477,16 +506,7 @@ pub(super) fn handle_mouse_input(
                     log::debug!("left-button press ignored (uncommitted gesture in flight); state stays put");
                     return;
                 }
-                *ctx.drag_state = DragState::Pending(Box::new(super::PendingPress {
-                    start_pos: cursor_pos_val,
-                    hit_node,
-                    hit_section_idx,
-                    hit_edge_handle,
-                    hit_portal_label,
-                    hit_edge_label: edge_label_hit,
-                    hit_section_resize_handle,
-                    hit_node_resize_handle,
-                }));
+                *ctx.drag_state = DragState::Pending(Box::new(press));
             } else {
                 match std::mem::replace(ctx.drag_state, DragState::None) {
                     DragState::Pending(press) => {

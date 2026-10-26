@@ -518,6 +518,46 @@ mod tests {
         }
     }
 
+    /// #208 over IPC: `act.console` running a `section split` on a
+    /// node at `MAX_SECTIONS_PER_NODE` answers with the refusal as a
+    /// `console_error`, carrying the cap by name — the same text the
+    /// console prints, never an `ok` with an unloadable map behind it.
+    #[test]
+    fn test_act_console_reports_the_section_cap_refusal() {
+        use crate::application::document::tests_common::pinned_two_section_node;
+        use crate::application::document::{SectionSel, SelectionState};
+        use baumhard::mindmap::model::{MindSection, MAX_SECTIONS_PER_NODE};
+
+        let (mut doc, id) = pinned_two_section_node();
+        let node = doc.mindmap.nodes.get_mut(&id).expect("fixture node");
+        while node.sections.len() < MAX_SECTIONS_PER_NODE {
+            node.sections
+                .push(MindSection::new_default(String::new(), Vec::new()));
+        }
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 0,
+        });
+
+        let ParseResult::Ok { cmd, args } = parse("section split at=0") else {
+            panic!("`section split` must parse");
+        };
+        let mut effects = ConsoleEffects::new(&mut doc);
+        let outcome = LineOutcome::Ran((cmd.execute)(&Args::new(&args), &mut effects));
+        assert!(!outcome.applied(), "a refused split did not apply");
+
+        let message = console_output(outcome).expect_err("the refusal is an error reply");
+        assert!(
+            message.starts_with("section split: "),
+            "the verb names itself: {message}"
+        );
+        assert!(
+            message.contains(&format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}")),
+            "the error names the cap: {message}"
+        );
+        assert_eq!(doc.mindmap.nodes[&id].sections.len(), MAX_SECTIONS_PER_NODE);
+    }
+
     /// `act.console`'s result mapping, against real verbs on the
     /// fixture document: output lines for a verb that prints, the
     /// console's own message for an unknown verb and for a verb that
