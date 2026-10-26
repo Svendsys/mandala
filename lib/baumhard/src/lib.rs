@@ -62,3 +62,9 @@ pub mod gfx_structs;
 pub mod mindmap;
 /// Shared math, container, and formatting helpers across the crate.
 pub mod util;
+
+/// The vector math baumhard's public API speaks — `Vec2` positions and
+/// sizes throughout `flow`, `document` and `gfx_structs` — re-exported
+/// so a dependent names the very glam baumhard was built with instead
+/// of pinning a version of its own that can drift from it.
+pub use glam;

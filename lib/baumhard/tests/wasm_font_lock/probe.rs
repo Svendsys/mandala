@@ -40,7 +40,7 @@ use baumhard::flow::{outline, place_on_closed, place_on_open, shape_box, shape_r
 use baumhard::font::fonts::{
     self, acquire_font_system_read, acquire_font_system_write, try_acquire_font_system_write, AppFont,
 };
-use glam::Vec2;
+use baumhard::glam::Vec2;
 
 /// Longest panic message kept. Longer ones are truncated; every message
 /// the runner looks for is in the first line.

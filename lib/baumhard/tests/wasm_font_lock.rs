@@ -146,7 +146,6 @@ fn test_font_lock_helpers_run_on_wasm32() {
          [dependencies]\n\
          baumhard = {{ path = {baumhard:?} }}\n\
          getrandom = {{ version = \"0.4.2\", features = [\"wasm_js\"] }}\n\
-         glam = \"0.34.1\"\n\
          \n\
          [workspace]\n",
         baumhard = root.join("lib/baumhard").display().to_string(),
