@@ -199,7 +199,12 @@ path and move the result into place yourself.
 ## What it does
 
 1. **Assigns Dewey-decimal IDs** by walking the tree (using `parent_id` +
-   the old `index` field for sibling order). Rewrites every reference —
+   the old `index` field for sibling order, ties broken by numeric
+   Dewey order on the old ID). A map whose IDs are all Dewey paths
+   already, and which carries no `index` field anywhere, keeps every
+   ID exactly as it is — gaps left by deletions and IDs that drifted
+   under a reparent ([ids.md](./ids.md)) included; any other map is
+   renumbered throughout. Rewrites every reference —
    edge `from_id`/`to_id` (covers both line-mode and portal-mode edges;
    post-refactor portals live in the edges array), legacy
    `portals[].endpoint_a`/`endpoint_b`, and the HashMap keys.
@@ -217,7 +222,7 @@ path and move the result into place yourself.
    reason given at the end of that section.
 4. **Hoists color schemas to top-level palettes**. Each unique palette is
    defined once; per-node `color_schema` becomes a lightweight reference.
-   The `theme_id` and `variant` fields are dropped; `variant` != 2 gets
+   The `groups`, `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
    `"coral-v3"`). A schema with no `palette` name is keyed
    `"default"`, and missing `starts_at_root` / `connections_colored`
@@ -230,8 +235,10 @@ path and move the result into place yourself.
    only on deeper nodes is never hoisted, and those nodes are left
    referencing a name the output does not define — which
    `maptool verify` reports under `palettes`. The rewritten
-   `color_schema` carries exactly `palette`, `level`, `starts_at_root`
-   and `connections_colored`; any other key on it is dropped (#198).
+   `color_schema` is edited in place: `palette`, `level`,
+   `starts_at_root` and `connections_colored` are set as above,
+   `groups`, `theme_id` and `variant` are removed, and every other
+   key — `overrides` first among them — is carried through unchanged.
 
    **The hoisted palette is authoritative at render time.** The
    converter leaves each node's `style` colors where it found them,
@@ -333,14 +340,15 @@ legacy key means *the file is older than the format* — the name is
 taken, the migration exists, and preserving it would only carry a
 contradiction forward.
 
-The converter is a one-shot migration, not an always-on pipeline, and
-**it is not idempotent on a file that is already current** — do not
-run `convert --legacy` over a map that does not need it. Two passes
-change such a file (#198): sibling order is rebuilt from the legacy
-`index` field, and with that field gone the fallback order is
-lexicographic, so a sibling group of ten or more is renumbered
-(`"x.10"` sorts before `"x.2"`); and every `color_schema` is rebuilt
-from four keys, which drops `overrides`. Already-string enums do pass
-through unchanged. `convert --portals` and `convert --sections` change
-no value in a file that has nothing for them to migrate (the file is
-still rewritten).
+The conversion is idempotent on a file that is already current: run
+over a map the app saved, `convert --legacy` writes the same map back.
+Already-Dewey IDs survive unchanged (step 1), already-string enums pass
+through, already-hoisted palettes don't double-hoist, and a node's
+`color_schema.overrides` rides through the palette pass (step 4).
+`test_run_convert_legacy_leaves_a_current_map_unchanged` holds that
+against testament with a ten-plus sibling group, a deletion gap, a
+drifted ID and an override. `convert --portals` and
+`convert --sections` likewise change no value in a file that has
+nothing for them to migrate (the file is still rewritten). But the
+converter is intended as a one-shot migration, not an always-on
+pipeline.

@@ -103,32 +103,34 @@ fn nonnegative_level(raw: Option<&Value>, node_id: &str) -> u64 {
     }
 }
 
-/// Simplify each node's color_schema: keep palette (as key), level,
-/// starts_at_root, connections_colored. Drop groups, theme_id, variant.
+/// Simplify each node's color_schema in place: palette becomes the
+/// hoisted key, `level` is floored, `starts_at_root` and
+/// `connections_colored` default to `true`, and `groups`, `theme_id`
+/// and `variant` are dropped.
+///
+/// Every other key rides through untouched — `overrides` first among
+/// them, which is where `format/migration.md` step 4 tells authors to
+/// put a per-node color edit, and keys this tool does not know, which
+/// the loader would carry too. This used to rebuild the object from
+/// the four keys above, so a second pass over a current map deleted
+/// the overrides the first pass's documentation recommended.
 fn simplify_node_schemas(root: &mut Value) {
     let Some(nodes) = super::nodes_obj_mut(root) else { return };
 
     for (node_id, node) in nodes.iter_mut() {
-        let schema = match node.get("color_schema") {
-            Some(Value::Object(obj)) => obj.clone(),
-            _ => continue,
+        let Some(Value::Object(schema)) = node.get_mut("color_schema") else {
+            continue;
         };
 
-        let key = palette_key(&schema);
-        let level = json!(nonnegative_level(schema.get("level"), node_id));
-        let starts_at_root = schema.get("starts_at_root").cloned().unwrap_or(json!(true));
-        let connections_colored = schema.get("connections_colored").cloned().unwrap_or(json!(true));
-
-        let simplified = json!({
-            "palette": key,
-            "level": level,
-            "starts_at_root": starts_at_root,
-            "connections_colored": connections_colored
-        });
-
-        if let Some(obj) = node.as_object_mut() {
-            obj.insert("color_schema".to_string(), simplified);
+        let key = palette_key(schema);
+        let level = nonnegative_level(schema.get("level"), node_id);
+        for legacy in ["groups", "theme_id", "variant"] {
+            schema.remove(legacy);
         }
+        schema.insert("palette".to_string(), json!(key));
+        schema.insert("level".to_string(), json!(level));
+        schema.entry("starts_at_root").or_insert(json!(true));
+        schema.entry("connections_colored").or_insert(json!(true));
     }
 }
 
@@ -193,5 +195,30 @@ mod tests {
             .remove("level");
         hoist_palettes(&mut root);
         assert_eq!(root["nodes"]["0"]["color_schema"]["level"], json!(0));
+    }
+
+    /// Keys the simplifier does not own ride through: `overrides`,
+    /// which a rebuild from four keys used to delete (#198), and a
+    /// key this tool has never heard of. The three legacy keys it
+    /// does own are still dropped.
+    #[test]
+    fn test_hoist_palettes_carries_keys_it_does_not_own() {
+        let mut root = legacy_map_with_level(json!(0));
+        let schema = root["nodes"]["0"]["color_schema"].as_object_mut().unwrap();
+        schema.insert("overrides".into(), json!({ "background": "#123456" }));
+        schema.insert("future_key".into(), json!([1, 2]));
+        schema.insert("theme_id".into(), json!(7));
+        hoist_palettes(&mut root);
+        assert_eq!(
+            root["nodes"]["0"]["color_schema"],
+            json!({
+                "palette": "coral",
+                "level": 0,
+                "starts_at_root": true,
+                "connections_colored": true,
+                "overrides": { "background": "#123456" },
+                "future_key": [1, 2]
+            })
+        );
     }
 }

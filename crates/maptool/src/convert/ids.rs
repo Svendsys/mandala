@@ -4,13 +4,27 @@
 //! before children; returns the old→new map for a follow-up
 //! reference-rewrite pass.
 
+use baumhard::mindmap::model::dewey_cmp;
 use serde_json::Value;
 use std::collections::HashMap;
 
 /// Walk the node tree and return a mapping from old IDs to new
-/// Dewey-decimal IDs. Roots are numbered 0, 1, 2, ... in index order.
-/// Children are numbered by their sibling position under each parent.
+/// Dewey-decimal IDs. Roots are numbered 0, 1, 2, ... in sibling
+/// order, and children by their sibling position under each parent.
+///
+/// **A map that is already Dewey keeps every id** — the mapping is
+/// the identity. `format/migration.md` promises that, and
+/// renumbering cannot keep it: a current map legitimately has gaps
+/// (deleting `1.1` leaves `1.0` and `1.2`) and drifted ids (a
+/// reparent does not cascade, `format/ids.md`), and a contiguous
+/// renumber rewrites both. "Already Dewey" is decided for the whole
+/// map, by [`is_already_dewey`], so a file is either left alone or
+/// renumbered throughout — never half of each.
 pub fn assign_dewey_ids(nodes: &serde_json::Map<String, Value>) -> HashMap<String, String> {
+    if is_already_dewey(nodes) {
+        return nodes.keys().map(|id| (id.clone(), id.clone())).collect();
+    }
+
     let mut id_map: HashMap<String, String> = HashMap::new();
 
     // Collect children grouped by parent, sorted by index.
@@ -56,8 +70,35 @@ fn assign_children(
     }
 }
 
-/// Return old IDs of nodes whose parent_id matches `parent`, sorted by
-/// ascending index.
+/// Whether every id in `nodes` is already a Dewey path and no node
+/// carries the legacy `index` field.
+///
+/// Both halves are needed. miMind's heap-pointer ids
+/// (`"348068464"`) are a single run of digits, which is a
+/// well-formed Dewey root, so the id shape alone would leave a
+/// legacy file's ids in place; `index` is the legacy marker that
+/// tells them apart, and the cleanup pass removes it, so no
+/// converted or app-saved map carries one. An early hand-authored
+/// map with symbolic ids (`"title"`, `"child_a"`) has no `index`
+/// either, and the shape check is what renumbers it.
+fn is_already_dewey(nodes: &serde_json::Map<String, Value>) -> bool {
+    let dewey_shaped = |id: &str| {
+        id.split('.')
+            .all(|segment| !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit()))
+    };
+    nodes
+        .iter()
+        .all(|(id, node)| dewey_shaped(id) && node.get("index").is_none())
+}
+
+/// Return old IDs of nodes whose parent_id matches `parent`, in
+/// sibling order: ascending legacy `index`, then [`dewey_cmp`] on the
+/// id.
+///
+/// The tie-break is load-bearing. `nodes` is a `serde_json::Map`,
+/// which without `preserve_order` is a `BTreeMap` and iterates
+/// lexicographically, so a stable sort on `index` alone put `"x.10"`
+/// before `"x.2"` whenever the index was missing or equal.
 fn sorted_children_of(nodes: &serde_json::Map<String, Value>, parent: Option<&str>) -> Vec<String> {
     let mut children: Vec<(&str, i64)> = nodes
         .iter()
@@ -70,7 +111,7 @@ fn sorted_children_of(nodes: &serde_json::Map<String, Value>, parent: Option<&st
             (id.as_str(), index)
         })
         .collect();
-    children.sort_by_key(|(_, idx)| *idx);
+    children.sort_by(|(a, a_index), (b, b_index)| a_index.cmp(b_index).then_with(|| dewey_cmp(a, b)));
     children.into_iter().map(|(id, _)| id.to_string()).collect()
 }
 
@@ -212,5 +253,74 @@ mod deep_chain_tests {
         assert_eq!(map.get("a1").map(String::as_str), Some("0.0.0"));
         assert_eq!(map.get("a2").map(String::as_str), Some("0.0.1"));
         assert_eq!(map.get("b1").map(String::as_str), Some("0.1.0"));
+    }
+}
+
+#[cfg(test)]
+mod sibling_order_tests {
+    use super::assign_dewey_ids;
+    use serde_json::json;
+
+    fn assign(nodes: serde_json::Value) -> std::collections::HashMap<String, String> {
+        assign_dewey_ids(&serde_json::from_value(nodes).expect("fixture parses"))
+    }
+
+    /// Equal `index` values fall back to Dewey order on the old id,
+    /// not to the map's lexicographic iteration, which put `"10"`
+    /// before `"2"` (#198).
+    #[test]
+    fn test_legacy_index_ties_break_in_dewey_order() {
+        let map = assign(json!({
+            "r":  { "parent_id": null, "index": 0 },
+            "10": { "parent_id": "r",  "index": 0 },
+            "2":  { "parent_id": "r",  "index": 0 },
+        }));
+        assert_eq!(map["2"], "0.0");
+        assert_eq!(map["10"], "0.1");
+    }
+
+    /// A map whose ids are all Dewey and which carries no `index` is
+    /// left exactly as it is: gaps stay gaps and a drifted id (a
+    /// reparent that did not cascade) stays put, because both are
+    /// legal in a current map and a renumber rewrites both.
+    #[test]
+    fn test_an_already_dewey_map_keeps_every_id() {
+        let map = assign(json!({
+            "0":    { "parent_id": null },
+            "0.0":  { "parent_id": "0" },
+            "0.2":  { "parent_id": "0" },
+            "0.10": { "parent_id": "0" },
+            "1":    { "parent_id": null },
+            "1.4":  { "parent_id": "0" },
+        }));
+        for id in ["0", "0.0", "0.2", "0.10", "1", "1.4"] {
+            assert_eq!(map[id], id, "{id} must survive unchanged");
+        }
+        assert_eq!(map.len(), 6);
+    }
+
+    /// miMind's heap-pointer ids are runs of digits, which is a valid
+    /// Dewey root shape, so the id shape alone cannot tell a legacy
+    /// file from a current one. The `index` field does.
+    #[test]
+    fn test_digit_heap_pointer_ids_with_an_index_are_renumbered() {
+        let map = assign(json!({
+            "348068464": { "parent_id": null,        "index": 0 },
+            "17":        { "parent_id": "348068464", "index": 0 },
+        }));
+        assert_eq!(map["348068464"], "0");
+        assert_eq!(map["17"], "0.0");
+    }
+
+    /// Symbolic ids from early hand-authored maps carry no `index`,
+    /// and the shape check is what renumbers them.
+    #[test]
+    fn test_symbolic_ids_without_an_index_are_renumbered() {
+        let map = assign(json!({
+            "title":   { "parent_id": null },
+            "child_a": { "parent_id": "title" },
+        }));
+        assert_eq!(map["title"], "0");
+        assert_eq!(map["child_a"], "0.0");
     }
 }

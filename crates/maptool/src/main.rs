@@ -1010,6 +1010,103 @@ mod tests {
         );
     }
 
+    /// **`convert --legacy` over a map that is already current changes
+    /// nothing** — `format/migration.md` §"Why a separate tool?" makes
+    /// that promise, and #198 found it broken twice: every sibling
+    /// group of ten or more was renumbered (`"x.10"` sorted before
+    /// `"x.2"`, so content moved between ids), and every
+    /// `color_schema` was rebuilt from four keys, deleting
+    /// `overrides`.
+    ///
+    /// The input is testament, saved by the app, with the shapes a
+    /// current map legitimately carries and a renumber would rewrite:
+    /// a sibling group past ten, a gap where a child was deleted, a
+    /// node reparented without its id cascading (`format/ids.md`),
+    /// and a per-node color override. The output is compared with
+    /// **the input** — never with a second converter run, which would
+    /// agree with a first run that was wrong in the same way.
+    #[test]
+    fn test_run_convert_legacy_leaves_a_current_map_unchanged() {
+        let text = fs::read_to_string(repo_path("maps/testament.mindmap.json")).unwrap();
+        let mut input: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let group = "1.2.0.0.0.0.0.0.0.0.0.2.0.0.0";
+        let gap = format!("{group}.3");
+        let drifted = "1.2.0.0.0.0.0.0.0.0.1.3.8";
+        {
+            let nodes = input["nodes"].as_object_mut().unwrap();
+            // A gap: delete a leaf from the middle of the group.
+            assert!(
+                !nodes.values().any(|n| n["parent_id"] == gap.as_str()),
+                "{gap} must be a leaf so deleting it leaves nothing dangling"
+            );
+            nodes.remove(&gap);
+            // Drift: reparent without renaming, as the app does.
+            nodes[drifted]["parent_id"] = serde_json::json!("0");
+            // A per-node override on a themed node.
+            nodes["0.0"]["color_schema"]["overrides"] = serde_json::json!({ "background": "#123456" });
+        }
+        input["edges"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|e| e["from_id"] != gap.as_str() && e["to_id"] != gap.as_str());
+
+        // Preconditions: each shape the test exists for is present, or
+        // it proves nothing about that shape (TEST_CONVENTIONS §T13.3).
+        let nodes = input["nodes"].as_object().unwrap();
+        for sibling in ["2", "10"] {
+            assert!(
+                nodes.contains_key(&format!("{group}.{sibling}")),
+                "the fixture needs {group}.{sibling}: the defect sorted .10 before .2"
+            );
+        }
+        assert!(!nodes.contains_key(&gap), "the fixture needs a gap at {gap}");
+        assert_eq!(nodes[drifted]["parent_id"], "0", "the fixture needs a drifted id");
+        assert!(
+            nodes["0.0"]["color_schema"]["overrides"]["background"].is_string(),
+            "the fixture needs an override on a node the palette pass rewrites"
+        );
+
+        let dir = TempDir::new("convert-legacy-current");
+        let in_path = dir.join("current.mindmap.json");
+        let out_path = dir.join("converted.mindmap.json");
+        fs::write(&in_path, serde_json::to_string_pretty(&input).unwrap()).unwrap();
+        let args = as_strings(&[
+            "convert",
+            "--legacy",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ]);
+        run(&args).expect("convert --legacy must succeed on a current map");
+        let output: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&out_path).unwrap()).unwrap();
+
+        // Node by node first, so a failure names the id that moved
+        // instead of printing the whole map twice (§T5).
+        let (in_nodes, out_nodes) = (
+            input["nodes"].as_object().unwrap(),
+            output["nodes"].as_object().unwrap(),
+        );
+        let lost: Vec<_> = in_nodes
+            .keys()
+            .filter(|id| !out_nodes.contains_key(*id))
+            .collect();
+        let gained: Vec<_> = out_nodes
+            .keys()
+            .filter(|id| !in_nodes.contains_key(*id))
+            .collect();
+        assert!(
+            lost.is_empty() && gained.is_empty(),
+            "convert --legacy must keep every id of a current map; lost {lost:?}, gained {gained:?}"
+        );
+        for (id, node) in in_nodes {
+            assert_eq!(&out_nodes[id], node, "convert --legacy changed node {id}");
+        }
+        assert_eq!(
+            output, input,
+            "convert --legacy changed a current map outside its nodes"
+        );
+    }
+
     /// **`verify` must diagnose exactly the maps the editor
     /// refuses.** The fixture carries three violations, and one of
     /// them — a `nodes` key that disagrees with its node's `id` — is
