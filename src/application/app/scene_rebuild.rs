@@ -507,15 +507,25 @@ pub(in crate::application::app) fn rebuild_scene_only(
 /// (§4's mobile budget). That is the whole difference from
 /// [`rebuild_scene_only`], which does all of them.
 ///
-/// The connection sample cache is cleared first: effective font size
-/// depends on zoom, so every cached pre-clip sample is stale.
-/// `ensure_zoom` inside the connection pass would also catch it; the
-/// explicit clear keeps the ordering readable next to the rebuild.
+/// The connection sample cache is not cleared here: effective font
+/// size depends on zoom, so every cached pre-clip sample is stale
+/// after a zoom, and `ensure_zoom` inside the connection pass drops
+/// them for exactly that reason (`SceneConnectionCache`'s own
+/// invariant). An explicit `clear` used to sit here as well, and it
+/// would now cost more than readability: `clear` counts as a
+/// statement that the *model's* geometry moved
+/// (`SceneConnectionCache::invalidations`), which the capture engine's
+/// scratch cache mirrors by dropping everything it holds — and a
+/// camera move is not such a statement.
 ///
 /// Both targets reach this. Native calls it from
 /// `drain_frame::drain_camera_geometry_rebuild` once per frame under
 /// the renderer's dirty flag; WASM has no per-frame drain and calls
-/// it from the wheel handler under the same flag.
+/// it from the wheel handler under the same flag. The capture engine
+/// does not reach it: a capture framed at another zoom projects the
+/// same roles through [`CanvasFrame::update_zoom_dependent_roles`]
+/// into a scene of its own (`app::capture_scene`), so the live scene
+/// stays the camera's.
 pub(in crate::application::app) fn rebuild_camera_geometry(
     doc: &MindMapDocument,
     interaction_mode: &super::InteractionMode,
@@ -523,32 +533,14 @@ pub(in crate::application::app) fn rebuild_camera_geometry(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    let zoom = renderer.camera_zoom();
-    rebuild_camera_geometry_at(zoom, doc, interaction_mode, app_scene, renderer, scene_cache);
-}
-
-/// [`rebuild_camera_geometry`] at a zoom other than the camera's: the
-/// zoom-dependent roles projected as a camera at `zoom` would see them.
-///
-/// The screenshot engine's seam (`app::capture_flow`): a capture that
-/// frames another zoom projects the scene at it, draws, and projects it
-/// back at the live zoom, so the trees the renderer and every hit test
-/// read are the live ones again before anything else runs. Nothing else
-/// should reach for it — the live scene is the camera's.
-pub(in crate::application::app) fn rebuild_camera_geometry_at(
-    zoom: f32,
-    doc: &MindMapDocument,
-    interaction_mode: &super::InteractionMode,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-) {
-    scene_cache.clear();
     let offsets = std::collections::HashMap::new();
-    let mut frame = CanvasFrame::new(doc, &offsets, interaction_mode.resize_handle_overrides(), zoom);
-    frame.update_connection_trees(scene_cache, app_scene);
-    frame.update_connection_label_tree(app_scene);
-    frame.update_portal_tree(app_scene);
+    let mut frame = CanvasFrame::new(
+        doc,
+        &offsets,
+        interaction_mode.resize_handle_overrides(),
+        renderer.camera_zoom(),
+    );
+    frame.update_zoom_dependent_roles(scene_cache, app_scene);
     flush_canvas_scene_buffers(app_scene, renderer);
 }
 
@@ -1140,6 +1132,29 @@ impl<'a> CanvasFrame<'a> {
         self.update_node_resize_handle_tree(app_scene);
         self.update_section_frame_tree(app_scene);
         self.update_connection_label_tree(app_scene);
+    }
+
+    /// Refresh exactly the roles whose projection reads
+    /// `camera_zoom` — the ones
+    /// [`CanvasRole::zoom_dependent`](crate::application::scene_host::CanvasRole::zoom_dependent)
+    /// answers `true` for: connections (with the edge handles the
+    /// connection pass emits beside them), connection labels and
+    /// portals. The body [`rebuild_camera_geometry`] runs on the live
+    /// scene after a camera change, and the body the capture engine
+    /// runs on its scratch scene for a frame at another zoom
+    /// (`app::capture_scene`); one function so the two cannot disagree
+    /// about which roles a zoom moves.
+    ///
+    /// Does **not** flush the renderer's canvas-scene buffers, for the
+    /// reason [`Self::update_all`] does not.
+    pub(in crate::application::app) fn update_zoom_dependent_roles(
+        &mut self,
+        cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+        app_scene: &mut crate::application::scene_host::AppScene,
+    ) {
+        self.update_connection_trees(cache, app_scene);
+        self.update_connection_label_tree(app_scene);
+        self.update_portal_tree(app_scene);
     }
 }
 
@@ -2269,18 +2284,16 @@ mod canvas_pass_granularity {
         );
 
         // What `rebuild_camera_geometry` re-projects, at a zoom the
-        // connection pass has to resample for.
+        // connection pass has to resample for — through the body it
+        // runs, so the role set this test pins is the production one.
         let offsets = std::collections::HashMap::new();
-        cache.clear();
-        let mut frame = super::CanvasFrame::new(
+        super::CanvasFrame::new(
             &doc,
             &offsets,
             InteractionMode::Default.resize_handle_overrides(),
             2.5,
-        );
-        frame.update_connection_trees(&mut cache, &mut app_scene);
-        frame.update_connection_label_tree(&mut app_scene);
-        frame.update_portal_tree(&mut app_scene);
+        )
+        .update_zoom_dependent_roles(&mut cache, &mut app_scene);
 
         // The zoom has to have actually moved something, or the zero
         // below is a camera change that never happened.
@@ -2301,6 +2314,53 @@ mod canvas_pass_granularity {
             (after.walked, after.reshaped, after.patched),
             (cold.walked, 0, 0),
             "the four zoom-independent roles were not re-projected, so none of them re-shapes"
+        );
+    }
+
+    /// The roles `update_zoom_dependent_roles` registers are exactly
+    /// the ones `CanvasRole::zoom_dependent` names — the two readers
+    /// of the split (the camera rebuild and the capture composition)
+    /// held to one answer. Shown on an empty scene, where a registered
+    /// role can only have come from the body under test; the control
+    /// is `update_all`, which registers all eight.
+    #[test]
+    fn test_the_zoom_dependent_roles_are_the_ones_the_camera_rebuild_projects() {
+        baumhard::font::fonts::init();
+
+        let doc = load_test_doc();
+        let offsets = std::collections::HashMap::new();
+        let mut cache = SceneConnectionCache::new();
+        let mut app_scene = AppScene::new();
+        super::CanvasFrame::new(
+            &doc,
+            &offsets,
+            InteractionMode::Default.resize_handle_overrides(),
+            1.0,
+        )
+        .update_zoom_dependent_roles(&mut cache, &mut app_scene);
+
+        let registered: std::collections::HashSet<CanvasRole> = CanvasRole::ALL
+            .into_iter()
+            .filter(|role| app_scene.canvas_id(*role).is_some())
+            .collect();
+        let zoom_dependent: std::collections::HashSet<CanvasRole> = CanvasRole::ALL
+            .into_iter()
+            .filter(|role| role.zoom_dependent())
+            .collect();
+        assert_eq!(registered, zoom_dependent);
+        assert_eq!(
+            registered.len(),
+            4,
+            "connections, edge handles, labels and portals; a fifth or a third is a split that moved"
+        );
+
+        let mut whole = AppScene::new();
+        project_all_roles(&doc, &mut whole, &mut cache);
+        assert!(
+            CanvasRole::ALL
+                .iter()
+                .all(|role| whole.canvas_id(*role).is_some()),
+            "the control registers every role"
         );
     }
 }

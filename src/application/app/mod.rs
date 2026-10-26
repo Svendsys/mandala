@@ -58,6 +58,8 @@ pub(crate) mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod capture_flow;
 #[cfg(not(target_arch = "wasm32"))]
+mod capture_scene;
+#[cfg(not(target_arch = "wasm32"))]
 mod click;
 mod click_triggers;
 #[cfg(not(target_arch = "wasm32"))]
@@ -895,9 +897,25 @@ impl DragState {
     /// model does not hold until release — so a camera-geometry rebuild
     /// in the middle of it, which projects from the model, would put
     /// them back where they were. The per-frame drain skips the rebuild
-    /// then, and a capture at another zoom refuses.
+    /// then, and a capture at another zoom projects its scratch scene
+    /// with the same offsets ([`Self::moving_node_offsets`]).
     fn is_moving_node(&self) -> bool {
-        matches!(self, Self::Throttled(d) if matches!(**d, ThrottledDrag::MovingNode(_)))
+        self.moving_node_offsets().is_some()
+    }
+
+    /// The offsets a node drag has drained into the tree so far
+    /// (`MovingNodeInteraction::drained_offsets`), while one is in
+    /// flight: the map that makes a projection from the model land
+    /// where the window shows the dragged nodes. `None` outside a node
+    /// drag — every other state leaves the model where the tree is.
+    fn moving_node_offsets(&self) -> Option<&std::collections::HashMap<String, (f32, f32)>> {
+        match self {
+            Self::Throttled(d) => match &**d {
+                ThrottledDrag::MovingNode(moving) => Some(moving.drained_offsets()),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// True when overwriting this state with a freshly-armed

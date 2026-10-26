@@ -316,8 +316,8 @@ pub(crate) struct Gap {
     pub(crate) t_ms: f64,
     /// How many frames are missing.
     pub(crate) frames: u32,
-    /// `overrun` (the loop was late for the boundary), `busy` (a node
-    /// drag made the frame undrawable), or a renderer skip word
+    /// `overrun` (the loop was late for the boundary), `invalid` (the
+    /// request could not be framed that time), or a renderer skip word
     /// (`font_system_contended`, `not_started`, `prepare_failed`).
     pub(crate) reason: String,
 }
@@ -545,13 +545,6 @@ impl Recording {
     pub(crate) fn push_unrendered(&mut self, due_ms: f64, reason: &str) {
         self.push_gap(due_ms, 1, reason.to_string());
         self.unrendered_streak += 1;
-    }
-
-    /// File a frame due at `due_ms` that a node drag made undrawable. A
-    /// gap like any other, but not counted toward the stall: the drag
-    /// ends by itself, and a recording of one is what recordings are for.
-    pub(crate) fn push_busy(&mut self, due_ms: f64) {
-        self.push_gap(due_ms, 1, "busy".to_string());
     }
 
     /// Account for the boundaries crossed since the last [`Self::step`],
@@ -1412,24 +1405,6 @@ mod tests {
         assert_eq!((recording.pending.len(), recording.pending_bytes), (0, 0));
         assert_eq!(read_manifest(&dir)["frames"].as_array().expect("frames").len(), 1);
         std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    /// A drag-made gap is a gap and is stamped where the frame was due,
-    /// but it does not count toward the stall: the drag ends by itself,
-    /// and a recording of one is the point.
-    #[test]
-    fn test_a_busy_frame_is_a_gap_that_never_stalls_the_recording() {
-        let mut recording = Recording::begin(config(10, 10), PathBuf::from("/unused"), 0.0, None);
-        for n in 0..3 * MAX_UNRENDERED_STREAK {
-            recording.push_busy(f64::from(n) * 100.0);
-        }
-        assert!(!recording.is_stalled());
-        assert_eq!(recording.dropped_frames(), 3 * MAX_UNRENDERED_STREAK);
-        assert_eq!(
-            recording.gaps[2].t_ms, 200.0,
-            "stamped with the boundary it was due at"
-        );
-        assert!(recording.gaps.iter().all(|gap| gap.reason == "busy"));
     }
 
     /// Boundaries crossed since the last step are accounted for as the

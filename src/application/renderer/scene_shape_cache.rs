@@ -543,21 +543,229 @@ pub(crate) fn refresh(
 ///
 /// The single reader of the grouping for the render path, so the
 /// main pass and the palette pass flatten it the same way and a
-/// test can assert on the same sequence the GPU is handed.
-pub(super) fn text_buffers(shaped: &[ShapedSceneElement]) -> impl Iterator<Item = &MindMapTextBuffer> {
-    shaped.iter().flat_map(|element| element.buffers.iter())
+/// test can assert on the same sequence the GPU is handed. Takes the
+/// elements as an iterator rather than a slice because the canvas
+/// pass draws from two shapes of source ([`canvas_elements`]).
+pub(super) fn text_buffers<'a>(
+    shaped: impl IntoIterator<Item = &'a ShapedSceneElement>,
+) -> impl Iterator<Item = &'a MindMapTextBuffer> {
+    shaped.into_iter().flat_map(|element| element.buffers.iter())
 }
 
 /// How many buffers [`text_buffers`] will yield — the capacity the
 /// render pass reserves before flattening, counted without walking
 /// into the groups.
-pub(super) fn buffer_count(shaped: &[ShapedSceneElement]) -> usize {
-    shaped.iter().map(|element| element.buffers.len()).sum()
+pub(super) fn buffer_count<'a>(shaped: impl IntoIterator<Item = &'a ShapedSceneElement>) -> usize {
+    shaped.into_iter().map(|element| element.buffers.len()).sum()
 }
 
 /// Every background fill of a pass's output, in draw order —
 /// [`text_buffers`]'s sibling for the rect pipeline. Empty for an
 /// overlay pass, which keeps no fills.
-pub(super) fn background_fills(shaped: &[ShapedSceneElement]) -> impl Iterator<Item = &NodeBackgroundRect> {
-    shaped.iter().filter_map(|element| element.background.as_ref())
+pub(super) fn background_fills<'a>(
+    shaped: impl IntoIterator<Item = &'a ShapedSceneElement>,
+) -> impl Iterator<Item = &'a NodeBackgroundRect> {
+    shaped
+        .into_iter()
+        .filter_map(|element| element.background.as_ref())
+}
+
+// ---------------------------------------------------------------------
+// A capture's canvas: the live zoom-independent roles and a scratch
+// projection of the zoom-dependent ones, drawn as one frame.
+// ---------------------------------------------------------------------
+
+/// Which shaped canvas output a frame's main pass draws.
+///
+/// The window draws [`Self::Live`]: `Renderer::canvas_scene_elements`,
+/// whole, in the walk order [`refresh`] left it in. A capture framed
+/// at a zoom other than the window's draws [`Self::Composed`]: the
+/// [`CaptureCanvas`] the capture engine filled a moment before, which
+/// interleaves the live set's zoom-independent trees with a scratch
+/// set's zoom-dependent ones. The window never draws `Composed` and a
+/// capture at the live zoom draws `Live`; what either reads is chosen
+/// per frame by the caller of `Renderer::prepare_frame`, so a frame
+/// cannot be left pointed at a set it did not ask for.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum CanvasSource {
+    /// The live canvas set, all of it.
+    Live,
+    /// The capture composition ([`CaptureCanvas::segments`]).
+    // Native-only producer: the capture engine; the window always
+    // draws the live set.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Composed,
+}
+
+/// Which of the two shaped canvas sets a [`CanvasSegment`] reads.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum ShapedSet {
+    /// `Renderer::canvas_scene_elements`: the window's set.
+    Live,
+    /// [`CaptureCanvas::shaped`]: the capture's scratch projection.
+    Scratch,
+}
+
+/// One tree's worth of a composed frame: a contiguous run of walk
+/// positions in one set, in the order [`refresh`] left them.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub(crate) struct CanvasSegment {
+    pub(crate) set: ShapedSet,
+    pub(crate) range: std::ops::Range<usize>,
+}
+
+/// A capture's canvas, held by the renderer beside the live set.
+///
+/// `shaped` is a second [`refresh`] output, walked from the capture
+/// engine's scratch `AppScene` and reused across captures by the same
+/// rule as the live set — its reuse key is the scratch scene's tree
+/// ids, which never meet the live scene's, because each set is
+/// refreshed from exactly one `Scene`. `segments` is the draw order of
+/// the next composed frame: for each canvas role in layer order, the
+/// live set's span of that role's tree when the role is
+/// zoom-independent, and the scratch set's when it is not
+/// ([`compose_capture_canvas`]).
+#[derive(Default)]
+pub(crate) struct CaptureCanvas {
+    pub(super) shaped: Vec<ShapedSceneElement>,
+    pub(super) segments: Vec<CanvasSegment>,
+}
+
+#[cfg(test)]
+impl CaptureCanvas {
+    /// The scratch set, for a test to fill through [`refresh`] as the
+    /// renderer's flush does.
+    pub(crate) fn shaped_mut(&mut self) -> &mut Vec<ShapedSceneElement> {
+        &mut self.shaped
+    }
+
+    /// The scratch set, for a test to compute its own spans over.
+    pub(crate) fn shaped(&self) -> &[ShapedSceneElement] {
+        &self.shaped
+    }
+
+    /// The composition the next composed frame draws.
+    pub(crate) fn segments(&self) -> &[CanvasSegment] {
+        &self.segments
+    }
+}
+
+impl ShapedSceneElement {
+    /// The tree this element was walked from. Test-gated: production
+    /// reads it through [`span_of`], and the composition test computes
+    /// its expected spans without that function.
+    #[cfg(test)]
+    pub(crate) fn tree(&self) -> SceneTreeId {
+        self.tree
+    }
+}
+
+/// The walk positions [`refresh`] gave `tree` within `shaped`.
+///
+/// Contiguous by construction: the pass visits one tree's descendants
+/// before the next tree's, and writes entry `i` at walk position `i`.
+/// Empty for a tree that contributed nothing — unregistered,
+/// invisible, or not among the pass's ids. O(len) in the worst case,
+/// one scan.
+pub(super) fn span_of(shaped: &[ShapedSceneElement], tree: SceneTreeId) -> std::ops::Range<usize> {
+    let Some(first) = shaped.iter().position(|element| element.tree == tree) else {
+        return 0..0;
+    };
+    let len = shaped[first..]
+        .iter()
+        .take_while(|element| element.tree == tree)
+        .count();
+    first..first + len
+}
+
+/// Fill `capture.segments` with the draw order of a frame that shows
+/// `scratch`'s zoom-dependent roles over `live`'s zoom-independent
+/// ones: every canvas role in layer order, each read from the set
+/// that holds the right projection of it
+/// ([`CanvasRole::zoom_dependent`](crate::application::scene_host::CanvasRole::zoom_dependent)).
+/// A role with no tree in its scene, or whose tree walked to nothing,
+/// contributes no segment.
+///
+/// `live_shaped` and `capture.shaped` must be the current [`refresh`]
+/// outputs of the two scenes — the segments are ranges into them.
+/// Pure over its inputs: the renderer calls it from
+/// `Renderer::rebuild_capture_canvas_buffers`, and a test calls it
+/// with two projected scenes and no device (TEST_CONVENTIONS §T8).
+///
+/// # Costs
+///
+/// One [`span_of`] scan per registered role — eight at most — and a
+/// sort of eight roles by layer. No allocation past the segment list's
+/// first fill.
+// Native-only caller: the capture engine.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) fn compose_capture_canvas(
+    live: &crate::application::scene_host::AppScene,
+    scratch: &crate::application::scene_host::AppScene,
+    live_shaped: &[ShapedSceneElement],
+    capture: &mut CaptureCanvas,
+) {
+    use crate::application::scene_host::CanvasRole;
+
+    let mut roles = CanvasRole::ALL;
+    roles.sort_by_key(|role| role.layer());
+    capture.segments.clear();
+    for role in roles {
+        let (set, scene, shaped): (ShapedSet, _, &[ShapedSceneElement]) = if role.zoom_dependent() {
+            (ShapedSet::Scratch, scratch, &capture.shaped)
+        } else {
+            (ShapedSet::Live, live, live_shaped)
+        };
+        let Some(id) = scene.canvas_id(role) else {
+            continue;
+        };
+        let range = span_of(shaped, id);
+        if !range.is_empty() {
+            capture.segments.push(CanvasSegment { set, range });
+        }
+    }
+}
+
+/// The elements a frame's main pass draws from `source`, in draw
+/// order: the live set as it stands, or the composition's segments one
+/// after another. A segment whose range the set no longer covers
+/// yields nothing rather than panicking — an interactive path
+/// (CODE_CONVENTIONS §9) — though none can: the composition is read
+/// by the capture that filled it, with nothing between.
+pub(super) fn canvas_elements<'a>(
+    source: CanvasSource,
+    live: &'a [ShapedSceneElement],
+    capture: &'a CaptureCanvas,
+) -> impl Iterator<Item = &'a ShapedSceneElement> + 'a {
+    match source {
+        CanvasSource::Live => Either::Left(live.iter()),
+        CanvasSource::Composed => Either::Right(capture.segments.iter().flat_map(move |segment| {
+            let set = match segment.set {
+                ShapedSet::Live => live,
+                ShapedSet::Scratch => &capture.shaped[..],
+            };
+            set.get(segment.range.clone())
+                .into_iter()
+                .flat_map(|slice| slice.iter())
+        })),
+    }
+}
+
+/// One of two iterators with the same item, for a function that
+/// returns either shape. The private twenty lines that spare the
+/// render path a `Box<dyn Iterator>` per frame.
+enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+
+impl<T, L: Iterator<Item = T>, R: Iterator<Item = T>> Iterator for Either<L, R> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        match self {
+            Either::Left(left) => left.next(),
+            Either::Right(right) => right.next(),
+        }
+    }
 }

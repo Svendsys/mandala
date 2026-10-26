@@ -300,6 +300,22 @@ pub struct SceneConnectionCache {
     /// an entry to reuse without the cache marking it seen, because
     /// marking it is what the reuse doors do.
     generation: u64,
+    /// How many times a caller has told this cache its geometry is
+    /// stale: bumped by [`SceneConnectionCache::clear`] and
+    /// [`SceneConnectionCache::invalidate_edge`], the two doors the
+    /// module header names as the caller's debt, and by nothing else.
+    /// [`SceneConnectionCache::ensure_zoom`]'s flush is excluded on
+    /// purpose: a zoom change moves the sample *spacing*, which this
+    /// cache tracks for itself, and says nothing about the model.
+    ///
+    /// Read by [`SceneConnectionCache::invalidations`], which is how a
+    /// second cache sampled from the same model at another zoom — the
+    /// screenshot engine's scratch cache — learns that the model moved
+    /// without every one of the twenty-odd sites that tell this cache
+    /// having to tell that one too. Per process and monotonic, never
+    /// reset: a cache that was cleared and refilled has still been told
+    /// once more than before.
+    invalidations: u64,
 }
 
 /// Threshold for "zoom changed enough to invalidate cached samples".
@@ -320,10 +336,27 @@ impl SceneConnectionCache {
     /// Drop everything. Used at drag-drop, undo, reparent, edge CRUD, fold
     /// toggle, theme-variable change — the cheap "when in doubt, flush"
     /// path. The next scene build re-populates the cache.
+    ///
+    /// Counts as one invalidation ([`Self::invalidations`]), whether or
+    /// not anything was held: the call is the caller's statement that
+    /// the geometry moved, and a mirror of this cache needs the
+    /// statement, not the entries.
     pub fn clear(&mut self) {
         self.entries.clear();
         self.by_node.clear();
         self.scene_zoom = None;
+        self.invalidations += 1;
+    }
+
+    /// How many times [`Self::clear`] and [`Self::invalidate_edge`] have
+    /// been called on this cache, ever. Two reads that differ mean the
+    /// model's connection geometry was declared stale in between; two
+    /// that are equal mean every entry sampled from that model at the
+    /// first read is still what the model would produce — at *its*
+    /// sample params, which is the cache's own business
+    /// ([`SampleParams::matches`]). O(1).
+    pub fn invalidations(&self) -> u64 {
+        self.invalidations
     }
 
     /// Ensure the cache is consistent with `camera_zoom`. If the stored
@@ -588,7 +621,13 @@ impl SceneConnectionCache {
 
     /// Drop a single edge (key-direct invalidation). Keeps the reverse
     /// index in sync.
+    ///
+    /// Counts as one invalidation ([`Self::invalidations`]) even when
+    /// the edge is not held here: a cache sampled at another zoom can
+    /// hold an edge this one evicted as off-screen, and the statement
+    /// "this edge moved" is about the model, not about what is cached.
     pub fn invalidate_edge(&mut self, key: &EdgeKey) {
+        self.invalidations += 1;
         if self.entries.remove(key).is_none() {
             return;
         }
@@ -679,6 +718,47 @@ mod tests {
         assert!(cache.inspect(&key).is_none());
         assert!(cache.edges_touching("a").is_empty());
         assert!(cache.edges_touching("b").is_empty());
+    }
+
+    /// The counter is the caller's statement, not the cache's state:
+    /// it moves on every `clear` and every `invalidate_edge`, held or
+    /// not, and on nothing the cache does for itself — a refill, a
+    /// pass, a zoom flush.
+    #[test]
+    fn test_invalidations_count_the_callers_statements_and_nothing_else() {
+        let mut cache = SceneConnectionCache::new();
+        let held = EdgeKey::new("a", "b", "cross_link");
+        let absent = EdgeKey::new("x", "y", "cross_link");
+        assert_eq!(cache.invalidations(), 0);
+
+        plant(&mut cache, &held, 1.0);
+        cache.begin_pass();
+        cache.evict_unseen();
+        cache.ensure_zoom(1.0);
+        cache.ensure_zoom(2.0);
+        assert!(
+            cache.is_empty(),
+            "the zoom flush must have dropped the entry, or the row below proves nothing"
+        );
+        assert_eq!(
+            cache.invalidations(),
+            0,
+            "a refill, a pass and a zoom flush are the cache's own business"
+        );
+
+        plant(&mut cache, &held, 1.0);
+        cache.invalidate_edge(&held);
+        assert_eq!(cache.invalidations(), 1, "an edge that was held");
+        cache.invalidate_edge(&absent);
+        assert_eq!(
+            cache.invalidations(),
+            2,
+            "an edge that was not held still moved in the model"
+        );
+        cache.clear();
+        assert_eq!(cache.invalidations(), 3, "a clear of an empty cache");
+        cache.clear();
+        assert_eq!(cache.invalidations(), 4, "never reset by a clear");
     }
 
     #[test]

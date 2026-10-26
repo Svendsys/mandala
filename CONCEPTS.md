@@ -3368,10 +3368,24 @@ server-chosen capture lands in, removed on exit; `geometry` is the
 sidecar, read off the node tree through `scene_dump` at the capture's
 camera; `png` encodes. `app/capture_flow.rs` is the app half both
 surfaces call: it runs the camera-geometry rebuild the next frame
-owes, re-projects the zoom-dependent roles for a capture framed at
-another zoom and projects them back afterwards (so the live scene and
-camera are untouched), and refuses that re-projection as `busy`
-during a node drag. Every caller-chosen path is written through
+owes, and for a capture framed at another zoom projects the
+zoom-dependent roles — connections with their edge handles, labels,
+portals (`CanvasRole::zoom_dependent`) — into a scratch scene of the
+capture's own (`app/capture_scene.rs`: its own `AppScene`, its own
+`SceneConnectionCache`, its own hit indices), through the same
+`CanvasFrame::update_zoom_dependent_roles` body the camera rebuild
+runs on the live scene. The renderer walks the scratch into a second
+shaped set and composes one frame of it with the live set's
+zoom-independent roles by layer (`renderer::compose_capture_canvas`,
+`CanvasSource::Composed`); the live scene, cache and shaped set are
+read and never written, so there is nothing to project back. A node
+drag's drained offsets are passed into the scratch projection, so a
+capture at any zoom mid-drag shows the dragged node's connections
+where the window does, and no `busy` refusal is needed. The scratch
+cache stays warm across the frames of a recording at one zoom and
+follows the live cache's `clear` / `invalidate_edge` statements
+through `SceneConnectionCache::invalidations`, so it goes stale
+exactly when the live one is told to. Every caller-chosen path is written through
 `guarded_file::publish` — atomic, no symlink followed, no file
 replaced unasked — the writer the IPC `to_file` sidecar uses too.
 

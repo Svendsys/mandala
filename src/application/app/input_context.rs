@@ -113,6 +113,10 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// The frame-sequence recording in progress, for the console's
     /// `record` verb to start and stop.
     pub recorder: &'a mut crate::application::capture::record::Recorder,
+    /// The capture engine's scratch scene (`app::capture_scene`), for
+    /// the console's `screenshot` and `record` verbs and the
+    /// recording heartbeat.
+    pub scratch_canvas: &'a mut super::capture_scene::ScratchCanvas,
     /// The freeze watchdog, for a screenshot to tick as it progresses
     /// and for a clock step to tick once per heartbeat.
     pub watchdog: &'a super::freeze_watchdog::FreezeWatchdog,

@@ -230,8 +230,9 @@ pub(super) fn end_rect_select_gesture(
 /// Camera (pan/zoom/resize) changed — rebuild
 /// connection buffers against the new viewport. On
 /// zoom, the document-side scene cache is also stale
-/// because effective font size depends on zoom, so
-/// clear it before the rebuild re-samples.
+/// because effective font size depends on zoom; the
+/// connection pass drops its samples through
+/// `ensure_zoom` as it re-samples.
 ///
 /// Skipped when a node drag is in progress: the
 /// `MovingNode` drain rebuilds with the drag offsets
