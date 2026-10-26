@@ -12,7 +12,8 @@
 //! 1. **The element's own field.**
 //! 2. **The owner chain.** For text, a span's container — its section,
 //!    ring, cap, label, path or portal end — then, for a ring, its frame,
-//!    then the owning node's `style.text`. A path's and a portal end's
+//!    and for a cap, its path's size and color; then the owning node's
+//!    `style.text`. A path's and a portal end's
 //!    text fields are their `size` and `color`; a ring's fit falls back
 //!    to its frame's.
 //! 3. **The palette tier.** The owning node's binding — the nearest node
@@ -34,7 +35,7 @@
 //! **Size and color stay in their flow** (amendment 3 and ruling R4 on
 //! #235). For every flow but a section, `size` and `color` come only
 //! from that flow's own chain: the span, its container (a ring's frame
-//! included), the palette tier where it maps one (ring and frame text),
+//! and a cap's path included), the palette tier where it maps one (ring and frame text),
 //! the flow's own `Defaults` struct and `BUILT_IN`. They never read the
 //! owning node's `style.text`, `Defaults.span` or `Defaults.node.text`:
 //! a connector, a portal marker, a label or a frame lives at a scale and
@@ -59,7 +60,8 @@
 //! [`ReadRecorder`](crate::document::resolve::ReadRecorder) and reports
 //! to it every input it **looks at**, named as narrowly as the read
 //! itself: an element's style fields
-//! ([`Input::Style`](crate::document::resolve::Input::Style)), a node's
+//! ([`Input::Style`](crate::document::resolve::Input::Style)), its
+//! placement fields (`Placement`), a node's
 //! `palette` field on the binding walk (`PaletteBinding`), the structure
 //! of a children row (`Row`), the theme, a palette, the defaults, and the
 //! depth of a node whose palette group it computed. Tiers that turned
@@ -67,7 +69,8 @@
 //! does not report: a span whose own color is an `Rgba` reports its own
 //! style and nothing else for its color, and nothing a resolver reads is
 //! a position or a size, so moving or resizing a node dirties no
-//! resolution. V1-B7 builds its dependency index from these records
+//! resolution, and no text resolution reads a placement, so dragging a
+//! label or a portal marker dirties only its placement. V1-B7 builds its dependency index from these records
 //! (design §12.3) and maps a journal entry onto them with
 //! [`inputs_changed`](crate::document::deps::inputs_changed); a read
 //! that goes unreported is a projection that goes stale.
@@ -96,10 +99,18 @@ use indextree::NodeId;
 /// onto these.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Input {
-    /// An element's style fields: a text style, a node's shape, fill and
-    /// fill fade, a path's flow style, a frame's, ring's, label's or
-    /// portal end's style. Never a position, a size, an ident or a flag.
+    /// An element's style fields: what it draws with — a text style, a
+    /// node's shape, fill and fill fade, a path's flow style, a frame's
+    /// visibility and fit, a ring's fit, a portal end's marker color,
+    /// size and content. Never a position, a placement, an ident or a
+    /// flag.
     Style(NodeId),
+    /// An element's placement fields: where it sits, not how it looks —
+    /// a label's `t` and `offset`, a portal end's `border_t` and
+    /// `offset`, a frame's `start`, `direction`, `gap` and `inset`. A
+    /// label or portal-marker drag changes only these, so it dirties no
+    /// text resolution.
+    Placement(NodeId),
     /// A node's `palette` field, read on the walk up to the nearest
     /// binding — one per node the walk looks at.
     PaletteBinding(NodeId),
@@ -276,6 +287,13 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
     /// return it.
     fn style(&mut self, id: NodeId) -> Option<&'t DocElement> {
         self.rec.read(Input::Style(id));
+        element(self.tree, id)
+    }
+
+    /// Report that the placement fields of the element `id` were read,
+    /// and return it.
+    fn placement(&mut self, id: NodeId) -> Option<&'t DocElement> {
+        self.rec.read(Input::Placement(id));
         element(self.tree, id)
     }
 
@@ -649,6 +667,15 @@ pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadR
                         }
                     }
                 }
+                // A cap belongs to its path, as a ring to its frame: the
+                // path's own size and color come next.
+                if matches!(flow, Flow::Cap(_)) && got.wants(flow_fields) {
+                    if let Some(path) = parent(tree, id) {
+                        if let Some(path) = inputs.style(path).and_then(DocElement::as_path) {
+                            got.take_flow(path.flow.size, path.flow.color, &mut inputs);
+                        }
+                    }
+                }
             }
         }
     }
@@ -777,11 +804,14 @@ pub fn resolve_node(tree: &Tree<DocElement>, node: NodeId, rec: &mut impl ReadRe
 }
 
 /// A frame's fields. The chain: the frame's style, `Defaults.frame`,
-/// `BUILT_IN`. Its text is [`resolve_text`] of the frame.
+/// `BUILT_IN`. Reads the frame's style (`visible`, `fit`) and its
+/// placement (`start`, `direction`, `gap`, `inset`). Its text is
+/// [`resolve_text`] of the frame.
 ///
 /// Cost: O(1). No allocation beyond cloning a `FitMode::Once` filler.
 pub fn resolve_frame(tree: &Tree<DocElement>, frame: NodeId, rec: &mut impl ReadRecorder) -> ResolvedFrame {
     let mut inputs = Inputs::new(tree, rec, None);
+    inputs.placement(frame);
     let own = match inputs.style(frame) {
         Some(DocElement::Frame(frame)) => Some(&frame.style),
         _ => None,
@@ -913,13 +943,14 @@ pub fn resolve_path(tree: &Tree<DocElement>, path: NodeId, rec: &mut impl ReadRe
     }
 }
 
-/// A label's position and offset. The chain: the label, `Defaults.label`,
-/// `BUILT_IN`. Its text is [`resolve_text`] of the label.
+/// A label's position and offset — its placement. The chain: the label,
+/// `Defaults.label`, `BUILT_IN`. Its text is [`resolve_text`] of the
+/// label.
 ///
 /// Cost: O(1). No allocation.
 pub fn resolve_label(tree: &Tree<DocElement>, label: NodeId, rec: &mut impl ReadRecorder) -> ResolvedLabel {
     let mut inputs = Inputs::new(tree, rec, None);
-    let own = match inputs.style(label) {
+    let own = match inputs.placement(label) {
         Some(DocElement::Label(label)) => Some(&label.style),
         _ => None,
     };
@@ -938,7 +969,8 @@ pub fn resolve_label(tree: &Tree<DocElement>, label: NodeId, rec: &mut impl Read
 }
 
 /// A portal end's position, offset and marker content. The chain: the
-/// end, `Defaults.portal_end`, `BUILT_IN`. An end with span children
+/// end, `Defaults.portal_end`, `BUILT_IN`. Reads the end's placement
+/// (`border_t`, `offset`) and, with no spans, its style (`content`). An end with span children
 /// draws them and never reads `content`. Its marker text is
 /// [`resolve_text`] of the end.
 ///
@@ -949,7 +981,7 @@ pub fn resolve_portal_end(
     rec: &mut impl ReadRecorder,
 ) -> ResolvedPortalEnd {
     let mut inputs = Inputs::new(tree, rec, None);
-    let own = match inputs.style(end) {
+    let own = match inputs.placement(end) {
         Some(DocElement::PortalEnd(end)) => Some(&end.style),
         _ => None,
     };
@@ -960,6 +992,8 @@ pub fn resolve_portal_end(
     let own_content = if has_spans {
         None
     } else {
+        // The marker's content is how it looks, not where it sits.
+        inputs.style(end);
         own.and_then(|s| s.content.as_ref())
     };
     let mut default_content = None;

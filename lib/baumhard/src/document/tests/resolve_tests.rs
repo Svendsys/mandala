@@ -426,6 +426,46 @@ pub fn do_document_resolve_node_text_stays_out_of_other_flows() {
 }
 
 #[test]
+fn test_document_resolve_cap_takes_its_path() {
+    do_document_resolve_cap_takes_its_path();
+}
+
+/// A cap belongs to its path, as a ring to its frame: a connector's own
+/// size and color reach its cap ahead of `Defaults.connector`, and the
+/// cap's own color outranks the connector's. The cap records the
+/// connector's style. Controls: without the connector's own style the
+/// cap falls to `Defaults.connector`, then `BUILT_IN`.
+pub fn do_document_resolve_cap_takes_its_path() {
+    let (mut builder, ids) = example();
+    defaults(&mut builder, |d| d.connector.color = rgba(BLUE));
+    builder.edit(ids.b_connector, |e| {
+        if let DocElement::Connector(c) = e {
+            c.path.flow.color = rgba(RED);
+            c.path.flow.size = Some(30.0);
+        }
+    });
+    let (cap, reads) = text(&builder, ids.b_cap);
+    assert_eq!((cap.size, cap.color), (FontSize::Pt(30.0), RED));
+    assert!(reads.contains(&Input::Style(ids.b_connector)));
+    style(&mut builder, ids.b_cap, |s| s.color = rgba(GREEN));
+    let cap = text(&builder, ids.b_cap).0;
+    assert_eq!(
+        (cap.size, cap.color),
+        (FontSize::Pt(30.0), GREEN),
+        "the cap's own color first"
+    );
+    style(&mut builder, ids.b_cap, |s| s.color = None);
+    builder.edit(ids.b_connector, |e| {
+        if let DocElement::Connector(c) = e {
+            c.path.flow.color = None;
+            c.path.flow.size = None;
+        }
+    });
+    let cap = text(&builder, ids.b_cap).0;
+    assert_eq!((cap.size, cap.color), (BUILT_IN.connector.text.size, BLUE));
+}
+
+#[test]
 fn test_document_resolve_ring_size_never_reads_points() {
     do_document_resolve_ring_size_never_reads_points();
 }

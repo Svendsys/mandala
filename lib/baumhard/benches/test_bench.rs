@@ -1762,6 +1762,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_document_bounds_node_ident)
     });
     c.bench_function("document_bounds_counts", |b| b.iter(do_document_bounds_counts));
+    c.bench_function("document_resolve_cap_takes_its_path", |b| {
+        b.iter(do_document_resolve_cap_takes_its_path)
+    });
     c.bench_function("document_journal_reverts_and_replays_exactly", |b| {
         b.iter(do_document_journal_reverts_and_replays_exactly)
     });

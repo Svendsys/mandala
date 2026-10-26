@@ -14,18 +14,19 @@
 //! readers of those inputs.
 //!
 //! **Every field of every kind is classified here, and the compiler
-//! holds it to that**: each data struct is destructured with every
-//! field named, so a field added to an element does not compile until
-//! this module says which input it belongs to. What is classified as no
-//! input is what no resolver reads — a node's position and minimum size,
-//! a section's offset, a path's anchors and control points, a span's
-//! text. Moving or resizing a node therefore touches no input, and
-//! dirties no resolution: a drag re-places geometry and reshapes
-//! nothing.
+//! holds it to that**: each data struct, and each style struct that
+//! mixes looks with placement, is destructured with every field named,
+//! so a field added to an element does not compile until this module
+//! says which input it belongs to. What is classified as no input is
+//! what no resolver reads — a node's position and minimum size, a
+//! section's offset, a path's anchors and control points, a span's
+//! text. Moving or resizing a node therefore touches no input, and a
+//! label or portal-marker drag touches only `Placement`, which no text
+//! resolution reads: a drag re-places geometry and reshapes nothing.
 
 use crate::document::element::{
-    CapData, ConnectorData, DocElement, FrameData, LabelData, LinkData, MapData, NodeData, PortalEndData,
-    RingData, SectionData, SpanData,
+    CapData, ConnectorData, DocElement, FrameData, FrameStyle, LabelData, LabelStyle, LinkData, MapData,
+    NodeData, PathData, PortalEndData, PortalEndStyle, RingData, SectionData, SpanData,
 };
 
 /// One kind of resolution input a change of an element can touch. The
@@ -34,8 +35,13 @@ use crate::document::element::{
 /// parent's.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum InputKind {
-    /// `Input::Style` of the element: a style field changed.
+    /// `Input::Style` of the element: a field it draws with changed.
     Style,
+    /// `Input::Placement` of the element: a field that says where it
+    /// sits changed — a label's `t` or `offset`, a portal end's
+    /// `border_t` or `offset`, a frame's `start`, `direction`, `gap` or
+    /// `inset`.
+    Placement,
     /// `Input::PaletteBinding` of the node: its `palette` changed.
     PaletteBinding,
     /// `Input::Row` of the element's **parent**: the element's key
@@ -50,53 +56,88 @@ pub enum InputKind {
     Defaults,
 }
 
-/// The element-scoped kinds that are set, at most three, in a fixed
-/// order.
-fn kinds(style: bool, binding: bool, row: bool) -> impl Iterator<Item = InputKind> {
-    [
-        style.then_some(InputKind::Style),
-        binding.then_some(InputKind::PaletteBinding),
-        row.then_some(InputKind::ParentRow),
-    ]
-    .into_iter()
-    .flatten()
+/// What one change touched.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+struct Touched {
+    style: bool,
+    placement: bool,
+    binding: bool,
+    row: bool,
+    whole: Option<InputKind>,
+}
+
+impl Touched {
+    /// Everything an element can be read for: a change of kind.
+    const ALL: Touched = Touched {
+        style: true,
+        placement: true,
+        binding: true,
+        row: true,
+        whole: None,
+    };
+
+    /// The kinds set, in a fixed order.
+    fn kinds(self) -> impl Iterator<Item = InputKind> {
+        [
+            self.style.then_some(InputKind::Style),
+            self.placement.then_some(InputKind::Placement),
+            self.binding.then_some(InputKind::PaletteBinding),
+            self.row.then_some(InputKind::ParentRow),
+            self.whole,
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 /// The resolution inputs a change of one element from `before` to
 /// `after` touches. See the module docs. O(1) per field; no allocation.
 pub fn inputs_changed(before: &DocElement, after: &DocElement) -> impl Iterator<Item = InputKind> {
-    let (style, binding, row, whole) = classify(before, after);
-    let whole = whole.into_iter();
-    kinds(style, binding, row).chain(whole)
+    classify(before, after).kinds()
 }
 
-/// `(style, binding, row, whole-element input)` for `before` → `after`.
-/// The match is over `before` alone and names every kind, so a new kind
-/// does not compile until it is classified; an `after` of another kind
-/// touches everything an element can be read for.
-fn classify(before: &DocElement, after: &DocElement) -> (bool, bool, bool, Option<InputKind>) {
+/// A style-only change.
+fn style(changed: bool) -> Touched {
+    Touched {
+        style: changed,
+        ..Touched::default()
+    }
+}
+
+/// A whole-element input.
+fn whole(changed: bool, kind: InputKind) -> Touched {
+    Touched {
+        whole: changed.then_some(kind),
+        ..Touched::default()
+    }
+}
+
+/// What `before` → `after` touches. The match is over `before` alone and
+/// names every kind, so a new kind does not compile until it is
+/// classified; an `after` of another kind touches everything an element
+/// can be read for.
+fn classify(before: &DocElement, after: &DocElement) -> Touched {
     use DocElement as E;
-    const KIND_CHANGED: (bool, bool, bool, Option<InputKind>) = (true, true, true, None);
     match before {
         E::Map(a) => {
-            let E::Map(_) = after else { return KIND_CHANGED };
+            let E::Map(_) = after else { return Touched::ALL };
             let MapData { name: _ } = a;
-            (false, false, false, None)
+            Touched::default()
         }
         E::Theme(a) => {
-            let E::Theme(b) = after else { return KIND_CHANGED };
-            (false, false, false, (a != b).then_some(InputKind::Theme))
+            let E::Theme(b) = after else { return Touched::ALL };
+            whole(a != b, InputKind::Theme)
         }
         E::Palette(a) => {
-            let E::Palette(b) = after else { return KIND_CHANGED };
-            (false, false, false, (a != b).then_some(InputKind::Palette))
+            let E::Palette(b) = after else { return Touched::ALL };
+            whole(a != b, InputKind::Palette)
         }
         E::Defaults(a) => {
-            let E::Defaults(b) = after else { return KIND_CHANGED };
-            (false, false, false, (a != b).then_some(InputKind::Defaults))
+            let E::Defaults(b) = after else { return Touched::ALL };
+            whole(a != b, InputKind::Defaults)
         }
         E::Node(a) => {
-            let E::Node(b) = after else { return KIND_CHANGED };
+            let E::Node(b) = after else { return Touched::ALL };
             let NodeData {
                 ident: _,
                 channel,
@@ -110,15 +151,15 @@ fn classify(before: &DocElement, after: &DocElement) -> (bool, bool, bool, Optio
                 opacity: _,
                 on: _,
             } = a;
-            (
-                style != &b.style,
-                palette != &b.palette,
-                channel != &b.channel,
-                None,
-            )
+            Touched {
+                style: style != &b.style,
+                binding: palette != &b.palette,
+                row: channel != &b.channel,
+                ..Touched::default()
+            }
         }
         E::Section(a) => {
-            let E::Section(b) = after else { return KIND_CHANGED };
+            let E::Section(b) = after else { return Touched::ALL };
             let SectionData {
                 channel,
                 offset: _,
@@ -126,56 +167,103 @@ fn classify(before: &DocElement, after: &DocElement) -> (bool, bool, bool, Optio
                 align: _,
                 text,
             } = a;
-            (text != &b.text, false, channel != &b.channel, None)
+            Touched {
+                style: text != &b.text,
+                row: channel != &b.channel,
+                ..Touched::default()
+            }
         }
         E::Span(a) => {
-            let E::Span(b) = after else { return KIND_CHANGED };
+            let E::Span(b) = after else { return Touched::ALL };
             let SpanData {
                 text: _,
-                style,
+                style: span_style,
                 link: _,
             } = a;
-            (style != &b.style, false, false, None)
+            style(span_style != &b.style)
         }
         E::Frame(a) => {
-            let E::Frame(b) = after else { return KIND_CHANGED };
-            let FrameData { style } = a;
-            (style != &b.style, false, false, None)
+            let E::Frame(b) = after else { return Touched::ALL };
+            let FrameData { style: a } = a;
+            let FrameData { style: b } = b;
+            let FrameStyle {
+                visible,
+                start,
+                direction,
+                fit,
+                gap,
+                inset,
+                text,
+            } = a;
+            Touched {
+                style: visible != &b.visible || fit != &b.fit || text != &b.text,
+                placement: start != &b.start
+                    || direction != &b.direction
+                    || gap != &b.gap
+                    || inset != &b.inset,
+                ..Touched::default()
+            }
         }
         E::Ring(a) => {
-            let E::Ring(b) = after else { return KIND_CHANGED };
-            let RingData { channel, style } = a;
-            (style != &b.style, false, channel != &b.channel, None)
+            let E::Ring(b) = after else { return Touched::ALL };
+            let RingData {
+                channel,
+                style: ring_style,
+            } = a;
+            Touched {
+                style: ring_style != &b.style,
+                row: channel != &b.channel,
+                ..Touched::default()
+            }
         }
         E::Connector(a) => {
-            let E::Connector(b) = after else { return KIND_CHANGED };
+            let E::Connector(b) = after else { return Touched::ALL };
             let ConnectorData { path } = a;
-            (path_style_changed(path, &b.path), false, false, None)
+            style(path_style_changed(path, &b.path))
         }
         E::Link(a) => {
-            let E::Link(b) = after else { return KIND_CHANGED };
+            let E::Link(b) = after else { return Touched::ALL };
             let LinkData { to: _, kind: _, path } = a;
-            (path_style_changed(path, &b.path), false, false, None)
+            style(path_style_changed(path, &b.path))
         }
         E::CapStart(a) => {
-            let E::CapStart(b) = after else { return KIND_CHANGED };
+            let E::CapStart(b) = after else { return Touched::ALL };
             let CapData { text } = a;
-            (text != &b.text, false, false, None)
+            style(text != &b.text)
         }
         E::CapEnd(a) => {
-            let E::CapEnd(b) = after else { return KIND_CHANGED };
+            let E::CapEnd(b) = after else { return Touched::ALL };
             let CapData { text } = a;
-            (text != &b.text, false, false, None)
+            style(text != &b.text)
         }
         E::Label(a) => {
-            let E::Label(b) = after else { return KIND_CHANGED };
-            let LabelData { style } = a;
-            (style != &b.style, false, false, None)
+            let E::Label(b) = after else { return Touched::ALL };
+            let LabelData { style: a } = a;
+            let LabelData { style: b } = b;
+            let LabelStyle { t, offset, text } = a;
+            Touched {
+                style: text != &b.text,
+                placement: t != &b.t || offset != &b.offset,
+                ..Touched::default()
+            }
         }
         E::PortalEnd(a) => {
-            let E::PortalEnd(b) = after else { return KIND_CHANGED };
-            let PortalEndData { end, style } = a;
-            (style != &b.style, false, end != &b.end, None)
+            let E::PortalEnd(b) = after else { return Touched::ALL };
+            let PortalEndData { end, style: a } = a;
+            let PortalEndData { end: b_end, style: b } = b;
+            let PortalEndStyle {
+                border_t,
+                offset,
+                color,
+                size,
+                content,
+            } = a;
+            Touched {
+                style: color != &b.color || size != &b.size || content != &b.content,
+                placement: border_t != &b.border_t || offset != &b.offset,
+                row: end != b_end,
+                ..Touched::default()
+            }
         }
     }
 }
@@ -183,11 +271,8 @@ fn classify(before: &DocElement, after: &DocElement) -> (bool, bool, bool, Optio
 /// Whether a path's style changed: its flow style is what resolution
 /// reads; its anchors, control points, visibility and zoom window are
 /// geometry and visibility, read by no resolver.
-fn path_style_changed(
-    a: &crate::document::element::PathData,
-    b: &crate::document::element::PathData,
-) -> bool {
-    let crate::document::element::PathData {
+fn path_style_changed(a: &PathData, b: &PathData) -> bool {
+    let PathData {
         flow,
         anchors: _,
         control_points: _,
