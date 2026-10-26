@@ -42,6 +42,7 @@ pub(crate) mod code {
     pub(crate) const PARSE_ERROR: &str = "parse_error";
     pub(crate) const UNKNOWN_CMD: &str = "unknown_cmd";
     pub(crate) const INVALID_PARAMS: &str = "invalid_params";
+    pub(crate) const UNSUPPORTED: &str = "unsupported";
     pub(crate) const BUSY: &str = "busy";
     pub(crate) const OVERLOADED: &str = "overloaded";
     pub(crate) const REPLY_TOO_LARGE: &str = "reply_too_large";
@@ -57,6 +58,7 @@ pub(crate) mod code {
         PARSE_ERROR,
         UNKNOWN_CMD,
         INVALID_PARAMS,
+        UNSUPPORTED,
         BUSY,
         OVERLOADED,
         REPLY_TOO_LARGE,
@@ -284,7 +286,7 @@ impl Event {
                 "protocol": PROTOCOL_VERSION,
                 "app": "mandala",
                 "version": env!("CARGO_PKG_VERSION"),
-                "pid": std::process::id(),
+                "pid": process_id(),
                 "map": map,
             }),
         }
@@ -319,6 +321,20 @@ impl Event {
             data: serde_json::json!({ "reason": "busy" }),
         }
     }
+}
+
+/// The process id `hello` reports: the app's, where there is a
+/// process to name, and `null` on the browser, where a page has none
+/// (`format/ipc.md` §Transport "Browser"). Additive for a client — the
+/// field is there on both targets, and a client reads it as optional.
+#[cfg(not(target_arch = "wasm32"))]
+fn process_id() -> Option<u32> {
+    Some(std::process::id())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn process_id() -> Option<u32> {
+    None
 }
 
 /// A frame bound for the wire. The outbound thread serializes it, so

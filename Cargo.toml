@@ -41,6 +41,11 @@ license = "MPL-2.0"
 # featureless here is about where the *declaration* lives, not about
 # what gets compiled.
 [workspace.dependencies]
+# Declared once because two manifests read it: the root turns its
+# `wasm_js` feature on for the browser build (see the wasm32 table
+# below), and `mandalactl` calls it for the relay's token
+# (`crates/mandalactl/src/bridge/mod.rs`).
+getrandom = "0.4.3"
 glam = { version = "0.34.1", features = ["serde"] }
 indextree = { version = "4.9.2", features = ["serde"] }
 # `release_max_level_warn`: `warn!`/`error!` survive into release
@@ -218,7 +223,9 @@ rustix = { version = "1.1.5", features = ["process", "fs"] }
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"
 js-sys = "0.3.106"
-web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response"] }
+# `WebSocket`, `MessageEvent` and `CloseEvent` are the browser IPC
+# transport's (`src/application/ipc/browser/socket.rs`).
+web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response", "WebSocket", "MessageEvent", "CloseEvent"] }
 # Load-bearing despite having no call site anywhere in `src/`, which
 # is exactly why it is worth a comment: this entry exists to turn a
 # *feature* on, and the next dead-dependency sweep will otherwise find
@@ -229,8 +236,9 @@ web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "H
 # 'backends'`, reproduced by removing this line and running the
 # `./test.sh` wasm32 gate). Cargo unions features across the
 # workspace, so declaring it in the crate that *is* the wasm binary
-# is what makes the browser build resolve.
-getrandom = { version = "0.4.3", features = ["wasm_js"] }
+# is what makes the browser build resolve. The version is the
+# workspace table's; the feature is this manifest's.
+getrandom = { workspace = true, features = ["wasm_js"] }
 
 # No `criterion` here, and no `[dev-dependencies]` for a benchmark
 # harness: this crate has no benchmark harness (TEST_CONVENTIONS §T2.3)

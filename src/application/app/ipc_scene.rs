@@ -14,9 +14,11 @@
 //! release and a touch tap run, which is the whole of the parity
 //! guarantee: there is no second hit test to drift.
 //!
-//! Native-only, with `ipc_target.rs` that consumes it.
-
-#![cfg(not(target_arch = "wasm32"))]
+//! Both targets' — each target's command target consumes it over the
+//! same trees, which is what keeps `scene.hit_test` one answer. The
+//! point resolver beside it ([`resolve_point`], [`surface_of`]) is
+//! shared for the same reason: an IPC point lands where the camera
+//! says, on either target.
 
 use glam::Vec2;
 use serde_json::{json, Value};
@@ -27,8 +29,36 @@ use baumhard::mindmap::tree_builder::{MindMapTree, PortalPart};
 use crate::application::document::{f32_json, SelectionState};
 use crate::application::scene_host::AppScene;
 
+use crate::application::ipc::injected::Surface;
+use crate::application::ipc::space::{Point, Space};
+use crate::application::renderer::Renderer;
+
 use super::dispatch::{edge_under_pointer, CanvasPerPixel};
 use super::{compute_click_hit, ClickHit, ClickHitParts};
+
+/// `point` in both spaces, `(surface, canvas)`, through `renderer`'s
+/// camera as it stands now. One body for both targets' command targets
+/// and both targets' injected-input landing: where an IPC point lands
+/// is the camera's answer, and the camera is the same type on both.
+pub(super) fn resolve_point(renderer: &Renderer, point: Point) -> (Vec2, Vec2) {
+    match point.space {
+        Space::Surface => (
+            Vec2::new(point.x, point.y),
+            renderer.screen_to_canvas(point.x, point.y),
+        ),
+        Space::Canvas => {
+            let canvas = Vec2::new(point.x, point.y);
+            (renderer.canvas_to_screen(canvas), canvas)
+        }
+    }
+}
+
+/// Where `point` lands on the surface, through `renderer`'s camera as
+/// it stands now: how an injected event's position is resolved.
+pub(super) fn surface_of(renderer: &Renderer, point: Point) -> Surface {
+    let (surface, _) = resolve_point(renderer, point);
+    (f64::from(surface.x), f64::from(surface.y))
+}
 
 impl ClickHit {
     /// The collapsed hit as `scene.hit_test` reports it: `kind` is the

@@ -25,7 +25,9 @@ use serde_json::Value;
 
 use crate::application::document::{DocumentField, MindMapDocument, PointerMiss};
 use crate::application::ipc::envelope::Reply;
-use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
+use crate::application::ipc::registry::{
+    Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support,
+};
 use crate::application::ipc::{CommandTarget, ShellState};
 
 use super::refusal::{no_loaded_document, refuse, Refusal};
@@ -61,6 +63,9 @@ pub(super) const FAMILY: Family = Family {
                      The reply's mindmap is then the value found there. Implies fields=[\"mindmap\"] \
                      when fields is omitted; refused when fields lacks mindmap.",
                 ),
+                // Native: the browser has no filesystem (`format/ipc.md`
+                // §Transport "Browser").
+                #[cfg(not(target_arch = "wasm32"))]
                 ParamSpec::new(
                     "to_file",
                     ParamType::String,
@@ -70,6 +75,9 @@ pub(super) const FAMILY: Family = Family {
                      is reply_too_large). The write is atomic: a temp file in the same directory, \
                      renamed into place.",
                 ),
+                // Native: the browser has no filesystem (`format/ipc.md`
+                // §Transport "Browser").
+                #[cfg(not(target_arch = "wasm32"))]
                 ParamSpec::new(
                     "overwrite",
                     ParamType::Boolean,
@@ -122,6 +130,7 @@ pub(super) const FAMILY: Family = Family {
                     "With to_file only: the size of the file written.",
                 ),
             ],
+            support: Support::Everywhere,
             run: document,
         },
         CommandSpec {
@@ -134,6 +143,7 @@ pub(super) const FAMILY: Family = Family {
                 "The variant: None, Single, Multi, Section, MultiSection, SectionRange, Edge, \
                  EdgeLabel, PortalLabel or PortalText. The variant's own ids sit beside it.",
             )],
+            support: Support::Everywhere,
             run: selection,
         },
         CommandSpec {
@@ -159,6 +169,7 @@ pub(super) const FAMILY: Family = Family {
                     "{width, height} of the surface, in physical pixels.",
                 ),
             ],
+            support: Support::Everywhere,
             run: camera,
         },
         CommandSpec {
@@ -200,6 +211,7 @@ pub(super) const FAMILY: Family = Family {
                     "{x, y}: the last known pointer position, in surface pixels.",
                 ),
             ],
+            support: Support::Everywhere,
             run: mode,
         },
         CommandSpec {
@@ -211,6 +223,7 @@ pub(super) const FAMILY: Family = Family {
                 ParamType::String,
                 "The status line, or null when none is showing (Default mode).",
             )],
+            support: Support::Everywhere,
             run: status,
         },
         CommandSpec {
@@ -238,6 +251,7 @@ pub(super) const FAMILY: Family = Family {
                      timing.",
                 ),
             ],
+            support: Support::Everywhere,
             run: animations,
         },
         CommandSpec {
@@ -274,6 +288,7 @@ pub(super) const FAMILY: Family = Family {
                      color_picker, border, rect_select; each null when none is live.",
                 ),
             ],
+            support: Support::Everywhere,
             run: editors,
         },
         CommandSpec {
@@ -293,6 +308,7 @@ pub(super) const FAMILY: Family = Family {
                     "Newest first: {kind, node_ids?, index?}, the order Undo takes them.",
                 ),
             ],
+            support: Support::Everywhere,
             run: undo,
         },
     ],

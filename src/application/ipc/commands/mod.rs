@@ -195,6 +195,26 @@ mod tests {
         assert_eq!(mandalactl::FRAME_CAP, OUTBOUND_FRAME_CAP);
     }
 
+    /// The relay's two control frames are spelled once in `mandalactl`
+    /// (the relay) and read once in the app (the page); the two must
+    /// agree byte for byte, or the page never learns it has a
+    /// controller.
+    #[test]
+    fn test_mandalactl_spells_the_bridge_frames_the_page_reads() {
+        use crate::application::ipc::browser::{BridgeFrame, BRIDGE_KEY};
+        assert_eq!(mandalactl::BRIDGE_ATTACHED, BridgeFrame::Attached.text());
+        assert_eq!(mandalactl::BRIDGE_DETACHED, BridgeFrame::Detached.text());
+        assert_eq!(mandalactl::BRIDGE_KEY, BRIDGE_KEY);
+        assert_eq!(
+            BridgeFrame::parse(mandalactl::BRIDGE_ATTACHED),
+            Some(BridgeFrame::Attached)
+        );
+        assert_eq!(
+            BridgeFrame::parse(mandalactl::BRIDGE_DETACHED),
+            Some(BridgeFrame::Detached)
+        );
+    }
+
     /// The convention `ParamSpec::doc` states, held across the *whole*
     /// registry and not only the commands `mandalactl` has a verb for:
     /// a parameter named like a file location documents itself as an

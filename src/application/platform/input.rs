@@ -9,24 +9,21 @@
 //! that imports through this module stays put.
 
 pub use winit::event::ElementState;
-/// Mouse-button payload — consumed by native event handlers and the
-/// color-picker click flow. WASM's bootstrap (`run_wasm/mod.rs`)
-/// imports directly from winit, so this re-export is gated to native.
-#[cfg(not(target_arch = "wasm32"))]
+/// Mouse-button payload — consumed by the native event handlers, the
+/// color-picker click flow, and on both targets by the IPC `input`
+/// family, whose injected events carry it to each target's handlers.
 pub use winit::event::MouseButton;
-/// Touch-phase payload — consumed by the native touch handler and
+/// Touch-phase payload — consumed by each target's touch handler and
 /// by the IPC `input.touch` command, which delivers it to the same
-/// handler. WASM's touch path translates browser events itself.
-#[cfg(not(target_arch = "wasm32"))]
+/// handler.
 pub use winit::event::TouchPhase;
 pub use winit::keyboard::Key;
 pub use winit::keyboard::ModifiersState as Modifiers;
 /// Named-key payload (`NamedKey::Enter` / `Tab` / etc.). Production
 /// key handlers pattern-match on `Key::Named(..)` directly; the
 /// names are built by the modal-editor test fixtures and by the IPC
-/// `input.key` / `input.text` commands, which synthesize the payload
-/// winit would deliver.
-#[cfg(any(test, not(target_arch = "wasm32")))]
+/// `input.key` / `input.text` commands, on both targets, which
+/// synthesize the payload winit would deliver.
 pub use winit::keyboard::NamedKey;
 
 /// Inline-string payload for `Key::Character(...)` — winit reuses
@@ -35,9 +32,8 @@ pub use winit::keyboard::NamedKey;
 /// importing the smol-str crate by name. Production input handlers
 /// receive the `SmolStr` already wrapped inside a `Key::Character(...)`
 /// from winit; the one production builder is the IPC `input.key` /
-/// `input.text` pair, which wraps a typed grapheme the way winit
-/// would.
-#[cfg(any(test, not(target_arch = "wasm32")))]
+/// `input.text` pair, on both targets, which wraps a typed grapheme
+/// the way winit would.
 pub use winit::keyboard::SmolStr;
 
 /// Wheel/trackpad scroll-delta payload. Both targets route through

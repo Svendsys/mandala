@@ -30,13 +30,24 @@ use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::scene_host::AppScene;
 
+#[cfg(target_arch = "wasm32")]
+use crate::application::capture::geometry::Sidecar;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::capture::plan::CaptureRequest;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::capture::record::{RecordDestination, Started, Summary};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::capture::{CaptureError, CaptureOutcome, Destination};
+#[cfg(target_arch = "wasm32")]
+use crate::application::renderer::FrameSkip;
 
 use super::events::Observed;
 use super::injected::{Overloaded, Pacing, Sample};
 use super::space::Point;
+
+/// How an anonymous `act.macro` step sequence is named in the macro
+/// dispatcher's diagnostics, on either target.
+pub(crate) const IPC_STEPS_LABEL: &str = "(ipc steps)";
 
 /// A part of the app shell's own state that a `query` command reads.
 /// The state types behind it (`DragState`, the modal editors) are
@@ -99,6 +110,11 @@ pub(crate) trait CommandTarget {
     /// parse → execute → side-effect drain, without opening the
     /// console and without writing to its scrollback. `None` when no
     /// document is loaded: every verb runs against one.
+    ///
+    /// The browser has no console runtime, so the registry refuses
+    /// `act.console` there before any handler runs
+    /// (`registry::Support`); its implementation answers `None`, and is
+    /// never reached.
     fn run_console_line(&mut self, line: &str) -> Option<LineOutcome>;
 
     /// Whether a macro with this id is registered in any tier.
@@ -202,12 +218,27 @@ pub(crate) trait CommandTarget {
     /// camera of its own, and a scene it re-projects for another zoom
     /// is projected back before this returns. [`Self::changed_view`]
     /// is untouched.
+    #[cfg(not(target_arch = "wasm32"))]
     fn capture(
         &mut self,
         request: &CaptureRequest,
         destination: Destination,
         sidecar: bool,
     ) -> Option<Result<Screenshot, CaptureError>>;
+
+    /// The browser's capture: draw the frame into the canvas and read
+    /// the canvas back as a PNG, in one task, so the drawing buffer is
+    /// still what was drawn (`format/ipc.md` §Transport "Browser"). The
+    /// live camera, at the canvas's size: the browser cannot draw
+    /// offscreen for another framing. `sidecar` asks for the geometry
+    /// sidecar inline. `None` when the app has no document; `Err` names
+    /// what the browser refused (the canvas could not be read).
+    ///
+    /// Draws the frame the window owed — the one the next
+    /// `RedrawRequested` would have drawn — and nothing a frame would
+    /// not show; [`Self::changed_view`] is untouched.
+    #[cfg(target_arch = "wasm32")]
+    fn capture_canvas(&mut self, sidecar: bool) -> Option<Result<CanvasCapture, String>>;
 
     /// Begin recording a frame sequence of `request` at `fps` into
     /// `destination` (`app::record_flow`). The first frame is taken
@@ -218,6 +249,7 @@ pub(crate) trait CommandTarget {
     /// The recording is app state: it keeps taking frames, one per
     /// heartbeat that finds one due, until [`Self::record_stop`], its
     /// `max_frames`, its disk budget or the app's exit.
+    #[cfg(not(target_arch = "wasm32"))]
     fn record_start(
         &mut self,
         request: &CaptureRequest,
@@ -231,6 +263,7 @@ pub(crate) trait CommandTarget {
     /// `CaptureError::Invalid` when nothing has recorded since the last
     /// stop. Needs no document: a recording outlives the one it began
     /// on.
+    #[cfg(not(target_arch = "wasm32"))]
     fn record_stop(&mut self) -> Result<Summary, CaptureError>;
 
     /// The app clock, read-only (`clock.status`, `ping`): its mode and
@@ -255,7 +288,40 @@ pub(crate) trait CommandTarget {
     fn step_clock(&mut self, request: StepRequest) -> Result<Stepped, ClockRefusal>;
 }
 
+/// What the browser's [`CommandTarget::capture_canvas`] did: the
+/// outcome and, as native's `Screenshot`, whether the app was settled
+/// once it was taken.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
+pub(crate) struct CanvasCapture {
+    pub(crate) outcome: CanvasOutcome,
+    /// The app needed no further frame once the capture was taken: no
+    /// animation running, no injected input queued.
+    pub(crate) settled: bool,
+}
+
+/// The browser's capture, drawn or not.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
+pub(crate) enum CanvasOutcome {
+    /// The frame was drawn and the canvas read back.
+    Drawn {
+        /// The live camera the frame was drawn through: its viewport
+        /// is the canvas's size and its pixel ratio the scale.
+        camera: Camera2D,
+        /// The PNG, base64-encoded as `HtmlCanvasElement::to_data_url`
+        /// hands it over, without the `data:image/png;base64,` prefix.
+        png_base64: String,
+        /// The geometry sidecar, when one was asked for.
+        sidecar: Option<Sidecar>,
+    },
+    /// The renderer did not draw the frame, so nothing was read: the
+    /// canvas would have held the previous frame, or nothing.
+    Skipped { camera: Camera2D, skip: FrameSkip },
+}
+
 /// What [`CommandTarget::capture`] did.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Screenshot {
     pub(crate) outcome: CaptureOutcome,

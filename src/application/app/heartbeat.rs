@@ -20,7 +20,8 @@
 //!
 //! **What a step runs.** A heartbeat every
 //! [`HEARTBEAT_MS`](crate::application::clock::HEARTBEAT_MS) virtual
-//! milliseconds, the last on the step's end ([`heartbeat_times`]), each
+//! milliseconds, the last on the step's end
+//! ([`heartbeat_times`](crate::application::clock::heartbeat_times)), each
 //! the whole frame — one injected sample, the drains, the tick, the
 //! recorder. Between two of them, a running recording's frame boundary
 //! gets a tick of its own ([`Beat::Boundary`]): the clock stops on the
@@ -36,58 +37,25 @@
 //! progress, so only a single stuck heartbeat can trip the threshold.
 //!
 //! Native-only: the input-driven half is made of native's drag state
-//! and picker, and the step driver below commands a clock only IPC can
-//! switch (`CLAUDE.md` "Dual-target status", "Virtual-clock
-//! stepping"). The animation tick it runs is not — `animation_drain`
-//! is the body the browser's frame runs too.
+//! and picker. The step's schedule is not — [`run_step`] and the
+//! [`Steps`] trait it drives live in `app::step`, and the browser's
+//! `run_wasm::step` implements the trait over its own frame — and
+//! neither is the animation tick: `animation_drain` is the body the
+//! browser's frame runs too.
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use crate::application::clock::{heartbeat_times, AppClock, ClockMode, ClockRefusal, StepRequest, Stepped};
+use crate::application::clock::{AppClock, ClockMode, ClockRefusal, StepRequest, Stepped};
 use crate::application::document::MindMapDocument;
 use crate::application::ipc::injected::{InjectedQueue, InputEvent, Sample};
 use crate::application::platform::window::PhysicalPosition;
 
 use super::capture_flow::CaptureScene;
 use super::input_context::InputHandlerContext;
-use super::ipc_target::surface_of;
+use super::ipc_scene::surface_of;
+use super::step::{run_step, Beat, Steps};
 use super::throttled_interaction::{ColorPickerHoverInteraction, ThrottledDrag, ThrottledInteraction};
 use super::{animation_drain, drain_frame, record_flow, DragState};
-
-/// Which frame is running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Beat {
-    /// One iteration of the event loop. In real time, the whole frame;
-    /// under a virtual clock time has not moved, so the input-driven
-    /// half alone.
-    Loop,
-    /// A step's heartbeat, on the
-    /// [`HEARTBEAT_MS`](crate::application::clock::HEARTBEAT_MS)
-    /// cadence: the whole frame.
-    Cadence,
-    /// A running recording's frame boundary, between two cadence
-    /// heartbeats of a step: the whole frame but the injected sample.
-    Boundary,
-}
-
-impl Beat {
-    /// Whether this frame runs the time-driven half.
-    fn moves_time(self, clock: &AppClock) -> bool {
-        match self {
-            Beat::Loop => !clock.is_virtual(),
-            Beat::Cadence | Beat::Boundary => true,
-        }
-    }
-
-    /// Whether this frame lands one injected-input sample.
-    fn lands_injected(self, clock: &AppClock) -> bool {
-        match self {
-            Beat::Loop => !clock.is_virtual(),
-            Beat::Cadence => true,
-            Beat::Boundary => false,
-        }
-    }
-}
 
 /// Whether the event loop must keep iterating without further input
 /// (`InitState::needs_continuation`, and the first conditions of
@@ -364,45 +332,6 @@ impl InputHandlerContext<'_> {
     pub(super) fn set_clock_mode(&mut self, mode: ClockMode) -> Result<bool, ClockRefusal> {
         self.clock.switch_mode(mode, self.recorder.active.is_some())
     }
-}
-
-/// What a step drives: a clock it stops at each instant the step
-/// names, a recording whose boundaries it stops at too, and the frame
-/// it runs there. The handler context is the app's; the tests drive a
-/// real recording on a real clock through the same [`run_step`], so the
-/// schedule they pin is the one the app runs.
-pub(super) trait Steps {
-    /// The clock's reading.
-    fn now_ms(&self) -> f64;
-    /// When the running recording's next frame is due, on the same
-    /// clock; `None` with nothing recording or the recording full.
-    fn next_frame_due(&self) -> Option<f64>;
-    /// Stop the clock at `at_ms` and run the frame `beat` names there.
-    fn beat(&mut self, beat: Beat, at_ms: f64);
-}
-
-/// One step's loop (see the module doc): a [`Beat::Cadence`] heartbeat
-/// at each of [`heartbeat_times`], and before each, a
-/// [`Beat::Boundary`] tick at every frame boundary of a running
-/// recording that falls strictly between it and the last instant run —
-/// one on a heartbeat is the heartbeat's to take. Returns the cadence
-/// heartbeats run.
-pub(super) fn run_step(app: &mut impl Steps, request: StepRequest) -> u64 {
-    let start = app.now_ms();
-    let mut frames_run = 0;
-    for at in heartbeat_times(start, request) {
-        // Ends: each tick stops the clock on `due`, so a boundary the
-        // recorder did not move past fails `due > now` next time round.
-        while let Some(due) = app
-            .next_frame_due()
-            .filter(|due| *due > app.now_ms() && *due < at)
-        {
-            app.beat(Beat::Boundary, due);
-        }
-        app.beat(Beat::Cadence, at);
-        frames_run += 1;
-    }
-    frames_run
 }
 
 impl Steps for InputHandlerContext<'_> {

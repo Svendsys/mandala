@@ -14,21 +14,30 @@
 //! on the main thread, between winit events, with the same access an
 //! input handler has, so IPC never races the user and a command's
 //! effects are ordered with theirs. The threads wake the parked event
-//! loop through a winit user event ([`IpcWake`]), which is what lets
+//! loop through a winit user event (`IpcWake`, native), which is what lets
 //! an idle app — parked in `ControlFlow::Wait`, the state an agent
 //! most often finds it in — answer with no polling and no idle cost.
 //!
-//! Native-only at this module boundary, the `console_input`
-//! precedent: browsers cannot serve local sockets (`CLAUDE.md`
-//! "Dual-target status"). Within native, the transport is Unix-only
-//! until the Windows named-pipe adapter lands; until then `--ipc` on
-//! Windows fails at startup rather than doing nothing.
+//! **Two targets, one protocol.** The envelope, the registry and every
+//! command compile for both targets; what differs is the transport
+//! and the handful of commands the browser cannot serve, which the
+//! registry refuses by name (`registry::Support`). Native listens on a
+//! Unix socket (`transport`); the browser, which cannot listen, opens
+//! a WebSocket toward `mandalactl bridge` (`format/ipc.md` §Transport
+//! "Browser"). Within native, the transport is Unix-only until the
+//! Windows named-pipe adapter lands; until then `--ipc` on Windows
+//! fails at startup rather than doing nothing.
 
 // The envelope is transport-agnostic, but the only code that reads
 // what it builds is the Unix transport. Off Unix the module compiles
 // with nothing draining it — the same shape as the wasm32 allows in
 // `application/mod.rs`, scoped the same way so the Unix lint stays
 // fully armed, and gone when the named-pipe transport (#169) lands.
+// The browser transport's protocol half compiles on native under
+// `test` alone: its only native reader is the test suite, which is
+// what proves it (`browser/mod.rs`); the socket half is wasm32's.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod browser;
 mod commands;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod envelope;
@@ -43,15 +52,24 @@ mod wait;
 
 pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
-pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use target::Screenshot;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use target::{CanvasCapture, CanvasOutcome};
+pub(crate) use target::{CommandTarget, Injected, SceneView, ShellState, IPC_STEPS_LABEL};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
-pub(crate) use wait::{Settling, Until};
+pub(crate) use wait::Settling;
+// Read by the one-shot capture's settle wait (`app/capture_flow.rs`),
+// a native launch; the browser's waits name their `Until` inside `wait`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use wait::Until;
 
 /// The winit user event the boundary threads send to wake the event
 /// loop. It carries nothing: the work is on the server's ordered
 /// queue, and a wake only says "drain it". Several wakes for one
 /// drain are harmless — an empty drain is a no-op.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct IpcWake;
 
@@ -69,6 +87,7 @@ pub(crate) struct Executed {
 }
 
 /// What one `IpcServer::drain` did that the event loop must act on.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct DrainOutcome {
     /// Some executed command changed pixels; request a redraw.
@@ -78,16 +97,18 @@ pub(crate) struct DrainOutcome {
     pub(crate) backlog: bool,
 }
 
-/// Stand-in for the transport where it does not exist yet. `start`
-/// is the only way to obtain one and always fails, so the other
-/// methods are unreachable by construction — the uninhabited field
-/// proves it to the compiler.
-#[cfg(not(unix))]
+/// Stand-in for the transport where it does not exist yet — Windows,
+/// until the named-pipe adapter lands. `start` is the only way to
+/// obtain one and always fails, so the other methods are unreachable
+/// by construction — the uninhabited field proves it to the compiler.
+/// The browser is not this case: it has a transport of its own and no
+/// `IpcServer` at all.
+#[cfg(all(not(unix), not(target_arch = "wasm32")))]
 pub(crate) struct IpcServer {
     never: std::convert::Infallible,
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(target_arch = "wasm32")))]
 impl IpcServer {
     pub(crate) fn start(
         _path: &std::path::Path,

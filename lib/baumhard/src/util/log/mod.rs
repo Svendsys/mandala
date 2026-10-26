@@ -14,12 +14,11 @@
 //! on WASM, plus the panic hook wiring on WASM. This module
 //! collapses both onto one [`crate::util::log::init`] call.
 //!
-//! On native the installed logger also feeds `capture`, which lets
-//! a caller collect the `warn!` / `error!` records one stretch of code
-//! emits. The IPC command executor uses it so a reply can carry the
-//! diagnostics its command produced.
+//! On both targets the installed logger also feeds `capture`, which
+//! lets a caller collect the `warn!` / `error!` records one stretch of
+//! code emits. The IPC command executor uses it so a reply can carry
+//! the diagnostics its command produced.
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod capture;
 
 /// Initialize the global logger for whichever target this binary
@@ -75,8 +74,48 @@ pub fn init() {
     #[cfg(target_arch = "wasm32")]
     {
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-        console_log::init_with_level(log::Level::Info).expect("failed to init logger");
+        // A static, through `set_logger`: the browser build's `log` has
+        // no `std` feature, so a boxed logger is not available there
+        // (the manifest's `env_logger` note). `console_log`'s own
+        // `init_with_level` would install its static the same way,
+        // minus the capture tap.
+        log::set_logger(&WASM_LOGGER)
+            .expect("util::log::init: a logger is already installed; init runs once, at startup");
+        log::set_max_level(WASM_MAX_LEVEL);
     }
+}
+
+/// The browser's runtime filter: `Info`, as `console_log::init_with_level`
+/// was called with before the capture tap replaced it — looser than
+/// native's `warn`, and harmless, since the release cap compiles
+/// `info!` out before this filter sees it.
+#[cfg(target_arch = "wasm32")]
+const WASM_MAX_LEVEL: log::LevelFilter = log::LevelFilter::Info;
+
+/// The browser logger: the console, with every record also offered to
+/// [`capture`], so an IPC reply over the browser transport carries
+/// its command's diagnostics as a native one does. The record goes to
+/// the capture before the filter, as on native.
+#[cfg(target_arch = "wasm32")]
+struct WasmCapturingLogger;
+
+#[cfg(target_arch = "wasm32")]
+static WASM_LOGGER: WasmCapturingLogger = WasmCapturingLogger;
+
+#[cfg(target_arch = "wasm32")]
+impl log::Log for WasmCapturingLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= WASM_MAX_LEVEL || (metadata.level() <= log::Level::Warn && capture::active())
+    }
+
+    fn log(&self, record: &log::Record) {
+        capture::observe(record);
+        if record.level() <= WASM_MAX_LEVEL {
+            console_log::log(record);
+        }
+    }
+
+    fn flush(&self) {}
 }
 
 /// The native logger: `env_logger`, with every record also offered

@@ -26,16 +26,18 @@
 //! arrives with `code: None` and is classified by the consumer.
 //!
 //! **What feeds it.** Only records that reach the installed logger:
-//! [`crate::util::log::init`]'s native logger in a binary, and
+//! [`crate::util::log::init`]'s logger in a binary — on native the
+//! `env_logger` wrapper, in the browser the console wrapper, both of
+//! which offer every record here before their own filter — and
 //! [`crate::util::test_logger`] in a test binary. With no logger
 //! installed, `log`'s global max level stays `Off`, nothing reaches
 //! `observe`, and a capture comes back empty. A test asserting on
 //! captured records therefore calls `test_logger::install()` first.
 //!
-//! Native-only, like its one consumer, the IPC command executor
-//! (`CLAUDE.md` "Dual-target status"). The browser's `console_log`
-//! backend does not feed it, and IPC-15's browser transport owns
-//! that wiring when it lands.
+//! Both targets': its consumer, the IPC command executor, runs on
+//! both (`format/ipc.md` §Transport "Browser"). The window is a
+//! thread-local, which on `wasm32-unknown-unknown` is the one main
+//! thread's.
 
 use std::cell::Cell;
 

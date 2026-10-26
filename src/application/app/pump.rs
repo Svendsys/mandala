@@ -36,9 +36,9 @@ use std::time::Instant;
 use crate::application::ipc::{self, DrainOutcome, IpcServer};
 
 use super::capture_flow;
-use super::heartbeat::Beat;
 use super::ipc_target::IpcCommandTarget;
 use super::run_native_init::InitState;
+use super::step::Beat;
 use super::OneShot;
 
 /// When the next iteration should run.

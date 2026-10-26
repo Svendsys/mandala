@@ -166,11 +166,11 @@ with other services on port allocation, and it triggers firewall
 consent dialogs. The **envelope and command semantics** are
 transport-agnostic and carry over unchanged; the *framing* (NDJSON
 line-delimiting) and the byte caps below are byte-stream constructs,
-re-expressed per transport — a named pipe keeps them, and the parked
-WebSocket transport (IPC-15) replaces `\n`-delimited lines with
-WebSocket message boundaries and re-expresses the size caps as
-max-message limits. "Same protocol" means the same envelope and
-commands, not the same framing bytes.
+re-expressed per transport — a named pipe keeps them, and the
+browser's WebSocket transport ([Browser](#browser), IPC-15) replaces
+`\n`-delimited lines with WebSocket message boundaries and keeps the
+size caps as the app's own per-message limits. "Same protocol" means
+the same envelope and commands, not the same framing bytes.
 
 IPC-02 ships the Unix transport; the named-pipe adapter is a
 self-contained follow-up inside the same transport module. IPC-02
@@ -180,15 +180,138 @@ adapter is tracked as #169. Until it lands,
 at this section (honest fail-fast per §9/§10 — no silent no-op of a
 user-requested feature).
 
-### WASM
+### Browser
 
-There is no WASM transport; the `src/application/ipc/` module is
-`#[cfg(not(target_arch = "wasm32"))]`-gated at the module boundary,
-mirroring `console_input`. The carve-out entry lives in `CLAUDE.md`
-"Dual-target status"; the browser trajectory (WebSocket transport +
-browser-side capture, same envelope and commands) is parked in
-IPC-15. Browsers cannot open local sockets, so this is a transport
-gap by nature, not a design gap.
+The browser build speaks this protocol too (IPC-15): the same
+envelope, the same commands, the same replies and events — the
+registry is one table on both targets — over a transport of its own,
+because a page can neither serve a local socket nor listen at all.
+
+**Topology: the page connects out, through a relay.** `mandalactl
+bridge` listens on loopback (`127.0.0.1:41816` by default; `listen=`
+moves it, to another loopback address only) and serves two roles,
+each behind the same token in its URL path:
+
+- `ws://127.0.0.1:41816/app/<token>` — the page. Open the page with
+  `?ipc=<this URL>` beside `?map=` (percent-encoded or not) and it
+  connects, reconnects when the relay goes away (250 ms doubling to
+  5 s), and otherwise does nothing: without `?ipc=` no socket is
+  opened and nothing in the transport runs, as native runs nothing
+  without `--ipc`. A page is **opt-in per load**, never a default.
+- `ws://127.0.0.1:41816/controller/<token>` — the client: `mandalactl
+  --ws <this URL>` (or `MANDALA_WS`), or anything that speaks
+  WebSocket text frames.
+
+The relay forwards text frames verbatim in both directions and owns
+the [single-controller](#single-controller) rule. One page at a time
+(a second is closed at the handshake); one controller at a time (a
+second receives `{"event":"connection_rejected","data":{"reason":"busy"}}`
+and is closed); a controller that arrives before any page receives
+`{"event":"connection_rejected","data":{"reason":"no_app"}}` and is
+closed, since nothing could greet it — `mandalactl` reports that one
+with its remedy and does not retry it, as it does not retry any
+reason but `busy`. A path naming another token, or no role, is refused
+at the WebSocket handshake with HTTP `403` and nothing is relayed.
+
+**Framing, re-expressed.** One frame is one WebSocket **text message**,
+without the newline the socket transport ends a line with; a binary
+message is nothing the protocol spells and is ignored. The caps are
+the app's and unchanged — a text message over the 1 MiB inbound cap is
+answered `parse_error` with `data.line` (a per-controller count of
+messages, blank ones included), a reply over 8 MiB becomes
+`reply_too_large` — and the relay only bounds its own memory above
+them. Events are offered while the page's send buffer is under 1 MiB
+and otherwise wait, coalesced behind newer ones of their class, as the
+socket transport holds them behind a full queue.
+
+**Lifecycle, mapped onto the relay.** The relay tells the page about
+its other role with two control frames of its own, the one addition
+to the wire — `{"bridge":"attached"}` and `{"bridge":"detached"}`, a
+JSON object with that one key and no other, which no request is:
+
+- *attached*: a controller connected. The page starts a fresh session
+  — a new controller generation; subscriptions cleared, no wait
+  pending — and greets it with `hello`, which the relay forwards: the
+  first frame a controller reads is the greeting, exactly as on the
+  socket. `hello.pid` is `null`: a page has no process id. Every other
+  `hello` field is as documented.
+- *detached*: the controller left. The page resets its session the way
+  the native acceptor's `Gone` does; a request still in flight from
+  the departed controller is dropped by generation, never executed
+  for the next one.
+- The page leaving (tab closed, reload, the relay's socket lost): the
+  controller receives `{"event":"shutdown","data":{}}` and is closed,
+  the shape an exiting native app gives. A new page attaches to the
+  waiting relay and is told `attached` at once if a controller is
+  already there.
+- A controller's frame that has the relay's shape is dropped by the
+  relay, never forwarded, so the page cannot be told about a
+  controller by anyone but the relay.
+
+Text from the page while no controller is attached goes nowhere, as
+an event nobody subscribed to does.
+
+**Where commands run.** On the browser's main thread, between event
+handlers and never inside one: the socket's callbacks queue what they
+received, and the app drains the queue — executing each command with
+the same access an input handler has, observing the app for the event
+stream, evaluating a pending `clock.wait` — from the callback's own
+task, from the end of every frame, and from a timer armed at a wait's
+deadline. That is this target's spelling of the
+[threading contract](#threading-contract-wire-visible-consequences)
+on a target that has no threads; a command's effects are ordered with
+the user's exactly as on native.
+
+**What the browser serves, and what it says it does not.** Every
+command is registered on both targets, and `describe` reports per
+command whether this build serves it (`supported`, and
+`unsupported_reason` when not); a request for one it does not is
+answered `unsupported` before its parameters are looked at. On the
+browser that is:
+
+| command | why |
+|---|---|
+| `act.console` | no console runtime: the shell that executes a line is native until console parity lands (CONCEPTS §6 "Console"). `act.action` and `act.macro` run on both. |
+| `capture.record_start`, `capture.record_stop` | no files and no frame recorder. `capture.screenshot` is served, inline (below). |
+
+Beside those, `act.action` with an `Action` whose body is
+`WasmCompatibility::NativeOnly` is answered `unsupported` naming the
+action — the cross-platform dispatcher would answer `unhandled`,
+which also means "nothing to do", so the honest answer is the
+refusal. `query.*`, `scene.*`, `input.*`, `act.macro`, `clock.*` and
+`events.*` are at parity, with these per-target shapes: `query.mode`
+reports `drag_state.kind: "None"` (the browser has no drag-state
+machine) and `modals` from the one modal it has, the node text editor;
+`query.editors` reports `null` for the console, the color picker and
+the single-line editor; `query.animations` reports no pause (the pause
+is keyed to native's drags); `query.document` and `scene.dump` declare
+no `to_file`/`overwrite` (no filesystem — a reply over the cap is
+`reply_too_large` with no file alternative, so keep `include` narrow).
+`capture.screenshot` on the browser is the canvas as drawn, at its own
+size, returned inline: see [`capture.screenshot`](#capturescreenshot-ipc-07)
+for the per-target table. `clock.set_mode virtual` and `clock.step`
+work: a step runs the browser's frame — one injected sample, then the
+animation tick — at each virtual instant through the same schedule
+native's heartbeat runs (`app/step.rs`), and the page's own frames
+stand still until the clock is real again.
+
+**Trust: the delta from the socket.** The socket's guard is the
+filesystem: `0600`, same-user, a path nothing else can open. A
+loopback port has no such owner: **any page in any browser on this
+machine can open a WebSocket to `127.0.0.1:<port>`**, and a browser's
+same-origin policy does not apply to WebSocket connects. The relay's
+answer is the token: 128 bits from the OS (`getrandom`), or `token=`
+if given, required on both roles, printed once at startup and
+otherwise unguessable — so a page that does not hold it cannot attach
+as a controller and cannot impersonate the app. The token is a
+**same-user secret, the tier the socket path is**, not a network one:
+it travels in a `ws://` URL that the page's own `location.search`
+carries in the clear, and the relay listens on loopback only (another
+`listen=` address is refused at startup). The privilege tier is
+unchanged — commands execute at `User`, the page's own tier — and so
+is what a hostile map can do (nothing more than on native). Nothing is
+exposed beyond this machine, and nothing without a user who started a
+relay and loaded a page with its URL.
 
 ### Headless and one-shot launches
 
@@ -432,7 +555,9 @@ On accept, before reading anything, the server greets:
 ```
 
 All `hello` fields except `map` are process-static
-(`protocol`/`app`/`version`/`pid`); `map` is live app state
+(`protocol`/`app`/`version`/`pid`; on the browser `pid` is `null`, a
+page having no process — clients read it as optional); `map` is live
+app state
 (`MindMapDocument.file_path` — the file the document is bound to, so
 it follows a load, a `new` and a save-as, and is `null` while no file
 is bound). The state-free boundary threads do
@@ -782,8 +907,14 @@ registered command is `invalid_params` with `data.param: "command"`.
 Result: `protocol` (the integer `hello` carries), `app` (always
 `"mandala"`), `version` (the Cargo package version), `commands` (one
 entry per registered command, in name order: `name`, `family`,
-`summary`, `params`, `result`), and `events` (the event catalog, one
-`name` and `doc` per class).
+`summary`, `params`, `result`, `supported` — whether the target this
+build runs on serves the command — and, when it does not,
+`unsupported_reason`, the words a request for it is refused with), and
+`events` (the event catalog, one `name` and `doc` per class). The
+registry is the same table on every target; what differs per target is
+`supported`, and sending an unsupported command is answered
+`unsupported` with that reason before its parameters are looked at
+([Browser](#browser) lists them).
 
 The two unnamespaced bootstrap commands report `"family":
 "bootstrap"`. The `events` array lists the three transport-level
@@ -1636,6 +1767,23 @@ the camera-geometry rebuild the next frame owes (a zoom the client sent
 a moment ago) is run, so the capture shows the current state rather than
 the last frame's.
 
+**On the browser** ([Browser](#browser)) the command is served with a
+different engine and a narrower shape, and `describe` declares exactly
+the per-target parameters and result fields: the page draws the live
+view into its canvas — the same prepare / encode pair, at the canvas's
+own size and through the live camera — and reads it back in the same
+task (`toDataURL`, before the browser composites), so the picture is
+the frame the user would see. There is no file: the PNG comes back
+inline as `png_base64`, and the geometry sidecar inline as `sidecar`,
+and `mandalactl --ws capture.screenshot <path>` writes both
+([Client](#client-mandalactl)). The framing parameters — `path`,
+`overwrite`, `width`, `height`, `region`, `space`, `fit`, `scale` —
+are not declared there and are refused as stray; `format` and
+`sidecar` are. `rendered`/`skipped`, `width`/`height`/`scale`/`camera`
+and `settled` mean what they mean below, `settled` reading the
+browser's two sources (an animation ticking, injected input queued,
+each in real time). The engine's write guards and `busy` do not arise.
+
 | param | type | default | meaning |
 |---|---|---|---|
 | `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (`O_NOFOLLOW`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
@@ -2174,9 +2322,12 @@ real reading at engagement, and anything a concurrent human does.
 **Also a console verb.** `clock status`, `clock real`, `clock
 virtual`, and `clock step ms=<n>` / `clock step frames=<n>` reach the
 same switch and the same step, with the same bounds and refusals in
-the console's words. The console shell is native, and so is the
-heartbeat a step runs (`CLAUDE.md` "Dual-target status"); the clock
-type and its modes are shared, and the browser holds a real one.
+the console's words. The console shell is native; the step's schedule
+is not (`app/step.rs`, `CLAUDE.md` "Dual-target status"): the browser
+runs its own frame at each heartbeat — one injected sample, then the
+animation tick — and the `clock` family is served there over the
+[browser transport](#browser), with the page's own frames standing
+still while the clock is virtual.
 
 ## `events` — event stream + revision (IPC-14)
 
@@ -2339,7 +2490,22 @@ a client does:
   client release. `mandalactl raw '<json>'` (or `raw -` on stdin) sends one
   frame as written, supplying an `id` when it has none.
 - **Socket discovery:** `--ipc <path>`, else `$MANDALA_IPC`, else a usage
-  error that says how to launch the app.
+  error that says how to launch the app. **A browser app** is named with
+  `--ws <url>` (the relay's controller URL), else `$MANDALA_WS`; the two
+  flags are exclusive, and a shell with both variables set is a usage
+  error naming them, since it names two apps. The client is the relay
+  too: `mandalactl bridge [listen=] [token=]` prints `listen`, `app_url`
+  and `controller_url` (`path: value` lines, or `--json`) and relays
+  until stopped ([Browser](#browser)). Over `--ws` every command is the
+  same, with one client-side difference: `capture.screenshot <path>`
+  requires the path, takes `path` and `overwrite` off the request, and
+  writes the PNG the page returns inline — and its sidecar, as
+  `<path>.geometry.json` — refusing a file in the way unless
+  `overwrite=true` (exit `1`; the capture may be repeated); its output,
+  `--json` included, then names `path` and `sidecar_path` as a native
+  reply does, in place of `png_base64` and `sidecar`. A `rendered: false`
+  reply writes nothing. The framing parameters are sent as given, for
+  the page to refuse as the stray parameters they are there.
 - **Paths:** a relative path argument (`path=`, `to_file=`) is made
   absolute against the client's working directory before it is sent,
   because the server requires absolute paths and has no working directory
@@ -2357,7 +2523,8 @@ a client does:
   "a moment after the socket closes" ([Single controller](#single-controller))
   and two invocations in a row would otherwise race it; a slot still held
   after that is reported as another client holding it. Any other `reason`
-  is reported as it is and not retried: nothing says it will pass.
+  is reported as it is and not retried: nothing says it will pass —
+  the relay's `no_app` is reported with its remedy (open the page).
 - **Every wait has a deadline** (`--timeout`, default 15 s, longer than the
   10 s `FreezeWatchdog` threshold): the connect, the greeting, each write
   and each reply. The deadline is the whole line's, re-armed before every
@@ -2402,7 +2569,11 @@ a client does:
   its newline: a body cut short cannot decode, so nothing runs, but the
   server also runs a final line its peer closes without terminating
   (`read_capped_line`), so a send that fails on the one-byte terminator
-  after the whole body went out is a `4`.
+  after the whole body went out is a `4`. Over `--ws` the boundary is
+  the whole WebSocket frame, header and mask included: a frame cut
+  short names a length it never reaches and is never delivered, so a
+  send that stopped inside it is a `2`, and one that failed after it a
+  `4`.
   Errors go to stderr as `error: <code>: <message>`, warnings as
   `warning: <code>: <message>`. `--json` prints each reply line exactly as
   received, one per request.

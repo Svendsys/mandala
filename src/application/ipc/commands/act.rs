@@ -20,7 +20,9 @@ use serde_json::{json, Value};
 
 use crate::application::console::{ExecResult, LineOutcome};
 use crate::application::ipc::envelope::{code, Reply};
-use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
+use crate::application::ipc::registry::{
+    Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support,
+};
 use crate::application::ipc::space::{Point, Space};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
@@ -28,6 +30,15 @@ use crate::application::macros::MacroStep;
 /// An `Action`'s serde form: a string for a unit variant, a
 /// `{"Variant": payload}` object for a payload variant.
 const ACTION_SHAPE: ParamType = ParamType::OneOf(&[ParamType::String, ParamType::Object]);
+
+/// Why `act.console` is refused on the browser: the console's parse
+/// and verbs compile there, but the shell that executes a line
+/// (`app::console_input`) is native-only until console parity lands
+/// (CONCEPTS §6 "Console"). The other two `act` commands run on both.
+pub(super) const CONSOLE_NATIVE_ONLY: &str = "the browser has no console runtime; `act.console` is \
+                                              native-only until the console shell reaches the browser \
+                                              (CONCEPTS §6 \"Console\"). `act.action` and `act.macro` \
+                                              run on both targets";
 
 pub(super) const FAMILY: Family = Family {
     name: "act",
@@ -69,6 +80,7 @@ pub(super) const FAMILY: Family = Family {
                 "\"handled\" or \"unhandled\": the funnel's DispatchOutcome. Unhandled means the \
                  Action did not apply in the current context.",
             )],
+            support: Support::Everywhere,
             run: action,
         },
         CommandSpec {
@@ -86,6 +98,7 @@ pub(super) const FAMILY: Family = Family {
                 ParamType::Array,
                 "The verb's output lines, as strings; empty for a blank line or a silent verb.",
             )],
+            support: Support::NativeOnly(CONSOLE_NATIVE_ONLY),
             run: console,
         },
         CommandSpec {
@@ -112,6 +125,7 @@ pub(super) const FAMILY: Family = Family {
                 "Whether at least one step executed. A privilege-gate abort is a \
                  macro_gate_rejected warning.",
             )],
+            support: Support::Everywhere,
             run: run_macro,
         },
     ],
@@ -122,6 +136,9 @@ fn action(call: &mut Call<'_>) -> Reply {
         Ok(action) => action,
         Err(reply) => return reply,
     };
+    if let Some(message) = native_only_refusal(&action, cfg!(target_arch = "wasm32")) {
+        return call.error(code::UNSUPPORTED, message, Some(json!({ "action": action })));
+    }
     let pointer = match parse_pointer(call) {
         Ok(pointer) => pointer,
         Err(reply) => return reply,
@@ -131,6 +148,25 @@ fn action(call: &mut Call<'_>) -> Reply {
     };
     let handled = app.dispatch_action(action, pointer);
     call.ok(json!({ "outcome": if handled { "handled" } else { "unhandled" } }))
+}
+
+/// Why `action` is refused on the browser, if it is: an `Action` whose
+/// body is `NativeOnly` (`keybinds::WasmCompatibility`) has nothing
+/// to run there — the cross-platform dispatcher would answer
+/// `unhandled`, which is also what "nothing to do" says, so the
+/// honest answer is the refusal `describe`'s `supported` promises
+/// for a whole command, here for the one action. Pure in `browser`
+/// so the native test suite checks both targets' answers.
+fn native_only_refusal(action: &Action, browser: bool) -> Option<String> {
+    use crate::application::keybinds::WasmCompatibility;
+    (browser && action.wasm_compatibility() == WasmCompatibility::NativeOnly).then(|| {
+        format!(
+            "{action:?} is native-only: its body needs a system the browser does not have yet \
+             (`WasmCompatibility::NativeOnly`, work_plans/WASM_CONVERGENCE.md). On the browser, \
+             `act.action` runs the `Compatible` actions, which is every action a browser keystroke \
+             can run"
+        )
+    })
 }
 
 /// The `action` parameter as an [`Action`]. Deserialization is serde's,
@@ -307,6 +343,21 @@ mod tests {
                 .unwrap_or_default()
                 .to_owned(),
         )
+    }
+
+    /// A native-only action is refused on the browser, naming the
+    /// action, and only there: the same action runs on native, and a
+    /// `Compatible` one is refused nowhere.
+    #[test]
+    fn test_a_native_only_action_is_refused_on_the_browser_only() {
+        let refused = native_only_refusal(&Action::OpenConsole, true).expect("OpenConsole is native-only");
+        assert!(
+            refused.contains("OpenConsole") && refused.contains("native-only"),
+            "{refused}"
+        );
+        assert_eq!(native_only_refusal(&Action::OpenConsole, false), None);
+        assert_eq!(native_only_refusal(&Action::ZoomIn, true), None);
+        assert_eq!(native_only_refusal(&Action::ZoomIn, false), None);
     }
 
     /// A malformed `action` payload is a structured `invalid_params`,

@@ -27,6 +27,65 @@ pub const REQUEST_CAP: usize = 1 << 20;
 /// the reader can bound its memory by it.
 pub const FRAME_CAP: usize = 8 << 20;
 
+/// The two control frames `mandalactl bridge` sends a browser app
+/// (`format/ipc.md` §Transport "Browser"): a controller attached to
+/// the relay, so the app greets it, and it left, so the app resets its
+/// session. A JSON object with this one key and no other, which no
+/// request is; a controller's frame that looks like one is dropped by
+/// the relay. The app crate's tests hold its own spelling equal to
+/// these.
+pub const BRIDGE_KEY: &str = "bridge";
+pub const BRIDGE_ATTACHED: &str = r#"{"bridge":"attached"}"#;
+pub const BRIDGE_DETACHED: &str = r#"{"bridge":"detached"}"#;
+
+/// Whether `text` is one of the relay's control frames, or a frame
+/// a controller could pass off as one: a JSON object whose only key is
+/// [`BRIDGE_KEY`].
+pub fn is_bridge_frame(text: &str) -> bool {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .map(|object| object.len() == 1 && object.contains_key(BRIDGE_KEY))
+        })
+        .unwrap_or(false)
+}
+
+/// Decode standard base64 (`A-Z a-z 0-9 + /`, `=` padding, no line
+/// breaks): what a browser's `canvas.toDataURL` carries after its
+/// `data:image/png;base64,` prefix, and what `capture.screenshot`'s
+/// `png_base64` is. `Err` names the first byte that is not base64.
+/// Written here rather than linked: thirty lines, one caller.
+pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
+    let bytes = text.trim().as_bytes();
+    let unpadded = bytes.iter().rposition(|b| *b != b'=').map_or(0, |last| last + 1);
+    if bytes.len() - unpadded > 2 || unpadded % 4 == 1 {
+        return Err("base64 has a length no encoding produces".to_string());
+    }
+    let mut out = Vec::with_capacity(unpadded / 4 * 3 + 2);
+    let mut acc: u32 = 0;
+    let mut held = 0;
+    for (index, byte) in bytes[..unpadded].iter().enumerate() {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err(format!("byte {index} ({:?}) is not base64", char::from(*byte))),
+        };
+        acc = (acc << 6) | u32::from(value);
+        held += 6;
+        if held >= 8 {
+            held -= 8;
+            out.push((acc >> held) as u8);
+            acc &= (1 << held) - 1;
+        }
+    }
+    Ok(out)
+}
+
 /// The request frame for `cmd` with `params` flat beside `id` and
 /// `cmd`.
 ///
@@ -264,6 +323,47 @@ mod tests {
     /// The request line as the client sends it.
     fn encode_request(id: &Value, cmd: &str, params: &Map<String, Value>) -> Result<String, String> {
         frame_line(&request_frame(id, cmd, params)?)
+    }
+
+    #[test]
+    fn test_base64_decodes_every_padding_shape_and_refuses_what_is_not_base64() {
+        assert_eq!(base64_decode("").expect("empty"), b"");
+        assert_eq!(base64_decode("Zg==").expect("one byte"), b"f");
+        assert_eq!(base64_decode("Zm8=").expect("two bytes"), b"fo");
+        assert_eq!(base64_decode("Zm9v").expect("three bytes"), b"foo");
+        assert_eq!(base64_decode("Zm9vYmFy").expect("six bytes"), b"foobar");
+        assert_eq!(base64_decode("Zm9vYg").expect("unpadded is tolerated"), b"foob");
+        // A PNG signature, as a data URL carries it.
+        assert_eq!(
+            base64_decode("iVBORw0KGgo=").expect("a signature"),
+            [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']
+        );
+        assert!(base64_decode("Zm9v*mFy")
+            .expect_err("not base64")
+            .contains("byte 4"));
+        assert!(base64_decode("Z").is_err(), "one stray sextet encodes nothing");
+        assert!(
+            base64_decode("Zm9v*").is_err(),
+            "a length no encoding produces, before any byte is looked at"
+        );
+        assert!(base64_decode("Zg===").is_err(), "three pads");
+    }
+
+    #[test]
+    fn test_bridge_frames_are_recognized_and_nothing_else_is() {
+        assert!(is_bridge_frame(BRIDGE_ATTACHED) && is_bridge_frame(BRIDGE_DETACHED));
+        assert!(
+            is_bridge_frame(r#"{"bridge":"anything"}"#),
+            "any value under the key is the relay's shape"
+        );
+        for text in [
+            r#"{"id":1,"cmd":"ping"}"#,
+            r#"{"bridge":"attached","id":1}"#,
+            "x",
+            "[]",
+        ] {
+            assert!(!is_bridge_frame(text), "{text}");
+        }
     }
 
     #[test]

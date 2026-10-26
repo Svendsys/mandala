@@ -20,30 +20,45 @@
 //! buffers, pre-edit snapshots) the projection is a stated subset and
 //! the omission is named at its method.
 //!
-//! Native-only, with `ipc_target.rs` that consumes it.
-
-#![cfg(not(target_arch = "wasm32"))]
+//! **Two targets, one wire shape.** The reply's keys are assembled
+//! here once ([`mode_to_ipc_json`], [`editors_to_ipc_json`]) from
+//! values each target projects for itself: native projects its drag
+//! state machine and its three extra modals; the browser, which has
+//! no drag machine, no console shell, no picker and no single-line
+//! editor, reports `{"kind": "None"}` and `null` for them. The
+//! interaction mode and the node text editor are both targets', and
+//! so is the key routing, which is over open-flags.
 
 use serde_json::{json, Value};
 
+#[cfg(not(target_arch = "wasm32"))]
 use baumhard::mindmap::tree_builder::{EdgeHandleKind, ResizeHandleSide};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::color_picker::{
     ColorPickerState, OpenPicker, PickerGesture, PickerHandle, PickerMode,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::console::{ConsoleLine, ConsoleState};
-use crate::application::document::{f32_json, MindMapDocument};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::application::document::f32_json;
+use crate::application::document::MindMapDocument;
 
 use super::interaction_mode::ResizeTarget;
 use super::modal_editor::ModalEditor;
+#[cfg(not(target_arch = "wasm32"))]
 use super::single_line_edit::{SingleLineEditTarget, SingleLineEditor};
 use super::text_edit::TextEditState;
+#[cfg(not(target_arch = "wasm32"))]
 use super::throttled_interaction::ThrottledDrag;
-use super::{DragState, Grab, InteractionMode};
+use super::InteractionMode;
+#[cfg(not(target_arch = "wasm32"))]
+use super::{DragState, Grab};
 
 /// How many scrollback lines `query.editors` reports for an open
 /// console: the tail, which is what is on screen. The total is
 /// `scrollback_len`.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) const CONSOLE_SCROLLBACK_TAIL: usize = 50;
 
 /// `{"x", "y"}`.
@@ -55,8 +70,17 @@ fn xy_f64(point: (f64, f64)) -> Value {
     xy(json!(point.0), json!(point.1))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn xy_vec2(point: glam::Vec2) -> Value {
     xy(f32_json(point.x), f32_json(point.y))
+}
+
+/// The drag state a target with no drag state machine reports: the
+/// browser's, always (`DragState` is native). The same words native's
+/// `DragState::None` projects to, so `query.mode` reads alike.
+#[cfg(target_arch = "wasm32")]
+pub(super) fn no_drag_state_json() -> Value {
+    json!({ "kind": "None" })
 }
 
 impl ResizeTarget {
@@ -86,6 +110,7 @@ impl InteractionMode {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn side_word(side: ResizeHandleSide) -> &'static str {
     match side {
         ResizeHandleSide::NW => "NW",
@@ -99,6 +124,7 @@ fn side_word(side: ResizeHandleSide) -> &'static str {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn edge_handle_json(handle: EdgeHandleKind) -> Value {
     match handle {
         EdgeHandleKind::AnchorFrom => json!({ "kind": "AnchorFrom" }),
@@ -108,6 +134,7 @@ fn edge_handle_json(handle: EdgeHandleKind) -> Value {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ThrottledDrag {
     /// The gesture as `query.mode` reports it, under `gesture` (the
     /// variant's name) with what it is acting on. **Omitted by name:**
@@ -155,6 +182,7 @@ impl ThrottledDrag {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DragState {
     /// The drag state machine as `query.mode` reports it. `kind` is
     /// the variant's name. Positions are what each variant carries:
@@ -233,6 +261,7 @@ impl TextEditState {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SingleLineEditTarget {
     fn to_ipc_json(&self) -> Value {
         match self {
@@ -251,6 +280,7 @@ impl SingleLineEditTarget {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SingleLineEditor {
     /// The edge-label / portal-caption editor as `query.editors`
     /// reports it: `null` when closed. `original` is the string the
@@ -273,6 +303,7 @@ impl SingleLineEditor {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn console_line_json(line: &ConsoleLine) -> Value {
     match line {
         ConsoleLine::Input(text) => json!({ "kind": "Input", "text": text }),
@@ -281,6 +312,7 @@ fn console_line_json(line: &ConsoleLine) -> Value {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The console as `query.editors` reports it: `null` when closed.
 /// `cursor` is a grapheme index into `input`. The scrollback is its
 /// last [`CONSOLE_SCROLLBACK_TAIL`] lines, the rest counted in
@@ -320,6 +352,7 @@ pub(super) fn console_to_ipc_json(state: &ConsoleState) -> Value {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn picker_handle_json(handle: &PickerHandle) -> Value {
     use crate::application::color_picker::{NodeColorAxis, SectionColorAxis};
     match handle {
@@ -350,6 +383,7 @@ fn picker_handle_json(handle: &PickerHandle) -> Value {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl OpenPicker {
     /// An open picker as `query.editors` reports it. `hue_deg` is in
     /// `[0, 360)`, `sat` and `val` in `[0, 1]`: the HSV the wheel
@@ -393,12 +427,25 @@ impl OpenPicker {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The color picker as `query.editors` reports it: `null` when closed.
 pub(super) fn picker_to_ipc_json(state: &ColorPickerState) -> Value {
     match state {
         ColorPickerState::Closed => Value::Null,
         ColorPickerState::Open(open) => open.to_ipc_json(),
     }
+}
+
+/// Which modal editors are open, as plain flags: what the key routing
+/// and `query.mode`'s `modals` read. The browser has the node text
+/// editor and none of the other three, so it sets one flag and the
+/// native shell sets four from its own states.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct OpenModals {
+    pub(super) console: bool,
+    pub(super) picker: bool,
+    pub(super) single_line: bool,
+    pub(super) text: bool,
 }
 
 /// Where keystrokes go, as the keyboard handler routes them
@@ -418,52 +465,44 @@ pub(super) fn picker_to_ipc_json(state: &ColorPickerState) -> Value {
 /// `"single_line_edit"`, `"text_edit"`, or `"none"` for normal
 /// dispatch). The picker appears in `modals` and is never the
 /// `key_owner`.
-fn key_routing(
-    console: &ConsoleState,
-    picker: &ColorPickerState,
-    single_line: &SingleLineEditor,
-    text: &TextEditState,
-) -> (Vec<&'static str>, &'static str) {
+fn key_routing(open: OpenModals) -> (Vec<&'static str>, &'static str) {
     let editor_word = |editor: ModalEditor| match editor {
         ModalEditor::SingleLine => "single_line_edit",
         ModalEditor::Text => "text_edit",
     };
     let mut modals = Vec::new();
-    if console.is_open() {
+    if open.console {
         modals.push("console");
     }
-    if picker.as_open().is_some() {
+    if open.picker {
         modals.push("color_picker");
     }
-    modals.extend(ModalEditor::open_in_steal_order(single_line.is_open(), text.is_open()).map(editor_word));
-    let key_owner = if console.is_open() {
+    modals.extend(ModalEditor::open_in_steal_order(open.single_line, open.text).map(editor_word));
+    let key_owner = if open.console {
         "console"
     } else {
-        ModalEditor::stealing_from(single_line.is_open(), text.is_open()).map_or("none", editor_word)
+        ModalEditor::stealing_from(open.single_line, open.text).map_or("none", editor_word)
     };
     (modals, key_owner)
 }
 
 /// `query.mode`'s reply: the interaction mode and the drag state
-/// machine, which modals are open and who receives an ordinary key
-/// ([`key_routing`]), and where the pointer is.
+/// machine (`drag`, as the target projects it — `no_drag_state_json`
+/// where there is none), which modals are open and who receives an
+/// ordinary key ([`key_routing`]), and where the pointer is.
 /// `hovered_node` is the node under the cursor (`null` over none) and
 /// `cursor_pos` the last known pointer position in **surface** pixels.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn mode_to_ipc_json(
     mode: &InteractionMode,
-    drag: &DragState,
-    console: &ConsoleState,
-    picker: &ColorPickerState,
-    single_line: &SingleLineEditor,
-    text: &TextEditState,
+    drag: Value,
+    open: OpenModals,
     hovered_node: Option<&str>,
     cursor_pos: (f64, f64),
 ) -> Value {
-    let (modals, key_owner) = key_routing(console, picker, single_line, text);
+    let (modals, key_owner) = key_routing(open);
     json!({
         "interaction_mode": mode.to_ipc_json(),
-        "drag_state": drag.to_ipc_json(),
+        "drag_state": drag,
         "modals": modals,
         "key_owner": key_owner,
         "hovered_node": hovered_node,
@@ -471,25 +510,26 @@ pub(super) fn mode_to_ipc_json(
     })
 }
 
-/// `query.editors`' reply: each modal editor's live state (`null`
-/// when closed) and the document's `previews`.
+/// `query.editors`' reply: each modal editor's live state, as the
+/// target projects it (`null` when closed, and always `null` for an
+/// editor the target does not have), and the document's `previews`.
 pub(super) fn editors_to_ipc_json(
-    console: &ConsoleState,
-    picker: &ColorPickerState,
-    single_line: &SingleLineEditor,
-    text: &TextEditState,
+    console: Value,
+    picker: Value,
+    single_line: Value,
+    text: Value,
     document: Option<&MindMapDocument>,
 ) -> Value {
     json!({
-        "console": console_to_ipc_json(console),
-        "color_picker": picker_to_ipc_json(picker),
-        "single_line_edit": single_line.to_ipc_json(),
-        "text_edit": text.to_ipc_json(),
+        "console": console,
+        "color_picker": picker,
+        "single_line_edit": single_line,
+        "text_edit": text,
         "previews": MindMapDocument::ipc_previews_json(document),
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::{
@@ -821,64 +861,45 @@ mod tests {
         }))
     }
 
-    fn open_text_editor() -> TextEditState {
-        TextEditState::Open {
-            node_id: "1".into(),
-            section_idx: 0,
-            buffer: "hi".into(),
-            cursor_grapheme_pos: 2,
-            buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
-            original_text: String::new(),
-            original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
-            selection_anchor: None,
-            exit_to_default_on_close: false,
-        }
-    }
-
-    fn open_single_line() -> SingleLineEditor {
-        SingleLineEditor::Open {
-            target: SingleLineEditTarget::EdgeLabel {
-                edge_ref: EdgeRef::new("a", "b", "cross_link"),
-            },
-            buffer: String::new(),
-            cursor_grapheme_pos: 0,
-            original: None,
-        }
-    }
-
     /// **Key routing is a stack, not one owner** (review of #174): an
     /// open color picker claims only its own keys, so it is listed in
     /// `modals` and is never the `key_owner`; an ordinary key goes to
     /// the console, else the editors in `ModalEditor::STEAL_ORDER`.
     #[test]
     fn test_key_routing_lists_every_open_modal_and_names_who_gets_an_ordinary_key() {
-        let closed = (
-            ConsoleState::Closed,
-            ColorPickerState::Closed,
-            SingleLineEditor::Closed,
-            TextEditState::Closed,
-        );
+        let closed = OpenModals::default();
+        assert_eq!(key_routing(closed), (vec![], "none"));
         assert_eq!(
-            key_routing(&closed.0, &closed.1, &closed.2, &closed.3),
-            (vec![], "none")
-        );
-        assert_eq!(
-            key_routing(&closed.0, &closed.1, &open_single_line(), &closed.3),
+            key_routing(OpenModals {
+                single_line: true,
+                ..closed
+            }),
             (vec!["single_line_edit"], "single_line_edit")
         );
         assert_eq!(
-            key_routing(&closed.0, &open_picker(), &closed.2, &closed.3),
+            key_routing(OpenModals {
+                picker: true,
+                ..closed
+            }),
             (vec!["color_picker"], "none"),
             "a picker alone leaves ordinary keys to normal dispatch"
         );
         assert_eq!(
-            key_routing(&closed.0, &open_picker(), &closed.2, &open_text_editor()),
+            key_routing(OpenModals {
+                picker: true,
+                text: true,
+                ..closed
+            }),
             (vec!["color_picker", "text_edit"], "text_edit"),
             "the picker is open, but every key it does not claim goes to the text editor"
         );
-        let console = ConsoleState::open(vec![]);
         assert_eq!(
-            key_routing(&console, &open_picker(), &open_single_line(), &open_text_editor()),
+            key_routing(OpenModals {
+                console: true,
+                picker: true,
+                single_line: true,
+                text: true,
+            }),
             (
                 vec!["console", "color_picker", "single_line_edit", "text_edit"],
                 "console"
@@ -968,11 +989,8 @@ mod tests {
         );
         let mode = mode_to_ipc_json(
             &InteractionMode::Default,
-            &DragState::None,
-            &closed.0,
-            &closed.1,
-            &closed.2,
-            &closed.3,
+            DragState::None.to_ipc_json(),
+            OpenModals::default(),
             Some("1.2"),
             (10.0, 20.5),
         );
@@ -987,7 +1005,13 @@ mod tests {
                 "cursor_pos": { "x": 10.0, "y": 20.5 },
             })
         );
-        let editors = editors_to_ipc_json(&closed.0, &closed.1, &closed.2, &closed.3, None);
+        let editors = editors_to_ipc_json(
+            console_to_ipc_json(&closed.0),
+            picker_to_ipc_json(&closed.1),
+            closed.2.to_ipc_json(),
+            closed.3.to_ipc_json(),
+            None,
+        );
         for key in ["console", "color_picker", "single_line_edit", "text_edit"] {
             assert_eq!(editors[key], Value::Null, "{key}");
         }

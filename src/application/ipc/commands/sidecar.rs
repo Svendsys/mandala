@@ -5,7 +5,7 @@
 //! `overwrite`), streams its result into that file atomically, and
 //! replies with only `{"path", "bytes"}`. The parameter rules live
 //! here, for every such command — `query.document` and `scene.dump`
-//! today; the write itself is [`guarded_file::publish`], the one
+//! today; the write itself is `guarded_file::publish` (native), the one
 //! writer behind every caller-chosen path, so the no-symlink,
 //! no-clobber, no-torn-file guarantees are stated and tested once.
 
@@ -14,6 +14,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::guarded_file::{self, PublishRefusal};
 
 use super::refusal::Refusal;
@@ -62,6 +63,7 @@ pub(super) fn parse_to_file(
 /// document that means the model goes from `&MindMap` to bytes with no
 /// value tree held beside it, which is the case the sidecar exists for.
 /// Atomic and symlink-proof as [`guarded_file::publish`] is.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn write_sidecar(target: &ToFile, value: &impl Serialize) -> Result<Value, Refusal> {
     let bytes = guarded_file::publish(Path::new(&target.path), target.overwrite, |out| {
         serde_json::to_writer(out, value).map_err(|e| e.to_string())
@@ -71,6 +73,22 @@ pub(super) fn write_sidecar(target: &ToFile, value: &impl Serialize) -> Result<V
         PublishRefusal::Internal(message) => Refusal::Internal(message),
     })?;
     Ok(serde_json::json!({ "path": target.path, "bytes": bytes }))
+}
+
+/// The browser has no filesystem, and its registry entries declare no
+/// `to_file` (`format/ipc.md` §Transport "Browser"), so a request
+/// naming one is refused as a stray parameter before any handler runs.
+/// This is the handler's own refusal for the same fact, so the write
+/// has one type on both targets.
+#[cfg(target_arch = "wasm32")]
+pub(super) fn write_sidecar(target: &ToFile, _value: &impl Serialize) -> Result<Value, Refusal> {
+    Err(Refusal::Invalid(
+        "to_file",
+        format!(
+            "`{}` cannot be written: the browser has no filesystem; read the reply inline",
+            target.path
+        ),
+    ))
 }
 
 #[cfg(test)]

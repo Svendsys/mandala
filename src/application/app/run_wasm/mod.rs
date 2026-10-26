@@ -33,6 +33,9 @@ mod event_mouse_wheel;
 mod event_redraw_requested;
 mod event_resized;
 mod event_touch;
+mod ipc;
+mod ipc_target;
+mod step;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -40,7 +43,7 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::platform::web::EventLoopExtWebSys;
 use winit::window::WindowId;
@@ -51,7 +54,10 @@ use super::text_edit::TextEditState;
 use super::{Application, LastClick};
 use crate::application::common::RenderDecree;
 use crate::application::document::MindMapDocument;
+use crate::application::ipc::events::Observed;
+use crate::application::ipc::injected::{InjectedQueue, InputEvent, Sample, Surface};
 use crate::application::keybinds::{Action, ResolvedKeybinds};
+use crate::application::platform::window::PhysicalPosition;
 use crate::application::renderer::Renderer;
 
 /// Pending left-click awaiting a release. `None` on init and after
@@ -158,6 +164,78 @@ pub(super) struct WasmInputState {
     /// loop frame does, so a step driver is what a virtual clock here
     /// still lacks.
     pub clock: crate::application::clock::AppClock,
+    /// The IPC injected-input queue (`ipc::injected`), the peer of
+    /// native's `InitState.injected`: a `Pacing::PerFrame` command's
+    /// samples wait here and the frame lands one per real-time frame
+    /// (`event_redraw_requested`), or a step lands one per heartbeat
+    /// (`step`), ahead of the animation tick, where a winit event
+    /// lands. Empty unless an IPC controller is attached.
+    pub injected: InjectedQueue,
+    /// A redraw has been asked for that no frame has drawn yet: the
+    /// browser's spelling of native's `RedrawLedger::is_current`, and
+    /// the "rendered" half of `clock.wait until=settled`. Set wherever
+    /// a redraw is asked for ([`WasmApp::ask_redraw`], the frame's own
+    /// re-ask), cleared by a frame whose render ran.
+    pub redraw_owed: bool,
+    /// The canvas the renderer draws into: what `capture.screenshot`
+    /// reads back on this target (`to_data_url`, in the same task as
+    /// the draw).
+    pub canvas: web_sys::HtmlCanvasElement,
+}
+
+/// The browser's event-handler context: the input state and the
+/// renderer, borrowed out of [`WasmApp`]'s cells for one event, with
+/// the keybind table and the editor-suppress flag beside them. The
+/// peer of native's `InputHandlerContext`, and for the same reason:
+/// every handler body is a method on it, so the three callers that
+/// enter a body — a winit event (`WasmApp::handle_window_event`), an
+/// injected IPC sample ([`Self::apply_injected`]) and an IPC command
+/// (`ipc_target`) — reach the one body rather than three copies of it.
+pub(super) struct Borrowed<'a> {
+    pub(super) input: &'a mut WasmInputState,
+    pub(super) renderer: &'a mut Renderer,
+    pub(super) keybinds: &'a ResolvedKeybinds,
+    /// Shared with the canvas keydown listener; `Cell` so a handler
+    /// flips it while it holds the input borrow (see
+    /// [`WasmApp::suppress_keys`]).
+    pub(super) suppress_keys: &'a Cell<bool>,
+}
+
+impl Borrowed<'_> {
+    /// Deliver one injected-input sample to the `on_*` entry point its
+    /// winit event reaches, with the sample's modifiers held for that
+    /// one event (`ipc::injected::Sample`). Returns whether the arm
+    /// asked for a redraw. The body native's `apply_injected` runs,
+    /// over this target's entry points.
+    pub(super) fn apply_injected(&mut self, sample: Sample<Surface>) -> bool {
+        let reported = self.input.modifiers;
+        if let Some(held) = sample.modifiers {
+            self.input.modifiers = held;
+        }
+        let redraw = match sample.event {
+            InputEvent::CursorMoved((x, y)) => self.on_cursor_moved(PhysicalPosition::new(x, y)),
+            InputEvent::MouseButton { button, state } => self.on_mouse_input(state, button),
+            InputEvent::Wheel(delta) => self.on_mouse_wheel(delta),
+            InputEvent::Key { key, state } => self.on_keyboard_input(key, state),
+            InputEvent::Touch {
+                phase,
+                pointer_id,
+                at: (x, y),
+            } => self.dispatch_touch_event(phase, pointer_id, PhysicalPosition::new(x, y)),
+        };
+        self.input.modifiers = reported;
+        redraw
+    }
+
+    /// The app as the IPC event stream reads it ([`Observed`]): the
+    /// document, the camera and the interaction mode.
+    pub(super) fn observed(&self) -> Observed<'_> {
+        Observed {
+            document: Some(&self.input.document),
+            camera: self.renderer.camera(),
+            mode: &self.input.interaction_mode,
+        }
+    }
 }
 
 impl WasmInputState {
@@ -246,14 +324,18 @@ impl WasmInputState {
 /// operation to the same helpers the keyboard handler uses.
 /// Privilege gating happens in
 /// `dispatch_macro_core::dispatch_macro` (single-source contract).
-struct WasmMacroDispatchTarget<'a> {
-    input: &'a mut WasmInputState,
-    renderer: &'a mut Renderer,
+pub(super) struct WasmMacroDispatchTarget<'a> {
+    pub(super) input: &'a mut WasmInputState,
+    pub(super) renderer: &'a mut Renderer,
     /// `keybinds` belongs in `InputContextCore` (Track C); WASM
-    /// holds its `ResolvedKeybinds` in the closure scope of `run`,
-    /// not on `WasmInputState`. Threaded here so
+    /// holds its `ResolvedKeybinds` on [`WasmApp`], not on
+    /// `WasmInputState`. Threaded here so
     /// `MacroDispatchTarget::dispatch_action` can build the core.
-    keybinds: &'a crate::application::keybinds::ResolvedKeybinds,
+    pub(super) keybinds: &'a crate::application::keybinds::ResolvedKeybinds,
+    /// The observer the IPC `verbose` event level hangs between
+    /// steps (`MacroDispatchTarget::step_finished`); `None` from the
+    /// keyboard, which observes nothing.
+    pub(super) after_step: Option<&'a mut dyn FnMut(Observed<'_>)>,
 }
 
 impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchTarget<'a> {
@@ -359,6 +441,16 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
     fn has_node(&self, node_id: &str) -> bool {
         self.input.document.mindmap.nodes.contains_key(node_id)
     }
+
+    fn step_finished(&mut self) {
+        if let Some(after_step) = self.after_step.as_mut() {
+            after_step(Observed {
+                document: Some(&self.input.document),
+                camera: self.renderer.camera(),
+                mode: &self.input.interaction_mode,
+            });
+        }
+    }
 }
 
 /// winit 0.30 [`ApplicationHandler`] for the WASM target. Mirrors
@@ -413,8 +505,15 @@ struct WasmApp {
     /// can interleave freely. Don't change the type.
     suppress_keys: Rc<Cell<bool>>,
     /// Resolved keybind table — built once in [`run`] from
-    /// `Options::keybind_config`, read on every key event.
-    keybinds: ResolvedKeybinds,
+    /// `Options::keybind_config`, read on every key event. `Rc`
+    /// because the IPC transport's message callback
+    /// (`run_wasm::ipc`) enters the same handler bodies from its own
+    /// task and needs the table there too.
+    keybinds: Rc<ResolvedKeybinds>,
+    /// The IPC transport's host: the same cells, pumped from the
+    /// socket's callbacks and from the end of every frame
+    /// (`run_wasm::ipc`). Off unless the page was opened with `?ipc=`.
+    ipc: ipc::IpcHost,
 }
 
 impl ApplicationHandler for WasmApp {
@@ -434,106 +533,65 @@ impl ApplicationHandler for WasmApp {
 }
 
 impl WasmApp {
-    /// Per-event dispatch — the arms fan out into per-arm methods
-    /// defined in sibling `event_*.rs` files: the `RedrawRequested`
-    /// arm is the browser's frame (the animation tick, then the
-    /// renderer's `process()`, the sole entry to render on web),
-    /// the rest are input. Plus an inline `CloseRequested` no-op
-    /// (browser tabs don't really close) and a `_ => {}` catch-all
-    /// that silently drops the arms winit fires that WASM doesn't
-    /// currently consume (IME composition, focus changes). Each
-    /// fan-out arm extracts only the fields that arm needs.
+    /// Per-event dispatch — the arms fan out into per-arm methods on
+    /// [`Borrowed`], defined in sibling `event_*.rs` files: the
+    /// `RedrawRequested` arm is the browser's frame (an injected sample,
+    /// the animation tick, then the renderer's `process()`, the sole
+    /// entry to render on web), the rest are input. Plus an inline
+    /// `CloseRequested` no-op (browser tabs don't really close) and a
+    /// `_ => {}` catch-all that silently drops the arms winit fires
+    /// that WASM doesn't currently consume (IME composition, focus
+    /// changes). Each fan-out arm extracts only the fields that arm
+    /// needs, and hands the rest to the `on_*` entry point an injected
+    /// IPC sample of the same event reaches ([`Borrowed::apply_injected`]),
+    /// so nothing below that point can tell the two apart.
     ///
-    /// Mutating arms set `redraw_after = true`; the trailing
-    /// `Renderer::request_redraw` call hands a redraw request
-    /// to winit-web, which translates to an internal rAF
-    /// dispatch. The browser only paints when the canvas
-    /// actually changed — and, while an animation runs, on every
-    /// frame, because the frame itself asks for the next one.
+    /// An arm says whether it changed pixels; the trailing
+    /// [`Self::ask_redraw`] hands one redraw request to winit-web,
+    /// which translates to an internal rAF dispatch. The browser only
+    /// paints when the canvas actually changed — and, while an
+    /// animation runs or injected input is queued, on every frame,
+    /// because the frame itself asks for the next one.
     fn handle_window_event(&mut self, event: WindowEvent) {
-        let mut redraw_after = false;
-        match event {
+        let redraw_after = match event {
             WindowEvent::RedrawRequested => {
                 self.handle_redraw_requested();
+                false
             }
             WindowEvent::Resized(s) => {
                 self.handle_resized(s);
-                redraw_after = true;
+                true
             }
             WindowEvent::CloseRequested => {
                 // WASM doesn't really close
+                false
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.handle_modifiers_changed(m);
                 // Modifier-only changes don't paint anything until
                 // a paired mouse/keyboard event acts on them.
+                false
             }
             WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        logical_key,
-                        ..
-                    },
+                event: KeyEvent {
+                    state, logical_key, ..
+                },
                 ..
-            } => {
-                self.handle_keyboard_input(logical_key);
-                redraw_after = true;
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                self.handle_cursor_moved(position);
-                // WASM doesn't yet have full drag/picker state
-                // (see `WasmInputState` field comments) so the
-                // CursorMoved redraw conditions native checks for
-                // collapse to "yes" for any in-progress click.
-                // Conservative: redraw on every CursorMoved that
-                // arrived while a click is pending.
-                redraw_after = !matches!(
-                    self.input
-                        .borrow()
-                        .as_ref()
-                        .map(|s| matches!(s.pending_click, PendingClick::None)),
-                    Some(true) | None,
-                );
-            }
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Left,
-                ..
-            } => {
-                self.handle_mouse_input(state);
-                redraw_after = true;
-            }
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Right,
-                ..
-            } => {
-                // WASM right-button: `DragState` machinery is
-                // `cfg(not(target_arch = "wasm32"))` so there's no
-                // `PendingRight` → `FastResizeStart` pipeline yet
-                // (it lands with the browser's drag-state machine;
-                // the touch vocabulary no longer waits on it).
-                // What we *can* do today is dispatch the bound
-                // `MouseGesture::RightClick` action on release —
-                // single-press right-click is just an action lookup,
-                // no DragState involved. Default-unbound so it's a
-                // no-op for users who didn't opt in; users who did
-                // get the action they bound. Without this arm the
-                // event drops silently.
-                self.handle_right_button(state);
-                redraw_after = true;
-            }
+            } => self
+                .with_borrowed(|b| b.on_keyboard_input(logical_key, state))
+                .unwrap_or(false),
+            WindowEvent::CursorMoved { position, .. } => self
+                .with_borrowed(|b| b.on_cursor_moved(position))
+                .unwrap_or(false),
+            WindowEvent::MouseInput { state, button, .. } => self
+                .with_borrowed(|b| b.on_mouse_input(state, button))
+                .unwrap_or(false),
             WindowEvent::MouseWheel { delta, .. } => {
-                self.handle_mouse_wheel(delta);
-                redraw_after = true;
+                self.with_borrowed(|b| b.on_mouse_wheel(delta)).unwrap_or(false)
             }
-            WindowEvent::Touch(touch) => {
-                // `|=`, not a match guard: `handle_touch_event` acts on
-                // the event, and a guard that acts would fall through
-                // into whatever arm is added below when it says no.
-                redraw_after |= self.handle_touch_event(touch);
-            }
+            WindowEvent::Touch(touch) => self
+                .with_borrowed(|b| b.dispatch_touch_event(touch.phase, touch.id, touch.location))
+                .unwrap_or(false),
             // Catch-all for winit `WindowEvent` variants WASM
             // doesn't yet route. The notable un-wired ones:
             //
@@ -551,12 +609,54 @@ impl WasmApp {
             // burn 60Hz × variants. When any of the above gets
             // wired, lift the corresponding match arm out of
             // this catch-all into a dedicated handle_* method.
-            _ => {}
-        }
+            _ => false,
+        };
         if redraw_after {
-            if let Some(r) = self.renderer.borrow().as_ref() {
-                r.request_redraw();
-            }
+            self.ask_redraw();
+        }
+    }
+
+    /// Run `f` over the event-handler context, or nothing before init
+    /// completes: the two cells are filled in one task, the renderer
+    /// first, so an input state implies a renderer.
+    ///
+    /// **Re-borrow contract.** `f` holds both cells' borrows for its
+    /// whole run, so it must not reach anything that re-borrows them —
+    /// the IPC transport's callback (`run_wasm::ipc`) runs in its own
+    /// task and never from inside a handler, which is what keeps the
+    /// contract.
+    pub(super) fn with_borrowed<R>(&self, f: impl FnOnce(&mut Borrowed<'_>) -> R) -> Option<R> {
+        let mut input_borrow = self.input.borrow_mut();
+        let mut renderer_borrow = self.renderer.borrow_mut();
+        let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) else {
+            return None;
+        };
+        let mut borrowed = Borrowed {
+            input,
+            renderer,
+            keybinds: &self.keybinds,
+            suppress_keys: &self.suppress_keys,
+        };
+        Some(f(&mut borrowed))
+    }
+
+    /// After a frame: the transport's pump, which evaluates a pending
+    /// `clock.wait` against the app as the frame left it and delivers
+    /// what the frame's handlers changed. A no-op without `?ipc=`.
+    pub(super) fn ipc_after_frame(&self) {
+        self.ipc.pump();
+    }
+
+    /// Ask winit-web for one frame, and record that it is owed
+    /// (`WasmInputState::redraw_owed`): the one place a redraw is asked
+    /// for outside the frame itself, so `clock.wait until=settled`
+    /// sees every ask.
+    pub(super) fn ask_redraw(&self) {
+        if let Some(input) = self.input.borrow_mut().as_mut() {
+            input.redraw_owed = true;
+        }
+        if let Some(r) = self.renderer.borrow().as_ref() {
+            r.request_redraw();
         }
     }
 }
@@ -674,10 +774,14 @@ pub(super) fn run(mut app: Application) {
 
     let renderer_window = Arc::clone(&app.window);
 
-    // On WASM, check for ?map= query parameter to override the default path
+    // On WASM, check for ?map= query parameter to override the default
+    // path, and ?ipc= for the IPC relay to connect to (off without it).
+    let search = web_sys::window()
+        .expect("No global window")
+        .location()
+        .search()
+        .unwrap_or_default();
     let mindmap_path = {
-        let web_window = web_sys::window().expect("No global window");
-        let search = web_window.location().search().unwrap_or_default();
         let mut map_path: Option<String> = None;
         let trimmed = search.trim_start_matches('?');
         for pair in trimmed.split('&') {
@@ -686,6 +790,13 @@ pub(super) fn run(mut app: Application) {
             }
         }
         map_path.unwrap_or_else(|| app.options.mindmap_path.clone())
+    };
+    let ipc_url = match crate::application::ipc::browser::ipc_url_from_query(&search) {
+        Ok(url) => url,
+        Err(why) => {
+            log::error!("ipc: {why}; IPC is off");
+            None
+        }
     };
 
     // Shared state between the rAF render loop and the winit event
@@ -708,6 +819,9 @@ pub(super) fn run(mut app: Application) {
     // block waiting for wgpu.
     wasm_bindgen_futures::spawn_local(async move {
         let mut renderer = Renderer::bootstrap_wasm(renderer_window, canvas.clone()).await;
+        // Kept beside the renderer for the canvas read-back
+        // `capture.screenshot` does on this target.
+        let state_canvas = canvas.clone();
         log::info!("WASM: adapter + surface + renderer ready");
 
         let size = canvas.width();
@@ -830,6 +944,10 @@ pub(super) fn run(mut app: Application) {
             macros,
             touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
             clock: crate::application::clock::AppClock::default(),
+            injected: InjectedQueue::default(),
+            // The first frame is asked for just below.
+            redraw_owed: true,
+            canvas: state_canvas,
         });
 
         // Event-driven redraw model: instead of an unconditional
@@ -852,7 +970,7 @@ pub(super) fn run(mut app: Application) {
 
     // Resolve the keybind config once. `action_for(key, ctrl, shift, alt)`
     // answers the dispatch question for every keydown.
-    let keybinds: ResolvedKeybinds = app.options.keybind_config.resolve();
+    let keybinds: Rc<ResolvedKeybinds> = Rc::new(app.options.keybind_config.resolve());
 
     // Hand control to winit. The handler owns the renderer / input
     // cells (shared with the rAF render loop), the editor-suppress
@@ -864,11 +982,26 @@ pub(super) fn run(mut app: Application) {
     // an `Arc<Window>` clone made before this handler is built, so
     // the window outlives the loop without the handler needing its
     // own clone.
+    // The transport, over the same cells the handler owns. Opened
+    // before the app exists: a controller that attaches early is
+    // greeted and answered `no_document` until init completes, as a
+    // native client that connects before the window is.
+    let ipc = ipc::IpcHost {
+        input: Rc::clone(&input_rc),
+        renderer: Rc::clone(&renderer_rc),
+        keybinds: Rc::clone(&keybinds),
+        suppress_keys: Rc::clone(&suppress_keys),
+        ipc: Rc::new(RefCell::new(None)),
+    };
+    if let Some(url) = ipc_url {
+        ipc.connect(url);
+    }
     let handler = WasmApp {
         renderer: renderer_rc,
         input: input_rc,
         suppress_keys,
         keybinds,
+        ipc,
     };
     app.event_loop.spawn_app(handler);
 }

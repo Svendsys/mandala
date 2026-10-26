@@ -3415,7 +3415,11 @@ newline-delimited JSON (`format/ipc.md`).
 The app's feedback loop for an agent: attach to an instance a human
 launched (or one the agent launched itself), send commands, read
 structured replies. Off unless `--ipc <path>` is passed; without the
-flag no socket exists and no thread runs.
+flag no socket exists and no thread runs. The browser build speaks
+the same protocol over a WebSocket toward `mandalactl bridge`, a
+loopback relay, when the page is opened with `?ipc=<its app URL>`
+(`ipc/browser/`, `app/run_wasm/ipc.rs`; `format/ipc.md` §Transport
+"Browser"); `describe` says per command what each target serves.
 
 `src/application/ipc/`. Boundary threads own the socket — a
 persistent acceptor (one controller at a time; a second client is

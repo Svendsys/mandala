@@ -4,7 +4,7 @@
 //!
 //! Two modal editors can own the keyboard and the pointer: the
 //! multi-line node text editor ([`super::text_edit`]) and the
-//! single-line editor ([`super::single_line_edit`]) bound to an edge
+//! single-line editor (`super::single_line_edit`, native) bound to an edge
 //! label or a portal caption. They are different enough to keep
 //! apart — one previews by mutating the live tree and hit-tests a
 //! node AABB, the other stages a string and hit-tests a glyph role
@@ -20,17 +20,22 @@
 //!
 //! [`ModalEditor`] is that ladder, written once.
 
-#![cfg(not(target_arch = "wasm32"))]
-
+// The ladder's steal order and its open-flag halves compile for both
+// targets: `query.mode` reports who owns the next key through them on
+// the browser too, which has the node text editor and no single-line
+// one. The halves that take a native handler context are native.
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::keybinds::{Action, InputContext};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::platform::input::Key;
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::input_context::InputHandlerContext;
 
 /// One inline text editor, as the ladder sees it.
 ///
 /// Ordering is load-bearing where the variants are enumerated:
-/// [`Self::LADDER`] lists the node text editor first, matching the
+/// `Self::LADDER` (native) lists the node text editor first, matching the
 /// order the release path has always checked them in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ModalEditor {
@@ -41,9 +46,11 @@ pub(super) enum ModalEditor {
 }
 
 impl ModalEditor {
+    #[cfg(not(target_arch = "wasm32"))]
     /// Every modal editor, in check order.
     const LADDER: [ModalEditor; 2] = [ModalEditor::Text, ModalEditor::SingleLine];
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Is this editor currently open?
     fn is_open(self, ctx: &InputHandlerContext<'_>) -> bool {
         match self {
@@ -52,6 +59,7 @@ impl ModalEditor {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// The keybind context this editor's keys resolve in.
     fn context(self) -> InputContext {
         match self {
@@ -60,6 +68,7 @@ impl ModalEditor {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// The `Action` a click outside the edited element dispatches.
     fn commit_action(self) -> Action {
         match self {
@@ -68,6 +77,7 @@ impl ModalEditor {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Does this editor own `action` as its commit / cancel pair?
     /// Those two are user-named effects, so they belong in the
     /// funnel rather than in the modal handler (CODE_CONVENTIONS
@@ -82,6 +92,7 @@ impl ModalEditor {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// The editor currently stealing keyboard input, if any.
     pub(super) fn stealing(ctx: &InputHandlerContext<'_>) -> Option<ModalEditor> {
         ModalEditor::stealing_from(
@@ -111,13 +122,14 @@ impl ModalEditor {
         })
     }
 
-    /// Pure half of [`Self::stealing`]: the first open editor in
+    /// Pure half of `Self::stealing` (native): the first open editor in
     /// [`Self::STEAL_ORDER`].
     pub(super) fn stealing_from(single_line_open: bool, text_open: bool) -> Option<ModalEditor> {
         Self::open_in_steal_order(single_line_open, text_open).next()
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Hand a keystroke to the modal editor that is stealing input.
 ///
 /// The commit / cancel pre-filter runs *before* the modal handler:
@@ -170,6 +182,7 @@ pub(super) fn steal_key_for_modal(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Resolve a pointer release against every open modal editor.
 ///
 /// Returns `true` when the release landed *inside* an edited
@@ -196,6 +209,7 @@ pub(super) fn commit_modal_editors_on_release(ctx: &mut InputHandlerContext<'_>)
     false
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Did the release land on the element `modal` is editing?
 fn release_stays_inside(modal: ModalEditor, ctx: &mut InputHandlerContext<'_>) -> bool {
     let release_canvas = ctx
