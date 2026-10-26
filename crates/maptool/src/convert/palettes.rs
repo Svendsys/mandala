@@ -345,6 +345,20 @@ mod tests {
         assert_eq!(root["palettes"]["coral-v3"]["groups"], own_groups);
         assert_eq!(root["palettes"]["coral"]["groups"][0]["background"], "#defined");
 
+        // `groups: []` is no groups: with nothing hoisting the folded
+        // name, a stray `variant` on a defined base keeps the base,
+        // since `coral-v3` would name no palette at all.
+        let mut root = legacy_map_with_level(json!(0));
+        root["palettes"] = json!({ "coral": { "groups": [{ "background": "#defined" }] } });
+        root["nodes"]["0"]["color_schema"]["variant"] = json!(3);
+        root["nodes"]["0"]["color_schema"]["groups"] = json!([]);
+        hoist_palettes(&mut root);
+        assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral");
+        assert!(
+            root["palettes"].get("coral-v3").is_none(),
+            "nothing is hoisted from empty groups"
+        );
+
         // A legacy subtree under a defined base name: the root carries
         // the groups, its child the same palette and variant with
         // `groups: []`. The child follows its subtree's fold to the
