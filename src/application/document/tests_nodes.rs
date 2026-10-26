@@ -3041,8 +3041,11 @@ fn test_border_preview_commit_force_shows_for_every_field_the_predicate_covers()
         ("font_size_pt", |e| e.font_size_pt = OptionEdit::Set(11.0)),
         ("color", |e| e.color = OptionEdit::Set("#ff8800".into())),
         ("padding", |e| e.padding = OptionEdit::Set(3.0)),
+        // A palette the fixture defines: the setters refuse one it
+        // does not (#136), which would test the refusal, not the
+        // predicate.
         ("color_palette", |e| {
-            e.color_palette = OptionEdit::Set("sunset".into())
+            e.color_palette = OptionEdit::Set("coral".into())
         }),
         ("color_palette_field", |e| {
             e.color_palette_field = OptionEdit::Set(PaletteField::Background)
