@@ -652,7 +652,7 @@ fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
     let zoomed = init.renderer.camera_zoom();
     assert!(
         zoomed > zoom_before,
-        "precondition: ZoomIn must zoom in about the node, or a label may still sit on its corner: \
+        "precondition: ZoomIn must zoom in about the node, or its middle may lie within a handle's tolerance: \
          {zoomed} from {zoom_before}"
     );
     // That the press at the corner captures the handle, asked of the
@@ -949,6 +949,46 @@ fn resize_node_1(init: &mut InitState) {
     assert!(matches!(init.interaction_mode, InteractionMode::Resize { .. }));
 }
 
+/// Whether a press at canvas `at`, through surface pixels and back as a
+/// press sees it, lands on one of node 1's resize handles.
+fn on_node_1_resize_handle(init: &InitState, at: glam::Vec2) -> bool {
+    let surface = init.renderer.canvas_to_screen(at);
+    let canvas = init.renderer.screen_to_canvas(surface.x, surface.y);
+    let tolerance = super::HANDLE_HIT_TOLERANCE_PX * init.renderer.canvas_per_pixel();
+    super::event_mouse_click::resize_handle_press(
+        init.document.as_ref(),
+        &init.interaction_mode,
+        canvas,
+        tolerance,
+    )
+    .node
+    .is_some()
+}
+
+/// The preconditions of a handle press paired with a body press beside
+/// it: `corner` is on node 1's resize handle; both presses land on node
+/// 1's body, so the two share a `ClickHit` and only the handle press
+/// can keep them from pairing into a double-click; `beside` is off the
+/// handle.
+fn assert_handle_and_body_beside_it(init: &mut InitState, corner: glam::Vec2, beside: glam::Vec2) {
+    assert!(
+        on_node_1_resize_handle(init, corner),
+        "precondition: the corner is node 1's resize handle in Resize mode"
+    );
+    assert!(
+        matches!(press_lands_on(init, corner), super::ClickHit::Node(ref id, None) if id == "1"),
+        "precondition: a press on the corner lands on node 1's body too"
+    );
+    assert!(
+        matches!(press_lands_on(init, beside), super::ClickHit::Node(ref id, None) if id == "1"),
+        "precondition: the spot beside the corner is node 1's body"
+    );
+    assert!(
+        !on_node_1_resize_handle(init, beside),
+        "precondition: the spot beside the corner is off the handle"
+    );
+}
+
 /// **A second press on a resize handle grabs it, inside the
 /// double-click window** (#218). In `Resize` mode on node 1, a click on
 /// its SE handle and then, at the same instant (the harness clock is
@@ -977,26 +1017,15 @@ fn test_a_second_press_on_a_resize_handle_grabs_it_inside_the_double_click_windo
     resize_node_1(init);
     zoom_onto_node_1(init);
     let (pos, size) = node_1_rect(init);
-    let corner = pos + size;
-    // Beside the corner: 11 px in, 2 px up, so outside the handle's
-    // 8 px tolerance and inside the 16 px double-click distance.
+    // The grip: 3 px inside the SE corner, within the handle's 8 px
+    // tolerance and on the node's body (the exact corner is empty
+    // canvas to the click chain). Beside it: 11 px in and 2 px up from
+    // the corner, so outside the handle's tolerance and within the
+    // 16 px double-click distance of the grip.
     let cpp = init.renderer.canvas_per_pixel();
-    let beside = corner - glam::Vec2::new(11.0, 2.0) * cpp;
-    assert!(
-        matches!(press_lands_on(init, beside), super::ClickHit::Node(ref id, None) if id == "1"),
-        "precondition: the spot beside the corner is node 1's body"
-    );
-    assert!(
-        super::event_mouse_click::resize_handle_press(
-            init.document.as_ref(),
-            &init.interaction_mode,
-            beside,
-            super::HANDLE_HIT_TOLERANCE_PX * cpp
-        )
-        .node
-        .is_none(),
-        "precondition: the spot beside the corner is off the handle"
-    );
+    let corner = pos + size - glam::Vec2::splat(3.0) * cpp;
+    let beside = pos + size - glam::Vec2::new(11.0, 2.0) * cpp;
+    assert_handle_and_body_beside_it(init, corner, beside);
     let undo_before = init.document.as_ref().expect("document").undo_stack.len();
 
     left_click_at(init, corner);
@@ -1022,8 +1051,9 @@ fn test_a_second_press_on_a_resize_handle_grabs_it_inside_the_double_click_windo
     );
 
     let (pos, size) = node_1_rect(init);
-    let corner = pos + size;
-    let beside = corner - glam::Vec2::new(11.0, 2.0) * cpp;
+    let corner = pos + size - glam::Vec2::splat(3.0) * cpp;
+    let beside = pos + size - glam::Vec2::new(11.0, 2.0) * cpp;
+    assert_handle_and_body_beside_it(init, corner, beside);
     left_click_at(init, corner);
     left_click_at(init, beside);
     assert_eq!(
@@ -1059,6 +1089,10 @@ fn test_a_finger_tapping_then_dragging_a_resize_handle_resizes() {
     zoom_onto_node_1(init);
     let (pos, size) = node_1_rect(init);
     let se = init.renderer.canvas_to_screen(pos + size);
+    assert!(
+        on_node_1_resize_handle(init, pos + size),
+        "precondition: node 1's SE corner must be its resize handle in Resize mode"
+    );
     let at = |i: f32| PhysicalPosition::new(f64::from(se.x + i * 8.0), f64::from(se.y + i * 8.0));
 
     init.input_context()
@@ -1252,6 +1286,11 @@ fn test_a_selected_edges_bare_handle_grabs_and_its_label_still_double_clicks() {
     );
     let edge_before = edge_json(init, "1", "1.2");
     left_click_at(init, point);
+    assert_eq!(
+        init.document.as_ref().expect("document").selection,
+        SelectionState::Edge(EdgeRef::new("1", "1.2", "parent_child")),
+        "precondition: a click on the bare control point keeps its edge selected, so the next press can grab it"
+    );
     left_drag_from(init, point);
     assert_ne!(
         edge_json(init, "1", "1.2"),

@@ -1122,11 +1122,19 @@ mod handle_press {
     #[test]
     fn test_the_first_grab_decides_whether_a_press_is_a_handle_press() {
         let resize_under_label = press(true, false, true);
-        assert_eq!(resize_under_label.first_grab(), Some(Grab::NodeResizeHandle));
+        assert_eq!(
+            resize_under_label.first_grab(),
+            Some(Grab::NodeResizeHandle),
+            "precondition: a resize handle outranks the label over it (Grab::PRECEDENCE)"
+        );
         assert!(resize_under_label.is_handle_press());
 
         let label_over_edge_handle = press(true, true, false);
-        assert_eq!(label_over_edge_handle.first_grab(), Some(Grab::EdgeLabel));
+        assert_eq!(
+            label_over_edge_handle.first_grab(),
+            Some(Grab::EdgeLabel),
+            "precondition: a label outranks the edge handle under it (Grab::PRECEDENCE)"
+        );
         assert!(
             !label_over_edge_handle.is_handle_press(),
             "a label over an edge handle is the label's press, which double-clicks into its editor"

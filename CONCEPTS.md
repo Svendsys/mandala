@@ -2737,7 +2737,13 @@ and it was wrong in both clauses. What is true:
   opening the editor on the node behind it. A press whose first
   grab is a label double-clicks as any press does, which is why a
   double-click on an edge's label keeps opening its editor even
-  where the label sits on the selected edge's midpoint handle.
+  where the label sits on the selected edge's midpoint handle. The
+  same rule reaches a node: with an edge selected, a press where
+  one of its anchors or control points sits on a node is that
+  handle's press, so a double-click there does not open the node's
+  editor. The first release selects the node, which deselects the
+  edge, and the next pair double-clicks as usual. That press does
+  drag the anchor, so it is what it would drag.
 - **The gesture starts at the press.** The threshold decides
   *whether* a press is a drag, not where the drag begins: the move
   that promotes it seeds the new gesture with the travel from the
