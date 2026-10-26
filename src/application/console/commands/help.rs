@@ -14,9 +14,9 @@
 //! second positional — the same [`kvs::read_strict`] every other verb
 //! opens with. It is the generic wording on purpose: a help-specific
 //! "expects a command name" would be a second answer to a question
-//! the engine already answers for every keyless level (`open`,
-//! `mutation`, `mode`, `new`, `node`, `fps`), and "takes no keys"
-//! already says that what `help` takes is positional.
+//! the engine already answers for every other level that declares
+//! no keys, and "takes no keys" already says that what `help` takes
+//! is positional.
 
 use super::{command_by_name, Command, COMMANDS};
 use crate::application::console::completion::Completion;

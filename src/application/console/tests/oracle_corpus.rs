@@ -13,13 +13,15 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "help color"),
     (Sel::Node, "help font"),
     (Sel::Node, "help nope"),
-    // `help` declares no keys and one slot. These three used to
+    // `help` declares no keys and one slot. These four used to
     // print as though the kv or the second word were not typed —
-    // the full listing, then `color`'s usage twice — because `help`
-    // was the one verb whose execute never called
-    // `kvs::read_strict` (#156).
+    // the full listing, then `color`'s usage three times — because
+    // `help` was the one verb whose execute never called
+    // `kvs::read_strict` (#156). A kv in the slot, after it, ahead
+    // of it, and a second positional.
     (Sel::Node, "help color=1"),
     (Sel::Node, "help color section=2"),
+    (Sel::Node, "help bg=x color"),
     (Sel::Node, "help color extra"),
     // anchor
     (Sel::Edge, "anchor"),

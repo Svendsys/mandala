@@ -17,6 +17,7 @@ pub const EXEC_EXPECTED: &[&str] = &[
     "ERR unknown command: nope",
     "ERR help: unknown key 'color'; help takes no keys",
     "ERR help: unknown key 'section'; help takes no keys",
+    "ERR help: unknown key 'bg'; help takes no keys",
     "ERR help: unexpected extra positional 'extra'.",
     "ERR usage: anchor [from=<auto|top|right|bottom|left>] [to=<auto|top|right|bottom|left>]",
     "OK anchor applied",
