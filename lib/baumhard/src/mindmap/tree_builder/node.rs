@@ -75,13 +75,13 @@ pub const DEFAULT_SECTION_FONT_SCALE: f32 = crate::mindmap::model::DEFAULT_TEXT_
 /// use the same ratio or a node grown to fit its text clips the
 /// text it was grown for.
 ///
-/// 1.2 is the typographic default cosmic-text and CSS both take for
-/// unspecified leading. There is no per-section line-height field in
-/// the model, so this is not a fallback — it is the whole answer,
-/// and the reverse converter in the app's
-/// `document::custom::sync` relies on that to avoid persisting a
-/// line height at all.
-pub const LINE_HEIGHT_FACTOR: f32 = 1.2;
+/// It is TextFlow's ratio, [`crate::flow::LINE_HEIGHT_FACTOR`], so the
+/// section layout and every flow share one number. There is no
+/// per-section line-height field in the model, so this is not a
+/// fallback — it is the whole answer, and the reverse converter in
+/// the app's `document::custom::sync` relies on that to avoid
+/// persisting a line height at all.
+pub const LINE_HEIGHT_FACTOR: f32 = crate::flow::LINE_HEIGHT_FACTOR;
 
 /// The font scale a section is laid out at: the **largest**
 /// `size_pt` among its `text_runs`, or [`DEFAULT_SECTION_FONT_SCALE`]

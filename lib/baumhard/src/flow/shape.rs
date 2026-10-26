@@ -1,0 +1,616 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Shaping: a flow's spans become one cosmic-text [`Buffer`], shaped
+//! once, plus the per-glyph facts placement and hit-testing read.
+//!
+//! Two shapes come out of it:
+//!
+//! - A [`ShapedRun`] is **one line**, never wrapped: the input of the
+//!   path and point flows, whose glyphs [`place`](crate::flow::place)
+//!   positions one by one.
+//! - A [`ShapedBox`] is a block of lines broken at `\n` only (D26),
+//!   sized to fit its text and at least its minimum size, its lines
+//!   aligned within its width: the section and label flows.
+//!
+//! Neither keeps a per-glyph buffer. A run's glyphs are listed in
+//! [`ShapedRun::glyphs`] in the order the buffer lays them out, so the
+//! renderer can walk [`ShapedRun::layout_glyphs`] beside a
+//! [`PlacedRun`](crate::flow::PlacedRun) and draw glyph *i* of the one
+//! buffer at placed position *i*.
+//!
+//! **Span mapping.** cosmic-text reports each glyph's cluster as bytes
+//! of the *line* it shaped, and the line is not the caller's text: the
+//! spans are concatenated, and the characters a flow does not draw
+//! (`\n` and `\r` in a run, `\r` in a box) are left out. Shaping
+//! therefore records a piece table — which bytes of which span each
+//! stretch of each line came from — and maps every glyph back through
+//! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
+//! caller's span and bytes of the caller's text.
+
+use std::ops::Range;
+use std::sync::Arc;
+
+use glam::Vec2;
+
+use crate::document::resolve::ResolvedText;
+use crate::document::values::Align;
+use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
+use crate::font::fonts::{
+    clamp_font_metric, face_family_name_for_pin, AppFont, FontSystemWriteGuard, MIN_FONT_SIZE_PT,
+};
+use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Wrap, SHAPING_ADVANCED};
+use crate::util::grapheme_chad;
+
+/// The span index a filler glyph reports: it belongs to no span of the
+/// flow, so it is never a link (ruling R6).
+///
+/// A `FitMode::Once` filler is drawn in the flow's own style, not any
+/// span's, and is appended to the run by placement
+/// ([`place_on_closed`](crate::flow::place_on_closed),
+/// [`place_on_open`](crate::flow::place_on_open)); its glyphs carry
+/// this value in [`GlyphMetrics::span`], and their
+/// [`GlyphMetrics::bytes`] index the filler text.
+pub const FILLER_SPAN: usize = usize::MAX;
+
+/// What shaping measured about one glyph of a [`ShapedRun`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlyphMetrics {
+    /// The index of the span the glyph's cluster starts in, in the slice
+    /// given to [`shape_run`]; [`FILLER_SPAN`] for a filler glyph. A
+    /// cluster that straddles two spans (a combining mark styled apart
+    /// from its base) belongs to the span it starts in.
+    pub span: usize,
+    /// The glyph's cluster as bytes of that span's text, clipped to the
+    /// span. Every glyph of one cluster reports the same range, and a
+    /// ligature reports all the characters it covers.
+    pub bytes: Range<usize>,
+    /// The horizontal advance, in points, at the size it was shaped at.
+    pub advance: f32,
+    /// The face's ascent at the glyph's size: how far above the
+    /// baseline the face reaches.
+    pub ascent: f32,
+    /// The face's descent at the glyph's size, positive: how far below
+    /// the baseline the face reaches.
+    pub descent: f32,
+    /// Whether this glyph begins a grapheme cluster, in the order the
+    /// glyphs are listed. A glyph that continues the previous glyph's
+    /// cluster (a mark shaped as a glyph of its own) is `false`, so a
+    /// cut that keeps whole graphemes keeps whole runs of glyphs from
+    /// one `true` to the next (ruling R6, reading 1).
+    pub grapheme_start: bool,
+}
+
+/// A flow shaped as one line, for placement along a path or at a point.
+///
+/// Built by [`shape_run`]; the glyph placement functions return a new
+/// one when they rescale it (`Fit`) or append a filler (`Once`).
+#[derive(Clone, Debug)]
+pub struct ShapedRun {
+    /// The shaped text. One line, or two after placement appended a
+    /// `Once` filler as a line of its own (so the filler and the text
+    /// never shape or reorder across each other). Shared: placing a run
+    /// many times, and repeating it along a path, never copies or
+    /// reshapes it.
+    pub buffer: Arc<Buffer>,
+    /// One entry per glyph, in the order [`ShapedRun::layout_glyphs`]
+    /// yields the buffer's glyphs: line by line, each line in visual
+    /// order. [`PlacedGlyph::glyph`](crate::flow::PlacedGlyph::glyph)
+    /// indexes this.
+    pub glyphs: Vec<GlyphMetrics>,
+    /// The run's line height: the largest of its spans' (point size ×
+    /// [`LINE_HEIGHT_FACTOR`]). Placement gives every glyph a box this
+    /// tall (`h` in #239 §5), so one run keeps one vertical rhythm.
+    /// `0.0` for a run with nothing to draw.
+    pub line_height: f32,
+    /// Which bytes of which span each stretch of each line came from:
+    /// how a glyph is mapped back to its span, and how the run is
+    /// reshaped (rescaled, or given a filler) without its spans.
+    pub(crate) pieces: Vec<Piece>,
+}
+
+/// A contiguous stretch of one shaped line that came from one span.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Piece {
+    /// The span index, or [`FILLER_SPAN`].
+    pub(crate) span: usize,
+    /// Where the stretch starts in the span's text.
+    pub(crate) span_start: usize,
+    /// The buffer line it is on.
+    pub(crate) line: usize,
+    /// Where the stretch starts in that line's text.
+    pub(crate) line_start: usize,
+    /// Its length in bytes.
+    pub(crate) len: usize,
+}
+
+impl ShapedRun {
+    /// The buffer's laid-out glyphs, in the order [`ShapedRun::glyphs`]
+    /// lists them: glyph *i* here is the glyph `glyphs[i]` describes.
+    /// This is what a renderer draws at each
+    /// [`PlacedGlyph`](crate::flow::PlacedGlyph)'s position.
+    ///
+    /// Cost: a lazy walk over the buffer's layout lines; no allocation.
+    pub fn layout_glyphs(&self) -> impl Iterator<Item = &LayoutGlyph> + '_ {
+        self.buffer.layout_runs().flat_map(|run| run.glyphs.iter())
+    }
+
+    /// Where the run's baseline sits below the top of a glyph's placed
+    /// box, which is [`ShapedRun::line_height`] tall: the line height's
+    /// slack split evenly above and below the run's tallest ascent and
+    /// deepest descent, as cosmic-text centers a line.
+    ///
+    /// One value for the whole run, so glyphs of different sizes on one
+    /// stretch of path share a baseline, as they would on a line of
+    /// text. A renderer draws glyph *i* with its baseline at
+    /// `placed.pos.y + baseline()`. `0.0` for an empty run.
+    ///
+    /// Cost: O(glyphs).
+    pub fn baseline(&self) -> f32 {
+        let ascent = self.glyphs.iter().map(|g| g.ascent).fold(0.0_f32, f32::max);
+        let descent = self.glyphs.iter().map(|g| g.descent).fold(0.0_f32, f32::max);
+        if self.glyphs.is_empty() {
+            return 0.0;
+        }
+        (self.line_height - (ascent + descent)) / 2.0 + ascent
+    }
+}
+
+/// A flow shaped as a block of lines, for box layout.
+#[derive(Clone, Debug)]
+pub struct ShapedBox {
+    /// The shaped text, laid out at the box's width with its lines
+    /// aligned: drawn with its top-left at the box's origin, it shows
+    /// the box.
+    pub buffer: Arc<Buffer>,
+    /// The box's size: the larger of the minimum size asked for and the
+    /// text's natural size (its widest line by the sum of its line
+    /// heights), per axis.
+    pub size: Vec2,
+    /// For each glyph, in layout order (line by line, each line in
+    /// visual order — the order `buffer.layout_runs()` yields them), the
+    /// span its cluster starts in and its cluster as bytes of that
+    /// span's text: how a hit on a glyph finds its span.
+    pub glyph_spans: Vec<(usize /* span */, Range<usize> /* bytes */)>,
+}
+
+/// Which characters of a flow's text are not drawn: a path flow is one
+/// line, so neither line break is drawn; a box flow breaks at `\n` and
+/// draws no `\r` (D26).
+#[derive(Copy, Clone, PartialEq)]
+enum Breaks {
+    /// `\n` and `\r` are left out.
+    None,
+    /// `\n` breaks the line; `\r` is left out.
+    Newline,
+}
+
+/// The text and attributes handed to cosmic-text, and the piece table
+/// that maps what it lays out back to the caller's spans.
+struct Assembly<'f> {
+    /// `(text, attrs)` pairs for cosmic-text's `set_rich_text`.
+    rich: Vec<(&'f str, Attrs<'f>)>,
+    /// One entry per drawn stretch, in line order.
+    pieces: Vec<Piece>,
+    /// The largest line height of any drawn stretch: a run's line
+    /// height.
+    line_height: f32,
+    /// The largest font size of any drawn stretch.
+    font_size: f32,
+    /// The largest line height and font size of any span, drawn or not:
+    /// how tall a line with nothing on it is.
+    span_metrics: Metrics,
+}
+
+/// The size and line height `attrs` carry.
+fn metrics_of(attrs: &Attrs<'_>) -> Metrics {
+    attrs
+        .metrics_opt
+        .map(Metrics::from)
+        .unwrap_or(Metrics::new(0.0, 0.0))
+}
+
+/// Split each span into the stretches that are drawn, attach its
+/// attributes, and record where each stretch lands.
+///
+/// With `Breaks::Newline`, each `\n` is handed to cosmic-text as a
+/// paragraph break, and a flow whose last break has nothing after it
+/// gets one more, so it ends with the empty line an editor shows there
+/// (cosmic-text drops a trailing empty line; D26 breaks at every `\n`).
+///
+/// `families` holds each span's pinned family name (same indexing as
+/// `spans`). Cost: O(text) scan for line breaks, one `Vec` entry per
+/// stretch.
+fn assemble<'f>(
+    spans: &[FlowSpan<'f>],
+    families: &'f [Option<String>],
+    scale: f32,
+    breaks: Breaks,
+) -> Assembly<'f> {
+    let mut assembly = Assembly {
+        rich: Vec::with_capacity(spans.len()),
+        pieces: Vec::with_capacity(spans.len()),
+        line_height: 0.0,
+        font_size: 0.0,
+        span_metrics: Metrics::new(0.0, 0.0),
+    };
+    let mut line = 0usize;
+    let mut line_len = 0usize;
+    // The attributes of the last break, while nothing has been drawn
+    // after it.
+    let mut open_break: Option<Attrs<'f>> = None;
+    for (index, span) in spans.iter().enumerate() {
+        let attrs = span_attrs(span, scale, families[index].as_deref());
+        let metrics = metrics_of(&attrs);
+        assembly.span_metrics.font_size = assembly.span_metrics.font_size.max(metrics.font_size);
+        assembly.span_metrics.line_height = assembly.span_metrics.line_height.max(metrics.line_height);
+        let text = span.text;
+        let push = |assembly: &mut Assembly<'f>,
+                    open_break: &mut Option<Attrs<'f>>,
+                    start: usize,
+                    end: usize,
+                    line: usize,
+                    line_len: &mut usize| {
+            if start >= end {
+                return;
+            }
+            *open_break = None;
+            assembly.rich.push((&text[start..end], attrs.clone()));
+            assembly.pieces.push(Piece {
+                span: index,
+                span_start: start,
+                line,
+                line_start: *line_len,
+                len: end - start,
+            });
+            *line_len += end - start;
+            assembly.line_height = assembly.line_height.max(metrics.line_height);
+            assembly.font_size = assembly.font_size.max(metrics.font_size);
+        };
+        let mut start = 0usize;
+        for (at, ch) in text.match_indices(['\n', '\r']) {
+            push(&mut assembly, &mut open_break, start, at, line, &mut line_len);
+            if breaks == Breaks::Newline && ch == "\n" {
+                // The break itself is handed to cosmic-text so it splits
+                // the paragraph there; it belongs to no piece.
+                assembly.rich.push(("\n", attrs.clone()));
+                open_break = Some(attrs.clone());
+                line += 1;
+                line_len = 0;
+            }
+            start = at + 1;
+        }
+        push(
+            &mut assembly,
+            &mut open_break,
+            start,
+            text.len(),
+            line,
+            &mut line_len,
+        );
+    }
+    if let Some(attrs) = open_break {
+        assembly.rich.push(("\n", attrs));
+    }
+    assembly
+}
+
+/// Each span's pinned family name, resolved once against `fs`:
+/// `None` for `AppFont::Any`, or a face the font system does not know.
+fn families_of<'s>(styles: impl Iterator<Item = &'s ResolvedText>, fs: &FontSystem) -> Vec<Option<String>> {
+    styles
+        .map(|style| match style.font {
+            AppFont::Any => None,
+            font => face_family_name_for_pin(fs, font),
+        })
+        .collect()
+}
+
+/// A buffer with no wrapping, no size limit and metrics no smaller than
+/// the shaper accepts, holding `rich`.
+fn new_buffer(
+    fs: &mut FontSystem,
+    rich: Vec<(&str, Attrs<'_>)>,
+    font_size: f32,
+    line_height: f32,
+    align: Option<Align>,
+) -> Buffer {
+    let font_size = font_size.max(MIN_FONT_SIZE_PT);
+    let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
+    let mut buffer = Buffer::new(fs, Metrics::new(font_size, line_height));
+    buffer.set_wrap(Wrap::None);
+    buffer.set_size(None, None);
+    let defaults = Attrs::new().metrics(Metrics::new(font_size, line_height));
+    buffer.set_rich_text(rich, &defaults, SHAPING_ADVANCED, align.map(cosmic_align));
+    buffer.shape_until_scroll(fs, false);
+    buffer
+}
+
+/// The document's alignment as cosmic-text's.
+fn cosmic_align(align: Align) -> crate::font::Align {
+    match align {
+        Align::Left => crate::font::Align::Left,
+        Align::Center => crate::font::Align::Center,
+        Align::Right => crate::font::Align::Right,
+    }
+}
+
+/// The piece a glyph on `line` starting at line byte `at` came from.
+/// `pieces` is in line order, so this is a binary search.
+fn piece_of(pieces: &[Piece], line: usize, at: usize) -> Option<&Piece> {
+    let index = pieces.partition_point(|p| (p.line, p.line_start) <= (line, at));
+    let piece = pieces.get(index.checked_sub(1)?)?;
+    (piece.line == line).then_some(piece)
+}
+
+/// `glyph`'s span and its cluster as bytes of that span's text.
+fn span_bytes(pieces: &[Piece], line: usize, glyph: &LayoutGlyph) -> (usize, Range<usize>) {
+    // Every glyph starts inside a piece, since cosmic-text shapes only
+    // the text it was handed; the fallback keeps a frame from failing if
+    // that ever stops being true.
+    let Some(piece) = piece_of(pieces, line, glyph.start) else {
+        return (0, 0..0);
+    };
+    let offset = glyph.start - piece.line_start;
+    let end = glyph.end.min(piece.line_start + piece.len).max(glyph.start) - piece.line_start;
+    (piece.span, piece.span_start + offset..piece.span_start + end)
+}
+
+/// The ascent and descent, per unit of size, assumed for a glyph whose
+/// face the font system cannot hand back. Unreachable in practice —
+/// cosmic-text lays out glyphs only in faces it loaded — but a frame
+/// must not fail on it (CODE_CONVENTIONS §9); these are a typical Latin
+/// face's proportions.
+const UNKNOWN_FACE_EXTENT: (f32, f32) = (0.8, 0.2);
+
+/// The per-glyph facts of a shaped buffer: span and bytes through the
+/// piece table, advance, the face's ascent and descent at the glyph's
+/// size, and where each grapheme cluster begins.
+///
+/// Cost: one grapheme walk per line (to learn its cluster starts), one
+/// binary search per glyph into the piece table and one into the line's
+/// cluster starts, and one font lookup per change of face.
+fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<GlyphMetrics> {
+    let mut out = Vec::new();
+    // The last glyph whose face was looked up, and that face's ascent
+    // and descent per unit of size: consecutive glyphs mostly share one.
+    let mut face: Option<(&LayoutGlyph, f32, f32)> = None;
+    let mut starts: Vec<usize> = Vec::new();
+    let mut current_line = usize::MAX;
+    let mut previous_cluster: Option<(usize, usize)> = None;
+    for run in buffer.layout_runs() {
+        if run.line_i != current_line {
+            current_line = run.line_i;
+            starts.clear();
+            starts.extend(grapheme_chad::grapheme_byte_starts(run.text));
+            previous_cluster = None;
+        }
+        for glyph in run.glyphs {
+            let (span, bytes) = span_bytes(pieces, run.line_i, glyph);
+            let (ascent, descent) = match face {
+                Some((seen, ascent, descent))
+                    if seen.font_id == glyph.font_id && seen.font_weight == glyph.font_weight =>
+                {
+                    (ascent, descent)
+                }
+                _ => {
+                    let (ascent, descent) = fs
+                        .get_font(glyph.font_id, glyph.font_weight)
+                        .map(|font| {
+                            let metrics = font.metrics();
+                            let em = f32::from(metrics.units_per_em.max(1));
+                            (metrics.ascent / em, -metrics.descent / em)
+                        })
+                        .unwrap_or(UNKNOWN_FACE_EXTENT);
+                    face = Some((glyph, ascent, descent));
+                    (ascent, descent)
+                }
+            };
+            let cluster = starts.partition_point(|&s| s <= glyph.start);
+            let key = (run.line_i, cluster);
+            let grapheme_start = previous_cluster != Some(key);
+            previous_cluster = Some(key);
+            out.push(GlyphMetrics {
+                span,
+                bytes,
+                advance: glyph.w,
+                ascent: ascent * glyph.font_size,
+                descent: descent * glyph.font_size,
+                grapheme_start,
+            });
+        }
+    }
+    out
+}
+
+/// Shape `spans` as one line, every span's size times `scale`.
+///
+/// The input of the path and point flows. Each span is shaped with its
+/// own face, size, weight, slant and color ([`span_attrs`]); a `\n` or
+/// `\r` in a span is not drawn, since a run is one line. `scale` is
+/// what `Fit` uses to rescale a flow (#239 §6); a caller shaping at the
+/// declared size passes `1.0`.
+///
+/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
+///
+/// Cost: one cosmic-text buffer and one shaping pass over the text,
+/// under the guard the caller holds (this never acquires the font
+/// lock); one family-name lookup and `String` per span; one grapheme
+/// walk; the piece table and glyph list.
+pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemWriteGuard) -> ShapedRun {
+    let fs: &mut FontSystem = fs;
+    let families = families_of(spans.iter().map(|span| span.style), fs);
+    let assembly = assemble(spans, &families, scale, Breaks::None);
+    run_from_assembly(assembly, fs)
+}
+
+/// Build a run from assembled stretches: shape them on one buffer and
+/// measure its glyphs.
+fn run_from_assembly(assembly: Assembly<'_>, fs: &mut FontSystem) -> ShapedRun {
+    let line_height = assembly.line_height;
+    let buffer = new_buffer(fs, assembly.rich, assembly.font_size, line_height, None);
+    let glyphs = glyph_metrics(&buffer, &assembly.pieces, fs);
+    ShapedRun {
+        buffer: Arc::new(buffer),
+        glyphs,
+        line_height,
+        pieces: assembly.pieces,
+    }
+}
+
+/// `run` shaped again with every size times `factor`, and, when
+/// `filler` is given, its text appended on a line of its own in the
+/// given style.
+///
+/// How placement rescales a run for `Fit` and gives it a `Once` filler
+/// without the spans it was shaped from: the buffer still holds every
+/// drawn stretch and its attributes, and the piece table says where
+/// each came from, so the same stretches are handed to cosmic-text
+/// again with scaled metrics. The text's glyphs come out in the same
+/// order with the same spans and bytes.
+///
+/// The filler goes on a line of its own so that neither the text's
+/// shaping (kerning, joining, bidi order) nor the filler's depends on
+/// the other: the text's glyphs, and their indices, are those of `run`.
+///
+/// Cost: one shaping pass over the run's text and the filler; one
+/// `String` per drawn stretch (the stretch's text is copied out of the
+/// old buffer), and the piece table and glyph list.
+pub(crate) fn reshape(
+    run: &ShapedRun,
+    factor: f32,
+    filler: Option<(&str, &ResolvedText)>,
+    fs: &mut FontSystem,
+) -> ShapedRun {
+    // The filler's text and family name outlive the attribute list that
+    // borrows them.
+    let filler_text: String = filler.map_or_else(String::new, |(text, _)| text.replace(['\n', '\r'], ""));
+    let filler_family = filler.and_then(|(_, style)| families_of(std::iter::once(style), fs).pop().flatten());
+
+    let mut rich: Vec<(&str, Attrs<'_>)> = Vec::with_capacity(run.pieces.len() + 2);
+    let mut pieces = Vec::with_capacity(run.pieces.len() + 1);
+    let mut line_height = 0.0_f32;
+    let mut font_size = 0.0_f32;
+    let mut track = |attrs: &Attrs<'_>| {
+        let metrics = metrics_of(attrs);
+        line_height = line_height.max(metrics.line_height);
+        font_size = font_size.max(metrics.font_size);
+    };
+    let mut line_len = 0usize;
+    for piece in run.pieces.iter().filter(|piece| piece.span != FILLER_SPAN) {
+        let Some(line) = run.buffer.lines.get(piece.line) else {
+            continue;
+        };
+        let Some(slice) = line.text().get(piece.line_start..piece.line_start + piece.len) else {
+            continue;
+        };
+        let attrs = scaled(&line.attrs_list().get_span(piece.line_start), factor);
+        track(&attrs);
+        rich.push((slice, attrs));
+        pieces.push(Piece {
+            span: piece.span,
+            span_start: piece.span_start,
+            line: 0,
+            line_start: line_len,
+            len: slice.len(),
+        });
+        line_len += slice.len();
+    }
+    if let Some((text, style)) = filler.filter(|_| !filler_text.is_empty()) {
+        let span = FlowSpan {
+            text,
+            style,
+            link: None,
+        };
+        let attrs = span_attrs(&span, factor, filler_family.as_deref());
+        track(&attrs);
+        rich.push(("\n", attrs.clone()));
+        rich.push((filler_text.as_str(), attrs));
+        pieces.push(Piece {
+            span: FILLER_SPAN,
+            span_start: 0,
+            line: 1,
+            line_start: 0,
+            len: filler_text.len(),
+        });
+    }
+    let buffer = new_buffer(fs, rich, font_size, line_height, None);
+    let glyphs = glyph_metrics(&buffer, &pieces, fs);
+    ShapedRun {
+        buffer: Arc::new(buffer),
+        glyphs,
+        line_height,
+        pieces,
+    }
+}
+
+/// `attrs` with its size and line height times `factor`, clamped to
+/// the shaper's domain.
+fn scaled<'a>(attrs: &Attrs<'a>, factor: f32) -> Attrs<'a> {
+    let size = clamp_font_metric(metrics_of(attrs).font_size * factor, MIN_FONT_SIZE_PT);
+    attrs
+        .clone()
+        .metrics(Metrics::new(size, size * LINE_HEIGHT_FACTOR))
+}
+
+/// Shape `spans` as a box: lines broken at `\n` only (D26), the box
+/// sized to the larger of `min_size` and the text's natural size, and
+/// every line aligned within the box's width by `align`.
+///
+/// The natural size is the widest line by the sum of the lines' heights
+/// (each line as tall as its tallest span's line height, an empty line
+/// as tall as the span it sits in, and empty text one empty line). A
+/// `\n` with nothing after it ends the box with an empty line, as an
+/// editor shows it; no spans at all is an empty box. Each span keeps its
+/// own face, size, weight, slant and color ([`span_attrs`]); a `\r` is
+/// not drawn.
+///
+/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
+///
+/// Cost: one cosmic-text buffer, shaped once and laid out twice (once
+/// unbounded to measure, once at the box's width to align — the second
+/// pass re-lays-out without reshaping), under the guard the caller
+/// holds; one family-name lookup and `String` per span; the piece
+/// table and the glyph-span list.
+pub fn shape_box(
+    spans: &[FlowSpan<'_>],
+    min_size: Option<Vec2>,
+    align: Align,
+    fs: &mut FontSystemWriteGuard,
+) -> ShapedBox {
+    let fs: &mut FontSystem = fs;
+    let families = families_of(spans.iter().map(|span| span.style), fs);
+    let assembly = assemble(spans, &families, 1.0, Breaks::Newline);
+    // A line with nothing on it — the whole box, when the text is empty
+    // — is as tall as the spans' line height.
+    let empty_line = assembly.span_metrics;
+    let pieces = assembly.pieces;
+    let mut buffer = new_buffer(
+        fs,
+        assembly.rich,
+        empty_line.font_size,
+        empty_line.line_height,
+        Some(align),
+    );
+
+    let mut natural = Vec2::ZERO;
+    if !spans.is_empty() {
+        for run in buffer.layout_runs() {
+            natural.x = natural.x.max(run.line_w);
+            natural.y += run.line_height;
+        }
+    }
+    let size = min_size.map_or(natural, |min| natural.max(min));
+    buffer.set_size(Some(size.x), None);
+    buffer.shape_until_scroll(fs, false);
+
+    let glyph_spans = buffer
+        .layout_runs()
+        .flat_map(|run| run.glyphs.iter().map(move |glyph| (run.line_i, glyph)))
+        .map(|(line, glyph)| span_bytes(&pieces, line, glyph))
+        .collect();
+    ShapedBox {
+        buffer: Arc::new(buffer),
+        size,
+        glyph_spans,
+    }
+}

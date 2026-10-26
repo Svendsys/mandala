@@ -41,6 +41,10 @@ pub mod document;
 /// mutation payload: `Tree` / `MutatorTree`, `Mutator` and
 /// `Instruction`, the walker, `Predicate`, and the builder DSL.
 pub mod engine;
+/// TextFlow: shaping spans into runs and boxes, outlines and curves,
+/// and placing upright glyphs along paths — the one text primitive
+/// everything drawn as text is built on.
+pub mod flow;
 /// Font loading, shaping, and glyph-metric lookups backed by
 /// cosmic-text. Owns the long-lived font cache.
 pub mod font;

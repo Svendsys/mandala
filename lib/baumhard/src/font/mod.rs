@@ -106,9 +106,16 @@ pub use cosmic_text::Buffer;
 /// Packed-RGBA color. See [`COLOR_WHITE`] / [`COLOR_BLACK`] for the
 /// common defaults the renderer used to write inline.
 pub use cosmic_text::Color;
+/// Cosmic-text `Family` — the face a span asks for, by name or by
+/// generic class. `crate::flow` pins an `AppFont` with `Family::Name`.
+pub use cosmic_text::Family;
 /// Long-lived font system (database + atlas). One per process;
 /// owned by `fonts::FONT_SYSTEM`.
 pub use cosmic_text::FontSystem;
+/// One glyph of a laid-out line: its face, glyph id, size, cluster
+/// bytes and position in the line. The renderer reads these from a
+/// [`ShapedRun`](crate::flow::ShapedRun) to draw its placed glyphs.
+pub use cosmic_text::LayoutGlyph;
 /// Per-buffer font / line-height metrics — one `Metrics::new(...)`
 /// per [`Buffer`] construction.
 pub use cosmic_text::Metrics;
@@ -116,9 +123,20 @@ pub use cosmic_text::Metrics;
 /// default is [`SHAPING_ADVANCED`] — every Mandala render path uses
 /// it for non-Latin fallback support.
 pub use cosmic_text::Shaping;
+/// Cosmic-text `Style` — upright or italic. `crate::flow` maps a
+/// span's `italic` onto it.
+pub use cosmic_text::Style;
 /// Glyph-rasterization cache. Owned by the caller — one per
 /// measurement pass — so repeated calls share rasterization work.
 pub use cosmic_text::SwashCache;
+/// Cosmic-text's font weight (`fontdb::Weight`), renamed so it does not
+/// collide with the document's own
+/// [`Weight`](crate::document::values::Weight), which `crate::flow`
+/// converts into it.
+pub use cosmic_text::Weight as FontWeight;
+/// Cosmic-text `Wrap` — the line-wrapping mode. TextFlow sets
+/// `Wrap::None`: box flows break at `\n` only (D26).
+pub use cosmic_text::Wrap;
 
 /// Opaque white in cosmic-text's packed-RGBA representation. Used
 /// as the FPS-overlay default and the unbranded text-renderer

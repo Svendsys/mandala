@@ -17,6 +17,10 @@ use baumhard::engine::tests::journal_tests::*;
 use baumhard::engine::tests::routing_tests::*;
 use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::walker_tests::*;
+use baumhard::flow::tests::fit_tests::*;
+use baumhard::flow::tests::outline_tests::*;
+use baumhard::flow::tests::place_tests::*;
+use baumhard::flow::tests::shape_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::color_tests::*;
 use baumhard::font::tests::fonts_tests::*;
@@ -1833,6 +1837,144 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_shape_checks_only_its_own_row", |b| {
         b.iter(do_document_shape_checks_only_its_own_row)
     });
+    // TextFlow: shaping, outlines and the arc-length walk, placement,
+    // and the fit modes //
+    c.bench_function("flow_fit_fills_a_line_exactly", |b| {
+        b.iter(do_flow_fit_fills_a_line_exactly)
+    });
+    c.bench_function("flow_fit_goes_around_once", |b| {
+        b.iter(do_flow_fit_goes_around_once)
+    });
+    c.bench_function("flow_fit_shrinks_past_the_naive_scale", |b| {
+        b.iter(do_flow_fit_shrinks_past_the_naive_scale)
+    });
+    c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
+        b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
+    });
+    c.bench_function("flow_fit_clamped_at_min_cuts_without_overlap", |b| {
+        b.iter(do_flow_fit_clamped_at_min_cuts_without_overlap)
+    });
+    c.bench_function("flow_repeat_reuses_glyph_indices", |b| {
+        b.iter(do_flow_repeat_reuses_glyph_indices)
+    });
+    c.bench_function("flow_repeat_cuts_at_a_grapheme", |b| {
+        b.iter(do_flow_repeat_cuts_at_a_grapheme)
+    });
+    c.bench_function("flow_once_with_a_filler_fills_the_rest", |b| {
+        b.iter(do_flow_once_with_a_filler_fills_the_rest)
+    });
+    c.bench_function("flow_once_places_the_text_once", |b| {
+        b.iter(do_flow_once_places_the_text_once)
+    });
+    c.bench_function("flow_spread_ends_on_a_line", |b| {
+        b.iter(do_flow_spread_ends_on_a_line)
+    });
+    c.bench_function("flow_spread_ends_around_a_rounded_rect", |b| {
+        b.iter(do_flow_spread_ends_around_a_rounded_rect)
+    });
+    c.bench_function("flow_spread_too_long_is_cut", |b| {
+        b.iter(do_flow_spread_too_long_is_cut)
+    });
+    c.bench_function(
+        "flow_outline_corner_radius_is_a_share_of_half_the_shorter_side",
+        |b| b.iter(do_flow_outline_corner_radius_is_a_share_of_half_the_shorter_side),
+    );
+    c.bench_function("flow_offset_grows_the_rect_and_the_radius", |b| {
+        b.iter(do_flow_offset_grows_the_rect_and_the_radius)
+    });
+    c.bench_function("flow_ring_offset_sums_inner_rings_and_gaps", |b| {
+        b.iter(do_flow_ring_offset_sums_inner_rings_and_gaps)
+    });
+    c.bench_function("flow_pill_has_straight_sides_of_w_minus_h", |b| {
+        b.iter(do_flow_pill_has_straight_sides_of_w_minus_h)
+    });
+    c.bench_function("flow_start_points_on_a_rounded_rect", |b| {
+        b.iter(do_flow_start_points_on_a_rounded_rect)
+    });
+    c.bench_function("flow_start_points_on_an_ellipse", |b| {
+        b.iter(do_flow_start_points_on_an_ellipse)
+    });
+    c.bench_function("flow_ellipse_walk_stays_on_the_ellipse", |b| {
+        b.iter(do_flow_ellipse_walk_stays_on_the_ellipse)
+    });
+    c.bench_function("flow_bezier_walk_measures_arc_length", |b| {
+        b.iter(do_flow_bezier_walk_measures_arc_length)
+    });
+    c.bench_function("flow_open_path_holds_its_ends", |b| {
+        b.iter(do_flow_open_path_holds_its_ends)
+    });
+    c.bench_function("flow_curve_from_points", |b| b.iter(do_flow_curve_from_points));
+    c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
+        b.iter(do_flow_place_horizontal_steps_by_advance)
+    });
+    c.bench_function("flow_place_vertical_steps_by_line_height", |b| {
+        b.iter(do_flow_place_vertical_steps_by_line_height)
+    });
+    c.bench_function("flow_place_diagonal_step_blends_advance_and_height", |b| {
+        b.iter(do_flow_place_diagonal_step_blends_advance_and_height)
+    });
+    c.bench_function("flow_place_sharp_rect_touches_every_side", |b| {
+        b.iter(do_flow_place_sharp_rect_touches_every_side)
+    });
+    c.bench_function("flow_place_round_square_is_a_circle", |b| {
+        b.iter(do_flow_place_round_square_is_a_circle)
+    });
+    c.bench_function("flow_place_start_and_direction", |b| {
+        b.iter(do_flow_place_start_and_direction)
+    });
+    c.bench_function("flow_place_rings_stack_outward", |b| {
+        b.iter(do_flow_place_rings_stack_outward)
+    });
+    c.bench_function("flow_place_step_is_taken_at_its_middle", |b| {
+        b.iter(do_flow_place_step_is_taken_at_its_middle)
+    });
+    c.bench_function("flow_place_on_an_ellipse", |b| {
+        b.iter(do_flow_place_on_an_ellipse)
+    });
+    c.bench_function("flow_place_on_a_bezier", |b| b.iter(do_flow_place_on_a_bezier));
+    c.bench_function("flow_place_at_point_centers_the_line", |b| {
+        b.iter(do_flow_place_at_point_centers_the_line)
+    });
+    c.bench_function("flow_span_attrs_carry_weight_slant_and_size", |b| {
+        b.iter(do_flow_span_attrs_carry_weight_slant_and_size)
+    });
+    c.bench_function("flow_shape_run_keeps_each_span_attributes", |b| {
+        b.iter(do_flow_shape_run_keeps_each_span_attributes)
+    });
+    c.bench_function("flow_shape_run_sizes_each_span", |b| {
+        b.iter(do_flow_shape_run_sizes_each_span)
+    });
+    c.bench_function("flow_shape_run_maps_glyphs_to_spans", |b| {
+        b.iter(do_flow_shape_run_maps_glyphs_to_spans)
+    });
+    c.bench_function("flow_shape_run_marks_grapheme_starts", |b| {
+        b.iter(do_flow_shape_run_marks_grapheme_starts)
+    });
+    c.bench_function("flow_shape_run_of_nothing", |b| {
+        b.iter(do_flow_shape_run_of_nothing)
+    });
+    c.bench_function("flow_layout_glyphs_follow_glyphs", |b| {
+        b.iter(do_flow_layout_glyphs_follow_glyphs)
+    });
+    c.bench_function("flow_baseline_centers_the_tallest_glyph", |b| {
+        b.iter(do_flow_baseline_centers_the_tallest_glyph)
+    });
+    c.bench_function("flow_reshape_rescales_and_keeps_the_mapping", |b| {
+        b.iter(do_flow_reshape_rescales_and_keeps_the_mapping)
+    });
+    c.bench_function("flow_reshape_appends_a_filler_on_its_own_line", |b| {
+        b.iter(do_flow_reshape_appends_a_filler_on_its_own_line)
+    });
+    c.bench_function("flow_box_breaks_at_newlines", |b| {
+        b.iter(do_flow_box_breaks_at_newlines)
+    });
+    c.bench_function("flow_box_counts_empty_lines", |b| {
+        b.iter(do_flow_box_counts_empty_lines)
+    });
+    c.bench_function("flow_box_keeps_a_larger_minimum", |b| {
+        b.iter(do_flow_box_keeps_a_larger_minimum)
+    });
+    c.bench_function("flow_box_aligns_lines", |b| b.iter(do_flow_box_aligns_lines));
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
     c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {
