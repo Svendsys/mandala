@@ -1205,16 +1205,118 @@ fn test_default_console_font_size_is_16() {
     ));
 }
 
+/// A loaded family resolves to its face, and the size passes
+/// through clamped; the family is the console's default face from
+/// here on, so a resolve that dropped it would leave the console in
+/// cosmic-text's default no matter what the user configured.
 #[test]
 fn test_resolve_exposes_console_style_fields() {
+    let family = baumhard::font::fonts::loaded_families_iter()
+        .next()
+        .expect("the build ships at least one family");
     let cfg = KeybindConfig {
-        console_font: "MyFont".into(),
+        console_font: family.to_string(),
         console_font_size: 20.0,
         ..KeybindConfig::default()
     };
     let r = cfg.resolve();
-    assert_eq!(r.console_font, "MyFont");
+    assert_eq!(r.console_font, baumhard::font::fonts::app_font_by_family(family));
+    assert!(r.console_font.is_some(), "a loaded family must resolve to a face");
     assert!(baumhard::util::geometry::almost_equal(r.console_font_size, 20.0));
+
+    // Control: the default config names no family and resolves to the
+    // default face, so the `Some` above is the configured family's
+    // doing and not something every resolve produces.
+    assert_eq!(KeybindConfig::default().resolve().console_font, None);
+}
+
+/// An empty `console_font` is the documented "default face" and says
+/// nothing; a name that is not loaded falls back to the same default
+/// and warns — the warning is the only thing that tells a misspelled
+/// family from a setting the console ignores.
+#[test]
+fn test_resolve_console_font_warns_only_for_an_unloaded_family() {
+    use super::config::resolve_console_font;
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+
+    let (face, captured) = capture(|| resolve_console_font(""));
+    assert_eq!(face, None);
+    assert!(
+        captured
+            .records
+            .iter()
+            .all(|r| !r.message.contains("console_font")),
+        "an empty console_font is not a mistake: {:?}",
+        captured.records
+    );
+
+    let unloaded = "NoSuchConsoleFace-7c2e";
+    let (face, captured) = capture(|| resolve_console_font(unloaded));
+    assert_eq!(face, None);
+    let warning = captured
+        .records
+        .iter()
+        .find(|r| r.message.contains(unloaded))
+        .unwrap_or_else(|| panic!("an unloaded family must be reported: {:?}", captured.records));
+    assert_eq!(warning.level, log::Level::Warn);
+    assert!(warning.message.starts_with("keybinds: "), "{}", warning.message);
+    assert!(
+        !warning.message.contains("did you mean"),
+        "nothing loaded is spelled like {unloaded}, so there is nothing to suggest: {}",
+        warning.message
+    );
+
+    // Control: a loaded family resolves to its face and does not warn,
+    // so the warning above is the miss path's and not every lookup's.
+    let family = baumhard::font::fonts::loaded_families_iter()
+        .next()
+        .expect("the build ships at least one family");
+    let (face, captured) = capture(|| resolve_console_font(family));
+    assert!(face.is_some());
+    assert!(
+        captured
+            .records
+            .iter()
+            .all(|r| !r.message.contains("console_font")),
+        "a loaded family is not a mistake: {:?}",
+        captured.records
+    );
+}
+
+/// Family names are matched exactly, as every family pin in the app
+/// is; a name off only by case still misses, and the warning quotes
+/// the canonical spelling back.
+#[test]
+fn test_resolve_console_font_suggests_the_canonical_case() {
+    use super::config::resolve_console_font;
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+
+    let (canonical, miscased) = baumhard::font::fonts::loaded_families_iter()
+        .find_map(|family| {
+            let upper = family.to_ascii_uppercase();
+            (upper != family && baumhard::font::fonts::app_font_by_family(&upper).is_none())
+                .then_some((family, upper))
+        })
+        .expect("some loaded family has lowercase letters and no all-caps alias");
+    let (face, captured) = capture(|| resolve_console_font(&miscased));
+    assert_eq!(
+        face, None,
+        "the match is exact, so a case variant does not resolve"
+    );
+    let warning = captured
+        .records
+        .iter()
+        .find(|r| r.message.contains(&miscased))
+        .unwrap_or_else(|| panic!("a miscased family must be reported: {:?}", captured.records));
+    assert!(
+        warning.message.contains(&format!("did you mean '{canonical}'")),
+        "{}",
+        warning.message
+    );
 }
 
 #[test]

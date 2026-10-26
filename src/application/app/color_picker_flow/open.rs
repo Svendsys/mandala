@@ -178,19 +178,28 @@ pub(in crate::application::app) fn open_picker_inner(
         preview_ink_offset,
     ) = {
         let mut font_system = baumhard::font::fonts::acquire_font_system_write("color_picker_flow::open");
-        let mut crosshair: Vec<&str> = Vec::with_capacity(40);
-        crosshair.extend(arm_top_glyphs().iter().copied());
-        crosshair.extend(arm_bottom_glyphs().iter().copied());
-        crosshair.extend(arm_left_glyphs().iter().copied());
-        crosshair.extend(arm_right_glyphs().iter().copied());
+        // The bottom arm draws in its own pinned face, so it is
+        // measured in that face; the other three arms draw unpinned.
+        let mut unpinned_arms: Vec<&str> = Vec::with_capacity(30);
+        unpinned_arms.extend(arm_top_glyphs().iter().copied());
+        unpinned_arms.extend(arm_left_glyphs().iter().copied());
+        unpinned_arms.extend(arm_right_glyphs().iter().copied());
         let cell = crate::application::renderer::measure_max_glyph_advance(
             &mut font_system,
-            &crosshair,
+            None,
+            &unpinned_arms,
             measurement_font_size,
-        );
+        )
+        .max(crate::application::renderer::measure_max_glyph_advance(
+            &mut font_system,
+            arm_bottom_font(),
+            arm_bottom_glyphs(),
+            measurement_font_size,
+        ));
         let ring_glyphs: Vec<&str> = hue_ring_glyphs().to_vec();
         let ring = crate::application::renderer::measure_max_glyph_advance(
             &mut font_system,
+            None,
             &ring_glyphs,
             ring_font_size,
         );

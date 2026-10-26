@@ -127,8 +127,11 @@ use console_geometry::{
 };
 #[cfg(test)]
 use console_pass::{
-    build_console_overlay_mutator, build_console_overlay_tree, console_overlay_areas,
-    console_overlay_signature,
+    build_console_overlay_mutator, build_console_overlay_tree, completion_row_regions, console_overlay_areas,
+    console_overlay_signature, CompletionRowSpans, CONSOLE_CHANNEL_BOTTOM_BORDER,
+    CONSOLE_CHANNEL_COMPLETION_BASE, CONSOLE_CHANNEL_LEFT_COL, CONSOLE_CHANNEL_PROMPT,
+    CONSOLE_CHANNEL_RIGHT_COL, CONSOLE_CHANNEL_SCROLLBACK_GUTTER_BASE, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE,
+    CONSOLE_CHANNEL_TOP_BORDER,
 };
 
 use std::borrow::Cow;

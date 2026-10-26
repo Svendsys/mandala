@@ -21,6 +21,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use baumhard::font::fonts::{app_font_by_family, loaded_families_iter, AppFont};
 use log::warn;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
@@ -481,7 +482,11 @@ keybind_surface! {
     // Top-level keys that are not per-Action.
     // ─────────────────────────────────────────────────────────────
     extra {
-        /// Font family name for the console overlay.
+        /// Font family name for the console overlay: its frame,
+        /// prompt, and every row that does not pin a face of its own.
+        /// Empty means cosmic-text's default face; a name that is not
+        /// a loaded family warns once at resolve time and falls back
+        /// to the same default.
         pub console_font: String = String::new(),
         /// Font size in pixels for the console overlay. Clamped to a
         /// 4.0 floor at resolve time.
@@ -608,10 +613,44 @@ impl KeybindConfig {
             binds,
             custom_binds,
             macro_binds,
-            self.console_font.clone(),
+            resolve_console_font(&self.console_font),
             self.console_font_size.max(4.0),
         )
     }
+}
+
+/// The face `console_font` names, resolved once per launch rather
+/// than once per console frame.
+///
+/// Empty is the documented "use cosmic-text's default face" and
+/// resolves to `None` silently. A name that matches no loaded family
+/// also resolves to `None` — the console draws in the default face,
+/// as it would for an empty value — but says so, because otherwise a
+/// misspelled family is indistinguishable from a setting the console
+/// ignores. The lookup is exact, like every family pin in the app
+/// ([`baumhard::font::fonts::app_font_by_family`]), so a name that
+/// differs only in case is quoted back with its canonical spelling.
+///
+/// Costs one scan of the loaded-family index, plus a second on the
+/// miss path for the case-insensitive candidate.
+pub(super) fn resolve_console_font(name: &str) -> Option<AppFont> {
+    if name.is_empty() {
+        return None;
+    }
+    let face = app_font_by_family(name);
+    if face.is_none() {
+        match loaded_families_iter().find(|family| family.eq_ignore_ascii_case(name)) {
+            Some(canonical) => warn!(
+                "keybinds: console_font '{name}' is not a loaded family (did you mean \
+                 '{canonical}'? family names are case-sensitive); the console uses the default face"
+            ),
+            None => warn!(
+                "keybinds: console_font '{name}' is not a loaded family; the console uses the \
+                 default face (the `font list` console verb lists the loaded families)"
+            ),
+        }
+    }
+    face
 }
 
 /// The entry of `known` closest to `key`, when one is close enough

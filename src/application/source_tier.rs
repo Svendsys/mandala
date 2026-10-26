@@ -48,10 +48,10 @@ pub enum SourceTier {
     /// content cannot have been modified after the build.
     App,
     /// Loaded from the user's own config file
-    /// (`$XDG_CONFIG_HOME/mandala/<name>.json` on native; the
-    /// `?<name>=` query param or `localStorage` on WASM). The user
-    /// owns the file, so this is the trusted tier for privileged
-    /// operations.
+    /// (`$XDG_CONFIG_HOME/mandala/<name>.json` on native;
+    /// `localStorage` on WASM — never a URL query param, which belongs
+    /// to whoever composed the link). The user owns the file, so this
+    /// is the trusted tier for privileged operations.
     User,
     /// Declared in the currently-loaded document — `mindmap.macros`
     /// or `mindmap.custom_mutations`. Refreshed on every document

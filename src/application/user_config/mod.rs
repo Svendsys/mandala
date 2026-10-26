@@ -11,19 +11,20 @@
 //!   worded.
 //! - *How is one candidate source turned into text?*
 //!   `capped_read::read_capped` for the filesystem tier (native),
-//!   `web_storage::read_query_param` / `read_local_storage` for the
-//!   browser tiers.
+//!   `web_storage::read_local_storage` for the browser tier.
 //! - *How do candidate sources compose into a fallback chain?*
 //!   [`layered::load_layered`] — with the same "absent is silent,
 //!   broken is logged, first good one wins" policy on either target.
 //!   Each platform names its own layers exactly once, in the
 //!   composition wrapper the driver sits under:
 //!   `desktop::load_desktop_layered` (explicit CLI path, then the XDG
-//!   path) and `web_storage::load_web_layered` (URL query param, then
-//!   `localStorage`).
+//!   path) and `web_storage::load_web_storage_only` (`localStorage`
+//!   alone — a URL query param is deliberately not a layer, because
+//!   whoever composed the link is not the user; the function's doc
+//!   gives the argument).
 //!
 //! Adding a fourth user-tier config file is therefore a matter of
-//! naming its filename / query-param / storage key and handing the
+//! naming its filename and storage key and handing the
 //! wrapper a parser; no new read, cap, or fallback code, and no new
 //! layer construction.
 //!

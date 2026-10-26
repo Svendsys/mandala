@@ -9,8 +9,8 @@
 //! - **App** — `assets/macros/application.json`, embedded with
 //!   `include_str!`. Cross-platform.
 //! - **User** — `~/.config/mandala/macros.json` on native;
-//!   `?macros=<urlencoded-json>` query param > `localStorage`
-//!   under `mandala_macros` on WASM. Routed via the
+//!   `localStorage` under `mandala_macros` on WASM (never a URL
+//!   query param — see `platform_web`). Routed via the
 //!   `platform_desktop` / `platform_web` sibling modules. Both
 //!   are cfg-gated to their target so intra-doc links would
 //!   trip "unresolved link" warnings on the inactive one.

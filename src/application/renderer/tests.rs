@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use baumhard::font::fonts::AppFont;
 
 // ====================================================================
 // Console overlay layout
@@ -13,7 +14,7 @@ fn empty_console_geometry() -> ConsoleOverlayGeometry {
         scrollback: Vec::new(),
         completions: Vec::new(),
         selected_completion: None,
-        font_family: String::new(),
+        default_font: None,
         font_size: 16.0,
     }
 }
@@ -40,7 +41,7 @@ fn sample_console_geometry() -> ConsoleOverlayGeometry {
             font_family: None,
         }],
         selected_completion: Some(0),
-        font_family: String::new(),
+        default_font: None,
         font_size: 16.0,
     }
 }
@@ -487,6 +488,259 @@ fn console_overlay_areas_degrades_when_completions_shorter_than_layout_rows() {
         console_overlay_areas(&g, &layout, &mut fs)
     };
     assert!(!areas.is_empty(), "non-completion slots still render");
+}
+
+/// Two distinct loaded faces, as `(family name, face)` pairs, for the
+/// console default-face tests: one to configure as `console_font` and
+/// one for a row to pin, so "the row kept its own face" and "the row
+/// took the default" are different observations.
+fn two_distinct_console_faces() -> ((String, AppFont), (String, AppFont)) {
+    let mut faces = baumhard::font::fonts::loaded_families_iter().filter_map(|family| {
+        baumhard::font::fonts::app_font_by_family(family).map(|f| (family.to_string(), f))
+    });
+    let first = faces.next().expect("the build ships at least one family");
+    let second = faces
+        .find(|(_, face)| *face != first.1)
+        .expect("the build ships at least two distinct faces");
+    (first, second)
+}
+
+/// Every region's font pin on the area at `channel`.
+fn fonts_on_channel(areas: &[(usize, GlyphArea)], channel: usize) -> Vec<Option<AppFont>> {
+    let (_, area) = areas
+        .iter()
+        .find(|(c, _)| *c == channel)
+        .unwrap_or_else(|| panic!("no console area on channel {channel}"));
+    area.regions.all_regions().iter().map(|r| r.font).collect()
+}
+
+/// A geometry exercising every way a console row can arrive: unpinned,
+/// pinned to a loaded face, and pinned to a family that is not loaded;
+/// plus a pinned completion with a hint and an unpinned one.
+fn console_geometry_with_faces(default_font: Option<AppFont>, pinned_family: &str) -> ConsoleOverlayGeometry {
+    let line = |text: &str, font_family: Option<&str>| ConsoleOverlayLine {
+        text: text.to_string(),
+        kind: ConsoleOverlayLineKind::Output,
+        font_family: font_family.map(str::to_string),
+    };
+    ConsoleOverlayGeometry {
+        input: "font set".to_string(),
+        cursor_grapheme: 8,
+        scrollback: vec![
+            line("unpinned", None),
+            line("pinned", Some(pinned_family)),
+            line("pinned to nothing loaded", Some("NoSuchConsoleFace-7c2e")),
+        ],
+        completions: vec![
+            ConsoleOverlayCompletion {
+                text: pinned_family.to_string(),
+                hint: Some("a family".to_string()),
+                font_family: Some(pinned_family.to_string()),
+            },
+            ConsoleOverlayCompletion {
+                text: "list".to_string(),
+                hint: None,
+                font_family: None,
+            },
+        ],
+        selected_completion: Some(0),
+        default_font,
+        font_size: 16.0,
+    }
+}
+
+/// `console_font` reaches every part of the console that does not pin
+/// a face of its own — the frame, the gutters, the prompt, unpinned
+/// rows, a completion's marker and hint, and a row whose pinned family
+/// is not loaded — while a row pinned to a loaded face keeps it. This
+/// is the consumer end of the setting: before #125 the overlay carried
+/// the family and no area read it.
+#[test]
+fn test_console_default_font_reaches_every_unpinned_area() {
+    baumhard::font::fonts::init();
+    let ((_, console_face), (pinned_family, pinned_face)) = two_distinct_console_faces();
+
+    let areas_for = |default_font: Option<AppFont>| {
+        let g = console_geometry_with_faces(default_font, &pinned_family);
+        let layout = compute_console_frame_layout(&g, 1280.0, 720.0);
+        assert_eq!((layout.scrollback_rows, layout.completion_rows), (3, 2));
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (console faces)");
+        console_overlay_areas(&g, &layout, &mut fs)
+    };
+
+    let configured = areas_for(Some(console_face));
+    let d = Some(console_face);
+    for channel in [
+        CONSOLE_CHANNEL_TOP_BORDER,
+        CONSOLE_CHANNEL_BOTTOM_BORDER,
+        CONSOLE_CHANNEL_LEFT_COL,
+        CONSOLE_CHANNEL_RIGHT_COL,
+        CONSOLE_CHANNEL_SCROLLBACK_GUTTER_BASE + 1,
+        CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE,
+        CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 2,
+        CONSOLE_CHANNEL_COMPLETION_BASE + 1,
+    ] {
+        let fonts = fonts_on_channel(&configured, channel);
+        assert!(
+            !fonts.is_empty() && fonts.iter().all(|f| *f == d),
+            "channel {channel} must shape in console_font: {fonts:?}"
+        );
+    }
+    assert_eq!(fonts_on_channel(&configured, CONSOLE_CHANNEL_PROMPT), vec![d, d]);
+    assert_eq!(
+        fonts_on_channel(&configured, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 1),
+        vec![Some(pinned_face)],
+        "a row pinned to a loaded face keeps it"
+    );
+    assert_eq!(
+        fonts_on_channel(&configured, CONSOLE_CHANNEL_COMPLETION_BASE),
+        vec![d, Some(pinned_face), d],
+        "a pinned candidate shapes its text in its face and its marker and hint in console_font"
+    );
+
+    // Control: with no console_font, the same unpinned areas carry no
+    // pin at all, so every `d` above came from the configured face —
+    // and the pinned row is unchanged, so the pin is not the default's
+    // doing either.
+    let unconfigured = areas_for(None);
+    for channel in [
+        CONSOLE_CHANNEL_TOP_BORDER,
+        CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE,
+        CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 2,
+        CONSOLE_CHANNEL_PROMPT,
+    ] {
+        let fonts = fonts_on_channel(&unconfigured, channel);
+        assert!(
+            fonts.iter().all(Option::is_none),
+            "channel {channel} has no console_font to take: {fonts:?}"
+        );
+    }
+    assert_eq!(
+        fonts_on_channel(&unconfigured, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 1),
+        vec![Some(pinned_face)]
+    );
+}
+
+/// A completion row splits into marker / candidate / hint, each clamped
+/// to what survived truncation, and never yields an empty or
+/// out-of-bounds region.
+#[test]
+fn test_completion_row_regions_split_and_clamp_to_the_shown_width() {
+    baumhard::font::fonts::init();
+    let ((_, d), (_, c)) = two_distinct_console_faces();
+    let color = [1.0, 1.0, 1.0, 1.0];
+    let spans_of = |marker, text, shown| {
+        completion_row_regions(
+            CompletionRowSpans { marker, text, shown },
+            color,
+            Some(d),
+            Some(c),
+        )
+        .all_regions()
+        .iter()
+        .map(|r| (r.range.start, r.range.end, r.font))
+        .collect::<Vec<_>>()
+    };
+
+    // `▸ ` + `Norse` + `    a family`, all shown.
+    assert_eq!(
+        spans_of(2, 5, 19),
+        vec![(0, 2, Some(d)), (2, 7, Some(c)), (7, 19, Some(d))]
+    );
+    // No hint: nothing after the candidate, so no trailing region.
+    assert_eq!(spans_of(2, 5, 7), vec![(0, 2, Some(d)), (2, 7, Some(c))]);
+    // Truncated inside the candidate: its region stops at the edge.
+    assert_eq!(spans_of(2, 5, 4), vec![(0, 2, Some(d)), (2, 4, Some(c))]);
+    // Truncated inside the marker: only the marker's shown part.
+    assert_eq!(spans_of(2, 5, 1), vec![(0, 1, Some(d))]);
+    // Nothing shown: no regions at all.
+    assert_eq!(spans_of(2, 5, 0), vec![]);
+}
+
+/// A shipped face that draws the console's box-drawing rule at a
+/// different advance from cosmic-text's default, with that advance.
+/// Without one, "measured in the configured face" and "measured in the
+/// default face" are the same number and nothing below can tell them
+/// apart.
+fn face_with_distinct_rule_advance(fs: &mut baumhard::font::FontSystem, size: f32) -> (AppFont, f32) {
+    use baumhard::font::metric_cache::glyph_advance_with;
+    let default_w = measure_max_glyph_advance(fs, None, &["\u{2500}"], size);
+    baumhard::font::fonts::loaded_families_iter()
+        .filter_map(baumhard::font::fonts::app_font_by_family)
+        .find_map(|face| {
+            let w = glyph_advance_with(fs, Some(face), size, "\u{2500}");
+            (w > 0.0 && w != default_w).then_some((face, w))
+        })
+        .expect("some shipped face draws the box-drawing rule at a different advance than the default")
+}
+
+/// `measure_max_glyph_advance` measures in the face it is given. A
+/// face whose box-drawing rule has a different advance from the
+/// default must measure differently, or a configured `console_font`
+/// tiles its border at the wrong pitch.
+#[test]
+fn test_measure_max_glyph_advance_measures_in_the_given_face() {
+    baumhard::font::fonts::init();
+    let size = 18.0;
+    let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (face advance)");
+    let (face, face_w) = face_with_distinct_rule_advance(&mut fs, size);
+    assert_eq!(
+        measure_max_glyph_advance(&mut fs, Some(face), &["\u{2500}"], size),
+        face_w
+    );
+    // Control: the same call without the face answers the default's
+    // width, so the line above is the face pin's doing.
+    assert_ne!(
+        measure_max_glyph_advance(&mut fs, None, &["\u{2500}"], size),
+        face_w
+    );
+}
+
+/// The console frame tiles its right border at the column pitch of the
+/// face the border draws in — `console_font` when configured. Measured
+/// in the default face instead, the right column lands where the
+/// default face's columns would end, off the configured face's grid.
+#[test]
+fn test_console_frame_pitch_is_measured_in_console_font() {
+    baumhard::font::fonts::init();
+    let size = 16.0;
+    let (face, face_w) = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (pitch face)");
+        face_with_distinct_rule_advance(&mut fs, size)
+    };
+    let right_col_x = |default_font: Option<AppFont>| {
+        let g = ConsoleOverlayGeometry {
+            default_font,
+            font_size: size,
+            ..sample_console_geometry()
+        };
+        let layout = compute_console_frame_layout(&g, 1280.0, 720.0);
+        let areas = {
+            let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (pitch areas)");
+            console_overlay_areas(&g, &layout, &mut fs)
+        };
+        let (_, right) = areas
+            .iter()
+            .find(|(c, _)| *c == CONSOLE_CHANNEL_RIGHT_COL)
+            .expect("the right border always emits");
+        (layout, right.position.x())
+    };
+
+    let (layout, configured_x) = right_col_x(Some(face));
+    let cols = ((layout.frame_width / face_w).floor() as usize).max(2);
+    assert!(
+        baumhard::util::geometry::almost_equal(configured_x, layout.left + (cols - 1) as f32 * face_w),
+        "right border at {configured_x}, expected column {} of a {face_w}px grid from {}",
+        cols - 1,
+        layout.left
+    );
+    // Control: unconfigured, the border sits elsewhere — the grid above
+    // is the configured face's, not one every console uses.
+    let (_, unconfigured_x) = right_col_x(None);
+    assert!(
+        !baumhard::util::geometry::almost_equal(configured_x, unconfigured_x),
+        "both at {configured_x}: the pitch did not follow console_font"
+    );
 }
 
 /// Freeze-hardening regression: the surface-size clamp must leave
@@ -2039,7 +2293,7 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
         "the two must differ, or 'widest' proves nothing"
     );
     assert_eq!(
-        measure_max_glyph_advance(&mut fs, &[narrow, wide], size),
+        measure_max_glyph_advance(&mut fs, None, &[narrow, wide], size),
         wide_w,
         "the answer is the widest cluster in the set"
     );
@@ -2056,7 +2310,7 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
          {count} glyph(s), sum {summed}, widest {widest_in_cluster}"
     );
     assert_eq!(
-        measure_max_glyph_advance(&mut fs, &[two_glyph], size),
+        measure_max_glyph_advance(&mut fs, None, &[two_glyph], size),
         summed,
         "a multi-glyph cluster is worth the width it occupies, not the width of its widest piece"
     );
@@ -2066,7 +2320,7 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
     // that keeps a tofu-only glyph set from collapsing the console
     // frame to zero columns.
     assert_eq!(
-        measure_max_glyph_advance(&mut fs, &[""], size),
+        measure_max_glyph_advance(&mut fs, None, &[""], size),
         monospace_advance(size),
         "a set that shapes to nothing must fall back rather than return zero"
     );
