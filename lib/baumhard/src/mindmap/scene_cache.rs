@@ -609,7 +609,10 @@ impl SceneConnectionCache {
             .map(|(k, _)| k.clone())
             .collect();
         for key in stale {
-            self.invalidate_edge(&key);
+            // Not `invalidate_edge`: an eviction is the cache's own
+            // bookkeeping, not a caller's statement about the model,
+            // and must not count as one (`Self::invalidations`).
+            self.remove_entry(&key);
         }
     }
 
@@ -628,6 +631,15 @@ impl SceneConnectionCache {
     /// "this edge moved" is about the model, not about what is cached.
     pub fn invalidate_edge(&mut self, key: &EdgeKey) {
         self.invalidations += 1;
+        self.remove_entry(key);
+    }
+
+    /// Drop the entry for `key`, if held, and its two `by_node`
+    /// memberships. The removal shared by a caller's
+    /// [`Self::invalidate_edge`] and the cache's own
+    /// [`Self::evict_unseen`], which differ only in whether the drop
+    /// counts as an invalidation.
+    fn remove_entry(&mut self, key: &EdgeKey) {
         if self.entries.remove(key).is_none() {
             return;
         }
