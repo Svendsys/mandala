@@ -21,7 +21,9 @@ impl KeybindConfig {
     /// Load a config on WASM: `localStorage` under the
     /// `mandala_keybinds` key, then hardcoded defaults. The payload is
     /// bounded by `MAX_USER_PAYLOAD_BYTES` — an oversized blob is
-    /// logged and skipped without invoking serde.
+    /// logged and skipped without invoking serde — and parsed by the
+    /// same [`KeybindConfig::from_json`] the desktop uses, so a
+    /// malformed value costs only its own key here too.
     ///
     /// **No `?keybinds=` layer**, for the reason given on
     /// [`load_web_storage_only`]:

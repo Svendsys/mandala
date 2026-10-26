@@ -11,10 +11,10 @@
 //! model, the editor state and the preview slot, then returns an
 //! [`EditRefresh`] naming the canvas work it owes; the shells below
 //! are the only place that touches `Renderer` / `AppScene`. That
-//! split is what lets the whole lifecycle be driven in tests —
-//! TEST_CONVENTIONS §T8 keeps live wgpu out of the harness, so a
-//! lifecycle that only exists inside a `&mut Renderer` signature
-//! could not be tested at all.
+//! split is what lets the whole lifecycle be driven in renderer-free
+//! tests (TEST_CONVENTIONS §T8): a lifecycle that only exists inside a
+//! `&mut Renderer` signature could be reached by the GPU-backed tier
+//! alone, one app at a time.
 
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};

@@ -14,7 +14,9 @@ use crate::application::user_config::web_storage::load_web_storage_only;
 
 /// Load user mutations on WASM: `localStorage` under the
 /// `mandala_mutations` key, then empty. Never fails — a missing or
-/// invalid source is logged and the default is used.
+/// unusable source is logged and the default is used, and a malformed
+/// mutation inside a usable one is skipped on its own by the shared
+/// `parse_user_mutations_json`, exactly as on desktop.
 ///
 /// **No `?mutations=` layer**, for the reason given on
 /// [`load_web_storage_only`]:
@@ -23,7 +25,7 @@ use crate::application::user_config::web_storage::load_web_storage_only;
 /// map's own by precedence and is not screened by the macro-step
 /// gates, which govern `MacroStep`s rather than mutations.
 pub fn load_user() -> Vec<CustomMutation> {
-    match load_web_storage_only("mutations", "mandala_mutations", super::parse_mutations_json) {
+    match load_web_storage_only("mutations", "mandala_mutations", super::parse_user_mutations_json) {
         Some((v, source)) => {
             log::info!("loaded {} user mutations from {}", v.len(), source);
             v
