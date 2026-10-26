@@ -240,6 +240,11 @@ struct Link {
     /// thread. The mutex is held only to swap or clone an `Arc`, never
     /// across I/O, so neither side can stall the other on it.
     map: Mutex<Option<Arc<str>>>,
+    /// Test-only: how long the acceptor pauses at the top of installing
+    /// a controller, to widen the window in which a server can go away
+    /// mid-install. Zero unless a test sets it.
+    #[cfg(test)]
+    install_delay: Mutex<Duration>,
 }
 
 impl Link {
@@ -320,6 +325,8 @@ impl IpcServer {
             pending_requests: AtomicUsize::new(0),
             controller_live: AtomicBool::new(false),
             map: Mutex::new(None),
+            #[cfg(test)]
+            install_delay: Mutex::new(Duration::ZERO),
         });
         let acceptor_link = Arc::clone(&link);
         std::thread::Builder::new()

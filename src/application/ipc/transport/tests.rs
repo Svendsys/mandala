@@ -710,6 +710,25 @@ fn test_ipc_loopback_no_boundary_thread_outlives_a_server_that_never_met_its_con
     drop(client);
 }
 
+/// The same when the server goes while the acceptor is still installing
+/// the controller, so its `Connected` is announced to a server already
+/// gone. The install is held open for a moment so the drop lands inside
+/// it; only the window's width is artificial. The failing input is a
+/// controller that ends only when the main thread hangs it up.
+#[test]
+fn test_ipc_loopback_no_boundary_thread_outlives_a_server_dropped_mid_install() {
+    let mut harness = Harness::paused("ipc-outlive-mid-install");
+    let link = harness.link.clone();
+    *harness.server().link.install_delay.lock().expect("not poisoned") = Duration::from_millis(300);
+    // Not `attach`: the greeting may never be written, the server being
+    // gone before the controller's writer exists.
+    let client = Client::connect(&harness.path);
+    thread::sleep(Duration::from_millis(50));
+    drop(harness.server.take());
+    assert_no_boundary_thread_outlives(&link, "after a server dropped mid-install");
+    drop(client);
+}
+
 /// Dropping the main thread's hang-up handle ends the connection, as
 /// calling it does. The failing input is a handle without that `Drop`.
 #[test]

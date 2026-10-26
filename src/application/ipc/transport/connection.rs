@@ -168,6 +168,8 @@ fn reject_busy(stream: impl Conn) {
 /// main thread's queue — a request whose controller the main thread
 /// has not met would be dropped as stale.
 fn install_controller<C: Conn>(stream: C, generation: u64, link: &Arc<Link>) -> io::Result<()> {
+    #[cfg(test)]
+    std::thread::sleep(*link.install_delay.lock().unwrap_or_else(|p| p.into_inner()));
     let (read_half, stream, hangup) = stream.into_controller()?;
     let (outbound_tx, outbound_rx) = mpsc::sync_channel(OUTBOUND_QUEUE_CAP + EVENT_QUEUE_CAP);
     let (flushed_tx, flushed_rx) = mpsc::channel();
