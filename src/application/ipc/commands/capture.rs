@@ -301,7 +301,6 @@ fn screenshot(call: &mut Call<'_>) -> Reply {
 fn refusal_of(error: CaptureError) -> Refusal {
     match error {
         CaptureError::Invalid { param, message } => Refusal::Invalid(param, message),
-        CaptureError::Busy(message) => Refusal::Busy(message),
         CaptureError::Internal(message) => Refusal::Internal(message),
     }
 }
@@ -947,7 +946,6 @@ mod tests {
                 },
                 "invalid_params",
             ),
-            (CaptureError::Busy("a node drag is in progress".into()), "busy"),
             (
                 CaptureError::Internal("the GPU did not finish".into()),
                 "internal",
@@ -1092,8 +1090,8 @@ mod tests {
     }
 
     /// The engine's refusals keep their codes: a recording already
-    /// running is the caller's mistake, a drag in the way is `busy`, a
-    /// failed disk is `internal`; no document is its own error.
+    /// running is the caller's mistake, a failed disk is `internal`; no
+    /// document is its own error.
     #[test]
     fn test_record_refusals_keep_the_engines_codes() {
         for (error, code) in [
@@ -1104,7 +1102,6 @@ mod tests {
                 },
                 "invalid_params",
             ),
-            (CaptureError::Busy("a drag".into()), "busy"),
             (CaptureError::Internal("disk".into()), "internal"),
         ] {
             let mut app = CaptureApp::written();

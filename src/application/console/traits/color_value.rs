@@ -33,7 +33,8 @@ pub enum ColorValue {
 impl ColorValue {
     /// Parse `s` into a ColorValue. Accepts:
     /// - `"#rrggbb"` / `"#rrggbbaa"` / `"#rgb"` / `"#rgba"` — as hex
-    /// - `"accent"` / `"edge"` / `"fg"` / `"bg"` — as well-known vars
+    /// - `"accent"` / `"edge"` / `"fg"` — as well-known vars (`bg` is
+    ///   a `color` verb *key*, not a value, and is refused here)
     /// - `"reset"` — as Reset
     ///
     /// Returns `Err(msg)` on unrecognized input. Callers report the
@@ -46,12 +47,16 @@ impl ColorValue {
             }
             return Ok(ColorValue::Hex(t.to_string()));
         }
+        // Matched case-insensitively, reported as typed: the user
+        // reads the message back looking for their own spelling, and
+        // `Coral` echoed as `coral` is a word they never wrote
+        // (`commands/mod.rs` § Casing).
         match t.to_ascii_lowercase().as_str() {
             "accent" => Ok(ColorValue::Var(VAR_ACCENT)),
             "edge" => Ok(ColorValue::Var(VAR_EDGE)),
             "fg" => Ok(ColorValue::Var(VAR_FG)),
             "reset" => Ok(ColorValue::Reset),
-            other => Err(format!("unknown color '{}'", other)),
+            _ => Err(format!("unknown color '{}'", s)),
         }
     }
 

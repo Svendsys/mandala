@@ -169,6 +169,26 @@ apt-get install -y --no-install-recommends xvfb libxkbcommon-x11-0              
 - `scripts/ipc_smoke.sh` checks for exactly these and prints the install
   line when one is missing.
 
+**In an agent container: apt over HTTPS.** The cloud container's apt
+sources are plain `http://`, which its outbound proxy does not carry, so
+`apt-get update` fails before it finds a package. Rewrite the sources to
+`https://` and hand apt the proxy and its CA bundle (the `_apt` sandbox
+user cannot read a bundle under `/root`, hence the sandbox override):
+
+```sh
+sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#; s#http://security.ubuntu.com#https://security.ubuntu.com#' /etc/apt/sources.list.d/*.sources
+APT_OPTS=(-o "Acquire::https::Proxy=$HTTPS_PROXY" -o Acquire::https::CaInfo=/root/.ccr/ca-bundle.crt -o APT::Sandbox::User=root)
+apt-get "${APT_OPTS[@]}" update
+apt-get "${APT_OPTS[@]}" install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers   # (b); add xvfb libxkbcommon-x11-0 for (c)
+```
+
+Verified in this repo's cloud container (Ubuntu 24.04): the ICD lands at
+`/usr/share/vulkan/icd.d/lvp_icd.json` and wgpu reports the adapter as
+`llvmpipe (LLVM 20.1.2, 256 bits)`. The suite's GPU-backed tests
+(`src/application/app/tests_gpu.rs`, TEST_CONVENTIONS §T8) run on the same
+adapter and print a `SKIPPED:` note until it is there, so this recipe is
+also what turns them on in a container.
+
 **What is different headless.**
 
 - **The clock starts virtual.** Time moves only when you step it, so a run
@@ -438,6 +458,8 @@ down.
 Its launch, preflight and teardown live in `scripts/lib/mandala_app.sh`,
 which `scripts/record_demo.sh` sources too — change the recipe there.
 
-It is deliberately **not** part of `./test.sh` (TEST_CONVENTIONS §T8/§T10: no
-live GPU in the suite). Run it after changing anything on the
-launch/IPC/capture path, and whenever this skill is edited.
+It is deliberately **not** part of `./test.sh`: it needs the built
+binaries, a socket and a process to drive, where the suite's
+GPU-backed tests build the app in-process (TEST_CONVENTIONS §T8).
+Run it after changing anything on the launch/IPC/capture path, and
+whenever this skill is edited.

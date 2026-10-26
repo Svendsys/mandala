@@ -287,4 +287,45 @@ impl Renderer {
             ScenePassKind::Canvas,
         );
     }
+
+    /// Bring the capture canvas in step with the capture engine's
+    /// `scratch` scene and compose the frame it will draw: refresh the
+    /// scratch set from the scratch scene's trees by the rule
+    /// [`Self::rebuild_canvas_scene_buffers`] uses for the live one,
+    /// then lay out the segments that interleave it with `live`'s
+    /// zoom-independent roles
+    /// ([`scene_shape_cache::compose_capture_canvas`]). The next frame
+    /// prepared with `CanvasSource::Composed` draws exactly that.
+    ///
+    /// Writes nothing the window reads: `canvas_scene_elements` is
+    /// borrowed, not touched, and the live scene only answers which
+    /// tree each of its roles holds.
+    ///
+    /// # Costs
+    ///
+    /// [`scene_shape_cache::refresh`]'s over the scratch scene — which
+    /// across the frames of a recording at one zoom is the walk and the
+    /// comparison, since the scratch set keeps its shaped output like
+    /// the live one does — plus the composition's eight span scans.
+    // Native-only caller: the capture engine.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn rebuild_capture_canvas_buffers(
+        &mut self,
+        live: &crate::application::scene_host::AppScene,
+        scratch: &mut crate::application::scene_host::AppScene,
+    ) {
+        let ids = scratch.canvas_ids_in_layer_order();
+        scene_shape_cache::refresh(
+            scratch.canvas_scene(),
+            &ids,
+            &mut self.capture_canvas.shaped,
+            ScenePassKind::Canvas,
+        );
+        scene_shape_cache::compose_capture_canvas(
+            live,
+            scratch,
+            &self.canvas_scene_elements,
+            &mut self.capture_canvas,
+        );
+    }
 }

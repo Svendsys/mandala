@@ -114,7 +114,7 @@ fn apply_composed(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> E
     let mut edits = BorderConfigEdits::default();
     for pair in &pairs {
         if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
-            return ExecResult::err(e);
+            return ExecResult::err(format!("{}: {}", descent.level.label, e));
         }
     }
     apply_edits(eff, edits)
@@ -544,9 +544,13 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState, verb_label: &str) -> Resu
 }
 
 /// Parse one `key=value` pair into the appropriate slot on
-/// `edits`. Returns the same error string the user sees in the
-/// console — kept verbatim so `border top="a)"` reports the parser
-/// output ("unmatched ')'…") with a `top: ` prefix.
+/// `edits`. The error names the key or the value but not the
+/// surface: `stage_kv` is shared by all four border surfaces and
+/// the keybind path, so each caller prefixes its own label —
+/// `canvas section-frame: unknown color 'Coral'` — the way
+/// `border preview` always has. The parser output for a side
+/// pattern keeps its `top: ` prefix, so `border top="a)"` reads
+/// `border: top: unmatched ')'…`.
 pub(crate) fn stage_kv(edits: &mut BorderConfigEdits, key: &str, value: &str) -> Result<(), String> {
     match key {
         "preset" => stage_preset(edits, value),
@@ -617,7 +621,10 @@ fn stage_padding(edits: &mut BorderConfigEdits, value: &str) -> Result<(), Strin
 }
 
 fn stage_color(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
-    let cv = ColorValue::parse(value).map_err(|e| format!("color: {}", e))?;
+    // `ColorValue::parse` already says "color" ("unknown color",
+    // "invalid hex color"), so the caller's surface label is all
+    // this needs; a `color: ` prefix here read `color: unknown color`.
+    let cv = ColorValue::parse(value)?;
     edits.color = match cv {
         ColorValue::Reset => OptionEdit::Clear,
         other => OptionEdit::Set(

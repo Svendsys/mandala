@@ -183,9 +183,6 @@ pub(super) fn tick(scene: CaptureScene<'_>, recorder: &mut Recorder, artifacts: 
         Step::Full => {}
         Step::Capture { t_ms, due_ms } => match capture_flow::draw(scene, &request, |_| Ok(())) {
             Ok(((), drawn)) => file(active, t_ms, due_ms, revision, drawn),
-            // A drag in flight makes a frame at another zoom
-            // undrawable (`capture_flow::draw`); the drag ends.
-            Err(CaptureError::Busy(_)) => active.push_busy(due_ms),
             // The request could not be framed *this time* — the document
             // lost what `fit` frames, a surface region needs a zoom the
             // live camera since left. A gap, counted toward the stall, so

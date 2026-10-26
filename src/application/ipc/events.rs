@@ -660,7 +660,8 @@ pub(crate) mod fixture {
     //! real interaction mode, with the funnels an event test drives
     //! (a console line, a macro's steps) reduced to the document
     //! change they stand for. A real `IpcCommandTarget` needs a GPU
-    //! renderer, which `TEST_CONVENTIONS` §T8 rules out.
+    //! renderer, which only the GPU-backed tier of `TEST_CONVENTIONS`
+    //! §T8 builds (`app/tests_gpu.rs` drives the real one).
 
     use serde_json::{json, Value};
 
