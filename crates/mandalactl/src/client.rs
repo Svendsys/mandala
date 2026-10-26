@@ -23,9 +23,13 @@
 //! `Unanswered` (it went out whole, so it may have), because that is what
 //! decides whether the caller may repeat it.
 //!
-//! Blocking `std` I/O and no runtime, the way the server's boundary
-//! threads are. Unix sockets only; elsewhere [`Connection::open`]
-//! fails naming the gap, the shape `ipc`'s own non-Unix stub has.
+//! Blocking I/O and no runtime, the way the server's boundary threads
+//! are. On Unix the stream is the socket, with its own read and write
+//! timeouts; on Windows it is the app's named pipe (#169), whose
+//! blocking reads and writes `pipe_wire` bounds with a reader and a
+//! writer thread, so the connection above is the same code on both.
+//! Elsewhere (the wasm32 type-check) [`Connection::open`] fails naming
+//! the gap.
 
 use std::time::Duration;
 
@@ -36,7 +40,45 @@ pub const BUSY_RETRY: Duration = Duration::from_secs(2);
 
 /// What to do when the socket cannot be reached, appended to the
 /// errors that mean "the app is not there".
+#[cfg(not(windows))]
 pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <socket-path>";
+/// What to do when the pipe cannot be reached, appended to the errors
+/// that mean "the app is not there".
+#[cfg(windows)]
+pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <name>";
+
+/// The Windows pipe an `--ipc` value names: `--ipc <name>` is
+/// `\\.\pipe\mandala-<name>` (`format/ipc.md` §Windows), the same value
+/// the app was launched with. The app maps it by the same rule, and a
+/// test on its side holds the two together.
+///
+/// Compiled on every platform, not only Windows, so that test can run
+/// where CI runs everything.
+pub fn pipe_path(name: &str) -> Result<String, String> {
+    const PREFIX: &str = r"\\.\pipe\mandala-";
+    const NAME_MAX: usize = 256;
+    if name.is_empty() {
+        return Err("`--ipc` needs a pipe name on Windows, e.g. --ipc mandala".to_string());
+    }
+    if name.contains('\0') {
+        return Err(format!(
+            "`--ipc {name:?}`: a pipe name cannot contain a NUL character"
+        ));
+    }
+    if name.contains('\\') {
+        return Err(format!(
+            "`--ipc {name}`: on Windows the value names a pipe, not a path, and a pipe name cannot contain a backslash"
+        ));
+    }
+    let path = format!("{PREFIX}{name}");
+    let after_root = path.trim_start_matches(r"\\.\pipe\").encode_utf16().count();
+    if after_root > NAME_MAX {
+        return Err(format!(
+            "`--ipc {name}`: the pipe name `mandala-{name}` is {after_root} UTF-16 units; Windows allows {NAME_MAX}"
+        ));
+    }
+    Ok(path)
+}
 
 /// How far a request got — the fact that decides whether repeating it
 /// is safe. Not an error type (CODE_CONVENTIONS §9): the two failures
@@ -77,30 +119,49 @@ pub struct Exchange {
     pub line: String,
 }
 
-#[cfg(unix)]
-pub use self::unix::Connection;
+#[cfg(any(unix, windows))]
+pub use self::stream::Connection;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub use self::unsupported::Connection;
 
-#[cfg(unix)]
-mod unix {
+#[cfg(any(unix, windows))]
+mod stream {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
+    #[cfg(unix)]
+    use std::os::unix::net::UnixStream as Stream;
     use std::path::Path;
+    #[cfg(unix)]
     use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
 
     use serde_json::Value;
 
-    use super::{Exchange, Outcome, Watched, BUSY_RETRY, LAUNCH_HINT};
+    #[cfg(windows)]
+    use super::pipe_wire::{connect, PipeWire as Stream};
+    #[cfg(unix)]
+    use super::LAUNCH_HINT;
+    use super::{Exchange, Outcome, Watched, BUSY_RETRY};
     use crate::wire::{decode_frame, Event, Frame, Hello, Outgoing, FRAME_CAP};
+
+    /// What a stream says beyond `Read` and `Write`: how many bytes of
+    /// a write that gave up may still reach the app. A socket write
+    /// that times out has written nothing more than it reported; the
+    /// Windows pipe's runs on a thread that may still finish it.
+    pub(super) trait Wire {
+        fn in_flight(&self) -> usize {
+            0
+        }
+    }
+
+    #[cfg(unix)]
+    impl Wire for Stream {}
 
     /// An open, greeted connection.
     #[derive(Debug)]
     pub struct Connection {
-        reader: BufReader<UnixStream>,
+        reader: BufReader<Stream>,
         next_id: u64,
     }
 
@@ -302,6 +363,10 @@ mod unix {
                 }
                 other => format!("could not send `{command}`: {other}"),
             };
+            // Bytes a write gave up on may still land, so they count as
+            // sent: claiming `NotSent` for a request that then runs is the
+            // one answer this must never give.
+            let written = written + self.reader.get_ref().in_flight();
             // Boxed because an `Outcome` can hold a whole reply and this is
             // only ever a failure.
             Err(Box::new(send_failure(written, request.line.len(), why)))
@@ -431,13 +496,14 @@ mod unix {
     /// deadline, so the connect runs on a thread this one abandons when
     /// the time is up — a connect that never finishes costs a thread
     /// until the process exits, which a one-shot CLI does at once.
-    fn connect(path: &Path, timeout: Duration) -> Result<UnixStream, String> {
+    #[cfg(unix)]
+    fn connect(path: &Path, timeout: Duration) -> Result<Stream, String> {
         let (sender, receiver) = mpsc::channel();
         let target = path.to_path_buf();
         thread::spawn(move || {
             // The receiver is gone when the deadline has passed; the
             // late stream is then dropped, which closes it.
-            let _ = sender.send(UnixStream::connect(target));
+            let _ = sender.send(Stream::connect(target));
         });
         match receiver.recv_timeout(timeout) {
             Ok(Ok(stream)) => Ok(stream),
@@ -452,6 +518,7 @@ mod unix {
     }
 
     /// Why `connect` failed, in words that name the next step.
+    #[cfg(unix)]
     fn unreachable(path: &Path, error: &std::io::Error) -> String {
         use std::io::ErrorKind;
         let shown = path.display();
@@ -558,7 +625,224 @@ mod unix {
     }
 }
 
-#[cfg(not(unix))]
+/// The app's named pipe as a byte stream with the per-call read and
+/// write timeouts a Unix socket has natively (#169).
+///
+/// `interprocess`'s blocking pipe client cannot bound a read or a write,
+/// and the connection above bounds every one. So each blocking call
+/// runs on a thread of its own — one reader, one writer — and this side
+/// waits for its result with the timeout the caller set, the way
+/// `connect` already does for the connect. A wait that times out leaves
+/// its call running: the reader's result is kept for the next read, and
+/// a write's bytes are reported by [`stream::Wire::in_flight`], because
+/// they may still reach the app.
+///
+/// The reader reads only when a read is asked for. One that drained the
+/// pipe ahead of the caller would buffer without bound, which is what
+/// the frame cap above exists to refuse.
+#[cfg(windows)]
+mod pipe_wire {
+    use std::cell::Cell;
+    use std::io::{self, ErrorKind, Read, Write};
+    use std::path::Path;
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+    use std::thread;
+    use std::time::Duration;
+
+    use interprocess::os::windows::named_pipe::{pipe_mode, DuplexPipeStream};
+    use interprocess::ConnectWaitMode;
+
+    use super::stream::Wire;
+    use super::{pipe_path, LAUNCH_HINT};
+
+    /// The most one read asks the reader thread for.
+    const READ_CHUNK: usize = 64 << 10;
+
+    #[derive(Debug)]
+    pub struct PipeWire {
+        read_timeout: Cell<Option<Duration>>,
+        write_timeout: Cell<Option<Duration>>,
+        reads: Sender<usize>,
+        chunks: Receiver<io::Result<Vec<u8>>>,
+        /// A read was asked for and its result has not been taken.
+        read_pending: bool,
+        /// Bytes a read returned beyond what its caller had room for.
+        leftover: Vec<u8>,
+        writes: Sender<Vec<u8>>,
+        written: Receiver<io::Result<usize>>,
+        /// The size of a write that timed out and may still finish.
+        in_flight: usize,
+    }
+
+    impl PipeWire {
+        fn new(stream: DuplexPipeStream<pipe_mode::Bytes>) -> PipeWire {
+            let (recv, send) = stream.split();
+            let (reads, wanted) = mpsc::channel::<usize>();
+            let (chunk_tx, chunks) = mpsc::channel();
+            thread::spawn(move || {
+                for size in wanted {
+                    let mut chunk = vec![0; size];
+                    let read = (&recv).read(&mut chunk).map(|n| {
+                        chunk.truncate(n);
+                        chunk
+                    });
+                    if chunk_tx.send(read).is_err() {
+                        return;
+                    }
+                }
+            });
+            let (writes, pending) = mpsc::channel::<Vec<u8>>();
+            let (written_tx, written) = mpsc::channel();
+            thread::spawn(move || {
+                for bytes in pending {
+                    if written_tx.send((&send).write(&bytes)).is_err() {
+                        return;
+                    }
+                }
+            });
+            PipeWire {
+                read_timeout: Cell::new(None),
+                write_timeout: Cell::new(None),
+                reads,
+                chunks,
+                read_pending: false,
+                leftover: Vec::new(),
+                writes,
+                written,
+                in_flight: 0,
+            }
+        }
+
+        /// How long each read waits; `UnixStream::set_read_timeout`'s
+        /// contract.
+        pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+            self.read_timeout.set(timeout);
+            Ok(())
+        }
+
+        /// How long each write waits; `UnixStream::set_write_timeout`'s
+        /// contract.
+        pub fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+            self.write_timeout.set(timeout);
+            Ok(())
+        }
+    }
+
+    impl Wire for PipeWire {
+        fn in_flight(&self) -> usize {
+            self.in_flight
+        }
+    }
+
+    /// Wait for one result from a helper thread, as long as `timeout`
+    /// allows: a timeout is `TimedOut`, a thread gone is a broken pipe.
+    fn wait<T>(
+        results: &Receiver<io::Result<T>>,
+        timeout: Option<Duration>,
+    ) -> Result<io::Result<T>, io::Error> {
+        let got = match timeout {
+            Some(timeout) => results.recv_timeout(timeout),
+            None => results.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match got {
+            Ok(result) => Ok(result),
+            Err(RecvTimeoutError::Timeout) => Err(io::Error::from(ErrorKind::TimedOut)),
+            Err(RecvTimeoutError::Disconnected) => Err(io::Error::from(ErrorKind::BrokenPipe)),
+        }
+    }
+
+    impl Read for PipeWire {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            if self.leftover.is_empty() {
+                if !self.read_pending {
+                    self.reads
+                        .send(buf.len().min(READ_CHUNK))
+                        .map_err(|_| io::Error::from(ErrorKind::BrokenPipe))?;
+                    self.read_pending = true;
+                }
+                // A timeout leaves the read pending; a result taken off
+                // the channel, error or not, ends it.
+                let read = wait(&self.chunks, self.read_timeout.get())?;
+                self.read_pending = false;
+                self.leftover = read?;
+                if self.leftover.is_empty() {
+                    return Ok(0);
+                }
+            }
+            let n = self.leftover.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.leftover[..n]);
+            self.leftover.drain(..n);
+            Ok(n)
+        }
+    }
+
+    impl Write for PipeWire {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.in_flight > 0 {
+                // An earlier write never reported back: whatever is sent
+                // now could overtake it.
+                return Err(io::Error::from(ErrorKind::TimedOut));
+            }
+            self.writes
+                .send(bytes.to_vec())
+                .map_err(|_| io::Error::from(ErrorKind::BrokenPipe))?;
+            match wait(&self.written, self.write_timeout.get()) {
+                Ok(result) => result,
+                Err(e) => {
+                    if e.kind() == ErrorKind::TimedOut {
+                        self.in_flight = bytes.len();
+                    }
+                    Err(e)
+                }
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Connect to the pipe `--ipc <name>` names, giving up after
+    /// `timeout`. Unlike a socket's, a pipe's connect takes a deadline
+    /// of its own: it waits for a free instance with `WaitNamedPipeW`,
+    /// which the server always has one of but for the instant between
+    /// handing one over and making the next.
+    pub fn connect(path: &Path, timeout: Duration) -> Result<PipeWire, String> {
+        let name = path
+            .to_str()
+            .ok_or_else(|| format!("`--ipc {}`: a pipe name must be valid Unicode", path.display()))?;
+        let pipe = pipe_path(name)?;
+        DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
+            pipe.as_str(),
+            ConnectWaitMode::Timeout(timeout),
+        )
+        .map(PipeWire::new)
+        .map_err(|e| unreachable(&pipe, &e, timeout))
+    }
+
+    /// Why `connect` failed, in words that name the next step.
+    fn unreachable(pipe: &str, error: &io::Error, timeout: Duration) -> String {
+        match error.kind() {
+            ErrorKind::TimedOut => format!(
+                "timed out after {:.1} s connecting to {pipe}. App busy or frozen? A wedged app is aborted by its \
+                 freeze watchdog after 10 s",
+                timeout.as_secs_f64()
+            ),
+            ErrorKind::NotFound => {
+                format!("no pipe {pipe}. App not running, or started without --ipc? {LAUNCH_HINT}")
+            }
+            ErrorKind::PermissionDenied => format!(
+                "permission denied on {pipe}: the pipe is owner-only; run as the user who launched the app"
+            ),
+            _ => format!("could not connect to {pipe}: {error}"),
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 mod unsupported {
     use std::path::Path;
     use std::time::Duration;
@@ -583,9 +867,11 @@ mod unsupported {
             _timeout: Duration,
             _force: bool,
         ) -> Result<(Connection, Option<String>), String> {
-            Err("mandalactl cannot reach the app on this platform yet: Windows needs the named-pipe adapter, \
-                 tracked in #169 (format/ipc.md \"Windows\")"
-                .to_string())
+            Err(
+                "mandalactl cannot reach the app on this platform: the `--ipc` transport is a Unix socket, \
+                 or a named pipe on Windows (format/ipc.md \"Transport\")"
+                    .to_string(),
+            )
         }
 
         pub fn next_id(&mut self) -> Value {

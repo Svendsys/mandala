@@ -615,8 +615,7 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
 /// Two preconditions are asserted first, with their own messages, so a
 /// drifted fixture does not fail as a claim that resized nothing: the
 /// zoom-in moved the camera, and the corner the press sees is the
-/// node's resize handle with no label on it (a label grab outranks a
-/// handle, #218).
+/// node's resize handle.
 #[test]
 fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
     use crate::application::platform::input::TouchPhase;
@@ -657,10 +656,9 @@ fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
         init.input_context().drain_frame(Beat::Loop);
     };
 
-    // Zoom in about the node until nothing else sits on its corner: at
-    // the fixture's opening zoom an edge label overlaps the SE handle,
-    // and a label grab outranks a handle grab at the threshold cross
-    // for a mouse and a finger alike (`Grab::PRECEDENCE`).
+    // Zoom in about the node so its middle, where the control drags
+    // from, lies well clear of its handles: at the fixture's opening
+    // zoom the node is a few handle tolerances across.
     let (pos, size) = node_rect(init);
     let center = pos + size / 2.0;
     let zoom_before = init.renderer.camera_zoom();
@@ -675,13 +673,13 @@ fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
     let zoomed = init.renderer.camera_zoom();
     assert!(
         zoomed > zoom_before,
-        "precondition: ZoomIn must zoom in about the node, or a label may still sit on its corner: \
+        "precondition: ZoomIn must zoom in about the node, or its middle may lie within a handle's tolerance: \
          {zoomed} from {zoom_before}"
     );
-    // What the press at the corner would capture besides the handle,
-    // asked of the same hit-tests the press runs and of nothing the
-    // touch claim decides, so a fixture that drifts fails here and not
-    // as a claim that resized nothing.
+    // That the press at the corner captures the handle, asked of the
+    // same hit-test the press runs and of nothing the touch claim
+    // decides, so a fixture that drifts fails here and not as a claim
+    // that resized nothing.
     let se = init.renderer.canvas_to_screen(pos + size);
     // The corner as the press sees it: through surface pixels and back.
     let corner = init.renderer.screen_to_canvas(se.x, se.y);
@@ -696,12 +694,6 @@ fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
         .node
         .is_some(),
         "precondition: node 1's SE corner must be its resize handle in Resize mode"
-    );
-    let parts = super::compute_click_hit(corner, init.mindmap_tree.as_mut(), &mut init.app_scene);
-    assert!(
-        parts.edge_label_hit.is_none() && parts.portal_icon_hit.is_none() && parts.portal_text_hit.is_none(),
-        "precondition: no label may sit on node 1's SE corner, since a label grab outranks the handle \
-         (`Grab::PRECEDENCE`, #218); zoom further in"
     );
     let undo_before = init.document.as_ref().expect("document").undo_stack.len();
 
@@ -908,5 +900,454 @@ fn test_a_ctrl_right_drag_anchors_its_resize_at_the_press() {
         press_then_cross(nw_quadrant, near_se),
         Some((ResizeHandleSide::NW, true)),
         "control: the mirrored press anchors NW"
+    );
+}
+
+/// Run one `input.*` request and the frame after it, asserting the app
+/// took it.
+fn input(init: &mut InitState, request: Value) {
+    let (reply, _) = act(init, request);
+    assert!(reply.get("error").is_none(), "{reply}");
+    init.input_context().drain_frame(Beat::Loop);
+}
+
+/// A left click, press and release in place, at canvas `at`.
+fn left_click_at(init: &mut InitState, at: glam::Vec2) {
+    input(
+        init,
+        json!({"id": 1, "cmd": "input.mouse_move", "x": at.x, "y": at.y, "space": "canvas"}),
+    );
+    input(
+        init,
+        json!({"id": 2, "cmd": "input.mouse_button", "button": "left", "state": "click"}),
+    );
+}
+
+/// A left drag from canvas `from`, 40 surface pixels down-right in five
+/// moves, a frame between each as a hand's samples land.
+fn left_drag_from(init: &mut InitState, from: glam::Vec2) {
+    left_press_at(init, from);
+    left_drag_on(init, from);
+}
+
+/// The left button pressed at canvas `at`, and held.
+fn left_press_at(init: &mut InitState, at: glam::Vec2) {
+    input(
+        init,
+        json!({"id": 1, "cmd": "input.mouse_move", "x": at.x, "y": at.y, "space": "canvas"}),
+    );
+    input(
+        init,
+        json!({"id": 2, "cmd": "input.mouse_button", "button": "left", "state": "press"}),
+    );
+}
+
+/// The held left button's drag from canvas `from`, as
+/// [`left_drag_from`] makes it, then its release.
+fn left_drag_on(init: &mut InitState, from: glam::Vec2) {
+    let start = init.renderer.canvas_to_screen(from);
+    for i in 1..=5 {
+        let to = start + glam::Vec2::splat(8.0 * i as f32);
+        input(
+            init,
+            json!({"id": 3, "cmd": "input.mouse_move", "x": to.x, "y": to.y, "space": "surface"}),
+        );
+    }
+    input(
+        init,
+        json!({"id": 4, "cmd": "input.mouse_button", "button": "left", "state": "release"}),
+    );
+}
+
+/// Node 1 selected and in `Resize` mode.
+fn resize_node_1(init: &mut InitState) {
+    init.document.as_mut().expect("document").selection = SelectionState::Single("1".into());
+    let (reply, _) = act(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "EnterResizeMode"}),
+    );
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    assert!(matches!(init.interaction_mode, InteractionMode::Resize { .. }));
+}
+
+/// Whether a press at canvas `at`, through surface pixels and back as a
+/// press sees it, lands on one of node 1's resize handles.
+fn on_node_1_resize_handle(init: &InitState, at: glam::Vec2) -> bool {
+    let surface = init.renderer.canvas_to_screen(at);
+    let canvas = init.renderer.screen_to_canvas(surface.x, surface.y);
+    let tolerance = super::HANDLE_HIT_TOLERANCE_PX * init.renderer.canvas_per_pixel();
+    super::event_mouse_click::resize_handle_press(
+        init.document.as_ref(),
+        &init.interaction_mode,
+        canvas,
+        tolerance,
+    )
+    .node
+    .is_some()
+}
+
+/// The preconditions of a handle press paired with a body press beside
+/// it: `corner` is on node 1's resize handle; both presses land on node
+/// 1's body, so the two share a `ClickHit` and only the handle press
+/// can keep them from pairing into a double-click; `beside` is off the
+/// handle.
+fn assert_handle_and_body_beside_it(init: &mut InitState, corner: glam::Vec2, beside: glam::Vec2) {
+    assert!(
+        on_node_1_resize_handle(init, corner),
+        "precondition: the corner is node 1's resize handle in Resize mode"
+    );
+    assert!(
+        matches!(press_lands_on(init, corner), super::ClickHit::Node(ref id, None) if id == "1"),
+        "precondition: a press on the corner lands on node 1's body too"
+    );
+    assert!(
+        matches!(press_lands_on(init, beside), super::ClickHit::Node(ref id, None) if id == "1"),
+        "precondition: the spot beside the corner is node 1's body"
+    );
+    assert!(
+        !on_node_1_resize_handle(init, beside),
+        "precondition: the spot beside the corner is off the handle"
+    );
+}
+
+/// **A second press on a resize handle grabs it, inside the
+/// double-click window** (#218). In `Resize` mode on node 1, a click on
+/// its SE handle and then, at the same instant (the harness clock is
+/// virtual and stands still), a press-drag from that handle: the node
+/// grows, no editor opens, and the release commits one undo entry.
+/// Before #218 the second press completed a double-click on the node
+/// the handle's corner also hits, opened the text editor and never
+/// grabbed the handle.
+///
+/// A handle press does not start a double-click either: a click on
+/// the handle and then one on the node's body just beside it, inside
+/// the double-click distance and outside the handle's tolerance, open
+/// no editor.
+///
+/// The control is one more click on that same spot, still in `Resize`
+/// mode: with the body click before it, it double-clicks into the text
+/// editor. So the spot is double-clickable, the window is live, and a
+/// double-click off the handles works as it did; only the handle press
+/// before it kept the first pair from being one.
+#[test]
+fn test_a_second_press_on_a_resize_handle_grabs_it_inside_the_double_click_window() {
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    resize_node_1(init);
+    zoom_onto_node_1(init);
+    let (pos, size) = node_1_rect(init);
+    // The grip: 3 px inside the SE corner, within the handle's 8 px
+    // tolerance and on the node's body (the exact corner is empty
+    // canvas to the click chain). Beside it: 11 px in and 2 px up from
+    // the corner, so outside the handle's tolerance and within the
+    // 16 px double-click distance of the grip.
+    let cpp = init.renderer.canvas_per_pixel();
+    let corner = pos + size - glam::Vec2::splat(3.0) * cpp;
+    let beside = pos + size - glam::Vec2::new(11.0, 2.0) * cpp;
+    assert_handle_and_body_beside_it(init, corner, beside);
+    let undo_before = init.document.as_ref().expect("document").undo_stack.len();
+
+    left_click_at(init, corner);
+    left_drag_from(init, corner);
+    let (_, resized) = node_1_rect(init);
+    assert!(
+        resized.x > size.x && resized.y > size.y,
+        "the second press on the SE handle must grab it and grow the node: {size:?} -> {resized:?}"
+    );
+    assert_eq!(
+        init.text_edit_state.node_id(),
+        None,
+        "the second press on a handle must not complete a double-click into the text editor"
+    );
+    assert!(
+        matches!(init.drag_state, super::DragState::None),
+        "the release ended the drag"
+    );
+    assert_eq!(
+        init.document.as_ref().expect("document").undo_stack.len(),
+        undo_before + 1,
+        "the release committed the resize with one undo entry of its own"
+    );
+
+    let (pos, size) = node_1_rect(init);
+    let corner = pos + size - glam::Vec2::splat(3.0) * cpp;
+    let beside = pos + size - glam::Vec2::new(11.0, 2.0) * cpp;
+    assert_handle_and_body_beside_it(init, corner, beside);
+    left_click_at(init, corner);
+    left_click_at(init, beside);
+    assert_eq!(
+        init.text_edit_state.node_id(),
+        None,
+        "a handle press must not start a double-click that a press beside it completes"
+    );
+
+    left_click_at(init, beside);
+    assert_eq!(
+        init.text_edit_state.node_id(),
+        Some("1"),
+        "control: a second click on the same body spot double-clicks into node 1's text editor"
+    );
+}
+
+/// **A finger's tap and then drag on a resize handle resizes** (#218):
+/// since #160 a finger on a handle is the left button, so the tap is a
+/// click and the drag a second press inside the double-click window,
+/// through the real `dispatch_touch_event`. The finger lands on the
+/// same grip as the mouse test, 3 px inside the corner, on the handle
+/// and on node 1's body (both asserted), so before #218 the drag
+/// completed a double-click on node 1, opened its text editor and
+/// resized nothing, exactly as the mouse did. The editor is checked
+/// first, so that is the failure the old code gives; the mouse test
+/// above holds the double-click control.
+#[test]
+fn test_a_finger_tapping_then_dragging_a_resize_handle_resizes() {
+    use crate::application::platform::input::TouchPhase;
+    use crate::application::platform::window::PhysicalPosition;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    resize_node_1(init);
+    zoom_onto_node_1(init);
+    let (pos, size) = node_1_rect(init);
+    let grip = pos + size - glam::Vec2::splat(3.0) * init.renderer.canvas_per_pixel();
+    assert!(
+        on_node_1_resize_handle(init, grip),
+        "precondition: the grip inside node 1's SE corner must be on its resize handle in Resize mode"
+    );
+    assert!(
+        matches!(press_lands_on(init, grip), super::ClickHit::Node(ref id, None) if id == "1"),
+        "precondition: a press on the grip lands on node 1's body too"
+    );
+    let se = init.renderer.canvas_to_screen(grip);
+    let at = |i: f32| PhysicalPosition::new(f64::from(se.x + i * 8.0), f64::from(se.y + i * 8.0));
+
+    init.input_context()
+        .dispatch_touch_event(TouchPhase::Started, 1, at(0.0));
+    init.input_context()
+        .dispatch_touch_event(TouchPhase::Ended, 1, at(0.0));
+    init.input_context().drain_frame(Beat::Loop);
+    init.input_context()
+        .dispatch_touch_event(TouchPhase::Started, 2, at(0.0));
+    for i in 1..=5 {
+        init.input_context()
+            .dispatch_touch_event(TouchPhase::Moved, 2, at(i as f32));
+        init.input_context().drain_frame(Beat::Loop);
+    }
+    init.input_context()
+        .dispatch_touch_event(TouchPhase::Ended, 2, at(5.0));
+    init.input_context().drain_frame(Beat::Loop);
+
+    assert_eq!(
+        init.text_edit_state.node_id(),
+        None,
+        "the drag must not complete a double-click into the text editor"
+    );
+    let (_, resized) = node_1_rect(init);
+    assert!(
+        resized.x > size.x && resized.y > size.y,
+        "a finger's tap and drag on the SE handle must grow the node: {size:?} -> {resized:?}"
+    );
+}
+
+/// The grabs the pending press recorded, by the names `query.mode`
+/// reports, in the order the drag resolves them.
+fn pending_grabs(init: &InitState) -> Vec<&'static str> {
+    match &init.drag_state {
+        super::DragState::Pending(press) => press.grabs().map(super::Grab::word).collect(),
+        _ => panic!("expected a pending left press"),
+    }
+}
+
+/// The edge `from` → `to` as the document holds it, serialized.
+fn edge_json(init: &InitState, from: &str, to: &str) -> Value {
+    let doc = init.document.as_ref().expect("document");
+    let edge = doc
+        .mindmap
+        .edges
+        .iter()
+        .find(|e| e.from_id == from && e.to_id == to)
+        .expect("the fixture carries the edge");
+    serde_json::to_value(edge).expect("an edge serializes")
+}
+
+/// The grab handles of the edge `from` → `to`, by kind and canvas
+/// position, as the press's hit-test builds them.
+fn edge_handles(
+    init: &InitState,
+    from: &str,
+    to: &str,
+) -> Vec<(baumhard::mindmap::tree_builder::EdgeHandleKind, glam::Vec2)> {
+    use baumhard::mindmap::{connection, tree_builder};
+    let doc = init.document.as_ref().expect("document");
+    let edge = doc
+        .mindmap
+        .edges
+        .iter()
+        .find(|e| e.from_id == from && e.to_id == to)
+        .expect("the fixture carries the edge");
+    let (f, t) = (&doc.mindmap.nodes[&edge.from_id], &doc.mindmap.nodes[&edge.to_id]);
+    let path = connection::build_connection_path(
+        f.pos_vec2(),
+        f.size_vec2(),
+        &edge.anchor_from,
+        t.pos_vec2(),
+        t.size_vec2(),
+        &edge.anchor_to,
+        &edge.control_points,
+    );
+    let key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(edge);
+    tree_builder::build_edge_handles(
+        edge,
+        &key,
+        &path,
+        f.pos_vec2(),
+        f.size_vec2(),
+        t.pos_vec2(),
+        t.size_vec2(),
+    )
+    .into_iter()
+    .map(|h| (h.kind, glam::Vec2::new(h.position.0, h.position.1)))
+    .collect()
+}
+
+/// **In `Resize` mode a resize handle outranks a label lying over it**
+/// (#218). At the fixture's opening zoom the label of the edge 1 →
+/// 1.2 covers node 1's SE handle, and a press there records both
+/// grabs (asserted first, so the test cannot pass on a press that
+/// grabbed only one). In `Resize` mode the drag resizes node 1 and
+/// leaves the edge, its label included, as it was.
+///
+/// The control is the same drag in `Default` mode, where no resize
+/// handle is captured: the press records the label alone, the drag
+/// moves the label, and node 1 keeps its size. So the label is still
+/// grabbable, and outside the mode nothing changed.
+#[test]
+fn test_in_resize_mode_a_resize_handle_outranks_a_label_lying_over_it() {
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    resize_node_1(init);
+    let (pos, size) = node_1_rect(init);
+    let corner = pos + size;
+    let edge_before = edge_json(init, "1", "1.2");
+
+    left_press_at(init, corner);
+    assert_eq!(
+        pending_grabs(init),
+        vec!["node_resize_handle", "edge_label"],
+        "precondition: the press on node 1's SE handle records the label lying over it too, \
+         and the handle first"
+    );
+    left_drag_on(init, corner);
+    let (_, resized) = node_1_rect(init);
+    assert!(
+        resized.x > size.x && resized.y > size.y,
+        "in Resize mode the drag must take the handle and grow the node: {size:?} -> {resized:?}"
+    );
+    assert_eq!(
+        edge_json(init, "1", "1.2"),
+        edge_before,
+        "the label under the handle must stay where it was"
+    );
+
+    // Back to the node's own size, so the control presses the same
+    // corner under the same label.
+    let (reply, _) = act(init, json!({"id": 2, "cmd": "act.action", "action": "Undo"}));
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    assert_eq!(node_1_rect(init), (pos, size), "the undo restored node 1");
+    let (reply, _) = act(init, json!({"id": 3, "cmd": "act.action", "action": "ExitMode"}));
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    assert!(matches!(init.interaction_mode, InteractionMode::Default));
+    left_press_at(init, corner);
+    assert_eq!(
+        pending_grabs(init),
+        vec!["edge_label"],
+        "control: outside Resize mode the same press grabs the label alone"
+    );
+    left_drag_on(init, corner);
+    assert_ne!(
+        edge_json(init, "1", "1.2"),
+        edge_before,
+        "control: outside Resize mode the drag moves the label"
+    );
+    assert_eq!(node_1_rect(init).1, size, "control: and resizes nothing");
+}
+
+/// **A second press on a selected edge's bare handle grabs it, inside
+/// the double-click window** (#218). With the edge 1 → 1.2 selected, a
+/// click on its first control point and then, at the same instant, a
+/// drag from it: the control point moves and no editor opens. Before
+/// #218 the second press completed a double-click on the empty canvas
+/// under the handle and never grabbed it.
+///
+/// The control is the other half of the rule, "what a press would drag
+/// is what it is": on the edge 1.2 → 1.2.0, selected, whose label lies
+/// over its midpoint handle, the press records the label first, so two
+/// clicks there still double-click into the label's editor. A rule
+/// that took every press with a handle grab out of double-click
+/// detection, whatever the grab's rank, fails it.
+#[test]
+fn test_a_selected_edges_bare_handle_grabs_and_its_label_still_double_clicks() {
+    use baumhard::mindmap::tree_builder::EdgeHandleKind;
+
+    use crate::application::document::EdgeRef;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    let editors_closed =
+        |init: &InitState| init.text_edit_state.node_id().is_none() && !init.single_line_edit_state.is_open();
+
+    init.document.as_mut().expect("document").selection =
+        SelectionState::Edge(EdgeRef::new("1", "1.2", "parent_child"));
+    let (_, point) = edge_handles(init, "1", "1.2")
+        .into_iter()
+        .find(|(kind, _)| *kind == EdgeHandleKind::ControlPoint(0))
+        .expect("the edge 1 -> 1.2 is curved");
+    assert!(
+        matches!(press_lands_on(init, point), super::ClickHit::Empty),
+        "precondition: the control point lies on empty canvas, so it is a bare handle"
+    );
+    let edge_before = edge_json(init, "1", "1.2");
+    left_click_at(init, point);
+    assert_eq!(
+        init.document.as_ref().expect("document").selection,
+        SelectionState::Edge(EdgeRef::new("1", "1.2", "parent_child")),
+        "precondition: a click on the bare control point keeps its edge selected, so the next press can grab it"
+    );
+    left_drag_from(init, point);
+    assert_ne!(
+        edge_json(init, "1", "1.2"),
+        edge_before,
+        "the second press on the control point must grab it and move it"
+    );
+    assert!(editors_closed(init), "and must open no editor");
+
+    init.document.as_mut().expect("document").selection =
+        SelectionState::Edge(EdgeRef::new("1.2", "1.2.0", "parent_child"));
+    let (_, midpoint) = edge_handles(init, "1.2", "1.2.0")
+        .into_iter()
+        .find(|(kind, _)| *kind == EdgeHandleKind::Midpoint)
+        .expect("the edge 1.2 -> 1.2.0 is straight");
+    left_press_at(init, midpoint);
+    assert_eq!(
+        pending_grabs(init),
+        vec!["edge_label", "edge_handle"],
+        "precondition: the press on the label records the midpoint handle under it, after the label"
+    );
+    input(
+        init,
+        json!({"id": 1, "cmd": "input.mouse_button", "button": "left", "state": "release"}),
+    );
+    left_click_at(init, midpoint);
+    assert!(
+        init.single_line_edit_state.is_open(),
+        "control: a double-click on the label over the midpoint handle opens the label's editor"
     );
 }
