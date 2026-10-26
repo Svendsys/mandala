@@ -1305,7 +1305,7 @@ impl Doc {
     }
 
     pub fn guard_too_late(&mut self, node: &mut MindNode) -> Result<(), String> {
-        node.sections.splice(0..0, [MindSection::default()]);
+        node.sections.push(MindSection::default());
         validate::room_for_another_section(node)?;
         Ok(())
     }
@@ -1392,6 +1392,33 @@ impl Doc {
         })
     }
 
+    pub fn guarded_per_iteration_by_continue(&mut self, node: &mut MindNode, n: usize) {
+        for _ in 0..n {
+            if validate::room_for_another_section(node).is_err() {
+                continue;
+            }
+            node.sections.push(MindSection::default());
+        }
+    }
+
+    pub fn bound_closure_called_in_loop(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        let mut grow = |n: &mut MindNode| n.sections.push(MindSection::default());
+        for _ in 0..n {
+            grow(node);
+        }
+        Ok(())
+    }
+
+    pub fn push_in_retain_after_guard(&mut self, node: &mut MindNode, other: &mut Vec<u8>) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        other.retain(|_| {
+            node.sections.push(MindSection::default());
+            true
+        });
+        Ok(())
+    }
+
     pub fn push_in_for_each_after_guard(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
         validate::room_for_another_section(node)?;
         (0..n).for_each(|_| node.sections.push(MindSection::default()));
@@ -1410,6 +1437,45 @@ impl Doc {
         validate::room_for_another_section(node).or_else(|_| Ok::<(), String>(()))?;
         node.sections.push(MindSection::default());
         Ok(())
+    }
+
+    pub fn if_is_err_returns_conditionally(&mut self, node: &mut MindNode, strict: bool) -> Result<(), String> {
+        if validate::room_for_another_section(node).is_err() {
+            if strict {
+                return Err("full".into());
+            }
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn err_arm_returns_conditionally(&mut self, node: &mut MindNode, strict: bool) -> Result<(), String> {
+        match validate::room_for_another_section(node) {
+            Err(e) => {
+                if strict {
+                    return Err(e);
+                }
+            }
+            Ok(()) => {}
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn err_arm_behind_a_match_guard(&mut self, node: &mut MindNode, strict: bool) -> Result<(), String> {
+        match validate::room_for_another_section(node) {
+            Err(e) if strict => return Err(e),
+            _ => {}
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn if_is_err_panics(&mut self, node: &mut MindNode) {
+        if validate::room_for_another_section(node).is_err() {
+            panic!("full");
+        }
+        node.sections.push(MindSection::default());
     }
 
     pub fn match_ok_arm_returns(&mut self, node: &mut MindNode) -> Result<(), String> {
@@ -1462,7 +1528,7 @@ impl Doc {
                 ("discarded_result", Single, false),
                 ("guard_in_a_closure_called_later", Single, false),
                 ("guard_on_a_branch", Single, false),
-                ("guard_too_late", Multi, false),
+                ("guard_too_late", Single, false),
                 ("guarded_by_method_form", Single, true),
                 ("guarded_ufcs", Ufcs, true),
                 ("if_is_err_returns", Single, true),
@@ -1474,9 +1540,16 @@ impl Doc {
                 ("per_iteration_guard_after_push", Single, false),
                 ("outer_iteration_guard_inner_loop", Single, false),
                 ("guard_inside_for_each", Single, false),
+                ("guarded_per_iteration_by_continue", Single, true),
+                ("bound_closure_called_in_loop", Single, false),
+                ("push_in_retain_after_guard", Single, false),
                 ("push_in_for_each_after_guard", Single, false),
                 ("inverted_is_ok", Single, false),
                 ("swallowed_or_else", Single, false),
+                ("if_is_err_returns_conditionally", Single, false),
+                ("err_arm_returns_conditionally", Single, false),
+                ("err_arm_behind_a_match_guard", Single, false),
+                ("if_is_err_panics", Single, true),
                 ("match_ok_arm_returns", Single, false),
                 ("replaces", Assign, false),
                 ("mem_replace", Assign, false),

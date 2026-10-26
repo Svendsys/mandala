@@ -780,22 +780,40 @@ const SECTION_MULTI_GROWTH_METHODS: &[&str] = &[
     "resize_with",
 ];
 
-/// Iterator methods whose closure argument runs once per item, so a
-/// growth inside it is a growth in a loop. Not exhaustive — a closure
-/// handed to anything else is assumed to run once, which is how both
+/// Methods whose closure argument runs once per item, so a growth
+/// inside it is a growth in a loop. Not exhaustive — a closure passed
+/// directly to anything else is assumed to run once, which is how both
 /// shipped writers use one (an undo envelope runs its closure once).
+/// `map` / `any` / `all` also run at most once on an `Option`; listing
+/// them reports that case too, the conservative direction.
 const ITERATING_CLOSURE_METHODS: &[&str] = &[
     "for_each",
     "try_for_each",
     "map",
+    "map_while",
+    "filter",
     "filter_map",
     "flat_map",
+    "find",
+    "find_map",
+    "position",
+    "take_while",
+    "skip_while",
+    "partition",
     "fold",
     "try_fold",
     "scan",
     "inspect",
     "any",
     "all",
+    "retain",
+    "retain_mut",
+    "sort_by",
+    "sort_by_key",
+    "sort_unstable_by",
+    "sort_unstable_by_key",
+    "dedup_by",
+    "dedup_by_key",
 ];
 
 /// How a [`SectionGrowth`] writes the vector.
@@ -860,23 +878,36 @@ pub(crate) struct SectionGrowth {
 ///   is the fn's. For a site in a `for` / `while` / `loop` body it is
 ///   that loop body — a guard **per iteration** — because a push
 ///   repeated N times behind one check before the loop is N growths;
-///   a site in a loop nested deeper needs a guard in its own body. A
-///   site in a closure passed to one of [`ITERATING_CLOSURE_METHODS`]
-///   is never guarded: a `?` there ends the closure, not the fn.
+///   a site in a loop nested deeper needs a guard in its own body;
+/// - it is not inside an **opaque closure**. A closure written directly
+///   as a call's argument runs where the call does — the undo-envelope
+///   shape both shipped writers grow in — unless the call is one of
+///   [`ITERATING_CLOSURE_METHODS`], which run it per item. Any other
+///   closure (bound with `let`, returned, stored) is opaque: where and
+///   how often it is called is data flow, which a syntax scan cannot
+///   follow, so a growth in it is never guarded rather than guessed at.
+///   A `?` inside any closure ends the closure, not the fn, so a guard
+///   there never counts either.
 ///
 ///   The propagating shapes are four: `room_for_another_section(…)`
 ///   followed only by `map_err(…)` / `ok()` and then `?` (as a
 ///   statement or a `let` initializer); `let Ok(..) = room_for_another_section(…)
-///   else { return … }`; `if room_for_another_section(…)….is_err() { return … }`
-///   or `if let Err(..) = room_for_another_section(…) { return … }`; or a
-///   `match room_for_another_section(…)` whose `Err(..)` arm returns.
-///   The call counts as a path (`validate::room_for_another_section(n)`)
-///   or a method (`n.room_for_another_section()`).
+///   else { … }` (the compiler makes the `else` diverge);
+///   `if room_for_another_section(…)….is_err() { … }` or
+///   `if let Err(..) = room_for_another_section(…) { … }` whose block
+///   **ends** in a diverging statement; or a
+///   `match room_for_another_section(…)` with an unguarded `Err(..)` arm
+///   that ends in one. Diverging means `return`, `break`, `continue`, a
+///   `panic!`-family macro or `Err(…)?` — a block that merely
+///   *contains* a `return` (`if strict { return … }`) can fall through,
+///   and does not count. The call counts as a path
+///   (`validate::room_for_another_section(n)`) or a method
+///   (`n.room_for_another_section()`).
 ///
 /// Not a guard, so reported unguarded: a discarded result (`let _ = …`),
 /// a call inside a closure or on a branch, a call after the growth, a
-/// refusal swallowed (`or_else(…)?`) or inverted (`is_ok()`), or a check
-/// in a helper the fn calls.
+/// refusal swallowed (`or_else(…)?`), inverted (`is_ok()`) or answered
+/// only conditionally, or a check in a helper the fn calls.
 ///
 /// Two approximations, stated so nobody reads in more: the guard is
 /// **not tied to the growth's receiver** — `room_for_another_section(a)?`
@@ -929,6 +960,7 @@ fn scan_fn_body(function: &str, body: &syn::Block, out: &mut Vec<SectionGrowth>)
         let mut finder = GrowthFinder {
             found: Vec::new(),
             loop_depth: 0,
+            opaque_closure_depth: 0,
         };
         syn::visit::Visit::visit_stmt(&mut finder, stmt);
         for site in finder.found {
@@ -942,7 +974,9 @@ fn scan_fn_body(function: &str, body: &syn::Block, out: &mut Vec<SectionGrowth>)
                 line: site.line,
                 function: function.to_string(),
                 kind: site.kind,
-                guarded: covered && matches!(site.kind, GrowthKind::Single | GrowthKind::Ufcs),
+                guarded: covered
+                    && !site.in_opaque_closure
+                    && matches!(site.kind, GrowthKind::Single | GrowthKind::Ufcs),
             });
         }
         if propagates_section_guard(stmt) {
@@ -979,6 +1013,11 @@ struct FoundSite {
     /// enclosing loop body propagates the guard — a per-iteration
     /// guard. Meaningful only when `loop_depth > 0`.
     iteration_guarded: bool,
+    /// Whether the site is inside a closure that is **not** passed
+    /// directly as an argument — one bound with `let`, returned, or
+    /// stored — whose calls, and so how often it grows the vector,
+    /// this scan cannot follow. Never guarded.
+    in_opaque_closure: bool,
 }
 
 /// Collects the sites inside one statement, each with its loop depth
@@ -988,6 +1027,9 @@ struct FoundSite {
 struct GrowthFinder {
     found: Vec<FoundSite>,
     loop_depth: usize,
+    /// How many opaque closures (see [`FoundSite::in_opaque_closure`])
+    /// enclose the current position.
+    opaque_closure_depth: usize,
 }
 
 impl GrowthFinder {
@@ -997,7 +1039,20 @@ impl GrowthFinder {
             kind,
             loop_depth: self.loop_depth,
             iteration_guarded: false,
+            in_opaque_closure: self.opaque_closure_depth > 0,
         });
+    }
+
+    /// Visit one argument of a call. A closure written directly as the
+    /// argument is walked as code that runs where the call runs — the
+    /// undo-envelope shape both shipped writers grow in. Any other
+    /// argument goes through the ordinary visitor, where a closure
+    /// nested deeper is opaque.
+    fn visit_call_arg(&mut self, arg: &syn::Expr) {
+        match arg {
+            syn::Expr::Closure(closure) => syn::visit::visit_expr_closure(self, closure),
+            _ => syn::visit::Visit::visit_expr(self, arg),
+        }
     }
 
     /// Visit a `for` / `while` / `loop` body one level deeper, the way
@@ -1028,6 +1083,15 @@ impl GrowthFinder {
 
 impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
     fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
+
+    /// Reached only for a closure that is not a direct call argument
+    /// (those go through [`GrowthFinder::visit_call_arg`]), or one
+    /// handed to an iterating method.
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        self.opaque_closure_depth += 1;
+        syn::visit::visit_expr_closure(self, closure);
+        self.opaque_closure_depth -= 1;
+    }
 
     fn visit_expr_for_loop(&mut self, e: &'ast syn::ExprForLoop) {
         // The iterated expression runs once, before the loop.
@@ -1069,7 +1133,10 @@ impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
             }
             self.loop_depth -= 1;
         } else {
-            syn::visit::visit_expr_method_call(self, call);
+            self.visit_expr(&call.receiver);
+            for arg in &call.args {
+                self.visit_call_arg(arg);
+            }
         }
     }
 
@@ -1093,7 +1160,10 @@ impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
                 self.record(line, GrowthKind::Assign);
             }
         }
-        syn::visit::visit_expr_call(self, call);
+        self.visit_expr(&call.func);
+        for arg in &call.args {
+            self.visit_call_arg(arg);
+        }
     }
 
     fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
@@ -1125,27 +1195,45 @@ fn is_section_guard_call(expr: &syn::Expr) -> bool {
     }
 }
 
-/// Whether `expr` contains a `return`, outside closures.
-fn returns(expr: &syn::Expr) -> bool {
-    struct Finder(bool);
-    impl<'ast> syn::visit::Visit<'ast> for Finder {
-        fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
-        fn visit_expr_return(&mut self, _: &'ast syn::ExprReturn) {
-            self.0 = true;
-        }
-    }
-    let mut finder = Finder(false);
-    syn::visit::Visit::visit_expr(&mut finder, expr);
-    finder.0
+/// The macros that never return.
+const DIVERGING_MACROS: &[&str] = &["panic", "unreachable", "todo", "unimplemented"];
+
+fn is_diverging_macro(mac: &syn::Macro) -> bool {
+    mac.path
+        .segments
+        .last()
+        .is_some_and(|s| DIVERGING_MACROS.contains(&s.ident.to_string().as_str()))
 }
 
-/// Whether `block` contains a `return`, outside closures.
-fn block_returns(block: &syn::Block) -> bool {
-    returns(&syn::Expr::Block(syn::ExprBlock {
-        attrs: Vec::new(),
-        label: None,
-        block: block.clone(),
-    }))
+/// Whether `expr` **always** leaves the code that follows it: a
+/// `return`, `break` or `continue`, a `panic!`-family macro, an
+/// `Err(…)?`, or a block whose last statement is one of those. Merely
+/// *containing* a `return` is not enough — `{ if strict { return …; } }`
+/// falls through when `strict` is false, and the growth after it runs.
+fn diverges(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Return(_) | syn::Expr::Break(_) | syn::Expr::Continue(_) => true,
+        syn::Expr::Macro(m) => is_diverging_macro(&m.mac),
+        syn::Expr::Try(t) => matches!(
+            &*t.expr,
+            syn::Expr::Call(call) if matches!(
+                &*call.func,
+                syn::Expr::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "Err")
+            )
+        ),
+        syn::Expr::Block(b) => block_diverges(&b.block),
+        syn::Expr::Paren(inner) => diverges(&inner.expr),
+        _ => false,
+    }
+}
+
+/// Whether `block` ends in a statement that [`diverges`].
+fn block_diverges(block: &syn::Block) -> bool {
+    match block.stmts.last() {
+        Some(syn::Stmt::Expr(expr, _)) => diverges(expr),
+        Some(syn::Stmt::Macro(m)) => is_diverging_macro(&m.mac),
+        _ => false,
+    }
 }
 
 /// Whether `pat` is `Err(..)` / `Ok(..)` (by the variant's last path
@@ -1175,13 +1263,16 @@ fn propagates_section_guard(stmt: &syn::Stmt) -> bool {
                     syn::Expr::Let(l) => is_variant_pattern(&l.pat, "Err") && is_section_guard_call(&l.expr),
                     _ => false,
                 };
-                cond_is_refusal && block_returns(&i.then_branch)
+                cond_is_refusal && block_diverges(&i.then_branch)
             }
             syn::Expr::Match(m) => {
                 is_section_guard_call(&m.expr)
                     && m.arms
                         .iter()
-                        .any(|arm| is_variant_pattern(&arm.pat, "Err") && returns(&arm.body))
+                        // An `Err(..) if …` arm parses as `Pat::Guard`, not a
+                        // tuple-struct pattern, so it is not counted: it lets the
+                        // other refusals fall through to a later arm.
+                        .any(|arm| is_variant_pattern(&arm.pat, "Err") && diverges(&arm.body))
             }
             _ => false,
         },
@@ -1190,7 +1281,8 @@ fn propagates_section_guard(stmt: &syn::Stmt) -> bool {
                 try_guard(&init.expr)
                     || (is_variant_pattern(&local.pat, "Ok")
                         && is_section_guard_call(&init.expr)
-                        && init.diverge.as_ref().is_some_and(|(_, diverge)| returns(diverge)))
+                        // The compiler requires a `let … else` block to diverge.
+                        && init.diverge.is_some())
             }
             None => false,
         },
