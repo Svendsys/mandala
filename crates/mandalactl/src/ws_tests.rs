@@ -511,6 +511,47 @@ fn test_a_screenshot_over_ws_never_writes_through_a_symlink() {
     );
 }
 
+/// **Whatever is already at the write's sibling name is left alone**:
+/// the client writes `<path>.<pid>.partial` first, and an entry there
+/// that it did not create — a crash's leftover, the user's own file, a
+/// planted link — is refused by name, never removed or written through.
+/// The control is the same capture once the name is free, which writes.
+#[cfg(unix)]
+#[test]
+fn test_a_screenshot_over_ws_leaves_an_entry_at_its_partial_name_alone() {
+    let relay = Relay::start();
+    let _app = screenshot_app(&relay, false);
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("shot.png");
+    // `invoke` runs the client in this process, so the pid is ours.
+    let partial = dir
+        .path()
+        .join(format!("shot.png.{}.partial", std::process::id()));
+    let target = dir.path().join("precious");
+    std::fs::write(&target, b"keep").expect("writes");
+    std::os::unix::fs::symlink(&target, &partial).expect("symlinks");
+    for extra in ["", " overwrite=true"] {
+        let outcome = relay.invoke(&format!("capture.screenshot {}{extra}", path.display()));
+        assert_eq!(outcome.exit, Exit::CommandError, "{extra}: {}", outcome.err);
+        assert!(outcome.err.contains("partial"), "{}", outcome.err);
+        assert!(
+            std::fs::symlink_metadata(&partial)
+                .expect("still there")
+                .file_type()
+                .is_symlink(),
+            "{extra}: the entry at the partial name was removed"
+        );
+        assert_eq!(std::fs::read(&target).expect("kept"), b"keep");
+        assert!(!path.exists(), "{extra}: nothing was published");
+    }
+    // Control: the name free, the capture writes.
+    std::fs::remove_file(&partial).expect("removes");
+    let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert!(path.exists());
+    assert!(!partial.exists(), "the client's own partial is cleaned up");
+}
+
 #[test]
 fn test_a_screenshot_the_page_did_not_render_writes_nothing() {
     let relay = Relay::start();

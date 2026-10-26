@@ -598,7 +598,8 @@ fn in_the_way(path: &Path, overwrite: bool) -> Option<String> {
 /// directory entry and cannot write through a symlink; without it by
 /// `hard_link`, which fails if the name exists, so a file created
 /// since [`in_the_way`] looked is not clobbered. A failure leaves
-/// whatever was at `path` as it was.
+/// whatever was at `path` as it was, and whatever was at the sibling
+/// name too: one this call did not create is refused, never removed.
 fn write_guarded(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {
     let shown = path.display();
     let partial = {
@@ -606,20 +607,37 @@ fn write_guarded(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), Strin
         name.push(format!(".{}.partial", std::process::id()));
         PathBuf::from(name)
     };
-    let written = std::fs::File::options()
-        .write(true)
-        .create_new(true)
-        .open(&partial)
-        .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()));
-    let published = written.and_then(|()| {
+    // Whatever is already at the sibling name is not this call's: it
+    // is refused by name and left alone, never removed.
+    let synced = {
+        let mut file = std::fs::File::options()
+            .write(true)
+            .create_new(true)
+            .open(&partial)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => format!(
+                "{} is in the way of writing {shown}: something is already at that name, and it is left as \
+                 it is. Remove it and repeat the capture",
+                partial.display()
+            ),
+                _ => format!(
+                    "could not write {shown}: could not create {}: {e}",
+                    partial.display()
+                ),
+            })?;
+        // Synced, and closed at the end of this block before it is
+        // published: Windows refuses to rename an open file.
+        file.write_all(bytes).and_then(|()| file.sync_all())
+    };
+    let published = synced.and_then(|()| {
         if overwrite {
             std::fs::rename(&partial, path)
         } else {
             std::fs::hard_link(&partial, path)
         }
     });
-    // Gone already after a rename; the link's twin, or a failure's
-    // leftover, otherwise.
+    // This call created the partial: gone already after a rename; the
+    // link's twin, or a failure's leftover, otherwise.
     let _ = std::fs::remove_file(&partial);
     published.map_err(|e| match e.kind() {
         std::io::ErrorKind::AlreadyExists => in_the_way(path, overwrite)

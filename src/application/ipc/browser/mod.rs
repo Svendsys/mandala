@@ -174,6 +174,17 @@ pub(crate) fn redacted(url: &str) -> String {
     }
 }
 
+/// `text` with every copy of `url` in it redacted: for a message the
+/// page did not compose, such as the browser's `DOMException` when
+/// `new WebSocket(url)` refuses a URL — Chromium copies the whole URL,
+/// token included, into that message.
+pub(crate) fn scrubbed(text: &str, url: &str) -> String {
+    if url.is_empty() {
+        return text.to_string();
+    }
+    text.replace(url, &redacted(url))
+}
+
 /// The relay's URL from the page's query string (`location.search`,
 /// with or without its leading `?`): `Ok(None)` when no `ipc` key is
 /// present — the default, and IPC stays off — `Ok(Some(url))` for a
@@ -364,6 +375,21 @@ mod tests {
         // Control: attached before it, and still attached at the end.
         let stamps = stamp(&[Attached, Other, Text], 4, false);
         assert!(stamps.owed(2));
+    }
+
+    /// **A browser message that quotes the relay URL loses the token**:
+    /// the shape Chromium gives a refused `new WebSocket(url)`. The
+    /// control is a message that does not quote the URL, which passes
+    /// through unchanged.
+    #[test]
+    fn test_a_browser_message_quoting_the_relay_url_is_scrubbed_of_its_token() {
+        let url = "ws://[zz/app/S3CR3TT0KEN";
+        let message = format!("SyntaxError: Failed to construct 'WebSocket': The URL '{url}' is invalid.");
+        let shown = scrubbed(&message, url);
+        assert!(!shown.contains("S3CR3TT0KEN"), "{shown}");
+        assert!(shown.contains("ws://[zz/app/…"), "{shown}");
+        // Control: nothing to scrub.
+        assert_eq!(scrubbed("NetworkError", url), "NetworkError");
     }
 
     #[test]

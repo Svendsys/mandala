@@ -43,7 +43,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
-use super::{redacted, stamp, Arrival, Backoff, BridgeFrame};
+use super::{redacted, scrubbed, stamp, Arrival, Backoff, BridgeFrame};
 use crate::application::ipc::envelope::{
     decode_line, Decoded, Event, Frame, IpcRequest, Reply, INBOUND_LINE_CAP, OUTBOUND_FRAME_CAP,
 };
@@ -195,10 +195,13 @@ impl BrowserIpc {
             Err(e) => {
                 // A URL the browser refuses to even try (a malformed
                 // one, or an insecure one from a secure page) will not
-                // get better: say so once and stop.
+                // get better: say so once and stop. The browser's own
+                // message quotes the URL, token and all, so it is
+                // scrubbed before it is logged.
                 log::error!(
-                    "ipc: cannot open a WebSocket to {}: {e:?}; IPC is off",
-                    redacted(&self.url)
+                    "ipc: cannot open a WebSocket to {}: {}; IPC is off",
+                    redacted(&self.url),
+                    scrubbed(&format!("{e:?}"), &self.url)
                 );
                 return;
             }

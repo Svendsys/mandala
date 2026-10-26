@@ -142,9 +142,10 @@ the parity trajectory (or why none is owed):
   targets since IPC-15 (#75)**: the browser draws the live view into
   its canvas and reads it back in the same task (`to_data_url`,
   `run_wasm/ipc_target.rs::capture_canvas`) — whether that read holds
-  the frame just drawn is unverified on WebGPU, the one backend the
-  bundle runs until #224 merges (`format/ipc.md` §`capture.screenshot`) —
-  returning the PNG inline
+  the frame just drawn is established on WebGL and unverified on
+  WebGPU, which the bundle takes whenever the browser defines
+  `navigator.gpu` (with no WebGL fallback behind it until #224 merges;
+  `format/ipc.md` §`capture.screenshot`) — returning the PNG inline
   (`png_base64`) with the geometry sidecar — `capture/geometry.rs`,
   one body for both — inline beside it, which `mandalactl --ws`
   writes to the path given. What the browser's capture lacks is the

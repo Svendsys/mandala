@@ -327,7 +327,24 @@ fn role_of(path: &str, token: &str) -> Option<Role> {
         "controller" => Role::Controller,
         _ => return None,
     };
-    (segments.next()? == token).then_some(role)
+    tokens_match(segments.next()?, token).then_some(role)
+}
+
+/// Whether `given` is `token`, compared without an early exit: every
+/// byte of an equal-length guess is looked at whatever it holds, so how
+/// long a refusal takes says nothing about how much of the guess was
+/// right. The token is the relay's only guard against any page on the
+/// machine, and a page can time a refused handshake. The length is not
+/// secret (a generated token is always 32 hex digits) and is compared
+/// first. The property is in the shape of the loop — a fold with no
+/// branch on the bytes — not something a test can time.
+fn tokens_match(given: &str, token: &str) -> bool {
+    given.len() == token.len()
+        && given
+            .bytes()
+            .zip(token.bytes())
+            .fold(0u8, |differ, (a, b)| differ | (a ^ b))
+            == 0
 }
 
 /// One connection, handshake to close. (The handshake callback's `Err`
@@ -454,6 +471,24 @@ mod tests {
             None,
             "a token with a slash in it is another token"
         );
+    }
+
+    /// The token comparison accepts exactly the token: a guess wrong in
+    /// its first byte, in its last, or by length is refused. The
+    /// control is the token itself.
+    #[test]
+    fn test_the_token_comparison_accepts_exactly_the_token() {
+        let token = "0123456789abcdef0123456789abcdef";
+        assert!(tokens_match(token, token));
+        for wrong in [
+            "x123456789abcdef0123456789abcdef",
+            "0123456789abcdef0123456789abcdex",
+            "0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0",
+            "",
+        ] {
+            assert!(!tokens_match(wrong, token), "{wrong}");
+        }
     }
 
     #[test]
