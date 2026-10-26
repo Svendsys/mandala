@@ -28,6 +28,11 @@ use std::collections::BTreeSet;
 use syn::visit::{self, Visit};
 use syn::{Fields, Item, PathSegment, Type};
 
+/// Identifiers no file outside the document and the benches may write in
+/// code: the document's test builder, a back door around the loader and
+/// the writer.
+const BUILDER: &[&str] = &["DocumentBuilder", "test_support"];
+
 /// Identifiers no document file may write in code.
 const FORBIDDEN: &[&str] = &["mindmap", "gfx_structs", "parent_id", "edge_type", "parent_child"];
 
@@ -179,6 +184,38 @@ mod tests {
             .map(|(owner, field, _)| format!("{owner}.{field}"))
             .collect();
         assert!(deleted.is_empty(), "fields D13 deletes: {deleted:?}");
+    }
+
+    /// **Only the document and the benches name its test builder.**
+    /// It is crate-private, which keeps the app crate out; this keeps
+    /// the rest of baumhard out too. The failure lists every
+    /// `file:line: identifier`.
+    #[test]
+    fn test_only_the_document_names_its_test_builder() {
+        let files = crate::util::source_scan::workspace_rust_sources();
+        let mut offenders = Vec::new();
+        let mut read_inside = false;
+        for file in &files {
+            let relative = crate::util::source_scan::relative_to_repo(file);
+            let inside = relative.starts_with("lib/baumhard/src/document/")
+                || relative.starts_with("lib/baumhard/benches/");
+            let source = std::fs::read_to_string(file)
+                .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+            let found = references_to(&source, BUILDER);
+            if inside {
+                read_inside |= !found.is_empty();
+                continue;
+            }
+            for (line, needle) in found {
+                offenders.push(format!("{relative}:{line}: {needle}"));
+            }
+        }
+        assert!(read_inside, "the scan must see the builder where it is allowed");
+        assert!(
+            offenders.is_empty(),
+            "the document's test builder named outside it:\n{}",
+            offenders.join("\n")
+        );
     }
 
     /// The readers the gates above trust, held to planted sources.

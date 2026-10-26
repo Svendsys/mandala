@@ -28,7 +28,7 @@
 //! There is no `&mut` access to a `Document` here: the document changes
 //! only through its writer (V1-B4), and is built only by the loader
 //! (V1-B2) and, for tests,
-//! [`DocumentBuilder`](crate::document::tests::test_support::DocumentBuilder).
+//! `DocumentBuilder`, crate-private in `document::tests::test_support`.
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};

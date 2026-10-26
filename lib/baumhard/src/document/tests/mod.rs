@@ -13,4 +13,8 @@ pub mod ids_tests;
 pub mod inspect_tests;
 pub mod resolve_tests;
 pub mod shape_tests;
-pub mod test_support;
+/// Crate-private: the tests and their bench bodies build documents with
+/// it, and nothing else may — a document is built by the loader and
+/// changed by its writer (rule 4). `util::document_surface` holds every
+/// other file of the workspace to not naming it.
+pub(crate) mod test_support;

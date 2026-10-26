@@ -48,7 +48,7 @@ pub mod resolve;
 pub mod shape;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8), plus
-/// [`DocumentBuilder`](tests::test_support::DocumentBuilder), which
+/// `DocumentBuilder` (`tests::test_support`, crate-private), which
 /// builds documents for them. `#[allow(clippy::unwrap_used)]` because
 /// this is a tests tree (§T2.2): it carries no `cfg(test)` gate, so the
 /// crate-root lint sees it as shipped code; `util::unwrap_posture`

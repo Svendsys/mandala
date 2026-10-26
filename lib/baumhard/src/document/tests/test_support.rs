@@ -4,6 +4,13 @@
 //! nothing else here can — the loader is V1-B2's, and a `Document` has
 //! no `&mut` API.
 //!
+//! **Crate-private, and only for tests.** It edits elements in place
+//! and can build a document past every shape check but the map row's:
+//! a second way to make and change a document, which rule 4 forbids
+//! anywhere but here. The bench harness reaches it only through the
+//! `do_*` bodies, never by name, and `util::document_surface` fails on
+//! any file outside `document/` and `benches/` that names it.
+//!
 //! The builder starts from the smallest valid map — a map, an empty
 //! theme and empty defaults — and adds elements in key order, so every
 //! row stays sorted. [`DocumentBuilder::build`] checks every element's
