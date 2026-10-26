@@ -174,15 +174,33 @@ pub(crate) fn redacted(url: &str) -> String {
     }
 }
 
-/// `text` with every copy of `url` in it redacted: for a message the
-/// page did not compose, such as the browser's `DOMException` when
-/// `new WebSocket(url)` refuses a URL — Chromium copies the whole URL,
-/// token included, into that message.
+/// What [`redacted`] hides of `url`: everything after its first path
+/// segment — the token, on a relay URL. `None` when nothing follows
+/// the role.
+fn hidden_part(url: &str) -> Option<&str> {
+    let authority = url.find("://").map_or(0, |at| at + 3);
+    let path = authority + url[authority..].find('/')?;
+    let role_end = path + 1 + url[path + 1..].find('/')?;
+    Some(&url[role_end + 1..]).filter(|rest| !rest.is_empty())
+}
+
+/// `text` with every copy of `url` in it redacted, and then every copy
+/// of the token itself: for a message the page did not compose, such as
+/// the browser's `DOMException` when `new WebSocket(url)` refuses a URL
+/// — Chromium copies the whole URL, token included, into that message.
+/// The URL is replaced first so a verbatim quote keeps its readable
+/// redacted form; the token is replaced after it, so a browser that
+/// quotes a *normalized* URL (a lowercased host, an escaped character
+/// elsewhere) still leaks nothing.
 pub(crate) fn scrubbed(text: &str, url: &str) -> String {
     if url.is_empty() {
         return text.to_string();
     }
-    text.replace(url, &redacted(url))
+    let shown = text.replace(url, &redacted(url));
+    match hidden_part(url) {
+        Some(token) => shown.replace(token, "…"),
+        None => shown,
+    }
 }
 
 /// The relay's URL from the page's query string (`location.search`,
@@ -390,6 +408,26 @@ mod tests {
         assert!(shown.contains("ws://[zz/app/…"), "{shown}");
         // Control: nothing to scrub.
         assert_eq!(scrubbed("NetworkError", url), "NetworkError");
+    }
+
+    /// **A browser that quotes a normalized URL leaks no token either**:
+    /// a lowercased host and an escaped bracket defeat a verbatim match
+    /// of the whole URL, and the token is scrubbed on its own. The
+    /// control is the verbatim quote, which keeps its readable redacted
+    /// form.
+    #[test]
+    fn test_a_browser_message_quoting_a_normalized_relay_url_is_scrubbed_of_its_token() {
+        let url = "ws://[ZZ/app/S3CR3TT0KEN";
+        let message = "SyntaxError: The URL 'ws://%5Bzz/app/S3CR3TT0KEN' is invalid.";
+        let shown = scrubbed(message, url);
+        assert!(!shown.contains("S3CR3TT0KEN"), "{shown}");
+        assert!(shown.contains("ws://%5Bzz/app/…"), "{shown}");
+        // Control: the verbatim quote reads as the redacted URL.
+        assert_eq!(
+            scrubbed(&format!("The URL '{url}' is invalid."), url),
+            "The URL 'ws://[ZZ/app/…' is invalid."
+        );
+        assert_eq!(hidden_part("ws://127.0.0.1:41816/app"), None);
     }
 
     #[test]
