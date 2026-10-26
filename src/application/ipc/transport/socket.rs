@@ -63,7 +63,10 @@ impl BoundSocket {
         let ours = fs::symlink_metadata(&self.path).is_ok_and(|m| m.dev() == self.dev && m.ino() == self.ino);
         if ours {
             if let Err(e) = fs::remove_file(&self.path) {
-                log::warn!("ipc: could not remove socket {}: {e}", self.path.display());
+                log::warn!(
+                    "ipc: could not remove socket {}: {e}",
+                    baumhard::util::log::tilde_path(&self.path)
+                );
             }
         }
     }
@@ -318,7 +321,7 @@ fn bind_staged(path: &Path, parent: &Path) -> Result<(UnixListener, BoundSocket)
     if let Err(e) = fs::remove_dir_all(&staging) {
         log::warn!(
             "ipc: could not remove staging directory {}: {e}",
-            staging.display()
+            baumhard::util::log::tilde_path(&staging)
         );
     }
     bound

@@ -247,8 +247,15 @@ impl UnknownKey {
     ///
     /// Cost: one `String` allocation.
     pub fn warning(&self) -> String {
+        format!("loader: {}", self.warning_body())
+    }
+
+    /// [`Self::warning`] without its `loader: ` area prefix, for the
+    /// log site that supplies the prefix as a literal so the posture
+    /// scan (`util::log_posture`) can read it.
+    pub fn warning_body(&self) -> String {
         format!(
-            "loader: {}: unrecognized key `{}` — this build has no field for it, so it is \
+            "{}: unrecognized key `{}` — this build has no field for it, so it is \
              kept as written and saved back with the value it was authored with. Check the \
              spelling if you meant an existing key; see format/schema.md.",
             self.location(),
@@ -334,8 +341,14 @@ impl SkippedConstruct {
     ///
     /// Cost: one `String` allocation.
     pub fn warning(&self) -> String {
+        format!("loader: {}", self.warning_body())
+    }
+
+    /// [`Self::warning`] without its `loader: ` area prefix — see the
+    /// unknown-key twin above.
+    pub fn warning_body(&self) -> String {
         format!(
-            "loader: {}: this build cannot read this construct ({}), so it is skipped — \
+            "{}: this build cannot read this construct ({}), so it is skipped — \
              it does not appear in the model and nothing it describes will run. It is \
              written back to the file unchanged, so a build that understands it still \
              has it. See format/schema.md.",

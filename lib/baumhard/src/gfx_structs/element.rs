@@ -578,7 +578,7 @@ impl TreeEventConsumer for GfxElement {
                     // Re-entrant delivery: a subscriber's reaction
                     // re-delivered an event to the same element.
                     // Skip rather than deadlock/panic.
-                    warn!("EventSubscriber already borrowed (re-entrant delivery); skipping");
+                    warn!("gfx_structs::element: EventSubscriber already borrowed (re-entrant delivery); skipping");
                     continue;
                 }
             };

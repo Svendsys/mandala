@@ -280,7 +280,7 @@ impl Add for GlyphAreaField {
         // rhs unchanged — the same "later mutation wins" rule the
         // single-value-field branches above use for Outline.
         log::warn!(
-            "GlyphAreaField::add called with mismatched variants; \
+            "gfx_structs::area_fields: GlyphAreaField::add called with mismatched variants; \
              discarding lhs and returning rhs"
         );
         rhs
