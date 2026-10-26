@@ -27,8 +27,8 @@ use crate::application::renderer::Renderer;
 /// `app_scene` is here rather than on the shell because the portal
 /// hit-test is part of the *selection* decision, not part of the
 /// rebuild — and `AppScene` holds no GPU state, so it stands up in
-/// a test harness (TEST_CONVENTIONS §T8 excludes wgpu, not the
-/// scene host).
+/// a renderer-free test (TEST_CONVENTIONS §T8: the `Renderer` needs
+/// the GPU-backed tier, the scene host does not).
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) struct ClickCore<'a> {
     pub document: &'a mut MindMapDocument,
@@ -405,8 +405,9 @@ mod tests {
     /// without Shift clears it.
     ///
     /// `handle_click` reads Shift from `ctx.modifiers` and the shell
-    /// cannot run without a live `Renderer` (TEST_CONVENTIONS §T8),
-    /// so this pins the flag at the core boundary the shell feeds.
+    /// needs a live `Renderer`, which only the GPU-backed tier builds
+    /// (TEST_CONVENTIONS §T8), so this pins the flag at the core
+    /// boundary the shell feeds.
     /// Fails if the core stops honoring `shift_pressed` on a miss,
     /// or if the two branches collapse into one.
     #[test]

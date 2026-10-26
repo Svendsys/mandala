@@ -49,9 +49,10 @@ borders, connection paths — is laid out as positioned font glyphs.
   before touching anything under `lib/baumhard/`.
 - **`TEST_CONVENTIONS.md`** — testing philosophy, where to put tests, the
   `do_*()` benchmark-reuse pattern, what we deliberately don't do
-  (no mocks, no snapshots, no GPU tests), and §T13's checklist of
-  assertions that cannot fail on their subject, with the negative
-  control every passing assertion owes.
+  (no mocks, no snapshots, no pixel assertions, no test that
+  *requires* a hardware GPU), and §T13's checklist of assertions
+  that cannot fail on their subject, with the negative control
+  every passing assertion owes.
 - **`format/`** — the `.mindmap.json` format specification.
   `format/schema.md` is the primary reference; per-concept docs cover
   Dewey-decimal IDs, named enums, palettes, channels, text runs,
@@ -297,8 +298,20 @@ the parity trajectory (or why none is owed):
   holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
   baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
   §T9): it skips with a note without the target or `node`, and CI sets
-  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. The
-  test count itself is not a gate — a summary-format change makes it
+  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. **And for
+  the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
+  TEST_CONVENTIONS §T8): they build the real app headless on whatever
+  adapter the machine has — Mesa's lavapipe on a GPU-less box,
+  `apt-get install mesa-vulkan-drivers`; an agent container needs the
+  apt-over-HTTPS recipe in the `mandala-drive` skill — and skip with a
+  `SKIPPED:` note without one, so a green run on a box with no adapter
+  has proved nothing about the code behind `&mut Renderer`. The note
+  is written past libtest's per-test capture
+  (`baumhard::util::test_skip`), so it shows in a plain run and the
+  summary counts the `SKIPPED:` lines beside the pass count. CI
+  installs lavapipe and sets `MANDALA_REQUIRE_GPU`, so they cannot
+  skip there.
+  The test count itself is not a gate — a summary-format change makes it
   print "count unavailable" rather than ending the run, which is
   what it used to do, silently, under `set -euo pipefail`. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
@@ -409,8 +422,9 @@ the parity trajectory (or why none is owed):
   window — text-first inspection, acting with `--wait-settled`,
   screenshots read through their geometry sidecar, teardown, and a
   troubleshooting table. `scripts/ipc_smoke.sh` is its end-to-end
-  check — deliberately outside `./test.sh`, which holds no live GPU
-  (TEST_CONVENTIONS §T8).
+  check — deliberately outside `./test.sh`: it needs the built
+  binaries, a socket and a process to drive, where the suite's
+  GPU-backed tests build the app in-process (TEST_CONVENTIONS §T8).
   **Showing a behavior, not a state, is the `mandala-record` skill**
   (`.claude/skills/mandala-record/SKILL.md`): a captioned demo GIF
   from `scripts/record_demo.sh`, watched by its maker before it is
