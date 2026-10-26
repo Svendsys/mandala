@@ -573,3 +573,319 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
     }
     panic!("the font system stayed contended through {ATTEMPTS} capture attempts: {reply}");
 }
+
+/// **A finger on a resize handle resizes; a finger anywhere else pans**
+/// (#160), through the real `dispatch_touch_event` on a device, which
+/// no renderer-free test reaches: the claim is decided next to the
+/// renderer that converts the finger to canvas space.
+///
+/// In `Resize` mode on node 1, a finger that lands on its SE handle
+/// and drags drives the handle drag: the node grows, the camera does
+/// not move, the drag ends at `None` on lift, and one undo entry
+/// stands. Before #160 that drag was the recognizer's one-finger pan.
+///
+/// The control is the same finger, same mode, same distance, started
+/// in the node's middle instead: it pans the camera and resizes
+/// nothing. So the handle, and only the handle, is what changes where
+/// the finger goes — which fails on a claim that never fires (every
+/// touch to the recognizer: the size assertion) and on one that fires
+/// everywhere (the control's camera assertion).
+///
+/// Two preconditions are asserted first, with their own messages, so a
+/// drifted fixture does not fail as a claim that resized nothing: the
+/// zoom-in moved the camera, and the corner the press sees is the
+/// node's resize handle with no label on it (a label grab outranks a
+/// handle, #218).
+#[test]
+fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
+    use crate::application::platform::input::TouchPhase;
+    use crate::application::platform::window::PhysicalPosition;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.document.as_mut().expect("document").selection = SelectionState::Single("1".into());
+    let (reply, _) = act(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "EnterResizeMode"}),
+    );
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    assert!(matches!(init.interaction_mode, InteractionMode::Resize { .. }));
+
+    let node_rect = |init: &InitState| {
+        let n = &init.document.as_ref().expect("document").mindmap.nodes["1"];
+        (
+            glam::Vec2::new(n.position.x as f32, n.position.y as f32),
+            glam::Vec2::new(n.size.width as f32, n.size.height as f32),
+        )
+    };
+    // One finger, `id`, from `from` (surface pixels) 40 px down-right,
+    // a frame between moves as a hand's samples land.
+    let drag_finger = |init: &mut InitState, id: u64, from: glam::Vec2| {
+        let at = |i: f32| PhysicalPosition::new(f64::from(from.x + i * 8.0), f64::from(from.y + i * 8.0));
+        init.input_context()
+            .dispatch_touch_event(TouchPhase::Started, id, at(0.0));
+        for i in 1..=5 {
+            init.input_context()
+                .dispatch_touch_event(TouchPhase::Moved, id, at(i as f32));
+            init.input_context().drain_frame(Beat::Loop);
+        }
+        init.input_context()
+            .dispatch_touch_event(TouchPhase::Ended, id, at(5.0));
+        init.input_context().drain_frame(Beat::Loop);
+    };
+
+    // Zoom in about the node until nothing else sits on its corner: at
+    // the fixture's opening zoom an edge label overlaps the SE handle,
+    // and a label grab outranks a handle grab at the threshold cross
+    // for a mouse and a finger alike (`Grab::PRECEDENCE`).
+    let (pos, size) = node_rect(init);
+    let center = pos + size / 2.0;
+    let zoom_before = init.renderer.camera_zoom();
+    for id in 0..12 {
+        let (reply, _) = act(
+            init,
+            json!({"id": 10 + id, "cmd": "act.action", "action": "ZoomIn", "x": center.x, "y": center.y}),
+        );
+        assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    }
+    init.input_context().drain_frame(Beat::Loop);
+    let zoomed = init.renderer.camera_zoom();
+    assert!(
+        zoomed > zoom_before,
+        "precondition: ZoomIn must zoom in about the node, or a label may still sit on its corner: \
+         {zoomed} from {zoom_before}"
+    );
+    // What the press at the corner would capture besides the handle,
+    // asked of the same hit-tests the press runs and of nothing the
+    // touch claim decides, so a fixture that drifts fails here and not
+    // as a claim that resized nothing.
+    let se = init.renderer.canvas_to_screen(pos + size);
+    // The corner as the press sees it: through surface pixels and back.
+    let corner = init.renderer.screen_to_canvas(se.x, se.y);
+    let tolerance = super::HANDLE_HIT_TOLERANCE_PX * init.renderer.canvas_per_pixel();
+    assert!(
+        super::event_mouse_click::resize_handle_press(
+            init.document.as_ref(),
+            &init.interaction_mode,
+            corner,
+            tolerance
+        )
+        .node
+        .is_some(),
+        "precondition: node 1's SE corner must be its resize handle in Resize mode"
+    );
+    let parts = super::compute_click_hit(corner, init.mindmap_tree.as_mut(), &mut init.app_scene);
+    assert!(
+        parts.edge_label_hit.is_none() && parts.portal_icon_hit.is_none() && parts.portal_text_hit.is_none(),
+        "precondition: no label may sit on node 1's SE corner, since a label grab outranks the handle \
+         (`Grab::PRECEDENCE`, #218); zoom further in"
+    );
+    let undo_before = init.document.as_ref().expect("document").undo_stack.len();
+
+    let camera = init.renderer.camera().position;
+    drag_finger(init, 2, se);
+    let (_, resized) = node_rect(init);
+    assert!(
+        resized.x > size.x && resized.y > size.y,
+        "a finger dragged from the SE handle must grow the node: {size:?} -> {resized:?}"
+    );
+    assert_eq!(
+        init.renderer.camera().position,
+        camera,
+        "a finger holding a handle is never the recognizer's, so it must not pan"
+    );
+    assert!(
+        matches!(init.drag_state, super::DragState::None),
+        "the lift ended the drag"
+    );
+    assert_eq!(
+        init.document.as_ref().expect("document").undo_stack.len(),
+        undo_before + 1,
+        "the lift committed the resize with one undo entry of its own"
+    );
+
+    // Control: the same drag from the node's middle, still in Resize.
+    let (pos, size) = node_rect(init);
+    let camera = init.renderer.camera().position;
+    let middle = init.renderer.canvas_to_screen(pos + size / 2.0);
+    drag_finger(init, 3, middle);
+    assert_eq!(node_rect(init).1, size, "off a handle the finger resizes nothing");
+    assert_ne!(
+        init.renderer.camera().position,
+        camera,
+        "off a handle the finger is the recognizer's one-finger pan"
+    );
+}
+
+/// Node 1's canvas AABB as (min, size).
+fn node_1_rect(init: &InitState) -> (glam::Vec2, glam::Vec2) {
+    let n = &init.document.as_ref().expect("document").mindmap.nodes["1"];
+    (
+        glam::Vec2::new(n.position.x as f32, n.position.y as f32),
+        glam::Vec2::new(n.size.width as f32, n.size.height as f32),
+    )
+}
+
+/// Zoom in about node 1, so a press near one of its corners lands on
+/// its body with pixels to spare: at the fixture's opening zoom an edge
+/// label overlaps its SE corner, and a label outranks the node's body
+/// in a press's hit-test. Each test still asserts where its own press
+/// lands ([`press_lands_on`]); this only makes that likely.
+fn zoom_onto_node_1(init: &mut InitState) {
+    let (pos, size) = node_1_rect(init);
+    let center = pos + size / 2.0;
+    let zoom_before = init.renderer.camera_zoom();
+    for id in 0..12 {
+        let (reply, _) = act(
+            init,
+            json!({"id": 100 + id, "cmd": "act.action", "action": "ZoomIn", "x": center.x, "y": center.y}),
+        );
+        assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    }
+    init.input_context().drain_frame(Beat::Loop);
+    let zoomed = init.renderer.camera_zoom();
+    assert!(
+        zoomed > zoom_before,
+        "precondition: ZoomIn must zoom in about node 1: {zoomed} from {zoom_before}"
+    );
+}
+
+/// What a press at canvas `at` lands on, asked as the press asks it:
+/// through surface pixels and back, then the click chain's hit-tests.
+fn press_lands_on(init: &mut InitState, at: glam::Vec2) -> super::ClickHit {
+    let surface = init.renderer.canvas_to_screen(at);
+    let canvas = init.renderer.screen_to_canvas(surface.x, surface.y);
+    super::compute_click_hit(canvas, init.mindmap_tree.as_mut(), &mut init.app_scene).click_hit
+}
+
+/// **`act.action FastResizeStart` with a pointer is refused, says
+/// why, and starts nothing** (#194). The synthetic pointer IPC places
+/// holds no button, so no release could end the drag the Action would
+/// arm. Through the real decoder, `IpcCommandTarget` and the dispatch
+/// arm, over node 1: the reply is `unhandled` with
+/// `FastResizeRefusal::NO_HOLDER` as its `reason`, the drag state stays
+/// `None`, and the document and undo stack are untouched.
+///
+/// The control is the same Action with no pointer at all, which the
+/// arm refuses for a different, named cause (`NO_POINTER`): the
+/// `reason` is the arm's verdict on this request, not a constant the
+/// reply carries for every refusal. Its positive counterpart, a held
+/// button through the same Action, is the next test.
+#[test]
+fn test_act_action_fast_resize_start_is_refused_by_name_and_starts_nothing() {
+    use super::dispatch::native::FastResizeRefusal;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    zoom_onto_node_1(init);
+    let baseline = document_json(init);
+    let (pos, size) = node_1_rect(init);
+    let near_se = pos + size * 0.9;
+
+    let (reply, _) = act(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "FastResizeStart", "x": near_se.x, "y": near_se.y}),
+    );
+    assert_eq!(reply["result"]["outcome"], "unhandled", "{reply}");
+    assert_eq!(reply["result"]["reason"], FastResizeRefusal::NO_HOLDER, "{reply}");
+    assert!(
+        matches!(init.drag_state, super::DragState::None),
+        "a refused fast-resize arms no drag"
+    );
+    init.input_context().drain_frame(Beat::Loop);
+    assert_eq!(document_json(init), baseline, "a refusal writes nothing");
+    assert!(init.document.as_ref().expect("document").undo_stack.is_empty());
+
+    let (reply, _) = act(
+        init,
+        json!({"id": 2, "cmd": "act.action", "action": "FastResizeStart"}),
+    );
+    assert_eq!(reply["result"]["outcome"], "unhandled", "{reply}");
+    assert_eq!(
+        reply["result"]["reason"],
+        FastResizeRefusal::NO_POINTER,
+        "control: a request with no pointer is refused for its own cause: {reply}"
+    );
+}
+
+/// **A `Ctrl+RightDrag` anchors at the press, through the real
+/// threshold cross** (#194). A right press with Ctrl just inside node
+/// 1's SE corner, then one move deep into its NW quadrant: the cross
+/// fires on that move, with the cursor nearest NW, and the drag it
+/// arms must be a node resize anchored SE and owned by the right
+/// button. A cross that built its hit from the cursor at the cross
+/// would anchor NW.
+///
+/// The control is the same press and move mirrored — pressed inside
+/// the NW corner, crossing in the SE quadrant — which anchors NW: the
+/// side follows the press, rather than being SE for every drag.
+#[test]
+fn test_a_ctrl_right_drag_anchors_its_resize_at_the_press() {
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
+
+    use super::throttled_interaction::ThrottledDrag;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    zoom_onto_node_1(init);
+    let (pos, size) = node_1_rect(init);
+
+    // Press the right button with Ctrl at canvas `press`, then one
+    // move to canvas `cross`; answers the side and owner of the drag
+    // the cross armed, then releases.
+    let mut press_then_cross = |press: glam::Vec2, cross: glam::Vec2| {
+        // Asked first, so a label drifting onto the press point fails
+        // as that, not as an anchor that came out wrong.
+        assert!(
+            matches!(press_lands_on(init, press), super::ClickHit::Node(ref id, None) if id == "1"),
+            "precondition: the press at {press:?} must land on node 1's body, with nothing over it"
+        );
+        for (id, request) in [
+            json!({"cmd": "input.mouse_move", "x": press.x, "y": press.y, "space": "canvas", "mods": ["ctrl"]}),
+            json!({"cmd": "input.mouse_button", "button": "right", "state": "press", "mods": ["ctrl"]}),
+            json!({"cmd": "input.mouse_move", "x": cross.x, "y": cross.y, "space": "canvas", "mods": ["ctrl"]}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut request = request;
+            request["id"] = json!(id);
+            let (reply, _) = act(init, request);
+            assert!(reply.get("error").is_none(), "{reply}");
+            init.input_context().drain_frame(Beat::Loop);
+        }
+        let armed = match &init.drag_state {
+            super::DragState::Throttled(drag) => match drag.as_ref() {
+                ThrottledDrag::NodeResize(i) => Some((i.side, drag.as_dyn().started_with_right())),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (reply, _) = act(
+            init,
+            json!({"id": 9, "cmd": "input.mouse_button", "button": "right", "state": "release", "mods": ["ctrl"]}),
+        );
+        assert!(reply.get("error").is_none(), "{reply}");
+        init.input_context().drain_frame(Beat::Loop);
+        armed
+    };
+
+    let near_se = pos + size * 0.9;
+    let nw_quadrant = pos + size * 0.2;
+    assert_eq!(
+        press_then_cross(near_se, nw_quadrant),
+        Some((ResizeHandleSide::SE, true)),
+        "a press inside the SE corner anchors SE wherever the cross lands, and the right button owns it"
+    );
+    assert_eq!(
+        press_then_cross(nw_quadrant, near_se),
+        Some((ResizeHandleSide::NW, true)),
+        "control: the mirrored press anchors NW"
+    );
+}

@@ -486,11 +486,21 @@ pub fn id_sort_key(id: &str) -> usize {
 /// which orders siblings under one parent and says nothing about
 /// two ids from different subtrees.
 ///
-/// Segments that do not parse as `u64` compare as strings, so a
-/// non-Dewey id still has a total order rather than collapsing
-/// onto zero. A prefix sorts first — `"0.2"` before `"0.2.1"` —
-/// because a parent precedes its children in every listing this
-/// feeds.
+/// Segments that do not parse as `u64` compare as strings, and sort
+/// after every numeric segment, so a non-Dewey id still has a place
+/// rather than collapsing onto zero. A prefix sorts first — `"0.2"`
+/// before `"0.2.1"` — because a parent precedes its children in
+/// every listing this feeds.
+///
+/// **A total order**, which callers rely on: `delete_nodes` sorts its
+/// victims with it so the undo entry does not depend on selection
+/// order, and `maptool convert --legacy` breaks sibling ties with it
+/// on legacy ids that need not be Dewey at all. Comparing a numeric
+/// segment with a non-numeric one as strings would not be: `"9" <
+/// "10"` numerically, `"10" < "1a"` and `"1a" < "9"` as strings, a
+/// cycle. Two ids whose segments are all equal by value but not by
+/// spelling (`"01"` and `"1"`) fall back to `str::cmp`, so `Equal`
+/// means the same string.
 ///
 /// Costs: no allocation. One `split('.')` walk over the shared
 /// prefix of the two ids, with a `u64` parse per segment pair.
@@ -502,7 +512,9 @@ pub fn dewey_cmp(a: &str, b: &str) -> std::cmp::Ordering {
             (Some(x), Some(y)) => {
                 let ordering = match (x.parse::<u64>(), y.parse::<u64>()) {
                     (Ok(nx), Ok(ny)) => nx.cmp(&ny),
-                    _ => x.cmp(y),
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => x.cmp(y),
                 };
                 if ordering != std::cmp::Ordering::Equal {
                     return ordering;
@@ -512,7 +524,7 @@ pub fn dewey_cmp(a: &str, b: &str) -> std::cmp::Ordering {
             // ancestor and comes first.
             (None, Some(_)) => return std::cmp::Ordering::Less,
             (Some(_), None) => return std::cmp::Ordering::Greater,
-            (None, None) => return std::cmp::Ordering::Equal,
+            (None, None) => return a.cmp(b),
         }
     }
 }

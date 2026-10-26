@@ -246,7 +246,7 @@ pub(super) fn ended_early(one_shot: &mut Option<OneShot>, why: &str) -> Option<E
     let shot = one_shot.take()?;
     log::error!(
         "screenshot: {why} before the map was captured; nothing was written to {}",
-        shot.path.display()
+        baumhard::util::log::tilde_path(&shot.path)
     );
     Some(ExitCode::FAILURE)
 }

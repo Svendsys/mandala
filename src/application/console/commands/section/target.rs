@@ -171,7 +171,7 @@ pub(crate) fn resolve_action_section_target(selection: &SelectionState) -> Optio
     match resolve_section_index(selection, &node_id, None, None, SectionTargetPolicy::Action) {
         Ok(idx) => Some((node_id, idx)),
         Err(msg) => {
-            log::warn!("{}", msg);
+            log::warn!("section: {}", msg);
             None
         }
     }

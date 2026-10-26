@@ -25,8 +25,8 @@ use glam::Vec2;
 use serde_json::{json, Value};
 
 use crate::application::app::animation_drain;
-use crate::application::app::dispatch::{self, DispatchHit, DispatchOutcome};
-use crate::application::app::ipc_scene::{self, resolve_point, surface_of};
+use crate::application::app::dispatch::{self, DispatchHit};
+use crate::application::app::ipc_scene::{self, action_outcome, resolve_point, surface_of};
 use crate::application::app::ipc_state;
 use crate::application::capture::geometry;
 use crate::application::clock::{AppClock, ClockMode, ClockRefusal, StepRequest, Stepped};
@@ -36,8 +36,8 @@ use crate::application::ipc::events::Observed;
 use crate::application::ipc::injected::{resolve_command, Delivery, Overloaded, Pacing, Sample, Surface};
 use crate::application::ipc::space::{camera_json, Point};
 use crate::application::ipc::{
-    CanvasCapture, CanvasOutcome, CommandTarget, Injected, SceneView, Settling, ShellState, IPC_STEPS_LABEL,
-    PROTOCOL_VERSION,
+    ActionOutcome, CanvasCapture, CanvasOutcome, CommandTarget, Injected, SceneView, Settling, ShellState,
+    IPC_STEPS_LABEL, PROTOCOL_VERSION,
 };
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
@@ -133,7 +133,7 @@ impl Borrowed<'_> {
 }
 
 impl CommandTarget for IpcCommandTarget<'_, '_> {
-    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> bool {
+    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> ActionOutcome {
         // The synthetic pointer is part of this one dispatch, like the
         // `DispatchHit` it builds. The cursor goes back afterwards, so
         // the next real wheel zoom keeps agreeing with the user's
@@ -148,9 +148,9 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
             dispatch::action_core::dispatch_compatible(&action, &mut core, hit.as_ref())
         };
         self.app.input.cursor_pos = real_cursor;
-        let handled = matches!(outcome, DispatchOutcome::Handled);
-        self.changed_view |= handled;
-        handled
+        let outcome = action_outcome(outcome);
+        self.changed_view |= outcome == ActionOutcome::Handled;
+        outcome
     }
 
     fn run_console_line(&mut self, _line: &str) -> Option<LineOutcome> {

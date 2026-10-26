@@ -254,9 +254,16 @@ pub(in crate::application::app) fn print_console_line(
 /// dropped.
 pub(in crate::application::app) fn log_console_line(line: &str, outcome: &LineOutcome) {
     if let Some(failure) = outcome.failure() {
+        // The line is the user's (or a macro author's) text, the
+        // failure echoes the token it rejected, and either may name a
+        // file: a release build keeps this record, so both halves are
+        // home-collapsed and excerpted — the failure at the wider
+        // `FAILURE_WIDTH`, since it carries the diagnosis (§9).
         log::warn!(
             code = crate::application::console::LINE_FAILED_CODE;
-            "console: `{line}` failed: {failure}"
+            "console: `{}` failed: {}",
+            baumhard::util::log::console_line_excerpt(line),
+            baumhard::util::log::failure_excerpt(&failure)
         );
     }
 }
@@ -607,7 +614,7 @@ pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMap
             true
         }
         Err(e) => {
-            log::error!(code = SAVE_FAILED_CODE; "save: {}", e);
+            log::error!(code = SAVE_FAILED_CODE; "save: {}", baumhard::util::log::collapse_home_in(&e));
             false
         }
     }

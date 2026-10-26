@@ -29,16 +29,18 @@ use crate::application::document::MindMapDocument;
 use crate::application::ipc::events::Observed;
 use crate::application::ipc::injected::{resolve_command, Delivery, Overloaded, Pacing, Sample, Surface};
 use crate::application::ipc::space::{camera_json, Point};
-use crate::application::ipc::{CommandTarget, Injected, SceneView, Screenshot, ShellState, IPC_STEPS_LABEL};
+use crate::application::ipc::{
+    ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState, IPC_STEPS_LABEL,
+};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::source_tier::SourceTier;
 
 use super::capture_flow::{self, CaptureScene};
 use super::console_input::exec::execute_console_line;
-use super::dispatch::{self, DispatchHit, DispatchOutcome};
+use super::dispatch::{self, DispatchHit};
 use super::input_context::InputHandlerContext;
-use super::ipc_scene::{self, resolve_point, surface_of};
+use super::ipc_scene::{self, action_outcome, resolve_point, surface_of};
 use super::ipc_state;
 use super::record_flow;
 use super::run_native_init::InitState;
@@ -96,6 +98,8 @@ impl<'a> IpcCommandTarget<'a> {
         DispatchHit {
             click_hit: parts.click_hit,
             canvas_pos: canvas,
+            // A synthetic pointer holds no button.
+            held_by: None,
         }
     }
 }
@@ -114,7 +118,7 @@ impl InitState {
 }
 
 impl CommandTarget for IpcCommandTarget<'_> {
-    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> bool {
+    fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> ActionOutcome {
         // The synthetic pointer is part of this one dispatch, like the
         // `DispatchHit` it builds. The cursor goes back afterwards, so
         // the hover state, the cursor icon and the next real wheel
@@ -122,13 +126,10 @@ impl CommandTarget for IpcCommandTarget<'_> {
         // never moved.
         let real_cursor = self.init.cursor_pos;
         let hit = pointer.map(|point| self.place_pointer(point));
-        let handled = matches!(
-            dispatch::dispatch_action(action, &mut self.ctx(), hit.as_ref()),
-            DispatchOutcome::Handled
-        );
+        let outcome = action_outcome(dispatch::dispatch_action(action, &mut self.ctx(), hit.as_ref()));
         self.init.cursor_pos = real_cursor;
-        self.changed_view |= handled;
-        handled
+        self.changed_view |= outcome == ActionOutcome::Handled;
+        outcome
     }
 
     fn run_console_line(&mut self, line: &str) -> Option<LineOutcome> {

@@ -654,8 +654,38 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `"font::attrs: ..."`, `"keybinds: ..."`, `"console history: ..."`.
   Function names go stale under refactor and tell a user nothing; the
   area is what they can name in a bug report. Bare messages with no
-  prefix are not acceptable. Normalize prefixes in files you are
-  already editing rather than in a repository-wide sweep.
+  prefix are not acceptable, and since #110 that is checked rather
+  than asked: `baumhard::util::log_posture` reads every shipped
+  `warn!` / `error!` on both targets and fails `./test.sh` naming the
+  site whose message is not a literal beginning `"<area>: "` — one or
+  more lowercase words joined by `::`, a space or a hyphen. The
+  reader cannot tell a function name from a subsystem, so that half
+  stays yours; a CamelCase `Action` name, a `{placeholder}` and a bare
+  message it does catch. The rule was introduced by #104 and violated
+  by its own passthrough sites in the same change, which is why it is
+  held by a scan and not by a sentence.
+- **A `warn!` / `error!` line is user-facing, so it carries excerpts
+  and `~`, not document text and account names.** Release builds keep
+  the two channels (above), so their *content* is pasted into bug
+  reports and read off the browser console. Two helpers in
+  `baumhard::util::log` are the whole policy: a console line, a
+  macro step or any other text the user authored goes through
+  `excerpt` (one line, `EXCERPT_WIDTH` display cells, cut on a
+  grapheme boundary and marked; every control character and the
+  Unicode line separators folded to a space), and a path goes
+  through `tilde_path` — or `collapse_home_in` when the path is
+  already inside a message composed elsewhere, as a loader error or
+  a console failure is. Where a value needs both, as a console line
+  does (it can be `save /home/<user>/…`), it goes through
+  `console_line_excerpt`, which folds and *then* cuts in one call,
+  so the cut can never land inside the home path; a console failure,
+  which since #136 echoes the token it rejected, goes through
+  `failure_excerpt`, the same composition at the wider
+  `FAILURE_WIDTH`. The same scan holds the path half as far as a
+  lexical reader can: a `.display()` or `.to_string_lossy()` inside
+  a `warn!` / `error!` invocation fails `./test.sh`. Where a macro id
+  and step index are in scope they identify a failing step better
+  than its text does; log those and not the line.
 - **A log line is also a reply.** Under `--ipc`, every `warn!` /
   `error!` a command's execution emits on the main thread is carried
   in that command's reply as a warning, in the line's own words

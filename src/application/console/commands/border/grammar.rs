@@ -81,7 +81,9 @@ const OFF_PALETTE: &[Word] = &[W::new("off", "clear palette cycling")];
 /// `font set off` names a family and there is no such family.
 const OFF_FONT: &[Word] = &[W::new("off", "clear the font override")];
 
-const VERBOSE_FLAG: &[Word] = &[W::new(
+/// `border show`'s one slot word, read by `show.rs` through
+/// [`Vocabulary::admits`] so the popup and the verb share one list.
+pub(crate) const VERBOSE_FLAG: &[Word] = &[W::new(
     "verbose",
     "surface the dual color cascade (frame_color vs border.color)",
 )];

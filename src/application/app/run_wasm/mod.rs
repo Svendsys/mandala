@@ -425,7 +425,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
         // load posture (false return on the warn arm).
         log::warn!(
             "macros: ConsoleLine step '{}' has no console runtime on WASM; skipping",
-            line,
+            baumhard::util::log::console_line_excerpt(line),
         );
         false
     }
@@ -696,9 +696,9 @@ pub(super) fn run(mut app: Application) {
     );
     let cw = canvas.width();
     let ch = canvas.height();
-    log::info!("WASM: canvas sized {}x{}", cw, ch);
+    log::info!("wasm: canvas sized {}x{}", cw, ch);
     if cw == 0 || ch == 0 {
-        log::warn!("WASM: canvas has zero dimension — render surface will be empty");
+        log::warn!("wasm: canvas has zero dimension — render surface will be empty");
     }
 
     // Canvas must be focusable for keyboard events to reach winit.

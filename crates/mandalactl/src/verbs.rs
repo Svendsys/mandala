@@ -403,7 +403,7 @@ pub const VERBS: &[Verb] = &[
     },
     Verb {
         name: "input.touch",
-        summary: "One finger event (started, moved, ended, canceled) into the touch-gesture recognizer.",
+        summary: "One finger event (started, moved, ended, canceled): a tap, long-press, pan or pinch, or a resize-handle drag.",
         params: &[
             param("phase", STRING, true),
             param("pointer_id", INTEGER, true),

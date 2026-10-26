@@ -600,6 +600,7 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
                         let dispatch_hit = super::dispatch::DispatchHit {
                             click_hit: super::ClickHit::Empty,
                             canvas_pos,
+                            held_by: Some(MouseButton::Left),
                         };
                         // Held: the left button is down, and a pan
                         // the dispatch arms ends on its release.
@@ -635,26 +636,34 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
                 .renderer
                 .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
         }
-        DragState::PendingRight {
-            start_pos,
-            start_canvas,
-            hit_node,
-            hit_section_idx,
-        } => {
-            // Threshold-cross arm for the right-button fast-resize
-            // gesture (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+        DragState::PendingRight { start_pos, .. } => {
+            // Threshold-cross arm for the right-button drag gesture
+            // (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
             // Same `POINTER_DRAG_THRESHOLD_SQ_PX` as the left-button arm
-            // above. The DispatchHit carries the **press-time**
-            // canvas position and hit (not the threshold-cross
-            // values) so anchor inference fires from "where the
-            // user pressed", not "where the cursor is now". Plan
-            // §6.3: "Quadrant determined at press time, not
-            // continuously".
+            // above.
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
             if dist_x * dist_x + dist_y * dist_y <= super::POINTER_DRAG_THRESHOLD_SQ_PX {
                 return;
             }
+            // The hit carries the **press-time** canvas position and
+            // body hit, not the cursor's at the cross, so a fast-resize
+            // anchors at "where the user pressed" — plan §6.3:
+            // "Quadrant determined at press time, not continuously".
+            let Some(dispatch_hit) = ctx.drag_state.right_drag_hit() else {
+                return;
+            };
+            // The cross resolves the pending press: past the threshold
+            // it is a drag, and its release can no longer be a
+            // `RightClick`. So it comes down *before* the dispatch,
+            // the way every promoted gesture leaves its pending state —
+            // and that is what lets an Action that arms from rest,
+            // `PanCanvas`, run here at all: it refuses a pending right
+            // press, which is right for a key pressed during one and
+            // was wrong for the press's own drag (#194). Whatever the
+            // Action does not take over stays `None`, so later moves do
+            // not re-fire the cross.
+            *ctx.drag_state = DragState::None;
             // Look up the bound action via `action_for_gesture` so a
             // user can rebind `RightDrag` away from `FastResizeStart`
             // (or onto bare `RightDrag` without the Ctrl modifier).
@@ -666,33 +675,12 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
                 ctx.modifiers.alt_key(),
             );
             if let Some(a) = action {
-                // Snapshot press-time data BEFORE dispatch (which
-                // may consume PendingRight). Cloning the String is
-                // cheap and the alternative — reading post-dispatch
-                // — would race with the arm's state mutation.
-                let click_hit = match (hit_node.clone(), *hit_section_idx) {
-                    (Some(id), Some(idx)) => super::ClickHit::Node(id, Some(idx)),
-                    (Some(id), None) => super::ClickHit::Node(id, None),
-                    (None, _) => super::ClickHit::Empty,
-                };
-                let dispatch_hit = super::dispatch::DispatchHit {
-                    click_hit,
-                    canvas_pos: *start_canvas,
-                };
                 super::dispatch::dispatch_held_action(
                     a,
                     ctx,
                     Some(&dispatch_hit),
                     HeldInput::Button(MouseButton::Right),
                 );
-            }
-            // After dispatch the state should be `Throttled(...)` if
-            // the arm took ownership of the gesture. If the arm
-            // didn't run (no binding) or couldn't resolve a target,
-            // reset to None so subsequent cursor moves don't re-fire
-            // the threshold-cross.
-            if matches!(*ctx.drag_state, DragState::PendingRight { .. }) {
-                *ctx.drag_state = DragState::None;
             }
         }
         DragState::None => {}

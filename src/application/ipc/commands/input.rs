@@ -193,7 +193,8 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "input.touch",
-            summary: "One finger event, as a Touch event, into the touch-gesture recognizer.",
+            summary: "One finger event, as a Touch event: to the touch-gesture recognizer, or, for a finger \
+                      that starts on a resize handle in Resize mode, to the handle drag.",
             params: &[
                 ParamSpec::new(
                     "phase",
@@ -958,7 +959,7 @@ mod tests {
     }
 
     impl CommandTarget for InputApp {
-        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> bool {
+        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> crate::application::ipc::ActionOutcome {
             panic!("raw input must not dispatch an Action itself");
         }
         fn run_console_line(&mut self, _: &str) -> Option<LineOutcome> {

@@ -95,7 +95,7 @@ impl super::Borrowed<'_> {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if state == ElementState::Released && !WARNED.swap(true, Ordering::Relaxed) {
             log::warn!(
-                "right-button gesture on WASM is currently a no-op \
+                "wasm: right-button gesture is currently a no-op \
                  (Action::FastResizeStart is NativeOnly until the \
                  browser gains a drag-state machine); browser context \
                  menu suppressed via canvas oncontextmenu, \

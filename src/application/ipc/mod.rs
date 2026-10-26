@@ -54,9 +54,9 @@ pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use target::Screenshot;
+pub(crate) use target::{ActionOutcome, CommandTarget, Injected, SceneView, ShellState, IPC_STEPS_LABEL};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use target::{CanvasCapture, CanvasOutcome};
-pub(crate) use target::{CommandTarget, Injected, SceneView, ShellState, IPC_STEPS_LABEL};
 // The decoder-to-wire test runner, for the app's GPU-backed tests
 // (`app::tests_gpu`): an `act.*` request run against a real app the
 // way the socket would run it, minus the socket.

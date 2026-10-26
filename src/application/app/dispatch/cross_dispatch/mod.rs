@@ -110,6 +110,21 @@ pub(in crate::application::app) enum DispatchOutcome {
     /// (e.g. context-mismatched, or scaffolded ahead of its arm).
     /// Caller may fall through to lower-priority resolution.
     Unhandled,
+    /// The arm ran its guard and declined, for the stated reason —
+    /// nothing ran, exactly as for `Unhandled`, and every caller that
+    /// asks "did it run?" (`matches!(.., Handled)`) treats it so. What
+    /// it adds is the *why*, for a caller that shows it: IPC
+    /// `act.action` returns it as `reason`, so an agent whose dispatch
+    /// was refused learns what to change rather than only that it did
+    /// nothing (#194).
+    ///
+    /// Native-only, as its constructors are (the `FastResizeStart` and
+    /// `PanCanvas` arms in `dispatch::native`). Its reader, IPC's
+    /// `ipc_scene::action_outcome`, serves both targets and gates its
+    /// arm for this variant the same way. A browser arm that wants to
+    /// say why it declined takes both `cfg`s off.
+    #[cfg(not(target_arch = "wasm32"))]
+    Refused(&'static str),
 }
 
 /// Borrowed bundle of the shared rebuild plumbing — the minimum

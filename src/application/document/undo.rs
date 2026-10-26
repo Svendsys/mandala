@@ -30,7 +30,7 @@ impl MindMapDocument {
                 .find(|node| self.mindmap.nodes.contains_key(node.id.as_str()))
             {
                 log::error!(
-                    "undo DeleteNodes: id '{}' is already occupied; refusing to overwrite a \
+                    "undo: DeleteNodes: id '{}' is already occupied; refusing to overwrite a \
                      live node and leaving the action on the undo stack",
                     occupied.id
                 );
