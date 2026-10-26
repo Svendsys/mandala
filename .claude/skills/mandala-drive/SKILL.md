@@ -464,14 +464,20 @@ capture needs a browser with a GPU; run the block above on a desktop and
 look. Until then the PNG is unverified on WebGPU — whether a same-task
 `toDataURL` holds the frame just drawn or the last presented one is the
 open question (`format/ipc.md` §`capture.screenshot`) — and the sidecar,
-computed from the scene, is the half to trust. (There is no WebGL
-fallback yet: tracked as #220, fixed by #224. The `webgl` feature *is* compiled in, but
-wgpu 30's web `Instance::new` takes its WebGPU context whenever
-`navigator.gpu` is defined, adapter or not, and never tries the GL
-backend — so headless Chromium that defines `navigator.gpu` with no
-adapter behind it panics at the adapter. Until #224 merges, the fallback
-does not exist.) Nothing in `./test.sh` runs a browser (TEST_CONVENTIONS
-§T8).
+computed from the scene, is the half to trust. **A browser whose WebGPU
+offers no adapter** — Chromium on Linux, headless Chromium without the
+unsafe-WebGPU flags — falls back to WebGL2 since #224 (#220): the page
+probes `requestAdapter` before it touches the canvas and, finding none,
+builds a GL-only instance with one `warn!`
+(`renderer/adapter.rs::browser_instance`). So plain headless Chromium
+now renders the bundle, on WebGL2. Two limits remain. First, the
+same-task read is established for WebGL's model on a plain canvas; on
+this bundle under the fallback it has not been run through
+`capture.screenshot` yet. Second, the browser has no Latin text face for
+the default family, so edge labels draw as `.notdef` boxes and
+connection dots vanish (#228, open) — on every backend, and on a native
+machine with no system fonts too. Nothing in `./test.sh` runs a browser
+(TEST_CONVENTIONS §T8).
 
 ## Tear down
 

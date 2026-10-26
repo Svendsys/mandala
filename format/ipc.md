@@ -1860,10 +1860,11 @@ own size and through the live camera — and reads it back in the same
 task (`toDataURL`), before that task yields to the browser's rendering
 update. What that read-back holds is **established for WebGL's
 presentation model only, and unverified for WebGPU** — and WebGPU is
-the backend the bundle takes whenever the browser defines
-`navigator.gpu`, with no WebGL fallback behind it until #224 (fixing
-#220) merges. A browser that does not define `navigator.gpu` runs the
-bundle on WebGL today, the model where the read is established. On WebGL
+the backend the bundle takes whenever the browser's WebGPU offers an
+adapter. A browser that does not define `navigator.gpu`, or whose
+WebGPU offers no adapter, runs the bundle on WebGL2 (the latter since
+#224, fixing #220), the model where the read is established — though
+not yet observed through `capture.screenshot` on this bundle. On WebGL
 without `preserveDrawingBuffer`, a same-task `toDataURL` reads the
 frame just drawn and a read one frame later reads a cleared buffer
 (observed in headless Chromium's WebGL2 on a plain canvas, not on this

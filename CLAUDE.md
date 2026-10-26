@@ -143,16 +143,20 @@ the parity trajectory (or why none is owed):
   its canvas and reads it back in the same task (`to_data_url`,
   `run_wasm/ipc_target.rs::capture_canvas`) — whether that read holds
   the frame just drawn is established on WebGL and unverified on
-  WebGPU, which the bundle takes whenever the browser defines
-  `navigator.gpu` (with no WebGL fallback behind it until #224 merges;
-  `format/ipc.md` §`capture.screenshot`) — returning the PNG inline
+  WebGPU, which the bundle takes whenever the browser's WebGPU offers
+  an adapter (a browser whose WebGPU offers none falls back to WebGL2
+  since #224; `format/ipc.md` §`capture.screenshot`) — returning the
+  PNG inline
   (`png_base64`) with the geometry sidecar — `capture/geometry.rs`,
   one body for both — inline beside it, which `mandalactl --ws`
   writes to the path given. What the browser's capture lacks is the
   engine's framing (`width`/`height`/`region`/`fit`/`scale`): it is
   the canvas as drawn, at its own size, and `describe` declares
   exactly the parameters each target takes. Recording stays native;
-  `describe` says so.
+  `describe` says so. What any browser frame shows is limited by #228
+  (open): the browser has no Latin text face for the default family,
+  so edge labels draw as `.notdef` boxes and connection dots vanish, on
+  every backend.
 - **Headless and one-shot launches** (`--headless`, `--size`,
   `--adapter`, `--screenshot`; `src/application/app/run_headless.rs`,
   `app/pump.rs`, `app/shell.rs`, `renderer/adapter.rs`; IPC-10/#70) —
