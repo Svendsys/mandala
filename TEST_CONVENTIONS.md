@@ -72,6 +72,8 @@ Exemplars:
 - `lib/baumhard/src/gfx_structs/tests/` — region, tree, model, area,
   walker.
 - `lib/baumhard/src/core/tests/` — primitives (ranges, color regions).
+- `lib/baumhard/src/engine/tests/` — the engine over a non-glyph
+  element: the walker matrix, inherited state, the builder.
 
 ### §T2.3 Cross-crate rule
 

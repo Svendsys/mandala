@@ -140,10 +140,28 @@ obligations — see
 [`lib/baumhard/CONVENTIONS.md`](./lib/baumhard/CONVENTIONS.md).
 This section is conceptual.
 
-### `Tree<T, M>`
+### The engine — `Tree<E>`, `MutatorTree<E, M>` and their element types
 
-An arena-backed forest of typed nodes with cached
-spatial indices, representing one layer of visual content.
+Baumhard's mutation engine, generic over **the element type** and
+**the mutation payload**, so the same walker can mutate any tree of
+any element type that implements its traits.
+
+The engine lives in `lib/baumhard/src/engine/` and knows nothing
+about glyphs. An element type implements `TreeElement` — the channel
+the walker routes on, a `void()` placeholder, a kind (carried, not yet
+routed on), the state it hands its children
+(`inherit`, see "Inherited state" below), and, for an element type
+with geometry, its own box (`spatial_bounds`). A payload implements
+`Mutation<E>`: one `apply_to(target, inherited)`, plus the shape of
+its builder template. The glyph trees are the first instantiation —
+`GfxElement` with the `GfxMutation` payload — and
+`util::engine_isolation`'s scan holds the engine to importing nothing
+from `gfx_structs`, `mindmap` or `font`.
+
+### `Tree<E>`
+
+An arena-backed forest of typed nodes plus the element type's
+per-tree derived state, representing one layer of content.
 
 A `Tree` is how Baumhard stores anything
 hierarchical that needs to render or be hit-tested: one tree for the
@@ -152,55 +170,69 @@ the console overlay, and so on. Every node in a tree is reached
 through an opaque `NodeId` — not a pointer, not an index — so the
 tree can be rearranged, cached, or serialized without invalidating
 references. Nodes are `Clone`, mutation is in-place (never
-rebuild-the-arena), and both AABB caches and an optional region
-index ride along so hit-testing stays cheap.
+rebuild-the-arena).
 
-Defined in
-`lib/baumhard/src/gfx_structs/tree.rs`. Wraps `indextree::Arena<T>`;
-adds `root: NodeId`, `layer: usize`, an AABB cache (`Cell<Option<...>>`
-because the values are `Copy`), a subtree-AABB dirty flag, and an
-optional `RegionParams` + `RegionIndexer` seam for future spatial
-queries. The blessed iteration primitives are
-`NodeId::children(&arena)` and `descendants(&arena)`; collecting
-into a `Vec<NodeId>` is a code smell. Every `MutatorTree::apply_to`
-call invalidates the AABB cache once, not per-field.
+Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
+`indextree::Arena<E>`; adds `root: NodeId`, `layer: usize`, and
+`cache: E::Cache` — the element type's `TreeCache`, which the walker
+invalidates whenever it applies a mutator. The glyph tree,
+`GfxTree = Tree<GfxElement>`, keeps its AABB memo
+(`Cell<Option<...>>` because the values are `Copy`), its subtree-AABB
+dirty flag, and an optional `RegionParams` + `RegionIndexer` seam
+there (`GlyphTreeCache`, `lib/baumhard/src/gfx_structs/tree.rs`),
+and only glyph trees answer the spatial queries (`descendant_at`,
+`descendant_near`, `descendants_aabb`). The blessed iteration
+primitives are `NodeId::children(&arena)` and
+`descendants(&arena)`; collecting into a `Vec<NodeId>` is a code
+smell. Every `MutatorTree::apply_to` call leaves the cache
+invalidated; nothing invalidates it per field.
 
-### `MutatorTree<M>`
+### `MutatorTree<E, M>`
 
 The mutation-side mirror of a `Tree`: same shape,
-carrying deltas instead of values.
+carrying `Mutator`s instead of elements.
 
 If `Tree` is the *noun*, `MutatorTree` is the
-*verb*. A `MutatorTree<GfxMutator>` describes a change to apply to a
-`Tree<GfxElement, GfxMutator>`: "mutate the third child's text,
-shrink the font on every descendant of channel 2, repeat until the
-predicate fails." The tree walker pairs the two up by channel (or
-sibling position, depending on the instruction), applies matching
-deltas in place, and leaves the rest alone. This is the seam custom
-mutations ([§4](#4-the-mutation-framework)) ride on.
+*verb*. A `GfxMutatorTree` describes a change to apply to a
+`GfxTree`: "mutate the third child's text, shrink the font on every
+descendant of channel 2, repeat until the predicate fails." The
+walker pairs the two up by channel (or sibling position, depending on
+the instruction), applies matching mutations in place, and leaves the
+rest alone. This is the seam custom mutations
+([§4](#4-the-mutation-framework)) ride on.
 
-Also in
-`lib/baumhard/src/gfx_structs/tree.rs`. Minimal — an `Arena<T>` and
-a `root: NodeId`. No spatial data: mutators are pure deltas, they do
-not render. The trait bound `TreeNode` requires a `void()` sentinel
-for padding the mutator's shape to match the target's when channels
-do not line up. `MutatorTree<GfxMutator>::apply_to(&mut target)` is
-the whole entry point; it calls `walk_tree_from` under the hood.
+Also in `lib/baumhard/src/engine/tree.rs`. Minimal — an
+`Arena<Mutator<E, M>>` and a `root: NodeId`. No derived state:
+mutators are pure deltas, they do not render. The root of an empty
+mutator tree is a channel-0 `Mutator::Void`, which pads the mutator's
+shape to match the target's when channels do not line up.
+`MutatorTree::apply_to(&mut target, &seed)` is the whole entry point;
+it calls `walk_tree_from` under the hood.
+
+**Inherited state.** Some mutations need a value their element
+inherits rather than stores. The walker carries `E::Inherited` down
+every walk: `seed` is the state of the walk root's parent, a mutation
+receives its target's *parent's* state, and each element hands its
+children `inherit(parent's state)` computed after its own mutations
+in the same walk. The state lives on the walker's call stack — never
+on an element, never in a tree, no allocation per visited node. The
+glyph trees inherit nothing (`Inherited = ()`, seed `&()`).
 
 ### `Applicable<T>`
 
 A one-method dispatch trait: "apply this delta to that
 value".
 
-Almost every mutation primitive in Baumhard
-implements `Applicable` against its target type. `MutatorTree<M>
-: Applicable<Tree<T, M>>` is the big one, but there are also
+Every field-level mutation primitive in Baumhard implements
+`Applicable` against its target type:
 `DeltaGlyphArea: Applicable<GlyphArea>`,
 `DeltaGlyphModel: Applicable<GlyphModel>`,
 `GlyphAreaCommand: Applicable<GlyphArea>`, and so on. The shape is
 always `fn apply_to(&self, target: &mut T)`. This keeps the
 vocabulary uniform: to learn how a new delta works, look at its
-`apply_to` and nothing else.
+`apply_to` and nothing else. The element-level counterpart is the
+engine's `Mutation<E>` (above): `GfxMutation` routes each payload to
+one of these.
 
 Defined in `lib/baumhard/src/core/primitives.rs`.
 The trait is deliberately minimal; no associated types, no `Result`.
@@ -388,7 +420,7 @@ caller moves a range whose bounds came from a document, and the
 unchecked predecessor wrapped silently in release, turning a
 far-right region into a far-left one.
 
-### `Channel` and `BranchChannel`
+### `Channel`
 
 An integer routing tag on every node. The tree walker
 matches mutator nodes to target nodes by equal channel within a
@@ -403,11 +435,10 @@ is within-sibling only. Siblings on the same channel form a
 primitive that makes a single mutation selective without naming
 child indices.
 
-The `BranchChannel` trait
-(`lib/baumhard/src/gfx_structs/tree.rs`) is a one-method trait
-`fn channel(&self) -> usize`. Both `GfxElement` and `GfxMutator`
-implement it. The walker calls it to align children. In the
-mindmap domain, `MindNode.channel` is where this surfaces to
+An element type answers `TreeElement::channel`
+(`lib/baumhard/src/engine/element.rs`), and every `Mutator` carries
+its own `channel` field; the walker reads both to align children.
+In the mindmap domain, `MindNode.channel` is where this surfaces to
 end users; see [§3: Channels](#channels-mindmap-level).
 
 Children arrive at the walker in **Dewey-id order**
@@ -476,10 +507,11 @@ the latter is the mutation-fired kind the `Flag::MutationEvents`
 seam is reserved for. `GlyphTreeEventInstance` wraps the kind with a
 timestamp;
 `EventSubscriber` is
-`Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance)
- + Send + Sync>>`. The `Arc<Mutex<…>>` shape exists so that
-cloning an element (as the arena does) keeps a single callback
-reachable from every clone rather than duplicating state.
+`Rc<RefCell<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance)>>`
+(`lib/baumhard/src/gfx_structs/tree.rs`). The `Rc<RefCell<…>>` shape
+exists so that cloning an element (as the arena does) keeps a single
+callback reachable from every clone rather than duplicating state;
+the event loop is single-threaded, so nothing needs `Send`.
 
 Today the mindmap app does not use subscribers
 heavily — most interaction goes through the application's own
@@ -499,7 +531,12 @@ the `Comparator` (equals, not-equals, greater-than, etc.) to use
 against each; the walker evaluates it per candidate node and
 decides whether to recurse.
 
-`lib/baumhard/src/gfx_structs/predicate.rs`.
+`lib/baumhard/src/engine/predicate.rs`. `Predicate<E>` is generic:
+its fields are the element type's own selector, `E::Field`, and the
+element answers each `(field, comparator)` pair through the `Inspect`
+trait. The glyph answer — `GfxElementField` over `GlyphArea`,
+`GlyphModel`, regions, channel, id and flags — is
+`lib/baumhard/src/gfx_structs/inspect.rs`.
 Pure data (serializable); typical predicates carry one or two
 fields, so evaluation is effectively `O(1)`. Float comparisons
 use `almost_equal`, whose epsilon is `ERROR_TOLERANCE_ALMOST_EQUAL`,
@@ -510,9 +547,8 @@ declared beside it
 
 ### `Instruction`
 
-The four control-flow primitives a `GfxMutator` can
-carry: `RepeatWhile`, `SpatialDescend`, `MapChildren`, and
-`RotateWhile` (reserved).
+The three control-flow primitives a `Mutator` can
+carry: `RepeatWhile`, `SpatialDescend`, and `MapChildren`.
 
 Most mutations are direct: apply this delta to
 this node. Some need to loop ("apply this to every descendant
@@ -523,51 +559,55 @@ siblings, zip-style"). `Instruction` is the vocabulary. This is
 how one custom mutation can sweep a whole subtree without
 hand-listing every target.
 
-`lib/baumhard/src/gfx_structs/mutator.rs`.
+`lib/baumhard/src/engine/mutator.rs`.
 - `RepeatWhile(Predicate)` — iterates children, applies mutator
   children while predicate holds, stops on failure. Aligns by
   channel (broadcast semantics).
-- `SpatialDescend(OrderedVec2)` — finds the deepest node whose
-  subtree AABB contains the given point, applies the mutation
-  there. Bypasses channel alignment.
+- `SpatialDescend(OrderedVec2)` — finds the smallest descendant
+  whose own box (`TreeElement::spatial_bounds`) contains the given
+  point, applies the mutation there. Bypasses channel alignment.
+  Only for an element type with geometry — the glyph trees; the
+  builder refuses it for any other.
 - `MapChildren` — zips mutator children to target children
   **strictly by sibling position**, ignoring channels. The
   right shape for size-aware layouts where index matters more
   than tag.
-- `RotateWhile(f32, Predicate)` — reserved AST variant; walker
-  is a no-op stub today.
 
-### `GfxMutator`
+`RotateWhile` is not part of V1; its design is V2 sub-issue #265.
 
-The mutator-side node type, mirroring `GfxElement`:
-`Single`, `Macro`, `Void`, or `Instruction` variants.
+### `Mutator` and `GfxMutator`
 
-Every node of a `MutatorTree` is a
-`GfxMutator`. The four variants cover "one field change here",
+The mutator-side node type: `Single`, `Macro`, `Void`, or
+`Instruction` variants.
+
+Every node of a `MutatorTree<E, M>` is a
+`Mutator<E, M>`; the glyph trees' is
+`GfxMutator = Mutator<GfxElement, GfxMutation>`. The four variants
+cover "one field change here",
 "a batch of changes on this target", "structural padding", and
 "control flow with nested children". Together with
 [`Instruction`](#instruction) and
 [`Predicate`](#predicate-and-comparator) they form a small but
 complete mutation language.
 
-`lib/baumhard/src/gfx_structs/mutator.rs`.
-Implements `BranchChannel`. The `Mutation` payload can be an
-`AreaDelta`, `AreaCommand`, `ModelDelta`, `ModelCommand`,
-`Event`, or `None`. A `Macro` carries a `Vec<Mutation>` applied
-in order to the same target, plus optional `children` for
-descendant instruction nodes.
+`lib/baumhard/src/engine/mutator.rs`. A `Macro` carries a `Vec<M>`
+applied in order to the same target, plus optional `children` for
+descendant instruction nodes. A mutator that carries no payload says
+so structurally — a `Void`, or an `Instruction` whose `mutation` is
+`None` — so a payload type has no no-op variant.
 
-### `Mutation` enum
+### `GfxMutation` enum
 
-The payload union: which kind of delta or command
-this mutator carries.
+The glyph payload union: which kind of delta or command
+a glyph mutator carries.
 
 A mutation is not one uniform thing — a
 `GlyphArea` and a `GlyphModel` accept different kinds of change.
-The `Mutation` enum is the sum type covering all of them: two
+The `GfxMutation` enum is the sum type covering all of them: two
 flavors each for area and model (field-level `Delta` vs.
-imperative `Command`), plus `Event` (subscriber dispatch) and
-`None` (structural placeholder).
+imperative `Command`), plus `Event` (subscriber dispatch). It
+implements the engine's `Mutation<GfxElement>`; its builder template
+is a list of `CellField` slots (`gfx_structs/template.rs`).
 
 `lib/baumhard/src/gfx_structs/mutator.rs`.
 Each variant boxes its payload to keep the enum compact. Type
@@ -614,8 +654,8 @@ edits, model position). `DeltaGlyphModel` wraps them with an
 `ApplyOperation`. `GlyphModelCommand` is the named-operation
 counterpart for things that don't fit arithmetic — row pops,
 matrix-coordinate moves, rotations. All three ride in the
-`Mutation::ModelDelta` / `Mutation::ModelCommand` variants of
-[`GfxMutator`](#gfxmutator).
+`GfxMutation::ModelDelta` / `GfxMutation::ModelCommand` variants of
+the [glyph payload](#gfxmutation-enum).
 
 ### `GlyphAreaCommand`
 
@@ -820,42 +860,46 @@ The recursive dispatch engine (a set of functions, not a type) that walks a
 Every mutation that ever lands on an element
 goes through the walker — `MutatorTree::apply_to` just calls
 `walk_tree_from`. The walker aligns children by channel (or by
-position, depending on instruction), recurses, and dispatches
-deltas to `Applicable::apply_to` at the leaves. Cost is `O(sum
-of matching pairs)` — pruned branches are free.
+position, depending on instruction), recurses, and dispatches each
+payload to `Mutation::apply_to` with the target's parent's
+[inherited state](#mutatortreee-m). Cost is `O(sum of matching
+pairs)` — pruned branches are free.
 
-`lib/baumhard/src/gfx_structs/tree_walker.rs`.
+`lib/baumhard/src/engine/walker.rs`, generic over the element type
+and the payload — no `dyn`, no `Any`, no runtime type checks.
 Key functions: `walk_tree_from` (the entry), `align_child_walks`
 (the channel-based pairing), `process_instruction_node` (the
-loop/spatial/map dispatch), `DEFAULT_TERMINATOR` (the closure
+loop/spatial/map dispatch), `default_terminator` (the continuation
 that resumes normal channel alignment after a `RepeatWhile`
 exits). Branchless enough that matching-pair cost dominates.
 
-### Mutator builder DSL — `MutatorNode`, `SectionContext`, `Repeat`, runtime holes
+### Mutator builder DSL — `MutatorNode`, `BuildContext`, `Repeat`, runtime holes
 
-A serde-friendly AST (`MutatorNode`) that compiles
-to a `MutatorTree<GfxMutator>` at apply time, with a
-`SectionContext` for runtime value injection.
+A serde-friendly AST (`MutatorNode<E, M>`) that compiles
+to a `MutatorTree<E, M>`, with a `BuildContext` for runtime value
+injection.
 
-Declaring mutators by hand as
-`MutatorTree<GfxMutator>` is fine for Rust code but hostile to
-JSON authoring. The builder DSL solves this: authors write
-`MutatorNode` in JSON (the shape is nearly identical to
-`GfxMutator` but serializable and with `Repeat` for "N
-consecutive channels with the same template"), and the builder
-walks the AST with a `SectionContext` to resolve runtime values
-(counts, fields, dynamically-chosen mutations) into a concrete
-tree ready for `walk_tree_from`. This is the seam
+Declaring mutators by hand as a `GfxMutatorTree` is fine for Rust
+code but hostile to JSON authoring. The builder DSL solves this:
+authors write `MutatorNode` in JSON (the shape is nearly identical
+to `Mutator` but serializable and with `Repeat` for "N consecutive
+channels with the same template"), and the builder walks the AST
+with a `BuildContext` to resolve runtime values (counts, templates,
+dynamically-chosen mutations) into a concrete tree ready for
+`walk_tree_from`. This is the seam
 [custom mutations](#4-the-mutation-framework) attach to.
 
-`lib/baumhard/src/mutator_builder/`. The AST:
+`lib/baumhard/src/engine/builder/`. The AST:
 `MutatorNode::{Void, Single, Macro, Instruction, Repeat}`. The
-indirection enums `ChannelSrc`, `CountSrc`, `MutationSrc` each
-have a `Literal` variant (inline) and a `Runtime(String)` or
-`SectionIndex` variant that consults the `SectionContext`
-trait at build time. `build(ast, context)` returns a
-`MutatorTree<GfxMutator>` with `Repeat` expanded to N children
-on consecutive channels.
+indirection enums `ChannelSrc` and `CountSrc` have a `Literal`
+variant (inline) and a `SectionIndex` or `Runtime(String)` variant;
+`MutationSrc` is a payload `Template` resolved per `Repeat`
+iteration, a `Runtime(String)` mutation, or `None`; the runtime
+ones consult the `BuildContext` trait at build time.
+`build(ast, context)` returns a `MutatorTree<E, M>` with `Repeat`
+expanded to N children on consecutive channels, or a `BuildError`
+for a shape no mutator tree can express (a root `Repeat`, a
+`SpatialDescend` for an element type with no geometry, …).
 
 ### Font system — `FONT_SYSTEM`, `AppFont`, `attrs_list_from_regions`, `RegionFamilies`, `rich_text_spans_from_regions`
 
@@ -1334,7 +1378,7 @@ default to channel 0 and behave as if the field did not exist.
 
 Stored as `usize` on `MindNode`; preserved
 through tree builder onto the corresponding `GfxElement.channel`;
-consulted by [`BranchChannel`](#channel-and-branchchannel) at walk
+consulted by the walker's [channel alignment](#channel) at walk
 time. Full reference:
 [`format/channels.md`](./format/channels.md).
 
@@ -1715,7 +1759,7 @@ walks the parent chain at O(depth) per call.
 ### Tree builder
 
 Projects a `MindMap` into a Baumhard
-`Tree<GfxElement, GfxMutator>` mirroring the parent-child
+`GfxTree` mirroring the parent-child
 structure, with each `MindNode` materializing as a three-deep
 subtree (container + section-areas + section-models).
 
@@ -1742,7 +1786,7 @@ mind-node. Section-areas (and section-models) carry
 
 ### Canvas-role projection
 
-Projects a `MindMap` into one `Tree<GfxElement, GfxMutator>` per
+Projects a `MindMap` into one `GfxTree` per
 canvas role (`CanvasRole`, eight of them) — borders, connections,
 connection labels, portals, section frames, and the three handle
 families — beside the node tree the [tree builder](#tree-builder)
@@ -1998,21 +2042,23 @@ won a given id.
 ### Declarative path — `MutatorNode` AST
 
 A pure-data AST that compiles to a
-`MutatorTree<GfxMutator>` and runs through the standard tree
+`GfxMutatorTree` and runs through the standard tree
 walker.
 
 Any mutation expressible as a tree of
 field-level deltas with control-flow instructions belongs here.
 This is the default: write JSON, the runtime walks it. The AST
-shape mirrors `GfxMutator` — `Void`, `Single`, `Macro`,
+shape mirrors `Mutator` — `Void`, `Single`, `Macro`,
 `Instruction` — plus a `Repeat` wrapper for "N consecutive
 children at consecutive channels with the same template" (the
 flower-petal pattern, etc.).
 
-`build(ast, context)` in `lib/baumhard/src/mutator_builder/build.rs`
+`build(ast, context)` in `lib/baumhard/src/engine/builder/build.rs`
 walks the AST recursively, expands `Repeat` to N children with
-incrementing channels, resolves `Runtime("<label>")` holes via the
-`SectionContext`, and returns a fully-inflated `MutatorTree`. The
+incrementing channels, resolves `Runtime("<label>")` holes and
+per-iteration `Template`s via the `BuildContext`, and returns a
+fully-inflated `MutatorTree` — or a `BuildError` for a shape no
+mutator tree can express. The
 walker then applies it via `apply_to`. After application, changed
 elements are synced back to the model so the change persists across
 the next scene build.
@@ -2203,7 +2249,7 @@ slot. The app-side `AnimationInstance` that ticks it lives in
 yet wired. When it lands, mutations will compose into chains
 and oscillations without scripting.
 
-### Runtime holes — `SectionContext`
+### Runtime holes — `BuildContext`
 
 A trait the host implements to feed runtime values
 into a `MutatorNode` AST at build time.
@@ -2211,23 +2257,28 @@ into a `MutatorNode` AST at build time.
 Some mutations need values the AST can't
 inline — the count of currently-visible children, the cursor
 position when invoked, a field looked up from the selected
-node. `MutationSrc::Runtime("<label>")` and
+node. `MutationSrc::Runtime("<label>")`,
+`MutationListSrc::Runtime("<label>")` and
 `CountSrc::Runtime("<label>")` defer those holes to a
-`SectionContext` registered per-mutation-id; the builder consults
-it as it walks. Pure-data mutations (no holes) use a no-op
-context.
+`BuildContext` registered per-mutation-id, and a
+`MutationSrc::Template` is resolved by it per `Repeat` iteration;
+the builder consults it as it walks. Pure-data mutations (no holes)
+use `NoRuntime`, the context that supplies nothing.
 
-`lib/baumhard/src/mutator_builder/context.rs`. The trait's five
-methods all have default bodies, so a context implements only the
-holes its mutation uses: `count(&self, name) -> usize`,
-`area(&self, section, index) -> &GlyphArea`, `field(&self, section,
-index, template) -> GlyphAreaField` (derived from `area` by
-default), `mutation(&self, label) -> Mutation` and
-`mutation_list(&self, label) -> Vec<Mutation>`. The defaults
-`unreachable!` rather than return a placeholder, because a hole the
-AST names and the context does not fill is an authoring error, not
-a runtime value. Custom mutations register their context at apply
-time so the build produces the right concrete tree.
+`lib/baumhard/src/engine/builder/context.rs`. `BuildContext<E, M>`
+has four methods: `count(&self, name) -> usize`,
+`mutation(&self, label) -> M` and `mutation_list(&self, label) ->
+Vec<M>` have default bodies that `unreachable!` rather than return a
+placeholder, because a hole the AST names and the context does not
+fill is an authoring error, not a runtime value; `resolve(&self,
+section, index, template) -> M` has none, because what a template
+means is the payload's to say. A glyph context resolves a
+`Vec<CellField>` template into an `AreaDelta` with the helpers in
+`gfx_structs/template.rs` — from a pre-built `GlyphArea` per cell
+(`resolve_from_area`), or field by field on a hot path
+(`area_delta_from_template`). Custom mutations register their
+context at apply time so the build produces the right concrete
+tree.
 
 ---
 
@@ -3239,7 +3290,7 @@ the whole point (see
 
 `src/application/scene_host.rs` (`struct AppScene`). Each
 role has named slots (`CanvasRole`, `OverlayRole`); each slot
-has a corresponding `Tree<GfxElement, GfxMutator>` and a
+has a corresponding `GfxTree` and a
 mutator registry. The same idiom drives both canvas-role
 rebuilds (in `scene_rebuild.rs`) and overlay-role rebuilds
 (console text changes, color picker re-layout).
