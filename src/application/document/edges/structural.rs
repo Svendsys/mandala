@@ -3,7 +3,7 @@
 //! Edge structural mutations — hit-testing handles, position resets,
 //! anchor/curve toggles, edge-index lookup. Houses the shared internal
 //! helpers (`mutate_edge`, `commit_throttled_edge_drag`,
-//! `ensure_glyph_connection`) that every per-axis style setter routes
+//! `ensure_glyph_connection_inline`) that every per-axis style setter routes
 //! through.
 
 use glam::Vec2;

@@ -22,15 +22,15 @@
 //! and manifest — never a map, and never the socket.
 //!
 //! **Two apps, one client.** A native app is reached over its `--ipc`
-//! Unix socket; a browser app over a WebSocket, through the relay this
-//! crate also is — `mandalactl bridge` (the `bridge` module), which a
-//! page opened with `?ipc=<its app URL>` connects to and `--ws <its
-//! controller URL>` drives (`format/ipc.md` §Transport "Browser"). The
-//! commands are the same; what differs is written in `--help`. The
-//! crate compiles for `wasm32-unknown-unknown` too (the workspace is
-//! type-checked for it) with both transports and the relay stubbed or
-//! absent, since the browser is the app's side of the relay, never the
-//! controller's.
+//! Unix socket, or its named pipe on Windows (#169); a browser app over
+//! a WebSocket, through the relay this crate also is — `mandalactl
+//! bridge` (the `bridge` module), which a page opened with `?ipc=<its
+//! app URL>` connects to and `--ws <its controller URL>` drives
+//! (`format/ipc.md` §Transport "Browser"). The commands are the same;
+//! what differs is written in `--help`. The crate compiles for
+//! `wasm32-unknown-unknown` too (the workspace is type-checked for it)
+//! with every transport and the relay stubbed or absent, since the
+//! browser is the app's side of the relay, never the controller's.
 //!
 //! The lints below are CODE_CONVENTIONS §9's `unwrap()` rule in its
 //! editor-time form; `baumhard::util::unwrap_posture` is the gate.
@@ -42,25 +42,29 @@ mod assemble;
 mod bridge;
 mod cli;
 // The frame reader, the greeting check and the connection's constants
-// are read only by the Unix client. Off Unix the modules compile with
-// nothing draining them — the same shape as `ipc`'s envelope in the app
-// crate, scoped the same way so the Unix lint stays fully armed, and
-// gone when a named-pipe transport (#169) lands.
+// are read by the native clients — the Unix socket, the Windows pipe
+// and the WebSocket. Elsewhere (the wasm32 type-check) the modules
+// compile with nothing draining them, scoped so the native lint stays
+// fully armed.
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 mod client;
 mod help;
 mod params;
 mod render;
 mod run;
 pub mod verbs;
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 mod wire;
 
 #[cfg(all(test, unix))]
 mod loopback_tests;
 #[cfg(all(test, unix))]
 mod testing;
+#[cfg(test)]
+mod words;
 #[cfg(all(test, unix))]
 mod ws_tests;
 
+pub use client::pipe_path;
 pub use run::{run, Env, Exit, Io};
 pub use wire::{redacted, BRIDGE_ATTACHED, BRIDGE_DETACHED, BRIDGE_KEY, FRAME_CAP, PROTOCOL, REQUEST_CAP};

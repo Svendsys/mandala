@@ -101,9 +101,9 @@ const WAIT_MAX_MS: u128 = 60_000;
 /// The `timeout_ms` the server gives a `clock.wait` that names none.
 const WAIT_DEFAULT_MS: u64 = 10_000;
 
-const NO_SOCKET: &str = "no app named. Pass --ipc <path> or set MANDALA_IPC for a native app (start it with: \
-                         mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"), or --ws <url> or \
-                         MANDALA_WS for a browser app behind `mandalactl bridge`";
+const NO_SOCKET: &str = "no app named. Pass --ipc <path> (on Windows, a pipe name) or set MANDALA_IPC for a native \
+                         app (start it with: mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"), or \
+                         --ws <url> or MANDALA_WS for a browser app behind `mandalactl bridge`";
 
 /// The command the client writes the browser's inline screenshot for
 /// (`format/ipc.md` §Transport "Browser").
@@ -112,7 +112,7 @@ const SCREENSHOT_COMMAND: &str = "capture.screenshot";
 /// The environment, as [`run`] reads it: the two discovery variables.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Env<'a> {
-    /// `$MANDALA_IPC`: a native app's socket.
+    /// `$MANDALA_IPC`: a native app's socket, or its pipe name on Windows.
     pub ipc: Option<&'a str>,
     /// `$MANDALA_WS`: a browser app's relay, its controller URL.
     pub ws: Option<&'a str>,

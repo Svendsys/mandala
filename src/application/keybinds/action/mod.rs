@@ -978,8 +978,8 @@ pub enum WasmCompatibility {
     /// Action works identically on native and WASM today. Its
     /// dispatch arm reads / writes only state both targets have:
     /// `MindMapDocument`, `Renderer`, `TextEditState`, mouse
-    /// gestures, the macro registry. Safe to fire from a WASM
-    /// `dispatch_action_for_wasm` once that path is built.
+    /// gestures, the macro registry. Safe to fire from the browser's
+    /// `dispatch_compatible` path.
     Compatible,
     /// Action requires a native-only system not yet ported to
     /// WASM (console, color picker, inline label / portal-text

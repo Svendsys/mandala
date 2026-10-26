@@ -91,7 +91,9 @@ path. The one sanctioned exception running today is the native
 [`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* an
 `AtomicU64` ping; CODE_CONVENTIONS §3 additionally sanctions the
 [IPC boundary threads](#ipc-server-ipcserver), which run only under
-`--ipc`, move protocol values and never touch app state. Lock
+`--ipc`, move protocol values and never touch app state (on Windows,
+with one tokio runtime worker driving the named pipe's I/O beneath
+them). Lock
 scopes stay trivial because of this.
 
 ### Model / view separation
@@ -3560,9 +3562,9 @@ and `document_revision`.
 module and one line to the registry's family table; recording
 (IPC-08) and headless mode (IPC-10) draw through the same
 parameterized frame the screenshot engine does.
-**Caveat:** Unix-only today — Windows fails `--ipc` at startup until
-the named-pipe adapter lands, and the browser has no socket at all
-(`CLAUDE.md` "Dual-target status").
+**Caveat:** native only — a Unix socket, or a named pipe on Windows
+(#169) — and the browser has no socket at all (`CLAUDE.md`
+"Dual-target status").
 
 ### Screenshot capture
 

@@ -72,39 +72,7 @@ pub fn against(server: &FakeServer, line: &str) -> Outcome {
     invoke(&format!("--ipc {} {line}", server.path().display()), None, "")
 }
 
-/// A minimal shell word splitter: whitespace separates, single and
-/// double quotes group, nothing else is special — enough to read what
-/// a copy-paste into `sh` would hand the program.
-pub fn split(line: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut quote: Option<char> = None;
-    let mut started = false;
-    for c in line.chars() {
-        match (quote, c) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), c) => current.push(c),
-            (None, '\'' | '"') => {
-                quote = Some(c);
-                started = true;
-            }
-            (None, c) if c.is_whitespace() => {
-                if started {
-                    words.push(std::mem::take(&mut current));
-                    started = false;
-                }
-            }
-            (None, c) => {
-                current.push(c);
-                started = true;
-            }
-        }
-    }
-    if started {
-        words.push(current);
-    }
-    words
-}
+pub use crate::words::split;
 
 /// The greeting a real app sends first.
 pub fn hello() -> Value {

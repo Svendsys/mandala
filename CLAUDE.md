@@ -89,15 +89,26 @@ Native desktop and the browser build are first-class peers
 sanctioned native-only carve-outs; each entry names the reason and
 the parity trajectory (or why none is owed):
 
-- **IPC: the Unix-socket transport** (`--ipc`,
-  `src/application/ipc/transport/`; IPC-02/#62) — native-only by
-  nature: a browser cannot serve a local socket. **The protocol is
-  not gated, since IPC-15 (#75)**: the envelope, the registry,
-  every command family and the event stream (`src/application/ipc/`,
-  `app/ipc_target.rs` on native, `app/run_wasm/ipc_target.rs` on the
-  browser) compile and run on both targets, and the browser has a
-  transport of its own — a WebSocket *toward* a loopback relay,
-  `mandalactl bridge`, opened when the page is loaded with
+- **IPC: the native transports** (`--ipc`,
+  `src/application/ipc/transport/`; IPC-02/#62, #169) — native-only by
+  nature: a browser cannot serve a local socket or pipe. Within native
+  the transport is a Unix socket, or on Windows a named pipe
+  (`\\.\pipe\mandala-<name>`, `ipc/transport/pipe.rs`; #169) behind the
+  same boundary threads. The pipe is owner-only, except that an
+  elevated (run-as-administrator) launch makes the Administrators
+  group its owner, so any other elevated process of a member of that
+  group can connect too. The Windows half runs on CI's `windows-ipc`
+  job (`.github/workflows/test.yml`: clippy and the `ipc::` tests),
+  not in `./test.sh`, which cannot run it from Linux; locally
+  `cargo check --target x86_64-pc-windows-gnu -p mandala` type-checks
+  it. **The protocol is not gated, since IPC-15 (#75)**: the
+  envelope, the registry, every command family and the event stream
+  (`src/application/ipc/`, `app/ipc_target.rs` on native,
+  `app/run_wasm/ipc_target.rs` on the browser) compile and run on
+  both targets — as does the document revision the event stream
+  observes (`document/revision.rs`), a counter on the model — and the
+  browser has a transport of its own: a WebSocket *toward* a loopback
+  relay, `mandalactl bridge`, opened when the page is loaded with
   `?ipc=<the relay's app URL>` (`ipc/browser/`, `run_wasm/ipc.rs`;
   `format/ipc.md` §Transport "Browser"). What the browser does not
   serve, `describe` reports per command (`supported`,
@@ -105,12 +116,11 @@ the parity trajectory (or why none is owed):
   `unsupported`: `act.console` (the console shell is native, below)
   and the two `capture.record_*` commands (no recorder, no files);
   `act.action` refuses a `NativeOnly` `Action` the same way. The
-  client, `crates/mandalactl`, speaks both transports (`--ipc` /
-  `--ws`) with one command surface and is the relay. Within native
-  the transport is Unix-only for now: `--ipc` on Windows fails at
-  startup naming the gap, until the named-pipe adapter lands (#169).
-  Protocol: `format/ipc.md`; design: `work_plans/LLM_IPC.md` §D6 (as
-  amended by IPC-15).
+  client, `crates/mandalactl`, compiles on every target (the
+  workspace is type-checked for wasm32), speaks the socket, the pipe
+  and the WebSocket (`--ipc` / `--ws`) with one command surface, and
+  is the relay. Protocol: `format/ipc.md`; design:
+  `work_plans/LLM_IPC.md` §D6 (as amended by IPC-15).
 - **The screenshot engine, and recording** (`src/application/capture/`
   minus `geometry.rs`, `src/application/renderer/capture.rs`,
   `src/application/app/capture_flow.rs`,
@@ -408,9 +418,11 @@ the parity trajectory (or why none is owed):
   of this file, and every other document, is on your own care.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
-- **Drive the running app over IPC** (native, Unix): launch with
+- **Drive the running app over IPC** (native): launch with
   `--ipc <socket-path>` — `$XDG_RUNTIME_DIR/mandala.sock` is the
-  recommended place — then speak newline-delimited JSON to it, e.g.
+  recommended place; on Windows the value is a pipe name instead,
+  `--ipc mandala` serving `\\.\pipe\mandala-mandala`, and `mandalactl`
+  takes the same name — then speak newline-delimited JSON to it, e.g.
   `printf '{"id":1,"cmd":"ping"}\n' | nc -N -U $XDG_RUNTIME_DIR/mandala.sock`
   (`-N` closes the write half after the request; the server answers
   everything it received, then closes).

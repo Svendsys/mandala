@@ -28,6 +28,13 @@ serde_json.workspace = true
 png.workspace = true
 gif = "0.14.2"
 
+# The Windows client for the app's named pipe (`src/client.rs`, #169):
+# std can open a named pipe as a file but cannot bound a read or a write
+# on it, and the client's every wait is bounded. Used through its
+# blocking API only, so the client stays free of an async runtime.
+[target.'cfg(windows)'.dependencies]
+interprocess.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

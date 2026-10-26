@@ -3,7 +3,7 @@
 //! Usage forms, search tags and the unknown-subverb listing, all
 //! derived from the one [`Grammar`] declaration.
 //!
-//! Before this module, `Command::usage` and `Command::tags` were
+//! Before this module, `Command::usage` (gone) and `Command::tags` (gone) were
 //! `&'static str` literals that `help` printed verbatim and that
 //! nothing derived from the verb's key list. A key could be added,
 //! offered by the popup on the next keystroke, and stay absent from
@@ -111,7 +111,7 @@ fn push_form(head: &str, grammar: &Grammar, form: &Form) -> String {
 ///
 /// This is what makes the collapse above lossless, and it is also
 /// the first time `help` has published a verb's key vocabulary at
-/// all — `Command::tags` and `Command::usage` were hand-written
+/// all — `Command::tags` (gone) and `Command::usage` (gone) were hand-written
 /// literals that nothing derived from the key list, so `font
 /// range=` and `color range=` were each parseable, named in their
 /// verb's own rejection, and documented nowhere.

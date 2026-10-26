@@ -10,7 +10,7 @@
 //!   `AttrsList` for callers using `Editor::insert_string`.
 //! - [`crate::font::attrs::RegionFamilies`] +
 //!   [`crate::font::attrs::rich_text_spans_from_regions`] returns
-//!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`.
+//!   a `Vec<(&str, Attrs)>` for callers using `cosmic_text::Buffer::set_rich_text`.
 //!   (Full crate paths because rustdoc resolves intra-doc links inside
 //!   `//!` inner-module docs against the parent module's namespace,
 //!   not this module's own — `self::` and bare names both fail.)
@@ -287,7 +287,7 @@ impl<'r> RegionFamilies<'r> {
 }
 
 /// Fill `out` with the `(text_slice, Attrs)` span list ready for
-/// `Buffer::set_rich_text` from a pre-resolved [`RegionFamilies`].
+/// `cosmic_text::Buffer::set_rich_text` from a pre-resolved [`RegionFamilies`].
 /// One span per region; spans whose `[start, end)` byte slice is
 /// empty (out-of-range or zero-width region) are dropped silently —
 /// the renderer must not hand cosmic-text zero-width spans.

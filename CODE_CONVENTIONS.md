@@ -136,6 +136,15 @@ decision, not a drive-by edit.
     never trip the `FreezeWatchdog`. A full outbound queue pauses that
     controller's execution until its writer makes room, and a write
     that makes no progress for ten seconds tears the connection down.
+    On Windows (the named pipe, #169) the same threads run, plus one
+    more: a single tokio runtime worker, `mandala-ipc-io`, which
+    exists only while `--ipc` is active and touches no app state —
+    it drives the pipe's overlapped I/O, because a pipe has no write
+    timeout and a stalled client can be disconnected only through
+    tokio's safe API. Every boundary thread still blocks on one call
+    at a time (`Runtime::block_on`); nothing above the transport seam
+    is async, and the runtime is not a license for `tokio` anywhere
+    else (`work_plans/LLM_IPC.md` §D2).
 - **Model / view separation.** `MindMapDocument` owns the data model;
   `Renderer` owns GPU resources. The renderer reads intermediate
   representation (`Tree<GfxElement, GfxMutator>`, one per canvas
@@ -452,24 +461,38 @@ industrial cost/benefit reasoning. This is not license for speculation.
   rather than a fix-when-it-bites: the error names neither a file nor
   a line, so the only way to locate it is to bisect the doc comments.
   `[`Foo`](crate::path::to::Foo)` resolves.
-- **Prose must not name an item the same change deleted, and a
-  rename sweep is what catches it — with two blind spots worth
-  knowing before you trust one.** A doc that says "which the first
-  `insert` overwrites" after `insert` is gone reads as a pointer and
-  is a dead end; the same sentence inside a *control instruction* is
-  worse, because the next reader runs it. The sweep is: extract every
+- **Prose must not name an item the same change deleted. A gate
+  catches the backticked half; a rename sweep is still what catches
+  the rest — with two blind spots worth knowing before you trust
+  one.** A doc that says "which the first `insert` overwrites" after
+  `insert` is gone reads as a pointer and is a dead end; the same
+  sentence inside a *control instruction* is worse, because the next
+  reader runs it. `test_no_doc_names_an_identifier_that_does_not_exist`
+  (`lib/baumhard/src/util/doc_identifiers.rs`) reads every `///` and
+  `//!` on an item in the tree — `cfg(test)` and `cfg(wasm32)` modules
+  included; `//` comments, Markdown, doc comments on statements inside
+  a function body, and a span rustfmt wrapped across two doc lines are
+  not read — and fails on a backticked `snake_case` name that is
+  qualified (`Type::method`, `module::function`, `Self::…`) and not
+  declared by that type or module, or that is a bare multi-word name
+  no file's code writes and nothing declares. A deliberate mention of
+  a removed item is fine and sometimes required
+  — naming the input that made a regression test fail, or the shape a
+  rewrite replaced — and it carries its own disclosure so a reader is
+  never sent looking: write `(gone)` directly after the closing
+  backtick, `` `reclaim_sample_buffer` (gone) ``, which is both the
+  sentence's disclosure and the gate's opt-out; on a qualified name
+  the gate also fails when the marked thing still exists. The sweep
+  remains for what the gate's own doc lists as uncaught: extract every
   `fn` / `struct` / field name the change removed from its own diff,
   grep the tree for each, then triage. It found four such sentences in
   one series. What it does **not** find: (1) removed field names that
   are ordinary English words — `color`, `font`, `position` — where the
   prose is in a file the change never touched, so no qualified
-  spelling and no file-locality narrows the grep; (2) a sentence whose
-  every identifier still exists but whose *claim* went false, which
-  needs reading rather than matching. Both were real misses. A
-  deliberate mention of a removed item is fine and sometimes required
-  — naming the input that made a regression test fail, or the shape a
-  rewrite replaced — but it carries its own disclosure that the thing
-  is gone, so a reader is never sent looking.
+  spelling and no file-locality narrows the grep, and which the gate
+  does not read either; (2) a sentence whose every identifier still
+  exists but whose *claim* went false, which needs reading rather than
+  matching. Both were real misses.
 - **A figure derived from a recorded constant belongs beside the
   constant, not copied into prose.** Name the constant and state the
   relation; a number restated in a doc comment goes stale silently

@@ -86,7 +86,7 @@ fn edge_handle_mutator_round_trip_matches_full_rebuild() {
 /// Adding a control point (drag-midpoint-creates-cp) or
 /// switching selection from a 0-CP edge to a 1-CP edge must
 /// register as a structural change in the identity sequence,
-/// so the dispatcher in `update_edge_handle_tree` falls back to
+/// so the dispatcher in `update_connection_trees` falls back to
 /// a full rebuild rather than apply a mutator against a tree
 /// whose channel set has shifted.
 #[test]

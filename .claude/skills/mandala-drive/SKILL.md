@@ -503,7 +503,7 @@ cleans up after itself: it exits on its own, through the graceful path.
 
 | symptom | meaning | fix |
 |---|---|---|
-| app log: `mandala: --headless needs --ipc <socket> or --screenshot <path>` (panic, exit 101) | a headless launch nothing could drive or see | add `--ipc <sock>` or `--screenshot <png>`; every refused flag panics the same way, naming itself |
+| app log: `mandala: --headless needs --ipc <socket, or pipe name on Windows> or --screenshot <path>` (panic, exit 101) | a headless launch nothing could drive or see | add `--ipc <sock>` or `--screenshot <png>`; every refused flag panics the same way, naming itself |
 | app log: `renderer: no GPU adapter could be used without a window: …` (exit 101) | headless, and no adapter at all: no Vulkan ICD, no EGL | install `libvulkan1 mesa-vulkan-drivers`; the message lists what each attempt hit |
 | `--screenshot` exits `1`, log: `screenshot: … exists; set overwrite to replace it` | the one-shot's write guard: the PNG or its sidecar is already there | add `--overwrite`, or pick another path |
 | app log: `Library libxkbcommon-x11.so could not be loaded` (panic, exit 101) | a window (recipe (c)) in a container missing winit's X11 keyboard library | install `libxkbcommon-x11-0`, or launch `--headless`, which loads no winit backend |

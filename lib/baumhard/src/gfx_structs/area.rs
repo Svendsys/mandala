@@ -41,7 +41,7 @@ use log::warn;
 /// run extends `1.5 * font_size - corner_overlap` below it. A
 /// symmetric pad either over-extends top or under-extends bottom.
 /// Carrying four independent values lets the producer
-/// (`tree_builder::node::mindnode_to_glyph_area`) state the actual
+/// (`tree_builder::node::mindnode_container_area`) state the actual
 /// outward extent on each side.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EdgePadding {

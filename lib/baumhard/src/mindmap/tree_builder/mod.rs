@@ -355,7 +355,7 @@ impl MindMapTree {
 mod append_cost_tests {
     /// **The scene build must stay linear in the node count.**
     ///
-    /// `indextree::NodeId::append` calls `checked_append`, which walks
+    /// `indextree::NodeId::append` calls `NodeId::checked_append`, which walks
     /// `self.ancestors(arena)` looking for a cycle before every append.
     /// A `.mindmap.json` may declare a linear `parent_id` chain — a
     /// legal acyclic tree the loader accepts, with no depth bound

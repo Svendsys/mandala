@@ -220,8 +220,8 @@ fn take_rubber_band_for_target_picker(
 ///     is `single_line_edit_state`, a `NativeContextExt` field the
 ///     browser has no counterpart for; the arm below is that one
 ///     step and nothing else. `CreateOrphanNodeAndEdit` no longer
-///     appears here at all: `dispatch_create_orphan_and_edit` is
-///     gone and the mouse path reaches
+///     appears here at all: `dispatch_create_orphan_and_edit` (gone)
+///     went with it, and the mouse path reaches
 ///     `apply_create_orphan_node_and_edit` through
 ///     `DoubleClickRoute::CreateOrphanAndEdit`,
 ///   - a `DoubleClickActivate` dispatched with no `DispatchHit` at

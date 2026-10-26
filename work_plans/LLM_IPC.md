@@ -80,9 +80,9 @@ misread — come back here.
 **Decision.** Newline-delimited JSON over a Unix domain socket
 (`SOCK_STREAM`) at a user-owned path, enabled per launch by
 `--ipc <path>` (mirroring `--keybinds`). Windows: the same byte
-protocol over a named pipe restricted to the current user; IPC-02
-ships the Unix adapter and `--ipc` fails fast at startup on Windows
-until the pipe adapter lands. Single controller at a time; the
+protocol over a named pipe restricted to its owner, `--ipc <name>`
+naming the pipe; IPC-02 shipped the Unix adapter and #169 the pipe,
+behind the same boundary threads. Single controller at a time; the
 listener outlives client connections; no session state survives a
 disconnect. Full wire detail: `format/ipc.md` §Transport.
 
@@ -340,6 +340,19 @@ entire body is "blocking call, forward, repeat" are the most
 auditable shape this boundary can have; the single-controller
 promise (D-transport) is exactly why accept and read are *separate*
 blocking loops rather than one.
+
+*As built for Windows (#169):* the named pipe's transport runs a
+one-worker tokio runtime (`mandala-ipc-io`, `ipc/transport/pipe.rs`)
+under the same three threads, and it is not the loop rejected above.
+Each boundary thread still makes one blocking call at a time — the
+acceptor waits for one client, a reader for one read, a writer for one
+write step — through `Runtime::block_on`, so each body is still
+"blocking call, forward, repeat", written once above a four-trait seam
+(`ipc/transport/connection.rs`) that the Unix socket implements
+unchanged. No readiness state machine or partial-write buffering is
+written here: the worker is tokio's driver, and it exists because a
+pipe has neither a write timeout nor a safe way to disconnect a client
+stalled on one without it.
 
 **Watchdog interplay (pinned invariants).** Commands execute inside
 `about_to_wait`, which ticks `unparked()` on entry like every

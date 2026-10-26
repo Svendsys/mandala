@@ -38,9 +38,8 @@
 //! those, [`Connection::open`] fails naming the gap, the shape `ipc`'s
 //! own non-Unix stub has. On the browser build both are stubs, so the
 //! machinery between them — the line reader, the send classifier —
-//! has no caller there and is allowed to be dead on that target alone.
-
-#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+//! has no caller there and is allowed to be dead on that target alone
+//! (`lib.rs`).
 
 use std::path::PathBuf;
 use std::thread;
@@ -56,6 +55,39 @@ pub const BUSY_RETRY: Duration = Duration::from_secs(2);
 /// What to do when the socket cannot be reached, appended to the
 /// errors that mean "the app is not there".
 pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <socket-path>";
+
+/// The Windows pipe an `--ipc` value names: `--ipc <name>` is
+/// `\\.\pipe\mandala-<name>` (`format/ipc.md` §Windows), the same value
+/// the app was launched with. The app maps it by the same rule, and a
+/// test on its side holds the two together.
+///
+/// Compiled on every platform, not only Windows, so that test can run
+/// where CI runs everything.
+pub fn pipe_path(name: &str) -> Result<String, String> {
+    const PREFIX: &str = r"\\.\pipe\mandala-";
+    const NAME_MAX: usize = 256;
+    if name.is_empty() {
+        return Err("`--ipc` needs a pipe name on Windows, e.g. --ipc mandala".to_string());
+    }
+    if name.contains('\0') {
+        return Err(format!(
+            "`--ipc {name:?}`: a pipe name cannot contain a NUL character"
+        ));
+    }
+    if name.contains('\\') {
+        return Err(format!(
+            "`--ipc {name}`: on Windows the value names a pipe, not a path, and a pipe name cannot contain a backslash"
+        ));
+    }
+    let path = format!("{PREFIX}{name}");
+    let after_root = path.trim_start_matches(r"\\.\pipe\").encode_utf16().count();
+    if after_root > NAME_MAX {
+        return Err(format!(
+            "`--ipc {name}`: the pipe name `mandala-{name}` is {after_root} UTF-16 units; Windows allows {NAME_MAX}"
+        ));
+    }
+    Ok(path)
+}
 
 /// What to do when the relay cannot be reached.
 pub const BRIDGE_HINT: &str = "start the relay with: mandalactl bridge, and open the page with its app URL \

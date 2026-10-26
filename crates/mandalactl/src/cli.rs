@@ -109,7 +109,7 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
                 "ipc" => {
                     let path = value_of("--ipc", inline, &mut args)?;
                     if path.is_empty() {
-                        return Err("`--ipc` needs a socket path, e.g. --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"".to_string());
+                        return Err("`--ipc` needs a socket path (on Windows, the app's pipe name), e.g. --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"".to_string());
                     }
                     options.ipc = Some(path);
                 }

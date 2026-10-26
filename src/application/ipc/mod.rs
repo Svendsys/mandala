@@ -22,31 +22,23 @@
 //! command compile for both targets; what differs is the transport
 //! and the handful of commands the browser cannot serve, which the
 //! registry refuses by name (`registry::Support`). Native listens on a
-//! Unix socket (`transport`); the browser, which cannot listen, opens
-//! a WebSocket toward `mandalactl bridge` (`format/ipc.md` §Transport
-//! "Browser"). Within native, the transport is Unix-only until the
-//! Windows named-pipe adapter lands; until then `--ipc` on Windows
-//! fails at startup rather than doing nothing.
+//! Unix socket, or a named pipe on Windows (#169) (`transport`); the
+//! browser, which cannot listen, opens a WebSocket toward `mandalactl
+//! bridge` (`format/ipc.md` §Transport "Browser").
 
-// The envelope is transport-agnostic, but the only code that reads
-// what it builds is the Unix transport. Off Unix the module compiles
-// with nothing draining it — the same shape as the wasm32 allows in
-// `application/mod.rs`, scoped the same way so the Unix lint stays
-// fully armed, and gone when the named-pipe transport (#169) lands.
 // The browser transport's protocol half compiles on native under
 // `test` alone: its only native reader is the test suite, which is
 // what proves it (`browser/mod.rs`); the socket half is wasm32's.
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod browser;
 mod commands;
-#[cfg_attr(not(unix), allow(dead_code))]
 mod envelope;
 pub(crate) mod events;
 pub(crate) mod injected;
 mod registry;
 pub(crate) mod space;
 mod target;
-#[cfg(unix)]
+#[cfg(not(target_arch = "wasm32"))]
 mod transport;
 mod wait;
 
@@ -62,7 +54,7 @@ pub(crate) use target::{CanvasCapture, CanvasOutcome};
 // way the socket would run it, minus the socket.
 #[cfg(test)]
 pub(crate) use registry::tests::run_attached;
-#[cfg(unix)]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use transport::IpcServer;
 pub(crate) use wait::Settling;
 // Read by the one-shot capture's settle wait (`app/capture_flow.rs`),
@@ -79,7 +71,6 @@ pub(crate) use wait::Until;
 pub(crate) struct IpcWake;
 
 /// What executing one request produced.
-#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct Executed {
     /// The reply, or `None` for one held back: a `clock.wait` whose
     /// reply the transport sends when it resolves (`wait`).
@@ -100,52 +91,4 @@ pub(crate) struct DrainOutcome {
     /// The drain budget ran out with messages still queued; keep the
     /// loop iterating rather than parking.
     pub(crate) backlog: bool,
-}
-
-/// Stand-in for the transport where it does not exist yet — Windows,
-/// until the named-pipe adapter lands. `start` is the only way to
-/// obtain one and always fails, so the other methods are unreachable
-/// by construction — the uninhabited field proves it to the compiler.
-/// The browser is not this case: it has a transport of its own and no
-/// `IpcServer` at all.
-#[cfg(all(not(unix), not(target_arch = "wasm32")))]
-pub(crate) struct IpcServer {
-    never: std::convert::Infallible,
-}
-
-#[cfg(all(not(unix), not(target_arch = "wasm32")))]
-impl IpcServer {
-    pub(crate) fn start(
-        _path: &std::path::Path,
-        _wake: impl Fn() + Send + Sync + 'static,
-    ) -> Result<IpcServer, String> {
-        Err(
-            "the `--ipc` transport is not available on this platform yet: Windows needs the \
-             named-pipe adapter, tracked in #169 (format/ipc.md \"Windows\")"
-                .to_string(),
-        )
-    }
-
-    pub(crate) fn drain(
-        &mut self,
-        _execute: impl FnMut(&envelope::IpcRequest, &mut events::Session) -> Executed,
-    ) -> DrainOutcome {
-        match self.never {}
-    }
-
-    pub(crate) fn publish_map(&mut self, _path: Option<&str>) {
-        match self.never {}
-    }
-
-    pub(crate) fn wait_deadline(&self) -> Option<std::time::Instant> {
-        match self.never {}
-    }
-
-    pub(crate) fn evaluate_wait(&mut self, _app: Settling, _now: &events::Observed<'_>) {
-        match self.never {}
-    }
-
-    pub(crate) fn shutdown(self) {
-        match self.never {}
-    }
 }

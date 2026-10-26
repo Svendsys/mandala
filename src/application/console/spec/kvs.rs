@@ -77,8 +77,8 @@ pub fn read<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>>, Stri
 ///
 /// The two refusals every form owes, in one call: a kv it does not
 /// read, and an argument it has no slot for. Before the engine
-/// these were a `reject_extras` on four subverbs, a
-/// `reject_extra_positional` on three more, and nothing at all on
+/// these were a `reject_extras` (gone) on four subverbs, a
+/// `reject_extra_positional` (gone) on three more, and nothing at all on
 /// the rest — `border preset heavy color=#fff` dropped the color in
 /// silence on four surfaces.
 pub fn read_strict<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>>, String> {

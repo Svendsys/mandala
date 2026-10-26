@@ -336,7 +336,7 @@ mod tests {
     /// release half of the policy is only observable under
     /// `cargo test --release`; `./test.sh` runs the dev profile and
     /// exercises the `Trace` half. Both halves are asserted rather
-    /// than only the interesting one, because a `max_level_*` feature
+    /// than only the interesting one, because a `log/max_level_*` feature
     /// arriving from some future dependency would cap debug builds
     /// too and silently delete the instrumentation this repo debugs
     /// with.
