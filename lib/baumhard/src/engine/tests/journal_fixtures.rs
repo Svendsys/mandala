@@ -118,8 +118,8 @@ pub struct Scenario {
 /// The calls crowd one **busy row** — the children of a random node
 /// that has at least two — and a small focus set of anchors: walks are
 /// often anchored at the busy row's parent or at the focus set, and
-/// updates mostly pick a busy-row child and usually change its
-/// channel. So one builder often applies to an element in several
+/// updates mostly pick a busy-row child, sometimes a node of the focus
+/// set, and usually change its channel. So one builder often applies to an element in several
 /// calls, and often moves an element in one call next to an element
 /// another call moves later — the case where a position read at the
 /// later call's time would name a neighbor that has since moved.
@@ -153,9 +153,9 @@ pub fn scenario(seed: u64) -> Scenario {
                     anchors,
                 }
             } else {
-                let pool = match rng.random_range(0..5) {
+                let pool = match rng.random_range(0..6) {
                     0..=3 if !row.is_empty() => &row,
-                    3 => focus_nodes(&focus),
+                    4 => focus_nodes(&focus),
                     _ => &nodes,
                 };
                 let mutation = if rng.random_bool(0.7) {
