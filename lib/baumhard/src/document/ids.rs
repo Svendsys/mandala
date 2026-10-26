@@ -106,10 +106,13 @@ pub enum DocumentError {
     DuplicateIdent(NodeIdent),
     /// A node carries [`NodeIdent::UNASSIGNED`].
     UnassignedIdent(NodeId),
-    /// The highest ident is
-    /// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT): the
-    /// counter has no ident left to issue, and issuing one would reuse
-    /// an ident.
+    /// No ident is left to issue: the counter has passed
+    /// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT), and
+    /// issuing one would reuse an ident or make one no loader accepts.
+    /// The writer (V1-B4) returns it when asked to issue an ident while
+    /// [`Document::next_ident`] is `None`. Never returned at load: every
+    /// ident a load accepts leaves the counter within the bound or just
+    /// past it.
     IdentSpaceExhausted,
     /// A number is out of its bound: a node ident, or a count an index
     /// type cannot address — palettes, theme variables or variants,
@@ -152,10 +155,10 @@ impl Document {
     /// ([`validate_shape`] at the root, so the theme and the defaults
     /// are there), check every index bound (`bounds::MAX_PALETTES` and
     /// its siblings), index every node's ident, and start the ident
-    /// counter one past the highest ident (at least `1`). A tree whose
-    /// counter would have no ident left to issue is refused
-    /// ([`DocumentError::IdentSpaceExhausted`]), so the counter never
-    /// issues an ident twice.
+    /// counter one past the highest ident (at least `1`). An ident past
+    /// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT) is
+    /// refused; a highest ident at the bound loads, with no ident left
+    /// to issue.
     ///
     /// Only the root row is checked; whoever built the tree checks the
     /// rest — the loader calls [`validate_shape`] for every element as it
@@ -186,9 +189,6 @@ impl Document {
         }
         // `highest <= MAX_NODE_IDENT < u32::MAX`, so this cannot wrap.
         let next_ident = highest + 1;
-        if next_ident > bounds::MAX_NODE_IDENT {
-            return Err(DocumentError::IdentSpaceExhausted);
-        }
         Ok(Document {
             tree,
             ident_index,
@@ -215,9 +215,12 @@ impl Document {
         self.ident_index.get(&ident).copied()
     }
 
-    /// The ident the next inserted node will be given. O(1).
-    pub fn next_ident(&self) -> NodeIdent {
-        NodeIdent(self.next_ident)
+    /// The ident the next inserted node will be given, or `None` when
+    /// the counter has passed
+    /// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT) and no
+    /// ident is left to issue. O(1).
+    pub fn next_ident(&self) -> Option<NodeIdent> {
+        (self.next_ident <= bounds::MAX_NODE_IDENT).then_some(NodeIdent(self.next_ident))
     }
 
     /// The element at `id`, or `None` if `id` is not in the tree. O(1).

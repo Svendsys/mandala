@@ -22,7 +22,7 @@ pub fn do_document_idents_index_every_node() {
         assert_eq!(doc.node_by_ident(NodeIdent(ident)), Some(node));
     }
     assert_eq!(doc.node_by_ident(NodeIdent(5)), None);
-    assert_eq!(doc.next_ident(), NodeIdent(5));
+    assert_eq!(doc.next_ident(), Some(NodeIdent(5)));
 }
 
 #[test]
@@ -40,9 +40,12 @@ pub fn do_document_ident_counter_starts_past_the_highest() {
         for ident in order {
             builder.node_with(root, node_data(ident));
         }
-        assert_eq!(builder.build().unwrap().next_ident(), NodeIdent(41));
+        assert_eq!(builder.build().unwrap().next_ident(), Some(NodeIdent(41)));
     }
-    assert_eq!(DocumentBuilder::new().build().unwrap().next_ident(), NodeIdent(1));
+    assert_eq!(
+        DocumentBuilder::new().build().unwrap().next_ident(),
+        Some(NodeIdent(1))
+    );
 }
 
 #[test]
@@ -187,12 +190,13 @@ fn test_document_never_reissues_an_ident() {
     do_document_never_reissues_an_ident();
 }
 
-/// A map whose highest ident is `MAX_NODE_IDENT` has no ident left to
-/// issue and is refused, rather than given a counter that would reissue
-/// one; an ident past the bound is refused outright. Control: one below
-/// the bound leaves the counter `MAX_NODE_IDENT`.
+/// The bound and the refusal agree: a map whose highest ident is
+/// `MAX_NODE_IDENT` loads — the bound admits it — and has no ident left
+/// to issue, rather than a counter that would issue one no load accepts;
+/// an ident past the bound is refused outright. Control: one below the
+/// bound leaves the counter at `MAX_NODE_IDENT`.
 pub fn do_document_never_reissues_an_ident() {
-    use crate::document::bounds::{BoundError, MAX_NODE_IDENT};
+    use crate::document::bounds::{check_node_ident, BoundError, MAX_NODE_IDENT};
     let with_ident = |ident| {
         let mut builder = DocumentBuilder::new();
         let root = builder.root();
@@ -201,12 +205,11 @@ pub fn do_document_never_reissues_an_ident() {
     };
     assert_eq!(
         with_ident(MAX_NODE_IDENT - 1).unwrap().next_ident(),
-        NodeIdent(MAX_NODE_IDENT)
+        Some(NodeIdent(MAX_NODE_IDENT))
     );
-    assert_eq!(
-        with_ident(MAX_NODE_IDENT).unwrap_err(),
-        DocumentError::IdentSpaceExhausted
-    );
+    assert_eq!(check_node_ident(MAX_NODE_IDENT), Ok(MAX_NODE_IDENT));
+    let at_bound = with_ident(MAX_NODE_IDENT).expect("an ident the bound admits loads");
+    assert_eq!(at_bound.next_ident(), None, "no ident is left to issue");
     assert_eq!(
         with_ident(u32::MAX).unwrap_err(),
         DocumentError::Bound {

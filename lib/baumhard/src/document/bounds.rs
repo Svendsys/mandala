@@ -36,11 +36,15 @@ pub const MAX_PERCENT: u8 = 100;
 /// and 2 a cubic Bézier.
 pub const MAX_CONTROL_POINTS: usize = 2;
 
-/// The largest ident a node may carry. One below `u32::MAX`, so the
-/// counter — one past the highest ident — always fits: a document whose
-/// counter has passed this bound has no ident left to issue, and is
-/// refused rather than issuing one twice
-/// ([`DocumentError::IdentSpaceExhausted`](crate::document::ids::DocumentError::IdentSpaceExhausted)).
+/// The largest ident a node may carry — read at load or issued by the
+/// counter, one ceiling for both, so whatever the counter issues loads
+/// again. One below `u32::MAX`, so the counter, one past the highest
+/// ident, always fits. A document may carry this ident and loads; its
+/// counter then has no ident left to issue
+/// ([`Document::next_ident`](crate::document::ids::Document::next_ident)
+/// is `None`), and the writer refuses to issue one past it
+/// ([`DocumentError::IdentSpaceExhausted`](crate::document::ids::DocumentError::IdentSpaceExhausted))
+/// rather than issue one twice.
 pub const MAX_NODE_IDENT: u32 = u32::MAX - 1;
 
 /// The most palettes a map may have: a
