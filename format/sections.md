@@ -136,7 +136,7 @@ no compatibility shims). Nine subverbs:
 | `section move` | `x=<f64> y=<f64> [section=<idx>]` | Absolute set — `offset = (x, y)`. |
 | `section resize` | `w=<f64> h=<f64> [section=<idx>]` | Pin `size = Some({w, h})`. |
 | `section resize` | `fill [section=<idx>]` | Clear `size = None` (renamed from `none`). |
-| `section text` | `"<text>" [section=<idx>] [runs=preserve\|clear]` | Replace text. `runs=preserve` (default) keeps per-grapheme styling on overlapping ranges and gives graphemes appended past the old end the last run's style (see [text-runs.md](./text-runs.md#section-text-runspreserve)); `runs=clear` collapses to single-run plaintext. |
+| `section text` | `"<text>" [section=<idx>] [runs=preserve\|clear]` | Replace text. `runs=preserve` (default) keeps per-grapheme styling on overlapping ranges and gives graphemes appended past the old end the last run's style, without its link (see [text-runs.md](./text-runs.md#section-text-runspreserve)); `runs=clear` collapses to single-run plaintext. |
 | `section edit` | `[section=<idx>]` | Open the section text editor on the resolved target. Closes the console; modal handoff to the editor. |
 | `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. |
 | `section delete` | `[section=<idx>]` | Remove. Errors when only one section remains. |
