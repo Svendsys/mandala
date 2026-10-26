@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Tests for the mode-driven resize-handle gate that landed in
-//! Batch 2 of `SECTIONS_BORDERS_RESIZE_PLAN.md`.
+//! Batch 2 of `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`.
 //!
 //! Pre-Batch-2 the scene-builder gate at
 //! `MindMapDocument::frame_overrides` read `SelectionState`

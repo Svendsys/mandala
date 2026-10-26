@@ -642,7 +642,7 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
             hit_section_idx,
         } => {
             // Threshold-cross arm for the right-button fast-resize
-            // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+            // gesture (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
             // Same `POINTER_DRAG_THRESHOLD_SQ_PX` as the left-button arm
             // above. The DispatchHit carries the **press-time**
             // canvas position and hit (not the threshold-cross
@@ -799,7 +799,7 @@ fn emits_first_pan_delta(drag_state: &DragState) -> bool {
 /// map to `NwseResize` / `NeswResize`; edge midpoints map to the
 /// vertical / horizontal resize cursors. Used by both
 /// handle-driven Resize-mode drags and right-button fast-resize
-/// gestures (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
+/// gestures (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
 fn cursor_icon_for_resize_side(side: baumhard::mindmap::tree_builder::ResizeHandleSide) -> CursorIcon {
     use baumhard::mindmap::tree_builder::ResizeHandleSide as S;
     match side {

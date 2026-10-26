@@ -115,8 +115,9 @@ pub fn slice(runs: &[TextRun], slice_start: usize, slice_end: usize) -> Vec<Text
 
 /// Coalesce style-equal neighbors that meet at a common
 /// boundary. Gap-separated equals stay separate — the gap
-/// carries semantic information (uncovered ranges fall
-/// through to section / node defaults).
+/// carries semantic information: an uncovered range is not
+/// drawn (`format/text-runs.md` § "Coverage rules"), so
+/// bridging it would make hidden text appear.
 pub fn merge_adjacent_equal(runs: &mut Vec<TextRun>) {
     debug_assert_invariants(runs);
     if runs.len() < 2 {
@@ -519,8 +520,8 @@ mod tests {
     #[test]
     fn test_merge_adjacent_equal_preserves_gap_boundary() {
         // Gap means `runs[i].end != runs[i+1].start` — the gap
-        // carries semantic information (uncovered range falls
-        // through to defaults), so neighbors separated by a
+        // carries semantic information (an uncovered range is
+        // not drawn), so neighbors separated by a
         // gap MUST stay separate even when their attributes
         // match.
         let mut runs = vec![run(0, 5, "red"), run(7, 10, "red")];

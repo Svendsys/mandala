@@ -17,7 +17,7 @@
 //! also repairs a selection or border preview left pointing at a
 //! section index that no longer exists.
 //!
-//! Per `SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5 (Batch 5).
+//! Per `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5 (Batch 5).
 
 use baumhard::mindmap::model::{validate, MindSection};
 
