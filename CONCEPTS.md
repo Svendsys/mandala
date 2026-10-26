@@ -949,9 +949,12 @@ journal restores positions too: every position it records is the
 element's place in the arrangement the builder started from — an
 earlier move in the same builder that shifted the element's
 neighbors is accounted for when that move happens — and a restore
-puts the moved elements back in that arrangement's order. A builder
-is all or nothing: a journaled call that fails reverts everything the
-builder recorded before returning its error.
+puts the moved elements back in that arrangement's order. Those
+positions are exact only if the tree changes through nothing but
+journaled calls on the builder until it closes. A builder is all or
+nothing: a journaled call that fails reverts everything the builder
+recorded before returning its error, and `JournalBuilder::abandon` is
+the same step for a failure its caller detects.
 
 `lib/baumhard/src/engine/journal.rs`. `Touch::{Inserted, Removed,
 Moved}` are reserved for structural commands; today every entry is a
