@@ -101,8 +101,15 @@ const WAIT_MAX_MS: u128 = 60_000;
 /// The `timeout_ms` the server gives a `clock.wait` that names none.
 const WAIT_DEFAULT_MS: u64 = 10_000;
 
-const NO_SOCKET: &str = "no app named. Pass --ipc <path> (on Windows, a pipe name) or set MANDALA_IPC for a native \
+/// No app named, with the launch spelled for this platform, as
+/// `client::LAUNCH_HINT` is.
+#[cfg(not(windows))]
+const NO_SOCKET: &str = "no app named. Pass --ipc <path> or set MANDALA_IPC for a native \
                          app (start it with: mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"), or \
+                         --ws <url> or MANDALA_WS for a browser app behind `mandalactl bridge`";
+#[cfg(windows)]
+const NO_SOCKET: &str = "no app named. Pass --ipc <name> (a pipe name) or set MANDALA_IPC for a native \
+                         app (start it with: mandala <map.mindmap.json> --ipc mandala), or \
                          --ws <url> or MANDALA_WS for a browser app behind `mandalactl bridge`";
 
 /// The command the client writes the browser's inline screenshot for

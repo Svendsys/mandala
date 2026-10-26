@@ -21,8 +21,8 @@ pub const WORKFLOW: &[&str] = &[
     "mandalactl scene.find_text Introduction",
     "mandalactl input.click_node 1.2",
     "mandalactl input.pending",
-    "mandalactl capture.screenshot /tmp/after.png fit=true width=1920 height=1080",
-    "mandalactl capture.record_start /tmp/zoom fps=20",
+    "mandalactl capture.screenshot after.png fit=true width=1920 height=1080",
+    "mandalactl capture.record_start zoom fps=20",
     "mandalactl act.action ZoomIn",
     "mandalactl capture.record_stop",
     "mandalactl events.subscribe document_changed --count 1",
@@ -31,9 +31,9 @@ pub const WORKFLOW: &[&str] = &[
 /// The client's own commands, which never touch the socket. Each is
 /// parsed in the tests, as [`WORKFLOW`] is.
 pub const LOCAL: &[&str] = &[
-    "mandalactl record assemble /tmp/zoom",
-    "mandalactl record assemble /tmp/zoom out=zoom.gif width=640 fps=15",
-    "mandalactl record assemble /tmp/zoom format=mp4 overwrite=true",
+    "mandalactl record assemble zoom",
+    "mandalactl record assemble zoom out=zoom.gif width=640 fps=15",
+    "mandalactl record assemble zoom format=mp4 overwrite=true",
 ];
 
 /// The relay's command lines, parsed in the tests like [`LOCAL`]'s.
@@ -59,6 +59,8 @@ pub const SPELLINGS: &[&str] = &[
 pub fn overview() -> String {
     let mut text = String::new();
     text.push_str(HEAD);
+    text.push_str(START);
+    text.push_str(SOCKET);
     text.push_str("\nSPELLINGS\n");
     for line in SPELLINGS {
         text.push_str(&format!("  {line}\n"));
@@ -180,8 +182,18 @@ describe` lists what the connected app serves, with every parameter and result, 
 than this build is still callable (name=value arguments are then typed from that list).
 
 SOCKET
-  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
-  With no display (a container, CI), add --headless: no window, and a clock that moves only by
+";
+
+/// How to start the app with IPC on, in this platform's spelling of the
+/// endpoint, as `client::LAUNCH_HINT` is.
+#[cfg(not(windows))]
+const START: &str = "  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
+";
+#[cfg(windows)]
+const START: &str = "  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc mandala
+";
+
+const SOCKET: &str = "  With no display (a container, CI), add --headless: no window, and a clock that moves only by
   clock.step until clock.set_mode real (format/ipc.md \"Headless and one-shot launches\")
   Name it here with --ipc <path>, or once per shell with:  export MANDALA_IPC=<path>
   On Windows the value is a pipe name, the app's own --ipc value: --ipc mandala is \\\\.\\pipe\\mandala-mandala
@@ -310,7 +322,7 @@ mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps
     frames_out, width, height, duration_ms, bytes. stderr: warnings. Exit 0 made, 1 could not (no
     manifest, a bad frame, no ffmpeg, a file in the way), 3 bad command line.
 
-  example: mandalactl record assemble /tmp/zoom out=zoom.gif width=640
+  example: mandalactl record assemble zoom out=zoom.gif width=640
 ";
 
 const RAW_EXAMPLE: &str = "  mandalactl raw - <<'JSON'
@@ -338,7 +350,13 @@ mod tests {
             panic!("`{line}` is not an invocation");
         };
         let verb = verbs::lookup(&call.command).unwrap_or_else(|| panic!("`{line}`: no such verb"));
-        build_params(&Signature::of(verb), &tokenize(&call.words), None)
+        // The examples teach relative paths, which every platform makes
+        // absolute against the shell's directory — an absolute one would
+        // be spelled for one platform only (`/tmp/...` has no drive on
+        // Windows). So the line is parsed as a shell in some directory
+        // would hand it over.
+        let cwd = std::path::Path::new(crate::platform::native("/work", r"C:\work"));
+        build_params(&Signature::of(verb), &tokenize(&call.words), Some(cwd))
             .unwrap_or_else(|e| panic!("`{line}`: {e}"));
         if call.options.wait_settled {
             assert_eq!(
@@ -380,8 +398,8 @@ mod tests {
                 panic!("`{line}` is not an invocation");
             };
             assert_eq!(call.command, crate::assemble::COMMAND, "{line}");
-            crate::assemble::parse_args(&call.words, Some(std::path::Path::new("/w")))
-                .unwrap_or_else(|e| panic!("`{line}`: {e}"));
+            let cwd = std::path::Path::new(crate::platform::native("/w", r"C:\w"));
+            crate::assemble::parse_args(&call.words, Some(cwd)).unwrap_or_else(|e| panic!("`{line}`: {e}"));
         }
         let overview = overview();
         for line in LOCAL {
@@ -449,6 +467,17 @@ mod tests {
         ] {
             assert!(text.contains(needle), "the overview never mentions {needle:?}");
         }
+    }
+
+    /// How to start the app is spelled for the platform the help is read
+    /// on, as the client's connection errors are.
+    #[test]
+    fn test_the_overview_spells_the_launch_for_this_platform() {
+        let start = crate::platform::native(
+            "--ipc \"$XDG_RUNTIME_DIR/mandala.sock\"",
+            "testament.mindmap.json --ipc mandala\n",
+        );
+        assert!(overview().contains(start), "{start:?}");
     }
 
     #[test]

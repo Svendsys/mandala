@@ -680,6 +680,13 @@ mod pipe_wire {
     /// The most one read asks the reader thread for.
     const READ_CHUNK: usize = 64 << 10;
 
+    /// The most one write hands the writer thread. A write that times
+    /// out cannot be canceled, so whatever it carried may still reach
+    /// the app (`in_flight`); bounding it keeps that to one chunk, so a
+    /// request whose body did not all leave is known to be incomplete —
+    /// and an incomplete line is one the app never runs.
+    const WRITE_CHUNK: usize = 64 << 10;
+
     #[derive(Debug)]
     pub struct PipeWire {
         read_timeout: Cell<Option<Duration>>,
@@ -808,6 +815,8 @@ mod pipe_wire {
                 // now could overtake it.
                 return Err(io::Error::from(ErrorKind::TimedOut));
             }
+            // A partial write, which the sender loops on.
+            let bytes = &bytes[..bytes.len().min(WRITE_CHUNK)];
             self.writes
                 .send(bytes.to_vec())
                 .map_err(|_| io::Error::from(ErrorKind::BrokenPipe))?;

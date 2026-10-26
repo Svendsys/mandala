@@ -6,12 +6,14 @@
 //! Nothing is mocked — see `testing`.
 
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use crate::platform::native;
 use crate::testing::{against, hello, invoke, no, ok, split, FakeServer, Outcome};
 use crate::verbs::VERBS;
 use crate::wire::FRAME_CAP;
@@ -673,6 +675,10 @@ fn test_no_command_and_no_socket_are_usage_errors_with_a_hint() {
         "{}",
         outcome.err
     );
+    // The hint is spelled for the platform it runs on: a Windows user
+    // told to use `$XDG_RUNTIME_DIR` has been told nothing.
+    let launch = native("--ipc \"$XDG_RUNTIME_DIR/mandala.sock\"", "--ipc mandala");
+    assert!(outcome.err.contains(launch), "{}", outcome.err);
     let outcome = invoke("ping", Some(""), "");
     assert_eq!(outcome.exit, Exit::UsageError, "an empty variable is no variable");
 }
@@ -715,6 +721,15 @@ fn unconfirmed_failure(outcome: &Outcome) -> &str {
     &outcome.err
 }
 
+// The endpoint's own failures. On Unix the `--ipc` value is a path, and
+// a socket file can be missing, stale, not a socket, or too long a path;
+// on Windows it is a pipe name, and only missing and too long carry over
+// — a pipe has no file to go stale, and a name cannot be a file of some
+// other kind (the nearest thing, a value spelled like a path, is refused
+// by name). Each Unix-only test says so beside its `cfg`.
+
+// The socket's spelling; the twin below is the pipe's.
+#[cfg(unix)]
 #[test]
 fn test_no_socket_says_the_app_is_not_running_and_how_to_start_it() {
     let dir = tempfile::tempdir().expect("a directory");
@@ -728,6 +743,22 @@ fn test_no_socket_says_the_app_is_not_running_and_how_to_start_it() {
     assert!(err.contains("--ipc <socket-path>"), "{err}");
 }
 
+#[cfg(windows)]
+#[test]
+fn test_no_pipe_says_the_app_is_not_running_and_how_to_start_it() {
+    let line = format!("--ipc mandalactl-test-absent-{} ping", std::process::id());
+    let outcome = invoke(&line, None, "");
+    let err = transport_failure(&outcome);
+    assert!(
+        err.contains(r"no pipe \\.\pipe\mandala-mandalactl-test-absent-") && err.contains("App not running"),
+        "{err}"
+    );
+    assert!(err.contains("--ipc <name>"), "{err}");
+}
+
+// Unix-only: a pipe vanishes with its server's last handle, so there is
+// no stale endpoint to tell apart from a missing one.
+#[cfg(unix)]
 #[test]
 fn test_a_stale_socket_file_is_told_apart_from_a_missing_one() {
     let dir = tempfile::tempdir().expect("a directory");
@@ -742,6 +773,9 @@ fn test_a_stale_socket_file_is_told_apart_from_a_missing_one() {
     );
 }
 
+// Unix-only as written: on Windows the value names a pipe, never a file.
+// The twin below is what a path given there gets.
+#[cfg(unix)]
 #[test]
 fn test_a_path_that_is_not_a_socket_is_reported_by_name() {
     let dir = tempfile::tempdir().expect("a directory");
@@ -752,6 +786,19 @@ fn test_a_path_that_is_not_a_socket_is_reported_by_name() {
     assert!(err.contains("thesis.txt"), "{err}");
 }
 
+#[cfg(windows)]
+#[test]
+fn test_a_path_where_a_pipe_name_belongs_is_reported_by_name() {
+    let outcome = invoke(r"--ipc C:\work\thesis.txt ping", None, "");
+    let err = transport_failure(&outcome);
+    assert!(
+        err.contains(r"C:\work\thesis.txt") && err.contains("names a pipe, not a path"),
+        "{err}"
+    );
+}
+
+// The socket's limit; the twin below is the pipe name's.
+#[cfg(unix)]
 #[test]
 fn test_a_socket_path_over_the_platform_limit_is_reported_as_such() {
     let long = format!("/tmp/{}/m.sock", "d".repeat(200));
@@ -761,6 +808,15 @@ fn test_a_socket_path_over_the_platform_limit_is_reported_as_such() {
         err.contains("at most 107") || err.contains("no socket at"),
         "{err}"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn test_a_pipe_name_over_the_platform_limit_is_reported_as_such() {
+    // `mandala-` is 8 units, so 249 more is one past Windows' 256.
+    let outcome = invoke(&format!("--ipc {} ping", "x".repeat(249)), None, "");
+    let err = transport_failure(&outcome);
+    assert!(err.contains("Windows allows 256"), "{err}");
 }
 
 fn rejecting(times: usize) -> FakeServer {
@@ -1054,10 +1110,14 @@ fn test_a_reply_that_trickles_in_cannot_outlast_the_timeout() {
 
 #[test]
 fn test_a_send_the_app_never_drains_is_bounded_and_means_nothing_ran() {
-    // The app greets and never reads: the socket buffer fills part way
-    // through a request near the 1 MiB cap, and the write must give up
-    // at the deadline. The request line is incomplete, so the server
-    // could not have executed it — exit 2, not 4.
+    // The app greets and never reads: the buffer fills part way through
+    // a request near the 1 MiB cap, and the write must give up at the
+    // deadline. The request line is incomplete, so the server could not
+    // have executed it — exit 2, not 4. On the pipe that rests on
+    // `PipeWire::write` handing over at most `WRITE_CHUNK` at a time: a
+    // write it cannot cancel may still deliver that chunk, never the
+    // rest of the body, so the client still knows the line never
+    // completed. Handing over the whole remainder made it exit 4.
     let server = FakeServer::start(|_, peer, _| {
         peer.send(&hello());
         thread::sleep(Duration::from_secs(5));
@@ -1104,12 +1164,18 @@ fn test_a_relative_path_argument_reaches_the_app_absolute() {
     let server = lenient();
     let outcome = against(&server, "capture.screenshot after.png fit=true");
     assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
-    assert_eq!(server.requests()[0]["path"], json!("/work/maps/after.png"));
+    assert_eq!(
+        server.requests()[0]["path"],
+        json!(native("/work/maps/after.png", r"C:\work\maps\after.png"))
+    );
     let outcome = against(&server, "query.document to_file=./out/model.json");
     assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
     assert_eq!(
         server.requests()[1]["to_file"],
-        json!("/work/maps/out/model.json")
+        json!(native(
+            "/work/maps/out/model.json",
+            r"C:\work\maps\out\model.json"
+        ))
     );
 }
 

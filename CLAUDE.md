@@ -98,8 +98,9 @@ the parity trajectory (or why none is owed):
   elevated (run-as-administrator) launch makes the Administrators
   group its owner, so any other elevated process of a member of that
   group can connect too. The Windows half runs on CI's `windows-ipc`
-  job (`.github/workflows/test.yml`: clippy and the `ipc::` tests),
-  not in `./test.sh`, which cannot run it from Linux; locally
+  job (`.github/workflows/test.yml`: clippy, the `ipc::` tests and
+  `mandalactl`'s whole test target), not in `./test.sh`, which cannot
+  run it from Linux; locally
   `cargo check --target x86_64-pc-windows-gnu -p mandala` type-checks
   it. **The protocol is not gated, since IPC-15 (#75)**: the
   envelope, the registry, every command family and the event stream
