@@ -163,6 +163,18 @@ fn frame_color_source(map: &MindMap, node: &MindNode) -> String {
     )
 }
 
+/// Width of the readout's label column: the widest top-level label,
+/// `border palette: `, so every value starts in the same column.
+/// The cycling row is named after its verb rather than squeezed into
+/// a narrower column, because the name is what keeps it from reading
+/// as the node's theme (#137).
+const LABEL_WIDTH: usize = "border palette: ".len();
+
+/// A top-level readout label, padded to [`LABEL_WIDTH`].
+fn label(name: &str) -> String {
+    format!("{name:<LABEL_WIDTH$}")
+}
+
 fn format_border_readout(
     map: &MindMap,
     node: &MindNode,
@@ -221,11 +233,13 @@ fn format_border_readout(
     // doubles as a discoverability surface — users learn the
     // verb shape from the show output.
     lines.push(OutputLine::plain(format!(
-        "visible: {:<3}  (toggle: `border toggle`)",
+        "{}{:<3}  (toggle: `border toggle`)",
+        label("visible:"),
         if visible { "on" } else { "off" }
     )));
     lines.push(OutputLine::plain(format!(
-        "preset:  {:<8}  (cycle: `border preset cycle`)",
+        "{}{:<8}  (cycle: `border preset cycle`)",
+        label("preset:"),
         preset_name
     )));
     let face_str = face.as_deref().unwrap_or("(default)");
@@ -242,8 +256,11 @@ fn format_border_readout(
         })
         .unwrap_or("hardcoded floor");
     lines.push(OutputLine::plain(format!(
-        "font:    {} ({} pt)  (override: `border font <family>`, source: {})",
-        face_str, style.font_size_pt, font_override
+        "{}{} ({} pt)  (override: `border font <family>`, source: {})",
+        label("font:"),
+        face_str,
+        style.font_size_pt,
+        font_override
     )));
     if verbose {
         // Surface every color surface the border sits on, so the
@@ -263,25 +280,24 @@ fn format_border_readout(
             frame_color_source(map, node)
         )));
         lines.push(OutputLine::plain(format!(
-            "  style.frame_color    = {}          # the unthemed tier, set via `color border=`",
+            "  style.frame_color      = {}          # the unthemed tier, set via `color border=`",
             node.style.frame_color
         )));
         let per_node_color = node.style.border.as_ref().and_then(|c| c.color.as_deref());
         let cascade_target = per_node_color.unwrap_or(frame_color);
         let per_node_label = per_node_color.unwrap_or("(unset)");
         lines.push(OutputLine::plain(format!(
-            "  style.border.color   = {} [\u{2192} {}]   # set via `border color`",
+            "  style.border.color     = {} [\u{2192} {}]   # set via `border color`",
             per_node_label, cascade_target
         )));
     } else {
-        lines.push(OutputLine::plain(format!("color:   {}", style.color)));
+        lines.push(OutputLine::plain(format!("{}{}", label("color:"), style.color)));
     }
-    // The one top-level label wider than the nine-character column
-    // the rows around it keep. Accepted rather than re-padded: the
-    // label names the verb that sets the field, which is what keeps
-    // it from reading as the theme, and widening every row to
-    // sixteen characters would move the whole readout for one label.
-    lines.push(OutputLine::plain(format!("border palette: {}", palette_summary)));
+    lines.push(OutputLine::plain(format!(
+        "{}{}",
+        label("border palette:"),
+        palette_summary
+    )));
     // Padding cascades per-node → canvas-default → 4px hardcoded
     // floor. Always print the resolved value so the readout is
     // useful even for nodes with no per-node override (the canvas
@@ -293,10 +309,18 @@ fn format_border_readout(
         .map(|c| c.padding)
         .or_else(|| canvas_default.map(|c| c.padding))
         .unwrap_or(4.0);
-    lines.push(OutputLine::plain(format!("padding: {} px", resolved_padding)));
     lines.push(OutputLine::plain(format!(
-        "size:    {}×{} px ({} cluster cols, {} rows)",
-        node.size.width as i64, node.size.height as i64, char_count, row_count
+        "{}{} px",
+        label("padding:"),
+        resolved_padding
+    )));
+    lines.push(OutputLine::plain(format!(
+        "{}{}×{} px ({} cluster cols, {} rows)",
+        label("size:"),
+        node.size.width as i64,
+        node.size.height as i64,
+        char_count,
+        row_count
     )));
 
     let side_face = face.clone();
@@ -307,7 +331,7 @@ fn format_border_readout(
     };
     if want("top") {
         lines.push(side_line(
-            "top:    ",
+            &label("top:"),
             &style.side_patterns.top,
             char_count,
             &side_face,
@@ -315,7 +339,7 @@ fn format_border_readout(
     }
     if want("bottom") {
         lines.push(side_line(
-            "bottom: ",
+            &label("bottom:"),
             &style.side_patterns.bottom,
             char_count,
             &side_face,
@@ -323,7 +347,7 @@ fn format_border_readout(
     }
     if want("left") {
         lines.push(side_line(
-            "left:   ",
+            &label("left:"),
             &style.side_patterns.left,
             row_count,
             &side_face,
@@ -331,7 +355,7 @@ fn format_border_readout(
     }
     if want("right") {
         lines.push(side_line(
-            "right:  ",
+            &label("right:"),
             &style.side_patterns.right,
             row_count,
             &side_face,
@@ -356,7 +380,8 @@ fn side_line(label: &str, pattern: &SidePattern, width: usize, face: &Option<Str
 
 fn corner_line(style: &baumhard::mindmap::border::BorderStyle, face: &Option<String>) -> OutputLine {
     let text = format!(
-        "corners: tl={}  tr={}  bl={}  br={}",
+        "{}tl={}  tr={}  bl={}  br={}",
+        label("corners:"),
         style.corners.top_left,
         style.corners.top_right,
         style.corners.bottom_left,
@@ -407,7 +432,7 @@ mod tests {
         );
         let blob = readout_blob(&map, node, false);
         assert!(
-            blob.contains(&format!("color:   {effective}")),
+            blob.contains(&format!("{}{effective}", label("color:"))),
             "readout must print the color the border is painted in: {blob}"
         );
     }
