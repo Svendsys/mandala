@@ -147,14 +147,26 @@
 //! - An external import's shadowing is read file-wide: `use
 //!   std::cell::Cell;` in one inline module makes every unrooted
 //!   `Cell::…` in the file external, including one in a sibling
-//!   module that meant the workspace's `Cell`.
+//!   module that meant the workspace's `Cell`. Scoping the set to the
+//!   module is a push of the inner module's `use` leaves before the
+//!   item walk recurses into it and a pop after; what is not free is
+//!   `use super::*` and `use super::Cell`, which carry the parent's
+//!   imports into the child and would have to be followed for the
+//!   child's docs to keep the parent's shadowing. The census found no
+//!   doc that the file-wide reading misjudges, so the walk stays flat
+//!   until one does.
+//! - A `#[derive(…)]` over a type a macro body writes is read from
+//!   the text, wrapped over several lines or not; a derive that stands
+//!   over a `$name` header, or is itself written as a parameter
+//!   (`$(#[$meta])*`), grants nothing, since the text cannot say what
+//!   it names.
 //! - Dotted forms (`` `node.position` ``, `` `clock.wait` ``,
 //!   `` `test.sh` ``): in this tree they are mostly JSON paths, IPC
 //!   verbs and file names, and the scan does not read them. Nor is a
-//!   turbofish (`` `parse::<u8>` `` leaves no segment to read), a
-//!   possessive or any other punctuation inside the backticks, or a
-//!   span rustfmt broke across two doc lines, whose halves are not
-//!   read.
+//!   possessive (`` `old_fn's` ``) or any other punctuation inside the
+//!   backticks that is not a call group, a `!`, a `?`, a `*` or a
+//!   generic argument group, or a span rustfmt broke across two doc
+//!   lines, whose halves are not read.
 //! - `CamelCase` types and `SCREAMING_SNAKE` constants, which are
 //!   not `snake_case`; intra-doc link *targets*, which `cargo doc`
 //!   already checks on live code.
@@ -705,8 +717,24 @@ impl WorkspaceIndex {
         let mut frames: Vec<Frame> = Vec::new();
         let mut pending: Option<Frame> = None;
         let mut derives: Vec<String> = Vec::new();
+        // A `#[derive(` rustfmt wrapped over several lines, gathered
+        // until its `)]` so it reads as the one line it is.
+        let mut open_derive: Option<String> = None;
         for line in text.lines() {
             let trimmed = line.trim();
+            if let Some(gathered) = &mut open_derive {
+                gathered.push(' ');
+                gathered.push_str(trimmed);
+                if trimmed.ends_with(")]") {
+                    derives.extend(derive_line(gathered).unwrap_or_default());
+                    open_derive = None;
+                }
+                continue;
+            }
+            if is_derive_opening(trimmed) && !trimmed.ends_with(")]") {
+                open_derive = Some(trimmed.to_string());
+                continue;
+            }
             if let Some(traits) = derive_line(trimmed) {
                 derives.extend(traits);
             } else if let Some(header) = header_frame(trimmed) {
@@ -770,7 +798,11 @@ impl WorkspaceIndex {
                     self.open_members.insert(ty.clone());
                 }
             }
-            for c in trimmed.chars() {
+            // `blank_string_literals` keeps char literals, so a `'{'`
+            // or `'}'` in code is still on the line; counted, it would
+            // open a frame no brace closes and leak the enclosing type
+            // to the end of the file.
+            for c in without_brace_char_literals(trimmed).chars() {
                 match c {
                     '{' => frames.push(pending.take().unwrap_or(Frame::Body)),
                     '}' => {
@@ -1089,9 +1121,29 @@ fn skip_angle_group(rest: &str) -> &str {
     rest
 }
 
-/// The traits a `#[derive(…)]` or `#[derivative(…)]` line lists, by
-/// their last path segment and with a `derivative` entry's `= "…"`
-/// option read past; `None` for any other line.
+/// Whether a line opens a `#[derive(…)]` or `#[derivative(…)]`
+/// attribute, closed on this line or a later one.
+fn is_derive_opening(line: &str) -> bool {
+    ["#[derive(", "#[derivative("]
+        .iter()
+        .any(|prefix| line.starts_with(prefix))
+}
+
+/// `line` with every `'{'`, `'}'`, `b'{'` and `b'}'` char literal
+/// removed, so the braces that remain are the ones that open and
+/// close blocks. A `'\u{…}'` escape keeps its balanced pair.
+fn without_brace_char_literals(line: &str) -> String {
+    let mut out = line.to_string();
+    for literal in ["b'{'", "b'}'", "'{'", "'}'"] {
+        out = out.replace(literal, "");
+    }
+    out
+}
+
+/// The traits a `#[derive(…)]` or `#[derivative(…)]` attribute lists,
+/// by their last path segment and with a `derivative` entry's `= "…"`
+/// option read past; `None` for any other line. A wrapped attribute is
+/// gathered onto one line before it is read here.
 fn derive_line(line: &str) -> Option<Vec<String>> {
     let inner = ["#[derive(", "#[derivative("]
         .iter()
@@ -1226,7 +1278,7 @@ pub(crate) fn scan_file(source: &Source, index: &WorkspaceIndex, scan: &mut DocI
 /// read as the external type's even when some workspace type is also
 /// called `Cell`. Read file-wide, inline modules included: a `use` in
 /// one module shadows for the whole file, which the module header
-/// lists among the things not caught.
+/// lists among the things not caught, with what scoping it would take.
 fn collect_external_imports(items: &[Item], index: &WorkspaceIndex, out: &mut BTreeSet<String>) {
     for item in items {
         match item {
@@ -1607,8 +1659,15 @@ fn classify(span: &str) -> Option<Candidate> {
     // `select_sibling_*` is the glob a comment writes for a family;
     // dropping the `*` leaves the trailing `_` that reads as one.
     s = s.strip_suffix('*').unwrap_or(s);
+    let ends_in_a_group = s.ends_with('>');
     let without_generics = strip_angle_groups(s)?;
-    let s = without_generics.as_str();
+    // `parse::<u8>` leaves `parse::` once its turbofish is dropped;
+    // the path meant is `parse`. Only a dropped group earns the trim:
+    // a span written `a::b::` is not a path.
+    let s = match without_generics.strip_suffix("::") {
+        Some(path) if ends_in_a_group => path,
+        _ => without_generics.as_str(),
+    };
     if s.is_empty()
         || !s
             .chars()
@@ -1643,7 +1702,8 @@ fn classify(span: &str) -> Option<Candidate> {
 }
 
 /// `s` with every balanced `<…>` group that stands where generic
-/// arguments stand — directly before a `::` or at the end — removed,
+/// arguments stand — directly before a `::` or at the end, a
+/// turbofish's `::<…>` included — removed,
 /// or `None` when the angle brackets do not balance (an `a < b`
 /// snippet). A group anywhere else, as in the placeholder shape
 /// `test_<short>_<and_more>`, is left in place and fails the identifier
@@ -2038,24 +2098,41 @@ pub fn almost_equal() {}
     }
 
     /// Generic arguments are dropped before the path is read, so
-    /// `Tree<GfxElement, GfxMutator>::descendant_at` is held to `Tree`;
-    /// a turbofish leaves no segment and is not read.
+    /// `Tree<GfxElement, GfxMutator>::descendant_at` is held to `Tree`,
+    /// and a turbofish is dropped with the `::` that carried it, so
+    /// `parse_all::<u8>` is held as `parse_all`.
     #[test]
-    fn test_generic_arguments_are_dropped_and_a_turbofish_is_not_read() {
+    fn test_generic_arguments_and_a_turbofish_are_dropped_before_the_path_is_read() {
         let source = "\
-/// `Tree<Elem, Mut>::descendant_at` and `Tree<Elem>::probe_gone` and `parse::<u8>`.
+/// `Tree<Elem, Mut>::descendant_at` and `Tree<Elem>::probe_gone` and `parse_all::<u8>`;
+/// `probe_gone_fn::<T>` and `Tree::probe_gone::<T>` are nobody's.
 struct Tree<E, M>(E, M);
 impl<E, M> Tree<E, M> {
     fn descendant_at(&self) {}
 }
+fn parse_all() {}
 ";
         let scan = scan_sources(&[("t.rs", source)]);
         assert_eq!(
             scan.unresolved,
-            vec!["t.rs:1: `Tree<Elem>::probe_gone` — `Tree` declares no `probe_gone`".to_string()]
+            vec![
+                "t.rs:1: `Tree<Elem>::probe_gone` — `Tree` declares no `probe_gone`".to_string(),
+                "t.rs:2: `probe_gone_fn::<T>` — written in no file's code and declared nowhere in the \
+                 workspace"
+                    .to_string(),
+                "t.rs:2: `Tree::probe_gone::<T>` — `Tree` declares no `probe_gone`".to_string(),
+            ]
         );
-        assert_eq!(scan.resolved.get("t.rs"), Some(&1));
-        assert_eq!(classify("parse::<u8>"), None);
+        assert_eq!(scan.resolved.get("t.rs"), Some(&2));
+        assert_eq!(
+            classify("parse_all::<u8>"),
+            Some(Candidate {
+                name: "parse_all".into(),
+                qualifier: Qualifier::Bare,
+                root: None,
+                enclosing: None,
+            })
+        );
         assert_eq!(
             classify("Tree<GfxElement, GfxMutator>::descendant_at"),
             Some(Candidate {
@@ -2381,6 +2458,104 @@ struct Host;
         assert!(declares_a_parameter("pub(crate) const #name: u8 = 1;"));
         assert!(!declares_a_parameter("pub field: Vec<$ty>,"));
         assert!(!declares_a_parameter("let $x = 1;"));
+    }
+
+    /// `blank_string_literals` keeps char literals, so a `'{'` in code
+    /// would be counted as an opening brace and leave the enclosing
+    /// `impl` frame open to the end of the file: every later macro
+    /// member would be attributed to that type, and leave the unscoped
+    /// set a custom derive resolves. The brace literals are removed
+    /// before the count; the `'x'` control shows the attribution the
+    /// fixture gets when nothing leaks.
+    #[test]
+    fn test_a_brace_char_literal_does_not_open_a_frame() {
+        let fixture = |literal: &str| {
+            format!(
+                "\
+struct Leaky;
+impl Leaky {{
+    pub fn count(&self, c: char) -> u8 {{
+        match c {{
+            {literal} => 1,
+            _ => 0,
+        }}
+    }}
+}}
+macro_rules! probe_leak {{
+    () => {{
+        fn probe_leaked_fn() {{}}
+    }};
+}}
+probe_leak!();
+/// `Leaky::probe_leaked_fn` is nobody's; `Classified::probe_leaked_fn` may be the derive's.
+#[derive(ActionClassify)]
+pub struct Classified;
+"
+            )
+        };
+        let expected =
+            vec!["l.rs:16: `Leaky::probe_leaked_fn` — `Leaky` declares no `probe_leaked_fn`".to_string()];
+        let control = scan_sources(&[("l.rs", &fixture("'x'"))]);
+        assert_eq!(
+            control.unresolved, expected,
+            "control: no brace literal, nothing leaks"
+        );
+        assert_eq!(control.resolved.get("l.rs"), Some(&1));
+        for literal in ["'{'", "'}'", "b'{'", "b'}'"] {
+            let scan = scan_sources(&[("l.rs", &fixture(literal))]);
+            assert_eq!(
+                scan.unresolved, expected,
+                "a {literal} literal must not open or close a frame"
+            );
+            assert_eq!(scan.resolved.get("l.rs"), Some(&1), "{literal}");
+        }
+        assert_eq!(
+            without_brace_char_literals("match c { '{' => 1, b'}' => 2 }"),
+            "match c {  => 1,  => 2 }"
+        );
+        assert_eq!(without_brace_char_literals("'\\u{7b}'"), "'\\u{7b}'");
+    }
+
+    /// A `#[derive(…)]` rustfmt wrapped over several lines above a
+    /// literal header in a macro body is gathered and read as one; the
+    /// control is the same header with the trait left out of the list.
+    #[test]
+    fn test_a_wrapped_derive_in_a_macro_body_grants_its_traits() {
+        let fixture = |traits: &str| {
+            format!(
+                "\
+macro_rules! make {{
+    () => {{
+        #[derive(
+            {traits}
+        )]
+        pub struct Wrapped;
+    }};
+}}
+make!();
+/// `Wrapped::default()` and `Wrapped::clone()`; `Wrapped::never_declared` is nobody's.
+fn user() {{}}
+"
+            )
+        };
+        let scan = scan_sources(&[("w.rs", &fixture("Clone,\n            Default,"))]);
+        assert_eq!(
+            scan.unresolved,
+            vec!["w.rs:11: `Wrapped::never_declared` — `Wrapped` declares no `never_declared`".to_string()]
+        );
+        assert_eq!(scan.resolved.get("w.rs"), Some(&2));
+        let control = scan_sources(&[("w.rs", &fixture("Clone,"))]);
+        assert_eq!(
+            control.unresolved,
+            vec![
+                "w.rs:10: `Wrapped::default()` — `Wrapped` declares no `default`".to_string(),
+                "w.rs:10: `Wrapped::never_declared` — `Wrapped` declares no `never_declared`".to_string(),
+            ],
+            "control: a trait the wrapped list does not name is not granted"
+        );
+        assert!(is_derive_opening("#[derive("));
+        assert!(is_derive_opening("#[derivative(Debug)]"));
+        assert!(!is_derive_opening("#[cfg(test)]"));
     }
 
     /// strum's `EnumDiscriminants` writes a mirror enum the parse never
