@@ -14,6 +14,7 @@ pub mod inspect_tests;
 pub mod journal_tests;
 pub mod resolve_tests;
 pub mod shape_tests;
+pub mod structure_tests;
 /// Crate-private: the tests and their bench bodies build documents with
 /// it, and nothing else may — a document is built by the loader and
 /// changed by its writer (rule 4). `util::document_surface` holds every

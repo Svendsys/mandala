@@ -12,7 +12,9 @@
 
 use crate::engine::interpolate::{Interpolate, Snap};
 use crate::engine::journal::JournalBuilder;
-use crate::engine::tests::journal_fixtures::{scenario, snapshot, Scenario, SEEDS};
+use crate::engine::tests::journal_fixtures::{
+    order, run_structural, scenario, snapshot, Scenario, StructuralRun, StructuralStats, SEEDS,
+};
 use crate::engine::tests::test_element::{add, TestElement};
 use crate::engine::tree::Tree;
 use crate::util::ordered_vec2::OrderedVec2;
@@ -192,6 +194,66 @@ pub fn do_write_interpolated_at_the_ends_equals_revert_and_replay() {
         }
     }
     assert!(changed > SEEDS / 2, "most seeds must change something: {changed}");
+
+    write_interpolated_snaps_structure_at_every_t();
+}
+
+/// The structural half of
+/// [`do_write_interpolated_at_the_ends_equals_revert_and_replay`]: for
+/// every seed of [`run_structural`] and both snaps, `write_interpolated`
+/// at `0` gives the snapshot from before the calls and at `1` the one
+/// after them. Halfway, the structure snaps whole: the tree has
+/// exactly the arrangement after — every node, parent and sibling
+/// order — with [`Snap::Start`], and exactly the one before with
+/// [`Snap::End`], sorted either way. A revert from halfway gives the
+/// tree from before.
+fn write_interpolated_snaps_structure_at_every_t() {
+    let mut stats = StructuralStats::default();
+    let mut restructured = 0;
+    for seed in 0..SEEDS {
+        let StructuralRun {
+            mut tree,
+            before,
+            after,
+            journal,
+        } = run_structural(seed, &mut stats);
+        if order(&before) != order(&after) {
+            restructured += 1;
+        }
+        for snap in [Snap::Start, Snap::End] {
+            journal.write_interpolated(&mut tree, 0.0, snap).unwrap();
+            assert_eq!(
+                snapshot(&tree),
+                before,
+                "seed {seed}, {snap:?}: t = 0 is the reverted tree"
+            );
+            journal.write_interpolated(&mut tree, 1.0, snap).unwrap();
+            assert_eq!(
+                snapshot(&tree),
+                after,
+                "seed {seed}, {snap:?}: t = 1 is the replayed tree"
+            );
+            journal.write_interpolated(&mut tree, 0.5, snap).unwrap();
+            let expected = if snap == Snap::Start { &after } else { &before };
+            assert_eq!(
+                order(&snapshot(&tree)),
+                order(expected),
+                "seed {seed}, {snap:?}: halfway, the structure is the snapped side's"
+            );
+            tree.check_sorted().unwrap();
+            journal.revert(&mut tree).unwrap();
+            assert_eq!(
+                snapshot(&tree),
+                before,
+                "seed {seed}, {snap:?}: revert from halfway"
+            );
+            journal.replay(&mut tree).unwrap();
+        }
+    }
+    assert!(
+        restructured > SEEDS / 2,
+        "most seeds must change the arrangement: {restructured}"
+    );
 }
 
 #[test]

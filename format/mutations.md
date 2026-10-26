@@ -420,7 +420,11 @@ mutations that don't filter stay byte-identical on disk.
 ## `mutator` — the MutatorNode AST
 
 The mutator AST mirrors the variants of the engine's `Mutator` plus a
-`Repeat` wrapper for "N children at consecutive channels". See
+`Repeat` wrapper for "N children at consecutive channels" — all but
+one: `Mutator::Structure`, a structural command (insert, remove, move,
+split, merge), has no AST node and no JSON spelling. Structure is never
+authored as JSON; the engine's serde skips the variant, so a
+`"Structure"` object is refused as an unknown variant. See
 `lib/baumhard/src/engine/builder/ast.rs` for the type definitions. The
 AST is generic over the element type and the mutation payload; in a
 custom mutation it is the glyph instantiation,

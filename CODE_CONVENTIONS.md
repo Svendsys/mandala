@@ -46,7 +46,8 @@ rise and fall together.
   `lib/baumhard/src/engine/walker.rs`). Never clone-edit-reinsert a
   subtree to change one field. Outside a walk a tree changes only
   through `insert_child`, `update` and `remove_subtree`, which keep
-  its children sorted by key.
+  its children sorted by key; a walk changes structure through its
+  structural commands (`Mutator::Structure`), which keep it too.
 - **Font** through `baumhard::font::fonts`. `fonts::init()` once at
   startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`
   (or its `try_` / `_read` siblings — there is no other way in);

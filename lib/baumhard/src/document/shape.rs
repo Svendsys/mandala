@@ -29,10 +29,14 @@
 //! connector under a node, none on a root node. A subtree's root has no
 //! parent until it is inserted, so its row is judged with the parent it
 //! will be inserted under (`under_node`), or by `validate_shape` once it
-//! is in place.
+//! is in place. [`validate_subtree`](crate::document::shape::validate_subtree)
+//! judges every row of a subtree before it is inserted, the root's with
+//! the connector count it holds, and leaves where it lands to
+//! `validate_shape`.
 
 use crate::document::element::{DocElement, DocKind};
 use crate::document::values::LinkKind;
+use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
 use indextree::NodeId;
 
@@ -130,6 +134,16 @@ pub enum ShapeError {
         /// What is wrong with it.
         error: RowError,
     },
+    /// A row of a detached subtree breaks a rule
+    /// ([`validate_subtree`]).
+    SubtreeRow {
+        /// Where the element whose row was judged sits: the position of
+        /// each child taken from the subtree's root down to it, empty
+        /// for the root itself.
+        path: Vec<usize>,
+        /// What is wrong with it.
+        error: RowError,
+    },
 }
 
 impl std::fmt::Display for ShapeError {
@@ -137,6 +151,7 @@ impl std::fmt::Display for ShapeError {
         match self {
             ShapeError::StaleNode(id) => write!(f, "node {id} is not in the tree"),
             ShapeError::Row { element, error } => write!(f, "{element}: {error}"),
+            ShapeError::SubtreeRow { path, error } => write!(f, "subtree element {path:?}: {error}"),
         }
     }
 }
@@ -249,4 +264,57 @@ pub fn validate_shape(tree: &Tree<DocElement>, id: NodeId) -> Result<(), ShapeEr
     let children = id.children(tree.arena()).map(|c| tree.arena()[c].get());
     validate_row(node.get(), id == tree.root(), under_node, children)
         .map_err(|error| ShapeError::Row { element: id, error })
+}
+
+/// [`validate_row`] for every row of a detached subtree — what a
+/// structural insert ([`StructOp::Insert`](crate::engine::structure::StructOp::Insert))
+/// puts into a document — judged before it is inserted.
+///
+/// Every element is judged with its own children, below a parent that
+/// is not the tree's root (an inserted subtree never is). Below the
+/// subtree's root the connector rule reads the parent the subtree
+/// gives each element. The root's own parent is the one it will be
+/// inserted under, which the subtree does not know: its row is judged
+/// with the connector count it holds — none, or exactly one — and
+/// whether that count fits where it lands is [`validate_shape`]'s, once
+/// it is in place.
+///
+/// Errors: [`ShapeError::SubtreeRow`] for the first row in pre-order
+/// that breaks a rule, naming where it sits.
+///
+/// Cost: one pass over each row and one over the kinds, as
+/// [`validate_row`]; a work list as deep as the subtree; an allocation
+/// for the path only on an error.
+pub fn validate_subtree(subtree: &Subtree<DocElement>) -> Result<(), ShapeError> {
+    let row_error = |path: &[usize], error| ShapeError::SubtreeRow {
+        path: path.to_vec(),
+        error,
+    };
+    let holds_connector = subtree
+        .children
+        .iter()
+        .any(|child| child.root.kind() == DocKind::Connector);
+    validate_row(&subtree.root, false, holds_connector, child_roots(subtree))
+        .map_err(|e| row_error(&[], e))?;
+    let mut path: Vec<usize> = Vec::new();
+    let mut pending: Vec<(&Subtree<DocElement>, usize)> = vec![(subtree, 0)];
+    while let Some((node, next)) = pending.last_mut() {
+        let node: &Subtree<DocElement> = node;
+        let Some(child) = node.children.get(*next) else {
+            pending.pop();
+            path.pop();
+            continue;
+        };
+        let under_node = node.root.kind() == DocKind::Node;
+        path.push(*next);
+        *next += 1;
+        validate_row(&child.root, false, under_node, child_roots(child)).map_err(|e| row_error(&path, e))?;
+        pending.push((child, 0));
+    }
+    Ok(())
+}
+
+/// The elements at the top of `subtree`'s children, in order.
+fn child_roots(subtree: &Subtree<DocElement>) -> impl Iterator<Item = &DocElement> {
+    subtree.children.iter().map(|child| &child.root)
 }
