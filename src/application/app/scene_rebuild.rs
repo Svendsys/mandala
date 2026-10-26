@@ -192,8 +192,9 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
 /// "every site" above counts installs rather than callers of this
 /// helper:
 ///
-/// - `document::animations::tick`. `drain_animation_tick` calls
-///   `rebuild_all` unconditionally on any advance, so the bare tree
+/// - `document::animations::tick`.
+///   `animation_drain::drain_animation_tick` calls `rebuild_all`
+///   unconditionally on any advance, so the bare tree
 ///   exists for less than one frame and is superseded before it can
 ///   be drawn. That safety rests entirely on the call staying
 ///   unconditional; a future change that gates it must route the

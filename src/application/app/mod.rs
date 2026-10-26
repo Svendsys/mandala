@@ -42,6 +42,7 @@
 //! `dispatch_compatible`. See `WASM_CONVERGENCE.md` for the
 //! current convergence status.
 
+mod animation_drain;
 mod scene_rebuild;
 mod text_edit;
 
@@ -76,6 +77,7 @@ mod event_cursor_moved;
 mod event_keyboard;
 #[cfg(not(target_arch = "wasm32"))]
 mod event_mouse_click;
+pub(crate) mod fire_custom_mutation;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]

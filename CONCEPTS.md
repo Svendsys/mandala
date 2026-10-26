@@ -2246,7 +2246,8 @@ one.
 ### Event loop and `drain_frame`
 
 The per-frame heartbeat: tick watchdog, drive
-throttled interactions, advance animations, rebuild geometry,
+throttled interactions, advance animations (`animation_drain`, the
+body the browser's frame runs too), rebuild geometry,
 rebuild scene if dirty, render, log frame interval.
 
 Every frame runs the same six steps in the
@@ -3527,7 +3528,7 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    `~/.config/mandala/macros.json` on native. See
    `crate::application::macros` for `Macro`, `MacroStep`,
    `MacroRegistry`, and `dispatch_macro`. Steps fan out to
-   `dispatch_action`, `apply_keybind_custom_mutation`, or
+   `dispatch_action`, `fire_custom_mutation`, or
    `execute_console_line` depending on `MacroStep` kind, so plugin
    authors and macro recorders share one runtime path. That path is
    `run_macro_steps`, the gated step loop `dispatch_macro` calls
@@ -3597,10 +3598,13 @@ ships unbound. Users opt back in via:
 ```
 
 **Custom-mutation parity.** `dispatch_custom_mutation_for_key`
-mirrors the click-trigger path at `click.rs:35-64` byte-for-byte:
-animation-aware (`start_animation` when `timing.duration_ms > 0`),
-always invokes `apply_document_actions`. Closes the silent feature
-gap where keyboard-triggered custom mutations skipped both.
+and the click-trigger loop (`click_triggers::fire_onclick_triggers`)
+land through one body, `app::fire_custom_mutation`: animation-aware
+(`start_animation_at` when `timing.duration_ms > 0`, ticked by both
+targets' frames since #144), always invokes
+`apply_document_actions`, and applies with or without an installed
+tree (the no-tree decision on #144). Closes the silent feature gap
+where keyboard-triggered custom mutations skipped both.
 
 ---
 

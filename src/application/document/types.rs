@@ -72,16 +72,12 @@ pub struct AnimationInstance {
     // Read by the native-only IPC event layer.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub seq: u64,
-    /// Wall-clock timestamp (ms) when the animation started.
-    // Native-driver-only: `tick_animations` is the reader and the
-    // browser has no per-frame drain wired to it (CLAUDE.md
-    // "Per-frame animation drain").
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// App-clock timestamp (ms) when the animation started, read by
+    /// `tick_animations` on both targets' frames.
     pub start_ms: u64,
     /// Timing envelope carved from `cm.timing` at construction.
     /// Stored directly (not as `Option`) so the per-frame tick
     /// loop projects without unwrap.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub timing: AnimationTiming,
     /// The `CustomMutation` driving the animation. Carries the
     /// id (for re-trigger detection) and the mutation list (for

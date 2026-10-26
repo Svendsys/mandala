@@ -33,10 +33,15 @@
 //! axis from the animations'.
 //!
 //! **Cross-platform.** The type and its modes compile for both
-//! targets and the browser holds one, in real mode. What advances
-//! virtual time is the heartbeat, and the heartbeat is native today
-//! (`CLAUDE.md` "Dual-target status", "Per-frame animation drain"),
-//! so `clock.step` is native for the reason the drain is.
+//! targets and the browser holds one, in real mode. The tick that
+//! reads it runs on both targets' frames (`app::animation_drain`), and
+//! the browser's frame already stands still under a virtual clock as
+//! native's loop frame does. What advances virtual time is the step
+//! driver (`heartbeat::step` / `run_step`), which lives on native's
+//! handler context and is commanded over IPC and the console, both
+//! native — so `clock.step` is native for the driver's reason, not
+//! the tick's (`CLAUDE.md` "Dual-target status", "Virtual-clock
+//! stepping").
 
 use std::ops::RangeInclusive;
 use std::sync::OnceLock;
