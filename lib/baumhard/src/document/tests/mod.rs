@@ -3,8 +3,8 @@
 //! Document tests: the shape rules, identity and the read API, style
 //! resolution and its read records, the predicate surface, the bounds,
 //! and the engine instantiation. Each builds its documents through
-//! [`DocumentBuilder`](crate::document::tests::test_support::DocumentBuilder),
-//! mostly from [`example`](crate::document::tests::test_support::example).
+//! `test_support::DocumentBuilder`,
+//! mostly from `test_support::example`.
 
 pub mod bounds_tests;
 pub mod deps_tests;

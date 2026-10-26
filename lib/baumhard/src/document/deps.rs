@@ -4,10 +4,12 @@
 //! half of the [`Input`](crate::document::resolve::Input) contract.
 //!
 //! A resolver reports what it reads as narrowly as the read itself
-//! ([`crate::document::resolve`]); [`inputs_changed`] says, for an
+//! ([`crate::document::resolve`]);
+//! [`inputs_changed`](crate::document::deps::inputs_changed) says, for an
 //! element before and after a change, which of those inputs the change
 //! touched. V1-B7 joins the two: a journal entry's before and after go
-//! through [`inputs_changed`], each [`InputKind`] becomes the `Input`
+//! through `inputs_changed`, each
+//! [`InputKind`](crate::document::deps::InputKind) becomes the `Input`
 //! of the touched element, and the projection re-resolves exactly the
 //! readers of those inputs.
 //!

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! [`DocumentBuilder`]: how a test or a bench makes a document, since
+//! [`DocumentBuilder`](crate::document::tests::test_support::DocumentBuilder): how a test or a bench makes a document, since
 //! nothing else here can — the loader is V1-B2's, and a `Document` has
 //! no `&mut` API.
 //!
@@ -13,10 +13,10 @@
 //!
 //! The builder starts from the smallest valid map — a map, an empty
 //! theme and empty defaults — and adds elements in key order, so every
-//! row stays sorted. [`DocumentBuilder::build`] checks every element's
+//! row stays sorted. [`DocumentBuilder::build`](crate::document::tests::test_support::DocumentBuilder::build) checks every element's
 //! shape before it hands the document out; a test that needs a
 //! document that breaks the shape rules builds it with
-//! [`DocumentBuilder::build_unchecked`], which checks only the map row.
+//! [`DocumentBuilder::build_unchecked`](crate::document::tests::test_support::DocumentBuilder::build_unchecked), which checks only the map row.
 
 use crate::document::element::{
     ConnectorData, DefaultsData, DocElement, DocKind, LinkData, MapData, NodeData, NodeStyle, PaletteData,
