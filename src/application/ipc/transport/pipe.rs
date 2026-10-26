@@ -29,10 +29,14 @@
 //! `interprocess` (pinned exactly; the root manifest names the source
 //! files each guarantee above was read in), because it is the only safe
 //! way in the graph to hand `CreateNamedPipeW` a security descriptor.
-//! A pipe's descriptor belongs to the pipe, not to an instance: it is
-//! set when the first instance creates the pipe, and every later
-//! instance is created *under* it — which takes create-instance access
-//! the descriptor grants only to its owner. So every instance after
+//! A pipe's descriptor belongs to the pipe object, not to an instance:
+//! it is set when the first instance creates the pipe, and every later
+//! instance is created *under* it. Creating a later instance is
+//! access-checked against that object's DACL — it needs
+//! `FILE_CREATE_PIPE_INSTANCE` ("Named Pipe Security and Access
+//! Rights", Win32 docs), which this DACL grants only to its owner — and
+//! the security attributes passed when creating it are not what
+//! protects it; the pipe object's descriptor is. So every instance after
 //! the first is a tokio [`NamedPipeServer`], made by `bind` before the
 //! `interprocess` one is let go, so the pipe never has zero handles and
 //! its name is never free for someone else to take. The one moment

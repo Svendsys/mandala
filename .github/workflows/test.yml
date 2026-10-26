@@ -95,7 +95,7 @@ jobs:
   #   suite the pipe client shares with the socket one. Not the rest of
   #   that suite: its path-parameter tests spell Unix paths
   #   (`/work/dump.json`), so running them here is the same port as
-  #   running `./test.sh`, not part of a transport.
+  #   running `./test.sh`, not part of a transport. Tracked in #221.
   #
   # Same triggers as the Linux job, so a pull request cannot merge red on
   # the platform this code is for.
