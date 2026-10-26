@@ -1672,6 +1672,41 @@ mod tests {
         assert_eq!(sections[2].text, "def");
     }
 
+    /// #208 at the console: a `section split` on a node already at
+    /// `MAX_SECTIONS_PER_NODE` reaches the user as the named refusal,
+    /// not as a success that writes an unloadable map. The console is
+    /// also what `act.console` drives over IPC, so this is the text an
+    /// agent sees too.
+    #[test]
+    fn test_section_split_at_the_cap_is_refused_by_name() {
+        use baumhard::mindmap::model::{MindSection, MAX_SECTIONS_PER_NODE};
+        let (mut doc, id) = pinned_two_section_node();
+        let node = doc.mindmap.nodes.get_mut(&id).expect("fixture node");
+        let filler = MindSection::new_default(String::new(), Vec::new());
+        while node.sections.len() < MAX_SECTIONS_PER_NODE {
+            node.sections.push(filler.clone());
+        }
+        doc.set_section_text(&id, 1, "abcdef".to_string());
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        match run("section split at=3", &mut doc) {
+            ExecResult::Err(message) => {
+                assert!(
+                    message.starts_with("section split: "),
+                    "the verb names itself: {message}"
+                );
+                assert!(
+                    message.contains(&format!("MAX_SECTIONS_PER_NODE = {MAX_SECTIONS_PER_NODE}")),
+                    "the refusal names the cap: {message}"
+                );
+            }
+            other => panic!("a split at the cap must be refused, got {other:?}"),
+        }
+        assert_eq!(doc.mindmap.nodes[&id].sections.len(), MAX_SECTIONS_PER_NODE);
+    }
+
     /// Pre-fix `section split` defaulted to end-of-text (empty
     /// suffix), creating a useless empty section the user
     /// almost never wanted (Full-Nelson API/UX reviewer B2 —
