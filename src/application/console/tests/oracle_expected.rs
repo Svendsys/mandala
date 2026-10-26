@@ -208,7 +208,7 @@ pub const EXEC_EXPECTED: &[&str] = &[
     "OK no mutations registered",
     "OK no mutations registered",
     "ERR mutation list: unknown flag '--al'; the only flag is --all",
-    "ERR mutation list: one filter only; got 'sec' and 'dec' (quote a filter that has a space)",
+    "ERR mutation list: one filter only; got 'sec' and 'dec' (quote a filter that has a space: \"…\")",
     "ERR mutation apply needs an id (`mutation apply <id>`)",
     "ERR unknown mutation: no-such-mutation",
     "ERR mutation help needs an id",

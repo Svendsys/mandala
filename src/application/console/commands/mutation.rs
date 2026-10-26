@@ -175,7 +175,7 @@ fn list(descent: &Descent, args: &Args, eff: &ConsoleEffects) -> ExecResult {
                 // 'sec'" — two words typed, one reported.
                 Some(first) => {
                     return ExecResult::err(format!(
-                        "mutation list: one filter only; got '{}' and '{}' (quote a filter that has a space)",
+                        "mutation list: one filter only; got '{}' and '{}' (quote a filter that has a space: \"…\")",
                         first, other
                     ));
                 }
@@ -532,7 +532,7 @@ mod tests {
         match run("mutation list sec dec", &mut doc) {
             ExecResult::Err(msg) => assert_eq!(
                 msg,
-                "mutation list: one filter only; got 'sec' and 'dec' (quote a filter that has a space)"
+                "mutation list: one filter only; got 'sec' and 'dec' (quote a filter that has a space: \"…\")"
             ),
             other => panic!("two filter words must be refused, got {other:?}"),
         }
