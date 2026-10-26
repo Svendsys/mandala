@@ -2057,15 +2057,21 @@ fn test_border_palette_binding_refuses_a_name_the_map_does_not_define() {
 /// `border font` reads its value as a run of positionals joined on a
 /// space, as `font set` does (#136). Read as one slot, `border font
 /// Unifont CSUR` first set `Unifont` — a real font, and not the one
-/// typed — and later refused the line `font set` accepts. The
-/// fixture loads both families, which is what makes a first-word
-/// reading a silent wrong answer rather than a refusal.
+/// typed — and later refused the line `font set` accepts.
+///
+/// The case uses two families the repository bundles (so it holds on
+/// every host, not only one with Unifont installed), one a word-prefix
+/// of the other: a reading that stopped short of the whole run would
+/// set `Carnivalee Freakshow` for `Carnivalee Freakshow Demo`, a
+/// silent wrong answer rather than a refusal.
 #[test]
 fn test_border_font_reads_a_multi_word_family_whole() {
+    const SHORT: &str = "Carnivalee Freakshow";
+    const LONG: &str = "Carnivalee Freakshow Demo";
     let families: Vec<&str> = baumhard::font::fonts::loaded_families_iter().collect();
     assert!(
-        families.contains(&"Unifont") && families.contains(&"Unifont CSUR"),
-        "the case needs a family whose first word is also a family"
+        families.contains(&SHORT) && families.contains(&LONG),
+        "the bundled fonts must provide a family that is a word-prefix of another: {families:?}"
     );
     let font_of = |doc: &MindMapDocument, id: &str| {
         doc.mindmap.nodes[id]
@@ -2074,28 +2080,24 @@ fn test_border_font_reads_a_multi_word_family_whole() {
             .as_ref()
             .and_then(|c| c.font.clone())
     };
-    for line in ["border font Unifont CSUR", "border font \"Unifont CSUR\""] {
+    for line in [format!("border font {LONG}"), format!("border font \"{LONG}\"")] {
         let mut doc = fixture_doc();
         let id = first_node_id(&doc);
         doc.selection = SelectionState::Single(id.clone());
-        assert_exec_ok(run(line, &mut doc));
-        assert_eq!(
-            font_of(&doc, &id).as_deref(),
-            Some("Unifont CSUR"),
-            "for {line:?}"
-        );
+        assert_exec_ok(run(&line, &mut doc));
+        assert_eq!(font_of(&doc, &id).as_deref(), Some(LONG), "for {line:?}");
     }
-    // Control: the one-word family is still its own family.
+    // Control: the shorter run is still its own family.
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    assert_exec_ok(run("border font Unifont", &mut doc));
-    assert_eq!(font_of(&doc, &id).as_deref(), Some("Unifont"));
+    assert_exec_ok(run(&format!("border font {SHORT}"), &mut doc));
+    assert_eq!(font_of(&doc, &id).as_deref(), Some(SHORT));
     // A run that names no loaded family is refused whole, under the
     // surface, rather than trimmed to a prefix that happens to load.
     assert_exec_err_contains(
-        run("border font Unifont Nope", &mut doc),
-        "border: font 'Unifont Nope' is not a loaded font",
+        run(&format!("border font {SHORT} Nope"), &mut doc),
+        &format!("border: font '{SHORT} Nope' is not a loaded font"),
     );
-    assert_eq!(font_of(&doc, &id).as_deref(), Some("Unifont"));
+    assert_eq!(font_of(&doc, &id).as_deref(), Some(SHORT));
 }
