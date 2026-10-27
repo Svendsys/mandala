@@ -21,7 +21,12 @@
 //! - a **font** a document holds has a family name a file can write
 //!   ([`nameable_font`](crate::document::place::nameable_font));
 //! - a **name** an author chose is not empty and holds no control or
-//!   bidi character ([`name_fault`](crate::document::place::name_fault));
+//!   bidi character ([`name_fault`](crate::document::place::name_fault)).
+//!   The verifier holds an inserted theme's variant and variable names
+//!   and an inserted palette's name to it; today no edit gets that far,
+//!   since a theme or a palette goes only in the map row, which a
+//!   structural insert may not touch, and no op renames one or adds a
+//!   definition;
 //! - a **channel** is within
 //!   [`MAX_CHANNEL`](crate::document::bounds::MAX_CHANNEL)
 //!   ([`check_channel`](crate::document::bounds::check_channel), which

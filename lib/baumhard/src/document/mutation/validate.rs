@@ -40,7 +40,7 @@ use crate::document::mutation::ops::{
     DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LinkOp, MapOp, NodeOp, PaletteOp, PathOp,
     PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
 };
-use crate::document::place::{nameable_font, sizes_its_own_text, Unit};
+use crate::document::place::{name_fault, nameable_font, sizes_its_own_text, Unit};
 use crate::document::shape::validate_shape;
 use crate::document::values::{
     ColorRef, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, StartPoint, VarId, VerbId,
@@ -67,6 +67,17 @@ use std::cell::RefCell;
 /// (as deep as the mutator tree).
 pub fn validate(mutator: &DocMutatorTree, doc: &Document) -> Result<(), MutationError> {
     Validator::new(doc, false).run(mutator)
+}
+
+/// How [`validate`] judges `element` as the root of an inserted subtree:
+/// the element rules alone, without the structural ones that an insert
+/// meets first. For a test of a rule that no insert reaches today — a
+/// theme or a palette can only be inserted into the map row, which
+/// [`StructureRule::MapRow`](crate::document::mutation::error::StructureRule::MapRow)
+/// refuses before any element is judged.
+#[cfg(test)]
+pub(crate) fn judge_element(doc: &Document, element: &DocElement) -> Result<(), MutationError> {
+    Validator::new(doc, false).element(element, None)
 }
 
 /// [`validate`], and refuse every structural command: a presentation
@@ -574,6 +585,19 @@ impl<'d> Validator<'d> {
         self.text_style(&defaults.span, Unit::of_tier(DocKind::Span))
     }
 
+    /// A name an author chose, held to the rule a file's names are
+    /// ([`name_fault`]), so that an edit never makes a map `save` refuses.
+    fn name(&self, what: &'static str, name: &str) -> Result<(), MutationError> {
+        match name_fault(name) {
+            None => Ok(()),
+            Some(fault) => Err(MutationError::Name {
+                at: self.at(),
+                what,
+                fault,
+            }),
+        }
+    }
+
     /// One element of an inserted subtree, under `parent` (its parent in
     /// the subtree; `None` for the subtree's root).
     fn element(&self, element: &DocElement, parent: Option<DocKind>) -> Result<(), MutationError> {
@@ -631,7 +655,17 @@ impl<'d> Validator<'d> {
             }
             DocElement::Label(label) => self.label_style(&label.style),
             DocElement::PortalEnd(end) => self.portal_end_style(&end.style),
-            DocElement::Map(_) | DocElement::Theme(_) | DocElement::Palette(_) => Ok(()),
+            DocElement::Theme(theme) => {
+                for variant in &theme.variants {
+                    self.name("theme variant", &variant.name)?;
+                }
+                for variable in &theme.variables {
+                    self.name("theme variable", variable)?;
+                }
+                Ok(())
+            }
+            DocElement::Palette(palette) => self.name("palette", &palette.name),
+            DocElement::Map(_) => Ok(()),
             DocElement::Defaults(defaults) => self.defaults(defaults),
         }
     }
