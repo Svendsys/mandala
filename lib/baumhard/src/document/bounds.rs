@@ -373,6 +373,10 @@ pub fn check_node_ident(value: u32) -> Result<u32, BoundError> {
 
 /// A channel if it is at most [`MAX_CHANNEL`]: a node's, a section's or
 /// a ring's. O(1).
+// On wasm32 a `usize` is 32 bits, so `MAX_CHANNEL` is its maximum and the
+// comparison is always true there; on 64-bit targets it is not. One body
+// for every target is the point.
+#[allow(clippy::absurd_extreme_comparisons)]
 pub fn check_channel(channel: usize) -> Result<(), BoundError> {
     if channel <= MAX_CHANNEL {
         Ok(())

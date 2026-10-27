@@ -549,8 +549,10 @@ pub fn do_document_compose_normalizes_in_log_steps() {
     assert_eq!(spans(&doc, section).len(), 2, "two halvings of eight leave two");
 }
 
-/// How deep the chains of the climb-count tests go.
-const DEEP: usize = 100_000;
+/// How deep the chain of the climb-count test goes: deep enough that a
+/// climb per node would be hundreds of millions of steps, shallow enough
+/// that the control which replants one still finishes.
+const DEEP: usize = 20_000;
 
 /// A document holding one chain of `DEEP` nodes below a root node, and
 /// the chain from the top down.
