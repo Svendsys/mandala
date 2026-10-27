@@ -7,8 +7,13 @@ use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::ids_tests::*;
 use baumhard::document::tests::inspect_tests::*;
 use baumhard::document::tests::journal_tests::*;
+use baumhard::document::tests::mutation_compose_tests::*;
+use baumhard::document::tests::mutation_inherited_tests::*;
+use baumhard::document::tests::mutation_ops_tests::*;
+use baumhard::document::tests::mutation_validate_tests::*;
 use baumhard::document::tests::resolve_tests::*;
 use baumhard::document::tests::shape_tests::*;
+use baumhard::document::tests::structure_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
 use baumhard::engine::tests::inherited_tests::*;
@@ -16,6 +21,7 @@ use baumhard::engine::tests::interpolate_tests::*;
 use baumhard::engine::tests::journal_tests::*;
 use baumhard::engine::tests::routing_tests::*;
 use baumhard::engine::tests::sorted_tests::*;
+use baumhard::engine::tests::structure_tests::*;
 use baumhard::engine::tests::walker_tests::*;
 use baumhard::flow::tests::fit_tests::*;
 use baumhard::flow::tests::outline_tests::*;
@@ -846,6 +852,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_insert_str_at_grapheme_counted)
     });
     c.bench_function("delete_grapheme_at", |b| b.iter(do_delete_grapheme_at));
+    c.bench_function("delete_grapheme_range", |b| b.iter(do_delete_grapheme_range));
     c.bench_function("grapheme_display_width", |b| b.iter(do_grapheme_display_width));
     c.bench_function("truncate_to_display_width", |b| {
         b.iter(do_truncate_to_display_width)
@@ -1643,6 +1650,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_bounds_control_points", |b| {
         b.iter(do_document_bounds_control_points)
     });
+    c.bench_function("document_bounds_computed_font_sizes", |b| {
+        b.iter(do_document_bounds_computed_font_sizes)
+    });
+    c.bench_function("document_bounds_extent", |b| b.iter(do_document_bounds_extent));
+    c.bench_function("document_bounds_zoom_window", |b| {
+        b.iter(do_document_bounds_zoom_window)
+    });
+    c.bench_function("document_bounds_channel", |b| b.iter(do_document_bounds_channel));
     c.bench_function("document_kind_order_is_the_declared_order", |b| {
         b.iter(do_document_kind_order_is_the_declared_order)
     });
@@ -1782,6 +1797,125 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_interpolate_blends_numbers_and_colors", |b| {
         b.iter(do_document_interpolate_blends_numbers_and_colors)
     });
+    // the document's mutation vocabulary (V1-B3) //
+    c.bench_function("document_interpolation_follows_the_listed_fields", |b| {
+        b.iter(do_document_interpolation_follows_the_listed_fields)
+    });
+    c.bench_function("document_node_ops_write_their_field", |b| {
+        b.iter(do_document_node_ops_write_their_field)
+    });
+    c.bench_function("document_section_and_span_ops_write_their_field", |b| {
+        b.iter(do_document_section_and_span_ops_write_their_field)
+    });
+    c.bench_function("document_frame_and_ring_ops_write_their_field", |b| {
+        b.iter(do_document_frame_and_ring_ops_write_their_field)
+    });
+    c.bench_function("document_path_ops_write_their_field", |b| {
+        b.iter(do_document_path_ops_write_their_field)
+    });
+    c.bench_function("document_cap_label_and_portal_end_ops_write_their_field", |b| {
+        b.iter(do_document_cap_label_and_portal_end_ops_write_their_field)
+    });
+    c.bench_function(
+        "document_map_theme_palette_and_defaults_ops_write_their_field",
+        |b| b.iter(do_document_map_theme_palette_and_defaults_ops_write_their_field),
+    );
+    c.bench_function(
+        "document_relative_size_ops_clamp_and_take_the_place_s_unit",
+        |b| b.iter(do_document_relative_size_ops_clamp_and_take_the_place_s_unit),
+    );
+    c.bench_function("document_seed_matches_the_resolver_for_every_kind", |b| {
+        b.iter(do_document_seed_matches_the_resolver_for_every_kind)
+    });
+    c.bench_function(
+        "document_walk_from_the_map_matches_the_resolver_for_every_kind",
+        |b| b.iter(do_document_walk_from_the_map_matches_the_resolver_for_every_kind),
+    );
+    c.bench_function("document_grow_size_grows_the_inherited_size", |b| {
+        b.iter(do_document_grow_size_grows_the_inherited_size)
+    });
+    c.bench_function("document_grow_size_never_crosses_a_flow", |b| {
+        b.iter(do_document_grow_size_never_crosses_a_flow)
+    });
+    c.bench_function("document_validate_refuses_a_payload_of_another_kind", |b| {
+        b.iter(do_document_validate_refuses_a_payload_of_another_kind)
+    });
+    c.bench_function("document_validate_refuses_every_literal_out_of_bounds", |b| {
+        b.iter(do_document_validate_refuses_every_literal_out_of_bounds)
+    });
+    c.bench_function("document_validate_holds_sizes_to_their_unit", |b| {
+        b.iter(do_document_validate_holds_sizes_to_their_unit)
+    });
+    c.bench_function("document_validate_refuses_a_missing_reference", |b| {
+        b.iter(do_document_validate_refuses_a_missing_reference)
+    });
+    c.bench_function("document_validate_holds_structure_to_the_document_s_rules", |b| {
+        b.iter(do_document_validate_holds_structure_to_the_document_s_rules)
+    });
+    c.bench_function(
+        "document_validate_refuses_positional_and_spatial_instructions",
+        |b| b.iter(do_document_validate_refuses_positional_and_spatial_instructions),
+    );
+    c.bench_function("document_validate_refuses_a_bare_kind_switch", |b| {
+        b.iter(do_document_validate_refuses_a_bare_kind_switch)
+    });
+    c.bench_function("document_presentations_change_fields_only", |b| {
+        b.iter(do_document_presentations_change_fields_only)
+    });
+    c.bench_function("document_validate_applied_judges_what_the_steps_did", |b| {
+        b.iter(do_document_validate_applied_judges_what_the_steps_did)
+    });
+    c.bench_function("document_run_steps_validates_and_is_all_or_nothing", |b| {
+        b.iter(do_document_run_steps_validates_and_is_all_or_nothing)
+    });
+    c.bench_function("document_validate_refuses_the_fallback_font", |b| {
+        b.iter(do_document_validate_refuses_the_fallback_font)
+    });
+    c.bench_function("document_validate_bounds_channels", |b| {
+        b.iter(do_document_validate_bounds_channels)
+    });
+    c.bench_function("document_validate_refuses_an_inverted_range", |b| {
+        b.iter(do_document_validate_refuses_an_inverted_range)
+    });
+    c.bench_function("document_validate_applied_judges_nested_links", |b| {
+        b.iter(do_document_validate_applied_judges_nested_links)
+    });
+    c.bench_function("document_validate_applied_skips_removed_parents", |b| {
+        b.iter(do_document_validate_applied_skips_removed_parents)
+    });
+    c.bench_function("document_validate_walks_a_deep_mutator", |b| {
+        b.iter(do_document_validate_walks_a_deep_mutator)
+    });
+    c.bench_function("document_compose_normalizes_in_log_steps", |b| {
+        b.iter(do_document_compose_normalizes_in_log_steps)
+    });
+    c.bench_function("document_compose_trims_a_deep_selection_once_per_ancestor", |b| {
+        b.iter(do_document_compose_trims_a_deep_selection_once_per_ancestor)
+    });
+    c.bench_function("document_compose_creates_nodes", |b| {
+        b.iter(do_document_compose_creates_nodes)
+    });
+    c.bench_function("document_compose_deletes_nodes_and_links", |b| {
+        b.iter(do_document_compose_deletes_nodes_and_links)
+    });
+    c.bench_function("document_compose_reparents", |b| {
+        b.iter(do_document_compose_reparents)
+    });
+    c.bench_function("document_compose_switches_link_kind", |b| {
+        b.iter(do_document_compose_switches_link_kind)
+    });
+    c.bench_function("document_compose_styles_a_range", |b| {
+        b.iter(do_document_compose_styles_a_range)
+    });
+    c.bench_function("document_compose_normalizes_spans", |b| {
+        b.iter(do_document_compose_normalizes_spans)
+    });
+    c.bench_function("document_compose_inserts_and_deletes_text", |b| {
+        b.iter(do_document_compose_inserts_and_deletes_text)
+    });
+    c.bench_function("document_compose_splits_and_adds_sections", |b| {
+        b.iter(do_document_compose_splits_and_adds_sections)
+    });
     c.bench_function("document_never_reissues_an_ident", |b| {
         b.iter(do_document_never_reissues_an_ident)
     });
@@ -1792,6 +1926,19 @@ fn criterion_benchmark(c: &mut Criterion) {
         "document_validate_row_is_order_independent_and_names_no_id",
         |b| b.iter(do_document_validate_row_is_order_independent_and_names_no_id),
     );
+    c.bench_function("document_validate_subtree_judges_every_row", |b| {
+        b.iter(do_document_validate_subtree_judges_every_row)
+    });
+    c.bench_function("document_span_splits_and_merges_at_grapheme_boundaries", |b| {
+        b.iter(do_document_span_splits_and_merges_at_grapheme_boundaries)
+    });
+    c.bench_function(
+        "document_span_merge_is_refused_for_different_styles_or_links",
+        |b| b.iter(do_document_span_merge_is_refused_for_different_styles_or_links),
+    );
+    c.bench_function("document_span_split_and_merge_are_journaled_commands", |b| {
+        b.iter(do_document_span_split_and_merge_are_journaled_commands)
+    });
     c.bench_function("document_geometry_touches_no_input", |b| {
         b.iter(do_document_geometry_touches_no_input)
     });
@@ -2154,6 +2301,101 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("gfx_interpolates_geometry_and_color_and_snaps_the_rest", |b| {
         b.iter(do_gfx_interpolates_geometry_and_color_and_snaps_the_rest)
     });
+    // structural commands: insert, remove, move, split, merge //
+    c.bench_function("structure_move_under_its_own_subtree_is_a_cycle", |b| {
+        b.iter(do_structure_move_under_its_own_subtree_is_a_cycle)
+    });
+    c.bench_function(
+        "structure_a_command_on_a_node_removed_earlier_in_the_walk_fails",
+        |b| b.iter(do_structure_a_command_on_a_node_removed_earlier_in_the_walk_fails),
+    );
+    c.bench_function("structure_merge_refuses_a_sibling_with_children", |b| {
+        b.iter(do_structure_merge_refuses_a_sibling_with_children)
+    });
+    c.bench_function("structure_refusals_name_what_is_wrong_and_change_nothing", |b| {
+        b.iter(do_structure_refusals_name_what_is_wrong_and_change_nothing)
+    });
+    c.bench_function("structure_commands_run_after_the_walk", |b| {
+        b.iter(do_structure_commands_run_after_the_walk)
+    });
+    c.bench_function("structure_inserts_land_where_their_placement_says", |b| {
+        b.iter(do_structure_inserts_land_where_their_placement_says)
+    });
+    c.bench_function("structure_revert_and_replay_put_back_the_same_nodes", |b| {
+        b.iter(do_structure_revert_and_replay_put_back_the_same_nodes)
+    });
+    c.bench_function("structure_split_then_merge_round_trips_a_value", |b| {
+        b.iter(do_structure_split_then_merge_round_trips_a_value)
+    });
+    c.bench_function("structure_insert_then_rekey_reverts_and_replays_exactly", |b| {
+        b.iter(do_structure_insert_then_rekey_reverts_and_replays_exactly)
+    });
+    c.bench_function("structure_rekey_then_insert_reverts_and_replays_exactly", |b| {
+        b.iter(do_structure_rekey_then_insert_reverts_and_replays_exactly)
+    });
+    c.bench_function(
+        "structure_a_reparented_node_is_restored_against_both_parents",
+        |b| b.iter(do_structure_a_reparented_node_is_restored_against_both_parents),
+    );
+    c.bench_function("structure_touched_names_whole_subtrees_in_pre_order", |b| {
+        b.iter(do_structure_touched_names_whole_subtrees_in_pre_order)
+    });
+    c.bench_function("structure_touched_reads_each_node_s_own_membership", |b| {
+        b.iter(do_structure_touched_reads_each_node_s_own_membership)
+    });
+    c.bench_function(
+        "structure_discard_stales_a_detached_node_and_keeps_an_attached_one",
+        |b| b.iter(do_structure_discard_stales_a_detached_node_and_keeps_an_attached_one),
+    );
+    c.bench_function("structure_discard_frees_by_the_side_last_written", |b| {
+        b.iter(do_structure_discard_frees_by_the_side_last_written)
+    });
+    c.bench_function(
+        "structure_discard_leaves_a_subtree_a_later_journal_removed",
+        |b| b.iter(do_structure_discard_leaves_a_subtree_a_later_journal_removed),
+    );
+    c.bench_function("structure_snaps_in_write_interpolated", |b| {
+        b.iter(do_structure_snaps_in_write_interpolated)
+    });
+    c.bench_function(
+        "structure_without_a_journal_is_all_or_nothing_and_frees_what_it_removes",
+        |b| b.iter(do_structure_without_a_journal_is_all_or_nothing_and_frees_what_it_removes),
+    );
+    c.bench_function("structure_is_never_serialized", |b| {
+        b.iter(do_structure_is_never_serialized)
+    });
+    c.bench_function("structure_batch_on_a_wide_tree", |b| {
+        b.iter(do_structure_batch_on_a_wide_tree)
+    });
+    c.bench_function("structure_discard_frees_exactly_what_the_journal_holds", |b| {
+        b.iter(do_structure_discard_frees_exactly_what_the_journal_holds)
+    });
+    c.bench_function("structure_journal_names_the_parents_a_node_left_and_took", |b| {
+        b.iter(do_structure_journal_names_the_parents_a_node_left_and_took)
+    });
+    c.bench_function("structure_touched_names_an_entering_subtree_from_its_top", |b| {
+        b.iter(do_structure_touched_names_an_entering_subtree_from_its_top)
+    });
+    c.bench_function(
+        "structure_touched_names_a_removed_subtree_in_one_pre_order",
+        |b| b.iter(do_structure_touched_names_a_removed_subtree_in_one_pre_order),
+    );
+    c.bench_function("structure_walk_tree_from_refuses_a_node_out_of_the_tree", |b| {
+        b.iter(do_structure_walk_tree_from_refuses_a_node_out_of_the_tree)
+    });
+    c.bench_function("structure_rebuilding_a_row_as_it_stood_before_is_one_pass", |b| {
+        b.iter(do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass)
+    });
+    c.bench_function("structure_discard_frees_only_what_is_still_detached", |b| {
+        b.iter(do_structure_discard_frees_only_what_is_still_detached)
+    });
+    c.bench_function("structure_refuses_a_split_or_merge_that_changes_the_key", |b| {
+        b.iter(do_structure_refuses_a_split_or_merge_that_changes_the_key)
+    });
+    c.bench_function(
+        "gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges",
+        |b| b.iter(do_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges),
+    );
     // routing keys, the sorted-children invariant and anchored walks //
     c.bench_function("engine_walk_routes_by_kind_and_channel", |b| {
         b.iter(do_engine_walk_routes_by_kind_and_channel)

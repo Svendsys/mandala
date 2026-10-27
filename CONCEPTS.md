@@ -183,9 +183,16 @@ engine, so the invariant is kept by the only ways to change a tree:
 run of its key (`First`, `Last`, or `Before` / `After` an equal-key
 sibling), `update(id, f)` — the one way to change an element outside
 a walk — moves an element whose key `f` changed, `remove_subtree`
-removes, and a walk moves the elements whose key it changed once it
-is over. `check_sorted` verifies it. `update_journaled(id, journal, f)`
+removes (freeing, for building trees), a walk moves the elements whose
+key it changed once it is over, and its
+[structural commands](#structural-commands--structop-subtree) place
+every node they insert or move within the run of its key.
+`check_sorted` verifies it. `update_journaled(id, journal, f)`
 is `update` recorded in a [journal](#journals--journalbuilder-journal-touch).
+`contains(id)` says whether a node is in the tree — under the root —
+rather than merely in the arena, which also holds the subtrees a
+structural command detached and a journal still owns; `update` refuses
+those.
 
 Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
 `indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,
@@ -242,7 +249,9 @@ root. `apply_at_journaled(&mut target, &anchors, seed_for, &mut
 journal)` is `apply_at` recorded in a
 [journal](#journals--journalbuilder-journal-touch), for a tree that
 keeps history; the plain entry points are for trees that need none
-(glyph layers that are rebuilt).
+(glyph layers that are rebuilt). A `Mutator::Structure` node carries a
+[structural command](#structural-commands--structop-subtree), which
+either entry point runs after its walk.
 
 **Inherited state.** Some mutations need a value their element
 inherits rather than stores. The walker carries `E::Inherited` down
@@ -957,9 +966,56 @@ nothing: a journaled call that fails reverts everything the builder
 recorded before returning its error, and `JournalBuilder::abandon` is
 the same step for a failure its caller detects.
 
-`lib/baumhard/src/engine/journal.rs`. `Touch::{Inserted, Removed,
-Moved}` are reserved for structural commands; today every entry is a
-`Touch::Field`.
+Structural commands record into the same builder and restore the same
+way: an inserted node has only a close position, a removed one only a
+start position, a re-parented one a position in each parent, and a
+restore puts back arrangements, not a history of moves — which is what
+lets structure and key changes mix in one builder. `touched()` reads
+each node's change from where it is before and after: `Field` (state,
+or place in its row), `Moved` (another parent), `Inserted` / `Removed`
+(in the tree at one end only — the whole subtree that moved with it,
+from its top, in the pre-order of the arrangement it is in, however
+many calls built it). `parents(node)` names the parent a node left or
+took — the row a removal changed, which the arena no longer links to.
+A journal is never cloned into a history: a clone shares the subtrees
+it owns.
+A journal **owns** the subtrees it holds out of the tree — what it
+removed while applied, what it inserted while reverted — and
+`Journal::discard` frees them when the journal leaves the history;
+nothing else frees them, and a revert never does.
+
+`lib/baumhard/src/engine/journal.rs`.
+
+### Structural commands — `StructOp`, `Subtree`
+
+A mutator that changes the shape of a tree rather than a field.
+
+Creating, deleting and re-parenting nodes, adding sections and
+splitting text spans are edits like any other, so they are mutators
+like any other: a `Mutator::Structure { key, op }` reaches its target
+by key from the walk's anchors and carries a `StructOp` —
+`Insert { subtree, at }` (a `Subtree` of new elements as a child of the
+target, at a `Placement` within its key's run), `Remove`, `Move { to,
+at }` (re-parent under a concrete `NodeId`; resolving persistent ids to
+`NodeId`s is the instantiation's), `Split { at }` and `Merge` (cut an
+element in two at its `TreeElement::SplitPoint`, or absorb the next
+equal-key sibling — the element says how through `TreeElement::split`
+/ `merge`, and by default it cannot; the glyph elements cannot).
+
+The walk applies them in a **second phase**: it collects `(target,
+command)` pairs in walk order and changes no structure, so it never
+iterates a row a command is changing; the commands then run in that
+order, journaled. All or nothing: a failing command (`Cycle`,
+`PlacementCrossesKey`, `StaleNode`, `Unsplittable`, `Unmergeable`,
+`RemoveRoot`, `TargetRemovedEarlier`, …) undoes the whole call through
+the journal, the walk's field changes included. A removed subtree is
+**detached, not freed** — the journal owns it, so undo re-attaches the
+same `NodeId`s and every id held elsewhere stays valid. A walk without
+a journal journals into one of its own when it has a command, and
+discards it after, which frees what it removed. Structure is never
+authored as JSON: the variant is skipped by serde.
+
+`lib/baumhard/src/engine/structure.rs`.
 
 ### Interpolation — `Interpolate`, `Snap`, `Interpolable`
 
@@ -1184,11 +1240,59 @@ replaces; nothing in the app uses it until the cut-over (V1-C3).
   frame's size and color stay in their own flow and never come from
   the node's text.
 - **Shape rules** (`document::shape::validate_shape`) say which kind
-  may hold which; **bounds** (`document::bounds`) every number's
-  range.
+  may hold which — `Document::validate_subtree` judges a detached
+  subtree's rows the same way before a structural insert puts it in;
+  **bounds** (`document::bounds`) every number's range.
+- **Structure** changes through the engine's
+  [structural commands](#structural-commands--structop-subtree). Only a
+  span splits and merges: at a grapheme-cluster index, and with a
+  neighbor of the same style and link.
 
 `lib/baumhard/src/document/`. `util::document_surface` holds it to
 naming nothing of the model it replaces.
+
+### The document's mutations — `DocMutation`, `DocInherited`, `DocStep`
+
+Every change a document can undergo, as the engine's payload for the
+document (V1-B3, #237). Every path that changes a map — actions, the
+console, IPC, drags, text editing, edits, presentations, verbs — builds
+mutator trees from this vocabulary and nothing else; the writer that
+applies them with history is V1-B4.
+
+- **`DocMutation`** has one payload per kind (`Node(NodeOp)`,
+  `Span(SpanOp)`, `Path(PathOp)` for connectors and links, `Cap(TextOp)`
+  …). Each op writes exactly the field it names; there are no setters.
+  The relative ops (`Nudge`, `GrowSize`, `ScaleSize`, `MoveControlPoint`)
+  clamp their result with `document::bounds`, and an index the reached
+  element lacks leaves it unchanged with a diagnostic.
+- **`DocInherited`** is what a document walk carries down, so "grow the
+  font" on text with no size of its own grows the size it displays:
+  `text_size_for(kind)` answers what `resolve_text` would, from
+  `Defaults` tails the seed reads once (`inherited_seed`) and the owners'
+  sizes within the flow. A frame never takes the node's points, and a
+  connector, cap or label never takes node text.
+- **Validation** has two halves. `validate` judges a mutator tree before
+  it walks: payload against key, every literal against its bound,
+  every reference, and the structural commands the document allows
+  (`validate_for_presentation` refuses all structure, D17).
+  `validate_applied` judges a request's journal after its last step:
+  the rows it changed, inserted links (nested ones included), links
+  whose kind changed, and that every size it wrote is in the unit its
+  place takes — none at all on a span inside a ring. A font is never
+  the fallback face, and a channel never passes `MAX_CHANNEL`. Both
+  halves iterate with explicit stacks and remember which elements are
+  in the tree, so depth costs them no call stack and no climb per
+  element (§20 rule 11).
+- **`DocStep`** is one walk of a request, built from the document as the
+  earlier steps left it — one walk cannot split a span twice and style
+  the middle, or merge a run of three. The composite builders
+  (`document::mutation::compose`: `create_child`, `delete`, `reparent`,
+  `set_link_kind`, `style_range`, `insert_text`, `delete_text`,
+  `split_section`, …) return the steps of each change whose shape is
+  not obvious; the writer runs them on one journal builder, all or
+  nothing.
+
+`lib/baumhard/src/document/mutation/`.
 
 ### TextFlow — `FlowSpan`, `ShapedRun`, `ShapedBox`, `PlacedRun`, `Outline`, `Curve`
 

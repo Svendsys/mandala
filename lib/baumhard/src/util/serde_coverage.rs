@@ -1089,6 +1089,13 @@ impl TypeGraph {
                     let mut fields = Vec::new();
                     let mut unread = unread_serde_attrs(&item.attrs);
                     for variant in &item.variants {
+                        // A `#[serde(skip)]` / `skip_deserializing`
+                        // variant is never read: it has no name on
+                        // disk (`serde_derive` leaves it out of
+                        // `VARIANTS`) and nothing in it is reached.
+                        if is_skipped(&variant.attrs) {
+                            continue;
+                        }
                         has_named_fields |= matches!(variant.fields, Fields::Named(_));
                         referenced.extend(referenced_types(&variant.fields));
                         predicates.extend(omit_predicates(&variant.fields));
@@ -3297,6 +3304,78 @@ pub struct AliasLeaf {
             Some(["Literal".to_string(), "lit".to_string(), "Bare".to_string()].as_slice()),
             "which is not the same as sorting the whole list, and is what \
              `mindmap::unknown_keys::expand_route` is driven over"
+        );
+    }
+
+    /// A variant serde skips is not on either published surface: the
+    /// walk leaves it out of the enum's variants exactly as
+    /// `serde_derive`'s `VARIANTS` does, and reaches nothing through
+    /// it — the engine's `Mutator::Structure` is such a variant, and
+    /// the `NodeId` inside it is no part of any file. The control: the
+    /// variant beside it is on both surfaces and reaches its leaf.
+    #[test]
+    fn test_a_skipped_variant_is_on_no_published_surface() {
+        use crate::util::serde_probe::derived_shape;
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        enum SkipPayload {
+            Shown(ShownLeaf),
+            #[serde(skip)]
+            Hidden(HiddenLeaf),
+        }
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct ShownLeaf {
+            x: f64,
+        }
+
+        /// Kept identical to `SOURCE` below; not `Deserialize`, as
+        /// the skipped variant asks nothing of it.
+        #[allow(dead_code)]
+        struct HiddenLeaf {
+            y: f64,
+        }
+
+        /// The declarations above, as text for the source walk.
+        const SOURCE: &str = "\
+#[derive(Deserialize)]
+pub enum SkipPayload {
+    Shown(ShownLeaf),
+    #[serde(skip)]
+    Hidden(HiddenLeaf),
+}
+#[derive(Deserialize)]
+pub struct ShownLeaf {
+    pub x: f64,
+}
+pub struct HiddenLeaf {
+    pub y: f64,
+}
+";
+
+        let graph = graph_of(SOURCE);
+        let variants = graph.get("SkipPayload").map(|info| info.variants.as_slice());
+        assert_eq!(
+            variants,
+            derived_shape::<SkipPayload>().variants_of("SkipPayload")
+        );
+        assert_eq!(variants, Some(["Shown".to_string()].as_slice()));
+        let reached: Vec<&str> = graph
+            .reachable_from("SkipPayload")
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect();
+        assert!(
+            reached.contains(&"ShownLeaf"),
+            "the control reaches its leaf: {reached:?}"
+        );
+        assert!(
+            !reached.contains(&"HiddenLeaf"),
+            "the skipped variant reaches nothing: {reached:?}"
         );
     }
 

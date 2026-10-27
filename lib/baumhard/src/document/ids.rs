@@ -25,15 +25,21 @@
 //! as "not yet assigned": a node a mutation inserts carries it until
 //! the writer (V1-B4) assigns the next ident.
 //!
-//! There is no `&mut` access to a `Document` here: the document changes
-//! only through its writer (V1-B4), and is built only by the loader
-//! (V1-B2) and, for tests,
-//! `DocumentBuilder`, crate-private in `document::tests::test_support`.
+//! There is no public `&mut` access to a `Document` here: the document
+//! changes only through its writer (V1-B4), which runs the steps of a
+//! request through `run_steps`, visible to `document` alone, and is
+//! built only by the loader (V1-B2) and, for tests, `DocumentBuilder`,
+//! crate-private in `document::tests::test_support`.
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
-use crate::document::shape::{validate_shape, ShapeError};
+use crate::document::mutation::error::MutationError;
+use crate::document::mutation::inherited::inherited_seed;
+use crate::document::mutation::validate::validate;
+use crate::document::shape::{validate_shape, validate_subtree, ShapeError};
 use crate::document::values::PaletteId;
+use crate::engine::journal::JournalBuilder;
+use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
 use indextree::NodeId;
 use rustc_hash::FxHashMap;
@@ -280,10 +286,66 @@ impl Document {
         &self.definitions
     }
 
+    /// Run `steps` in order on `journal`, each built from the document
+    /// as the steps before it left it, validated
+    /// ([`validate`]),
+    /// and walked from its anchors with
+    /// [`inherited_seed`]
+    /// as every anchor's seed. A step that builds nothing is skipped.
+    ///
+    /// All or nothing: on the first step that fails to build, validate
+    /// or walk, `journal` is abandoned — everything it recorded, earlier
+    /// steps and earlier calls included, is undone and what its commands
+    /// created is freed — and the error is returned. On success the
+    /// builder comes back holding every step, for the caller to add to,
+    /// close, and judge with
+    /// [`validate_applied`](crate::document::mutation::validate::validate_applied).
+    ///
+    /// Each step is built from the document as the steps before it left
+    /// it, which is not validated until the request is over: a step's
+    /// closure may see a row that breaks the shape rules (see
+    /// [`DocStep`](crate::document::mutation::step::DocStep)).
+    ///
+    /// The loop the writer (V1-B4) runs a request's steps through, and
+    /// the only code that walks a mutator over a document. Visible to
+    /// `document` alone: no other code changes a document (rule 4).
+    ///
+    /// Cost: per step, its build, its validation and its walk.
+    pub(in crate::document) fn run_steps(
+        &mut self,
+        steps: Vec<crate::document::mutation::step::DocStep>,
+        mut journal: JournalBuilder<DocElement>,
+    ) -> Result<JournalBuilder<DocElement>, MutationError> {
+        for step in steps {
+            let result = match step.build(self) {
+                Ok(Some(walk)) => validate(&walk.mutator, self).and_then(|()| {
+                    walk.mutator
+                        .apply_at_journaled(&mut self.tree, &walk.anchors, inherited_seed, &mut journal)
+                        .map_err(MutationError::from)
+                }),
+                Ok(None) => Ok(()),
+                Err(error) => Err(error),
+            };
+            if let Err(error) = result {
+                journal.abandon(&mut self.tree);
+                return Err(error);
+            }
+        }
+        Ok(journal)
+    }
+
     /// [`validate_shape`] for the element at `id`: its own row, and a
     /// node's connector rule. O(children of `id`).
     pub fn validate_shape(&self, id: NodeId) -> Result<(), ShapeError> {
         validate_shape(&self.tree, id)
+    }
+
+    /// [`validate_subtree`]: every row of a detached subtree, judged
+    /// before a structural insert puts it into a document; the root's
+    /// connector rule is [`Self::validate_shape`]'s once it is in place.
+    /// O(elements of `subtree`).
+    pub fn validate_subtree(subtree: &Subtree<DocElement>) -> Result<(), ShapeError> {
+        validate_subtree(subtree)
     }
 }
 

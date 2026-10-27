@@ -11,18 +11,19 @@
 //! has a bench entry in `benches/test_bench.rs`.
 
 use crate::engine::anchor::Anchors;
-use crate::engine::journal::{JournalBuilder, Touch};
+use crate::engine::journal::{Journal, JournalBuilder, Touch};
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::{Comparator, Predicate};
 use crate::engine::tests::journal_fixtures::{
-    no_op_scenario, order, scenario, snapshot, state_above, Call, Scenario, SEEDS,
+    no_op_scenario, order, placed, run_structural, scenario, snapshot, state_above, Call, Intent, Scenario,
+    SnapshotRow, StructuralRun, StructuralStats, SEEDS,
 };
 use crate::engine::tests::test_element::{
     add, add_mutator, plain, value, TestElement, TestField, TestMutation,
 };
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
 use indextree::NodeId;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The values of `parent`'s children, in sibling order — the row's
 /// order, read through values the fixtures keep distinct.
@@ -134,6 +135,207 @@ pub fn do_journal_revert_and_replay_are_exact() {
         reordered >= SEEDS / 10,
         "seeds must move elements among their siblings: {reordered}"
     );
+
+    revert_and_replay_are_exact_with_structure();
+}
+
+/// The structural half of [`do_journal_revert_and_replay_are_exact`]:
+/// for every seed, a [`StructuralScenario`](crate::engine::tests::journal_fixtures::StructuralScenario)'s
+/// calls — inserts, removes, moves, splits and merges, valid and not,
+/// mixed with key and value changes — on one builder. Every call is
+/// checked as it runs ([`run_structural`]): sorted rows after a
+/// success, the tree as the builder found it after a failure. Then the
+/// closed journal is empty exactly when the tree did not change, names
+/// what changed ([`check_touched`]), and reverts to the snapshot from
+/// before the first call and replays to the one after the last — the
+/// same `NodeId`s in the same places, the inserted and the removed
+/// included — twice over, sorted each time.
+///
+/// The run must have exercised every command, re-parented nodes, hit
+/// every error the commands can return, mixed a structural call and a
+/// key move in **two calls of one builder**, and gone on using a
+/// builder after a failure unwound it.
+fn revert_and_replay_are_exact_with_structure() {
+    let mut stats = StructuralStats::default();
+    for seed in 0..SEEDS {
+        let StructuralRun {
+            mut tree,
+            before,
+            after,
+            journal,
+        } = run_structural(seed, &mut stats);
+        assert_eq!(
+            journal.is_empty(),
+            before == after,
+            "seed {seed}: empty exactly when nothing changed"
+        );
+        check_touched(seed, &before, &after, &journal);
+        for cycle in 0..2 {
+            journal
+                .revert(&mut tree)
+                .unwrap_or_else(|e| panic!("seed {seed}, cycle {cycle}: revert refused: {e}"));
+            assert_eq!(
+                snapshot(&tree),
+                before,
+                "seed {seed}, cycle {cycle}: revert restores the tree"
+            );
+            tree.check_sorted().unwrap();
+            journal
+                .replay(&mut tree)
+                .unwrap_or_else(|e| panic!("seed {seed}, cycle {cycle}: replay refused: {e}"));
+            assert_eq!(
+                snapshot(&tree),
+                after,
+                "seed {seed}, cycle {cycle}: replay reproduces the calls"
+            );
+            tree.check_sorted().unwrap();
+        }
+    }
+    assert!(
+        stats.nested_removals >= SEEDS / 50,
+        "builders must remove a node above one they removed before: {}",
+        stats.nested_removals
+    );
+    assert!(
+        stats.created_into_created >= SEEDS / 50,
+        "builders must move a node they created into another they created: {}",
+        stats.created_into_created
+    );
+    for intent in Intent::STRUCTURAL {
+        let count = stats.structural.get(&intent).copied().unwrap_or(0);
+        assert!(
+            count >= SEEDS / 5,
+            "{intent:?} must succeed and change structure often: {count}"
+        );
+    }
+    assert!(
+        stats.reparented >= SEEDS / 5,
+        "calls must move nodes to other parents: {}",
+        stats.reparented
+    );
+    for error in [
+        "Cycle",
+        "TargetRemovedEarlier",
+        "RemoveRoot",
+        "Unsplittable",
+        "Unmergeable",
+        "PlacementCrossesKey",
+        "NotAChild",
+    ] {
+        let count = stats.errors.get(error).copied().unwrap_or(0);
+        assert!(count >= 1, "a command must fail with {error}: {count}");
+    }
+    assert!(
+        stats.mixed >= SEEDS / 10,
+        "builders must hold a structural call and another call's key move: {}",
+        stats.mixed
+    );
+    assert!(
+        stats.continued_after_failure >= SEEDS / 50,
+        "builders must be used again after a failure unwound them: {}",
+        stats.continued_after_failure
+    );
+    assert!(
+        stats.changed > SEEDS / 2,
+        "most seeds must change something: {}",
+        stats.changed
+    );
+}
+
+/// `journal.touched()` against the snapshots from before and after its
+/// calls, which share no code with it: each node at most once; a node
+/// only in `after` is `Inserted`, one only in `before` `Removed`, one
+/// under another parent `Moved`, and each of these is named; a node
+/// whose state changed under the same parent is a named `Field`; a node
+/// whose state and parent did not change may be a `Field` — its row
+/// changed around it — and nothing else; a node in neither snapshot is
+/// never named.
+fn check_touched(seed: u64, before: &[SnapshotRow], after: &[SnapshotRow], journal: &Journal<TestElement>) {
+    let touched: Vec<(NodeId, Touch)> = journal.touched().collect();
+    let named: FxHashMap<NodeId, Touch> = touched.iter().copied().collect();
+    assert_eq!(named.len(), touched.len(), "seed {seed}: each node is named once");
+    let (b, a) = (placed(before), placed(after));
+    for (id, touch) in &named {
+        assert!(
+            b.contains_key(id) || a.contains_key(id),
+            "seed {seed}: {id} ({touch:?}) was never in the tree, and is not named"
+        );
+    }
+    let ids: FxHashSet<NodeId> = b.keys().chain(a.keys()).copied().collect();
+    for id in ids {
+        let expected = match (b.get(&id), a.get(&id)) {
+            (None, Some(_)) => Some(Touch::Inserted),
+            (Some(_), None) => Some(Touch::Removed),
+            (Some((bp, _, be)), Some((ap, _, ae))) if bp != ap || be != ae => {
+                Some(if bp != ap { Touch::Moved } else { Touch::Field })
+            }
+            _ => None,
+        };
+        match expected {
+            Some(expected) => assert_eq!(named.get(&id), Some(&expected), "seed {seed}: {id}"),
+            None => assert!(
+                matches!(named.get(&id), None | Some(Touch::Field)),
+                "seed {seed}: {id} kept its parent and state, so it is a field touch or none"
+            ),
+        }
+    }
+    check_touched_order(seed, &touched, after, &a, &b, Touch::Inserted);
+    check_touched_order(seed, &touched, before, &b, &a, Touch::Removed);
+}
+
+/// The order `touched` names the nodes that entered (`kind`
+/// `Inserted`) or left (`Removed`) the tree, against the snapshot of the
+/// arrangement they are in (`rows`, indexed as `here`; `there` is the
+/// other one). Each such node belongs to the subtree that moved with
+/// it, whose top is its highest ancestor that is in `here` and not in
+/// `there`. Within each subtree the nodes come in `rows`' pre-order,
+/// and no node of another subtree comes between them.
+fn check_touched_order(
+    seed: u64,
+    touched: &[(NodeId, Touch)],
+    rows: &[SnapshotRow],
+    here: &FxHashMap<NodeId, (Option<NodeId>, Option<NodeId>, TestElement)>,
+    there: &FxHashMap<NodeId, (Option<NodeId>, Option<NodeId>, TestElement)>,
+    kind: Touch,
+) {
+    let pre_order: FxHashMap<NodeId, usize> =
+        rows.iter().enumerate().map(|(i, (id, _, _))| (*id, i)).collect();
+    let top = |mut node: NodeId| {
+        while let Some(parent) = here.get(&node).and_then(|(parent, _, _)| *parent) {
+            if there.contains_key(&parent) {
+                break;
+            }
+            node = parent;
+        }
+        node
+    };
+    let moved: Vec<(usize, NodeId, NodeId)> = touched
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, touch))| *touch == kind)
+        .map(|(i, (id, _))| (i, *id, top(*id)))
+        .collect();
+    let tops: FxHashSet<NodeId> = moved.iter().map(|&(_, _, top)| top).collect();
+    for group in tops {
+        let members: Vec<&(usize, NodeId, NodeId)> = moved.iter().filter(|m| m.2 == group).collect();
+        let (first, last) = (members[0].0, members[members.len() - 1].0);
+        assert!(
+            moved
+                .iter()
+                .all(|&(i, _, other)| other == group || i < first || i > last),
+            "seed {seed}: the {kind:?} subtree of {group} is named in one piece"
+        );
+        assert!(
+            members
+                .windows(2)
+                .all(|pair| pre_order[&pair[0].1] < pre_order[&pair[1].1]),
+            "seed {seed}: the {kind:?} subtree of {group} is named in pre-order"
+        );
+        assert_eq!(
+            members[0].1, group,
+            "seed {seed}: the top of the {kind:?} subtree comes first"
+        );
+    }
 }
 
 #[test]
@@ -641,9 +843,11 @@ fn test_journal_names_every_change_as_a_field_touch() {
     do_journal_names_every_change_as_a_field_touch();
 }
 
-/// The structural touches are defined but no journal produces them:
-/// a value change and a key change are both `Touch::Field`, oldest
-/// first, and `before` / `after` answer for exactly the touched nodes.
+/// A change that keeps every node in the tree under its parent is a
+/// field touch: a value change and a key change — a move within the
+/// row — are both `Touch::Field`, oldest first, and `before` / `after`
+/// answer for exactly the touched nodes. (The structural touches are
+/// `structure_tests`'.)
 pub fn do_journal_names_every_change_as_a_field_touch() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3)]);
     let mut builder = JournalBuilder::new();

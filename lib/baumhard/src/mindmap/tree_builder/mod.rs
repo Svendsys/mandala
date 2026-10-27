@@ -471,9 +471,10 @@ mod append_cost_tests {
     fn test_the_tree_builder_never_pays_for_a_cycle_check() {
         let (found, value_inserts) = crate::util::source_scan::sorted_insert_checked_calls();
         assert!(
-            value_inserts >= 4,
+            value_inserts >= 2,
             "precondition: the scan reads the sorted insert's body, which places its node \
-             through indextree's four value-inserting calls (found {value_inserts})"
+             at the slot it found through indextree's two value-inserting calls, \
+             `insert_after_value` and `prepend_value` (found {value_inserts})"
         );
         assert!(
             found.is_empty(),

@@ -420,7 +420,11 @@ mutations that don't filter stay byte-identical on disk.
 ## `mutator` — the MutatorNode AST
 
 The mutator AST mirrors the variants of the engine's `Mutator` plus a
-`Repeat` wrapper for "N children at consecutive channels". See
+`Repeat` wrapper for "N children at consecutive channels" — all but
+one: `Mutator::Structure`, a structural command (insert, remove, move,
+split, merge), has no AST node and no JSON spelling. Structure is never
+authored as JSON; the engine's serde skips the variant, so a
+`"Structure"` object is refused as an unknown variant. See
 `lib/baumhard/src/engine/builder/ast.rs` for the type definitions. The
 AST is generic over the element type and the mutation payload; in a
 custom mutation it is the glyph instantiation,
@@ -720,10 +724,11 @@ mutation on a specific node overrides the map's.
 ## The document's kinds and predicate fields
 
 The document (`lib/baumhard/src/document/`, V1-B1) is the engine's
-second element type. Nothing authors mutators against it yet — its
-mutations are V1-B3's, and its edits and presentations V1-D1's and
-V1-D2's — but the two spellings a document mutator will carry are
-fixed here, because they are serialized by the types themselves.
+second element type. Nothing authors mutators against it yet: its
+mutation vocabulary (`document::mutation`, V1-B3) is built by code and
+has no JSON spelling in V1, and its edits and presentations are
+V1-D1's and V1-D2's. The two spellings a document mutator will carry
+are fixed here, because they are serialized by the types themselves.
 
 **Kinds.** A document mutator's `"kind"` is one of, in sibling order:
 `"map"`, `"theme"`, `"palette"`, `"defaults"`, `"section"`, `"span"`,

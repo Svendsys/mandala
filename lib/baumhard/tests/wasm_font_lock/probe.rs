@@ -3,8 +3,9 @@
 //! The wasm32 side of `tests/wasm_font_lock.rs`: a `cdylib` that
 //! exports one function per scenario, each calling baumhard's real
 //! font-lock helpers — or, in `flow_shape_and_place`, TextFlow's
-//! shaping and placement under the guard — so a node runner can execute
-//! them in a real WebAssembly engine.
+//! shaping and placement under the guard, and in
+//! `deep_mutator_validates`, the document validator's deep walk — so a
+//! node runner can execute them in a real WebAssembly engine.
 //!
 //! This file is not part of any cargo target in the repository. The
 //! test copies it into a staging crate under `target/` and builds it
@@ -13,10 +14,11 @@
 //! drift.
 //!
 //! Every export returns `1` on success; a probe that checks several
-//! things returns a distinct other number for each that went wrong. The `reentrant_*` exports are
-//! *meant* to panic: on `wasm32-unknown-unknown` a panic aborts as a
-//! trap, which says nothing about its cause, so the hook below leaves
-//! the message where the host can read it. The runner decides pass or
+//! things returns a distinct other number for each that went wrong.
+//! The `reentrant_*` exports are *meant* to panic: on
+//! `wasm32-unknown-unknown` a panic aborts as a trap, which says
+//! nothing about its cause, so the hook below leaves the message where
+//! the host can read it. The runner decides pass or
 //! fail from that message, not from the trap: a trap on its own is
 //! exactly what `Instant::now()` produces too, so only the message
 //! tells a deliberate panic from a bug.
@@ -199,5 +201,17 @@ pub extern "C" fn flow_shape_and_place() -> u32 {
     if filled.is_none() || placed.glyphs.len() <= 3 {
         return 5;
     }
+    1
+}
+
+/// Validate a document mutator tree 100,000 levels deep (design §20
+/// rule 11, ruling R14.4 on #237): the validator's walk iterates, so it
+/// fits wasm32's default stack in a debug build. Runs the native test's
+/// body, `do_document_validate_walks_a_deep_mutator`, which panics on
+/// any failure.
+#[no_mangle]
+pub extern "C" fn deep_mutator_validates() -> u32 {
+    install_hook();
+    baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_mutator();
     1
 }

@@ -519,11 +519,14 @@ impl TreeEventConsumer for GfxElement {
 /// are the tree's [`GlyphTreeCache`]. Spatial: a `GlyphArea` with a
 /// positive render size answers [`TreeElement::spatial_bounds`]
 /// with its position and render bounds; a model or a `Void` has no
-/// box of its own.
+/// box of its own. A glyph element is never split or merged
+/// (`SplitPoint = ()`, the default `split` and `merge`), so a glyph
+/// tree refuses those two structural commands.
 impl TreeElement for GfxElement {
     type Kind = ();
     type Cache = GlyphTreeCache;
     type Inherited = ();
+    type SplitPoint = ();
     const SPATIAL: bool = true;
 
     fn kind(&self) {}

@@ -29,6 +29,7 @@ use crate::document::values::{
 };
 use crate::engine::element::TreeElement;
 use crate::font::fonts::AppFont;
+use crate::util::grapheme_chad::split_off_graphemes;
 use glam::Vec2;
 use indextree::NodeId;
 use serde::{Deserialize, Serialize};
@@ -552,15 +553,22 @@ impl DocElement {
 ///   a mutator for one kind never lands on another (§4.1).
 /// - `Cache` is `()`: a document derives nothing per tree. Resolved
 ///   values are projection state (V1-B7), never cached here.
-/// - `Inherited` is `()` for now. What a document walk carries down —
-///   the resolved text size, and whether the walk is inside a frame —
-///   belongs with the mutations that read it, V1-B3.
+/// - `Inherited` is [`DocInherited`](crate::document::mutation::inherited::DocInherited):
+///   what a text displays when it sets no size of its own, by kind, and
+///   whether the walk is inside a frame — what `GrowSize` and
+///   `ScaleSize` read. A walk's seed is
+///   [`inherited_seed`](crate::document::mutation::inherited::inherited_seed).
 /// - `SPATIAL` is `false`: a document element has no box to hit-test;
 ///   hit-testing happens on the glyph layers.
+/// - Only a span splits and merges: `SplitPoint` is a grapheme-cluster
+///   index into its text (baumhard §B3), and two spans merge when their
+///   styles and links are equal.
 impl TreeElement for DocElement {
     type Kind = DocKind;
     type Cache = ();
-    type Inherited = ();
+    type Inherited = crate::document::mutation::inherited::DocInherited;
+    /// A grapheme-cluster index into a span's text.
+    type SplitPoint = usize;
     const SPATIAL: bool = false;
 
     fn kind(&self) -> DocKind {
@@ -584,5 +592,53 @@ impl TreeElement for DocElement {
         self == other
     }
 
-    fn inherit(&self, _parent: &()) {}
+    /// See [`DocInherited`](crate::document::mutation::inherited::DocInherited). O(1).
+    fn inherit(
+        &self,
+        parent: &crate::document::mutation::inherited::DocInherited,
+    ) -> crate::document::mutation::inherited::DocInherited {
+        crate::document::mutation::inherited::inherit(self, parent)
+    }
+
+    /// A span splits at a grapheme-cluster index into its first `at`
+    /// clusters and the rest, both with its style and link; it splits
+    /// only where both parts hold text, so `at` is between 1 and its
+    /// cluster count minus one. No other kind splits. Cost: one
+    /// grapheme walk to `at`, the copy of the rest and a clone of the
+    /// style and link.
+    fn split(&self, at: &usize) -> Option<(Self, Self)> {
+        let DocElement::Span(span) = self else {
+            return None;
+        };
+        if *at == 0 {
+            return None;
+        }
+        let mut first = span.clone();
+        let rest = split_off_graphemes(&mut first.text, *at);
+        if rest.is_empty() {
+            return None;
+        }
+        let second = SpanData {
+            text: rest,
+            style: span.style.clone(),
+            link: span.link.clone(),
+        };
+        Some((DocElement::Span(first), DocElement::Span(second)))
+    }
+
+    /// Two spans with equal styles and equal links merge into one
+    /// holding the first's text followed by the second's. Nothing else
+    /// merges. Cost: the two style and link compares and the joined
+    /// text.
+    fn merge(&self, next: &Self) -> Option<Self> {
+        let (DocElement::Span(span), DocElement::Span(next)) = (self, next) else {
+            return None;
+        };
+        if span.style != next.style || span.link != next.link {
+            return None;
+        }
+        let mut merged = span.clone();
+        merged.text.push_str(&next.text);
+        Some(DocElement::Span(merged))
+    }
 }

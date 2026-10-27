@@ -27,8 +27,8 @@ develops it.
 |---|---|---|
 | D1 | The document itself becomes a baumhard `Tree`, mutated by the same engine as the glyph trees. No reverse sync from view to data, ever. | §3, §5 |
 | D2 | Text is a sequence of **span** elements (text + style), not ranges over a string. | §5, §6 |
-| D3 | Structure is nesting. Nodes carry a compact integer `id`, used only for references and external addressing. In memory, identity is the arena `NodeId`. | §5, §7 |
-| D4 | The file format is strict, nested, typed JSON with a single `format` integer. Unknown fields are a load error. | §7 |
+| D3 | Structure is the tree in memory; in the file it is a flat pre-order list naming parents (D30). Nodes carry a compact integer `id`, used for references (a node's `parent` among them) and external addressing. In memory, identity is the arena `NodeId`. | §5, §7 |
+| D4 | The file format is strict, typed JSON with a single `format` integer; nodes are flat (D30). Unknown fields are a load error. | §7 |
 | D5 | A saved node `size` is the user's explicit size and acts as a **minimum**; the node grows to fit its content. Fitted sizes are derived, never saved. | §5, §12 |
 | D6 | Two kinds of map behavior, separate types in code and separate lists in the file: **Edits** (change the map, saved, undoable) and **Presentations** (perform the map, never saved). | §10 |
 | D7 | A map exposes **verbs**: named step sequences that triggers, links, the console and IPC invoke. Map verbs replace the map- and node-level macro tiers. | §11 |
@@ -53,6 +53,8 @@ develops it.
 | D26 | Box flows (sections, labels) break lines at `\n` only; the box grows to fit (D5). Automatic wrapping is not in V1. | §6.1 |
 | D27 | A verb target naming a node id that does not exist is **skipped at run time with a logged warning**, never a load error. Deleting a node a verb names is an ordinary delete. | §11.1 |
 | D28 | **One open transaction, and who yields.** While an interactive transaction is open (text editor session, drag or resize, color picker, frame preview), any other `apply` or `begin` is refused and the user sees a short status message; a verb's `Edit` step in that state is skipped with a warning. An animated edit is not interactive: any new `apply` or `begin` first fast-forwards it to its end and commits it, then proceeds. | §9 |
+| D29 | **Untrusted input is fuzzed, permanently.** Maps are shared with strangers, so every untrusted-input boundary (the `.mandala.json` loader, map-borne edits, presentations and verbs, shaping of arbitrary text, IPC frames) has a coverage-guided fuzz target (`fuzz/`, cargo-fuzz, outside the workspace), run as a short smoke on PRs and nightly once V1 is on `main`. Every finding becomes a stable regression test in `./test.sh`. Infrastructure and the loader target: V1-B8 (#278). | §16, §20 |
+| D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
 
 ---
 
@@ -674,8 +676,11 @@ connectors start at their source end.
 
 ### §7.1 Shape
 
-Strict, nested, typed JSON (D4). The structure of the file *is* the
-structure of the tree: a node's children are nested inside it.
+Strict, typed JSON (D4) with a flat node list (D30): `nodes` is the
+tree in depth-first pre-order, each node naming its `parent` by `id`
+(absent on a root). Sibling order is order of appearance, so every
+subtree is one contiguous block of the list, and the file's JSON
+nesting is the same at any tree depth.
 
 ```json
 {
@@ -712,12 +717,10 @@ structure of the tree: a node's children are nested inside it.
         "rings": [ { "spans": [ { "text": "And the earth was without form, and void; " } ] } ]
       },
       "on": { "hover": "glow", "click": "reveal-chapter-2" },
-      "links": [ { "to": 9, "kind": "portal" } ],
-      "children": [
-        { "id": 2, "position": [320, 40], "connector": { "spans": [ { "text": "·" } ] },
-          "sections": [ { "spans": [ { "text": "the heaven and the earth" } ] } ] }
-      ]
-    }
+      "links": [ { "to": 9, "kind": "portal" } ]
+    },
+    { "id": 2, "parent": 1, "position": [320, 40], "connector": { "spans": [ { "text": "·" } ] },
+      "sections": [ { "spans": [ { "text": "the heaven and the earth" } ] } ] }
   ]
 }
 ```
@@ -733,11 +736,16 @@ structure of the tree: a node's children are nested inside it.
   shapes, anchors, fit modes, weights and verb references are
   resolved to their typed forms (§5.3) during parsing; the document
   never holds the string forms.
+- **Flat, pre-order** (D30). A node's `parent` must be on the
+  ancestor chain of the node before it (or absent, for a new root);
+  anything else, including a parent that appears later, a missing
+  one or the node itself, is a load error naming that node's path.
+  Depth itself is never an error (D30).
 - **Nothing derived is written.** No fitted sizes, no depth, no
-  parent pointers, no resolved colors, no copied defaults. Optional
+  child lists, no resolved colors, no copied defaults. Optional
   fields equal to their inherited value are omitted on save.
-- **Deterministic output.** Keys in schema order, nodes in sibling
-  order, numbers in a canonical form, so an unchanged map saves
+- **Deterministic output.** Keys in schema order, nodes in
+  depth-first pre-order, numbers in a canonical form, so an unchanged map saves
   byte-identically and a one-field edit is a one-line diff.
 - **One pass.** Load is parse → build the tree with links and verb
   references resolved through a load-time `id → NodeId` table →
@@ -1306,6 +1314,7 @@ negative control (§T13).
 | Presentations never persist | Edit applied while presentations are active: the history journal holds only the edit; save output equals the save without the presentation |
 | Verbs are deterministic | Headless app, virtual clock: step timing and presentation states at stepped instants |
 | Verbs are sandboxed | Load rejects any step outside §11.1's set |
+| Hostile input degrades, never crashes | Coverage-guided fuzz targets per untrusted surface (D29, V1-B8): no panic, bounded time and memory, refusals name their JSON path, anything loaded validates and round-trips; findings become regression tests |
 | Dual target | `./test.sh` type-checks wasm32 as today; the wasm font-lock probe covers the new shaping paths |
 
 Bench entries accompany every new engine primitive (journaled walk,
@@ -1345,6 +1354,7 @@ levels; where they differ, the epic is updated, then this table.
 | A4 | Structural commands | A3 |
 | B1 | Document types, typed values, inheritance | A2 (bridges A3/A4, below) |
 | B2 | Format: schema, loader, saver | B1 |
+| B8 | Fuzzing: untrusted-input boundaries (#278) | B2 |
 | B3 | Document mutation vocabulary | A4, B1 |
 | B4 | Document writer: apply, history, transactions | B3 |
 | B5 | TextFlow: layout and path placement | B1 |
@@ -1374,6 +1384,7 @@ graph LR
   A4 --> B3
   B1 --> B3 --> B4
   B1 --> B2
+  B2 --> B8
   B1 --> B5 --> B6
   A3 --> B6
   B4 --> B7
@@ -1504,3 +1515,15 @@ workers who could not see the whole.
    document needs the owner's approval on the issue first, and then
    lands in the same commit as the code that needs it.
 9. **American English** (CLAUDE.md §5).
+10. **Untrusted input is fuzzed** (D29). A sub-issue that adds or
+   changes an untrusted-input surface ships its fuzz target in the
+   same PR (`fuzz/`, see V1-B8, #278), with the properties that apply
+   and a seed corpus; findings become stable regression tests.
+11. **Depth costs nothing extra** (D30). Code that walks the
+   document tree, or a glyph tree built from it, never recurses in
+   proportion to depth (it iterates with an explicit heap stack) and
+   never spends per-node work proportional to depth (inherited state
+   is carried down the walk, not re-derived by climbing to the root).
+   A sub-issue that adds a tree walk proves it on a 100,000-deep
+   chain, natively and under wasm32 debug in TEST_CONVENTIONS §T9's
+   node probe. Engine and document walks: V1-A5 (#282).

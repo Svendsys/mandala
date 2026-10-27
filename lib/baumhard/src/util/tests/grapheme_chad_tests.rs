@@ -4,13 +4,13 @@ use lazy_static::lazy_static;
 
 use crate::util::grapheme_chad::{
     byte_indices_of_graphemes, count_grapheme_clusters, count_number_lines, delete_back_unicode,
-    delete_front_unicode, delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_grapheme_range,
-    first_non_whitespace_grapheme, grapheme_byte_starts, grapheme_display_width, insert_new_lines,
-    insert_spaces, insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
-    prev_word_boundary_ws, push_spaces, replace_graphemes_until_newline, replace_substring,
-    scalar_display_width, slice_to_newline, split_graphemes_owned, split_off_graphemes, take_graphemes,
-    token_start_ws, truncate_to_byte_budget, truncate_to_display_width, word_left, word_right,
-    wrap_to_display_width, LineReplacement,
+    delete_front_unicode, delete_grapheme_at, delete_grapheme_range, find_byte_index_of_grapheme,
+    find_nth_line_grapheme_range, first_non_whitespace_grapheme, grapheme_byte_starts,
+    grapheme_display_width, insert_new_lines, insert_spaces, insert_str_at_grapheme,
+    insert_str_at_grapheme_counted, join_graphemes, line_bounds_at, prev_word_boundary_ws, push_spaces,
+    replace_graphemes_until_newline, replace_substring, scalar_display_width, slice_to_newline,
+    split_graphemes_owned, split_off_graphemes, take_graphemes, token_start_ws, truncate_to_byte_budget,
+    truncate_to_display_width, word_left, word_right, wrap_to_display_width, LineReplacement,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -1155,6 +1155,45 @@ pub fn do_truncate_to_byte_budget() {
     for budget in 0..text.len() {
         let (prefix, cut) = truncate_to_byte_budget(&text, budget);
         assert!(prefix.len() <= budget && cut && text.starts_with(prefix));
+    }
+}
+
+#[test]
+fn test_delete_grapheme_range() {
+    do_delete_grapheme_range();
+}
+
+/// A cluster range deletes whole clusters: the family emoji (five code
+/// points joined by zero-width joiners) and the `e` carrying two
+/// combining marks go as one each, where a `char` range of the same
+/// numbers would cut them. Indices past the end clamp, and an empty or
+/// inverted range deletes nothing.
+pub fn do_delete_grapheme_range() {
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let marked = "e\u{0301}\u{0302}";
+    let text = format!("a{family}{marked}b");
+    assert_eq!(count_grapheme_clusters(&text), 4, "the fixture is four clusters");
+
+    let mut s = text.clone();
+    delete_grapheme_range(&mut s, 1, 3);
+    assert_eq!(s, "ab", "the emoji and the marked e go whole");
+
+    let mut by_char: String = text.chars().take(1).collect();
+    by_char.extend(text.chars().skip(3));
+    assert_ne!(by_char, "ab", "a char range of the same numbers cuts the emoji");
+
+    let mut s = text.clone();
+    delete_grapheme_range(&mut s, 2, 99);
+    assert_eq!(s, format!("a{family}"), "an end past the text clamps to it");
+
+    let mut s = text.clone();
+    delete_grapheme_range(&mut s, 0, 1);
+    assert_eq!(s, format!("{family}{marked}b"), "the first cluster");
+
+    for (start, end) in [(2, 2), (3, 1), (4, 9), (99, 100)] {
+        let mut s = text.clone();
+        delete_grapheme_range(&mut s, start, end);
+        assert_eq!(s, text, "{start}..{end} deletes nothing");
     }
 }
 
