@@ -3,15 +3,22 @@
 //! The document's state between a journal's before and after: what
 //! moves smoothly and what switches.
 //!
-//! **Numbers, positions, sizes and colors interpolate; everything else
-//! snaps.** A position, an offset, a minimum size, an opacity, a fade, a
-//! gap, a spacing, a label's `t`, a font size of one unit, a literal
-//! color — each moves along the straight line from before to after.
-//! Text, fonts, weights, shapes of another kind, a color given by a
-//! theme variable or a palette, a flag, an id, a link — each switches
-//! whole at the snap point. A field interpolates only when both sides
-//! hold a value of the same form; otherwise it snaps, so a field that
-//! appears or disappears switches rather than inventing a value.
+//! **The fields #237 lists interpolate; everything else snaps.** A
+//! node's position and minimum size, a section's offset and minimum
+//! size, an opacity, a fill fade, a font size of one unit, a literal
+//! color (a palette group's included), a frame's gap and inset, a path's
+//! spacing and size, its control points when both sides have as many, a
+//! label's `t` and offset, a portal end's `border_t`, offset and size,
+//! and the theme's variant values — each moves along the straight line
+//! from before to after. Everything else switches whole at the snap
+//! point: text, fonts, weights, flags, ids, links, a color given by a
+//! theme variable or a palette, and every enum, with what it carries —
+//! a shape and its corner radius, a fit mode and its range, a frame's
+//! start point — and a zoom window. A field interpolates only when both
+//! sides hold a value of the same form; otherwise it snaps, so a field
+//! that appears or disappears switches rather than inventing a value.
+//! (B1 blended fit ranges, corner radii, zoom windows and start points
+//! too; ruling R10 on #237 holds them to the list.)
 //!
 //! Every interpolated element starts as a clone of the side the snap
 //! picks ([`Snap::pick`](crate::engine::interpolate::Snap::pick)), and
@@ -27,7 +34,7 @@ use crate::document::element::{
     DefaultsData, DocElement, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PaletteGroup, PathData,
     PortalEndStyle, RingStyle, TextStyle, ThemeData,
 };
-use crate::document::values::{ColorRef, FitMode, FontSize, Percent, PlainColor, Rgba, Shape, ZoomWindow};
+use crate::document::values::{ColorRef, FontSize, PlainColor, Rgba};
 use crate::engine::interpolate::{Interpolable, Interpolate, Snap};
 use glam::Vec2;
 
@@ -74,69 +81,30 @@ fn font_size(value: &mut Option<FontSize>, from: &Option<FontSize>, to: &Option<
     }
 }
 
-/// A `Fit` range blends; every other mode snaps.
-fn fit(value: &mut Option<FitMode>, from: &Option<FitMode>, to: &Option<FitMode>, t: f32) {
-    if let (Some(FitMode::Fit { min: a0, max: a1 }), Some(FitMode::Fit { min: b0, max: b1 })) = (from, to) {
-        *value = Some(FitMode::Fit {
-            min: <f32 as Interpolate>::lerp(a0, b0, t),
-            max: <f32 as Interpolate>::lerp(a1, b1, t),
-        });
-    }
-}
-
-/// A rectangle's corner radius blends; a change of shape snaps.
-fn shape(value: &mut Option<Shape>, from: &Option<Shape>, to: &Option<Shape>, t: f32) {
-    if let (Some(Shape::Rectangle { radius: a }), Some(Shape::Rectangle { radius: b })) = (from, to) {
-        let radius = <f32 as Interpolate>::lerp(&f32::from(a.get()), &f32::from(b.get()), t).round();
-        // In 0..=100 between two percentages; `Percent::new` clamps
-        // anyway, and `as` saturates.
-        *value = Some(Shape::Rectangle {
-            radius: Percent::new(radius as u8),
-        });
-    }
-}
-
-/// A zoom window's bounds blend where both sides set them.
-fn zoom(value: &mut Option<ZoomWindow>, from: &Option<ZoomWindow>, to: &Option<ZoomWindow>, t: f32) {
-    if let (Some(value), Some(from), Some(to)) = (value.as_mut(), from, to) {
-        opt(&mut value.min, &from.min, &to.min, t);
-        opt(&mut value.max, &from.max, &to.max, t);
-    }
-}
-
 fn text(value: &mut TextStyle, from: &TextStyle, to: &TextStyle, t: f32) {
     font_size(&mut value.size, &from.size, &to.size, t);
     color_ref(&mut value.color, &from.color, &to.color, t);
 }
 
 fn flow(value: &mut FlowStyle, from: &FlowStyle, to: &FlowStyle, t: f32) {
-    fit(&mut value.fit, &from.fit, &to.fit, t);
     opt(&mut value.spacing, &from.spacing, &to.spacing, t);
     opt(&mut value.size, &from.size, &to.size, t);
     color_ref(&mut value.color, &from.color, &to.color, t);
 }
 
 fn node_style(value: &mut NodeStyle, from: &NodeStyle, to: &NodeStyle, t: f32) {
-    shape(&mut value.shape, &from.shape, &to.shape, t);
     color_ref(&mut value.fill, &from.fill, &to.fill, t);
     opt(&mut value.fill_fade, &from.fill_fade, &to.fill_fade, t);
     text(&mut value.text, &from.text, &to.text, t);
 }
 
 fn frame(value: &mut FrameStyle, from: &FrameStyle, to: &FrameStyle, t: f32) {
-    if let (Some(value), Some(from), Some(to)) = (value.start.as_mut(), &from.start, &to.start) {
-        if from.edge == to.edge {
-            value.at = <f32 as Interpolate>::lerp(&from.at, &to.at, t);
-        }
-    }
-    fit(&mut value.fit, &from.fit, &to.fit, t);
     opt(&mut value.gap, &from.gap, &to.gap, t);
     opt(&mut value.inset, &from.inset, &to.inset, t);
     text(&mut value.text, &from.text, &to.text, t);
 }
 
 fn ring(value: &mut RingStyle, from: &RingStyle, to: &RingStyle, t: f32) {
-    fit(&mut value.fit, &from.fit, &to.fit, t);
     text(&mut value.text, &from.text, &to.text, t);
 }
 
@@ -167,7 +135,6 @@ fn path(value: &mut PathData, from: &PathData, to: &PathData, t: f32) {
             *value = <Vec2 as Interpolate>::lerp(from, to, t);
         }
     }
-    zoom(&mut value.zoom, &from.zoom, &to.zoom, t);
 }
 
 fn theme(value: &mut ThemeData, from: &ThemeData, to: &ThemeData, t: f32) {
@@ -227,7 +194,6 @@ impl Interpolable for DocElement {
                 v.position = <Vec2 as Interpolate>::lerp(&a.position, &b.position, t);
                 opt(&mut v.min_size, &a.min_size, &b.min_size, t);
                 node_style(&mut v.style, &a.style, &b.style, t);
-                zoom(&mut v.zoom, &a.zoom, &b.zoom, t);
                 v.opacity = <f32 as Interpolate>::lerp(&a.opacity, &b.opacity, t);
             }
             (E::Section(v), E::Section(a), E::Section(b)) => {

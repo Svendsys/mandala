@@ -5,15 +5,15 @@
 //! document mutator meets.
 
 use crate::document::element::{DocElement, DocKind};
+use crate::document::mutation::inherited::inherited_seed;
+use crate::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp, SectionOp};
 use crate::document::tests::test_support::{example, DocumentBuilder};
 use crate::engine::anchor::Anchors;
 use crate::engine::element::TreeElement;
 use crate::engine::key::BranchKey;
-use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
-use crate::engine::tree::{MutatorTree, Placement, Tree};
+use crate::engine::tree::{Placement, Tree};
 use indextree::NodeId;
-use serde::{Deserialize, Serialize};
 
 /// The kinds of `parent`'s children, in sibling order.
 fn row(tree: &Tree<DocElement>, parent: NodeId) -> Vec<DocKind> {
@@ -83,27 +83,6 @@ pub fn do_document_rows_are_laid_out_by_kind() {
     );
 }
 
-/// A mutation for these tests only: the document's vocabulary is
-/// V1-B3's.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ProbeMutation {
-    /// Set a node's opacity, or a section's channel.
-    Set(f32),
-}
-
-impl Mutation<DocElement> for ProbeMutation {
-    type Template = ProbeMutation;
-
-    fn apply_to(&self, target: &mut DocElement, _: &()) {
-        let ProbeMutation::Set(value) = self;
-        match target {
-            DocElement::Node(node) => node.opacity = *value,
-            DocElement::Section(section) => section.channel = *value as usize,
-            _ => {}
-        }
-    }
-}
-
 /// The opacity of the node at `id`.
 fn opacity(tree: &Tree<DocElement>, id: NodeId) -> f32 {
     tree.arena()[id].get().as_node().unwrap().opacity
@@ -123,16 +102,20 @@ pub fn do_document_walk_routes_by_kind() {
     let (builder, ids) = example();
     let mut tree = builder.tree().clone();
     let before = tree.clone();
-    let mut mutators: MutatorTree<DocElement, ProbeMutation> = MutatorTree::new();
+    let mut mutators = DocMutatorTree::new();
     let root = mutators.root;
     mutators
         .insert_child(
             root,
-            Mutator::new(ProbeMutation::Set(0.25), BranchKey::new(DocKind::Node, 0)),
+            Mutator::new(
+                DocMutation::Node(NodeOp::SetOpacity(0.25)),
+                BranchKey::new(DocKind::Node, 0),
+            ),
             Placement::Last,
         )
         .unwrap();
-    mutators.apply_to(&mut tree, &());
+    let seed = inherited_seed(&tree, tree.root());
+    mutators.apply_to(&mut tree, &seed);
     assert_eq!(opacity(&tree, ids.a), 0.25);
     assert_eq!(opacity(&tree, ids.d), 0.25);
     assert_eq!(opacity(&tree, ids.b), 1.0, "a child node is a row below");
@@ -145,17 +128,20 @@ pub fn do_document_walk_routes_by_kind() {
     // Control: the same mutator under a root of another kind reaches
     // nothing, because a kind mismatch at the root prunes the walk.
     let mut tree = builder.tree().clone();
-    let mut mutators: MutatorTree<DocElement, ProbeMutation> =
-        MutatorTree::new_with(Mutator::new_void(BranchKey::new(DocKind::Node, 0)));
+    let mut mutators = DocMutatorTree::new_with(Mutator::new_void(BranchKey::new(DocKind::Node, 0)));
     let root = mutators.root;
     mutators
         .insert_child(
             root,
-            Mutator::new(ProbeMutation::Set(0.25), BranchKey::new(DocKind::Node, 0)),
+            Mutator::new(
+                DocMutation::Node(NodeOp::SetOpacity(0.25)),
+                BranchKey::new(DocKind::Node, 0),
+            ),
             Placement::Last,
         )
         .unwrap();
-    mutators.apply_to(&mut tree, &());
+    let seed = inherited_seed(&tree, tree.root());
+    mutators.apply_to(&mut tree, &seed);
     assert_eq!(opacity(&tree, ids.a), 1.0);
 }
 
@@ -170,15 +156,15 @@ fn test_document_anchored_walk_reaches_the_selection() {
 pub fn do_document_anchored_walk_reaches_the_selection() {
     let (builder, ids) = example();
     let mut tree = builder.tree().clone();
-    let mutators: MutatorTree<DocElement, ProbeMutation> = MutatorTree::new_with(Mutator::new(
-        ProbeMutation::Set(0.5),
+    let mutators = DocMutatorTree::new_with(Mutator::new(
+        DocMutation::Node(NodeOp::SetOpacity(0.5)),
         BranchKey::new(DocKind::Node, 0),
     ));
     mutators
         .apply_at(
             &mut tree,
             &Anchors::Nodes(vec![ids.b, ids.d, ids.a_title]),
-            |_, _| (),
+            inherited_seed,
         )
         .unwrap();
     assert_eq!(opacity(&tree, ids.b), 0.5);
@@ -199,12 +185,12 @@ fn test_document_walk_moves_a_rekeyed_element() {
 pub fn do_document_walk_moves_a_rekeyed_element() {
     let (builder, ids) = example();
     let mut tree = builder.tree().clone();
-    let mutators: MutatorTree<DocElement, ProbeMutation> = MutatorTree::new_with(Mutator::new(
-        ProbeMutation::Set(5.0),
+    let mutators = DocMutatorTree::new_with(Mutator::new(
+        DocMutation::Section(SectionOp::SetChannel(5)),
         BranchKey::new(DocKind::Section, 0),
     ));
     mutators
-        .apply_at(&mut tree, &Anchors::Nodes(vec![ids.a_title]), |_, _| ())
+        .apply_at(&mut tree, &Anchors::Nodes(vec![ids.a_title]), inherited_seed)
         .unwrap();
     tree.check_sorted().unwrap();
     let sections: Vec<NodeId> = ids.a.children(tree.arena()).take(2).collect();

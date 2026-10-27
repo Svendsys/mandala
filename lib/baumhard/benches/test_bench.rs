@@ -7,6 +7,10 @@ use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::ids_tests::*;
 use baumhard::document::tests::inspect_tests::*;
 use baumhard::document::tests::journal_tests::*;
+use baumhard::document::tests::mutation_compose_tests::*;
+use baumhard::document::tests::mutation_inherited_tests::*;
+use baumhard::document::tests::mutation_ops_tests::*;
+use baumhard::document::tests::mutation_validate_tests::*;
 use baumhard::document::tests::resolve_tests::*;
 use baumhard::document::tests::shape_tests::*;
 use baumhard::document::tests::structure_tests::*;
@@ -843,6 +847,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_insert_str_at_grapheme_counted)
     });
     c.bench_function("delete_grapheme_at", |b| b.iter(do_delete_grapheme_at));
+    c.bench_function("delete_grapheme_range", |b| b.iter(do_delete_grapheme_range));
     c.bench_function("grapheme_display_width", |b| b.iter(do_grapheme_display_width));
     c.bench_function("truncate_to_display_width", |b| {
         b.iter(do_truncate_to_display_width)
@@ -1640,6 +1645,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_bounds_control_points", |b| {
         b.iter(do_document_bounds_control_points)
     });
+    c.bench_function("document_bounds_computed_font_sizes", |b| {
+        b.iter(do_document_bounds_computed_font_sizes)
+    });
+    c.bench_function("document_bounds_extent", |b| b.iter(do_document_bounds_extent));
+    c.bench_function("document_bounds_zoom_window", |b| {
+        b.iter(do_document_bounds_zoom_window)
+    });
+    c.bench_function("document_bounds_channel", |b| b.iter(do_document_bounds_channel));
     c.bench_function("document_kind_order_is_the_declared_order", |b| {
         b.iter(do_document_kind_order_is_the_declared_order)
     });
@@ -1778,6 +1791,125 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_interpolate_blends_numbers_and_colors", |b| {
         b.iter(do_document_interpolate_blends_numbers_and_colors)
+    });
+    // the document's mutation vocabulary (V1-B3) //
+    c.bench_function("document_interpolation_follows_the_listed_fields", |b| {
+        b.iter(do_document_interpolation_follows_the_listed_fields)
+    });
+    c.bench_function("document_node_ops_write_their_field", |b| {
+        b.iter(do_document_node_ops_write_their_field)
+    });
+    c.bench_function("document_section_and_span_ops_write_their_field", |b| {
+        b.iter(do_document_section_and_span_ops_write_their_field)
+    });
+    c.bench_function("document_frame_and_ring_ops_write_their_field", |b| {
+        b.iter(do_document_frame_and_ring_ops_write_their_field)
+    });
+    c.bench_function("document_path_ops_write_their_field", |b| {
+        b.iter(do_document_path_ops_write_their_field)
+    });
+    c.bench_function("document_cap_label_and_portal_end_ops_write_their_field", |b| {
+        b.iter(do_document_cap_label_and_portal_end_ops_write_their_field)
+    });
+    c.bench_function(
+        "document_map_theme_palette_and_defaults_ops_write_their_field",
+        |b| b.iter(do_document_map_theme_palette_and_defaults_ops_write_their_field),
+    );
+    c.bench_function(
+        "document_relative_size_ops_clamp_and_take_the_place_s_unit",
+        |b| b.iter(do_document_relative_size_ops_clamp_and_take_the_place_s_unit),
+    );
+    c.bench_function("document_seed_matches_the_resolver_for_every_kind", |b| {
+        b.iter(do_document_seed_matches_the_resolver_for_every_kind)
+    });
+    c.bench_function(
+        "document_walk_from_the_map_matches_the_resolver_for_every_kind",
+        |b| b.iter(do_document_walk_from_the_map_matches_the_resolver_for_every_kind),
+    );
+    c.bench_function("document_grow_size_grows_the_inherited_size", |b| {
+        b.iter(do_document_grow_size_grows_the_inherited_size)
+    });
+    c.bench_function("document_grow_size_never_crosses_a_flow", |b| {
+        b.iter(do_document_grow_size_never_crosses_a_flow)
+    });
+    c.bench_function("document_validate_refuses_a_payload_of_another_kind", |b| {
+        b.iter(do_document_validate_refuses_a_payload_of_another_kind)
+    });
+    c.bench_function("document_validate_refuses_every_literal_out_of_bounds", |b| {
+        b.iter(do_document_validate_refuses_every_literal_out_of_bounds)
+    });
+    c.bench_function("document_validate_holds_sizes_to_their_unit", |b| {
+        b.iter(do_document_validate_holds_sizes_to_their_unit)
+    });
+    c.bench_function("document_validate_refuses_a_missing_reference", |b| {
+        b.iter(do_document_validate_refuses_a_missing_reference)
+    });
+    c.bench_function("document_validate_holds_structure_to_the_document_s_rules", |b| {
+        b.iter(do_document_validate_holds_structure_to_the_document_s_rules)
+    });
+    c.bench_function(
+        "document_validate_refuses_positional_and_spatial_instructions",
+        |b| b.iter(do_document_validate_refuses_positional_and_spatial_instructions),
+    );
+    c.bench_function("document_validate_refuses_a_bare_kind_switch", |b| {
+        b.iter(do_document_validate_refuses_a_bare_kind_switch)
+    });
+    c.bench_function("document_presentations_change_fields_only", |b| {
+        b.iter(do_document_presentations_change_fields_only)
+    });
+    c.bench_function("document_validate_applied_judges_what_the_steps_did", |b| {
+        b.iter(do_document_validate_applied_judges_what_the_steps_did)
+    });
+    c.bench_function("document_run_steps_validates_and_is_all_or_nothing", |b| {
+        b.iter(do_document_run_steps_validates_and_is_all_or_nothing)
+    });
+    c.bench_function("document_validate_refuses_the_fallback_font", |b| {
+        b.iter(do_document_validate_refuses_the_fallback_font)
+    });
+    c.bench_function("document_validate_bounds_channels", |b| {
+        b.iter(do_document_validate_bounds_channels)
+    });
+    c.bench_function("document_validate_refuses_an_inverted_range", |b| {
+        b.iter(do_document_validate_refuses_an_inverted_range)
+    });
+    c.bench_function("document_validate_applied_judges_nested_links", |b| {
+        b.iter(do_document_validate_applied_judges_nested_links)
+    });
+    c.bench_function("document_validate_applied_skips_removed_parents", |b| {
+        b.iter(do_document_validate_applied_skips_removed_parents)
+    });
+    c.bench_function("document_validate_walks_a_deep_mutator", |b| {
+        b.iter(do_document_validate_walks_a_deep_mutator)
+    });
+    c.bench_function("document_compose_normalizes_in_log_steps", |b| {
+        b.iter(do_document_compose_normalizes_in_log_steps)
+    });
+    c.bench_function("document_compose_trims_a_deep_selection_once_per_ancestor", |b| {
+        b.iter(do_document_compose_trims_a_deep_selection_once_per_ancestor)
+    });
+    c.bench_function("document_compose_creates_nodes", |b| {
+        b.iter(do_document_compose_creates_nodes)
+    });
+    c.bench_function("document_compose_deletes_nodes_and_links", |b| {
+        b.iter(do_document_compose_deletes_nodes_and_links)
+    });
+    c.bench_function("document_compose_reparents", |b| {
+        b.iter(do_document_compose_reparents)
+    });
+    c.bench_function("document_compose_switches_link_kind", |b| {
+        b.iter(do_document_compose_switches_link_kind)
+    });
+    c.bench_function("document_compose_styles_a_range", |b| {
+        b.iter(do_document_compose_styles_a_range)
+    });
+    c.bench_function("document_compose_normalizes_spans", |b| {
+        b.iter(do_document_compose_normalizes_spans)
+    });
+    c.bench_function("document_compose_inserts_and_deletes_text", |b| {
+        b.iter(do_document_compose_inserts_and_deletes_text)
+    });
+    c.bench_function("document_compose_splits_and_adds_sections", |b| {
+        b.iter(do_document_compose_splits_and_adds_sections)
     });
     c.bench_function("document_never_reissues_an_ident", |b| {
         b.iter(do_document_never_reissues_an_ident)

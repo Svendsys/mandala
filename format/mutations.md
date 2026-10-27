@@ -724,10 +724,11 @@ mutation on a specific node overrides the map's.
 ## The document's kinds and predicate fields
 
 The document (`lib/baumhard/src/document/`, V1-B1) is the engine's
-second element type. Nothing authors mutators against it yet — its
-mutations are V1-B3's, and its edits and presentations V1-D1's and
-V1-D2's — but the two spellings a document mutator will carry are
-fixed here, because they are serialized by the types themselves.
+second element type. Nothing authors mutators against it yet: its
+mutation vocabulary (`document::mutation`, V1-B3) is built by code and
+has no JSON spelling in V1, and its edits and presentations are
+V1-D1's and V1-D2's. The two spellings a document mutator will carry
+are fixed here, because they are serialized by the types themselves.
 
 **Kinds.** A document mutator's `"kind"` is one of, in sibling order:
 `"map"`, `"theme"`, `"palette"`, `"defaults"`, `"section"`, `"span"`,
