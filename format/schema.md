@@ -797,7 +797,7 @@ would have had in the file.
 
 | Limit | Value |
 |---|---|
-| The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, before it is parsed. |
+| The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, before it is parsed: about 162 MiB, a 3 GiB load budget over the text and what a load measurably expands it into (18 bytes per byte at most), so that a map under it never traps the page while it loads. |
 | The tree's depth | **None.** Every walk is iterative. |
 | The number of nodes | None beyond the ids there are; memory runs out first. |
 | A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |

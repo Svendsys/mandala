@@ -185,7 +185,11 @@ the parity trajectory (or why none is owed):
   native-only by design: browsers ship their own unresponsive-tab
   dialog; no parity owed.
 - **`MAX_MAP_BYTES`** (`lib/baumhard/src/document/format/mod.rs`) —
-  `None` on native, `Some(3 GiB)` on wasm32. Divergent by
+  `None` on native, `Some(WASM32_MAX_MAP_BYTES)` on wasm32 —
+  about 162 MiB, derived rather than chosen: a 3 GiB load budget
+  over the text and the 18 bytes per byte a load measurably
+  expands it into (`lib/baumhard/tests/format_memory.rs`, which
+  fails if that grows). Divergent by
   platform physics rather than policy: wasm32's `usize` is 32
   bits and its address space is 4 GiB, shared with the runtime,
   the GPU buffers and the browser. Native opens maps as large as

@@ -90,8 +90,10 @@ fn test_the_native_ceiling_is_none_and_the_browser_is_bounded() {
     #[cfg(target_arch = "wasm32")]
     assert_eq!(
         crate::document::format::MAX_MAP_BYTES,
-        Some(3 * 1024 * 1024 * 1024)
+        Some(crate::document::format::WASM32_MAX_MAP_BYTES)
     );
+    // The derived value, written out: 3 GiB over 1 + 18.
+    assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 169_538_182);
 }
 
 #[test]

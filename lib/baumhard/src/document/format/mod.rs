@@ -93,19 +93,41 @@ use crate::document::ids::Document;
 /// sanctioned target divergence, registered in `CLAUDE.md`'s dual-target
 /// section.
 ///
-/// What is *not* bounded by any of this is the ratio: peak memory is a
-/// multiple of the text, the parsed DTOs and the document being alive
-/// together. Predicting cost from file size is what a user needs, and a
-/// ceiling never provided it.
+/// On wasm32 the ceiling is derived, not chosen: the text and what it
+/// expands into while it loads must fit in [`WASM32_LOAD_BUDGET`], and
+/// a map's text expands by at most [`WASM32_EXPANSION`] bytes per byte,
+/// measured (`tests/format_memory.rs`), so the text may be at most
+/// [`WASM32_MAX_MAP_BYTES`].
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_MAP_BYTES: Option<u64> = None;
 
-/// See the native definition above for the rationale. 3 GiB leaves
-/// headroom inside wasm32's 4 GiB address space for the typed model the
-/// text is parsed into, the glyph trees built from it, and the GPU-side
-/// buffers — none of which the text's length counts.
+/// See the native definition above for the rationale, and
+/// [`WASM32_MAX_MAP_BYTES`] for the value.
 #[cfg(target_arch = "wasm32")]
-pub const MAX_MAP_BYTES: Option<u64> = Some(3 * 1024 * 1024 * 1024);
+pub const MAX_MAP_BYTES: Option<u64> = Some(WASM32_MAX_MAP_BYTES);
+
+/// The part of wasm32's 4 GiB address space a load may use for the text
+/// and what it builds from it: 3 GiB. The remaining 1 GiB is reserved
+/// for the runtime (the module's code, data and stack, the allocator's
+/// own overhead) and for the first projection the app builds from the
+/// document — what the scene builders make of it, which this module
+/// does not measure.
+pub const WASM32_LOAD_BUDGET: u64 = 3 * 1024 * 1024 * 1024;
+
+/// The most heap a load needs beside a map's text, per byte of that
+/// text, rounded up to a whole number: the tree, the ident index, the
+/// node extents' index, the chain and the pending links, at their peak,
+/// for the densest maps the format allows — nodes with nothing but an
+/// id, a parent and a position, which each become a node and a
+/// connector. Measured natively, where pointers are twice as wide as on
+/// wasm32, so it bounds wasm32's from above; `tests/format_memory.rs`
+/// measures it again and fails if it grows.
+pub const WASM32_EXPANSION: u64 = 18;
+
+/// wasm32's ceiling on a map's text: [`WASM32_LOAD_BUDGET`] over the
+/// text and its [`WASM32_EXPANSION`], so that a map under it fits while
+/// it loads and is never a trap.
+pub const WASM32_MAX_MAP_BYTES: u64 = WASM32_LOAD_BUDGET / (1 + WASM32_EXPANSION);
 
 /// [`load`] for bytes: the entry point for input that is not known to
 /// be text (a file read, a socket, a fuzzer's corpus). The text is

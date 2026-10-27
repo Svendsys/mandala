@@ -156,6 +156,14 @@ syn = { workspace = true, features = ["full", "visit"] }
 # macros the workspace expands go through a different `proc-macro2`
 # and do not pay for this.
 proc-macro2 = { workspace = true, features = ["span-locations"] }
+# The allocator `tests/format_memory.rs` measures a load's peak heap
+# with: it wraps the system allocator and counts, so the test can derive
+# wasm32's `MAX_MAP_BYTES` from how far a map's text expands into its
+# document, and fail when that grows. A counting allocator needs a
+# `GlobalAlloc` impl, which is `unsafe`; baumhard's own source holds none
+# (CONVENTIONS.md), so it comes from here. Test-only: no shipped build
+# links it.
+cap = { version = "0.1.2", features = ["stats"] }
 
 [[bench]]
 name = "test_bench"
