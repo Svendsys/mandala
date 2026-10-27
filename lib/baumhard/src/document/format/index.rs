@@ -292,7 +292,8 @@ pub(crate) fn index(text: &str) -> Result<MapIndex<'_>, LoadError> {
 /// The [`LoadError`] for an index that the reader stopped: a key
 /// written twice, malformed text anywhere, a top level that is not an
 /// object, or a `nodes` that is not an array. The position is the
-/// reader's, which is already in the whole text.
+/// reader's, which is already in the whole text, and is named once: the
+/// message leaves out the reader's own ` at line L column C`.
 fn index_refusal(found: &Found<'_>, error: &serde_json::Error) -> LoadError {
     use serde_json::error::Category;
     let position = reader_position(error.line(), error.column());
@@ -307,11 +308,11 @@ fn index_refusal(found: &Found<'_>, error: &serde_json::Error) -> LoadError {
         LoadErrorKind::DuplicateKey { key: key.clone() }
     } else if matches!(error.classify(), Category::Data) {
         LoadErrorKind::Invalid {
-            message: error.to_string(),
+            message: without_position(error),
         }
     } else {
         LoadErrorKind::Syntax {
-            message: error.to_string(),
+            message: without_position(error),
         }
     };
     LoadError {

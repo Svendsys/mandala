@@ -224,3 +224,24 @@ fn test_a_content_error_inside_a_value_names_its_place_once() {
     assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
     assert!(!error.to_string().contains("at line"), "{error}");
 }
+
+#[test]
+fn test_an_error_the_index_raises_names_its_place_once() {
+    // A syntax error in node 2's line, which the index finds reading the
+    // whole text: the message leaves out the reader's position, and the
+    // context names the line once.
+    let nodes = format!("{},\n{}", node_of(1, ""), r#"{"id":2 "position":[0,0]}"#);
+    let error = rejection(&map_with("", &nodes));
+    assert_eq!(error.path, "nodes[1]");
+    assert!(matches!(error.kind, LoadErrorKind::Syntax { .. }), "{error:?}");
+    assert_eq!(error.position.map(|p| p.line), Some(2));
+    let rendered = error.to_string();
+    assert!(!rendered.contains("at line"), "{rendered}");
+    assert_eq!(rendered.matches("line ").count(), 1, "{rendered}");
+    // A data error the index finds: a top level that is not an object.
+    let error = rejection(r#"["format", 1]"#);
+    assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
+    let rendered = error.to_string();
+    assert!(!rendered.contains("at line"), "{rendered}");
+    assert_eq!(rendered.matches("line ").count(), 1, "{rendered}");
+}
