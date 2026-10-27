@@ -2372,10 +2372,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("journal_round_trips_a_tree_of_runs_and_fills", |b| {
         b.iter(do_journal_round_trips_a_tree_of_runs_and_fills)
     });
-    c.bench_function(
-        "authored_glyph_layer_mutations_have_the_documented_wire_shape",
-        |b| b.iter(do_authored_glyph_layer_mutations_have_the_documented_wire_shape),
-    );
+    c.bench_function("authored_glyph_layer_mutations_have_the_wire_shape", |b| {
+        b.iter(do_authored_glyph_layer_mutations_have_the_wire_shape)
+    });
+    c.bench_function("format_doc_publishes_the_authored_glyph_layer_mutations", |b| {
+        b.iter(do_format_doc_publishes_the_authored_glyph_layer_mutations)
+    });
+    c.bench_function("hostile_authored_values_degrade_without_panicking", |b| {
+        b.iter(do_hostile_authored_values_degrade_without_panicking)
+    });
     c.bench_function("hit_test_reaches_a_run_and_a_fill_in_a_deep_chain", |b| {
         b.iter(do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain)
     });

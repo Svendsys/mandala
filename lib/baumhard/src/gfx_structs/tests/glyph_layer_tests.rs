@@ -29,8 +29,9 @@ use crate::gfx_structs::model::GlyphModel;
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance};
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp};
 use crate::gfx_structs::tests::fill_tests::{a_fill, a_fill_element};
-use crate::gfx_structs::tests::run_tests::{apply, box_shape, four_glyph_shape, run_of};
+use crate::gfx_structs::tests::run_tests::{apply, box_shape, four_glyph_element, four_glyph_shape, run_of};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::util::doc_fixtures::{documented_json_block, format_doc_path};
 
 // ── same_state ────────────────────────────────────────────────────
@@ -981,19 +982,10 @@ pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
 
 // ── the wire ──────────────────────────────────────────────────────
 
-#[test]
-fn test_authored_glyph_layer_mutations_have_the_documented_wire_shape() {
-    do_authored_glyph_layer_mutations_have_the_documented_wire_shape();
-}
-
-/// The authored run and fill mutations serialize to the spellings
-/// `format/mutations.md` publishes, and the example block in that doc
-/// — read from the file, not restated — parses to exactly the
-/// mutations it describes. `RunSet` and `FillSet`, which hold shaped
-/// text, are `#[serde(skip)]`: serializing one is an error and no file
-/// can spell one.
-pub fn do_authored_glyph_layer_mutations_have_the_documented_wire_shape() {
-    let authored = [
+/// The authored run and fill mutations, with the exact JSON each
+/// serializes to and the doc publishes.
+pub fn authored_glyph_layer_mutations() -> Vec<(GfxMutation, &'static str)> {
+    vec![
         (GfxMutation::RunOpacity(0.5), r#"{"RunOpacity":0.5}"#),
         (
             GfxMutation::RunOrigin(Vec2::new(12.0, -4.0)),
@@ -1040,7 +1032,21 @@ pub fn do_authored_glyph_layer_mutations_have_the_documented_wire_shape() {
             GfxMutation::FillRect(Rect::new(Vec2::new(0.0, 0.0), Vec2::new(120.0, 60.0))),
             r#"{"FillRect":{"origin":[0.0,0.0],"size":[120.0,60.0]}}"#,
         ),
-    ];
+    ]
+}
+
+#[test]
+fn test_authored_glyph_layer_mutations_have_the_wire_shape() {
+    do_authored_glyph_layer_mutations_have_the_wire_shape();
+}
+
+/// The authored run and fill mutations serialize to the spellings
+/// `format/mutations.md` publishes and parse back to themselves.
+/// `RunSet` and `FillSet`, which hold shaped text, are
+/// `#[serde(skip)]`: serializing one is an error and no file can spell
+/// one.
+pub fn do_authored_glyph_layer_mutations_have_the_wire_shape() {
+    let authored = authored_glyph_layer_mutations();
     for (mutation, wire) in &authored {
         assert_eq!(&serde_json::to_string(mutation).unwrap(), wire);
         let parsed: GfxMutation = serde_json::from_str(wire).unwrap();
@@ -1065,7 +1071,20 @@ pub fn do_authored_glyph_layer_mutations_have_the_documented_wire_shape() {
         serde_json::from_str::<GfxMutation>(r#"{"FillSet":{}}"#).is_err(),
         "no file spells FillSet"
     );
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_format_doc_publishes_the_authored_glyph_layer_mutations() {
+    do_format_doc_publishes_the_authored_glyph_layer_mutations();
+}
+
+/// The example blocks in `format/mutations.md` — read from the file,
+/// not restated — parse to exactly the mutations and predicate fields
+/// they describe. Native only: the specs live on the filesystem.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn do_format_doc_publishes_the_authored_glyph_layer_mutations() {
+    let authored = authored_glyph_layer_mutations();
     // The doc's example, read from the doc.
     let doc = documented_json_block(
         &format_doc_path("mutations.md"),
@@ -1103,6 +1122,77 @@ pub fn do_authored_glyph_layer_mutations_have_the_documented_wire_shape() {
         GfxElementField::ElementType(GfxElementType::Fill)
     ));
     assert!(matches!(&fields[2], GfxElementField::Opacity(o) if o.0 == 0.5));
+}
+
+#[test]
+fn test_hostile_authored_values_degrade_without_panicking() {
+    do_hostile_authored_values_degrade_without_panicking();
+}
+
+/// A map can carry any number a JSON literal can spell, and
+/// `RunOverrides` and `RunOrigin` take them from an authored mutation:
+/// a range from zero to `usize::MAX`, a range that starts there, and
+/// values that read as infinity (`1e39` is out of `f32`'s range). None
+/// of it panics or allocates in proportion to the range: the run keeps
+/// exactly as many overrides as it has placed glyphs, overrides never
+/// move its bounds, and a run whose origin is not finite has no box, so
+/// a hit test over a tree holding it still answers for the fill beside
+/// it.
+pub fn do_hostile_authored_values_degrade_without_panicking() {
+    let parse = |json: &str| -> GfxMutation { serde_json::from_str(json).unwrap() };
+    let mut element = four_glyph_element();
+    apply(
+        &mut element,
+        parse(r#"{"RunOverrides":{"Scale":{"range":{"start":0,"end":18446744073709551615},"value":1e39}}}"#),
+    );
+    apply(
+        &mut element,
+        parse(
+            r#"{"RunOverrides":{"Offset":{"range":{"start":18446744073709551615,"end":0},"value":[1e39,-1e39]}}}"#,
+        ),
+    );
+    let run = element.glyph_run().unwrap();
+    assert_eq!(
+        run.overrides().len(),
+        4,
+        "as many overrides as placed glyphs, whatever the range"
+    );
+    assert!(
+        run.overrides().scale().iter().all(|s| s.is_infinite()),
+        "the whole run is scaled"
+    );
+    assert_eq!(
+        run.overrides().offset(),
+        &[Vec2::ZERO; 4],
+        "the backward range wrote nothing"
+    );
+    assert_eq!(
+        run.bounds(),
+        (Vec2::new(100.0, 50.0), Vec2::new(30.0, 40.0)),
+        "overrides never move the bounds"
+    );
+
+    apply(&mut element, parse(r#"{"RunOrigin":[1e39,-1e39]}"#));
+    assert_eq!(
+        element.spatial_bounds(),
+        None,
+        "a box that is not finite is not hit"
+    );
+
+    let mut tree = GfxTree::new_non_indexed();
+    let root = tree.root;
+    let fill = GfxElement::new_fill(
+        FillData {
+            rect: Rect::new(Vec2::ZERO, Vec2::new(10.0, 10.0)),
+            ..a_fill()
+        },
+        0,
+        1,
+    );
+    let fill = tree.insert_child(root, fill, Placement::Last).unwrap();
+    tree.insert_child(root, element, Placement::Last).unwrap();
+    assert_eq!(tree.descendant_at(Vec2::new(5.0, 5.0)), Some(fill));
+    assert_eq!(tree.descendant_at(Vec2::new(5000.0, 5000.0)), None);
 }
 
 // ── depth ─────────────────────────────────────────────────────────

@@ -838,18 +838,26 @@ impl TreeElement for GfxElement {
     /// - a `GlyphRun`: its [`bounds`](GlyphRunData::bounds);
     /// - a `Fill`: its rectangle.
     ///
-    /// A model or a `Void` has no box of its own.
+    /// A run's or a fill's box must be finite, corner to corner: an
+    /// authored origin or rectangle can be any number a map spells, and
+    /// a box at infinity would stretch every ancestor's subtree box to
+    /// it. A model or a `Void` has no box of its own.
     fn spatial_bounds(&self) -> Option<(Vec2, Vec2)> {
         let (top_left, size) = match self {
             GfxElement::GlyphArea { glyph_area, .. } => {
                 (glyph_area.position.to_vec2(), glyph_area.render_bounds.to_vec2())
             }
-            GfxElement::GlyphRun { run, .. } => run.bounds(),
-            GfxElement::Fill { fill, .. } => (fill.rect.origin, fill.rect.size),
+            GfxElement::GlyphRun { run, .. } => finite_box(run.bounds())?,
+            GfxElement::Fill { fill, .. } => finite_box((fill.rect.origin, fill.rect.size))?,
             GfxElement::GlyphModel { .. } | GfxElement::Void { .. } => return None,
         };
         (size.x > 0.0 && size.y > 0.0).then_some((top_left, size))
     }
+}
+
+/// `(top_left, size)` when the box, its far corner included, is finite.
+fn finite_box((top_left, size): (Vec2, Vec2)) -> Option<(Vec2, Vec2)> {
+    (top_left.is_finite() && size.is_finite() && (top_left + size).is_finite()).then_some((top_left, size))
 }
 
 /// The glyph instantiation's interpolation. Between two `GlyphArea`s,
