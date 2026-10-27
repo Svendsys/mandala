@@ -387,16 +387,27 @@ fn refusal(
     use serde_json::error::Category;
     let (mut path, mut has_unknown_step) = render_parse_path(prefix, error.path());
     let inner = error.into_inner();
-    let (inner, base) = match rows::take_fault(&inner.to_string(), extent) {
+    // Where the reader that stopped began, as an offset into `extent`:
+    // its start, or the start of the row whose fault it is.
+    let (inner, into_extent) = match rows::take_fault(&inner.to_string(), extent) {
         Some(fault) => {
             for step in &fault.steps {
                 has_unknown_step |= push_parse_path(&mut path, step);
             }
-            (fault.error, fault.base.0)
+            (fault.error, fault.base.0.checked_sub(extent.as_ptr() as usize))
         }
-        None => (inner, extent.as_ptr() as usize),
+        None => (inner, Some(0)),
     };
-    let start = base.checked_sub(text.as_ptr() as usize).unwrap_or(0);
+    // Both offsets are of slices of `text`: the extent by
+    // `parse_extent`'s contract (the index borrowed it from `text`), and
+    // the row by `take_fault`, which takes a fault only from inside the
+    // extent. An offset outside would be a defect in the loader, never a
+    // property of the input, and saturating it would put the error at
+    // the wrong place in silence, so it is asserted.
+    let start = offset_in(text, extent)
+        .zip(into_extent)
+        .map(|(extent_at, into)| extent_at + into)
+        .expect("a value's reader begins inside the text it was read from");
     let base = position_at(text, start);
     let position = Some(within(base, inner.line(), inner.column()));
     let message = without_position(&inner);
