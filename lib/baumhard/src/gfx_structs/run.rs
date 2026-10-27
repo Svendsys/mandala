@@ -8,9 +8,9 @@
 //! **A run is one element whatever its glyph count.** It never splits
 //! into per-glyph elements. What it holds is shared, not copied:
 //!
-//! - [`RunShape::Box`] is a box flow (a section, a label) — the shaped
+//! - [`RunShape::Box`](crate::gfx_structs::run::RunShape::Box) is a box flow (a section, a label) — the shaped
 //!   box, drawn whole with its top-left at the run's `origin`.
-//! - [`RunShape::Path`] is a path flow (a frame ring, a connection, a
+//! - [`RunShape::Path`](crate::gfx_structs::run::RunShape::Path) is a path flow (a frame ring, a connection, a
 //!   portal marker) — the shaped run and the placement of its glyphs on
 //!   the canvas, one position per placed glyph. Point placement
 //!   ([`place_at_point`](crate::flow::place_at_point)) is also this
@@ -20,14 +20,14 @@
 //! animation frame — copies pointers, not shaping. Re-placing a run
 //! (moving a node) swaps the `placed` pointer and reshapes nothing.
 //!
-//! **Overrides** ([`GlyphOverrides`]) are per-glyph presentation effects
+//! **Overrides** ([`GlyphOverrides`](crate::gfx_structs::run::GlyphOverrides)) are per-glyph presentation effects
 //! — an offset, a color, a scale — that glyph-layer presentations write
-//! through [`RunOverrideOp`]. They are indexed by **placed glyph**:
+//! through [`RunOverrideOp`](crate::gfx_structs::run::RunOverrideOp). They are indexed by **placed glyph**:
 //! index *i* is the *i*-th [`PlacedGlyph`](crate::flow::PlacedGlyph) of a
-//! path run (not the *i*-th of its [`ShapedRun::glyphs`], because
+//! path run (not the *i*-th of its [`ShapedRun::glyphs`](crate::flow::ShapedRun::glyphs), because
 //! `Repeat` and fillers reuse indices), and the *i*-th glyph of a box
-//! run's layout (its [`ShapedBox::glyph_spans`] entry). A range op skips
-//! filler glyphs (`span ==` [`FILLER_SPAN`]): a filler is padding the
+//! run's layout (its [`ShapedBox::glyph_spans`](crate::flow::ShapedBox::glyph_spans) entry). A range op skips
+//! filler glyphs (`span ==` [`FILLER_SPAN`](crate::flow::FILLER_SPAN)): a filler is padding the
 //! placement added, not text a presentation addresses.
 //!
 //! **Bounds.** A run's box for hit-testing is computed when its shape or
@@ -38,7 +38,7 @@
 //!
 //! The fields are private because they are tied together: `bounds`
 //! derives from `shaped` and `origin`, and `overrides` is as long as
-//! the placed glyphs. A run is built by [`GlyphRunData::new`], which
+//! the placed glyphs. A run is built by [`GlyphRunData::new`](crate::gfx_structs::run::GlyphRunData::new), which
 //! checks the second, and changes only through the glyph mutations
 //! (`RunSet`, `RunOrigin`, `RunOpacity`, `RunOverrides`), which keep
 //! both.
@@ -218,7 +218,7 @@ impl GlyphOverrides {
     }
 
     /// Whether `self` and `other` hold the same state: every override,
-    /// floats compared as [`same_f32`] does. O(len).
+    /// floats compared so that a `NaN` equals a `NaN`. O(len).
     pub(crate) fn same_state(&self, other: &Self) -> bool {
         self.offset.len() == other.offset.len()
             && self
@@ -414,7 +414,7 @@ impl GlyphRunData {
 
     /// Whether `self` and `other` hold the same state: the shape by
     /// identity ([`RunShape`]'s equality) and every other field by
-    /// value, floats compared as [`same_f32`] does. The bounds are
+    /// value, floats compared so that a `NaN` equals a `NaN`. The bounds are
     /// derived from the shape and the origin and are not compared.
     ///
     /// Cost: O(placed glyphs) with overrides; O(1) without.
@@ -479,9 +479,8 @@ impl GlyphRunData {
     }
 }
 
-/// `range` held to `0..len`: both ends clamped to `len`, and a range
-/// that runs backward is empty.
+/// `range` with its end clamped to `len`. A range that starts at or past
+/// the end it is left with, or runs backward, is empty.
 fn clamp_range(range: &Range<usize>, len: usize) -> Range<usize> {
-    let end = range.end.min(len);
-    range.start.min(end)..end
+    range.start..range.end.min(len)
 }

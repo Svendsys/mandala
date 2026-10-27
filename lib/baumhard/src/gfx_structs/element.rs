@@ -865,16 +865,17 @@ fn finite_box((top_left, size): (Vec2, Vec2)) -> Option<(Vec2, Vec2)> {
 /// and so does `background_color` when both sides have one (per
 /// channel, rounded); between two `GlyphModel`s, `position`
 /// interpolates; between two `GlyphRun`s, `origin`, `opacity` and each
-/// override vector (element-wise, when the two vectors are the same
-/// length, a color only where both sides have one); between two
-/// `Fill`s, `rect`, `color` (per channel), `fade` and `opacity`. A run's
-/// `shaped` and `zoom` and a fill's `shape` and `zoom` snap. Every other field — the text, the regions, a
+/// override vector do (element-wise, and only when the two vectors are
+/// the same length; a glyph's color blends only where both sides color
+/// it); between two `Fill`s, `rect`, `color` (per channel), `fade` and
+/// `opacity` do. A run's `shaped` and `zoom` and a fill's `shape` and
+/// `zoom` snap. Every other field — the text, the regions, a
 /// background color present on one side only, the flags, the channel,
 /// the id — takes the before or the after element by `snap`, and so
 /// does the whole element when the two are different variants.
 ///
 /// Cost: one clone of the element `snap` picks, plus O(1) per
-/// interpolated field.
+/// interpolated field, and O(glyphs) for a run's overrides.
 impl Interpolable for GfxElement {
     fn interpolate(before: &Self, after: &Self, t: f32, snap: Snap) -> Self {
         let mut out = snap.pick(before, after, t).clone();

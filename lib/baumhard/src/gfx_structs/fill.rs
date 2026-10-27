@@ -4,7 +4,7 @@
 //! D12): a color shaped like the node's outline, with a soft edge fade.
 //!
 //! A fill is one element per node, not one per anything it covers. It
-//! carries the rectangle it fills, the [`FillShape`] it takes inside
+//! carries the rectangle it fills, the [`FillShape`](crate::gfx_structs::fill::FillShape) it takes inside
 //! that rectangle, its color, how far its alpha falls off at the edge
 //! (`fade`), its opacity and an optional zoom window. The renderer
 //! (V1-C2) draws it with the shader fill that already exists; nothing

@@ -15,6 +15,7 @@
 //! drive a `debug_assert!` are plain `#[test]`s, a panic being the
 //! subject (baumhard CONVENTIONS §B8).
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use glam::Vec2;
@@ -527,7 +528,7 @@ pub fn do_run_override_ranges_are_clamped_to_the_placed_glyphs() {
     for (name, range) in [
         ("past the end", 4..9),
         ("far past the end", 100..200),
-        ("backward", 3..1),
+        ("backward", Range { start: 3, end: 1 }),
         ("empty", 2..2),
     ] {
         let element = with_ops_on(
