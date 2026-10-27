@@ -2020,6 +2020,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_place_sets_glyphs_at_their_pen_positions", |b| {
         b.iter(do_flow_place_sets_glyphs_at_their_pen_positions)
     });
+    c.bench_function("flow_fit_models_the_size_floor", |b| {
+        b.iter(do_flow_fit_models_the_size_floor)
+    });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
     c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {

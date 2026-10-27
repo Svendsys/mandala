@@ -12,8 +12,10 @@ use glam::Vec2;
 use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
 use crate::flow::tests::support::{close, clustered, real_run, style, synthetic, with_fonts};
 use crate::flow::{
-    outline, place_on_closed, place_on_open, Curve, Outline, PlacedRun, Rect, ShapedRun, FILLER_SPAN,
+    outline, place_on_closed, place_on_open, shape_run, Curve, FlowSpan, Outline, PlacedRun, Rect, ShapedRun,
+    FILLER_SPAN,
 };
+use crate::font::fonts::MIN_FONT_SIZE_PT;
 
 /// A horizontal line from the origin, `length` long.
 fn line(length: f32) -> Curve {
@@ -540,6 +542,63 @@ pub fn do_flow_fit_finishes_a_creeping_shrink() {
     let (end, level) = end_on_top(&rescaled, &placed);
     close(level, 0.0, 1e-3, "the last glyph is on the top side");
     close(end, 400.0, 0.5, "it ends at the start");
+}
+
+#[test]
+fn test_flow_fit_models_the_size_floor() {
+    do_flow_fit_models_the_size_floor();
+}
+
+/// `Fit` predicts the reshape's size floor in a run of mixed sizes
+/// (ruling R9.3): four letters at 24 pt and forty at 1 pt, fitted to
+/// four and three tenths of their natural length on a line. Shrinking
+/// that far takes the 1 pt span below the shaper's 0.5 pt floor, where
+/// it stops shrinking while the 24 pt span still does — so the length is
+/// not the scale times the natural length there. Predicted as if it
+/// were, the reshaped run overruns and is cut at a scale well above
+/// `min`; predicted with the floor, all 44 glyphs are placed and the
+/// last one ends at the line's end.
+pub fn do_flow_fit_models_the_size_floor() {
+    let large = style(24.0);
+    let small = style(1.0);
+    let bs = "b".repeat(40);
+    let shape = |fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+        shape_run(
+            &[
+                FlowSpan {
+                    text: "AAAA",
+                    style: &large,
+                    link: None,
+                },
+                FlowSpan {
+                    text: &bs,
+                    style: &small,
+                    link: None,
+                },
+            ],
+            1.0,
+            fs,
+        )
+    };
+    let run = with_fonts(|fs| shape(fs));
+    assert_eq!(run.glyphs.len(), 44);
+    let natural: f32 = run.glyphs.iter().map(|g| g.advance).sum();
+    let fit = FitMode::Fit { min: 0.05, max: 2.0 };
+    for share in [0.4_f32, 0.3] {
+        let length = natural * share;
+        let (rescaled, placed) =
+            with_fonts(|fs| place_on_open(&run, &line(length), &fit, 0.0, &style(12.0), fs));
+        let rescaled = rescaled.expect("the run is rescaled");
+        assert!(
+            rescaled.glyphs[4].size <= MIN_FONT_SIZE_PT + 1e-4,
+            "{share}: the fixture needs the 1 pt span at the floor, not {}",
+            rescaled.glyphs[4].size
+        );
+        assert!(!placed.truncated, "{share}: cut at a scale above min");
+        assert_eq!(placed.glyphs.len(), 44, "{share}");
+        let end = right_edges(&rescaled, &placed).last().copied().unwrap();
+        close(end, length, 0.5, &format!("{share}: ends at the line's end"));
+    }
 }
 
 #[test]

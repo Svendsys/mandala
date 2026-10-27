@@ -71,6 +71,12 @@ pub struct GlyphMetrics {
     pub bytes: Range<usize>,
     /// The horizontal advance, in points, at the size it was shaped at.
     pub advance: f32,
+    /// The font size, in points, the glyph was shaped at. `Fit` reads it
+    /// to predict the glyph's advance at another scale: the reshape
+    /// floors every size at
+    /// [`MIN_FONT_SIZE_PT`](crate::font::fonts::MIN_FONT_SIZE_PT), so a
+    /// glyph's advance does not shrink with the scale below that size.
+    pub size: f32,
     /// The glyph's pen position in its shaped line, in points from the
     /// line's left edge. Placement sets each glyph of a grapheme cluster
     /// at its pen position relative to the cluster's leftmost, so a mark
@@ -462,6 +468,7 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
                 span,
                 bytes,
                 advance: glyph.w,
+                size: glyph.font_size,
                 x: glyph.x,
                 ascent: ascent * glyph.font_size,
                 descent: descent * glyph.font_size,

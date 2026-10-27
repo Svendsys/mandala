@@ -50,7 +50,7 @@ use crate::flow::outline::Outline;
 use crate::flow::path::ArcPath;
 use crate::flow::shape::{reshape, GlyphMetrics, ShapedRun, FILLER_SPAN};
 use crate::flow::span::{point_size, LINE_HEIGHT_FACTOR};
-use crate::font::fonts::FontSystemWriteGuard;
+use crate::font::fonts::{clamp_font_metric, FontSystemWriteGuard, MIN_FONT_SIZE_PT};
 use crate::font::FontSystem;
 
 /// The most glyphs one placement places (ruling R6, reading 9). A
@@ -234,11 +234,49 @@ impl PathWalk<'_> {
     /// Advances and line heights are linear in size (cosmic-text's
     /// default hinting is off), so `L(scale)` needs no reshape.
     fn measure(&self, clusters: &[Cluster], scale: f32, gap: f32) -> f32 {
-        let h = self.line_height * scale;
+        self.measure_widths(
+            clusters.iter().map(|cluster| cluster.advance * scale),
+            self.line_height * scale,
+            gap,
+        )
+    }
+
+    /// `L(scale)` as a reshape at `scale` will lay `clusters` out
+    /// (ruling R9.3): each glyph's advance, and the line height, scaled
+    /// by [`size_factor`] rather than by `scale` itself, because the
+    /// reshape floors every size at [`MIN_FONT_SIZE_PT`]. In a run of
+    /// mixed sizes, a small span stops shrinking at the floor while a
+    /// large one still shrinks, so `L` is not `scale` times `L(1)`
+    /// there, and `Fit` must not predict it as if it were. `largest` is
+    /// the largest glyph size of the run, whose line height the run's is.
+    ///
+    /// Cost: O(glyphs), no allocation.
+    fn measure_at_scale(
+        &self,
+        glyphs: &[GlyphMetrics],
+        clusters: &[Cluster],
+        scale: f32,
+        largest: f32,
+    ) -> f32 {
+        self.measure_widths(
+            clusters.iter().map(|cluster| {
+                glyphs[cluster.glyphs.clone()]
+                    .iter()
+                    .map(|glyph| glyph.advance * size_factor(glyph.size, scale))
+                    .sum::<f32>()
+            }),
+            self.line_height * size_factor(largest, scale),
+            0.0,
+        )
+    }
+
+    /// Where the last of these cluster widths' steps ends, walked from 0
+    /// with `gap` between steps at line height `h`.
+    fn measure_widths(&self, widths: impl Iterator<Item = f32>, h: f32, gap: f32) -> f32 {
         let mut s = 0.0_f32;
         let mut end = 0.0_f32;
-        for cluster in clusters {
-            end = s + self.step(s, cluster.advance * scale, h).0;
+        for width in widths {
+            end = s + self.step(s, width, h).0;
             s = end + gap;
         }
         end
@@ -691,7 +729,7 @@ fn fit_to<'p>(
     } else {
         ideal.clamp(low, high)
     };
-    let scale = fitting_scale(&walk, &clusters, length, start, low);
+    let scale = fitting_scale(&walk, &run.glyphs, &clusters, length, start, low);
     let rescaled = (scale != 1.0).then(|| reshape(run, scale, None, fs));
     let placed_run = rescaled.as_ref().unwrap_or(run);
     let slack = if scale > low { SOLVE_TOLERANCE } else { 0.0 };
@@ -706,12 +744,22 @@ fn fit_to<'p>(
 /// above), at most [`FIT_ROUNDS`] times; then, if the text still
 /// overruns, bisection between `low` and the last overrunning scale, at
 /// most [`SOLVE_ROUNDS`] times, keeping the side that fits. Every round
-/// is one arithmetic measure; nothing is reshaped.
-fn fitting_scale(walk: &PathWalk<'_>, clusters: &[Cluster], length: f32, start: f32, low: f32) -> f32 {
-    let fits = |scale: f32| walk.measure(clusters, scale, 0.0) <= length;
+/// is one arithmetic measure ([`PathWalk::measure_at_scale`], which
+/// predicts the reshape's size floor); nothing is reshaped.
+fn fitting_scale(
+    walk: &PathWalk<'_>,
+    glyphs: &[GlyphMetrics],
+    clusters: &[Cluster],
+    length: f32,
+    start: f32,
+    low: f32,
+) -> f32 {
+    let largest = glyphs.iter().map(|glyph| glyph.size).fold(0.0_f32, f32::max);
+    let measure = |scale: f32| walk.measure_at_scale(glyphs, clusters, scale, largest);
+    let fits = |scale: f32| measure(scale) <= length;
     let mut over = start;
     for _ in 0..FIT_ROUNDS {
-        let at_scale = walk.measure(clusters, over, 0.0);
+        let at_scale = measure(over);
         if at_scale <= length {
             return over;
         }
@@ -739,6 +787,20 @@ fn fitting_scale(walk: &PathWalk<'_>, clusters: &[Cluster], length: f32, start: 
         }
     }
     under
+}
+
+/// What a reshape at `scale` multiplies a glyph of `size` points by:
+/// `scale`, unless that would take it out of the shaper's size domain,
+/// which the reshape clamps it to (`clamp_font_metric`, as
+/// `shape::scaled` does) — so below
+/// [`MIN_FONT_SIZE_PT`] a glyph stops shrinking. A size that is not a
+/// positive number (never shaped) scales by `scale`.
+fn size_factor(size: f32, scale: f32) -> f32 {
+    if size > 0.0 && size.is_finite() {
+        clamp_font_metric(size * scale, MIN_FONT_SIZE_PT) / size
+    } else {
+        scale
+    }
 }
 
 /// `Fit`'s scale window, made usable whatever it holds: a reversed pair

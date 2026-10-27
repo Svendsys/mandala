@@ -23,7 +23,7 @@ use glam::Vec2;
 
 use crate::document::resolve::ResolvedText;
 use crate::document::values::{FontSize, Rgba, Weight};
-use crate::flow::{shape_run, FlowSpan, GlyphMetrics, ShapedRun};
+use crate::flow::{shape_run, FlowSpan, GlyphMetrics, ShapedRun, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{self, acquire_font_system_write, AppFont, FontSystemWriteGuard};
 use crate::font::{Buffer, Metrics};
 
@@ -89,7 +89,8 @@ pub(crate) fn clustered(glyphs: &[(f32, bool)], line_height: f32) -> ShapedRun {
 
 /// A run of glyphs `(advance, pen position, begins a grapheme cluster)`:
 /// for a fixture whose pen positions are not its advances laid end to
-/// end, as a right-to-left mark's are not.
+/// end, as a right-to-left mark's are not. Every glyph's size is the
+/// one whose line height is `line_height`.
 pub(crate) fn positioned(glyphs: &[(f32, f32, bool)], line_height: f32) -> ShapedRun {
     ShapedRun {
         buffer: Arc::new(Buffer::new_empty(Metrics::new(line_height, line_height))),
@@ -100,6 +101,7 @@ pub(crate) fn positioned(glyphs: &[(f32, f32, bool)], line_height: f32) -> Shape
                 span: 0,
                 bytes: i..i + 1,
                 advance,
+                size: line_height / LINE_HEIGHT_FACTOR,
                 x,
                 ascent: line_height * 0.6,
                 descent: line_height * 0.2,
