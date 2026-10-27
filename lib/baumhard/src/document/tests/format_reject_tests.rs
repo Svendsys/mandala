@@ -437,13 +437,12 @@ fn test_a_spelling_the_schema_does_not_list_is_refused() {
 
 #[test]
 fn test_every_color_spelling_but_the_listed_ones_is_refused_and_the_listed_read() {
-    // The spellings the schema lists load, in either case of hex digit.
+    // The spellings the schema lists load.
     for color in [
         "#000000",
         "#abcdef",
-        "#ABCDEF",
         "#abcdef12",
-        "#ABCDEF12",
+        "#abcdef00",
         "var(bg)",
         "palette(fill)",
         "palette(frame)",
@@ -452,6 +451,42 @@ fn test_every_color_spelling_but_the_listed_ones_is_refused_and_the_listed_read(
     ] {
         assert!(load(&map_of(&format!(r#","fill":"{color}""#))).is_ok(), "{color}");
     }
+}
+
+#[test]
+fn test_a_color_has_one_spelling_and_the_refusal_names_it() {
+    // Uppercase digits and an opaque alpha are second spellings of a
+    // color that has a canonical one, and the message says which.
+    let refused = |json: &str, path: &str, canonical: &str| {
+        let error = rejection(json);
+        let LoadErrorKind::Invalid { message } = &error.kind else {
+            panic!("expected the reader's message for {json}, got {error:?}");
+        };
+        assert_eq!(error.path, path, "the path for {json}");
+        assert!(
+            message.contains(&format!("write {canonical:?}")),
+            "{json}: the message should name {canonical}: {message}"
+        );
+    };
+    refused(&map_of(r##","fill":"#ABCDEF""##), "nodes[0].fill", "#abcdef");
+    refused(&map_of(r##","fill":"#AbCdEf""##), "nodes[0].fill", "#abcdef");
+    refused(&map_of(r##","fill":"#ABCDEF12""##), "nodes[0].fill", "#abcdef12");
+    refused(&map_of(r##","fill":"#abcdefff""##), "nodes[0].fill", "#abcdef");
+    refused(&map_of(r##","fill":"#ABCDEFFF""##), "nodes[0].fill", "#abcdef");
+    // The same in a theme's literal colors and in a palette's.
+    refused(
+        r##"{"format":1,"name":"t","theme":{"active":"d","variants":{"d":{"bg":"#000000FF"}}},"nodes":[]}"##,
+        "theme.variants.d.bg",
+        "#000000",
+    );
+    refused(
+        r##"{"format":1,"name":"t","palettes":{"p":[{"fill":"#FFFFFF","frame":"#000000","text":"#000000"}]},"nodes":[]}"##,
+        "palettes.p[0].fill",
+        "#ffffff",
+    );
+    // A text that is not a color at all keeps the reader's wording.
+    rejects_as_invalid(&map_of(r##","fill":"#abc""##), "nodes[0].fill");
+    rejects_as_invalid(&map_of(r##","fill":"#gggggg""##), "nodes[0].fill");
 }
 
 #[test]

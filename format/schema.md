@@ -475,7 +475,7 @@ One end of a portal link.
 
 | Spelling | Meaning |
 |---|---|
-| `"#rrggbb"`, `"#rrggbbaa"` | A literal color. Hex digits in either case; an opaque color is written without alpha digits. |
+| `"#rrggbb"`, `"#rrggbbaa"` | A literal color. Hex digits are lowercase, and an opaque color is written without alpha digits: `#ABCDEF` and `#abcdefff` are refused, with the canonical spelling in the message. |
 | `"var(name)"` | The theme variable `name`, in the active variant. The name must be a variable of the theme. |
 | `"palette(fill)"`, `"palette(frame)"`, `"palette(text)"`, `"palette(title)"` | That color of the palette group the element's owning node is bound to, at the node's depth. Not allowed inside `palettes`. |
 

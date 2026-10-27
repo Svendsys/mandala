@@ -260,13 +260,13 @@ fn test_a_color_reads_in_every_spelling_the_schema_lists() {
         fill("palette(title)"),
         Some(ColorRef::Palette(PaletteField::Title))
     );
-    // Hex digits in either case read to one value; it saves in lowercase.
-    assert_eq!(fill("#ABCDEF"), fill("#abcdef"));
-    let doc = load_node(r##","fill":"#ABCDEF""##).unwrap();
-    assert!(save(&doc).contains("\"fill\": \"#abcdef\""));
-    // Opaque is written without alpha digits.
-    let doc = load_node(r##","fill":"#102030ff""##).unwrap();
-    assert!(save(&doc).contains("\"fill\": \"#102030\""));
+    // One spelling: the saver writes what the loader accepts, in
+    // lowercase and with no alpha digits when opaque, and the loader
+    // accepts nothing else (`format_reject_tests` holds the refusals).
+    let doc = load_node(r##","fill":"#abcdef","color":"#10203040""##).unwrap();
+    let text = save(&doc);
+    assert!(text.contains("\"fill\": \"#abcdef\""), "{text}");
+    assert!(text.contains("\"color\": \"#10203040\""), "{text}");
 }
 
 #[test]

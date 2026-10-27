@@ -95,20 +95,63 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Named<T> {
     }
 }
 
-/// `#rrggbb` or `#rrggbbaa` as four bytes, hex digits in either case;
-/// `None` for anything else. An absent alpha is opaque. O(1).
-pub(crate) fn parse_hex(text: &str) -> Option<[u8; 4]> {
-    let digits = text.strip_prefix('#')?;
-    if !matches!(digits.len(), 6 | 8) || !digits.is_ascii() {
-        return None;
+/// Why a text is not the canonical spelling of a color.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HexRefusal {
+    /// Not `#` and six or eight hex digits.
+    Malformed,
+    /// A color, but with an uppercase digit.
+    Uppercase([u8; 4]),
+    /// A color, but with the alpha `ff` an opaque color leaves out.
+    OpaqueAlpha([u8; 4]),
+}
+
+impl HexRefusal {
+    /// What to tell the author: names the canonical spelling.
+    pub(crate) fn message(self, text: &str) -> String {
+        match self {
+            HexRefusal::Malformed => {
+                format!("invalid value: string {text:?}, expected a color, `#rrggbb` or `#rrggbbaa`")
+            }
+            HexRefusal::Uppercase(color) => format!(
+                "{text:?} is not the canonical spelling: hex digits are lowercase, write {:?}",
+                format_hex(color)
+            ),
+            HexRefusal::OpaqueAlpha(color) => format!(
+                "{text:?} is not the canonical spelling: an opaque color has no alpha digits, write {:?}",
+                format_hex(color)
+            ),
+        }
     }
-    let nibble = |byte: u8| char::from(byte).to_digit(16).and_then(|d| u8::try_from(d).ok());
+}
+
+/// `#rrggbb` or `#rrggbbaa` as four bytes, in the one spelling the file
+/// has for each color: lowercase digits, and no alpha digits when the
+/// color is opaque (`#rrggbbff` is refused). Anything else is a
+/// [`HexRefusal`]. An absent alpha is opaque. O(1).
+pub(crate) fn parse_hex(text: &str) -> Result<[u8; 4], HexRefusal> {
+    let digits = text.strip_prefix('#').ok_or(HexRefusal::Malformed)?;
+    if !matches!(digits.len(), 6 | 8) || !digits.is_ascii() {
+        return Err(HexRefusal::Malformed);
+    }
+    let nibble = |byte: u8| {
+        char::from(byte)
+            .to_digit(16)
+            .and_then(|d| u8::try_from(d).ok())
+            .ok_or(HexRefusal::Malformed)
+    };
     let mut out = [0, 0, 0, 255];
     let (pairs, _) = digits.as_bytes().as_chunks::<2>();
     for (slot, [high, low]) in out.iter_mut().zip(pairs) {
         *slot = (nibble(*high)? << 4) | nibble(*low)?;
     }
-    Some(out)
+    if digits.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Err(HexRefusal::Uppercase(out));
+    }
+    if digits.len() == 8 && out[3] == 255 {
+        return Err(HexRefusal::OpaqueAlpha(out));
+    }
+    Ok(out)
 }
 
 /// The canonical spelling of a color: lowercase, `#rrggbb` when opaque
@@ -147,7 +190,7 @@ impl<'de> Deserialize<'de> for HexDto {
             fn visit_str<E: de::Error>(self, text: &str) -> Result<HexDto, E> {
                 parse_hex(text)
                     .map(HexDto)
-                    .ok_or_else(|| E::invalid_value(Unexpected::Str(text), &self))
+                    .map_err(|refusal| E::custom(refusal.message(text)))
             }
         }
 
@@ -305,6 +348,7 @@ impl<'de> Deserialize<'de> for ShapeDto {
 
 /// A color wherever a color may be written: `"#rrggbb"`,
 /// `"#rrggbbaa"`, `"var(name)"` or `"palette(fill|frame|text|title)"`.
+/// Hex is lowercase, and an opaque color has no alpha digits.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ColorDto {
     /// A literal color.
@@ -342,7 +386,7 @@ impl<'de> Deserialize<'de> for ColorDto {
                 if text.starts_with('#') {
                     return parse_hex(text)
                         .map(|rgba| ColorDto::Hex(HexDto(rgba)))
-                        .ok_or_else(|| E::invalid_value(Unexpected::Str(text), &self));
+                        .map_err(|refusal| E::custom(refusal.message(text)));
                 }
                 let inner = |prefix: &str| text.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(')'));
                 if let Some(name) = inner("var(") {
