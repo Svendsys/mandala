@@ -1251,6 +1251,44 @@ replaces; nothing in the app uses it until the cut-over (V1-C3).
 `lib/baumhard/src/document/`. `util::document_surface` holds it to
 naming nothing of the model it replaces.
 
+### The document's mutations — `DocMutation`, `DocInherited`, `DocStep`
+
+Every change a document can undergo, as the engine's payload for the
+document (V1-B3, #237). Every path that changes a map — actions, the
+console, IPC, drags, text editing, edits, presentations, verbs — builds
+mutator trees from this vocabulary and nothing else; the writer that
+applies them with history is V1-B4.
+
+- **`DocMutation`** has one payload per kind (`Node(NodeOp)`,
+  `Span(SpanOp)`, `Path(PathOp)` for connectors and links, `Cap(TextOp)`
+  …). Each op writes exactly the field it names; there are no setters.
+  The relative ops (`Nudge`, `GrowSize`, `ScaleSize`, `MoveControlPoint`)
+  clamp their result with `document::bounds`, and an index the reached
+  element lacks leaves it unchanged with a diagnostic.
+- **`DocInherited`** is what a document walk carries down, so "grow the
+  font" on text with no size of its own grows the size it displays:
+  `text_size_for(kind)` answers what `resolve_text` would, from
+  `Defaults` tails the seed reads once (`inherited_seed`) and the owners'
+  sizes within the flow. A frame never takes the node's points, and a
+  connector, cap or label never takes node text.
+- **Validation** has two halves. `validate` judges a mutator tree before
+  it walks: payload against key, every literal against its bound,
+  every reference, and the structural commands the document allows
+  (`validate_for_presentation` refuses all structure, D17).
+  `validate_applied` judges a request's journal after its last step:
+  the rows it changed, inserted links, links whose kind changed, and
+  that every size it wrote is in the unit its place takes.
+- **`DocStep`** is one walk of a request, built from the document as the
+  earlier steps left it — one walk cannot split a span twice and style
+  the middle, or merge a run of three. The composite builders
+  (`document::mutation::compose`: `create_child`, `delete`, `reparent`,
+  `set_link_kind`, `style_range`, `insert_text`, `delete_text`,
+  `split_section`, …) return the steps of each change whose shape is
+  not obvious; the writer runs them on one journal builder, all or
+  nothing.
+
+`lib/baumhard/src/document/mutation/`.
+
 ---
 
 ## §3 The mindmap domain
