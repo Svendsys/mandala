@@ -401,8 +401,8 @@ impl Builder {
     /// ([`Unit`](crate::document::place::Unit), the rule the mutations
     /// share), checked against the bound for that unit. A file's number
     /// has no unit of its own: the loader always knows the place it
-    /// reads one in, so it never asks for [`Unit::Either`]
-    /// (crate::document::place::Unit::Either), and would read one as
+    /// reads one in, so it never asks for
+    /// [`Unit::Either`](crate::document::place::Unit::Either), and would read one as
     /// points, the unit a span's place takes.
     pub fn size(&self, value: f32, unit: crate::document::place::Unit) -> LoadResult<FontSize> {
         use crate::document::place::Unit;

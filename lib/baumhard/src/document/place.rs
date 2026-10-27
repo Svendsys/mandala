@@ -14,14 +14,14 @@
 //! map no edit may reach. So each rule is a function here, and both
 //! call it:
 //!
-//! - the **unit of a text size** ([`Unit`]): relative inside a frame
+//! - the **unit of a text size** ([`Unit`](crate::document::place::Unit)): relative inside a frame
 //!   and a ring, points everywhere else;
 //! - a **span inside a ring** sets no size of its own
-//!   ([`sizes_its_own_text`]): the ring sizes its text;
+//!   ([`sizes_its_own_text`](crate::document::place::sizes_its_own_text)): the ring sizes its text;
 //! - a **font** a document holds has a family name a file can write
-//!   ([`nameable_font`]);
+//!   ([`nameable_font`](crate::document::place::nameable_font));
 //! - a **name** an author chose is not empty and holds no control or
-//!   bidi character ([`name_fault`]);
+//!   bidi character ([`name_fault`](crate::document::place::name_fault));
 //! - a **channel** is within
 //!   [`MAX_CHANNEL`](crate::document::bounds::MAX_CHANNEL)
 //!   ([`check_channel`](crate::document::bounds::check_channel), which

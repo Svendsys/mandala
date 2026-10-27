@@ -17,7 +17,7 @@
 //! is `\n` in JSON, and on top of serde_json's escaping this writes
 //! U+0085, U+2028 and U+2029 — where some editors and diff viewers break
 //! a line — and the bidi controls as `\uXXXX`
-//! ([`saver_escapes`](crate::document::format::context::saver_escapes)),
+//! ([`saver_escapes`]),
 //! so a line count agrees with a reported line number and a diff cannot
 //! be shown in an order other than its bytes. This applies to every
 //! string in the file, the header's too.
