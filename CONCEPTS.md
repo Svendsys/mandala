@@ -1276,8 +1276,13 @@ applies them with history is V1-B4.
   every reference, and the structural commands the document allows
   (`validate_for_presentation` refuses all structure, D17).
   `validate_applied` judges a request's journal after its last step:
-  the rows it changed, inserted links, links whose kind changed, and
-  that every size it wrote is in the unit its place takes.
+  the rows it changed, inserted links (nested ones included), links
+  whose kind changed, and that every size it wrote is in the unit its
+  place takes — none at all on a span inside a ring. A font is never
+  the fallback face, and a channel never passes `MAX_CHANNEL`. Both
+  halves iterate with explicit stacks and remember which elements are
+  in the tree, so depth costs them no call stack and no climb per
+  element (§20 rule 11).
 - **`DocStep`** is one walk of a request, built from the document as the
   earlier steps left it — one walk cannot split a span twice and style
   the middle, or merge a run of three. The composite builders
