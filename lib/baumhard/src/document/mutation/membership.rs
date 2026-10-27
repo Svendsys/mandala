@@ -25,6 +25,9 @@ pub(crate) struct Membership {
     known: FxHashMap<NodeId, bool>,
     /// The elements of the climb in progress, reused between climbs.
     climb: Vec<NodeId>,
+    /// How many elements every climb so far went through: what the
+    /// tests hold to the number of distinct elements (§20 rule 11).
+    climbed: usize,
 }
 
 impl Membership {
@@ -52,11 +55,18 @@ impl Membership {
                 break true;
             }
             self.climb.push(node);
+            self.climbed += 1;
             at = arena[node].parent();
         };
         for node in self.climb.drain(..) {
             self.known.insert(node, answer);
         }
         answer
+    }
+
+    /// How many elements the climbs so far went through, each counted
+    /// once per climb. O(1).
+    pub(crate) fn climbed(&self) -> usize {
+        self.climbed
     }
 }

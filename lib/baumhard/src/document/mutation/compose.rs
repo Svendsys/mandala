@@ -141,6 +141,19 @@ fn new_section() -> Subtree<DocElement> {
 /// each ancestor is climbed through once over the whole selection — so
 /// nothing per node grows with its depth (§20 rule 11).
 fn tops(doc: &Document, nodes: &[NodeId]) -> Result<Vec<NodeId>, MutationError> {
+    tops_counting(doc, nodes).0
+}
+
+/// [`tops`], and how many ancestors its climbs went through — the
+/// membership check's and the nesting check's together — for the tests
+/// that hold it to the selection's distinct ancestors (§20 rule 11).
+pub(crate) fn tops_counting(doc: &Document, nodes: &[NodeId]) -> (Result<Vec<NodeId>, MutationError>, usize) {
+    let mut climbed = 0;
+    let result = tops_climbing(doc, nodes, &mut climbed);
+    (result, climbed)
+}
+
+fn tops_climbing(doc: &Document, nodes: &[NodeId], climbed: &mut usize) -> Result<Vec<NodeId>, MutationError> {
     let tree = doc.tree();
     let arena = tree.arena();
     let given: FxHashSet<NodeId> = nodes.iter().copied().collect();
@@ -172,6 +185,7 @@ fn tops(doc: &Document, nodes: &[NodeId]) -> Result<Vec<NodeId>, MutationError> 
                 break known;
             }
             climb.push(ancestor);
+            *climbed += 1;
             at = arena[ancestor].parent();
         };
         for ancestor in climb.drain(..) {
@@ -181,6 +195,7 @@ fn tops(doc: &Document, nodes: &[NodeId]) -> Result<Vec<NodeId>, MutationError> 
             tops.push(node);
         }
     }
+    *climbed += members.climbed();
     Ok(tops)
 }
 

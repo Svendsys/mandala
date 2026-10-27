@@ -144,7 +144,6 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
         (DocKind::Section, DocMutation::Section(SectionOp::SetOffset(Vec2::new(0.0, -2.0e9))), DocMutation::Section(SectionOp::SetOffset(Vec2::splat(-MAX_CANVAS_COORD))), "section.offset"),
         (DocKind::Section, DocMutation::Section(SectionOp::Nudge(Vec2::new(0.0, f32::INFINITY))), DocMutation::Section(SectionOp::Nudge(Vec2::ONE)), "section.nudge"),
         (DocKind::Section, DocMutation::Section(SectionOp::SetMinSize(Some(Vec2::new(2.0e9, 1.0)))), DocMutation::Section(SectionOp::SetMinSize(Some(Vec2::splat(MAX_CANVAS_COORD)))), "section.min_size"),
-        (DocKind::Span, DocMutation::Span(SpanOp::DeleteText { start: 3, end: 1 }), DocMutation::Span(SpanOp::DeleteText { start: 1, end: 1 }), "span.delete_text"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::SetStart(Some(StartPoint { edge: Edge::Top, at: 1.1 }))), DocMutation::Frame(FrameOp::SetStart(Some(StartPoint { edge: Edge::Top, at: 1.0 }))), "frame.start"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::SetFit(fit(2.0, 1.0))), DocMutation::Frame(FrameOp::SetFit(fit(1.0, 1.0))), "frame.fit"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::SetGap(Some(-1.0))), DocMutation::Frame(FrameOp::SetGap(Some(0.0))), "frame.gap"),
@@ -705,17 +704,34 @@ pub fn do_document_validate_applied_judges_what_the_steps_did() {
         Err(MutationError::PlacedUnit { element, .. }) => element,
         other => panic!("expected a placed-unit refusal, got {other:?}"),
     };
+    let ring_span = |result: Result<(), MutationError>| match result {
+        Err(MutationError::PlacedRingSpanSize { element }) => element,
+        other => panic!("expected a ring-span refusal, got {other:?}"),
+    };
+    // A span inside a ring sets no size, in either unit (R14.1): the
+    // ring's is the one size.
+    for unit in [FontSize::Pt(12.0), FontSize::Rel(0.1)] {
+        let (mut doc, _) = document();
+        assert_eq!(
+            ring_span(applied(&mut doc, vec![(size(unit), vec![ids.ring_span])])),
+            ids.ring_span,
+            "{unit:?}"
+        );
+    }
+    // A computed size is refused the same way.
     let (mut doc, _) = document();
+    let grow = at_root(
+        DocKind::Span,
+        DocMutation::Span(SpanOp::Text(TextOp::GrowSize(0.01))),
+    );
     assert_eq!(
-        placed(applied(
-            &mut doc,
-            vec![(size(FontSize::Pt(12.0)), vec![ids.ring_span])]
-        )),
+        ring_span(applied(&mut doc, vec![(grow, vec![ids.ring_span])])),
         ids.ring_span
     );
+    // Control: a section's span takes points, and only points.
     let (mut doc, _) = document();
     assert_eq!(
-        applied(&mut doc, vec![(size(FontSize::Rel(0.1)), vec![ids.ring_span])]),
+        applied(&mut doc, vec![(size(FontSize::Pt(12.0)), vec![ids.b_span])]),
         Ok(())
     );
     let (mut doc, _) = document();
@@ -726,38 +742,56 @@ pub fn do_document_validate_applied_judges_what_the_steps_did() {
         )),
         ids.b_span
     );
-    let (mut doc, _) = document();
-    assert_eq!(
-        applied(&mut doc, vec![(size(FontSize::Pt(12.0)), vec![ids.b_span])]),
-        Ok(())
-    );
 
-    // An inserted span is judged where it lands.
+    // An inserted span is judged where it lands: at the top of the
+    // insert after the walk, inside it before.
+    let span_sized = |size: Option<FontSize>| {
+        DocElement::Span(SpanData {
+            text: "x".to_string(),
+            style: TextStyle {
+                size,
+                ..TextStyle::default()
+            },
+            link: None,
+        })
+    };
     let insert_span = |size| {
         command(
             DocKind::Ring,
             StructOp::Insert {
-                subtree: Subtree::leaf(DocElement::Span(SpanData {
-                    text: "x".to_string(),
-                    style: TextStyle {
-                        size: Some(size),
-                        ..TextStyle::default()
-                    },
-                    link: None,
-                })),
+                subtree: Subtree::leaf(span_sized(Some(size))),
+                at: Placement::Last,
+            },
+        )
+    };
+    let (mut doc, _) = document();
+    let refused = ring_span(applied(
+        &mut doc,
+        vec![(insert_span(FontSize::Rel(0.2)), vec![ids.ring])],
+    ));
+    assert_eq!(Some(refused), doc.children(ids.ring).last());
+    let insert_ring = |size| {
+        command(
+            DocKind::Frame,
+            StructOp::Insert {
+                subtree: Subtree {
+                    root: DocElement::Ring(Default::default()),
+                    children: vec![Subtree::leaf(span_sized(size))],
+                },
                 at: Placement::Last,
             },
         )
     };
     let (mut doc, _) = document();
     assert!(matches!(
-        applied(&mut doc, vec![(insert_span(FontSize::Pt(9.0)), vec![ids.ring])]),
-        Err(MutationError::PlacedUnit { .. })
+        applied(&mut doc, vec![(insert_ring(Some(FontSize::Rel(0.2))), vec![ids.frame])]),
+        Err(MutationError::RingSpanSize { at }) if at.subtree == Some(vec![0])
     ));
     let (mut doc, _) = document();
     assert_eq!(
-        applied(&mut doc, vec![(insert_span(FontSize::Rel(0.2)), vec![ids.ring])]),
-        Ok(())
+        applied(&mut doc, vec![(insert_ring(None), vec![ids.frame])]),
+        Ok(()),
+        "a ring span with no size of its own is fine"
     );
 
     // A frame inserted with its relative size keeps it: its own kind
@@ -834,4 +868,294 @@ pub fn do_document_run_steps_validates_and_is_all_or_nothing() {
     let builder = doc.run_steps(vec![hide()], JournalBuilder::new()).unwrap();
     let _ = builder.close(doc.tree());
     assert!(matches!(doc.get(ids.b), Some(DocElement::Node(n)) if n.hidden));
+}
+
+#[test]
+fn test_document_validate_refuses_the_fallback_font() {
+    do_document_validate_refuses_the_fallback_font();
+}
+
+/// `AppFont::Any` names no face: it is refused by `SetFont`, inside an
+/// inserted subtree (named by its path there) and in replaced defaults
+/// (R14.2). A real face, and no face (`None`, which inherits), pass.
+pub fn do_document_validate_refuses_the_fallback_font() {
+    use crate::font::fonts::AppFont;
+    let (doc, _) = document();
+    let set_font = |font| at_root(DocKind::Span, DocMutation::Span(SpanOp::Text(TextOp::SetFont(font))));
+    assert!(matches!(
+        validate(&set_font(Some(AppFont::Any)), &doc),
+        Err(MutationError::AnyFont { .. })
+    ));
+    assert_eq!(validate(&set_font(Some(AppFont::Evilz)), &doc), Ok(()));
+    assert_eq!(validate(&set_font(None), &doc), Ok(()));
+
+    let section_with = |font| {
+        command(
+            DocKind::Node,
+            StructOp::Insert {
+                subtree: Subtree {
+                    root: DocElement::Section(SectionData::default()),
+                    children: vec![Subtree::leaf(DocElement::Span(SpanData {
+                        text: "x".to_string(),
+                        style: TextStyle {
+                            font: Some(font),
+                            ..TextStyle::default()
+                        },
+                        link: None,
+                    }))],
+                },
+                at: Placement::Last,
+            },
+        )
+    };
+    match validate(&section_with(AppFont::Any), &doc) {
+        Err(MutationError::AnyFont { at }) => assert_eq!(at.subtree, Some(vec![0])),
+        other => panic!("expected the fallback font refused, got {other:?}"),
+    }
+    assert_eq!(validate(&section_with(AppFont::Evilz), &doc), Ok(()));
+
+    let replace = |font| {
+        let mut defaults = DefaultsData::default();
+        defaults.label.text.font = Some(font);
+        at_root(
+            DocKind::Defaults,
+            DocMutation::Defaults(DefaultsOp::Replace(Box::new(defaults))),
+        )
+    };
+    assert!(matches!(
+        validate(&replace(AppFont::Any), &doc),
+        Err(MutationError::AnyFont { .. })
+    ));
+    assert_eq!(validate(&replace(AppFont::Evilz), &doc), Ok(()));
+}
+
+#[test]
+fn test_document_validate_bounds_channels() {
+    do_document_validate_bounds_channels();
+}
+
+/// A node's, a section's and a ring's channel is at most `MAX_CHANNEL`,
+/// set by `SetChannel` or carried by an inserted element (R14.3); the
+/// bound itself passes. Only a target whose `usize` is wider than 32
+/// bits can hold a channel past it.
+pub fn do_document_validate_bounds_channels() {
+    use crate::document::bounds::{BoundError, MAX_CHANNEL};
+    let (doc, _) = document();
+    let set = |kind, channel| {
+        let mutation = match kind {
+            DocKind::Node => DocMutation::Node(NodeOp::SetChannel(channel)),
+            DocKind::Section => DocMutation::Section(SectionOp::SetChannel(channel)),
+            _ => DocMutation::Ring(RingOp::SetChannel(channel)),
+        };
+        validate(&at_root(kind, mutation), &doc)
+    };
+    let insert_section = |channel| {
+        command(
+            DocKind::Node,
+            StructOp::Insert {
+                subtree: Subtree::leaf(DocElement::Section(SectionData {
+                    channel,
+                    ..SectionData::default()
+                })),
+                at: Placement::Last,
+            },
+        )
+    };
+    for (kind, field) in [
+        (DocKind::Node, "node.channel"),
+        (DocKind::Section, "section.channel"),
+        (DocKind::Ring, "ring.channel"),
+    ] {
+        assert_eq!(set(kind, MAX_CHANNEL), Ok(()), "{kind:?}");
+        if let Some(past) = MAX_CHANNEL.checked_add(1) {
+            assert_eq!(bound_field(set(kind, past)), (field, vec![]), "{kind:?}");
+        }
+    }
+    assert_eq!(validate(&insert_section(MAX_CHANNEL), &doc), Ok(()));
+    #[cfg(target_pointer_width = "64")]
+    assert!(MAX_CHANNEL.checked_add(1).is_some(), "a 64-bit usize holds a channel past the bound");
+    if let Some(past) = MAX_CHANNEL.checked_add(1) {
+        match validate(&insert_section(past), &doc) {
+            Err(MutationError::Bound { field, error, at }) => {
+                assert_eq!(field, "section.channel");
+                assert_eq!(error, BoundError::NotAChannel(1 << 32));
+                assert_eq!(at.subtree, Some(vec![]));
+            }
+            other => panic!("expected the channel refused, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_document_validate_refuses_an_inverted_range() {
+    do_document_validate_refuses_an_inverted_range();
+}
+
+/// `DeleteText` from 3 to 1 is a malformed range, refused with both
+/// indices as they were given — integers, never rounded through a
+/// float; an empty range passes.
+pub fn do_document_validate_refuses_an_inverted_range() {
+    let (doc, _) = document();
+    let delete = |start, end| at_root(DocKind::Span, DocMutation::Span(SpanOp::DeleteText { start, end }));
+    let huge = (1usize << 24) + 1;
+    assert_eq!(
+        validate(&delete(huge, 1), &doc),
+        Err(MutationError::InvertedRange {
+            at: Default::default(),
+            start: huge,
+            end: 1,
+        })
+    );
+    assert_eq!(validate(&delete(1, 1), &doc), Ok(()));
+}
+
+#[test]
+fn test_document_validate_applied_judges_nested_links() {
+    do_document_validate_applied_judges_nested_links();
+}
+
+/// A link nested inside an inserted node — not at the top of the insert
+/// — whose target a later step of the same request removes is a
+/// dangling link (R14.8); a nested link to a node that stays passes.
+pub fn do_document_validate_applied_judges_nested_links() {
+    let (_, ids) = document();
+    let node_with_link = |to| {
+        command(
+            DocKind::Node,
+            StructOp::Insert {
+                subtree: Subtree {
+                    root: DocElement::Node(node_data(0)),
+                    children: vec![
+                        Subtree::leaf(connector()),
+                        Subtree::leaf(DocElement::Link(LinkData {
+                            to,
+                            kind: LinkKind::Line,
+                            path: path_data(),
+                        })),
+                    ],
+                },
+                at: Placement::Last,
+            },
+        )
+    };
+    let (mut doc, _) = document();
+    let remove_d = command(DocKind::Node, StructOp::Remove);
+    assert!(matches!(
+        applied(&mut doc, vec![(node_with_link(ids.d), vec![ids.b]), (remove_d, vec![ids.d])]),
+        Err(MutationError::DanglingLink { to, .. }) if to == ids.d
+    ));
+    let (mut doc, _) = document();
+    assert_eq!(applied(&mut doc, vec![(node_with_link(ids.d), vec![ids.b])]), Ok(()));
+}
+
+/// How deep the deep tests go: §20 rule 11's chain.
+const DEEP: usize = 100_000;
+
+#[test]
+fn test_document_validate_walks_a_deep_mutator() {
+    do_document_validate_walks_a_deep_mutator();
+}
+
+/// A mutator tree `DEEP` levels deep — a chain of node mutators, as a
+/// map-borne edit could carry (D29) — is validated on a default test
+/// thread, so the walk over it costs no call stack per level (§20
+/// rule 11, R14.4); a payload of another kind at the bottom is still
+/// found, and named by its full path.
+pub fn do_document_validate_walks_a_deep_mutator() {
+    let (doc, _) = document();
+    let mut deep = DocMutatorTree::new_with(Mutator::new_void(BranchKey::new(DocKind::Node, 0)));
+    let mut at = deep.root;
+    for _ in 1..DEEP {
+        at = deep
+            .insert_child(at, Mutator::new_void(BranchKey::new(DocKind::Node, 0)), Placement::Last)
+            .unwrap();
+    }
+    assert_eq!(validate(&deep, &doc), Ok(()));
+    deep.insert_child(
+        at,
+        Mutator::new(DocMutation::Node(NodeOp::SetHidden(true)), BranchKey::new(DocKind::Section, 0)),
+        Placement::Last,
+    )
+    .unwrap();
+    match validate(&deep, &doc) {
+        Err(MutationError::PayloadKind { at, .. }) => {
+            assert_eq!(at.mutator.len(), DEEP, "the path runs from the root to the bottom");
+            assert!(at.mutator.iter().all(|&p| p == 0));
+        }
+        other => panic!("expected the payload at the bottom refused, got {other:?}"),
+    }
+}
+
+/// A chain of `DEEP` nodes, each with its connector, as an insert's
+/// subtree: built from the bottom up, so building it recurses on
+/// nothing.
+#[cfg(test)]
+fn deep_subtree() -> Subtree<DocElement> {
+    let mut chain = Subtree {
+        root: DocElement::Node(node_data(0)),
+        children: vec![Subtree::leaf(connector())],
+    };
+    for _ in 1..DEEP {
+        chain = Subtree {
+            root: DocElement::Node(node_data(0)),
+            children: vec![Subtree::leaf(connector()), chain],
+        };
+    }
+    chain
+}
+
+/// Drop `value` on a thread with room for a recursive drop.
+/// `Subtree`'s derived `Drop` recurses on its depth, which is the
+/// engine's to make iterative (V1-A5, #282); this test is about the
+/// validator's walk, so it keeps the drop off the thread under test.
+#[cfg(test)]
+fn drop_deep<T: Send + 'static>(value: T) {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(move || drop(value))
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// An inserted subtree `DEEP` levels deep is validated on a default
+/// test thread: `walk_subtree` iterates (§20 rule 11, R14.4). A refusal
+/// at the bottom — the fallback font on the deepest node — is found and
+/// named by its full path in the subtree. A plain test: what it builds
+/// can only be dropped off the thread under test (`drop_deep`), which a
+/// bench body could not do.
+#[test]
+fn test_document_validate_walks_a_deep_insert() {
+    let (doc, _) = document();
+    let insert = |subtree| {
+        command(
+            DocKind::Node,
+            StructOp::Insert {
+                subtree,
+                at: Placement::Last,
+            },
+        )
+    };
+    let fine = insert(deep_subtree());
+    assert_eq!(validate(&fine, &doc), Ok(()));
+    drop_deep(fine);
+
+    let mut bad = deep_subtree();
+    let mut bottom = &mut bad;
+    while bottom.children.len() > 1 {
+        bottom = &mut bottom.children[1];
+    }
+    if let DocElement::Node(node) = &mut bottom.root {
+        node.style.text.font = Some(crate::font::fonts::AppFont::Any);
+    }
+    let bad = insert(bad);
+    match validate(&bad, &doc) {
+        Err(MutationError::AnyFont { at }) => {
+            let path = at.subtree.expect("inside the insert");
+            assert_eq!(path.len(), DEEP - 1, "the path runs to the bottom node");
+            assert!(path.iter().all(|&p| p == 1));
+        }
+        other => panic!("expected the bottom's font refused, got {other:?}"),
+    }
+    drop_deep(bad);
 }
