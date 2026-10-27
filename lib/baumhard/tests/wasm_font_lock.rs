@@ -17,7 +17,11 @@
 //! calls the lock helpers and checks two things the browser depends on.
 //! The uncontended path works and reads no clock, and every same-thread
 //! re-entrancy case panics with its own message — rather than hanging,
-//! or trapping for some unrelated reason.
+//! or trapping for some unrelated reason. Beside them it runs TextFlow
+//! (`baumhard::flow`, #239) under the guard — shaping a run and a box,
+//! and the two placements that shape again, `Fit` and a `Once` filler —
+//! because that is the shaping path every frame, connector and section
+//! takes in the browser.
 //!
 //! **It also runs one document walk 100,000 levels deep** — the
 //! mutation validator over a deep mutator tree — because design §20

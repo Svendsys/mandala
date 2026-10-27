@@ -12,13 +12,12 @@ use std::path::Path;
 
 use log::info;
 
+use baumhard::flow::LINE_HEIGHT_FACTOR;
 use baumhard::mindmap::custom_mutation::CustomMutation;
 use baumhard::mindmap::loader;
 use baumhard::mindmap::model::{MindMap, MAX_NODE_AXIS};
 use baumhard::mindmap::placard;
-use baumhard::mindmap::tree_builder::{
-    self, effective_section_scale, FrameOverrides, MindMapTree, LINE_HEIGHT_FACTOR,
-};
+use baumhard::mindmap::tree_builder::{self, effective_section_scale, FrameOverrides, MindMapTree};
 
 use crate::application::source_tier::SourceTier;
 

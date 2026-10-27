@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use indextree::NodeId;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Flag, Flaggable, Range};
+use crate::flow::LINE_HEIGHT_FACTOR;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::model::{GlyphComponent, GlyphLine, GlyphModel};
@@ -68,20 +69,6 @@ use glam::Vec2;
 /// "run that names no size" cannot drift apart — both render at
 /// exactly this scale by construction.
 pub const DEFAULT_SECTION_FONT_SCALE: f32 = crate::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT;
-
-/// Ratio of a section's line height to its font scale. Every
-/// `GlyphArea` this builder emits gets `line_height = scale *
-/// LINE_HEIGHT_FACTOR`, and the app's auto-size measurement has to
-/// use the same ratio or a node grown to fit its text clips the
-/// text it was grown for.
-///
-/// 1.2 is the typographic default cosmic-text and CSS both take for
-/// unspecified leading. There is no per-section line-height field in
-/// the model, so this is not a fallback — it is the whole answer,
-/// and the reverse converter in the app's
-/// `document::custom::sync` relies on that to avoid persisting a
-/// line height at all.
-pub const LINE_HEIGHT_FACTOR: f32 = 1.2;
 
 /// The font scale a section is laid out at: the **largest**
 /// `size_pt` among its `text_runs`, or [`DEFAULT_SECTION_FONT_SCALE`]
@@ -228,6 +215,11 @@ pub(super) fn mindnode_section_area(
 ) -> GlyphArea {
     let vars = &map.canvas.theme_variables;
     let scale = effective_section_scale(section);
+    // TextFlow's ratio, the one the app's auto-size measurement also
+    // uses: a node grown to fit its text must not clip the text it was
+    // grown for. The model has no line-height field, so this is the
+    // whole answer, which the app's `document::custom::sync` relies on
+    // to avoid persisting a line height.
     let line_height = scale * LINE_HEIGHT_FACTOR;
     let position = node.pos_vec2() + Vec2::new(section.offset.x as f32, section.offset.y as f32);
     let bounds = section

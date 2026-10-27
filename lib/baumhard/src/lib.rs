@@ -41,6 +41,10 @@ pub mod document;
 /// mutation payload: `Tree` / `MutatorTree`, `Mutator` and
 /// `Instruction`, the walker, `Predicate`, and the builder DSL.
 pub mod engine;
+/// TextFlow: shaping spans into runs and boxes, outlines and curves,
+/// and placing upright glyphs along paths — the one text primitive
+/// everything drawn as text is built on.
+pub mod flow;
 /// Font loading, shaping, and glyph-metric lookups backed by
 /// cosmic-text. Owns the long-lived font cache.
 pub mod font;
@@ -58,3 +62,9 @@ pub mod gfx_structs;
 pub mod mindmap;
 /// Shared math, container, and formatting helpers across the crate.
 pub mod util;
+
+/// The vector math baumhard's public API speaks — `Vec2` positions and
+/// sizes throughout `flow`, `document` and `gfx_structs` — re-exported
+/// so a dependent names the very glam baumhard was built with instead
+/// of pinning a version of its own that can drift from it.
+pub use glam;

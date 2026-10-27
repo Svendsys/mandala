@@ -749,6 +749,23 @@ pub fn count_grapheme_clusters(s: &str) -> usize {
     s.graphemes(true).count()
 }
 
+/// The byte offset at which each extended grapheme cluster of `s`
+/// begins, ascending — `0` first whenever `s` is non-empty, and
+/// nothing for an empty `s`.
+///
+/// The shape a caller wants when it holds byte offsets from elsewhere
+/// (a shaper's glyph clusters, say) and must learn which cluster each
+/// one falls in: collect these once, then binary-search them. Every
+/// offset is a `char` boundary, so slicing at one is always safe.
+///
+/// # Costs
+///
+/// A lazy O(n) grapheme walk; no allocation unless the caller
+/// collects.
+pub fn grapheme_byte_starts(s: &str) -> impl Iterator<Item = usize> + '_ {
+    s.grapheme_indices(true).map(|(start, _)| start)
+}
+
 /// Borrow the first `n` grapheme clusters of `s`, and say whether any
 /// clusters were left behind.
 ///
