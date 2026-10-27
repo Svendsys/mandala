@@ -20,8 +20,10 @@
 //!
 //! **Span mapping.** cosmic-text reports each glyph's cluster as bytes
 //! of the *line* it shaped, and the line is not the caller's text: the
-//! spans are concatenated, and the characters a flow does not draw
-//! (`\n` and `\r` in a run, `\r` in a box) are left out. Shaping
+//! spans are concatenated, and the characters a flow does not draw are
+//! left out: every paragraph separator (the private
+//! `is_paragraph_separator` names them) in a run, every one but `\n` in
+//! a box (D26, ruling R9.5). Shaping
 //! therefore records a piece table — which bytes of which span each
 //! stretch of each line came from — and maps every glyph back through
 //! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
