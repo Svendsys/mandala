@@ -259,7 +259,27 @@ fn test_the_format_reads_no_index_and_no_predicate_field() {
     let expected: BTreeSet<String> = [
         // `Cow<'a, str>`: a node's text, borrowed from the document when
         // the saver writes it, owned when the loader reads it.
-        "bool", "Cow", "f32", "Option", "str", "String", "u16", "u32", "u64", "u8", "usize", "Vec",
+        "bool",
+        "Cow",
+        "f32",
+        "Option",
+        "str",
+        "String",
+        "u16",
+        "u32",
+        "u64",
+        "u8",
+        "usize",
+        "Vec",
+        // `Rows<'a, T>` (`format/rows.rs`): a row read from the text is
+        // its array's captured text (`RawValue`), checked item by item as
+        // a `T` when it is read; one the saver writes is its source over
+        // the arena (`Rc<dyn RowSource>`). Its items are `T`, reached
+        // through its `PhantomData<T>`.
+        "RawValue",
+        "Rc",
+        "<dyn Trait>",
+        "PhantomData",
     ]
     .into_iter()
     .map(str::to_string)
@@ -318,7 +338,12 @@ fn test_the_fixtures_use_every_key_the_format_defines() {
     let graph = TypeGraph::build(&crate_src_root());
     let mut defined: BTreeSet<String> = BTreeSet::new();
     for root in ROOTS {
-        for (_, members) in graph.member_names_from(root) {
+        for (name, members) in graph.member_names_from(root) {
+            // A row (`format/rows.rs`) is written as an array of its
+            // items; its own fields are how it holds them, never keys.
+            if name == "Rows" {
+                continue;
+            }
             defined.extend(members);
         }
     }
@@ -416,7 +441,8 @@ fn type_depth(graph: &TypeGraph, ty: &syn::Type, visiting: &mut Vec<String>) -> 
                     Some(inner) => type_depth(graph, &inner, visiting),
                     None => Ok(0),
                 },
-                "Vec" | "Named" => match argument() {
+                // `Rows<'a, T>` is written as an array of `T`.
+                "Vec" | "Named" | "Rows" => match argument() {
                     Some(inner) => Ok(1 + type_depth(graph, &inner, visiting)?),
                     None => Ok(1),
                 },

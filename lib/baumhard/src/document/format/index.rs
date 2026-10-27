@@ -28,7 +28,10 @@
 //! file's keys may legitimately be unknown here.
 
 use crate::document::format::context::{offset_in, position_at, within};
-use crate::document::format::error::{render_parse_path, LoadError, LoadErrorKind, Seg, TextPosition};
+use crate::document::format::error::{
+    push_parse_path, render_parse_path, LoadError, LoadErrorKind, Seg, TextPosition,
+};
+use crate::document::format::rows;
 use crate::document::format::strict;
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
@@ -340,13 +343,11 @@ pub(crate) fn parse_extent<'t, T: Deserialize<'t>>(
     extent: &'t RawValue,
     prefix: &[Seg],
 ) -> Result<T, LoadError> {
+    rows::clear_fault();
     let mut deserializer = serde_json::Deserializer::from_str(extent.get());
     let parsed: Result<T, serde_path_to_error::Error<serde_json::Error>> =
         serde_path_to_error::deserialize(strict::Objects(&mut deserializer));
-    parsed.map_err(|error| {
-        let base = position_at(text, offset_in(text, extent.get()).unwrap_or(0));
-        refusal(error, prefix, base)
-    })
+    parsed.map_err(|error| refusal(error, prefix, text, extent.get()))
 }
 
 /// The reader's message for `error`, without the ` at line L column C`
@@ -366,8 +367,11 @@ fn without_position(error: &serde_json::Error) -> String {
     }
 }
 
-/// The [`LoadError`] for a value that failed to parse, inside an extent
-/// that starts at `base`.
+/// The [`LoadError`] for a value that failed to parse, inside `extent`,
+/// a slice of `text`. When what failed was a row inside it, which is
+/// read by a reader of its own ([`rows`]), the row's fault says the rest
+/// of the path and the place: the error is the innermost reader's, at
+/// the whole path, at its place in the text.
 ///
 /// The reader's messages are the only place the kind of a data error is
 /// written, so the kinds that name a key are read back out of them; the
@@ -377,11 +381,23 @@ fn without_position(error: &serde_json::Error) -> String {
 fn refusal(
     error: serde_path_to_error::Error<serde_json::Error>,
     prefix: &[Seg],
-    base: TextPosition,
+    text: &str,
+    extent: &str,
 ) -> LoadError {
     use serde_json::error::Category;
-    let (path, has_unknown_step) = render_parse_path(prefix, error.path());
+    let (mut path, mut has_unknown_step) = render_parse_path(prefix, error.path());
     let inner = error.into_inner();
+    let (inner, base) = match rows::take_fault(&inner.to_string(), extent) {
+        Some(fault) => {
+            for step in &fault.steps {
+                has_unknown_step |= push_parse_path(&mut path, step);
+            }
+            (fault.error, fault.base.0)
+        }
+        None => (inner, extent.as_ptr() as usize),
+    };
+    let start = base.checked_sub(text.as_ptr() as usize).unwrap_or(0);
+    let base = position_at(text, start);
     let position = Some(within(base, inner.line(), inner.column()));
     let message = without_position(&inner);
     let at = |path: String, kind| LoadError {

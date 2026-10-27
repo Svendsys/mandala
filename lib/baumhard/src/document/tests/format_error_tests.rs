@@ -245,3 +245,30 @@ fn test_an_error_the_index_raises_names_its_place_once() {
     assert!(!rendered.contains("at line"), "{rendered}");
     assert_eq!(rendered.matches("line ").count(), 1, "{rendered}");
 }
+
+#[test]
+fn test_an_error_inside_a_row_inside_a_row_names_its_full_path_and_its_exact_place() {
+    // Each row is checked by a reader of its own (`format/rows.rs`): an
+    // error three rows down — a span of the label of a link — is still
+    // named at its whole path and its exact line and column.
+    let link = r#"{"to":2,"kind":"line","label":{"spans":[{"text":"a"},{"text":"b","italic":"x"}]}}"#;
+    let node = format!(r#"{{"id":1,"position":[0,0],"links":[{{"to":2,"kind":"line"}},{link}]}}"#);
+    let nodes = format!("{},\n{}", node_of(2, ""), node);
+    let json = map_with("", &nodes);
+    let error = rejection(&json);
+    assert_eq!(error.path, "nodes[1].links[1].label.spans[1].italic");
+    assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
+    // The reader stopped on the value `"x"`: its line is node 1's, and
+    // its column is where that value ends in the whole text.
+    let line_start = json.find(r#"{"id":1"#).expect("node 1");
+    let at = json.find(r#""x""#).expect("the bad value") + 3 - line_start;
+    assert_eq!(
+        error.position,
+        Some(TextPosition {
+            line: 2,
+            column: u32::try_from(at).unwrap()
+        })
+    );
+    let rendered = error.to_string();
+    assert!(!rendered.contains("at line"), "{rendered}");
+}

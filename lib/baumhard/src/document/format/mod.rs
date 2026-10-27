@@ -62,6 +62,7 @@ mod index;
 mod load_map;
 mod load_node;
 pub(crate) mod load_style;
+pub(crate) mod rows;
 pub(crate) mod spelling;
 mod strict;
 pub(crate) mod to_dto;
@@ -139,9 +140,11 @@ pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 7;
 /// load's or a check's bookkeeping per node and per link. Measured
 /// (`tests/format_memory.rs`) on the densest maps the format allows —
 /// every kind of row a node can hold in bulk, rows of empty sections,
-/// empty rings, links and empty spans among them — at the load's peak
-/// and at the save's, and rounded up.
-pub const WASM32_BYTES_PER_ELEMENT: u64 = 560;
+/// empty rings, links and empty spans among them, spread over many
+/// nodes and held by one — at the load's peak and at the save's, and
+/// rounded up to 16 bytes. It is essentially three arena slots: the
+/// arena's old buffer and its new one, twice the size, while it doubles.
+pub const WASM32_BYTES_PER_ELEMENT: u64 = 576;
 
 /// wasm32's ceiling on a map's text: half of [`WASM32_MEMORY_BUDGET`]
 /// over [`WASM32_BYTES_PER_TEXT_BYTE`].
@@ -234,8 +237,10 @@ pub(crate) fn load_bytes_under(bytes: &[u8], limits: Limits) -> Result<Document,
 /// hash insert or lookup per node, per `parent` and per link. Every
 /// insert is an append. Memory beside the text and the tree: one fat
 /// pointer per node, the ident index (made once, at its size), the
-/// chain (as long as the tree is deep), a few words per pending link
-/// and one node's DTO. Every element is counted against
+/// chain (as long as the tree is deep), a few words per pending link,
+/// and one node's DTO with one item of each row it holds: a row is its
+/// captured text, read one item at a time ([`rows`]), however many items
+/// it has. Every element is counted against
 /// [`MAX_ELEMENTS`] as it is appended.
 pub fn load(json: &str) -> Result<Document, LoadError> {
     load_under(json, LIMITS)
@@ -408,7 +413,10 @@ fn not_loadable(error: LoadError) -> SaveError {
 ///
 /// **It holds one node, not a second document.** The builder runs in
 /// `Keep::OneNode`: each node is built from what the saver would
-/// write, its row checked, and its elements freed before the next. What
+/// write, its row checked, and its elements freed before the next, and
+/// within a node each section, ring, span and link is freed once judged,
+/// so a node that holds every row of its map is checked one row at a
+/// time. What
 /// a load answers from the nodes it keeps is answered from `doc`
 /// instead: each node's id must be the one `doc`'s ident index holds
 /// for it — which makes the ids unique — a link's `to` must be an id
@@ -425,10 +433,12 @@ fn not_loadable(error: LoadError) -> SaveError {
 /// refused without one.
 ///
 /// Cost: one iterative walk of the tree, building one node's DTO and
-/// elements at a time; O(elements) whatever the depth, with one hash
-/// lookup per node and per link. Memory beside `doc`: one node's DTO
-/// and elements, the header's elements, and the chain (a few words per
-/// level of the deepest path). On a target with [`MAX_MAP_BYTES`], one
+/// elements at a time, and each row of it one item at a time;
+/// O(elements) whatever the depth, with one hash lookup per node and
+/// per link. Memory beside `doc`: one node's own DTO and elements (a
+/// frame, a connector), one item of each of its rows, the header's
+/// elements, and the chain (a few words per level of the deepest
+/// path). On a target with [`MAX_MAP_BYTES`], one
 /// more walk counts the bytes the file would have, writing none of
 /// them, since a file longer than that does not load there.
 pub fn check_savable(doc: &Document) -> Result<(), SaveError> {
@@ -549,12 +559,15 @@ fn check_one_node(doc: &Document, max_elements: Option<u64>) -> OneNode {
             return Err(stop(&mut unsure));
         }
         // A link names a node the index holds, other than its own.
-        for link in &dto.links {
+        let named = dto.links.each(|_, link| {
             let to = u32::try_from(link.to).ok().map(crate::document::ids::NodeIdent);
             match to.and_then(|to| doc.node_by_ident(to)) {
-                Some(target) if target != id => {}
-                _ => return Err(stop(&mut unsure)),
+                Some(target) if target != id => Ok(()),
+                _ => Err(()),
             }
+        });
+        if named.is_err() {
+            return Err(stop(&mut unsure));
         }
         nodes += 1;
         builder.node(i, &dto).map_err(|error| {

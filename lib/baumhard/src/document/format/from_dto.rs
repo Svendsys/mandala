@@ -12,7 +12,8 @@
 //! **Phase 4, the nodes** ([`Builder::node`], in `chain.rs`): each node
 //! of the flat list is placed on the chain of ancestors the list's
 //! pre-order implies, appended under its parent, and its own content is
-//! built under it. Only one node's DTO is alive at a time. Nothing
+//! built under it. Only one node's DTO is alive at a time, and of each row
+//! it holds only one item ([`Rows`]). Nothing
 //! recurses on the depth of the tree: the chain is a heap `Vec` and a
 //! node's row is checked when it leaves the chain.
 //!
@@ -38,9 +39,10 @@
 //! the position it alone knows.
 
 use crate::document::bounds::{self, BoundError};
-use crate::document::element::{DocElement, MapData};
+use crate::document::element::{DocElement, DocKind, MapData};
 use crate::document::format::dto::MapHeaderDto;
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, NodeContext, Seg};
+use crate::document::format::rows::{Rows, RowsError};
 use crate::document::ids::{Definitions, Document, IdentIndex, NodeIdent};
 use crate::document::keyed::KeyedMap;
 use crate::document::shape::validate_shape;
@@ -349,24 +351,50 @@ impl Builder {
         })
     }
 
-    /// Run `f` for each item of the array under `key`, in file order,
-    /// inside `key[i]`, refusing an item whose channel (`channel_of`) is
-    /// below the one before it with
+    /// Run `f` for each item of the row under `key`, in file order,
+    /// inside `key[i]`: one item read (or, for a check, made by the
+    /// saver) at a time, never the whole row ([`Rows`]).
+    pub fn each_row<'r, T: serde::Deserialize<'r>>(
+        &mut self,
+        key: &'static str,
+        rows: &Rows<'r, T>,
+        mut f: impl FnMut(&mut Self, &T) -> LoadResult<()>,
+    ) -> LoadResult<()> {
+        self.key(key, |b| {
+            let walked = rows.each(|index, item| b.at(Seg::Index(index), |b| f(b, &item)));
+            match walked {
+                Ok(()) => Ok(()),
+                Err(RowsError::Item(error)) => Err(error),
+                // The row was checked as it was read, and the saver's
+                // checked before the builder sees it: either is a defect.
+                Err(RowsError::Read(error)) => Err(b.error(LoadErrorKind::Internal {
+                    message: error.to_string(),
+                })),
+                Err(RowsError::Save(error)) => Err(b.error(LoadErrorKind::Internal {
+                    message: error.to_string(),
+                })),
+            }
+        })
+    }
+
+    /// Run `f` for each item of the row under `key`, as [`Self::each_row`],
+    /// refusing an item whose channel (`channel_of`) is below the one
+    /// before it with
     /// [`SiblingsOutOfOrder`](LoadErrorKind::SiblingsOutOfOrder) at its
     /// `channel`. Equal channels keep the file's order.
     ///
     /// This is how a row of sections or rings reaches the tree in key
     /// order without a sort: the file must already be in it (design
     /// B.4). One spelling per row, and every insert an append.
-    pub fn each_ascending<'a, T>(
+    pub fn each_ascending<'r, T: serde::Deserialize<'r>>(
         &mut self,
         key: &'static str,
-        items: &'a [T],
+        rows: &Rows<'r, T>,
         channel_of: impl Fn(&T) -> u64,
-        mut f: impl FnMut(&mut Self, &'a T) -> LoadResult<()>,
+        mut f: impl FnMut(&mut Self, &T) -> LoadResult<()>,
     ) -> LoadResult<()> {
         let mut previous: Option<u64> = None;
-        self.each(key, items, |b, item| {
+        self.each_row(key, rows, |b, item| {
             let channel = channel_of(item);
             if let Some(previous_channel) = previous.filter(|previous| channel < *previous) {
                 let kind = LoadErrorKind::SiblingsOutOfOrder {
@@ -406,9 +434,24 @@ impl Builder {
         element: DocElement,
         under: impl FnOnce(&mut Self, NodeId) -> LoadResult<()>,
     ) -> LoadResult<NodeId> {
+        let kind = element.kind();
         let id = self.add(parent, element)?;
         under(self, id)?;
         self.finish_element(id)?;
+        // A check frees a row's item once it is judged: a node may hold
+        // any number of sections, links, rings or spans, and the check
+        // holds one at a time. The rows that bound how many their parent
+        // holds (a frame, a connector, a cap, a label, a portal end) stay
+        // until their parent is judged; a row of any number is never
+        // counted in its parent's judgment.
+        if self.keep == Keep::OneNode
+            && matches!(
+                kind,
+                DocKind::Section | DocKind::Ring | DocKind::Span | DocKind::Link
+            )
+        {
+            self.free(id)?;
+        }
         Ok(id)
     }
 

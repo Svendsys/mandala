@@ -754,14 +754,22 @@ pub(crate) fn render_path(segs: &[Seg]) -> String {
 /// Rendered from the path's segments rather than its `Display`, which
 /// writes every key bare.
 pub(crate) fn render_parse_path(prefix: &[Seg], path: &serde_path_to_error::Path) -> (String, bool) {
+    let mut out = render_path(prefix);
+    let unknown = push_parse_path(&mut out, path);
+    (out, unknown)
+}
+
+/// Write `path`, a path the JSON reader was at, after `out`, in the
+/// notation of [`render_path`]; and whether it had a step it could not
+/// name.
+pub(crate) fn push_parse_path(out: &mut String, path: &serde_path_to_error::Path) -> bool {
     use serde_path_to_error::Segment;
     use std::fmt::Write;
-    let mut out = render_path(prefix);
     let mut unknown = false;
     for segment in path.iter() {
         match segment {
-            Segment::Map { key } => push_key(&mut out, key),
-            Segment::Enum { variant } => push_key(&mut out, variant),
+            Segment::Map { key } => push_key(out, key),
+            Segment::Enum { variant } => push_key(out, variant),
             Segment::Seq { index } => {
                 // Writing to a `String` cannot fail.
                 let _ = write!(out, "[{index}]");
@@ -769,5 +777,5 @@ pub(crate) fn render_parse_path(prefix: &[Seg], path: &serde_path_to_error::Path
             Segment::Unknown => unknown = true,
         }
     }
-    (out, unknown)
+    unknown
 }

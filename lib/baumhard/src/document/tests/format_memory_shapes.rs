@@ -27,7 +27,7 @@ use crate::document::ids::Document;
 
 /// The element shapes: each node of a fan holds one kind of row in
 /// bulk, or nothing; and the definitions.
-pub const ELEMENT_SHAPES: [&str; 10] = [
+pub const ELEMENT_SHAPES: [&str; 15] = [
     // Every node under node 1: a node and a connector each.
     "fan", // Each node under the one before: the chain as long as the map.
     "chain",
@@ -46,6 +46,15 @@ pub const ELEMENT_SHAPES: [&str; 10] = [
     // counted as an element is. Edits and presentations are the same
     // two strings.
     "verbs",
+    // One node holding every row of its map (R19.1): line links,
+    // portal links, empty sections, a frame of empty rings, and one
+    // section of empty spans. How many rows one node holds must not
+    // change what a row costs.
+    "one_lines",
+    "one_portals",
+    "one_sections",
+    "one_rings",
+    "one_spans",
 ];
 
 /// The text shapes: few elements, a long text, or a header that is all
@@ -100,10 +109,38 @@ fn node(shape: &str, id: u32) -> String {
     format!(r#"{{"id":{id}{parent},"position":[0,0]{content}}}"#)
 }
 
-/// The text of an element shape with `n` nodes, written as densely as
-/// the format allows (compact, no whitespace), in one allocation of the
-/// size it needs.
+/// The text of a one-node shape (`one_…`) whose node holds `n` rows,
+/// beside a second node its links name.
+fn one_node_text(shape: &str, n: u32) -> String {
+    let (open, row, close) = match shape {
+        "one_lines" => (r#","links":["#, r#"{"to":2,"kind":"line"}"#, "]"),
+        "one_portals" => (r#","links":["#, r#"{"to":2,"kind":"portal"}"#, "]"),
+        "one_sections" => (r#","sections":["#, "{}", "]"),
+        "one_rings" => (r#","frame":{"rings":["#, "{}", "]}"),
+        _ => (r#","sections":[{"spans":["#, r#"{"text":""}"#, "]}]"),
+    };
+    let rows = usize::try_from(n).unwrap_or(usize::MAX);
+    let mut text = String::with_capacity(128 + rows * (row.len() + 1));
+    text.push_str(r#"{"format":1,"name":"m","nodes":[{"id":1,"position":[0,0]"#);
+    text.push_str(open);
+    for index in 0..rows {
+        if index > 0 {
+            text.push(',');
+        }
+        text.push_str(row);
+    }
+    text.push_str(close);
+    text.push_str(r#"},{"id":2,"position":[0,0]}]}"#);
+    text
+}
+
+/// The text of an element shape with `n` nodes (for a one-node shape,
+/// `n` rows), written as densely as the format allows (compact, no
+/// whitespace), in one allocation of the size it needs.
 pub fn element_text(shape: &str, n: u32) -> String {
+    if shape.starts_with("one_") {
+        return one_node_text(shape, n);
+    }
     let size: usize = 64 + (1..=n).map(|id| node(shape, id).len() + 1).sum::<usize>();
     let mut text = String::with_capacity(size);
     text.push_str(r#"{"format":1,"name":"m","nodes":["#);

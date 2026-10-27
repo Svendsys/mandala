@@ -46,6 +46,7 @@ use crate::document::format::dto::{
 };
 use crate::document::format::error::{render_path, NodeContext, SaveError, SaveErrorKind, Seg};
 use crate::document::format::index::FORMAT;
+use crate::document::format::rows::{Halt, RowSource, Rows, RowsError};
 use crate::document::format::spelling::{
     ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, Named, PaletteFieldDto, RectangleDto,
     ShapeDto, StartDto, StartPointDto, WeightDto,
@@ -59,7 +60,11 @@ use crate::document::values::{
 };
 use crate::font::fonts::{family_name_of, AppFont};
 use indextree::NodeId;
+use serde::Deserialize;
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::convert::Infallible;
+use std::rc::Rc;
 
 /// What every step of the saver returns.
 type SaveResult<T> = Result<T, SaveError>;
@@ -73,8 +78,9 @@ struct TextOut<'a> {
     italic: Option<bool>,
 }
 
-/// The state of one save.
-struct Saver<'a> {
+/// What every step of one save reads, shared by the saver and by each
+/// row it hands out ([`Children`]).
+struct Core<'a> {
     doc: &'a Document,
     /// The theme's variable names, in the order a `VarId` indexes.
     vars: &'a [String],
@@ -83,7 +89,12 @@ struct Saver<'a> {
     /// The verbs, in the order a `VerbId` indexes.
     verbs: &'a [VerbDef],
     /// The family name of each face already looked up.
-    fonts: KeyedMap<AppFont, Option<&'static str>>,
+    fonts: RefCell<KeyedMap<AppFont, Option<&'static str>>>,
+}
+
+/// The state of one save.
+struct Saver<'a> {
+    core: Rc<Core<'a>>,
     /// Where in the file the saver is, as the loader would say it.
     path: Vec<Seg>,
 }
@@ -91,12 +102,64 @@ struct Saver<'a> {
 /// A saver for `doc`, at the top of the file.
 fn saver(doc: &Document) -> Saver<'_> {
     Saver {
-        doc,
-        vars: &doc.theme().variables,
-        palettes: doc.palettes().map(|(_, palette)| palette.name.as_str()).collect(),
-        verbs: &doc.definitions().verbs,
-        fonts: KeyedMap::default(),
+        core: Rc::new(Core {
+            doc,
+            vars: &doc.theme().variables,
+            palettes: doc.palettes().map(|(_, palette)| palette.name.as_str()).collect(),
+            verbs: &doc.definitions().verbs,
+            fonts: RefCell::new(KeyedMap::default()),
+        }),
         path: Vec::new(),
+    }
+}
+
+/// The rows of one kind under `parent` — its sections, links, rings or
+/// spans — made by the saver one at a time as they are reached, each at
+/// its path (`path`, then its place in the row), and dropped
+/// ([`Rows`], ruling R19.1). A row never exists as a list of DTOs.
+struct Children<'a, T> {
+    core: Rc<Core<'a>>,
+    parent: NodeId,
+    /// The row's path: where its items are, up to its key.
+    path: Vec<Seg>,
+    /// Whether an element is an item of this row.
+    is_row: fn(&DocElement) -> bool,
+    /// The DTO of the item `child` of `parent`, at the saver's path.
+    make: Maker<'a, T>,
+}
+
+/// How [`Children`] makes the DTO of one item: the saver at the item's
+/// path, the parent, the item and its element.
+type Maker<'a, T> = fn(&mut Saver<'a>, NodeId, NodeId, &'a DocElement) -> SaveResult<T>;
+
+impl<'a, T> RowSource<'a, T> for Children<'a, T> {
+    fn is_empty(&self) -> bool {
+        let doc = self.core.doc;
+        !doc.children(self.parent)
+            .any(|child| doc.get(child).is_some_and(self.is_row))
+    }
+
+    fn each(&self, sink: &mut dyn FnMut(usize, T) -> Result<(), Halt>) -> Result<(), Halt> {
+        let doc: &'a Document = self.core.doc;
+        let mut saver = Saver {
+            core: Rc::clone(&self.core),
+            path: self.path.clone(),
+        };
+        let mut index = 0;
+        for child in doc.children(self.parent) {
+            let Some(element) = doc.get(child) else {
+                continue;
+            };
+            if !(self.is_row)(element) {
+                continue;
+            }
+            saver.path.push(Seg::Index(index));
+            let made = (self.make)(&mut saver, self.parent, child, element);
+            saver.path.pop();
+            sink(index, made.map_err(Halt::Save)?)?;
+            index += 1;
+        }
+        Ok(())
     }
 }
 
@@ -178,7 +241,7 @@ impl<'a> Saver<'a> {
 
     /// The header: every top-level key but `nodes`.
     fn map(&mut self) -> SaveResult<MapHeaderDto<'a>> {
-        let doc = self.doc;
+        let doc = self.core.doc;
         let name = match doc.get(doc.root()) {
             Some(DocElement::Map(map)) => map.name.clone(),
             _ => String::new(),
@@ -235,7 +298,7 @@ impl<'a> Saver<'a> {
     /// `None` for the empty theme, which has exactly one spelling: no
     /// `theme` key.
     fn theme(&mut self) -> SaveResult<Option<ThemeDto>> {
-        let theme = self.doc.theme();
+        let theme = self.core.doc.theme();
         if theme.variants.is_empty() {
             return if theme.variables.is_empty() && theme.active == 0 {
                 Ok(None)
@@ -310,7 +373,7 @@ impl<'a> Saver<'a> {
 
     /// The palettes, by name.
     fn palettes(&mut self) -> SaveResult<Named<Vec<PaletteGroupDto<'a>>>> {
-        let doc = self.doc;
+        let doc = self.core.doc;
         let mut palettes: Vec<(String, Vec<PaletteGroupDto>)> = Vec::new();
         self.key("palettes", |s| {
             for (_, palette) in doc.palettes() {
@@ -354,7 +417,8 @@ impl<'a> Saver<'a> {
     /// A theme variable's name, or an error at `key` when the theme
     /// defines no such variable.
     fn var_name(&self, key: &'static str, index: u16) -> SaveResult<Cow<'a, str>> {
-        self.vars
+        self.core
+            .vars
             .get(usize::from(index))
             .map(|name| Cow::Borrowed(name.as_str()))
             .ok_or_else(|| self.error_at(key, SaveErrorKind::UnknownVariable { index }))
@@ -384,7 +448,7 @@ impl<'a> Saver<'a> {
         let Some(font) = font else {
             return Ok(None);
         };
-        let name = *self.fonts.entry(font).or_insert_with(|| {
+        let name = *self.core.fonts.borrow_mut().entry(font).or_insert_with(|| {
             if nameable_font(font) {
                 family_name_of(font)
             } else {
@@ -456,7 +520,8 @@ impl<'a> Saver<'a> {
     /// A verb's id, or an error at `key` when the map defines no such
     /// verb.
     fn verb_id(&self, key: &'static str, index: u16) -> SaveResult<Cow<'a, str>> {
-        self.verbs
+        self.core
+            .verbs
             .get(usize::from(index))
             .map(|verb| Cow::Borrowed(verb.id.as_str()))
             .ok_or_else(|| self.error_at(key, SaveErrorKind::UnknownVerb { index }))
@@ -464,7 +529,7 @@ impl<'a> Saver<'a> {
 
     /// The element at `id`.
     fn element(&self, id: NodeId) -> Option<&'a DocElement> {
-        let doc: &'a Document = self.doc;
+        let doc: &'a Document = self.core.doc;
         doc.get(id)
     }
 
@@ -472,7 +537,7 @@ impl<'a> Saver<'a> {
     /// iterator over the arena's sibling links, borrowing the document
     /// and not the saver: no allocation per element visited.
     fn children(&self, id: NodeId) -> impl Iterator<Item = (NodeId, &'a DocElement)> + 'a {
-        let doc: &'a Document = self.doc;
+        let doc: &'a Document = self.core.doc;
         doc.children(id)
             .filter_map(move |child| doc.get(child).map(|element| (child, element)))
     }
@@ -499,7 +564,8 @@ impl<'a> Saver<'a> {
         let fill = self.color("fill", node.style.fill)?;
         let palette = match node.palette {
             Some(palette) => Some(
-                self.palettes
+                self.core
+                    .palettes
                     .get(usize::from(palette.0))
                     .map(|name| Cow::Borrowed(*name))
                     .ok_or_else(|| {
@@ -508,26 +574,28 @@ impl<'a> Saver<'a> {
             ),
             None => None,
         };
-        // What lies under the node, in the order of the kinds.
-        let (mut sections, mut frame, mut connector, mut links) = (Vec::new(), None, None, Vec::new());
+        // What lies under the node, in the order of the kinds. Child
+        // nodes are listed after this one.
+        let sections = self.rows(
+            id,
+            "sections",
+            |element| matches!(element, DocElement::Section(_)),
+            |s, _, child, _| s.section(child),
+        )?;
+        let (mut frame, mut connector) = (None, None);
         for (child, element) in self.children(id) {
             match element {
-                DocElement::Section(_) => {
-                    let index = sections.len();
-                    let section = self.key("sections", |s| s.at(Seg::Index(index), |s| s.section(child)))?;
-                    sections.push(section);
-                }
                 DocElement::Frame(_) => frame = Some(self.key("frame", |s| s.frame(child))?),
                 DocElement::Connector(_) => connector = self.key("connector", |s| s.connector(child))?,
-                DocElement::Link(_) => {
-                    let index = links.len();
-                    let link = self.key("links", |s| s.at(Seg::Index(index), |s| s.link(id, child)))?;
-                    links.push(link);
-                }
-                // A child node is listed after this one.
                 _ => {}
             }
         }
+        let links = self.rows(
+            id,
+            "links",
+            |element| matches!(element, DocElement::Link(_)),
+            |s, owner, child, _| s.link(owner, child),
+        )?;
         Ok(NodeDto {
             id: u64::from(node.ident.0),
             parent,
@@ -579,42 +647,74 @@ impl<'a> Saver<'a> {
         })
     }
 
-    /// The spans under `parent`, at the current path's `spans`. A span in
-    /// a ring has no size of its own: the ring sizes its text, and a size
-    /// on the span would be one the file cannot say.
-    fn spans(&mut self, parent: NodeId) -> SaveResult<Vec<SpanDto<'a>>> {
-        let parent_kind = self.element(parent).map(DocElement::kind);
-        let mut out = Vec::new();
-        for (_, element) in self.children(parent) {
-            let DocElement::Span(span) = element else {
-                continue;
-            };
-            let index = out.len();
-            let dto = self.key("spans", |s| {
-                s.at(Seg::Index(index), |s| {
-                    if span.style.size.is_some() && !sizes_its_own_text(DocKind::Span, parent_kind) {
-                        return Err(s.error_at("size", SaveErrorKind::SizeInRing));
-                    }
-                    let text = s.text(&span.style, Unit::of_place(DocKind::Span, parent_kind))?;
-                    let link = match &span.link {
-                        Some(LinkTarget::Url(url)) => Some(LinkTargetDto::Url(Cow::Borrowed(url.as_str()))),
-                        Some(LinkTarget::Verb(verb)) => Some(LinkTargetDto::Verb(s.verb_id("link", verb.0)?)),
-                        None => None,
-                    };
-                    Ok(SpanDto {
-                        text: Cow::Borrowed(span.text.as_str()),
-                        font: text.font,
-                        size: text.size,
-                        color: text.color,
-                        weight: text.weight,
-                        italic: text.italic,
-                        link,
-                    })
-                })
-            })?;
-            out.push(dto);
+    /// The row `key` of `parent`: its items are the children
+    /// `is_row` picks, each made by `make` when it is reached
+    /// ([`Children`]). Each is made once here, so that a value with no
+    /// spelling is refused now, at its path and in the order the file
+    /// would hold it, and the row is then made again by whoever reads it.
+    /// O(the row) time; one item at a time.
+    fn rows<T: Deserialize<'a> + 'a>(
+        &self,
+        parent: NodeId,
+        key: &'static str,
+        is_row: fn(&DocElement) -> bool,
+        make: Maker<'a, T>,
+    ) -> SaveResult<Rows<'a, T>> {
+        let mut path = self.path.clone();
+        path.push(Seg::Key(key));
+        let rows = Rows::arena(Rc::new(Children {
+            core: Rc::clone(&self.core),
+            parent,
+            path,
+            is_row,
+            make,
+        }));
+        match rows.each(|_, _| Ok::<(), Infallible>(())) {
+            Ok(()) => Ok(rows),
+            Err(RowsError::Save(error)) => Err(error),
+            Err(RowsError::Item(never)) => match never {},
+            Err(RowsError::Read(error)) => Err(self.error(SaveErrorKind::Io {
+                message: error.to_string(),
+            })),
         }
-        Ok(out)
+    }
+
+    /// The spans under `parent`, at the current path's `spans`.
+    fn spans(&self, parent: NodeId) -> SaveResult<Rows<'a, SpanDto<'a>>> {
+        self.rows(
+            parent,
+            "spans",
+            |element| matches!(element, DocElement::Span(_)),
+            |s, parent, _, element| s.span(parent, element),
+        )
+    }
+
+    /// One span under `parent`, at the current path. A span in a ring has
+    /// no size of its own: the ring sizes its text, and a size on the
+    /// span would be one the file cannot say.
+    fn span(&mut self, parent: NodeId, element: &'a DocElement) -> SaveResult<SpanDto<'a>> {
+        let DocElement::Span(span) = element else {
+            return Err(self.error(SaveErrorKind::WrongElement));
+        };
+        let parent_kind = self.element(parent).map(DocElement::kind);
+        if span.style.size.is_some() && !sizes_its_own_text(DocKind::Span, parent_kind) {
+            return Err(self.error_at("size", SaveErrorKind::SizeInRing));
+        }
+        let text = self.text(&span.style, Unit::of_place(DocKind::Span, parent_kind))?;
+        let link = match &span.link {
+            Some(LinkTarget::Url(url)) => Some(LinkTargetDto::Url(Cow::Borrowed(url.as_str()))),
+            Some(LinkTarget::Verb(verb)) => Some(LinkTargetDto::Verb(self.verb_id("link", verb.0)?)),
+            None => None,
+        };
+        Ok(SpanDto {
+            text: Cow::Borrowed(span.text.as_str()),
+            font: text.font,
+            size: text.size,
+            color: text.color,
+            weight: text.weight,
+            italic: text.italic,
+            link,
+        })
     }
 
     /// A frame and its rings.
@@ -623,29 +723,12 @@ impl<'a> Saver<'a> {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
         let style = self.frame_style(&frame.style)?;
-        let mut rings = Vec::new();
-        for (ring_id, element) in self.children(id) {
-            let DocElement::Ring(ring) = element else {
-                continue;
-            };
-            let index = rings.len();
-            let dto = self.key("rings", |s| {
-                s.at(Seg::Index(index), |s| {
-                    let text = s.text(&ring.style.text, Unit::of_tier(DocKind::Ring))?;
-                    Ok(RingDto {
-                        channel: channel_of(ring.channel),
-                        fit: Self::fit(&ring.style.fit),
-                        font: text.font,
-                        size: text.size,
-                        color: text.color,
-                        weight: text.weight,
-                        italic: text.italic,
-                        spans: s.spans(ring_id)?,
-                    })
-                })
-            })?;
-            rings.push(dto);
-        }
+        let rings = self.rows(
+            id,
+            "rings",
+            |element| matches!(element, DocElement::Ring(_)),
+            |s, _, ring, element| s.ring(ring, element),
+        )?;
         Ok(FrameDto {
             visible: style.visible,
             start: style.start,
@@ -659,6 +742,24 @@ impl<'a> Saver<'a> {
             weight: style.text.weight,
             italic: style.text.italic,
             rings,
+        })
+    }
+
+    /// One ring, at the current path.
+    fn ring(&mut self, id: NodeId, element: &'a DocElement) -> SaveResult<RingDto<'a>> {
+        let DocElement::Ring(ring) = element else {
+            return Err(self.error(SaveErrorKind::WrongElement));
+        };
+        let text = self.text(&ring.style.text, Unit::of_tier(DocKind::Ring))?;
+        Ok(RingDto {
+            channel: channel_of(ring.channel),
+            fit: Self::fit(&ring.style.fit),
+            font: text.font,
+            size: text.size,
+            color: text.color,
+            weight: text.weight,
+            italic: text.italic,
+            spans: self.spans(id)?,
         })
     }
 
@@ -733,7 +834,7 @@ impl<'a> Saver<'a> {
         &mut self,
         id: NodeId,
     ) -> SaveResult<(
-        Vec<SpanDto<'a>>,
+        Rows<'a, SpanDto<'a>>,
         Option<CapDto<'a>>,
         Option<CapDto<'a>>,
         Option<LabelDto<'a>>,
@@ -814,7 +915,7 @@ impl<'a> Saver<'a> {
             control_points: Vec::new(),
             visible: None,
             zoom: None,
-            spans: Vec::new(),
+            spans: Rows::default(),
             cap_start: None,
             cap_end: None,
             label: None,
@@ -844,16 +945,20 @@ impl<'a> Saver<'a> {
                 // path keys belong to line links.
                 let mut ends = Vec::with_capacity(2);
                 let mut default_ends = true;
-                let found: Vec<(NodeId, &PortalEndData)> = self
-                    .children(id)
-                    .filter_map(|(end_id, element)| match element {
+                let ends_of = || {
+                    self.children(id).filter_map(|(end_id, element)| match element {
                         DocElement::PortalEnd(end) => Some((end_id, end)),
                         _ => None,
                     })
-                    .collect();
-                if found.len() != 2 {
-                    return Err(self.error(SaveErrorKind::PortalEnds { count: found.len() }));
+                };
+                // Counted before any is held: a link has two ends, and a
+                // document that gave it more is refused without a list of
+                // them.
+                let count = ends_of().count();
+                if count != 2 {
+                    return Err(self.error(SaveErrorKind::PortalEnds { count }));
                 }
+                let found: Vec<(NodeId, &PortalEndData)> = ends_of().collect();
                 for (end_id, end) in found {
                     default_ends &=
                         *end == PortalEndData {

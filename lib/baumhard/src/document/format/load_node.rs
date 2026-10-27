@@ -27,6 +27,7 @@ use crate::document::format::dto::{
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{Builder, Keep, LoadResult, PendingLink};
+use crate::document::format::rows::Rows;
 use crate::document::ids::NodeIdent;
 use crate::document::place::{sizes_its_own_text, Unit};
 use crate::document::values::{Align, Anchor, LinkKind, LinkTarget, PaletteId};
@@ -133,7 +134,7 @@ impl Builder {
         self.each_ascending(
             "sections",
             &dto.sections,
-            |s| s.channel,
+            |s: &SectionDto| s.channel,
             |b, section| b.section(node, section),
         )?;
         if let Some(frame) = &dto.frame {
@@ -150,11 +151,11 @@ impl Builder {
                 }
             }
         }
-        self.key("links", |b| {
-            for (at, link) in dto.links.iter().enumerate() {
-                b.at(Seg::Index(at), |b| b.link(node, owner, at, link))?;
-            }
-            Ok(())
+        let mut at = 0;
+        self.each_row("links", &dto.links, |b, link| {
+            let here = at;
+            at += 1;
+            b.link(node, owner, here, link)
         })
     }
 
@@ -200,9 +201,9 @@ impl Builder {
     }
 
     /// The spans under `parent`, in file order.
-    fn spans(&mut self, parent: NodeId, spans: &[SpanDto]) -> LoadResult<()> {
+    fn spans<'r>(&mut self, parent: NodeId, spans: &Rows<'r, SpanDto<'r>>) -> LoadResult<()> {
         let parent_kind = self.tree.get(parent).map(|node| node.get().kind());
-        self.each("spans", spans, |b, span| b.span(parent, parent_kind, span))
+        self.each_row("spans", spans, |b, span| b.span(parent, parent_kind, span))
     }
 
     /// One span, under `parent`, an element of kind `parent_kind`: its
@@ -238,7 +239,12 @@ impl Builder {
     fn frame(&mut self, node: NodeId, dto: &FrameDto) -> LoadResult<()> {
         let style = self.frame_style(frame_in!(dto))?;
         self.element(node, DocElement::Frame(FrameData { style }), |b, frame| {
-            b.each_ascending("rings", &dto.rings, |r| r.channel, |b, ring| b.ring(frame, ring))
+            b.each_ascending(
+                "rings",
+                &dto.rings,
+                |r: &RingDto| r.channel,
+                |b, ring| b.ring(frame, ring),
+            )
         })
         .map(|_| ())
     }
@@ -322,10 +328,10 @@ impl Builder {
 
     /// What lies on a path, in the order of the kinds: its spans, its
     /// start cap, its end cap, its label.
-    fn on_path(
+    fn on_path<'r>(
         &mut self,
         path: NodeId,
-        spans: &[SpanDto],
+        spans: &Rows<'r, SpanDto<'r>>,
         cap_start: Option<&CapDto>,
         cap_end: Option<&CapDto>,
         label: Option<&LabelDto>,

@@ -30,6 +30,7 @@
 //! that is [`load`](crate::document::format::load)'s, which can name
 //! the path of what it refuses.
 
+use crate::document::format::rows::Rows;
 use crate::document::format::spelling::{
     present, ColorDto, FitDto, HexDto, Named, ShapeDto, StartDto, WeightDto,
 };
@@ -802,8 +803,8 @@ pub(crate) struct SectionDto<'a> {
     )]
     pub italic: Option<bool>,
     /// Its spans.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub spans: Rows<'a, SpanDto<'a>>,
 }
 
 /// One ring of a frame.
@@ -856,8 +857,8 @@ pub(crate) struct RingDto<'a> {
     )]
     pub italic: Option<bool>,
     /// Its spans.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub spans: Rows<'a, SpanDto<'a>>,
 }
 
 /// A node's frame.
@@ -942,8 +943,8 @@ pub(crate) struct FrameDto<'a> {
     )]
     pub italic: Option<bool>,
     /// Its rings, innermost first.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rings: Vec<RingDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub rings: Rows<'a, RingDto<'a>>,
 }
 
 /// A path's start or end cap.
@@ -986,8 +987,8 @@ pub(crate) struct CapDto<'a> {
     )]
     pub italic: Option<bool>,
     /// Its spans.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub spans: Rows<'a, SpanDto<'a>>,
 }
 
 /// A label on a path or beside a portal end.
@@ -1044,8 +1045,8 @@ pub(crate) struct LabelDto<'a> {
     )]
     pub italic: Option<bool>,
     /// Its spans.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub spans: Rows<'a, SpanDto<'a>>,
 }
 
 /// One end of a portal link.
@@ -1088,8 +1089,8 @@ pub(crate) struct PortalEndDto<'a> {
     )]
     pub content: Option<Cow<'a, str>>,
     /// Its spans, the marker.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub spans: Rows<'a, SpanDto<'a>>,
     /// Its label.
     #[serde(
         default,
@@ -1163,8 +1164,8 @@ pub(crate) struct PathDto<'a> {
     )]
     pub zoom: Option<ZoomDto>,
     /// Its spans.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub spans: Rows<'a, SpanDto<'a>>,
     /// The glyphs at its start.
     #[serde(
         default,
@@ -1257,8 +1258,8 @@ pub(crate) struct LinkDto<'a> {
     )]
     pub zoom: Option<ZoomDto>,
     /// Its spans.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub spans: Rows<'a, SpanDto<'a>>,
     /// The glyphs at its start.
     #[serde(
         default,
@@ -1406,8 +1407,8 @@ pub(crate) struct NodeDto<'a> {
     )]
     pub italic: Option<bool>,
     /// Its sections.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sections: Vec<SectionDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub sections: Rows<'a, SectionDto<'a>>,
     /// Its frame.
     #[serde(
         default,
@@ -1423,8 +1424,8 @@ pub(crate) struct NodeDto<'a> {
     )]
     pub connector: Option<PathDto<'a>>,
     /// Its links.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub links: Vec<LinkDto<'a>>,
+    #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
+    pub links: Rows<'a, LinkDto<'a>>,
 }
 
 /// Every top-level key of a file but `nodes`: the header, which the

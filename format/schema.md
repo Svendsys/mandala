@@ -67,6 +67,9 @@ the depth of the tree:
 3. **Build.** The top-level values are read in the order of the table
    below, then each node is read on its own from its place in the text
    and appended to the tree, so only one node is being read at a time.
+   A node's rows (its sections and links, a frame's rings, the spans of
+   a section, a ring, a path, a cap, a label or a portal end) are read
+   one item at a time as each is appended, however many a node holds.
    Links are resolved last, because a link may name a node that comes
    later in the list.
 
@@ -808,8 +811,8 @@ would have had in the file.
 | Limit | Value |
 |---|---|
 | The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, 230,087,533 bytes, before it is parsed (`TooLarge`). |
-| Elements | Unbounded on native. On wasm32 a map may become at most `MAX_ELEMENTS`, 2,876,094 elements, each verb, edit and presentation counting as one; the one past it is refused, before it is built, at its path (`TooManyElements`). |
-| Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 7 + elements × 560` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
+| Elements | Unbounded on native. On wasm32 a map may become at most `MAX_ELEMENTS`, 2,796,202 elements, each verb, edit and presentation counting as one; the one past it is refused, before it is built, at its path (`TooManyElements`). |
+| Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 7 + elements × 576` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
 | The tree's depth | **None.** Every walk is iterative. |
 | The number of nodes | None beyond the ids there are and, on wasm32, the element bound above. |
 | A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |

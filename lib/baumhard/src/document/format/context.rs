@@ -16,8 +16,9 @@
 //! before an offset is O(offset), which a load that succeeds never pays.
 
 use crate::document::element::{DocElement, DocKind};
-use crate::document::format::dto::NodeDto;
+use crate::document::format::dto::{NodeDto, SpanDto};
 use crate::document::format::error::TextPosition;
+use crate::document::format::rows::{Rows, RowsError};
 use crate::engine::tree::Tree;
 use indextree::NodeId;
 use serde_json::value::RawValue;
@@ -211,33 +212,40 @@ fn saturate(value: usize) -> u32 {
 /// text the built node would show first even in a node refused for
 /// listing its sections out of order.
 pub(crate) fn dto_excerpt(node: &NodeDto) -> Option<String> {
-    let section = lowest_first_text(
-        node.sections
-            .iter()
-            .map(|section| (section.channel, section.spans.first().map(|span| &*span.text))),
-    );
+    let section = lowest_first_text(&node.sections, |section| {
+        (section.channel, first_text(&section.spans))
+    });
     let ring = || {
-        node.frame.as_ref().and_then(|frame| {
-            lowest_first_text(
-                frame
-                    .rings
-                    .iter()
-                    .map(|ring| (ring.channel, ring.spans.first().map(|span| &*span.text))),
-            )
-        })
+        node.frame
+            .as_ref()
+            .and_then(|frame| lowest_first_text(&frame.rings, |ring| (ring.channel, first_text(&ring.spans))))
     };
-    section.or_else(ring).map(excerpt)
+    section.or_else(ring).map(|text| excerpt(&text))
 }
 
-/// Of rows given as (channel, the text of the first span), the text of
-/// the row with the lowest channel, the first among equals.
-fn lowest_first_text<'a>(rows: impl Iterator<Item = (u64, Option<&'a str>)>) -> Option<&'a str> {
-    let mut best: Option<(u64, Option<&'a str>)> = None;
-    for (channel, text) in rows {
-        if best.is_none_or(|(low, _)| channel < low) {
-            best = Some((channel, text));
-        }
+/// The text of the first span of `spans`, reading no further.
+fn first_text<'r>(spans: &Rows<'r, SpanDto<'r>>) -> Option<String> {
+    match spans.each(|_, span| Err(span.text.to_string())) {
+        Err(RowsError::Item(text)) => Some(text),
+        _ => None,
     }
+}
+
+/// Of `rows`, each giving (its channel, the text of its first span),
+/// the text of the row with the lowest channel, the first among equals.
+/// One row is read at a time.
+fn lowest_first_text<'r, T: serde::Deserialize<'r>>(
+    rows: &Rows<'r, T>,
+    of: impl Fn(&T) -> (u64, Option<String>),
+) -> Option<String> {
+    let mut best: Option<(u64, Option<String>)> = None;
+    let _ = rows.each(|_, row| {
+        let channel_of = |row: &T| of(row).0;
+        if best.as_ref().is_none_or(|(low, _)| channel_of(&row) < *low) {
+            best = Some(of(&row));
+        }
+        Ok::<(), ()>(())
+    });
     best.and_then(|(_, text)| text)
 }
 
@@ -295,28 +303,68 @@ pub(crate) fn peek_excerpt(extent: &RawValue) -> Option<String> {
         #[serde(default)]
         channel: u64,
         #[serde(default)]
-        spans: Vec<SpanPeek>,
+        spans: FirstSpan,
     }
     #[derive(serde::Deserialize)]
     struct FramePeek {
         #[serde(default)]
-        rings: Vec<RowPeek>,
+        rings: LowestRow,
     }
     #[derive(serde::Deserialize)]
     struct TextPeek {
         #[serde(default)]
-        sections: Vec<RowPeek>,
+        sections: LowestRow,
         frame: Option<FramePeek>,
     }
+    /// The text of the first span of a row, the rest skipped.
+    #[derive(Default)]
+    struct FirstSpan(Option<String>);
+    impl<'de> serde::Deserialize<'de> for FirstSpan {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct First;
+            impl<'de> serde::de::Visitor<'de> for First {
+                type Value = FirstSpan;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("spans")
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<FirstSpan, A::Error> {
+                    let first = seq.next_element::<SpanPeek>()?.and_then(|span| span.text);
+                    while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                    Ok(FirstSpan(first))
+                }
+            }
+            deserializer.deserialize_seq(First)
+        }
+    }
+    /// Of a row of sections or rings, the first span's text of the one
+    /// with the lowest channel, the first among equals: one row held at
+    /// a time.
+    #[derive(Default)]
+    struct LowestRow(Option<(u64, Option<String>)>);
+    impl<'de> serde::Deserialize<'de> for LowestRow {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Lowest;
+            impl<'de> serde::de::Visitor<'de> for Lowest {
+                type Value = LowestRow;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("rows")
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<LowestRow, A::Error> {
+                    let mut best: Option<(u64, Option<String>)> = None;
+                    while let Some(row) = seq.next_element::<RowPeek>()? {
+                        if best.as_ref().is_none_or(|(low, _)| row.channel < *low) {
+                            best = Some((row.channel, row.spans.0));
+                        }
+                    }
+                    Ok(LowestRow(best))
+                }
+            }
+            deserializer.deserialize_seq(Lowest)
+        }
+    }
     let peek = serde_json::from_str::<TextPeek>(extent.get()).ok()?;
-    let first = |rows: &[RowPeek]| {
-        rows.iter()
-            .enumerate()
-            .min_by_key(|(n, row)| (row.channel, *n))
-            .and_then(|(_, row)| row.spans.first())
-            .and_then(|span| span.text.clone())
-    };
-    first(&peek.sections)
-        .or_else(|| peek.frame.as_ref().and_then(|frame| first(&frame.rings)))
+    let text = |row: LowestRow| row.0.and_then(|(_, text)| text);
+    text(peek.sections)
+        .or_else(|| peek.frame.and_then(|frame| text(frame.rings)))
         .map(|text| excerpt(&text))
 }

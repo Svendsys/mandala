@@ -756,3 +756,31 @@ fn test_a_bound_refusal_is_named_by_the_one_node_check_without_a_second_document
         OneNode::Passed(_)
     ));
 }
+
+#[test]
+fn test_check_savable_holds_one_row_of_a_node_that_holds_every_row() {
+    // One node holding every row of its map — 600 links with a label of
+    // three spans each, 600 sections of two spans, a frame of 600 rings
+    // — is checked one row at a time: what the check holds at once is
+    // the header, the stand-in, the node with its frame and connector,
+    // and one row's elements, never the node's whole row.
+    let link = r#"{"to":2,"kind":"line","label":{"spans":[{"text":"a"},{"text":"b"},{"text":"c"}]}}"#;
+    let section = r#"{"spans":[{"text":"a"},{"text":"b"}]}"#;
+    let ring = r#"{"spans":[{"text":"r"}]}"#;
+    let rows = |row: &str| vec![row; 600].join(",");
+    let node = format!(
+        r#","sections":[{}],"frame":{{"rings":[{}]}},"links":[{}]"#,
+        rows(section),
+        rows(ring),
+        rows(link)
+    );
+    let nodes = format!("{},{}", node_of(1, &node), node_of(2, ""));
+    let doc = load(&map_with("", &nodes)).expect("the map loads");
+    assert!(elements_of(&doc) > 6000, "precondition: the node holds every row");
+    let (result, held) = check_savable_holding(&doc);
+    assert_eq!(result, Ok(()));
+    let held = held.expect("the one-node check passed");
+    // The root, the theme and the defaults; the stand-in; the node, its
+    // frame; and the biggest row item: a link, its label and a span.
+    assert!(held <= 3 + 1 + 2 + 3, "the check held {held} elements at once");
+}

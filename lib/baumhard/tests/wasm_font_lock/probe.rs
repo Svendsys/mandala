@@ -326,6 +326,36 @@ pub extern "C" fn memory_spans() -> u32 {
 
 /// See [`measure_memory`].
 #[no_mangle]
+pub extern "C" fn memory_one_lines() -> u32 {
+    measure_memory("one_lines")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_portals() -> u32 {
+    measure_memory("one_portals")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_sections() -> u32 {
+    measure_memory("one_sections")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_rings() -> u32 {
+    measure_memory("one_rings")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_spans() -> u32 {
+    measure_memory("one_spans")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
 pub extern "C" fn memory_text() -> u32 {
     measure_memory("text")
 }

@@ -190,21 +190,26 @@ the parity trajectory (or why none is owed):
   limit and a map's cost grows both with its text and with the
   elements (and definitions) it becomes, and a short text can
   become many elements. A map's peak while it loads, and while it
-  is then saved, is modeled as `text × 7 + elements × 560` bytes
+  is then saved, is modeled as `text × 7 + elements × 576` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`), and
   each limit takes half of a 3 GiB budget: **230,087,533 bytes of
-  text** (~219 MiB, refused before parsing) and **2,876,094
+  text** (~219 MiB, refused before parsing) and **2,796,202
   elements** (counted as the builder appends them, the one past it
   refused with `TooManyElements`). The two costs are measured, not
   chosen: the densest shape of each kind of content (empty
   sections, empty rings, portal and line links, empty spans,
-  top-level nodes, a long text, a large theme or palette, the most
-  verbs), at its worst point of container growth, by the wasm32
+  top-level nodes, one node holding every row, a long text, a large
+  theme or palette, the most verbs), at its worst point of container
+  growth, by the wasm32
   module's own memory — which counts `dlmalloc`'s headers and
   rounding, `realloc` copies and freed chunks it could not reuse —
   in the probe (`lib/baumhard/tests/wasm_font_lock.rs`), which
   fails if a pin is stale; `lib/baumhard/tests/format_memory.rs`
-  holds the same maps to the model natively. `save` holds one node's
+  holds the same maps to the model natively. The cost per element is
+  now essentially three arena slots at the arena's doubling point
+  (the old buffer and the new one while it is copied): a smaller
+  `DocElement` or a non-contiguous arena are the only levers left,
+  and both are outside the format. `save` holds one node's
   row at a time beside the document — a second copy only to name a
   refusal about ids, parents or links, which only a defect makes —
   and refuses on wasm32 what that target's load would refuse, the
