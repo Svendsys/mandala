@@ -694,16 +694,29 @@ fn test_the_one_node_check_never_passes_what_the_full_build_refuses() {
         }
     })
     .expect("node 2 is in the tree");
-    let index: IdentIndex = [(NodeIdent(1), first)].into_iter().collect();
-    let doc =
-        Document::from_loaded(tree, loaded.definitions().clone(), index, 1).expect("the map row is fine");
-    let (result, held) = check_savable_holding(&doc);
-    assert_eq!(held, None, "the one-node check passed two nodes with one id");
-    let refusal = result.expect_err("two nodes with one id do not load");
-    assert_eq!(refusal.path, "nodes[1].id");
-    assert!(
-        matches!(&refusal.kind, SaveErrorKind::NotLoadable { error }
-            if error.kind == LoadErrorKind::DuplicateId { id: 1, first_index: 0 }),
-        "{refusal:?}"
-    );
+    // Two indexes: one that lacks node 2, so it holds fewer ids than the
+    // tree has nodes; and one sized to the nodes, whose second entry is
+    // an id no node has. Against the second only the check that each
+    // node's own id leads back to it refuses.
+    let short: IdentIndex = [(NodeIdent(1), first)].into_iter().collect();
+    let sized: IdentIndex = [(NodeIdent(1), first), (NodeIdent(3), second)]
+        .into_iter()
+        .collect();
+    for (name, index) in [("short", short), ("sized", sized)] {
+        let doc = Document::from_loaded(tree.clone(), loaded.definitions().clone(), index, 3)
+            .expect("the map row is fine");
+        assert_eq!(doc.ident_count(), if name == "short" { 1 } else { 2 });
+        let (result, held) = check_savable_holding(&doc);
+        assert_eq!(
+            held, None,
+            "{name}: the one-node check passed two nodes with one id"
+        );
+        let refusal = result.expect_err("two nodes with one id do not load");
+        assert_eq!(refusal.path, "nodes[1].id", "{name}");
+        assert!(
+            matches!(&refusal.kind, SaveErrorKind::NotLoadable { error }
+                if error.kind == LoadErrorKind::DuplicateId { id: 1, first_index: 0 }),
+            "{name}: {refusal:?}"
+        );
+    }
 }
