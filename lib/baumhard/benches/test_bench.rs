@@ -2276,6 +2276,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("an_empty_journal_leaves_the_history_restorable", |b| {
         b.iter(do_an_empty_journal_leaves_the_history_restorable)
     });
+    c.bench_function("an_unjournaled_structural_change_ends_the_history", |b| {
+        b.iter(do_an_unjournaled_structural_change_ends_the_history)
+    });
     c.bench_function("engine_journaled_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_journaled_walk_wide_and_deep_tree)
     });

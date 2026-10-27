@@ -1437,10 +1437,19 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
 ///   which climbs to check for a cycle.
 /// - **a hand-written climb**, by syntax: a parent read — a `parent`
 ///   method, or a function or method whose name starts `parent_` —
-///   anywhere inside a `loop` or a `while` (its condition included),
-///   which is what walking up a chain of parents looks like whatever
-///   the cursor is called. A parent read in a `for` is not one: a
-///   `for` walks what it is given, once per item.
+///   in one of the three spellings of walking up a chain of parents
+///   whatever the cursor is called: inside a `loop` or a `while` (its
+///   condition included); inside a closure handed to an iterator that
+///   feeds a value back into itself (`successors`, `from_fn`, `scan`);
+///   or inside a `for` whose body assigns a variable the read itself
+///   names (`cur = p` beside `arena[cur].parent()`). A parent read in
+///   any other `for` is not one: that `for` walks what it is given,
+///   once per item.
+///
+/// It is a heuristic over spellings, not a proof. A climb by
+/// recursion is not read here — the deep tests' 100,000-level chains
+/// overflow the stack on one — and neither is one hidden behind a
+/// helper that reads one parent per call and is called in a loop.
 ///
 /// The engine keeps each in a few places: `tree::climb` (counted in
 /// test builds), and `siblings`' `attach_after` / `attach_first`
@@ -1550,24 +1559,80 @@ pub(crate) struct EngineDepthCosts {
     pub(crate) allowed: BTreeMap<(String, String), usize>,
 }
 
-/// Every parent read inside a `loop` or a `while` of `source` — a
-/// `parent` method, or a function or method named `parent_*` — as
-/// `(the enclosing function's name, 1-based line)`. A closure counts
-/// where it is written. Panics when `source` does not parse, naming
-/// `file`.
+/// Every parent read of `source` — a `parent` method, or a function or
+/// method named `parent_*` — that climbs by [`engine_depth_cost_calls`]'
+/// three spellings: inside a `loop` or a `while`; inside a closure
+/// handed to `successors`, `from_fn` or `scan`; or inside a `for` whose
+/// body assigns a plain variable the read names (in its receiver or its
+/// arguments). As `(the enclosing function's name, 1-based line)`. A
+/// closure counts where it is written. Panics when `source` does not
+/// parse, naming `file`.
 fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
+    use std::collections::BTreeSet;
     use syn::visit::{self, Visit};
+
+    /// The iterator constructors and adapters whose closure is handed
+    /// its own last result: a parent read there is a climb.
+    const FEEDBACK: &[&str] = &["successors", "from_fn", "scan"];
 
     struct Finder {
         function: String,
         loops: usize,
+        /// For each enclosing `for`, the plain variables its body
+        /// assigns.
+        cursors: Vec<BTreeSet<String>>,
         found: Vec<(String, usize)>,
     }
 
+    /// The plain variables `block` assigns anywhere inside it.
+    fn assigned(block: &syn::Block) -> BTreeSet<String> {
+        struct Assigned(BTreeSet<String>);
+        impl<'ast> Visit<'ast> for Assigned {
+            fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+                if let syn::Expr::Path(path) = &*assign.left {
+                    if let Some(ident) = path.path.get_ident() {
+                        self.0.insert(ident.to_string());
+                    }
+                }
+                visit::visit_expr_assign(self, assign);
+            }
+        }
+        let mut found = Assigned(BTreeSet::new());
+        found.visit_block(block);
+        found.0
+    }
+
+    /// The plain variables `exprs` name.
+    fn named<'a>(exprs: impl IntoIterator<Item = &'a syn::Expr>) -> BTreeSet<String> {
+        struct Named(BTreeSet<String>);
+        impl<'ast> Visit<'ast> for Named {
+            fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+                if let Some(ident) = path.path.get_ident() {
+                    self.0.insert(ident.to_string());
+                }
+                visit::visit_expr_path(self, path);
+            }
+        }
+        let mut found = Named(BTreeSet::new());
+        for expr in exprs {
+            found.visit_expr(expr);
+        }
+        found.0
+    }
+
     impl Finder {
-        fn read(&mut self, name: &syn::Ident) {
+        /// A call or method named `name` reading `operands` (receiver
+        /// and arguments): recorded when it is a parent read that climbs.
+        fn read<'a>(&mut self, name: &syn::Ident, operands: impl IntoIterator<Item = &'a syn::Expr>) {
             let text = name.to_string();
-            if self.loops > 0 && (text == "parent" || text.starts_with("parent_")) {
+            if text != "parent" && !text.starts_with("parent_") {
+                return;
+            }
+            let climbs = self.loops > 0 || {
+                let names = named(operands);
+                self.cursors.iter().any(|assigned| !assigned.is_disjoint(&names))
+            };
+            if climbs {
                 self.found.push((self.function.clone(), name.span().start().line));
             }
         }
@@ -1575,9 +1640,21 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
         fn in_function(&mut self, name: &syn::Ident, body: impl FnOnce(&mut Self)) {
             let function = std::mem::replace(&mut self.function, name.to_string());
             let loops = std::mem::take(&mut self.loops);
+            let cursors = std::mem::take(&mut self.cursors);
             body(self);
             self.function = function;
             self.loops = loops;
+            self.cursors = cursors;
+        }
+
+        /// Visit `args` as a loop body: they hold a closure the callee
+        /// feeds its own results.
+        fn feedback<'ast>(&mut self, args: impl IntoIterator<Item = &'ast syn::Expr>) {
+            self.loops += 1;
+            for arg in args {
+                self.visit_expr(arg);
+            }
+            self.loops -= 1;
         }
     }
 
@@ -1606,18 +1683,36 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
             self.loops -= 1;
         }
 
+        fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
+            self.visit_expr(&expr.expr);
+            self.cursors.push(assigned(&expr.body));
+            self.visit_block(&expr.body);
+            self.cursors.pop();
+        }
+
         fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-            self.read(&call.method);
-            visit::visit_expr_method_call(self, call);
+            self.read(&call.method, std::iter::once(&*call.receiver).chain(&call.args));
+            if FEEDBACK.contains(&call.method.to_string().as_str()) {
+                self.visit_expr(&call.receiver);
+                self.feedback(&call.args);
+            } else {
+                visit::visit_expr_method_call(self, call);
+            }
         }
 
         fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            let mut feeds_back = false;
             if let syn::Expr::Path(path) = &*call.func {
                 if let Some(last) = path.path.segments.last() {
-                    self.read(&last.ident);
+                    self.read(&last.ident, &call.args);
+                    feeds_back = FEEDBACK.contains(&last.ident.to_string().as_str());
                 }
             }
-            visit::visit_expr_call(self, call);
+            if feeds_back {
+                self.feedback(&call.args);
+            } else {
+                visit::visit_expr_call(self, call);
+            }
         }
     }
 
@@ -1626,6 +1721,7 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
     let mut finder = Finder {
         function: String::new(),
         loops: 0,
+        cursors: Vec::new(),
         found: Vec::new(),
     };
     finder.visit_file(&parsed);
@@ -1958,5 +2054,51 @@ mod tests {
                  looking there — a stale citation in it would pass in silence"
             );
         }
+    }
+
+    /// The climb spellings `parent_reads_in_loops` recognizes, and the
+    /// `for` it does not: one parent read per item of what a `for` is
+    /// given climbs nothing.
+    #[test]
+    fn test_parent_reads_in_loops_reads_the_climb_spellings() {
+        let found = |body: &str| {
+            let source = format!("fn f() {{ {body} }}");
+            parent_reads_in_loops(Path::new("probe.rs"), &source).len()
+        };
+        assert_eq!(found("while let Some(n) = at { at = arena[n].parent(); }"), 1);
+        assert_eq!(
+            found("loop { match arena[at].parent() { Some(p) => at = p, None => break } }"),
+            1
+        );
+        assert_eq!(
+            found("let _ = std::iter::successors(Some(t), |&n| arena[n].parent()).count();"),
+            1
+        );
+        assert_eq!(
+            found("let _ = std::iter::from_fn(|| { at = arena[at].parent()?; Some(at) });"),
+            1
+        );
+        assert_eq!(
+            found("let _ = ids.iter().scan(t, |at, _| { *at = arena[*at].parent()?; Some(*at) });"),
+            1
+        );
+        assert_eq!(
+            found("for _ in 0..n { match arena[cur].parent() { Some(p) => cur = p, None => break } }"),
+            1
+        );
+        assert_eq!(found("while let Some(n) = at { at = parent_of(n); }"), 1);
+        assert_eq!(
+            found("for id in ids { if let Some(p) = arena[id].parent() { out.push(p); } }"),
+            0
+        );
+        assert_eq!(
+            found("for id in ids { let p = arena[id].parent(); last = p; }"),
+            0
+        );
+        assert_eq!(found("let p = arena[n].parent();"), 0);
+        assert_eq!(
+            found("let _ = ids.iter().map(|&n| arena[n].parent()).count();"),
+            0
+        );
     }
 }

@@ -155,12 +155,18 @@ it with respect.
     (`engine::membership::Membership`). The engine calls indextree's
     climb, `ancestors`, in one function, `tree::climb`, and inserts an
     existing node in one, `siblings::checked_attach`; test builds count
-    both. Its hand-written climbs — a parent read inside a `loop` or a
-    `while` — are the memoized ones (`Membership::contains`, a
-    journal's `Presence::top` and `resolve`) and the walker's
-    `state_above`, which climbs once per anchored walk.
-    `test_the_engine_climbs_only_where_it_may` refuses either kind anywhere
-    else in the engine's shipped code, and a checked insert too.
+    both. Its hand-written climbs are the memoized ones
+    (`Membership::contains`, a journal's `Presence::top` and `resolve`)
+    and the walker's `state_above`, which climbs once per anchored
+    walk. `test_the_engine_climbs_only_where_it_may` refuses, anywhere
+    else in the engine's shipped code, a call of `ancestors`, a checked
+    insert, and a parent read in the spellings of a climb it
+    recognizes — inside a `loop` or a `while`, inside a closure handed
+    to `successors`, `from_fn` or `scan`, or inside a `for` whose body
+    reassigns the cursor the read names. It is a heuristic over
+    spellings, not a proof: a climb by recursion is caught by the deep
+    tests' stack instead, and one hidden behind a helper called in a
+    loop by neither.
   - **Insert new nodes by value.** indextree's `*_value` inserts climb
     nothing; inserting an *existing* node climbs to the root to check
     for a cycle. A node the engine creates goes in by value

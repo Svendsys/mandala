@@ -133,9 +133,14 @@ pub enum TreeError {
     /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)
     /// on a tree that is in neither of the journal's arrangements: a
     /// journal recorded after it is still applied, or one recorded
-    /// before it is still undone. Undo is newest first and redo oldest
-    /// first; out of that order a restore would put the tree, and the
-    /// set behind [`Tree::contains`], in a state no history had.
+    /// before it is still undone, or the tree's structure has been
+    /// changed without a journal since — [`Tree::insert_child`],
+    /// [`Tree::remove_subtree`], or an unjournaled walk that ran a
+    /// structural command — which ends the undo history of every
+    /// journal recorded before the change. Undo is newest first and
+    /// redo oldest first; out of that order a restore would put the
+    /// tree, and the set behind [`Tree::contains`], in a state no
+    /// history had.
     OutOfOrder,
 }
 
@@ -226,6 +231,23 @@ pub struct Tree<E: TreeElement> {
     /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)
     /// refuse ([`TreeError::OutOfOrder`]) a tree at any other stamp —
     /// one a later journal changed and that change was not undone. O(1).
+    ///
+    /// **An unjournaled structural change moves the stamp too**, to a
+    /// fresh value no journal holds: [`Tree::insert_child`],
+    /// [`Tree::remove_subtree`], and an unjournaled walk that ran a
+    /// [structural command](crate::engine::structure)
+    /// ([`MutatorTree::apply_to`], [`MutatorTree::apply_at`],
+    /// [`walk_tree_from`](crate::engine::walker::walk_tree_from)),
+    /// which journals into a builder of its own. A journal's touches
+    /// cannot describe a tree changed behind them, so after such a
+    /// change every journal recorded before it refuses to restore —
+    /// even one whose nodes the change never reached. **Any unjournaled
+    /// structural edit therefore ends the undo history of the whole
+    /// tree**; a tree that keeps history makes every structural edit
+    /// through a journaled call. Changes that leave every node's parent
+    /// and membership as they were — an unjournaled [`Tree::update`],
+    /// re-key moves included, or a walk without structural commands —
+    /// do not move it.
     ///
     /// A journal that closes empty records no change, so it has no
     /// arrangement of its own: closing it puts the tree back at the stamp
@@ -333,11 +355,18 @@ impl<E: TreeElement> Tree<E> {
     /// the end of the row and the insertion point — O(1) for children
     /// inserted in ascending key order with [`Placement::Last`]. The new
     /// node is fresh, so no ancestor walk.
+    ///
+    /// Not journaled, so it ends the undo history of the tree: every
+    /// journal recorded before it refuses to restore afterwards
+    /// ([`TreeError::OutOfOrder`]), whatever part of the tree it
+    /// touched. A tree that keeps history changes its structure only
+    /// through journaled calls.
     pub fn insert_child(&mut self, parent: NodeId, element: E, at: Placement) -> Result<NodeId, TreeError> {
         if !self.contains(parent) {
             return Err(TreeError::StaleNode(parent));
         }
         let id = siblings::insert_sorted(&mut self.arena, parent, element, at, E::key)?;
+        self.changed_without_journal();
         self.cache.invalidate();
         Ok(id)
     }
@@ -353,6 +382,12 @@ impl<E: TreeElement> Tree<E> {
     /// siblings that remain are still in order.
     ///
     /// Invalidates the tree's cache. Cost: O(subtree size).
+    ///
+    /// Not journaled, so it ends the undo history of the tree: every
+    /// journal recorded before it refuses to restore afterwards
+    /// ([`TreeError::OutOfOrder`]), whatever part of the tree it
+    /// touched. A tree that keeps history changes its structure only
+    /// through journaled calls.
     pub fn remove_subtree(&mut self, node: NodeId) -> Result<(), TreeError> {
         if !self.contains(node) {
             return Err(TreeError::StaleNode(node));
@@ -361,8 +396,17 @@ impl<E: TreeElement> Tree<E> {
             return Err(TreeError::RemoveRoot);
         }
         node.remove_subtree(&mut self.arena);
+        self.changed_without_journal();
         self.cache.invalidate();
         Ok(())
+    }
+
+    /// Note a structural change no journal records: move the tree to a
+    /// fresh [version](Self::version), so every journal recorded before
+    /// it refuses to restore over it. O(1).
+    fn changed_without_journal(&mut self) {
+        self.version.set(self.next_version);
+        self.next_version += 1;
     }
 
     /// Change the element at `id` with `f` — the one way to mutate an
@@ -597,6 +641,13 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// A tree that must see the error is changed through
     /// [`Self::apply_at`].
     ///
+    /// Not journaled: a walk that ran a structural command ends the
+    /// undo history of `tree` — every journal recorded before it then
+    /// refuses to restore ([`TreeError::OutOfOrder`]), whatever part of
+    /// the tree the walk reached. A walk without
+    /// structural commands does not. A tree that keeps history is
+    /// changed through [`Self::apply_at_journaled`].
+    ///
     /// Invalidates `tree`'s cache once more when the walk ends, on top
     /// of the one each applied mutator node performs, so a walk that
     /// applied nothing still leaves no stale memo behind.
@@ -678,8 +729,11 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     ///   own cost ([`StructOp`](crate::engine::structure::StructOp)).
     ///
     /// Not journaled: for a tree that needs no history (a glyph layer
-    /// that is rebuilt). A tree that keeps history is changed through
-    /// [`Self::apply_at_journaled`].
+    /// that is rebuilt). A call that ran a structural command ends the
+    /// undo history of `tree` — every journal recorded before it then
+    /// refuses to restore ([`TreeError::OutOfOrder`]), whatever part of
+    /// the tree the call reached. A tree that
+    /// keeps history is changed through [`Self::apply_at_journaled`].
     pub fn apply_at<F>(&self, tree: &mut Tree<E>, anchors: &Anchors, seed_for: F) -> Result<(), TreeError>
     where
         F: Fn(&Tree<E>, NodeId) -> E::Inherited,
@@ -744,10 +798,16 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
 /// (`Membership::contains`, and a journal's `Presence::top` and
 /// `resolve`), and the walker's `state_above`, the one climb an
 /// anchored walk makes from its anchor. `test_the_engine_climbs_only_where_it_may`
-/// (over `util::source_scan`) holds every other engine file to
-/// neither calling `ancestors` nor reading a parent inside a `loop` or
-/// a `while`, and test builds count this function's steps, so a climb
-/// planted per element shows in a step count. No allocation.
+/// (over `util::source_scan`) holds every other engine file to not
+/// calling `ancestors`, and to not reading a parent in the spellings
+/// of a climb it recognizes: inside a `loop` or a `while`, inside a
+/// closure handed to `successors`, `from_fn` or `scan`, or inside a
+/// `for` whose body reassigns the cursor the read names. That is a
+/// heuristic over spellings: a climb by recursion is caught instead by
+/// the deep tests, whose chains overflow the stack on one, and a climb
+/// hidden behind a helper called in a loop is caught by neither. Test
+/// builds count this function's steps, so a climb planted per element
+/// through it shows in a step count. No allocation.
 pub(in crate::engine) fn climb<E>(arena: &Arena<E>, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     id.ancestors(arena).inspect(|_| {
         #[cfg(test)]

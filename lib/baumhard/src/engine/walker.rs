@@ -394,7 +394,11 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 /// when it returns (`Walk::settle`), and the
 /// [structural commands](crate::engine::structure) it reached run then.
 /// Not journaled: a command that fails undoes the whole walk, and the
-/// error is logged, as [`MutatorTree::apply_to`] does. A `target_id`
+/// error is logged, as [`MutatorTree::apply_to`] does. A walk that ran
+/// a structural command ends the undo history of `tree` — every journal
+/// recorded before it then refuses to restore
+/// ([`TreeError::OutOfOrder`]),
+/// whatever part of the tree the walk reached. A `target_id`
 /// not in the tree ([`Tree::contains`]) — a node of a subtree a journal
 /// holds detached among them — is refused the same way, with nothing
 /// applied, as [`Tree::update`] and the anchored walks refuse it.

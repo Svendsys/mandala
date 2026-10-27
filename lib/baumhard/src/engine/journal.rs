@@ -1229,16 +1229,18 @@ impl<E: TreeElement> Journal<E> {
     /// the tree from either arrangement this journal knows, and its
     /// touches no longer say which nodes it puts in or out of the tree.
     /// So that order is checked, in every build and in O(1) (the tree's
-    /// version stamp), before anything else.
+    /// version stamp), before anything is written. A structural change
+    /// made without a journal ends the history the same way: every
+    /// journal recorded before it is refused afterwards.
     ///
     /// Writes recorded values only: no mutation is applied and nothing
     /// is inherited or compared, and nothing is freed. Errors (nothing
-    /// is written): [`TreeError::OutOfOrder`] for a tree in neither of
-    /// the journal's arrangements, [`TreeError::StaleNode`] for a node
-    /// the journal names that is no longer in the arena,
+    /// is written), checked in this order: [`TreeError::StaleNode`] for
+    /// a node the journal names that is no longer in the arena,
     /// [`TreeError::NotAChild`] for a moved node under neither of its
     /// recorded parents, or a recorded sibling no longer under its
-    /// recorded parent.
+    /// recorded parent; then [`TreeError::OutOfOrder`] for a tree in
+    /// neither of the journal's arrangements.
     ///
     /// Invalidates the tree's cache. Cost: one clone per entry; for
     /// moved elements a detach and a re-attach each: a same-row one for
@@ -1246,8 +1248,8 @@ impl<E: TreeElement> Journal<E> {
     /// ruling R16 on #282), and an O(depth) one — the cycle check of a
     /// re-parent — for an element that changes parent, enters or leaves.
     pub fn revert(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
-        self.in_order(tree)?;
         self.validate(tree)?;
+        self.in_order(tree)?;
         self.side.set(Side::Before);
         tree.version.set(self.before_version);
         if self.entries.is_empty() {
@@ -1270,8 +1272,8 @@ impl<E: TreeElement> Journal<E> {
     ///
     /// The same guarantees, errors and cost as [`Self::revert`].
     pub fn replay(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
-        self.in_order(tree)?;
         self.validate(tree)?;
+        self.in_order(tree)?;
         self.side.set(Side::After);
         tree.version.set(self.after_version);
         if self.entries.is_empty() {
@@ -1482,8 +1484,8 @@ impl<E: Interpolable> Journal<E> {
     /// `interpolate` per entry; for moved elements the
     /// detach and re-attach [`Self::revert`] describes.
     pub fn write_interpolated(&self, tree: &mut Tree<E>, t: f32, snap: Snap) -> Result<(), TreeError> {
-        self.in_order(tree)?;
         self.validate(tree)?;
+        self.in_order(tree)?;
         let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
         let after = snap.takes_after(t);
         self.side.set(if after { Side::After } else { Side::Before });

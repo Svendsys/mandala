@@ -1026,7 +1026,16 @@ and a restore moves to the stamp of the side it writes, and a journal
 whose two stamps the tree is at neither of refuses with
 `TreeError::OutOfOrder` before writing anything. A journal that closes
 empty has one arrangement, so closing it puts the tree back at the
-stamp it started from, and dropping it never strands the history.
+stamp it started from, and dropping it never strands the history. A
+structural change made without a journal — `Tree::insert_child`,
+`Tree::remove_subtree`, or an unjournaled walk that ran a structural
+command — moves the tree to a fresh stamp no journal holds, so it
+ends the undo history of the whole tree: every journal recorded before
+it is refused afterwards, even one whose nodes it never reached. A
+tree that keeps history makes every structural edit through a
+journaled call. Changes that keep every node's parent and membership —
+an unjournaled `update`, re-key moves included, or a walk without
+structural commands — leave the stamp alone.
 
 Depth costs a journal nothing per entry (§20 rule 11): `close` asks,
 for each entry, the top of the subtree that entered or left with it,

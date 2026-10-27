@@ -30,12 +30,13 @@
 //! them are benchmark-reachable bodies.
 
 use crate::engine::anchor::Anchors;
-use crate::engine::journal::JournalBuilder;
+use crate::engine::journal::{Journal, JournalBuilder};
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tests::test_element::{add, TestElement, TestKind, TestMutation};
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
+use indextree::NodeId;
 
 /// The reviewer's example: J1 inserts S under P, J2 removes P. Undoing
 /// J1 before J2 would detach S, and undoing J2 would then mark S back
@@ -158,6 +159,90 @@ pub fn do_an_empty_journal_leaves_the_history_restorable() {
 #[test]
 fn test_an_empty_journal_leaves_the_history_restorable() {
     do_an_empty_journal_leaves_the_history_restorable();
+}
+
+/// A tree with P and Q under the root, and J1, which inserted S under
+/// P: the start of each unjournaled-change case below.
+fn with_s_inserted_under_p() -> (Tree<TestElement>, Journal<TestElement>, [NodeId; 3]) {
+    let mut tree: Tree<TestElement> = Tree::new_non_indexed();
+    let root = tree.root;
+    let p = add(&mut tree, root, TestElement::new(0, 1));
+    let q = add(&mut tree, root, TestElement::new(0, 2));
+    let insert: MutatorTree<TestElement, TestMutation> = MutatorTree::new_with(Mutator::new_structure(
+        StructOp::Insert {
+            subtree: Subtree::leaf(TestElement::new(0, 3)),
+            at: Placement::Last,
+        },
+        BranchKey::new(TestKind::Plain, 0),
+    ));
+    let mut builder = JournalBuilder::new();
+    insert
+        .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![p]), |_, _| 0, &mut builder)
+        .unwrap();
+    let j1 = builder.close(&tree);
+    let s = tree.arena()[p].first_child().expect("S is under P");
+    (tree, j1, [p, q, s])
+}
+
+/// An unjournaled structural change ends the history before it (review
+/// round 3 on #286). J1 inserts S under P; then, with no journal:
+///
+/// - `insert_child(S, X)`. Were J1's revert accepted, it would detach S
+///   with X under it, while its touches — which never named X — left X
+///   marked in the tree: `contains(X)` true for a node under a detached
+///   subtree, and `insert_child(X, …)` accepted under it. It is refused,
+///   and nothing changes.
+/// - `remove_subtree(S)`: J1 names S, so it is refused as stale
+///   first. And, apart, `remove_subtree(Q)` of a node J1 never touched,
+///   which leaves every node J1 names where J1 left it: J1 is refused
+///   for its order, not for a node it happens to find missing.
+/// - An unjournaled `update` of P, which leaves every node's parent and
+///   membership as they were, does not end the history: J1 still
+///   reverts.
+pub fn do_an_unjournaled_structural_change_ends_the_history() {
+    let (mut tree, j1, [_, _, s]) = with_s_inserted_under_p();
+    let x = tree
+        .insert_child(s, TestElement::new(0, 4), Placement::Last)
+        .unwrap();
+    assert_eq!(
+        j1.revert(&mut tree),
+        Err(TreeError::OutOfOrder),
+        "J1 after insert_child"
+    );
+    assert!(tree.contains(s) && tree.contains(x), "nothing changed");
+    assert_eq!(tree.arena()[x].parent(), Some(s), "X is still under S");
+    assert_eq!(j1.replay(&mut tree), Err(TreeError::OutOfOrder), "nor replayed");
+    j1.discard(&mut tree);
+
+    let (mut tree, j1, [_, _, s]) = with_s_inserted_under_p();
+    tree.remove_subtree(s).unwrap();
+    assert_eq!(
+        j1.revert(&mut tree),
+        Err(TreeError::StaleNode(s)),
+        "J1 after removing S"
+    );
+    j1.discard(&mut tree);
+
+    let (mut tree, j1, [_, q, s]) = with_s_inserted_under_p();
+    tree.remove_subtree(q).unwrap();
+    assert_eq!(
+        j1.revert(&mut tree),
+        Err(TreeError::OutOfOrder),
+        "J1 after removing Q"
+    );
+    assert!(tree.contains(s), "nothing changed");
+    j1.discard(&mut tree);
+
+    let (mut tree, j1, [p, _, s]) = with_s_inserted_under_p();
+    tree.update(p, |e| e.value += 1).unwrap();
+    j1.revert(&mut tree).unwrap();
+    assert!(!tree.contains(s), "J1 reverts after an update");
+    j1.discard(&mut tree);
+}
+
+#[test]
+fn test_an_unjournaled_structural_change_ends_the_history() {
+    do_an_unjournaled_structural_change_ends_the_history();
 }
 
 /// The seeded sweeps, and the helpers only they use. `cfg(test)`
