@@ -100,6 +100,34 @@ const RUN_VARIATIONS: &[Variation] = &[
             GfxMutation::RunSet(Box::new(base_run_data(RunShape::Path { run, placed }))),
         );
     }),
+    ("shaped (the same placement of a second shaping)", |e| {
+        // The placement is shared; only the shaped run is a new
+        // allocation.
+        let RunShape::Path { run, placed } = e.glyph_run().unwrap().shaped().clone() else {
+            unreachable!("the base is a path run");
+        };
+        let run = Arc::new((*run).clone());
+        apply(
+            e,
+            GfxMutation::RunSet(Box::new(base_run_data(RunShape::Path { run, placed }))),
+        );
+    }),
+    ("zoom", |e| {
+        let shaped = e.glyph_run().unwrap().shaped().clone();
+        let mut data = base_run_data(shaped);
+        data = GlyphRunData::new(
+            data.shaped().clone(),
+            data.origin(),
+            data.overrides().clone(),
+            data.opacity(),
+            Some(ZoomWindow {
+                min: Some(1.0),
+                max: Some(5.0),
+            }),
+        )
+        .unwrap();
+        apply(e, GfxMutation::RunSet(Box::new(data)));
+    }),
     ("origin", |e| {
         apply(e, GfxMutation::RunOrigin(Vec2::new(1.0, 3.0)))
     }),
