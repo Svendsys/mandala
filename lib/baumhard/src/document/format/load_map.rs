@@ -5,6 +5,7 @@
 //! colors and triggers are resolved against, read before any node.
 
 use crate::document::bounds;
+use crate::document::element::DocKind;
 use crate::document::element::{
     DefaultsData, DocElement, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PaletteData, PaletteGroup,
     PortalEndStyle, RingStyle, TextStyle, ThemeData, ThemeVariant,
@@ -17,8 +18,8 @@ use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{sorted_names, Builder, LoadResult};
 use crate::document::format::index::FORMAT;
 use crate::document::format::spelling::{HexDto, Named};
-use crate::document::format::SizeUnit;
 use crate::document::ids::{Definitions, EditDef, PresentationDef, VerbDef};
+use crate::document::place::Unit;
 use crate::document::values::{Rgba, VerbId};
 use indextree::NodeId;
 use rustc_hash::FxHashSet;
@@ -292,7 +293,7 @@ impl Builder {
                 None => NodeStyle::default(),
             },
             section: match &dto.section {
-                Some(text) => self.key("section", |b| b.text_defaults(text))?,
+                Some(text) => self.key("section", |b| b.text_defaults(text, DocKind::Section))?,
                 None => TextStyle::default(),
             },
             frame: match &dto.frame {
@@ -320,7 +321,7 @@ impl Builder {
                 None => PortalEndStyle::default(),
             },
             span: match &dto.span {
-                Some(text) => self.key("span", |b| b.text_defaults(text))?,
+                Some(text) => self.key("span", |b| b.text_defaults(text, DocKind::Span))?,
                 None => TextStyle::default(),
             },
         })
@@ -335,13 +336,13 @@ impl Builder {
                 None => None,
             },
             fill_fade: self.opt_number("fill_fade", dto.fill_fade, bounds::check_non_negative)?,
-            text: self.text_style(text_in!(dto), SizeUnit::Pt)?,
+            text: self.text_style(text_in!(dto), Unit::of_tier(DocKind::Node))?,
         })
     }
 
     /// `defaults.section` and `defaults.span`.
-    fn text_defaults(&mut self, dto: &TextDefaultsDto) -> LoadResult<TextStyle> {
-        self.text_style(text_in!(dto), SizeUnit::Pt)
+    fn text_defaults(&mut self, dto: &TextDefaultsDto, kind: DocKind) -> LoadResult<TextStyle> {
+        self.text_style(text_in!(dto), Unit::of_tier(kind))
     }
 
     /// `defaults.ring`.
@@ -351,7 +352,7 @@ impl Builder {
                 Some(fit) => Some(self.fit("fit", fit)?),
                 None => None,
             },
-            text: self.text_style(text_in!(dto), SizeUnit::Rel)?,
+            text: self.text_style(text_in!(dto), Unit::of_tier(DocKind::Ring))?,
         })
     }
 

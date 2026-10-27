@@ -34,8 +34,8 @@
 
 use crate::document::defaults::{FIT_MAX, FIT_MIN};
 use crate::document::element::{
-    CapData, DefaultsData, DocElement, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData, PortalEndData,
-    PortalEndStyle, RingStyle, TextStyle,
+    CapData, DefaultsData, DocElement, DocKind, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData,
+    PortalEndData, PortalEndStyle, RingStyle, TextStyle,
 };
 use crate::document::format::context::tree_excerpt;
 use crate::document::format::dto::{
@@ -50,8 +50,8 @@ use crate::document::format::spelling::{
     ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, Named, PaletteFieldDto, RectangleDto,
     ShapeDto, StartDto, StartPointDto, WeightDto,
 };
-use crate::document::format::SizeUnit;
 use crate::document::ids::{Document, VerbDef};
+use crate::document::place::{nameable_font, sizes_its_own_text, Unit};
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteField,
     PlainColor, Shape, ZoomWindow,
@@ -383,10 +383,10 @@ impl<'a> Saver<'a> {
             return Ok(None);
         };
         let name = *self.fonts.entry(font).or_insert_with(|| {
-            if font == AppFont::Any {
-                None
-            } else {
+            if nameable_font(font) {
                 family_name_of(font)
+            } else {
+                None
             }
         });
         name.map(|name| Some(name.to_string()))
@@ -395,22 +395,27 @@ impl<'a> Saver<'a> {
 
     /// A size in the unit this position takes; a size in the other unit
     /// would load as another size.
-    fn size(&self, size: Option<FontSize>, unit: SizeUnit) -> SaveResult<Option<f32>> {
-        match (size, unit) {
-            (None, _) => Ok(None),
-            (Some(FontSize::Pt(points)), SizeUnit::Pt) => Ok(Some(points)),
-            (Some(FontSize::Rel(fraction)), SizeUnit::Rel) => Ok(Some(fraction)),
-            (Some(FontSize::Pt(_)), SizeUnit::Rel) => {
-                Err(self.error_at("size", SaveErrorKind::WrongUnit { found_points: true }))
-            }
-            (Some(FontSize::Rel(_)), SizeUnit::Pt) => {
-                Err(self.error_at("size", SaveErrorKind::WrongUnit { found_points: false }))
-            }
+    /// A size in the unit this position takes ([`Unit::admits`], the rule
+    /// the mutations share); a size in the other unit would load as
+    /// another size.
+    fn size(&self, size: Option<FontSize>, unit: Unit) -> SaveResult<Option<f32>> {
+        match size {
+            None => Ok(None),
+            Some(size) if unit.admits(size) => Ok(Some(match size {
+                FontSize::Pt(points) => points,
+                FontSize::Rel(fraction) => fraction,
+            })),
+            Some(size) => Err(self.error_at(
+                "size",
+                SaveErrorKind::WrongUnit {
+                    found_points: matches!(size, FontSize::Pt(_)),
+                },
+            )),
         }
     }
 
     /// The five text-style keys.
-    fn text(&mut self, style: &TextStyle, unit: SizeUnit) -> SaveResult<TextOut> {
+    fn text(&mut self, style: &TextStyle, unit: Unit) -> SaveResult<TextOut> {
         Ok(TextOut {
             font: self.font(style.font)?,
             size: self.size(style.size, unit)?,
@@ -476,7 +481,7 @@ impl<'a> Saver<'a> {
         let Some(DocElement::Node(node)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let text = self.text(&node.style.text, SizeUnit::Pt)?;
+        let text = self.text(&node.style.text, Unit::of_tier(DocKind::Node))?;
         let on = self.key("on", |s| {
             let on = OnDto {
                 click: node.on.click.map(|verb| s.verb_id("click", verb.0)).transpose()?,
@@ -552,7 +557,7 @@ impl<'a> Saver<'a> {
         let Some(DocElement::Section(section)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let text = self.text(&section.text, SizeUnit::Pt)?;
+        let text = self.text(&section.text, Unit::of_tier(DocKind::Section))?;
         Ok(SectionDto {
             channel: channel_of(section.channel),
             offset: section.offset.to_array(),
@@ -567,14 +572,15 @@ impl<'a> Saver<'a> {
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-            spans: self.spans(id, false)?,
+            spans: self.spans(id)?,
         })
     }
 
     /// The spans under `parent`, at the current path's `spans`. A span in
     /// a ring has no size of its own: the ring sizes its text, and a size
     /// on the span would be one the file cannot say.
-    fn spans(&mut self, parent: NodeId, in_ring: bool) -> SaveResult<Vec<SpanDto>> {
+    fn spans(&mut self, parent: NodeId) -> SaveResult<Vec<SpanDto>> {
+        let parent_kind = self.element(parent).map(DocElement::kind);
         let mut out = Vec::new();
         for (_, element) in self.children(parent) {
             let DocElement::Span(span) = element else {
@@ -583,10 +589,10 @@ impl<'a> Saver<'a> {
             let index = out.len();
             let dto = self.key("spans", |s| {
                 s.at(Seg::Index(index), |s| {
-                    if in_ring && span.style.size.is_some() {
+                    if span.style.size.is_some() && !sizes_its_own_text(DocKind::Span, parent_kind) {
                         return Err(s.error_at("size", SaveErrorKind::SizeInRing));
                     }
-                    let text = s.text(&span.style, SizeUnit::Pt)?;
+                    let text = s.text(&span.style, Unit::of_place(DocKind::Span, parent_kind))?;
                     let link = match &span.link {
                         Some(LinkTarget::Url(url)) => Some(LinkTargetDto::Url(url.clone())),
                         Some(LinkTarget::Verb(verb)) => Some(LinkTargetDto::Verb(s.verb_id("link", verb.0)?)),
@@ -622,7 +628,7 @@ impl<'a> Saver<'a> {
             let index = rings.len();
             let dto = self.key("rings", |s| {
                 s.at(Seg::Index(index), |s| {
-                    let text = s.text(&ring.style.text, SizeUnit::Rel)?;
+                    let text = s.text(&ring.style.text, Unit::of_tier(DocKind::Ring))?;
                     Ok(RingDto {
                         channel: channel_of(ring.channel),
                         fit: Self::fit(&ring.style.fit),
@@ -631,7 +637,7 @@ impl<'a> Saver<'a> {
                         color: text.color,
                         weight: text.weight,
                         italic: text.italic,
-                        spans: s.spans(ring_id, true)?,
+                        spans: s.spans(ring_id)?,
                     })
                 })
             })?;
@@ -675,7 +681,7 @@ impl<'a> Saver<'a> {
             fit: Self::fit(&style.fit),
             gap: style.gap,
             inset: style.inset,
-            text: self.text(&style.text, SizeUnit::Rel)?,
+            text: self.text(&style.text, Unit::of_tier(DocKind::Frame))?,
         })
     }
 
@@ -725,7 +731,7 @@ impl<'a> Saver<'a> {
         &mut self,
         id: NodeId,
     ) -> SaveResult<(Vec<SpanDto>, Option<CapDto>, Option<CapDto>, Option<LabelDto>)> {
-        let spans = self.spans(id, false)?;
+        let spans = self.spans(id)?;
         let (mut cap_start, mut cap_end, mut label) = (None, None, None);
         for (child, element) in self.children(id) {
             match element {
@@ -744,14 +750,15 @@ impl<'a> Saver<'a> {
 
     /// A cap.
     fn cap(&mut self, id: NodeId, cap: &CapData) -> SaveResult<CapDto> {
-        let text = self.text(&cap.text, SizeUnit::Pt)?;
+        let kind = self.element(id).map_or(DocKind::CapStart, DocElement::kind);
+        let text = self.text(&cap.text, Unit::of_tier(kind))?;
         Ok(CapDto {
             font: text.font,
             size: text.size,
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-            spans: self.spans(id, false)?,
+            spans: self.spans(id)?,
         })
     }
 
@@ -760,7 +767,7 @@ impl<'a> Saver<'a> {
         let Some(DocElement::Label(label)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let text = self.text(&label.style.text, SizeUnit::Pt)?;
+        let text = self.text(&label.style.text, Unit::of_tier(DocKind::Label))?;
         Ok(LabelDto {
             t: label.style.t,
             offset: label.style.offset,
@@ -769,7 +776,7 @@ impl<'a> Saver<'a> {
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-            spans: self.spans(id, false)?,
+            spans: self.spans(id)?,
         })
     }
 
@@ -865,7 +872,7 @@ impl<'a> Saver<'a> {
     /// One end of a portal link.
     fn portal_end(&mut self, id: NodeId, end: &PortalEndData) -> SaveResult<PortalEndDto> {
         let style = &end.style;
-        let spans = self.spans(id, false)?;
+        let spans = self.spans(id)?;
         let mut label = None;
         for (child, element) in self.children(id) {
             if let DocElement::Label(_) = element {
@@ -890,14 +897,16 @@ impl<'a> Saver<'a> {
             return Ok(None);
         }
         let node = self.key("node", |s| s.node_defaults(&defaults.node))?;
-        let section = self.key("section", |s| s.text_defaults(&defaults.section))?;
+        let section = self.key("section", |s| {
+            s.text_defaults(&defaults.section, DocKind::Section)
+        })?;
         let frame = self.key("frame", |s| s.frame_defaults(&defaults.frame))?;
         let ring = self.key("ring", |s| s.ring_defaults(&defaults.ring))?;
         let connector = self.key("connector", |s| s.flow_defaults(&defaults.connector))?;
         let link = self.key("link", |s| s.flow_defaults(&defaults.link))?;
         let label = self.key("label", |s| s.label_defaults(&defaults.label))?;
         let portal_end = self.key("portal_end", |s| s.portal_end_defaults(&defaults.portal_end))?;
-        let span = self.key("span", |s| s.text_defaults(&defaults.span))?;
+        let span = self.key("span", |s| s.text_defaults(&defaults.span, DocKind::Span))?;
         Ok(Some(DefaultsDto {
             node,
             section,
@@ -915,7 +924,7 @@ impl<'a> Saver<'a> {
         if *style == NodeStyle::default() {
             return Ok(None);
         }
-        let text = self.text(&style.text, SizeUnit::Pt)?;
+        let text = self.text(&style.text, Unit::of_tier(DocKind::Node))?;
         Ok(Some(NodeDefaultsDto {
             shape: style.shape.map(shape),
             fill: self.color("fill", style.fill)?,
@@ -928,11 +937,11 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn text_defaults(&mut self, style: &TextStyle) -> SaveResult<Option<TextDefaultsDto>> {
+    fn text_defaults(&mut self, style: &TextStyle, kind: DocKind) -> SaveResult<Option<TextDefaultsDto>> {
         if *style == TextStyle::default() {
             return Ok(None);
         }
-        let text = self.text(style, SizeUnit::Pt)?;
+        let text = self.text(style, Unit::of_tier(kind))?;
         Ok(Some(TextDefaultsDto {
             font: text.font,
             size: text.size,
@@ -966,7 +975,7 @@ impl<'a> Saver<'a> {
         if *style == RingStyle::default() {
             return Ok(None);
         }
-        let text = self.text(&style.text, SizeUnit::Rel)?;
+        let text = self.text(&style.text, Unit::of_tier(DocKind::Ring))?;
         Ok(Some(RingDefaultsDto {
             fit: Self::fit(&style.fit),
             font: text.font,
@@ -995,7 +1004,7 @@ impl<'a> Saver<'a> {
         if *style == LabelStyle::default() {
             return Ok(None);
         }
-        let text = self.text(&style.text, SizeUnit::Pt)?;
+        let text = self.text(&style.text, Unit::of_tier(DocKind::Label))?;
         Ok(Some(LabelDefaultsDto {
             t: style.t,
             offset: style.offset,

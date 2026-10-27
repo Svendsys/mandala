@@ -9,11 +9,12 @@
 //! so an element and the defaults for it share the conversion.
 
 use crate::document::bounds;
+use crate::document::element::DocKind;
 use crate::document::element::{FlowStyle, FrameStyle, LabelStyle, PortalEndStyle, TextStyle};
 use crate::document::format::dto::DirectionDto;
 use crate::document::format::from_dto::{Builder, LoadResult};
 use crate::document::format::spelling::{ColorDto, FitDto, StartDto, WeightDto};
-use crate::document::format::SizeUnit;
+use crate::document::place::Unit;
 use crate::document::values::Direction;
 
 /// A view of the five text-style keys.
@@ -79,7 +80,7 @@ pub(crate) struct PortalIn<'a> {
 impl Builder {
     /// A text style whose `size` is in `unit`. The current path is the
     /// object that holds the keys.
-    pub(super) fn text_style(&mut self, text: TextIn<'_>, unit: SizeUnit) -> LoadResult<TextStyle> {
+    pub(super) fn text_style(&mut self, text: TextIn<'_>, unit: Unit) -> LoadResult<TextStyle> {
         Ok(TextStyle {
             font: match text.font {
                 Some(family) => Some(self.font(family)?),
@@ -116,7 +117,7 @@ impl Builder {
             },
             gap: self.opt_number("gap", frame.gap, bounds::check_non_negative)?,
             inset: self.opt_number("inset", frame.inset, bounds::check_non_negative)?,
-            text: self.text_style(frame.text, SizeUnit::Rel)?,
+            text: self.text_style(frame.text, Unit::of_tier(DocKind::Frame))?,
         })
     }
 
@@ -148,7 +149,7 @@ impl Builder {
         Ok(LabelStyle {
             t: self.opt_number("t", t, bounds::check_unit_interval)?,
             offset: self.opt_number("offset", offset, bounds::check_canvas_coord)?,
-            text: self.text_style(text, SizeUnit::Pt)?,
+            text: self.text_style(text, Unit::of_tier(DocKind::Label))?,
         })
     }
 

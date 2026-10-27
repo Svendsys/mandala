@@ -107,20 +107,6 @@ pub const MAX_MAP_BYTES: Option<u64> = None;
 #[cfg(target_arch = "wasm32")]
 pub const MAX_MAP_BYTES: Option<u64> = Some(3 * 1024 * 1024 * 1024);
 
-/// Whether a `size` is points or a fraction of the node's shorter side.
-/// Which one it is depends on where it sits, not on how it is written:
-/// inside a frame (the frame, its rings, `defaults.frame`,
-/// `defaults.ring`) it is a fraction, everywhere else points. The
-/// loader stores the unit it reads a number as, and the saver writes a
-/// size only where its unit is the one the position takes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SizeUnit {
-    /// Points.
-    Pt,
-    /// A fraction of the node's shorter side.
-    Rel,
-}
-
 /// [`load`] for bytes: the entry point for input that is not known to
 /// be text (a file read, a socket, a fuzzer's corpus). The text is
 /// checked against [`MAX_MAP_BYTES`] before it is looked at, and then

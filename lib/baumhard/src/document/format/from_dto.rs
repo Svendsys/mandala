@@ -41,7 +41,6 @@ use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DocElement, MapData};
 use crate::document::format::dto::MapHeaderDto;
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, NodeContext, Seg};
-use crate::document::format::SizeUnit;
 use crate::document::ids::{Definitions, Document, IdentIndex, NodeIdent};
 use crate::document::shape::validate_shape;
 use crate::document::values::{
@@ -398,13 +397,20 @@ impl Builder {
         result.map_err(|error| self.error(LoadErrorKind::Bound { error }))
     }
 
-    /// A font size in `unit`, checked against the bound for it.
-    pub fn size(&self, value: f32, unit: SizeUnit) -> LoadResult<FontSize> {
+    /// A font size in the unit its place takes
+    /// ([`Unit`](crate::document::place::Unit), the rule the mutations
+    /// share), checked against the bound for that unit. A file's number
+    /// has no unit of its own: the loader always knows the place it
+    /// reads one in, so it never asks for [`Unit::Either`]
+    /// (crate::document::place::Unit::Either), and would read one as
+    /// points, the unit a span's place takes.
+    pub fn size(&self, value: f32, unit: crate::document::place::Unit) -> LoadResult<FontSize> {
+        use crate::document::place::Unit;
         match unit {
-            SizeUnit::Pt => self
+            Unit::Points | Unit::Either => self
                 .bounded("size", bounds::check_font_size_pt(value))
                 .map(FontSize::Pt),
-            SizeUnit::Rel => self
+            Unit::Relative => self
                 .bounded("size", bounds::check_rel_size(value))
                 .map(FontSize::Rel),
         }
@@ -430,12 +436,15 @@ impl Builder {
     /// face for is an error, and so is one that is only an installed
     /// system font: it resolves to the fallback face
     /// ([`AppFont::Any`]), which has no name a file could write, so
-    /// the document could not save it back.
+    /// the document could not save it back. Which faces a document may
+    /// hold is [`nameable_font`](crate::document::place::nameable_font),
+    /// the rule the mutations share.
     pub fn font(&mut self, family: &str) -> LoadResult<AppFont> {
         let found = match self.fonts.get(family) {
             Some(found) => *found,
             None => {
-                let found = app_font_by_family(family).filter(|font| *font != AppFont::Any);
+                let found =
+                    app_font_by_family(family).filter(|font| crate::document::place::nameable_font(*font));
                 self.fonts.insert(family.to_string(), found);
                 found
             }

@@ -50,6 +50,9 @@ pub mod inspect;
 pub mod interpolation;
 /// The mutation vocabulary: every change a document can undergo.
 pub mod mutation;
+/// The rules that depend on where a value sits, shared by the format
+/// and the mutations (R14.16).
+pub mod place;
 /// Per-field style resolution with read recording.
 pub mod resolve;
 /// The shape rules: which kinds may hold which.

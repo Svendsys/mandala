@@ -18,8 +18,8 @@
 
 use crate::document::bounds;
 use crate::document::element::{
-    CapData, ConnectorData, DocElement, FrameData, LabelData, LinkData, NodeData, NodeStyle, PathData,
-    PortalEndData, RingData, RingStyle, SectionData, SpanData, TextStyle, Triggers,
+    CapData, ConnectorData, DocElement, DocKind, FrameData, LabelData, LinkData, NodeData, NodeStyle,
+    PathData, PortalEndData, RingData, RingStyle, SectionData, SpanData, TextStyle, Triggers,
 };
 use crate::document::format::dto::{
     AlignDto, AnchorDto, CapDto, FrameDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, NodeDto, PathDto,
@@ -27,8 +27,8 @@ use crate::document::format::dto::{
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{Builder, LoadResult, PendingLink};
-use crate::document::format::SizeUnit;
 use crate::document::ids::NodeIdent;
+use crate::document::place::{sizes_its_own_text, Unit};
 use crate::document::values::{Align, Anchor, LinkKind, LinkTarget, PaletteId};
 use glam::Vec2;
 use indextree::NodeId;
@@ -97,7 +97,7 @@ impl Builder {
             })?,
             None => Triggers::default(),
         };
-        let text = self.text_style(text_in!(dto), SizeUnit::Pt)?;
+        let text = self.text_style(text_in!(dto), Unit::of_tier(DocKind::Node))?;
         let data = DocElement::Node(NodeData {
             ident: NodeIdent(id),
             channel,
@@ -178,7 +178,7 @@ impl Builder {
             .min_size
             .map(|size| self.extent("min_size", size))
             .transpose()?;
-        let text = self.text_style(text_in!(dto), SizeUnit::Pt)?;
+        let text = self.text_style(text_in!(dto), Unit::of_tier(DocKind::Section))?;
         let data = DocElement::Section(SectionData {
             channel,
             offset,
@@ -190,19 +190,21 @@ impl Builder {
             }),
             text,
         });
-        self.element(node, data, |b, section| b.spans(section, &dto.spans, false))
+        self.element(node, data, |b, section| b.spans(section, &dto.spans))
             .map(|_| ())
     }
 
-    /// The spans under `parent`, in file order. `in_ring` refuses a
-    /// `size`.
-    fn spans(&mut self, parent: NodeId, spans: &[SpanDto], in_ring: bool) -> LoadResult<()> {
-        self.each("spans", spans, |b, span| b.span(parent, span, in_ring))
+    /// The spans under `parent`, in file order.
+    fn spans(&mut self, parent: NodeId, spans: &[SpanDto]) -> LoadResult<()> {
+        let parent_kind = self.tree.get(parent).map(|node| node.get().kind());
+        self.each("spans", spans, |b, span| b.span(parent, parent_kind, span))
     }
 
-    /// One span.
-    fn span(&mut self, parent: NodeId, dto: &SpanDto, in_ring: bool) -> LoadResult<()> {
-        if in_ring && dto.size.is_some() {
+    /// One span, under `parent`, an element of kind `parent_kind`: its
+    /// size in the unit its place takes, and none at all inside a ring
+    /// ([`sizes_its_own_text`], the rule the mutations share).
+    fn span(&mut self, parent: NodeId, parent_kind: Option<DocKind>, dto: &SpanDto) -> LoadResult<()> {
+        if dto.size.is_some() && !sizes_its_own_text(DocKind::Span, parent_kind) {
             return Err(self.error_at(
                 "size",
                 LoadErrorKind::KeyNotAllowed {
@@ -211,7 +213,7 @@ impl Builder {
                 },
             ));
         }
-        let style = self.text_style(text_in!(dto), SizeUnit::Pt)?;
+        let style = self.text_style(text_in!(dto), Unit::of_place(DocKind::Span, parent_kind))?;
         let link = match &dto.link {
             Some(link) => Some(self.key("link", |b| match link {
                 LinkTargetDto::Url(url) => Ok(LinkTarget::Url(url.clone())),
@@ -243,12 +245,12 @@ impl Builder {
             Some(fit) => Some(self.fit("fit", fit)?),
             None => None,
         };
-        let text = self.text_style(text_in!(dto), SizeUnit::Rel)?;
+        let text = self.text_style(text_in!(dto), Unit::of_tier(DocKind::Ring))?;
         let data = DocElement::Ring(RingData {
             channel,
             style: RingStyle { fit, text },
         });
-        self.element(frame, data, |b, ring| b.spans(ring, &dto.spans, true))
+        self.element(frame, data, |b, ring| b.spans(ring, &dto.spans))
             .map(|_| ())
     }
 
@@ -323,7 +325,7 @@ impl Builder {
         cap_end: Option<&CapDto>,
         label: Option<&LabelDto>,
     ) -> LoadResult<()> {
-        self.spans(path, spans, false)?;
+        self.spans(path, spans)?;
         if let Some(cap) = cap_start {
             self.key("cap_start", |b| b.cap(path, cap, true))?;
         }
@@ -338,14 +340,15 @@ impl Builder {
 
     /// A start or end cap and its spans.
     fn cap(&mut self, path: NodeId, dto: &CapDto, start: bool) -> LoadResult<()> {
-        let text: TextStyle = self.text_style(text_in!(dto), SizeUnit::Pt)?;
+        let kind = if start { DocKind::CapStart } else { DocKind::CapEnd };
+        let text: TextStyle = self.text_style(text_in!(dto), Unit::of_tier(kind))?;
         let data = CapData { text };
         let element = if start {
             DocElement::CapStart(data)
         } else {
             DocElement::CapEnd(data)
         };
-        self.element(path, element, |b, cap| b.spans(cap, &dto.spans, false))
+        self.element(path, element, |b, cap| b.spans(cap, &dto.spans))
             .map(|_| ())
     }
 
@@ -353,7 +356,7 @@ impl Builder {
     fn label(&mut self, parent: NodeId, dto: &LabelDto) -> LoadResult<()> {
         let style = self.label_style(dto.t, dto.offset, text_in!(dto))?;
         self.element(parent, DocElement::Label(LabelData { style }), |b, label| {
-            b.spans(label, &dto.spans, false)
+            b.spans(label, &dto.spans)
         })
         .map(|_| ())
     }
@@ -471,7 +474,7 @@ impl Builder {
         let style = self.portal_end_style(portal_in!(dto))?;
         let data = DocElement::PortalEnd(PortalEndData { end, style });
         self.element(link, data, |b, id| {
-            b.spans(id, &dto.spans, false)?;
+            b.spans(id, &dto.spans)?;
             if let Some(label) = &dto.label {
                 b.key("label", |b| b.label(id, label))?;
             }
