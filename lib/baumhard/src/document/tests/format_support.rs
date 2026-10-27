@@ -7,6 +7,7 @@
 
 use crate::document::element::{DocElement, DocKind, NodeData};
 use crate::document::ids::{Document, NodeIdent};
+use crate::document::values::LinkKind;
 use indextree::NodeId;
 
 /// The fixture corpus, by name: every key at least once
@@ -21,6 +22,12 @@ pub const FIXTURES: [(&str, &str); 7] = [
     ("starts", include_str!("../format/fixtures/starts.mandala.json")),
     ("colors", include_str!("../format/fixtures/colors.mandala.json")),
 ];
+
+/// The text [`save`](crate::document::format::save) writes for `doc`;
+/// the document must be savable.
+pub fn written(doc: &Document) -> String {
+    crate::document::format::save(doc).unwrap_or_else(|error| panic!("the document must save: {error}"))
+}
 
 /// The text of the fixture `name`.
 pub fn fixture(name: &str) -> &'static str {
@@ -88,7 +95,11 @@ pub fn same_document(a: &Document, b: &Document) -> Result<(), String> {
                             Some(DocElement::Node(node)) => Some(node.ident),
                             _ => None,
                         };
-                        if target(a, p.to) != target(b, q.to) || p.kind != q.kind || p.path != q.path {
+                        // A portal link's path is kept within a session and
+                        // never saved (`LinkData::path`): it is the one
+                        // thing a save and a load do not carry over.
+                        let same_path = p.kind == LinkKind::Portal || p.path == q.path;
+                        if target(a, p.to) != target(b, q.to) || p.kind != q.kind || !same_path {
                             return Err(format!("a link differs: {p:?} against {q:?}"));
                         }
                     }

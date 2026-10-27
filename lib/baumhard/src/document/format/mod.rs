@@ -54,7 +54,7 @@ pub(crate) mod spelling;
 mod strict;
 mod to_dto;
 
-pub use error::{LoadError, LoadErrorKind};
+pub use error::{LoadError, LoadErrorKind, SaveError, SaveErrorKind};
 
 use crate::document::format::dto::MapDto;
 use crate::document::ids::Document;
@@ -190,25 +190,61 @@ pub(crate) fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result
     }
 }
 
+/// The DTOs of `doc`, if the file can say all of it and the loader would
+/// accept what is said.
+///
+/// Two steps. The saver's own walk refuses what the file has no spelling
+/// for (a size in the wrong unit, a name two entries share, a color
+/// naming a variable that is not there), at the path the value would have
+/// had. Then the DTOs are built into a document by the loader's own
+/// builder, which refuses a number outside its bound, a channel past
+/// [`MAX_CHANNEL`](crate::document::bounds::MAX_CHANNEL) and every other
+/// rule the loader holds, at the same path. The saver therefore cannot
+/// disagree with the loader about what a loadable file is: it asks it.
+fn checked_dtos(doc: &Document) -> Result<MapDto, SaveError> {
+    let dto = to_dto::dtos_of(doc)?;
+    from_dto::build(&dto).map_err(|error| SaveError {
+        path: error.path.clone(),
+        kind: SaveErrorKind::NotLoadable {
+            error: Box::new(error),
+        },
+    })?;
+    Ok(dto)
+}
+
+/// Whether `doc` can be saved: `Ok` exactly when [`save`] would give a
+/// file that [`load`] reads back as the same document. Otherwise the
+/// first thing the file cannot say, with the path it would have had.
+///
+/// The one exception to "the same document" is deliberate and stated in
+/// `format/schema.md`: a portal link keeps the path it had as a line link
+/// within a session, so that it can switch kind without losing it, and the
+/// file never saves it.
+///
+/// B3's mutations and B4's editor call this, or the parts of it they
+/// need, when they apply an edit. [`save`] runs it itself. Cost: one walk
+/// of the tree to build the DTOs, then one build of them; O(elements).
+pub fn check_savable(doc: &Document) -> Result<(), SaveError> {
+    checked_dtos(doc).map(|_| ())
+}
+
 /// Write a document as a `.mandala.json`: deterministic, two-space
 /// indented, ending in a newline.
 ///
-/// Nothing derived is written, and what the file cannot spell is left
-/// out with a warning (see the module docs of the saver). Cost: one walk
-/// of the tree to build the DTOs, then serde_json's writer; O(elements).
-pub fn save(doc: &Document) -> String {
-    let dto = to_dto::dtos_of(doc);
-    let mut text = match serde_json::to_string_pretty(&dto) {
-        Ok(text) => text,
-        Err(error) => {
-            // The DTOs hold strings, numbers and maps with string keys:
-            // nothing here can fail to serialize.
-            log::error!("save: the document could not be written: {error}");
-            String::new()
-        }
-    };
+/// Nothing derived is written, and nothing is dropped: what the file
+/// cannot spell is a [`SaveError`] (see [`check_savable`]), never a
+/// value left out with a warning. Cost: [`check_savable`]'s, then
+/// serde_json's writer; O(elements).
+pub fn save(doc: &Document) -> Result<String, SaveError> {
+    let dto = checked_dtos(doc)?;
+    let mut text = serde_json::to_string_pretty(&dto).map_err(|error| SaveError {
+        path: String::new(),
+        kind: SaveErrorKind::Write {
+            message: error.to_string(),
+        },
+    })?;
     text.push('\n');
-    text
+    Ok(text)
 }
 
 /// Parse `json` into the DTOs, naming the path of whatever is wrong.

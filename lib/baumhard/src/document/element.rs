@@ -380,8 +380,12 @@ pub struct LinkData {
     pub to: NodeId,
     /// Whether it draws a path or two portal ends.
     pub kind: LinkKind,
-    /// The path. A portal link has no path to draw, but keeps the
-    /// fields so a link can switch kind without losing them.
+    /// The path of a line link. A portal link draws no path, but keeps
+    /// the fields within a session so that a link can switch kind
+    /// without losing them. **They are never saved for a portal link**:
+    /// the file's path keys belong to line links, so a portal link
+    /// reloads with the default path. That is the one thing a save and a
+    /// load do not carry over; everything else is the same document.
     pub path: PathData,
 }
 

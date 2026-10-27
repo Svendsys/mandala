@@ -4,15 +4,13 @@
 //! refuses to write, and the numbers.
 
 use crate::document::element::{
-    ConnectorData, DocElement, FlowStyle, FrameData, LabelData, LabelStyle, LinkData, PathData, RingData,
-    RingStyle, SectionData, SpanData, TextStyle, ThemeData, ThemeVariant,
+    ConnectorData, DocElement, FlowStyle, LabelData, LabelStyle, LinkData, PathData, ThemeData, ThemeVariant,
 };
-use crate::document::format::{load, save};
-use crate::document::tests::format_support::{fixture, node, same_document};
+use crate::document::format::load;
+use crate::document::tests::format_support::{fixture, node, same_document, written};
 use crate::document::tests::format_text::map_of;
-use crate::document::tests::test_support::{example, node_data, path_data, DocumentBuilder};
-use crate::document::values::{ColorRef, FontSize, LinkKind, Rgba, VarId};
-use crate::font::fonts::AppFont;
+use crate::document::tests::test_support::{example, path_data, DocumentBuilder};
+use crate::document::values::{LinkKind, Rgba};
 use serde_json::Value;
 
 /// The position of each `"key":` at `indent` spaces in `text`, after
@@ -93,10 +91,10 @@ fn test_the_saver_writes_the_same_text_whatever_order_the_file_was_in() {
     let value: Value = serde_json::from_str(fixture("full")).unwrap();
     let reversed = serde_json::to_string(&value).unwrap(); // serde_json's maps are sorted
     let doc = load(&reversed).unwrap();
-    assert_eq!(save(&doc), fixture("full"));
+    assert_eq!(written(&doc), fixture("full"));
     // And compact or spaced, the same.
     let spaced = serde_json::to_string_pretty(&value).unwrap().replace("  ", "\t");
-    assert_eq!(save(&load(&spaced).unwrap()), fixture("full"));
+    assert_eq!(written(&load(&spaced).unwrap()), fixture("full"));
 }
 
 /// Whether a JSON object at the end of `path` in `value` has `key`.
@@ -124,7 +122,7 @@ fn test_the_saver_leaves_out_what_the_file_would_say_by_default() {
     });
     // Nothing of the example's is set but node `a`'s palette, and that
     // is the point: every other field is at its default.
-    let value: Value = serde_json::from_str(&save(&builder.build().unwrap())).unwrap();
+    let value: Value = serde_json::from_str(&written(&builder.build().unwrap())).unwrap();
 
     // Not written: defaults, empty arrays, empty objects, derived data.
     let a = ["nodes", "0"];
@@ -216,7 +214,7 @@ fn test_a_portal_link_with_default_ends_is_written_with_none() {
         }],
         active: 0,
     });
-    let text = save(&builder.build().unwrap());
+    let text = written(&builder.build().unwrap());
     assert!(
         text.contains(r#""ends""#),
         "the example's source end has a marker"
@@ -236,7 +234,7 @@ fn test_a_portal_link_with_default_ends_is_written_with_none() {
     let a = builder.node(root);
     let b = builder.node(root);
     builder.link(a, b, LinkKind::Portal);
-    let text = save(&builder.build().unwrap());
+    let text = written(&builder.build().unwrap());
     assert!(text.contains(r#""kind": "portal""#));
     assert!(
         !text.contains(r#""ends""#),
@@ -256,128 +254,6 @@ fn test_a_portal_link_with_default_ends_is_written_with_none() {
         .len(),
         2
     );
-}
-
-#[test]
-fn test_the_saver_writes_nothing_the_loader_would_read_as_something_else() {
-    // A document can hold, through the builder or a mutation that does
-    // not check, values the file has no spelling for. Writing any of
-    // them would give a file that loads as another map, so they are
-    // left out; each case below would be silently retargeted, or would
-    // not load, if it were written.
-    let mut builder = DocumentBuilder::new();
-    builder.theme(ThemeData {
-        variables: vec!["x".to_string()],
-        variants: vec![ThemeVariant {
-            name: "d".to_string(),
-            values: vec![Rgba::opaque(1, 2, 3)],
-        }],
-        active: 0,
-    });
-    let root = builder.root();
-    let mut data = node_data(1);
-    // The fallback face has no name; points on a node are fine, a
-    // fraction on one is not; a variable the theme does not define.
-    data.style.text.font = Some(AppFont::Any);
-    data.style.text.size = Some(FontSize::Rel(0.5));
-    data.style.text.color = Some(ColorRef::Var(VarId(9)));
-    data.style.fill = Some(ColorRef::Var(VarId(0)));
-    let a = builder.node_with(root, data);
-    // Points on a ring (never read), a fraction on a section.
-    let frame = builder.add(a, DocElement::Frame(FrameData::default()));
-    let ring = builder.add(
-        frame,
-        DocElement::Ring(RingData {
-            channel: 0,
-            style: RingStyle {
-                fit: None,
-                text: TextStyle {
-                    size: Some(FontSize::Pt(24.0)),
-                    ..TextStyle::default()
-                },
-            },
-        }),
-    );
-    // A span in the ring that has a size of its own.
-    builder.add(
-        ring,
-        DocElement::Span(SpanData {
-            text: "r".to_string(),
-            style: TextStyle {
-                size: Some(FontSize::Pt(12.0)),
-                ..TextStyle::default()
-            },
-            link: None,
-        }),
-    );
-    builder.add(
-        a,
-        DocElement::Section(SectionData {
-            text: TextStyle {
-                size: Some(FontSize::Rel(0.2)),
-                ..TextStyle::default()
-            },
-            ..SectionData::default()
-        }),
-    );
-    let doc = builder.build().unwrap();
-    let text = save(&doc);
-    let value: Value = serde_json::from_str(&text).unwrap();
-    let node = &value["nodes"][0];
-    assert!(
-        node.get("font").is_none(),
-        "the fallback face has no family name:\n{text}"
-    );
-    assert!(node.get("size").is_none(), "a fraction is not points:\n{text}");
-    assert!(
-        node.get("color").is_none(),
-        "a variable the theme lacks is not written:\n{text}"
-    );
-    assert_eq!(node["fill"], "var(x)", "a variable that is defined is");
-    assert!(
-        node["frame"]["rings"][0].get("size").is_none(),
-        "points on a ring:\n{text}"
-    );
-    assert!(
-        node["frame"]["rings"][0]["spans"][0].get("size").is_none(),
-        "a span in a ring has no size:\n{text}"
-    );
-    assert!(
-        node["sections"][0].get("size").is_none(),
-        "a fraction on a section:\n{text}"
-    );
-    // And what it did write loads.
-    load(&text).unwrap_or_else(|error| panic!("{error}\n{text}"));
-}
-
-#[test]
-fn test_a_palette_color_naming_a_missing_variable_is_written_so_that_it_does_not_load() {
-    use crate::document::element::{PaletteData, PaletteGroup};
-    use crate::document::values::PlainColor;
-    let mut builder = DocumentBuilder::new();
-    builder.theme(ThemeData {
-        variables: Vec::new(),
-        variants: vec![ThemeVariant {
-            name: "d".to_string(),
-            values: Vec::new(),
-        }],
-        active: 0,
-    });
-    builder.palette(PaletteData {
-        name: "p".to_string(),
-        groups: vec![PaletteGroup {
-            fill: PlainColor::Var(VarId(3)),
-            frame: PlainColor::Rgba(Rgba::opaque(0, 0, 0)),
-            text: PlainColor::Rgba(Rgba::opaque(0, 0, 0)),
-            title: None,
-        }],
-    });
-    let text = save(&builder.build().unwrap());
-    // A palette group has all its colors, so one that cannot be named
-    // is written as a variable no theme defines: a refusal at load that
-    // names it, never a color that was not asked for.
-    let error = load(&text).unwrap_err();
-    assert_eq!(error.path, "palettes.p[0].fill");
 }
 
 #[test]
@@ -443,8 +319,8 @@ fn test_a_document_of_every_kind_saves_the_same_text_twice() {
         active: 0,
     });
     let doc = builder.build().unwrap();
-    assert_eq!(save(&doc), save(&doc));
-    let back = load(&save(&doc)).unwrap();
+    assert_eq!(written(&doc), written(&doc));
+    let back = load(&written(&doc)).unwrap();
     same_document(&doc, &back).unwrap();
 }
 
@@ -498,6 +374,6 @@ fn test_a_connector_the_file_writes_loads_back_to_its_fields() {
     );
     builder.span(label, "l");
     let doc = builder.build().unwrap();
-    let back = load(&save(&doc)).unwrap();
+    let back = load(&written(&doc)).unwrap();
     same_document(&doc, &back).unwrap();
 }

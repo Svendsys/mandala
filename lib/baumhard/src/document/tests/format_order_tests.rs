@@ -5,8 +5,9 @@
 //! never from where they sit in the file.
 
 use crate::document::element::{DocElement, DocKind};
-use crate::document::format::{load, save};
+use crate::document::format::load;
 use crate::document::ids::Document;
+use crate::document::tests::format_support::written;
 use crate::document::tests::format_support::{kids, node, same_document};
 use crate::document::tests::format_text::{map_with, node_of};
 use crate::document::values::{ColorRef, PaletteId, VarId};
@@ -155,10 +156,10 @@ fn test_a_descending_file_saves_in_ascending_order() {
     // writes the order the document holds, and that order reloads to
     // the same document.
     let doc = load(&descending_map()).unwrap();
-    let saved = save(&doc);
+    let saved = written(&doc);
     let again = load(&saved).unwrap();
     same_document(&doc, &again).unwrap();
-    assert_eq!(save(&again), saved);
+    assert_eq!(written(&again), saved);
     assert!(saved.find("\"s1\"").unwrap() < saved.find("\"s2\"").unwrap());
 }
 
@@ -215,7 +216,7 @@ fn test_indices_follow_sorted_names_not_the_order_of_the_file() {
     ] {
         let shuffled = load(&text(variants, &order)).unwrap();
         same_document(&reference, &shuffled).expect("key order in the file changes nothing");
-        assert_eq!(save(&reference), save(&shuffled));
+        assert_eq!(written(&reference), written(&shuffled));
     }
     // And the indices are what the names sort to.
     assert_eq!(reference.theme().variables, ["accent", "bg", "fg"]);
@@ -262,7 +263,7 @@ fn test_an_index_never_reaches_the_file() {
     builder.node_with(root, data);
     let doc = builder.build().unwrap();
 
-    let text = save(&doc);
+    let text = written(&doc);
     assert!(
         text.contains(r#""fill": "var(zed)""#),
         "a variable is written by name:\n{text}"

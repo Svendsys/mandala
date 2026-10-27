@@ -5,7 +5,8 @@
 //! spellings that read to one value.
 
 use crate::document::element::{DocElement, DocKind};
-use crate::document::format::{load, save};
+use crate::document::format::load;
+use crate::document::tests::format_support::written;
 use crate::document::tests::format_support::{kid, kids, node};
 use crate::document::tests::format_text::{load_node, map_of, map_with, node_of};
 use crate::document::values::{
@@ -55,7 +56,7 @@ fn test_a_path_without_anchors_or_visibility_reads_as_auto_and_drawn() {
         r#","links":[{"to":2,"kind":"line","anchors":["auto","auto"],"visible":true}],"children":[{"id":2,"position":[0,0]}]"#,
     ))
     .unwrap();
-    assert_eq!(save(&explicit), save(&doc));
+    assert_eq!(written(&explicit), written(&doc));
 }
 
 #[test]
@@ -90,7 +91,7 @@ fn test_a_palette_group_may_have_no_title() {
     assert_eq!(groups[0].text, PlainColor::Rgba(Rgba::opaque(3, 3, 3)));
     assert_eq!(groups[1].title, Some(PlainColor::Var(VarId(1))));
     // Saved, the untitled group has no `title` key.
-    let text = save(&doc);
+    let text = written(&doc);
     assert_eq!(text.matches("\"title\"").count(), 1, "{text}");
 }
 
@@ -142,7 +143,7 @@ fn test_the_weight_spellings_read_to_one_value_and_save_as_one() {
             Some(Weight::new(weight).unwrap()),
             "{written}"
         );
-        let saved = save(&doc);
+        let saved = crate::document::tests::format_support::written(&doc);
         let canonical = match weight {
             400 => "\"normal\"".to_string(),
             700 => "\"bold\"".to_string(),
@@ -181,11 +182,11 @@ fn test_the_start_spellings_read_to_one_value_and_save_as_one() {
         assert_eq!(start(&by_name), start(&by_point), "{named}");
         assert!(start(&by_name).is_some());
         assert_eq!(
-            save(&by_point),
-            save(&by_name),
+            written(&by_point),
+            written(&by_name),
             "{named}: the name is what is written"
         );
-        assert!(save(&by_name).contains(&format!(r#""start": "{named}""#)));
+        assert!(written(&by_name).contains(&format!(r#""start": "{named}""#)));
     }
     // A point no name matches is written as a point.
     let doc = load_node(r#","frame":{"start":{"edge":"top","at":0.75}}"#).unwrap();
@@ -198,7 +199,7 @@ fn test_the_start_spellings_read_to_one_value_and_save_as_one() {
             at: 0.75
         })
     );
-    assert!(save(&doc).contains("\"at\": 0.75"));
+    assert!(written(&doc).contains("\"at\": 0.75"));
 }
 
 #[test]
@@ -232,7 +233,7 @@ fn test_the_fit_spellings_read_and_the_bare_fit_means_the_built_in_bounds() {
     );
     // The built-in bounds are written as the bare form.
     let doc = load_node(r#","frame":{"fit":{"fit":{"min":0.5,"max":2}}}"#).unwrap();
-    assert!(save(&doc).contains("\"fit\": \"fit\""));
+    assert!(written(&doc).contains("\"fit\": \"fit\""));
 }
 
 #[test]
@@ -264,7 +265,7 @@ fn test_a_color_reads_in_every_spelling_the_schema_lists() {
     // lowercase and with no alpha digits when opaque, and the loader
     // accepts nothing else (`format_reject_tests` holds the refusals).
     let doc = load_node(r##","fill":"#abcdef","color":"#10203040""##).unwrap();
-    let text = save(&doc);
+    let text = written(&doc);
     assert!(text.contains("\"fill\": \"#abcdef\""), "{text}");
     assert!(text.contains("\"color\": \"#10203040\""), "{text}");
 }
@@ -276,7 +277,7 @@ fn test_a_font_reads_by_family_name_and_saves_by_family_name() {
     assert_eq!(data.style.text.font, Some(AppFont::PublicPixel));
     let DocElement::Section(section) = kid(&doc, one, DocKind::Section, 0).1 else { panic!("a section") };
     assert_eq!(section.align, Some(Align::Left));
-    assert!(save(&doc).contains("\"font\": \"Public Pixel\""));
+    assert!(written(&doc).contains("\"font\": \"Public Pixel\""));
 }
 
 #[test]

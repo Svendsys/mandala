@@ -35,7 +35,10 @@ impl Builder {
         }
         self.counts(dto)?;
         let root = self.tree.root();
-        let theme = self.key("theme", |b| b.theme(&dto.theme))?;
+        let theme = match &dto.theme {
+            Some(theme) => self.key("theme", |b| b.theme(theme))?,
+            None => ThemeData::default(),
+        };
         self.element(root, DocElement::Theme(theme), |_, _| Ok(()))?;
         self.key("palettes", |b| b.palettes(root, &dto.palettes))?;
         let definitions = self.definitions(dto)?;
@@ -75,7 +78,7 @@ impl Builder {
         check(&[Seg::Key("verbs")], dto.verbs.len(), bounds::MAX_VERBS)?;
         check(
             &[Seg::Key("theme"), Seg::Key("variants")],
-            dto.theme.variants.0.len(),
+            dto.theme.as_ref().map_or(0, |theme| theme.variants.0.len()),
             bounds::MAX_THEME_VARIANTS,
         )
     }

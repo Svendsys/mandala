@@ -10,23 +10,27 @@
 //! of the arena (a row is kept sorted by kind and channel); numbers are
 //! serde_json's shortest round-trip form of the stored `f32`. A key
 //! equal to its inherited `None`, a default value, an empty array, a
-//! child node's default connector and a portal link's default ends are
-//! left out. Nothing derived is written: no fitted size, no depth, no
-//! resolved color.
+//! child node's default connector, a portal link's default ends and an
+//! empty theme are left out. Nothing derived is written: no fitted size,
+//! no depth, no resolved color.
 //!
 //! **Names, never indices.** A theme variable, a palette, a font and a
 //! verb are written by name, from the document's own tables, so a saved
 //! file does not depend on how the indices were assigned.
 //!
-//! **A value the file cannot spell is left out, and logged.** The
-//! document can hold, through the test builder or a mutation that does
-//! not check, a few things the file has no spelling for: a size in the
+//! **Nothing is dropped, and nothing is written that does not load.**
+//! The document can hold, through the test builder or a mutation that
+//! does not check, things the file has no spelling for: a size in the
 //! wrong unit (points on a ring, a fraction on a section), the fallback
 //! face as an explicit font, an index into a table that has no such
-//! entry. Writing any of them would give a file that loads as something
-//! else (a fraction `0.5` read back as `0.5` points would retarget
-//! silently), so the saver writes nothing and warns, and the mutations
-//! that make them (V1-B3) refuse them.
+//! entry, two palettes of one name, a portal link with one end. Writing
+//! any of them would give a file that does not load, or loads as
+//! something else (a fraction `0.5` read back as `0.5` points would
+//! retarget silently). So the saver refuses with a [`SaveError`] naming
+//! the path the value would have in the file, and writes nothing. After
+//! the walk, the DTOs it built are built into a document by the loader's
+//! own builder, so a number outside its bound is refused here, at the
+//! same path, as the loader would refuse it.
 
 use crate::document::defaults::{FIT_MAX, FIT_MIN};
 use crate::document::element::{
@@ -39,6 +43,7 @@ use crate::document::format::dto::{
     NodeDto, OnDto, PaletteGroupDto, PathDto, PortalEndDefaultsDto, PortalEndDto, PresentationDto,
     RingDefaultsDto, RingDto, SectionDto, SpanDto, TextDefaultsDto, ThemeDto, VerbDto, ZoomDto,
 };
+use crate::document::format::error::{render_path, SaveError, SaveErrorKind, Seg};
 use crate::document::format::spelling::{
     ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, Named, PaletteFieldDto, RectangleDto,
     ShapeDto, StartDto, StartPointDto, WeightDto,
@@ -51,7 +56,10 @@ use crate::document::values::{
 };
 use crate::font::fonts::{family_name_of, AppFont};
 use indextree::NodeId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+/// What every step of the saver returns.
+type SaveResult<T> = Result<T, SaveError>;
 
 /// The five text-style keys of one element.
 struct TextOut {
@@ -73,71 +81,143 @@ struct Saver<'a> {
     verbs: &'a [VerbDef],
     /// The family name of each face already looked up.
     fonts: FxHashMap<AppFont, Option<&'static str>>,
+    /// Where in the file the saver is, as the loader would say it.
+    path: Vec<Seg>,
 }
 
-/// The DTOs of `doc`. O(nodes + elements): one walk.
-pub(super) fn dtos_of(doc: &Document) -> MapDto {
+/// The DTOs of `doc`, or the first thing in it the file cannot spell.
+/// O(nodes + elements): one walk.
+pub(super) fn dtos_of(doc: &Document) -> SaveResult<MapDto> {
     let mut saver = Saver {
         doc,
         vars: &doc.theme().variables,
         palettes: doc.palettes().map(|(_, palette)| palette.name.as_str()).collect(),
         verbs: &doc.definitions().verbs,
         fonts: FxHashMap::default(),
+        path: Vec::new(),
     };
     saver.map()
 }
 
 impl<'a> Saver<'a> {
+    /// An error of `kind` at the current path.
+    fn error(&self, kind: SaveErrorKind) -> SaveError {
+        SaveError {
+            path: render_path(&self.path),
+            kind,
+        }
+    }
+
+    /// An error of `kind` at the current path and then `key`.
+    fn error_at(&self, key: &'static str, kind: SaveErrorKind) -> SaveError {
+        let mut path = self.path.clone();
+        path.push(Seg::Key(key));
+        SaveError {
+            path: render_path(&path),
+            kind,
+        }
+    }
+
+    /// Run `f` one segment deeper.
+    fn at<T>(&mut self, seg: Seg, f: impl FnOnce(&mut Self) -> SaveResult<T>) -> SaveResult<T> {
+        self.path.push(seg);
+        let out = f(self);
+        self.path.pop();
+        out
+    }
+
+    /// Run `f` inside the key `key`.
+    fn key<T>(&mut self, key: &'static str, f: impl FnOnce(&mut Self) -> SaveResult<T>) -> SaveResult<T> {
+        self.at(Seg::Key(key), f)
+    }
+
     /// The whole file.
-    fn map(&mut self) -> MapDto {
+    fn map(&mut self) -> SaveResult<MapDto> {
         let doc = self.doc;
         let name = match doc.get(doc.root()) {
             Some(DocElement::Map(map)) => map.name.clone(),
             _ => String::new(),
         };
         let definitions = doc.definitions();
-        let defaults = self.defaults(doc.defaults());
-        MapDto {
+        let theme = self.theme()?;
+        let palettes = self.palettes()?;
+        let defaults = self.key("defaults", |s| s.defaults(doc.defaults()))?;
+        let edits = self.definitions("edits", definitions.edits.iter().map(|d| (&d.id, &d.name)))?;
+        let presentations = self.definitions(
+            "presentations",
+            definitions.presentations.iter().map(|d| (&d.id, &d.name)),
+        )?;
+        let verbs = self.definitions("verbs", definitions.verbs.iter().map(|d| (&d.id, &d.name)))?;
+        let nodes = self.key("nodes", |s| s.nodes(doc.root()))?;
+        Ok(MapDto {
             format: 1,
             name,
-            theme: self.theme(),
-            palettes: self.palettes(),
+            theme,
+            palettes,
             defaults,
-            edits: definitions
-                .edits
-                .iter()
-                .map(|d| EditDto {
-                    id: d.id.clone(),
-                    name: d.name.clone(),
-                })
+            edits: edits.into_iter().map(|(id, name)| EditDto { id, name }).collect(),
+            presentations: presentations
+                .into_iter()
+                .map(|(id, name)| PresentationDto { id, name })
                 .collect(),
-            presentations: definitions
-                .presentations
-                .iter()
-                .map(|d| PresentationDto {
-                    id: d.id.clone(),
-                    name: d.name.clone(),
-                })
-                .collect(),
-            verbs: definitions
-                .verbs
-                .iter()
-                .map(|d| VerbDto {
-                    id: d.id.clone(),
-                    name: d.name.clone(),
-                })
-                .collect(),
-            nodes: self.nodes(doc.root()),
-        }
+            verbs: verbs.into_iter().map(|(id, name)| VerbDto { id, name }).collect(),
+            nodes,
+        })
     }
 
-    /// The theme: variants and variables in ascending name order.
-    fn theme(&self) -> ThemeDto {
+    /// The entries of `edits`, `presentations` or `verbs` as (id, name)
+    /// pairs, refusing an id that two entries share.
+    fn definitions<'d>(
+        &mut self,
+        key: &'static str,
+        entries: impl Iterator<Item = (&'d String, &'d String)>,
+    ) -> SaveResult<Vec<(String, String)>> {
+        let mut seen: FxHashSet<&str> = FxHashSet::default();
+        let mut out = Vec::new();
+        self.key(key, |s| {
+            for (index, (id, name)) in entries.enumerate() {
+                if !seen.insert(id.as_str()) {
+                    return s.at(Seg::Index(index), |s| {
+                        Err(s.error_at("id", SaveErrorKind::DuplicateDefinition { id: id.clone() }))
+                    });
+                }
+                out.push((id.clone(), name.clone()));
+            }
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    /// The theme: variants and variables in ascending name order, or
+    /// `None` for the empty theme, which has exactly one spelling: no
+    /// `theme` key.
+    fn theme(&mut self) -> SaveResult<Option<ThemeDto>> {
         let theme = self.doc.theme();
-        let mut variants: Vec<(String, Named<HexDto>)> = theme
-            .variants
-            .iter()
-            .map(|variant| {
+        if theme.variants.is_empty() {
+            return if theme.variables.is_empty() && theme.active == 0 {
+                Ok(None)
+            } else {
+                self.key("theme", |s| {
+                    Err(s.error(SaveErrorKind::ThemeWithoutVariants {
+                        variables: theme.variables.len(),
+                        active: theme.active,
+                    }))
+                })
+            };
+        }
+        self.key("theme", |s| {
+            let mut variants: Vec<(String, Named<HexDto>)> = Vec::with_capacity(theme.variants.len());
+            for variant in &theme.variants {
+                if variant.values.len() != theme.variables.len() {
+                    return s.key("variants", |s| {
+                        s.at(Seg::Name(variant.name.clone()), |s| {
+                            Err(s.error(SaveErrorKind::VariantLength {
+                                values: variant.values.len(),
+                                variables: theme.variables.len(),
+                            }))
+                        })
+                    });
+                }
                 let mut values: Vec<(String, HexDto)> = theme
                     .variables
                     .iter()
@@ -145,86 +225,122 @@ impl<'a> Saver<'a> {
                     .map(|(name, rgba)| (name.clone(), HexDto(rgba.0)))
                     .collect();
                 values.sort_by(|a, b| a.0.cmp(&b.0));
-                (variant.name.clone(), Named(values))
-            })
-            .collect();
-        variants.sort_by(|a, b| a.0.cmp(&b.0));
-        let active = match theme.variants.get(usize::from(theme.active)) {
-            Some(variant) => variant.name.clone(),
-            None => {
-                log::warn!("save: the theme's active variant is not one of its variants; writing none");
-                String::new()
+                if let Some(pair) = values.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+                    let name = pair[1].0.clone();
+                    return s.key("variants", |s| {
+                        s.at(Seg::Name(variant.name.clone()), |s| {
+                            s.at(Seg::Name(name.clone()), |s| {
+                                Err(s.error(SaveErrorKind::DuplicateName { name }))
+                            })
+                        })
+                    });
+                }
+                variants.push((variant.name.clone(), Named(values)));
             }
-        };
-        ThemeDto {
-            active,
-            variants: Named(variants),
-        }
+            let active = match theme.variants.get(usize::from(theme.active)) {
+                Some(variant) => variant.name.clone(),
+                None => {
+                    return Err(s.error_at(
+                        "active",
+                        SaveErrorKind::ActiveNotAVariant {
+                            active: theme.active,
+                            variants: theme.variants.len(),
+                        },
+                    ))
+                }
+            };
+            variants.sort_by(|a, b| a.0.cmp(&b.0));
+            if let Some(pair) = variants.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+                let name = pair[1].0.clone();
+                return s.key("variants", |s| {
+                    s.at(Seg::Name(name.clone()), |s| {
+                        Err(s.error(SaveErrorKind::DuplicateName { name }))
+                    })
+                });
+            }
+            Ok(Some(ThemeDto {
+                active,
+                variants: Named(variants),
+            }))
+        })
     }
 
     /// The palettes, by name.
-    fn palettes(&self) -> Named<Vec<PaletteGroupDto>> {
-        let mut palettes: Vec<(String, Vec<PaletteGroupDto>)> = self
-            .doc
-            .palettes()
-            .map(|(_, palette)| {
-                let groups = palette
-                    .groups
-                    .iter()
-                    .map(|group| PaletteGroupDto {
-                        fill: self.plain(group.fill),
-                        frame: self.plain(group.frame),
-                        text: self.plain(group.text),
-                        title: group.title.map(|title| self.plain(title)),
-                    })
-                    .collect();
-                (palette.name.clone(), groups)
-            })
-            .collect();
-        palettes.sort_by(|a, b| a.0.cmp(&b.0));
-        Named(palettes)
+    fn palettes(&mut self) -> SaveResult<Named<Vec<PaletteGroupDto>>> {
+        let doc = self.doc;
+        let mut palettes: Vec<(String, Vec<PaletteGroupDto>)> = Vec::new();
+        self.key("palettes", |s| {
+            for (_, palette) in doc.palettes() {
+                let groups = s.at(Seg::Name(palette.name.clone()), |s| {
+                    let mut groups = Vec::with_capacity(palette.groups.len());
+                    for (index, group) in palette.groups.iter().enumerate() {
+                        groups.push(s.at(Seg::Index(index), |s| {
+                            Ok(PaletteGroupDto {
+                                fill: s.plain("fill", group.fill)?,
+                                frame: s.plain("frame", group.frame)?,
+                                text: s.plain("text", group.text)?,
+                                title: group.title.map(|title| s.plain("title", title)).transpose()?,
+                            })
+                        })?);
+                    }
+                    Ok(groups)
+                })?;
+                palettes.push((palette.name.clone(), groups));
+            }
+            palettes.sort_by(|a, b| a.0.cmp(&b.0));
+            if let Some(pair) = palettes.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+                let name = pair[1].0.clone();
+                return s.at(Seg::Name(name.clone()), |s| {
+                    Err(s.error(SaveErrorKind::DuplicateName { name }))
+                });
+            }
+            Ok(())
+        })?;
+        Ok(Named(palettes))
     }
 
     /// A palette color. A palette group has all of its colors, so one
-    /// naming a variable the theme lacks is written as `var()`, which
-    /// the loader refuses by name: the document that holds one is not
-    /// valid, and nothing here can say what it meant.
-    fn plain(&self, color: PlainColor) -> ColorDto {
-        match color {
+    /// naming a variable the theme lacks has no spelling.
+    fn plain(&self, key: &'static str, color: PlainColor) -> SaveResult<ColorDto> {
+        Ok(match color {
             PlainColor::Rgba(rgba) => ColorDto::Hex(HexDto(rgba.0)),
-            PlainColor::Var(var) => ColorDto::Var(self.var_name(var.0).unwrap_or_default()),
-        }
+            PlainColor::Var(var) => ColorDto::Var(self.var_name(key, var.0)?),
+        })
     }
 
-    /// A theme variable's name, or `None` (and a warning) when the
-    /// theme defines no such variable.
-    fn var_name(&self, index: u16) -> Option<String> {
-        let name = self.vars.get(usize::from(index)).cloned();
-        if name.is_none() {
-            log::warn!("save: a color names theme variable {index}, which the theme does not define");
-        }
-        name
+    /// A theme variable's name, or an error at `key` when the theme
+    /// defines no such variable.
+    fn var_name(&self, key: &'static str, index: u16) -> SaveResult<String> {
+        self.vars
+            .get(usize::from(index))
+            .cloned()
+            .ok_or_else(|| self.error_at(key, SaveErrorKind::UnknownVariable { index }))
     }
 
-    /// A color as the file spells it; `None` for an unset color and for
-    /// one naming a variable the theme lacks.
-    fn color(&self, color: Option<ColorRef>) -> Option<ColorDto> {
-        Some(match color? {
+    /// A color as the file spells it; `None` for an unset color.
+    fn color(&self, key: &'static str, color: Option<ColorRef>) -> SaveResult<Option<ColorDto>> {
+        let Some(color) = color else {
+            return Ok(None);
+        };
+        Ok(Some(match color {
             ColorRef::Rgba(rgba) => ColorDto::Hex(HexDto(rgba.0)),
-            ColorRef::Var(var) => ColorDto::Var(self.var_name(var.0)?),
+            ColorRef::Var(var) => ColorDto::Var(self.var_name(key, var.0)?),
             ColorRef::Palette(field) => ColorDto::Palette(match field {
                 PaletteField::Fill => PaletteFieldDto::Fill,
                 PaletteField::Frame => PaletteFieldDto::Frame,
                 PaletteField::Text => PaletteFieldDto::Text,
                 PaletteField::Title => PaletteFieldDto::Title,
             }),
-        })
+        }))
     }
 
-    /// A font's family name, or `None` for the fallback face (which has
-    /// no name) and for a face this build cannot name.
-    fn font(&mut self, font: Option<AppFont>) -> Option<String> {
-        let font = font?;
+    /// A font's family name. The fallback face has none, and neither has
+    /// a face this build cannot name: the file could not say which it
+    /// was.
+    fn font(&mut self, font: Option<AppFont>) -> SaveResult<Option<String>> {
+        let Some(font) = font else {
+            return Ok(None);
+        };
         let name = *self.fonts.entry(font).or_insert_with(|| {
             if font == AppFont::Any {
                 None
@@ -232,33 +348,35 @@ impl<'a> Saver<'a> {
                 family_name_of(font)
             }
         });
-        if name.is_none() {
-            log::warn!("save: a font ({font:?}) has no family name a file can write; leaving it out");
-        }
-        name.map(str::to_string)
+        name.map(|name| Some(name.to_string()))
+            .ok_or_else(|| self.error_at("font", SaveErrorKind::NoFamilyName))
     }
 
-    /// A size in the unit this position takes.
-    fn size(size: Option<FontSize>, unit: SizeUnit) -> Option<f32> {
-        match (size?, unit) {
-            (FontSize::Pt(points), SizeUnit::Pt) => Some(points),
-            (FontSize::Rel(fraction), SizeUnit::Rel) => Some(fraction),
-            (other, _) => {
-                log::warn!("save: the size {other:?} is in the wrong unit for where it sits; leaving it out");
-                None
+    /// A size in the unit this position takes; a size in the other unit
+    /// would load as another size.
+    fn size(&self, size: Option<FontSize>, unit: SizeUnit) -> SaveResult<Option<f32>> {
+        match (size, unit) {
+            (None, _) => Ok(None),
+            (Some(FontSize::Pt(points)), SizeUnit::Pt) => Ok(Some(points)),
+            (Some(FontSize::Rel(fraction)), SizeUnit::Rel) => Ok(Some(fraction)),
+            (Some(FontSize::Pt(_)), SizeUnit::Rel) => {
+                Err(self.error_at("size", SaveErrorKind::WrongUnit { found_points: true }))
+            }
+            (Some(FontSize::Rel(_)), SizeUnit::Pt) => {
+                Err(self.error_at("size", SaveErrorKind::WrongUnit { found_points: false }))
             }
         }
     }
 
     /// The five text-style keys.
-    fn text(&mut self, style: &TextStyle, unit: SizeUnit) -> TextOut {
-        TextOut {
-            font: self.font(style.font),
-            size: Self::size(style.size, unit),
-            color: self.color(style.color),
+    fn text(&mut self, style: &TextStyle, unit: SizeUnit) -> SaveResult<TextOut> {
+        Ok(TextOut {
+            font: self.font(style.font)?,
+            size: self.size(style.size, unit)?,
+            color: self.color("color", style.color)?,
             weight: style.weight.map(|weight| WeightDto(weight.get())),
             italic: style.italic,
-        }
+        })
     }
 
     /// A fit mode as the file spells it.
@@ -287,13 +405,13 @@ impl<'a> Saver<'a> {
         })
     }
 
-    /// A verb's id.
-    fn verb_id(&self, index: u16) -> Option<String> {
-        let id = self.verbs.get(usize::from(index)).map(|verb| verb.id.clone());
-        if id.is_none() {
-            log::warn!("save: a trigger names verb {index}, which the map does not define; leaving it out");
-        }
-        id
+    /// A verb's id, or an error at `key` when the map defines no such
+    /// verb.
+    fn verb_id(&self, key: &'static str, index: u16) -> SaveResult<String> {
+        self.verbs
+            .get(usize::from(index))
+            .map(|verb| verb.id.clone())
+            .ok_or_else(|| self.error_at(key, SaveErrorKind::UnknownVerb { index }))
     }
 
     /// The element at `id`.
@@ -310,64 +428,88 @@ impl<'a> Saver<'a> {
             .collect()
     }
 
-    /// The child nodes of `parent`, with everything under them.
-    fn nodes(&mut self, parent: NodeId) -> Vec<NodeDto> {
-        self.children(parent)
-            .into_iter()
-            .filter(|(_, element)| element.kind() == DocKind::Node)
-            .filter_map(|(id, _)| self.node(id))
-            .collect()
+    /// The child nodes of `parent`, with everything under them. The
+    /// current path is the array they sit in.
+    fn nodes(&mut self, parent: NodeId) -> SaveResult<Vec<NodeDto>> {
+        let mut out = Vec::new();
+        for (id, element) in self.children(parent) {
+            if element.kind() != DocKind::Node {
+                continue;
+            }
+            let index = out.len();
+            out.push(self.at(Seg::Index(index), |s| s.node(id))?);
+        }
+        Ok(out)
     }
 
     /// One node.
-    fn node(&mut self, id: NodeId) -> Option<NodeDto> {
+    fn node(&mut self, id: NodeId) -> SaveResult<NodeDto> {
         let Some(DocElement::Node(node)) = self.element(id) else {
-            return None;
+            return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let text = self.text(&node.style.text, SizeUnit::Pt);
-        let on = OnDto {
-            click: node.on.click.and_then(|verb| self.verb_id(verb.0)),
-            hover: node.on.hover.and_then(|verb| self.verb_id(verb.0)),
+        let text = self.text(&node.style.text, SizeUnit::Pt)?;
+        let on = self.key("on", |s| {
+            let on = OnDto {
+                click: node.on.click.map(|verb| s.verb_id("click", verb.0)).transpose()?,
+                hover: node.on.hover.map(|verb| s.verb_id("hover", verb.0)).transpose()?,
+            };
+            Ok(if on.click.is_some() || on.hover.is_some() {
+                Some(on)
+            } else {
+                None
+            })
+        })?;
+        let fill = self.color("fill", node.style.fill)?;
+        let palette = match node.palette {
+            Some(palette) => Some(
+                self.palettes
+                    .get(usize::from(palette.0))
+                    .map(|name| (*name).to_string())
+                    .ok_or_else(|| {
+                        self.error_at("palette", SaveErrorKind::UnknownPalette { index: palette.0 })
+                    })?,
+            ),
+            None => None,
         };
         // What lies under the node, in the order of the kinds.
         let (mut sections, mut frame, mut connector, mut links, mut children) =
             (Vec::new(), None, None, Vec::new(), Vec::new());
         for (child, element) in self.children(id) {
             match element {
-                DocElement::Section(_) => sections.extend(self.section(child)),
-                DocElement::Frame(_) => frame = self.frame(child),
-                DocElement::Connector(_) => connector = self.connector(child),
-                DocElement::Link(_) => links.extend(self.link(child)),
-                DocElement::Node(_) => children.extend(self.node(child)),
+                DocElement::Section(_) => {
+                    let index = sections.len();
+                    let section = self.key("sections", |s| s.at(Seg::Index(index), |s| s.section(child)))?;
+                    sections.push(section);
+                }
+                DocElement::Frame(_) => frame = Some(self.key("frame", |s| s.frame(child))?),
+                DocElement::Connector(_) => connector = self.key("connector", |s| s.connector(child))?,
+                DocElement::Link(_) => {
+                    let index = links.len();
+                    let link = self.key("links", |s| s.at(Seg::Index(index), |s| s.link(id, child)))?;
+                    links.push(link);
+                }
+                DocElement::Node(_) => {
+                    let index = children.len();
+                    let node = self.key("children", |s| s.at(Seg::Index(index), |s| s.node(child)))?;
+                    children.push(node);
+                }
                 _ => {}
             }
         }
-        Some(NodeDto {
+        Ok(NodeDto {
             id: node.ident.0,
             channel: channel_of(node.channel),
             position: node.position.to_array(),
             min_size: node.min_size.map(|size| size.to_array()),
             shape: node.style.shape.map(shape),
-            fill: self.color(node.style.fill),
+            fill,
             fill_fade: node.style.fill_fade,
-            palette: node.palette.and_then(|palette| {
-                let name = self
-                    .palettes
-                    .get(usize::from(palette.0))
-                    .map(|name| (*name).to_string());
-                if name.is_none() {
-                    log::warn!(
-                        "save: a node names palette {}, which the map does not define",
-                        palette.0
-                    );
-                }
-                name
-            }),
+            palette,
             zoom: Self::zoom(node.zoom),
             folded: node.folded,
             hidden: node.hidden,
             opacity: node.opacity,
-            on: (on.click.is_some() || on.hover.is_some()).then_some(on),
+            on,
             font: text.font,
             size: text.size,
             color: text.color,
@@ -382,12 +524,12 @@ impl<'a> Saver<'a> {
     }
 
     /// One section.
-    fn section(&mut self, id: NodeId) -> Option<SectionDto> {
+    fn section(&mut self, id: NodeId) -> SaveResult<SectionDto> {
         let Some(DocElement::Section(section)) = self.element(id) else {
-            return None;
+            return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let text = self.text(&section.text, SizeUnit::Pt);
-        Some(SectionDto {
+        let text = self.text(&section.text, SizeUnit::Pt)?;
+        Ok(SectionDto {
             channel: channel_of(section.channel),
             offset: section.offset.to_array(),
             min_size: section.min_size.map(|size| size.to_array()),
@@ -401,62 +543,77 @@ impl<'a> Saver<'a> {
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-            spans: self.spans(id, false),
+            spans: self.spans(id, false)?,
         })
     }
 
-    /// The spans under `parent`. A span in a ring has no size of its
-    /// own to write.
-    fn spans(&mut self, parent: NodeId, in_ring: bool) -> Vec<SpanDto> {
+    /// The spans under `parent`, at the current path's `spans`. A span in
+    /// a ring has no size of its own: the ring sizes its text, and a size
+    /// on the span would be one the file cannot say.
+    fn spans(&mut self, parent: NodeId, in_ring: bool) -> SaveResult<Vec<SpanDto>> {
         let mut out = Vec::new();
         for (_, element) in self.children(parent) {
             let DocElement::Span(span) = element else {
                 continue;
             };
-            let mut text = self.text(&span.style, SizeUnit::Pt);
-            if in_ring {
-                text.size = None;
-            }
-            out.push(SpanDto {
-                text: span.text.clone(),
-                font: text.font,
-                size: text.size,
-                color: text.color,
-                weight: text.weight,
-                italic: text.italic,
-                link: span.link.as_ref().and_then(|link| match link {
-                    LinkTarget::Url(url) => Some(LinkTargetDto::Url(url.clone())),
-                    LinkTarget::Verb(verb) => self.verb_id(verb.0).map(LinkTargetDto::Verb),
-                }),
-            });
+            let index = out.len();
+            let dto = self.key("spans", |s| {
+                s.at(Seg::Index(index), |s| {
+                    if in_ring && span.style.size.is_some() {
+                        return Err(s.error_at("size", SaveErrorKind::SizeInRing));
+                    }
+                    let text = s.text(&span.style, SizeUnit::Pt)?;
+                    let link = match &span.link {
+                        Some(LinkTarget::Url(url)) => Some(LinkTargetDto::Url(url.clone())),
+                        Some(LinkTarget::Verb(verb)) => Some(LinkTargetDto::Verb(s.verb_id("link", verb.0)?)),
+                        None => None,
+                    };
+                    Ok(SpanDto {
+                        text: span.text.clone(),
+                        font: text.font,
+                        size: text.size,
+                        color: text.color,
+                        weight: text.weight,
+                        italic: text.italic,
+                        link,
+                    })
+                })
+            })?;
+            out.push(dto);
         }
-        out
+        Ok(out)
     }
 
     /// A frame and its rings.
-    fn frame(&mut self, id: NodeId) -> Option<FrameDto> {
+    fn frame(&mut self, id: NodeId) -> SaveResult<FrameDto> {
         let Some(DocElement::Frame(frame)) = self.element(id) else {
-            return None;
+            return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let style = self.frame_style(&frame.style);
+        let style = self.frame_style(&frame.style)?;
         let mut rings = Vec::new();
         for (ring_id, element) in self.children(id) {
             let DocElement::Ring(ring) = element else {
                 continue;
             };
-            let text = self.text(&ring.style.text, SizeUnit::Rel);
-            rings.push(RingDto {
-                channel: channel_of(ring.channel),
-                fit: Self::fit(&ring.style.fit),
-                font: text.font,
-                size: text.size,
-                color: text.color,
-                weight: text.weight,
-                italic: text.italic,
-                spans: self.spans(ring_id, true),
-            });
+            let index = rings.len();
+            let dto = self.key("rings", |s| {
+                s.at(Seg::Index(index), |s| {
+                    let text = s.text(&ring.style.text, SizeUnit::Rel)?;
+                    Ok(RingDto {
+                        channel: channel_of(ring.channel),
+                        fit: Self::fit(&ring.style.fit),
+                        font: text.font,
+                        size: text.size,
+                        color: text.color,
+                        weight: text.weight,
+                        italic: text.italic,
+                        spans: s.spans(ring_id, true)?,
+                    })
+                })
+            })?;
+            rings.push(dto);
         }
-        Some(FrameDto {
+        Ok(FrameDto {
             visible: style.visible,
             start: style.start,
             direction: style.direction,
@@ -473,8 +630,8 @@ impl<'a> Saver<'a> {
     }
 
     /// A frame's style keys.
-    fn frame_style(&mut self, style: &FrameStyle) -> FrameOut {
-        FrameOut {
+    fn frame_style(&mut self, style: &FrameStyle) -> SaveResult<FrameOut> {
+        Ok(FrameOut {
             visible: style.visible,
             start: style.start.map(|start| {
                 StartDto(StartPointDto {
@@ -494,23 +651,23 @@ impl<'a> Saver<'a> {
             fit: Self::fit(&style.fit),
             gap: style.gap,
             inset: style.inset,
-            text: self.text(&style.text, SizeUnit::Rel),
-        }
+            text: self.text(&style.text, SizeUnit::Rel)?,
+        })
     }
 
     /// The connector of a node, or `None` when the file leaves it out:
     /// a connector with every field inherited and nothing under it.
-    fn connector(&mut self, id: NodeId) -> Option<PathDto> {
+    fn connector(&mut self, id: NodeId) -> SaveResult<Option<PathDto>> {
         let Some(DocElement::Connector(connector)) = self.element(id) else {
-            return None;
+            return Err(self.error(SaveErrorKind::WrongElement));
         };
         let children = self.children(id);
         if connector.path == default_path() && children.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let flow = self.flow(&connector.path.flow);
-        let (spans, cap_start, cap_end, label) = self.on_path(id);
-        Some(PathDto {
+        let flow = self.flow(&connector.path.flow)?;
+        let (spans, cap_start, cap_end, label) = self.on_path(id)?;
+        Ok(Some(PathDto {
             fit: flow.fit,
             spacing: flow.spacing,
             size: flow.size,
@@ -524,55 +681,63 @@ impl<'a> Saver<'a> {
             cap_start,
             cap_end,
             label,
-        })
+        }))
     }
 
     /// A path's style keys.
-    fn flow(&mut self, flow: &FlowStyle) -> FlowOut {
-        FlowOut {
+    fn flow(&mut self, flow: &FlowStyle) -> SaveResult<FlowOut> {
+        Ok(FlowOut {
             fit: Self::fit(&flow.fit),
             spacing: flow.spacing,
             size: flow.size,
-            color: self.color(flow.color),
+            color: self.color("color", flow.color)?,
             content: flow.content.clone(),
-        }
+        })
     }
 
     /// What lies on a path: its spans, caps and label.
-    fn on_path(&mut self, id: NodeId) -> (Vec<SpanDto>, Option<CapDto>, Option<CapDto>, Option<LabelDto>) {
-        let spans = self.spans(id, false);
+    #[allow(clippy::type_complexity)]
+    fn on_path(
+        &mut self,
+        id: NodeId,
+    ) -> SaveResult<(Vec<SpanDto>, Option<CapDto>, Option<CapDto>, Option<LabelDto>)> {
+        let spans = self.spans(id, false)?;
         let (mut cap_start, mut cap_end, mut label) = (None, None, None);
         for (child, element) in self.children(id) {
             match element {
-                DocElement::CapStart(cap) => cap_start = Some(self.cap(child, cap)),
-                DocElement::CapEnd(cap) => cap_end = Some(self.cap(child, cap)),
-                DocElement::Label(_) => label = self.label(child),
+                DocElement::CapStart(cap) => {
+                    cap_start = Some(self.key("cap_start", |s| s.cap(child, cap))?);
+                }
+                DocElement::CapEnd(cap) => {
+                    cap_end = Some(self.key("cap_end", |s| s.cap(child, cap))?);
+                }
+                DocElement::Label(_) => label = Some(self.key("label", |s| s.label(child))?),
                 _ => {}
             }
         }
-        (spans, cap_start, cap_end, label)
+        Ok((spans, cap_start, cap_end, label))
     }
 
     /// A cap.
-    fn cap(&mut self, id: NodeId, cap: &CapData) -> CapDto {
-        let text = self.text(&cap.text, SizeUnit::Pt);
-        CapDto {
+    fn cap(&mut self, id: NodeId, cap: &CapData) -> SaveResult<CapDto> {
+        let text = self.text(&cap.text, SizeUnit::Pt)?;
+        Ok(CapDto {
             font: text.font,
             size: text.size,
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-            spans: self.spans(id, false),
-        }
+            spans: self.spans(id, false)?,
+        })
     }
 
     /// A label.
-    fn label(&mut self, id: NodeId) -> Option<LabelDto> {
+    fn label(&mut self, id: NodeId) -> SaveResult<LabelDto> {
         let Some(DocElement::Label(label)) = self.element(id) else {
-            return None;
+            return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let text = self.text(&label.style.text, SizeUnit::Pt);
-        Some(LabelDto {
+        let text = self.text(&label.style.text, SizeUnit::Pt)?;
+        Ok(LabelDto {
             t: label.style.t,
             offset: label.style.offset,
             font: text.font,
@@ -580,22 +745,22 @@ impl<'a> Saver<'a> {
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-            spans: self.spans(id, false),
+            spans: self.spans(id, false)?,
         })
     }
 
-    /// A link.
-    fn link(&mut self, id: NodeId) -> Option<LinkDto> {
+    /// A link held by `owner`.
+    fn link(&mut self, owner: NodeId, id: NodeId) -> SaveResult<LinkDto> {
         let Some(DocElement::Link(link)) = self.element(id) else {
-            return None;
+            return Err(self.error(SaveErrorKind::WrongElement));
         };
         let to = match self.element(link.to) {
             Some(DocElement::Node(target)) => target.ident.0,
-            _ => {
-                log::warn!("save: a link leads to something that is not a node; leaving it out");
-                return None;
-            }
+            _ => return Err(self.error_at("to", SaveErrorKind::LinkToNothing)),
         };
+        if link.to == owner {
+            return Err(self.error_at("to", SaveErrorKind::SelfLink));
+        }
         let mut dto = LinkDto {
             to,
             kind: match link.kind {
@@ -619,8 +784,8 @@ impl<'a> Saver<'a> {
         };
         match link.kind {
             LinkKind::Line => {
-                let flow = self.flow(&link.path.flow);
-                let (spans, cap_start, cap_end, label) = self.on_path(id);
+                let flow = self.flow(&link.path.flow)?;
+                let (spans, cap_start, cap_end, label) = self.on_path(id)?;
                 dto.fit = flow.fit;
                 dto.spacing = flow.spacing;
                 dto.size = flow.size;
@@ -636,18 +801,32 @@ impl<'a> Saver<'a> {
                 dto.label = label;
             }
             LinkKind::Portal => {
+                // The path a portal link retains (so that it can become a
+                // line link without losing it) is not saved: the file's
+                // path keys belong to line links.
                 let mut ends = Vec::with_capacity(2);
                 let mut default_ends = true;
-                for (end_id, element) in self.children(id) {
-                    let DocElement::PortalEnd(end) = element else {
-                        continue;
-                    };
+                let found: Vec<(NodeId, &PortalEndData)> = self
+                    .children(id)
+                    .into_iter()
+                    .filter_map(|(end_id, element)| match element {
+                        DocElement::PortalEnd(end) => Some((end_id, end)),
+                        _ => None,
+                    })
+                    .collect();
+                if found.len() != 2 {
+                    return Err(self.error(SaveErrorKind::PortalEnds { count: found.len() }));
+                }
+                for (end_id, end) in found {
                     default_ends &=
                         *end == PortalEndData {
                             end: end.end,
                             style: PortalEndStyle::default(),
                         } && self.children(end_id).is_empty();
-                    ends.push(self.portal_end(end_id, end));
+                    let index = ends.len();
+                    let dto_end =
+                        self.key("ends", |s| s.at(Seg::Index(index), |s| s.portal_end(end_id, end)))?;
+                    ends.push(dto_end);
                 }
                 if !default_ends {
                     if let Ok(ends) = <[PortalEndDto; 2]>::try_from(ends) {
@@ -656,46 +835,46 @@ impl<'a> Saver<'a> {
                 }
             }
         }
-        Some(dto)
+        Ok(dto)
     }
 
     /// One end of a portal link.
-    fn portal_end(&mut self, id: NodeId, end: &PortalEndData) -> PortalEndDto {
+    fn portal_end(&mut self, id: NodeId, end: &PortalEndData) -> SaveResult<PortalEndDto> {
         let style = &end.style;
-        let mut spans = Vec::new();
+        let spans = self.spans(id, false)?;
         let mut label = None;
-        spans.extend(self.spans(id, false));
         for (child, element) in self.children(id) {
             if let DocElement::Label(_) = element {
-                label = self.label(child);
+                label = Some(self.key("label", |s| s.label(child))?);
             }
         }
-        PortalEndDto {
+        Ok(PortalEndDto {
             border_t: style.border_t,
             offset: style.offset,
-            color: self.color(style.color),
+            color: self.color("color", style.color)?,
             size: style.size,
             content: style.content.clone(),
             spans,
             label,
-        }
+        })
     }
 
-    /// The map's defaults, or `None` when they are all unset.
-    fn defaults(&mut self, defaults: &DefaultsData) -> Option<DefaultsDto> {
+    /// The map's defaults, or `None` when they are all unset. The
+    /// current path is `defaults`.
+    fn defaults(&mut self, defaults: &DefaultsData) -> SaveResult<Option<DefaultsDto>> {
         if *defaults == DefaultsData::default() {
-            return None;
+            return Ok(None);
         }
-        let node = self.node_defaults(&defaults.node);
-        let section = self.text_defaults(&defaults.section);
-        let frame = self.frame_defaults(&defaults.frame);
-        let ring = self.ring_defaults(&defaults.ring);
-        let connector = self.flow_defaults(&defaults.connector);
-        let link = self.flow_defaults(&defaults.link);
-        let label = self.label_defaults(&defaults.label);
-        let portal_end = self.portal_end_defaults(&defaults.portal_end);
-        let span = self.text_defaults(&defaults.span);
-        Some(DefaultsDto {
+        let node = self.key("node", |s| s.node_defaults(&defaults.node))?;
+        let section = self.key("section", |s| s.text_defaults(&defaults.section))?;
+        let frame = self.key("frame", |s| s.frame_defaults(&defaults.frame))?;
+        let ring = self.key("ring", |s| s.ring_defaults(&defaults.ring))?;
+        let connector = self.key("connector", |s| s.flow_defaults(&defaults.connector))?;
+        let link = self.key("link", |s| s.flow_defaults(&defaults.link))?;
+        let label = self.key("label", |s| s.label_defaults(&defaults.label))?;
+        let portal_end = self.key("portal_end", |s| s.portal_end_defaults(&defaults.portal_end))?;
+        let span = self.key("span", |s| s.text_defaults(&defaults.span))?;
+        Ok(Some(DefaultsDto {
             node,
             section,
             frame,
@@ -705,46 +884,46 @@ impl<'a> Saver<'a> {
             label,
             portal_end,
             span,
-        })
+        }))
     }
 
-    fn node_defaults(&mut self, style: &NodeStyle) -> Option<NodeDefaultsDto> {
+    fn node_defaults(&mut self, style: &NodeStyle) -> SaveResult<Option<NodeDefaultsDto>> {
         if *style == NodeStyle::default() {
-            return None;
+            return Ok(None);
         }
-        let text = self.text(&style.text, SizeUnit::Pt);
-        Some(NodeDefaultsDto {
+        let text = self.text(&style.text, SizeUnit::Pt)?;
+        Ok(Some(NodeDefaultsDto {
             shape: style.shape.map(shape),
-            fill: self.color(style.fill),
+            fill: self.color("fill", style.fill)?,
             fill_fade: style.fill_fade,
             font: text.font,
             size: text.size,
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-        })
+        }))
     }
 
-    fn text_defaults(&mut self, style: &TextStyle) -> Option<TextDefaultsDto> {
+    fn text_defaults(&mut self, style: &TextStyle) -> SaveResult<Option<TextDefaultsDto>> {
         if *style == TextStyle::default() {
-            return None;
+            return Ok(None);
         }
-        let text = self.text(style, SizeUnit::Pt);
-        Some(TextDefaultsDto {
+        let text = self.text(style, SizeUnit::Pt)?;
+        Ok(Some(TextDefaultsDto {
             font: text.font,
             size: text.size,
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-        })
+        }))
     }
 
-    fn frame_defaults(&mut self, style: &FrameStyle) -> Option<FrameDefaultsDto> {
+    fn frame_defaults(&mut self, style: &FrameStyle) -> SaveResult<Option<FrameDefaultsDto>> {
         if *style == FrameStyle::default() {
-            return None;
+            return Ok(None);
         }
-        let out = self.frame_style(style);
-        Some(FrameDefaultsDto {
+        let out = self.frame_style(style)?;
+        Ok(Some(FrameDefaultsDto {
             visible: out.visible,
             start: out.start,
             direction: out.direction,
@@ -756,44 +935,44 @@ impl<'a> Saver<'a> {
             color: out.text.color,
             weight: out.text.weight,
             italic: out.text.italic,
-        })
+        }))
     }
 
-    fn ring_defaults(&mut self, style: &RingStyle) -> Option<RingDefaultsDto> {
+    fn ring_defaults(&mut self, style: &RingStyle) -> SaveResult<Option<RingDefaultsDto>> {
         if *style == RingStyle::default() {
-            return None;
+            return Ok(None);
         }
-        let text = self.text(&style.text, SizeUnit::Rel);
-        Some(RingDefaultsDto {
+        let text = self.text(&style.text, SizeUnit::Rel)?;
+        Ok(Some(RingDefaultsDto {
             fit: Self::fit(&style.fit),
             font: text.font,
             size: text.size,
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-        })
+        }))
     }
 
-    fn flow_defaults(&mut self, style: &FlowStyle) -> Option<FlowDefaultsDto> {
+    fn flow_defaults(&mut self, style: &FlowStyle) -> SaveResult<Option<FlowDefaultsDto>> {
         if *style == FlowStyle::default() {
-            return None;
+            return Ok(None);
         }
-        let flow = self.flow(style);
-        Some(FlowDefaultsDto {
+        let flow = self.flow(style)?;
+        Ok(Some(FlowDefaultsDto {
             fit: flow.fit,
             spacing: flow.spacing,
             size: flow.size,
             color: flow.color,
             content: flow.content,
-        })
+        }))
     }
 
-    fn label_defaults(&mut self, style: &LabelStyle) -> Option<LabelDefaultsDto> {
+    fn label_defaults(&mut self, style: &LabelStyle) -> SaveResult<Option<LabelDefaultsDto>> {
         if *style == LabelStyle::default() {
-            return None;
+            return Ok(None);
         }
-        let text = self.text(&style.text, SizeUnit::Pt);
-        Some(LabelDefaultsDto {
+        let text = self.text(&style.text, SizeUnit::Pt)?;
+        Ok(Some(LabelDefaultsDto {
             t: style.t,
             offset: style.offset,
             font: text.font,
@@ -801,20 +980,20 @@ impl<'a> Saver<'a> {
             color: text.color,
             weight: text.weight,
             italic: text.italic,
-        })
+        }))
     }
 
-    fn portal_end_defaults(&mut self, style: &PortalEndStyle) -> Option<PortalEndDefaultsDto> {
+    fn portal_end_defaults(&mut self, style: &PortalEndStyle) -> SaveResult<Option<PortalEndDefaultsDto>> {
         if *style == PortalEndStyle::default() {
-            return None;
+            return Ok(None);
         }
-        Some(PortalEndDefaultsDto {
+        Ok(Some(PortalEndDefaultsDto {
             border_t: style.border_t,
             offset: style.offset,
-            color: self.color(style.color),
+            color: self.color("color", style.color)?,
             size: style.size,
             content: style.content.clone(),
-        })
+        }))
     }
 }
 

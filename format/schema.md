@@ -68,11 +68,37 @@ it.
   object inside it, that sets nothing.
 - **Never written:** anything derived: fitted sizes, depth, resolved
   colors, parent pointers.
-- **A value the file cannot spell is left out, with a warning,** rather
-  than written as something else: a size in the wrong unit for where it
-  sits (points on a ring), a span `size` inside a ring, the fallback
-  face as an explicit `font`, a reference to a variable, palette or verb
-  the document does not define.
+- **Nothing is dropped, and nothing is written that does not load.** A
+  document that holds a value the file cannot spell is not saved: `save`
+  returns a `SaveError` naming the path the value would have had, in the
+  notation of [Errors](#errors), and writes nothing. `check_savable`
+  gives the same answer without writing, for the mutations and the
+  editor to call when they apply an edit. What it refuses:
+  - a size in the wrong unit for where it sits (points on a frame or a
+    ring, a fraction elsewhere), and a span `size` inside a ring;
+  - the fallback face as an explicit `font`;
+  - a reference to a theme variable, palette or verb the document does
+    not define (so a `var()` with nothing behind it is never written);
+  - two theme variants, two theme variables or two palettes of one name,
+    and two edits, presentations or verbs of one `id`;
+  - a theme with variables or an active index but no variants, an active
+    index that is not a variant, and a variant with a different number
+    of values than the theme has variables;
+  - a link that leads to something that is not a node, or to its own
+    node, and a portal link without exactly two ends;
+  - everything the loader would refuse in the file it would write: a
+    number outside its [bound](#bounds), a `channel` past `MAX_CHANNEL`,
+    and so on. The saver builds the file it wrote with the loader's own
+    builder, so the two cannot disagree about what loads.
+- **The empty theme has one spelling: no `theme` key.** A document with
+  no variables and no variants saves without one, and a file without one
+  loads as that theme. A `theme` that is present has at least one
+  variant.
+- **One exception to "a saved map loads back as the same document":** a
+  portal link keeps the fields of a path within a session, so that a link
+  can switch between line and portal without losing them, and the file
+  does not save them (the path keys belong to line links). A portal link
+  reloads with the default path.
 
 ## Objects
 
@@ -87,7 +113,7 @@ built-in value, unless the table gives a default of its own.
 |---|---|---|---|---|
 | `format` | integer | yes | | The format number: `1`. Any other number is an error, reported before anything else in the file. |
 | `name` | string | yes | | The map's name. |
-| `theme` | [theme](#theme) | yes | | The theme. |
+| `theme` | [theme](#theme) | no | the empty theme | The theme. Absent is the empty theme (no variables, no variants), which has no other spelling. A theme that is present has at least one variant. |
 | `palettes` | object: name to array of [palette groups](#palette-group) | no | none | The palettes. |
 | `defaults` | [defaults](#defaults) | no | nothing set | Per-field defaults, consulted after the element and its owners and before the built-in value. |
 | `edits` | array of [definitions](#definitions) | no | `[]` | The edits the map defines. V1-D1 extends this schema. |
@@ -588,7 +614,12 @@ its path.
 A load returns a `LoadError` with a `path` and a `kind`.
 
 - The `path` writes keys after a dot and array positions in brackets:
-  `nodes[3].frame.rings[0].spans[2].color`. It is empty for an error
+  `nodes[3].frame.rings[0].spans[2].color`. A key that is not a plain
+  identifier (a letter or `_`, then letters, digits and `_`), which only
+  a name an author chose can be, is quoted in brackets as JSON quotes a
+  string, so that it cannot be read as more path: `palettes["a.b"][0].fill`,
+  `theme.variants[""].bg`, `nodes[0][""]`. A `SaveError`'s path is written
+  the same way. It is empty for an error
   about the whole text (too large; not UTF-8), for the map itself (a
   missing top-level key) and when the reader died where it has no path
   to give (the end of the text).

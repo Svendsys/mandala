@@ -18,6 +18,8 @@ mod format_reject_tests;
 #[cfg(test)]
 mod format_robust_tests;
 #[cfg(test)]
+mod format_savable_tests;
+#[cfg(test)]
 mod format_save_tests;
 #[cfg(test)]
 mod format_schema_tests;

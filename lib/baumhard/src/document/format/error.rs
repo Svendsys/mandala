@@ -250,6 +250,179 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
+/// Why a document cannot be saved, and where in the file the value
+/// would have been.
+///
+/// **A save never writes text that [`load`](crate::document::format::load)
+/// refuses or reads differently**, and it never drops a value either:
+/// what the file has no spelling for is refused here, with the path the
+/// value would have had, in the notation of [`LoadError::path`]. The
+/// mutations (V1-B3) refuse to make any of these states, so one reaching
+/// the saver is a defect in a mutation, not a thing a user did.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SaveError {
+    /// Where in the file the offending value would be.
+    pub path: String,
+    /// What is wrong with it.
+    pub kind: SaveErrorKind,
+}
+
+/// What is wrong at a [`SaveError`]'s path.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SaveErrorKind {
+    /// A size in the other unit from the one this position takes:
+    /// points on a ring or a frame, a fraction anywhere else. The file
+    /// writes a number, and the unit is whatever the position says, so
+    /// writing it would load as another size.
+    WrongUnit {
+        /// `true` when the size is in points where a fraction belongs.
+        found_points: bool,
+    },
+    /// A span inside a ring has a `size`. A ring sizes its own text.
+    SizeInRing,
+    /// A font the file cannot name: the fallback face, or a face this
+    /// build has no family name for.
+    NoFamilyName,
+    /// A color names a theme variable the theme does not define.
+    UnknownVariable {
+        /// The index it holds.
+        index: u16,
+    },
+    /// A node names a palette the map does not define.
+    UnknownPalette {
+        /// The index it holds.
+        index: u16,
+    },
+    /// A trigger or a span link names a verb the map does not define.
+    UnknownVerb {
+        /// The index it holds.
+        index: u16,
+    },
+    /// Two theme variants, two theme variables or two palettes have one
+    /// name. The file keys them by name.
+    DuplicateName {
+        /// The name.
+        name: String,
+    },
+    /// Two edits, two presentations or two verbs have one id.
+    DuplicateDefinition {
+        /// The id.
+        id: String,
+    },
+    /// The theme has variables or an active variant and no variants. The
+    /// empty theme, which has none of these, is written as no `theme`.
+    ThemeWithoutVariants {
+        /// How many variables it has.
+        variables: usize,
+        /// The active index it holds.
+        active: u16,
+    },
+    /// The active variant is not one of the theme's variants.
+    ActiveNotAVariant {
+        /// The index it holds.
+        active: u16,
+        /// How many variants there are.
+        variants: usize,
+    },
+    /// A variant holds a different number of values than the theme has
+    /// variables.
+    VariantLength {
+        /// How many values the variant holds.
+        values: usize,
+        /// How many variables the theme has.
+        variables: usize,
+    },
+    /// A link leads to something that is not a node.
+    LinkToNothing,
+    /// A link leads to the node that holds it.
+    SelfLink,
+    /// A portal link without exactly two ends.
+    PortalEnds {
+        /// How many ends it has.
+        count: usize,
+    },
+    /// The tree holds another element than the one this place requires:
+    /// the document is not shaped as the model says.
+    WrongElement,
+    /// The document wrote a file the loader refuses: a number outside
+    /// its bound, or another rule the saver does not check on its own.
+    /// `error` is what the loader said, at the path the file would give.
+    NotLoadable {
+        /// The loader's refusal.
+        error: Box<LoadError>,
+    },
+    /// The text could not be written.
+    Write {
+        /// What the writer reported.
+        message: String,
+    },
+}
+
+impl fmt::Display for SaveErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SaveErrorKind::WrongUnit { found_points: true } => f.write_str(
+                "this size is in points, but here a size is a fraction of the node's shorter side",
+            ),
+            SaveErrorKind::WrongUnit { found_points: false } => {
+                f.write_str("this size is a fraction, but here a size is in points")
+            }
+            SaveErrorKind::SizeInRing => {
+                f.write_str("a span inside a ring has no size of its own: the ring sizes its text")
+            }
+            SaveErrorKind::NoFamilyName => {
+                f.write_str("this font has no family name a file can write (the fallback face, or one this build cannot name)")
+            }
+            SaveErrorKind::UnknownVariable { index } => {
+                write!(f, "the theme defines no variable {index}")
+            }
+            SaveErrorKind::UnknownPalette { index } => write!(f, "the map defines no palette {index}"),
+            SaveErrorKind::UnknownVerb { index } => write!(f, "the map defines no verb {index}"),
+            SaveErrorKind::DuplicateName { name } => {
+                write!(f, "two entries are named `{name}`, and the file keys them by name")
+            }
+            SaveErrorKind::DuplicateDefinition { id } => {
+                write!(f, "two entries of this list have the id `{id}`")
+            }
+            SaveErrorKind::ThemeWithoutVariants { variables, active } => write!(
+                f,
+                "the theme has {variables} variables and the active index {active} but no variants; \
+                 only the empty theme can be written (as no `theme`)"
+            ),
+            SaveErrorKind::ActiveNotAVariant { active, variants } => {
+                write!(f, "the active variant {active} is not one of the {variants} variants")
+            }
+            SaveErrorKind::VariantLength { values, variables } => {
+                write!(f, "this variant holds {values} values for {variables} variables")
+            }
+            SaveErrorKind::LinkToNothing => f.write_str("this link leads to something that is not a node"),
+            SaveErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),
+            SaveErrorKind::PortalEnds { count } => {
+                write!(f, "a portal link has two ends, and this one has {count}")
+            }
+            SaveErrorKind::WrongElement => f.write_str(
+                "the tree holds another kind of element here than the document model allows: this is a bug",
+            ),
+            SaveErrorKind::NotLoadable { error } => {
+                write!(f, "the file this would write does not load ({})", error.kind)
+            }
+            SaveErrorKind::Write { message } => write!(f, "the text could not be written: {message}"),
+        }
+    }
+}
+
+impl fmt::Display for SaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.path.is_empty() {
+            write!(f, "{}", self.kind)
+        } else {
+            write!(f, "{}: {}", self.path, self.kind)
+        }
+    }
+}
+
+impl std::error::Error for SaveError {}
+
 /// One step of a JSON path while the loader walks the file.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Seg {

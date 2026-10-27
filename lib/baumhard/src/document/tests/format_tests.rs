@@ -8,9 +8,9 @@ use crate::document::element::{
     CapData, DocElement, DocKind, FrameStyle, LabelData, LabelStyle, LinkData, NodeStyle, PathData,
     PortalEndStyle, RingStyle, TextStyle, ThemeData, ThemeVariant,
 };
-use crate::document::format::{load, save};
+use crate::document::format::load;
 use crate::document::ids::Definitions;
-use crate::document::tests::format_support::{fixture, kid, kids, node, same_document, FIXTURES};
+use crate::document::tests::format_support::{fixture, kid, kids, node, same_document, written, FIXTURES};
 use crate::document::tests::test_support::{example, node_data, DocumentBuilder};
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteField,
@@ -30,7 +30,7 @@ fn test_format_fixtures_round_trip_byte_for_byte() {
 pub fn do_format_fixtures_round_trip_byte_for_byte() {
     for (name, text) in FIXTURES {
         let doc = load(text).unwrap_or_else(|error| panic!("fixture {name} must load: {error}"));
-        let saved = save(&doc);
+        let saved = written(&doc);
         assert_eq!(saved, text, "fixture {name} is not what the saver writes for it");
         assert!(saved.ends_with("}\n"), "{name} ends in a newline");
         assert!(!saved.ends_with("\n\n"), "{name} ends in exactly one");
@@ -384,13 +384,20 @@ fn test_format_builder_documents_round_trip() {
 /// `load(save(d)) == d` for documents built in memory: the `example`
 /// document with its theme given variants, and one that sets a field
 /// of every kind. Compared by structure, with a link's target by ident.
+///
+/// **One exception, stated rather than hidden:** the path a portal link
+/// retains from being a line link is kept within a session and never
+/// saved (the file's path keys belong to line links), so `same_document`
+/// does not compare the path of a portal link.
+/// `format_savable_tests` holds the exception in place: a portal link
+/// with a path of its own does reload with the default one.
 pub fn do_format_builder_documents_round_trip() {
     for (name, doc) in builder_documents() {
-        let text = save(&doc);
+        let text = written(&doc);
         let back = load(&text).unwrap_or_else(|error| panic!("{name}, saved, must load: {error}\n{text}"));
         same_document(&doc, &back)
             .unwrap_or_else(|why| panic!("{name} changed over a round trip: {why}\n{text}"));
-        assert_eq!(save(&back), text, "{name}: a second save writes the same text");
+        assert_eq!(written(&back), text, "{name}: a second save writes the same text");
     }
 }
 

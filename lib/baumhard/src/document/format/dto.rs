@@ -1424,8 +1424,15 @@ pub(crate) struct MapDto {
     pub format: u64,
     /// The map's name.
     pub name: String,
-    /// The theme.
-    pub theme: ThemeDto,
+    /// The theme. Absent is the empty theme (no variables, no variants),
+    /// which has no other spelling; a theme that is present has at least
+    /// one variant.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub theme: Option<ThemeDto>,
     /// The palettes, by name.
     #[serde(default, skip_serializing_if = "Named::is_empty")]
     pub palettes: Named<Vec<PaletteGroupDto>>,

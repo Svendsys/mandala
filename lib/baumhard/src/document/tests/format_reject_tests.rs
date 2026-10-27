@@ -278,7 +278,9 @@ fn test_an_unknown_key_in_a_nested_object_is_refused() {
 fn test_a_missing_required_key_is_refused() {
     let missing = |key: &str| LoadErrorKind::MissingKey { key: key.to_string() };
     rejects(r#"{"name":"t"}"#, "", missing("format"));
-    rejects(r#"{"format":1,"name":"t"}"#, "", missing("theme"));
+    // The theme is the one top-level key that may be absent: no theme
+    // is the empty theme, which has no other spelling.
+    assert!(load(r#"{"format":1,"name":"t"}"#).is_ok());
     rejects(&format!(r#"{{"format":1,{THEME}}}"#), "", missing("name"));
     rejects(&map_with("", r#"{"position":[0,0]}"#), "nodes[0]", missing("id"));
     rejects(&map_with("", r#"{"id":1}"#), "nodes[0]", missing("position"));

@@ -6,8 +6,8 @@
 //! This is a deterministic stand-in for a fuzzer (V1-D29): the same
 //! property, driven over mutations of the fixtures.
 
-use crate::document::format::{load, load_bytes_under, load_from_bytes, save, LoadErrorKind};
-use crate::document::tests::format_support::{same_document, FIXTURES};
+use crate::document::format::{load, load_bytes_under, load_from_bytes, LoadErrorKind};
+use crate::document::tests::format_support::{same_document, written, FIXTURES};
 
 /// A small deterministic generator (xorshift).
 struct Rng(u64);
@@ -103,13 +103,13 @@ fn test_no_input_makes_the_loader_panic_and_what_loads_round_trips() {
             match load_from_bytes(&bytes) {
                 Ok(doc) => {
                     loaded += 1;
-                    let saved = save(&doc);
+                    let saved = written(&doc);
                     let again = load(&saved).unwrap_or_else(|error| {
                         panic!("{name}: what loaded saved to text that does not: {error}")
                     });
                     same_document(&doc, &again)
                         .unwrap_or_else(|why| panic!("{name}: load, save, load changed the map: {why}"));
-                    assert_eq!(save(&again), saved, "{name}: save is not a fixed point");
+                    assert_eq!(written(&again), saved, "{name}: save is not a fixed point");
                 }
                 Err(error) => {
                     refused += 1;
