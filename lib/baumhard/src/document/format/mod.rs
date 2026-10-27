@@ -239,8 +239,7 @@ fn parse(json: &str) -> Result<MapDto, LoadError> {
 /// reader's text, which still carries the path.
 fn refusal(json: &str, error: serde_path_to_error::Error<serde_json::Error>) -> LoadError {
     use serde_json::error::Category;
-    let path = error.path().to_string();
-    let path = if path == "." { String::new() } else { path };
+    let (path, has_unknown_step) = error::render_parse_path(error.path());
     let inner = error.into_inner();
     let message = inner.to_string();
 
@@ -248,7 +247,7 @@ fn refusal(json: &str, error: serde_path_to_error::Error<serde_json::Error>) -> 
         // Malformed text: the message says where, by line and column,
         // and the path is the last value the reader entered, which is
         // where it gave up. It has none to give when it died on a key.
-        let path = if path.contains('?') { String::new() } else { path };
+        let path = if has_unknown_step { String::new() } else { path };
         return LoadError {
             path,
             kind: LoadErrorKind::Syntax { message },

@@ -157,6 +157,88 @@ fn test_an_unknown_key_at_the_top_level_is_refused() {
 }
 
 #[test]
+fn test_a_name_the_author_chose_is_quoted_in_a_path_unless_it_is_plain() {
+    // Names an author picks (palettes, theme variants and variables)
+    // can hold a dot or a bracket or nothing at all; unquoted they would
+    // read as more path, or none. The notation is the same whether the
+    // reader (a parse error) or the builder (a reference that names
+    // nothing) found the fault.
+    let color = |name: &str, value: &str| {
+        format!(
+            r##","palettes":{{{}:[{{"fill":"{value}","frame":"#000000","text":"#000000"}}]}}"##,
+            serde_json::to_string(name).unwrap()
+        )
+    };
+    let unknown_variable = |name: &str| LoadErrorKind::UnknownVariable {
+        name: name.to_string(),
+    };
+    // Found by the builder.
+    rejects(
+        &map_with(&color("a.b", "var(nope)"), ""),
+        r#"palettes["a.b"][0].fill"#,
+        unknown_variable("nope"),
+    );
+    rejects(
+        &map_with(&color("", "var(nope)"), ""),
+        r#"palettes[""][0].fill"#,
+        unknown_variable("nope"),
+    );
+    rejects(
+        &map_with(&color("say \"hi\"", "var(nope)"), ""),
+        r#"palettes["say \"hi\""][0].fill"#,
+        unknown_variable("nope"),
+    );
+    rejects(
+        &map_with(&color("a[0]", "var(nope)"), ""),
+        r#"palettes["a[0]"][0].fill"#,
+        unknown_variable("nope"),
+    );
+    // A plain name stays a plain key: no brackets, no noise.
+    rejects(
+        &map_with(&color("_p9", "var(nope)"), ""),
+        "palettes._p9[0].fill",
+        unknown_variable("nope"),
+    );
+    // A name that starts with a digit is not an identifier.
+    rejects(
+        &map_with(&color("9p", "var(nope)"), ""),
+        r#"palettes["9p"][0].fill"#,
+        unknown_variable("nope"),
+    );
+    rejects(
+        r##"{"format":1,"name":"t","theme":{"active":"a","variants":{"a":{"x":"#000000"},"x y":{"y":"#000000"}}}}"##,
+        r#"theme.variants["x y"]"#,
+        LoadErrorKind::VariantsDiffer {
+            variable: "x".to_string(),
+            missing: true,
+        },
+    );
+    // The empty name sorts first, so it is the one the others are held to.
+    rejects(
+        r##"{"format":1,"name":"t","theme":{"active":"","variants":{"":{"x":"#000000"},"a":{"y":"#000000"}}}}"##,
+        "theme.variants.a",
+        LoadErrorKind::VariantsDiffer {
+            variable: "x".to_string(),
+            missing: true,
+        },
+    );
+    // Found by the reader.
+    rejects_as_invalid(
+        r##"{"format":1,"name":"t","palettes":{"a.b":[{"fill":"#gggggg","frame":"#000000","text":"#000000"}]},"nodes":[]}"##,
+        r#"palettes["a.b"][0].fill"#,
+    );
+    rejects_as_invalid(
+        r##"{"format":1,"name":"t","theme":{"active":"a","variants":{"a":{"x y":"#gggggg"}}}}"##,
+        r#"theme.variants.a["x y"]"#,
+    );
+    // An unknown key is named in the path the same way, whatever it holds.
+    let unknown = |key: &str| LoadErrorKind::UnknownKey { key: key.to_string() };
+    rejects(&map_of(r#","":1"#), r#"nodes[0][""]"#, unknown(""));
+    rejects(&map_of(r#","a.b":1"#), r#"nodes[0]["a.b"]"#, unknown("a.b"));
+    rejects(&map_of(r#","bogus":1"#), "nodes[0].bogus", unknown("bogus"));
+}
+
+#[test]
 fn test_an_unknown_key_in_a_nested_object_is_refused() {
     let key = |key: &str| LoadErrorKind::UnknownKey { key: key.to_string() };
     rejects(&map_of(r#","bogus":1"#), "nodes[0].bogus", key("bogus"));

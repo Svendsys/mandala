@@ -29,7 +29,9 @@ use std::fmt;
 pub struct LoadError {
     /// The JSON path of the offending value: `nodes[3].frame.rings[0]`.
     /// A key is written after a `.`, an array position in brackets, and
-    /// the first segment has no leading dot. Empty when the error is
+    /// the first segment has no leading dot. A key that is not a plain
+    /// identifier (a name an author chose, holding a dot, or empty) is
+    /// quoted in brackets instead, `palettes["a.b"][0].fill`. Empty when the error is
     /// about the whole text. For a key that is missing, the path is the
     /// object that lacks it and the key is in the
     /// [kind](LoadErrorKind::MissingKey); for a key that is not allowed,
@@ -259,25 +261,48 @@ pub(crate) enum Seg {
     Index(usize),
 }
 
+/// Whether `name` can follow a dot in a path without being quoted: a
+/// letter or `_`, then letters, digits and `_`.
+fn is_plain(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Write the key `name` after what `out` holds: `.name` when it is a
+/// plain identifier (and just `name` first), otherwise `["name"]`, quoted
+/// the way JSON quotes a string. A name an author chose can hold a dot, a
+/// bracket or nothing at all, and unquoted it would read as more path
+/// (`palettes.a.b[0].fill`) or none.
+fn push_key(out: &mut String, name: &str) {
+    if is_plain(name) {
+        if !out.is_empty() {
+            out.push('.');
+        }
+        out.push_str(name);
+    } else {
+        out.push('[');
+        match serde_json::to_string(name) {
+            Ok(quoted) => out.push_str(&quoted),
+            // A string always serializes; this keeps the path well formed
+            // if that ever stops being so.
+            Err(_) => out.push_str("\"\""),
+        }
+        out.push(']');
+    }
+}
+
 /// `segs` as a JSON path: keys after a dot (none before the first
-/// segment), positions in brackets. O(length of the path).
+/// segment) and quoted in brackets when they are not plain identifiers
+/// (`palettes["a.b"][0].fill`), positions in brackets. O(length of the
+/// path).
 pub(crate) fn render_path(segs: &[Seg]) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     for seg in segs {
         match seg {
-            Seg::Key(key) => {
-                if !out.is_empty() {
-                    out.push('.');
-                }
-                out.push_str(key);
-            }
-            Seg::Name(name) => {
-                if !out.is_empty() {
-                    out.push('.');
-                }
-                out.push_str(name);
-            }
+            Seg::Key(key) => push_key(&mut out, key),
+            Seg::Name(name) => push_key(&mut out, name),
             Seg::Index(index) => {
                 // Writing to a `String` cannot fail.
                 let _ = write!(out, "[{index}]");
@@ -285,4 +310,27 @@ pub(crate) fn render_path(segs: &[Seg]) -> String {
         }
     }
     out
+}
+
+/// The path the JSON reader was at, in the notation of [`render_path`],
+/// and whether it had a step it could not name (a key that was not a
+/// string). Rendered from the path's segments rather than its `Display`,
+/// which writes every key bare.
+pub(crate) fn render_parse_path(path: &serde_path_to_error::Path) -> (String, bool) {
+    use serde_path_to_error::Segment;
+    use std::fmt::Write;
+    let mut out = String::new();
+    let mut unknown = false;
+    for segment in path.iter() {
+        match segment {
+            Segment::Map { key } => push_key(&mut out, key),
+            Segment::Enum { variant } => push_key(&mut out, variant),
+            Segment::Seq { index } => {
+                // Writing to a `String` cannot fail.
+                let _ = write!(out, "[{index}]");
+            }
+            Segment::Unknown => unknown = true,
+        }
+    }
+    (out, unknown)
 }
