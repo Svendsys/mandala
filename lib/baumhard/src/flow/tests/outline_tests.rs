@@ -404,8 +404,8 @@ fn test_flow_non_finite_curves_build_no_table() {
 
 /// A curve with a control point that is not finite has no speed bound —
 /// `speed_bound` is `NaN`, not the bound of its finite legs — and its
-/// path builds no table and has no length; so does an ellipse with a
-/// radius that is not a number.
+/// path builds no table at all (not one built and then dropped) and has
+/// no length; so does an ellipse with a radius that is not a number.
 pub fn do_flow_non_finite_curves_build_no_table() {
     let nan_cubic = Curve::Cubic(
         Vec2::ZERO,

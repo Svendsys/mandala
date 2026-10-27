@@ -168,6 +168,9 @@ pub(crate) struct ArcPath {
     /// `+1` for a closed path walked clockwise, `-1` counter-clockwise,
     /// `0` for an open path, which has no outside.
     winding: f32,
+    /// How many samples were built into arc-length tables for this
+    /// path, kept or dropped as not walkable.
+    table_samples: usize,
 }
 
 impl ArcPath {
@@ -184,8 +187,12 @@ impl ArcPath {
             length: 0.0,
             origin: if origin.is_finite() { origin } else { Vec2::ZERO },
             winding,
+            table_samples: 0,
         };
         for stretch in stretches {
+            if let Stretch::Table { params, .. } = &stretch {
+                path.table_samples += params.len();
+            }
             let len = stretch.len();
             if stretch.is_walkable() {
                 path.starts.push(path.length);
@@ -345,17 +352,13 @@ impl ArcPath {
         self.length
     }
 
-    /// How many samples the path's arc-length tables hold, all told: 0
-    /// for a path of lines and arcs. What a test reads to hold the table
-    /// spacing to its floor without timing anything.
+    /// How many samples were built into arc-length tables for this
+    /// path, all told — those dropped as not walkable included: 0 for a
+    /// path of lines and arcs, and for a curve that is not finite, which
+    /// builds no table. What a test reads to hold the table spacing to its
+    /// floor, and a non-finite curve to no work, without timing anything.
     pub(crate) fn table_samples(&self) -> usize {
-        self.stretches
-            .iter()
-            .map(|stretch| match stretch {
-                Stretch::Table { params, .. } => params.len(),
-                _ => 0,
-            })
-            .sum()
+        self.table_samples
     }
 
     /// The point `s` along the path and the unit direction of travel
