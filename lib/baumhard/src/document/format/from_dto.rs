@@ -593,23 +593,25 @@ impl Builder {
         })
     }
 
-    /// A zoom range, checked, at `key`.
+    /// A zoom range, checked, at `key`, by the rule the mutations share
+    /// ([`bounds::check_zoom_window`]): each bound given is finite and
+    /// above `0` — a camera zoom is always above `0`, so a bound at or
+    /// below it is never reached — and `min` is not above `max`. A bound
+    /// that fails alone is reported at it, an inverted window at the
+    /// window.
     pub fn zoom(
         &mut self,
         key: &'static str,
         zoom: &crate::document::format::dto::ZoomDto,
     ) -> LoadResult<ZoomWindow> {
         self.key(key, |b| {
-            let min = b.opt_number("min", zoom.min, bounds::check_non_negative)?;
-            let max = b.opt_number("max", zoom.max, bounds::check_non_negative)?;
-            if let (Some(min), Some(max)) = (min, max) {
-                if min > max {
-                    return Err(b.error(LoadErrorKind::Bound {
-                        error: BoundError::Inverted { min, max },
-                    }));
-                }
-            }
-            Ok(ZoomWindow { min, max })
+            b.bounded("min", bounds::check_zoom_window(zoom.min, None))?;
+            b.bounded("max", bounds::check_zoom_window(None, zoom.max))?;
+            b.bounded_here(bounds::check_zoom_window(zoom.min, zoom.max))?;
+            Ok(ZoomWindow {
+                min: zoom.min,
+                max: zoom.max,
+            })
         })
     }
 

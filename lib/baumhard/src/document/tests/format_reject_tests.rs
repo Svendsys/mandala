@@ -1270,11 +1270,6 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
         negative(-5.0),
     );
     rejects_bound(
-        &map_of(r#","zoom":{"min":-1}"#),
-        "nodes[0].zoom.min",
-        negative(-1.0),
-    );
-    rejects_bound(
         &map_with(r#","defaults":{"node":{"fill_fade":-6}}"#, ""),
         "defaults.node.fill_fade",
         negative(-6.0),
@@ -1303,6 +1298,34 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
         r#","fill_fade":0,"min_size":[0,0],"frame":{"gap":0,"inset":0}"#
     ))
     .is_ok());
+}
+
+#[test]
+fn test_a_zoom_bound_is_above_zero() {
+    // A camera zoom is always above 0, so a bound at 0 or below it is
+    // never reached: one rule with the mutations' (`check_zoom_window`).
+    let not_above_zero = |value: f32| BoundError::Below {
+        value,
+        min: 0.0,
+        inclusive: false,
+    };
+    rejects_bound(
+        &map_of(r#","zoom":{"min":0}"#),
+        "nodes[0].zoom.min",
+        not_above_zero(0.0),
+    );
+    rejects_bound(
+        &map_of(r#","zoom":{"max":-1}"#),
+        "nodes[0].zoom.max",
+        not_above_zero(-1.0),
+    );
+    rejects_bound(
+        &map_of_two(r#""#, r#","connector":{"zoom":{"min":-0.5}}"#),
+        "nodes[1].connector.zoom.min",
+        not_above_zero(-0.5),
+    );
+    // Control: the smallest positive bound is in.
+    assert!(load(&map_of(r#","zoom":{"min":1e-6,"max":1e-6}"#)).is_ok());
 }
 
 #[test]

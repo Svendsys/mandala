@@ -455,8 +455,8 @@ A node's child nodes are not inside it: they follow it in the list.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `min` | number `>= 0` | no | open | The lowest camera zoom it renders at. |
-| `max` | number `>= 0` | no | open | The highest camera zoom it renders at. Not below `min`. |
+| `min` | number `> 0` | no | open | The lowest camera zoom it renders at. A camera zoom is always above 0, so a bound at or below it would never be reached. |
+| `max` | number `> 0` | no | open | The highest camera zoom it renders at. Not below `min`. |
 
 ### Section
 
@@ -731,7 +731,8 @@ its path.
 | Font size in points | `0.5` to `4096` |
 | Font size as a fraction (inside a frame) | above `0`, at most `1` |
 | `opacity`, a label's `t`, `border_t`, a start point's `at` | `0` to `1` |
-| `fill_fade`, `gap`, `inset`, `spacing`, a `zoom` bound | `>= 0` |
+| `fill_fade`, `gap`, `inset`, `spacing` | `>= 0` |
+| A `zoom` bound | above `0`, and `min` not above `max` (the bound the mutations hold an edit to) |
 | `fit` bounds | `0 < min <= max` |
 | Corner radius | `0` to `100` |
 | Weight | 100, 200, ... 900 |
