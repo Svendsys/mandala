@@ -100,3 +100,19 @@ pub fn deep_chain_survives_every_walk(depth: u32) -> Result<(), String> {
     let again = load(&saved).map_err(|error| format!("reload: {error}"))?;
     same_document(&doc, &again).map_err(|why| format!("the reloaded chain differs: {why}"))
 }
+
+/// The negative control's planted walk: how many elements a chain
+/// `depth` deep holds, counted by **recursing** on the depth of the
+/// tree — the walk the format must never make. On a stack the size of
+/// a default test thread, or wasm32's, a chain of [`CHAIN_DEPTH`]
+/// exhausts it; the controls run it to prove that the acceptance test
+/// would catch a walk that recursed.
+pub fn planted_recursive_count(depth: u32) -> usize {
+    fn count(doc: &Document, id: NodeId) -> usize {
+        1 + doc.children(id).map(|child| count(doc, child)).sum::<usize>()
+    }
+    match load(&chain_text(depth)) {
+        Ok(doc) => count(&doc, doc.root()),
+        Err(_) => 0,
+    }
+}

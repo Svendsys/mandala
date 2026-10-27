@@ -14,10 +14,9 @@
 //! chain is deep enough, and the thread small enough, for a recursion
 //! to be caught.
 
-use crate::document::format::load;
-use crate::document::ids::Document;
-use crate::document::tests::format_depth::{chain_text, deep_chain_survives_every_walk, CHAIN_DEPTH};
-use indextree::NodeId;
+use crate::document::tests::format_depth::{
+    deep_chain_survives_every_walk, planted_recursive_count, CHAIN_DEPTH,
+};
 
 /// Set in the child process of the control: run a recursive walk over
 /// the chain instead.
@@ -28,15 +27,6 @@ const PLANT: &str = "MANDALA_PLANT_RECURSIVE_WALK";
 /// cannot make it pass on a larger one.
 const DEFAULT_TEST_STACK: usize = 2 * 1024 * 1024;
 
-/// How many elements are at or under `id`, counted by recursing on the
-/// depth of the tree: the walk the format must never make.
-fn recursive_count(doc: &Document, id: NodeId) -> usize {
-    1 + doc
-        .children(id)
-        .map(|child| recursive_count(doc, child))
-        .sum::<usize>()
-}
-
 #[test]
 fn test_a_chain_100000_deep_survives_every_walk_on_a_default_stack() {
     let planted = std::env::var_os(PLANT).is_some();
@@ -44,8 +34,7 @@ fn test_a_chain_100000_deep_survives_every_walk_on_a_default_stack() {
         .stack_size(DEFAULT_TEST_STACK)
         .spawn(move || {
             if planted {
-                let doc = load(&chain_text(CHAIN_DEPTH)).expect("the chain loads");
-                let count = recursive_count(&doc, doc.root());
+                let count = planted_recursive_count(CHAIN_DEPTH);
                 return Err(format!(
                     "the planted recursive walk counted {count} elements and did not overflow"
                 ));

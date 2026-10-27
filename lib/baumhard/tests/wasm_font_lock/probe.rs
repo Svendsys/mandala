@@ -148,3 +148,29 @@ pub extern "C" fn deep_mutator_validates() -> u32 {
     baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_mutator();
     1
 }
+
+/// R13's acceptance on wasm32's default stack, in a debug build: a map
+/// 100,000 nodes deep through `load`, `validate_subtree`,
+/// `check_savable` and `save`, and back
+/// (`baumhard::document::tests::format_depth`). It also builds every
+/// keyed map the loader and the document hold, so it runs the hash
+/// key's draw from `getrandom` here too.
+#[no_mangle]
+pub extern "C" fn deep_chain_survives_every_walk() -> u32 {
+    install_hook();
+    use baumhard::document::tests::format_depth::{deep_chain_survives_every_walk, CHAIN_DEPTH};
+    match deep_chain_survives_every_walk(CHAIN_DEPTH) {
+        Ok(()) => 1,
+        Err(why) => panic!("the deep chain failed on wasm32: {why}"),
+    }
+}
+
+/// The negative control of `deep_chain_survives_every_walk`: the same
+/// chain counted by a walk that recurses on depth, which must not
+/// return. See the runner for what it is expected to do instead.
+#[no_mangle]
+pub extern "C" fn planted_recursive_walk() -> u32 {
+    install_hook();
+    use baumhard::document::tests::format_depth::{planted_recursive_count, CHAIN_DEPTH};
+    u32::try_from(planted_recursive_count(CHAIN_DEPTH)).unwrap_or(0)
+}

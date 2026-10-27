@@ -23,6 +23,11 @@
 //! mutation validator over a deep mutator tree — because design §20
 //! rule 11 asks every tree walk to prove, under wasm32 debug, that depth
 //! costs it no call stack, and this is the probe that runs code there.
+//! Beside it, R13's acceptance for the file format: a map 100,000
+//! nodes deep through `load`, `validate_subtree`, `check_savable` and
+//! `save`, and back — and, as its negative control, the same chain
+//! counted by a walk that recurses, which must exhaust the engine's
+//! stack.
 //!
 //! **What it needs.** The `wasm32-unknown-unknown` target and `node`.
 //! Without either, the test prints a note and passes, the same
