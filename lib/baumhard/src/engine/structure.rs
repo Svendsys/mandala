@@ -51,7 +51,7 @@ use crate::engine::journal::JournalBuilder;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
 use crate::engine::siblings;
-use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
+use crate::engine::tree::{climb, MutatorTree, Placement, Tree, TreeError};
 use indextree::{Arena, NodeId};
 use rustc_hash::FxHashSet;
 use std::fmt;
@@ -151,12 +151,18 @@ impl<E: PartialEq> PartialEq for Subtree<E> {
     }
 }
 
-/// The derived form, `Subtree { root: …, children: [Subtree { … }, …] }`,
-/// written element by element in pre-order with a heap stack. Each
-/// element is written with the formatter's own flags (`{:#?}` included),
-/// the nesting around them on one line. Cost: O(elements).
+/// The derived form, written element by element in pre-order with a
+/// heap stack instead of one call per level: `{:?}` gives
+/// `Subtree { root: …, children: [Subtree { … }, …] }`, and `{:#?}` the
+/// derived pretty form, a field per line and four spaces per level of
+/// nesting — each element's own `{:#?}` lines indented with it, as the
+/// derived form's padding indents them. Cost: O(elements); for `{:#?}`,
+/// one `String` per element for its own lines.
 impl<E: fmt::Debug> fmt::Debug for Subtree<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            return self.fmt_pretty(f);
+        }
         let mut stack: Vec<(&Subtree<E>, usize)> = Vec::new();
         let mut current = (self, 0);
         f.write_str("Subtree { root: ")?;
@@ -180,6 +186,81 @@ impl<E: fmt::Debug> fmt::Debug for Subtree<E> {
                 None => return Ok(()),
             }
         }
+    }
+}
+
+impl<E: fmt::Debug> Subtree<E> {
+    /// `{:#?}`: see the `Debug` impl. Each entry of the stack is a
+    /// subtree with children, the index of its next child and its level
+    /// of nesting, in units of four spaces.
+    fn fmt_pretty(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        open_pretty(f, self, 0)?;
+        if self.children.is_empty() {
+            return Ok(());
+        }
+        let mut stack: Vec<(&Subtree<E>, usize, usize)> = Vec::new();
+        let mut current = (self, 0, 0);
+        loop {
+            if let Some(child) = current.0.children.get(current.1) {
+                current.1 += 1;
+                let level = current.2 + 2;
+                pad(f, level)?;
+                open_pretty(f, child, level)?;
+                if child.children.is_empty() {
+                    f.write_str(",\n")?;
+                } else {
+                    stack.push(std::mem::replace(&mut current, (child, 0, level)));
+                }
+                continue;
+            }
+            pad(f, current.2 + 1)?;
+            f.write_str("],\n")?;
+            pad(f, current.2)?;
+            f.write_str("}")?;
+            match stack.pop() {
+                Some(parent) => {
+                    f.write_str(",\n")?;
+                    current = parent;
+                }
+                None => return Ok(()),
+            }
+        }
+    }
+}
+
+/// Four spaces per level, as the derived pretty form pads.
+fn pad(f: &mut fmt::Formatter<'_>, level: usize) -> fmt::Result {
+    for _ in 0..level {
+        f.write_str("    ")?;
+    }
+    Ok(())
+}
+
+/// Write `subtree` at `level` in the pretty form up to its children:
+/// its name, its root on its own lines, and either the empty list and
+/// the closing brace, or the opening of a list its children follow.
+fn open_pretty<E: fmt::Debug>(f: &mut fmt::Formatter<'_>, subtree: &Subtree<E>, level: usize) -> fmt::Result {
+    f.write_str("Subtree {\n")?;
+    pad(f, level + 1)?;
+    f.write_str("root: ")?;
+    let root = format!("{:#?}", subtree.root);
+    let mut lines = root.split('\n');
+    if let Some(first) = lines.next() {
+        f.write_str(first)?;
+    }
+    for line in lines {
+        f.write_str("\n")?;
+        pad(f, level + 1)?;
+        f.write_str(line)?;
+    }
+    f.write_str(",\n")?;
+    pad(f, level + 1)?;
+    if subtree.children.is_empty() {
+        f.write_str("children: [],\n")?;
+        pad(f, level)?;
+        f.write_str("}")
+    } else {
+        f.write_str("children: [\n")
     }
 }
 
@@ -281,19 +362,19 @@ pub enum StructOp<E: TreeElement> {
 ///
 /// Every target was reached by the walk, from anchors in the tree, so
 /// it was in the tree when the commands began; a command finds it gone
-/// only if an earlier one removed it, which [`Removed`] answers in
-/// O(1) — no target is checked by climbing to the root.
+/// only if an earlier one removed it, which the tree's O(1)
+/// [`Tree::contains`] answers — no target is checked by climbing to
+/// the root.
 ///
-/// Invalidates `tree`'s cache. Cost: each command's, plus — only when a
-/// command removes something and a later command follows — one hash
-/// insert per element of what was removed.
+/// Invalidates `tree`'s cache. Cost: each command's, plus a hash set
+/// over the subtrees the commands remove, allocated only when one does.
 pub(in crate::engine) fn apply_ops<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
     ops: &[(NodeId, NodeId)],
     journal: &mut JournalBuilder<E>,
 ) -> Result<(), TreeError> {
-    let mut removed = Removed::default();
+    let mut removed: FxHashSet<NodeId> = FxHashSet::default();
     let result = ops.iter().try_for_each(|&(target, mutator)| {
         match mutator_tree.arena.get(mutator).map(|node| node.get()) {
             Some(Mutator::Structure { op, .. }) => apply_op(tree, target, op, journal, &mut removed),
@@ -304,65 +385,26 @@ pub(in crate::engine) fn apply_ops<E: TreeElement, M: Mutation<E>>(
     result
 }
 
-/// What the commands of one walk have taken out of the tree, so that a
-/// later command can tell whether a node it names is still in it
-/// without climbing to the root.
-///
-/// A removed subtree is frozen for the rest of the walk: no command can
-/// name a node in it — insert under it, split, merge or move it — nor
-/// move anything into it, since each refuses a node out of the tree.
-/// So the elements of the removed subtrees, gathered once, answer the
-/// question exactly for the whole walk. They are gathered only when a
-/// command after the removal asks.
-#[derive(Default)]
-struct Removed {
-    /// The tops of the removed subtrees.
-    tops: FxHashSet<NodeId>,
-    /// Every element of the removed subtrees gathered so far.
-    gone: FxHashSet<NodeId>,
-    /// Tops whose elements are not gathered yet.
-    ungathered: Vec<NodeId>,
-}
-
-impl Removed {
-    /// Note that `top` and its subtree left the tree. O(1).
-    fn add(&mut self, top: NodeId) {
-        self.tops.insert(top);
-        self.ungathered.push(top);
-    }
-
-    /// Whether `node` is in a subtree removed so far. Amortized O(1):
-    /// each removed element is gathered once, by the first question
-    /// after its removal.
-    fn contains<E>(&mut self, arena: &Arena<E>, node: NodeId) -> bool {
-        if self.tops.is_empty() {
-            return false;
-        }
-        for top in self.ungathered.drain(..) {
-            self.gone.extend(top.descendants(arena));
-        }
-        self.gone.contains(&node)
-    }
-}
-
 /// Run one command on `target`, which was in the tree when the walk
-/// reached it. `removed` holds what this walk's earlier commands
-/// detached.
+/// reached it. `removed` holds the tops of the subtrees this walk's
+/// earlier commands detached.
 fn apply_op<E: TreeElement>(
     tree: &mut Tree<E>,
     target: NodeId,
     op: &StructOp<E>,
     journal: &mut JournalBuilder<E>,
-    removed: &mut Removed,
+    removed: &mut FxHashSet<NodeId>,
 ) -> Result<(), TreeError> {
-    let root = tree.root;
-    let arena = &mut tree.arena;
-    if arena.get(target).is_none() {
+    if tree.arena.get(target).is_none() {
         return Err(TreeError::StaleNode(target));
     }
-    if removed.contains(arena, target) {
+    if !tree.contains(target) {
+        // In the tree when the walk reached it, so out of it only by an
+        // earlier command of this walk.
         return Err(TreeError::TargetRemovedEarlier(target));
     }
+    let root = tree.root;
+    let Tree { arena, detached, .. } = tree;
     match op {
         StructOp::Insert { subtree, at } => {
             let prev = siblings::slot(arena, target, &subtree.root.key(), *at, E::key)?;
@@ -375,7 +417,7 @@ fn apply_op<E: TreeElement>(
             if target == root {
                 return Err(TreeError::RemoveRoot);
             }
-            detach(arena, target, journal, removed);
+            detach(arena, detached, target, journal, removed);
         }
         StructOp::Move { to, at } => {
             if arena.get(*to).is_none() {
@@ -394,22 +436,22 @@ fn apply_op<E: TreeElement>(
                 siblings::reattach_in_row(arena, *to, target, prev);
                 return Ok(());
             }
-            if removed.contains(arena, *to) {
-                return Err(TreeError::TargetRemovedEarlier(*to));
+            if detached.contains(to) {
+                // Out of the tree: removed by this walk, or held by a
+                // journal from before it. Which one is told by the top
+                // of its detached subtree — a climb on this refusal
+                // only.
+                let top = climb(arena, *to).last().unwrap_or(*to);
+                return Err(if removed.contains(&top) {
+                    TreeError::TargetRemovedEarlier(*to)
+                } else {
+                    TreeError::StaleNode(*to)
+                });
             }
-            // A real re-parent: the one climb a command makes, to
-            // refuse a cycle and a parent out of the tree — once per
-            // node moved, the price of the move.
-            let mut top = *to;
-            let mut cycle = false;
-            for ancestor in to.ancestors(arena) {
-                cycle |= ancestor == target;
-                top = ancestor;
-            }
-            if top != root {
-                return Err(not_in_tree(*to, top, &removed.tops));
-            }
-            if cycle {
+            // A real re-parent: the one climb a command makes, to refuse
+            // a cycle — once per node moved, the price of the move
+            // (ruling R16 on #282), never per node visited.
+            if climb(arena, *to).any(|ancestor| ancestor == target) {
                 return Err(TreeError::Cycle {
                     node: target,
                     to: *to,
@@ -461,35 +503,28 @@ fn apply_op<E: TreeElement>(
             }
             journal.record(arena, target);
             *arena[target].get_mut() = merged;
-            detach(arena, next, journal, removed);
+            detach(arena, detached, next, journal, removed);
         }
     }
     Ok(())
 }
 
-/// The error for a command naming `node`, which is in the arena but in
-/// a detached subtree whose top is `top`: the walk's own removal, or a
-/// node that was out of the tree before the walk.
-fn not_in_tree(node: NodeId, top: NodeId, removed: &FxHashSet<NodeId>) -> TreeError {
-    if removed.contains(&top) {
-        TreeError::TargetRemovedEarlier(node)
-    } else {
-        TreeError::StaleNode(node)
-    }
-}
-
-/// Detach `node` and its subtree from the tree, recorded in `journal`,
-/// and remember it as removed by this walk.
+/// Detach `node` and its subtree from the tree, recorded in `journal`;
+/// mark every element of it out of the tree in `detached` (the tree's
+/// set), and remember it as removed by this walk. O(subtree): the
+/// elements a journal's touches name for this removal.
 fn detach<E: TreeElement>(
     arena: &mut Arena<E>,
+    detached: &mut FxHashSet<NodeId>,
     node: NodeId,
     journal: &mut JournalBuilder<E>,
-    removed: &mut Removed,
+    removed: &mut FxHashSet<NodeId>,
 ) {
     journal.record(arena, node);
     journal.note_detach(arena, node);
     node.detach(arena);
-    removed.add(node);
+    detached.extend(node.descendants(arena));
+    removed.insert(node);
 }
 
 /// Allocate the elements below `subtree`'s root under `top`, the node

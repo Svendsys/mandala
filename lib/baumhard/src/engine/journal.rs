@@ -1192,6 +1192,7 @@ impl<E: TreeElement> Journal<E> {
             write(&mut tree.arena, entry.node, entry.before.clone());
         }
         self.arrange(&mut tree.arena, &self.to_before, Positions::before);
+        self.mark(tree, Side::Before);
         tree.cache.invalidate();
         Ok(())
     }
@@ -1213,6 +1214,7 @@ impl<E: TreeElement> Journal<E> {
             write(&mut tree.arena, entry.node, entry.after.clone());
         }
         self.arrange(&mut tree.arena, &self.to_after, Positions::after);
+        self.mark(tree, Side::After);
         tree.cache.invalidate();
         Ok(())
     }
@@ -1245,12 +1247,44 @@ impl<E: TreeElement> Journal<E> {
         for &node in held {
             let detached = tree.arena.get(node).is_some_and(|n| n.parent().is_none());
             if detached && node != tree.root {
+                for member in node.descendants(&tree.arena) {
+                    tree.detached.remove(&member);
+                }
                 node.remove_subtree(&mut tree.arena);
                 freed = true;
             }
         }
         if freed {
             tree.cache.invalidate();
+        }
+    }
+
+    /// Mark in `tree`'s set of detached nodes which nodes are out of the
+    /// tree in the arrangement `side`, now written: a node the touches
+    /// name [`Touch::Inserted`] is in after the journal and out before
+    /// it, a [`Touch::Removed`] one the other way round, and no other
+    /// node changes whether it is in the tree. The touches name every
+    /// element of each subtree that entered or left, so the set stays
+    /// exact, and [`Tree::contains`] O(1).
+    ///
+    /// Cost: one hash write per element that entered or left — the
+    /// touches every consumer of the change walks anyway; nothing for a
+    /// journal with no structural change.
+    fn mark(&self, tree: &mut Tree<E>, side: Side) {
+        let Some(touched) = &self.touched else {
+            return;
+        };
+        for &(node, touch) in touched {
+            let out = match (touch, side) {
+                (Touch::Inserted, Side::Before) | (Touch::Removed, Side::After) => true,
+                (Touch::Inserted, Side::After) | (Touch::Removed, Side::Before) => false,
+                (Touch::Field | Touch::Moved, _) => continue,
+            };
+            if out {
+                tree.detached.insert(node);
+            } else {
+                tree.detached.remove(&node);
+            }
         }
     }
 
@@ -1381,8 +1415,10 @@ impl<E: Interpolable> Journal<E> {
         }
         if after {
             self.arrange(&mut tree.arena, &self.to_after, Positions::after);
+            self.mark(tree, Side::After);
         } else {
             self.arrange(&mut tree.arena, &self.to_before, Positions::before);
+            self.mark(tree, Side::Before);
         }
         tree.cache.invalidate();
         Ok(())

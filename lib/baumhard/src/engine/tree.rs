@@ -50,6 +50,7 @@ use crate::engine::siblings;
 use crate::engine::walker::{run_walk, walk_anchor};
 use indextree::{Arena, Children, Descendants, Node, NodeId};
 use log::error;
+use rustc_hash::FxHashSet;
 use std::fmt;
 
 /// Where [`Tree::insert_child`] / [`MutatorTree::insert_child`] puts a
@@ -181,6 +182,20 @@ pub struct Tree<E: TreeElement> {
     /// methods may write it. Every way of changing the tree — the
     /// methods here and a walk — marks it stale.
     pub(crate) cache: E::Cache,
+    /// Every node in the arena that is **not** in the tree: each element
+    /// of every subtree a structural command detached and a journal
+    /// still owns. What makes [`Tree::contains`] O(1). Kept exact by the
+    /// engine alone — the arena is private to it — at the three places
+    /// a subtree leaves or re-enters the tree: a command that detaches
+    /// one (`StructOp::Remove`, `StructOp::Merge`), a journal restoring
+    /// an arrangement ([`Journal::revert`](crate::engine::journal::Journal::revert),
+    /// [`replay`](crate::engine::journal::Journal::replay),
+    /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)),
+    /// which marks exactly the nodes its
+    /// [touches](crate::engine::journal::Journal::touched) name as
+    /// inserted or removed, and [`Journal::discard`](crate::engine::journal::Journal::discard),
+    /// which frees them. Every other move keeps a node in the tree.
+    pub(in crate::engine) detached: FxHashSet<NodeId>,
 }
 
 impl<E: TreeElement> Tree<E> {
@@ -200,6 +215,7 @@ impl<E: TreeElement> Tree<E> {
             root,
             layer: 0,
             cache: E::Cache::default(),
+            detached: FxHashSet::default(),
         }
     }
 
@@ -225,23 +241,17 @@ impl<E: TreeElement> Tree<E> {
     /// removed node and a reused slot under an old stamp answer `false`,
     /// and so does a node of a subtree a structural command detached —
     /// still allocated, so a journal can put it back, but not part of
-    /// the tree until it does. O(depth of `id`); no allocation.
+    /// the tree until it does.
     ///
-    /// **A one-off question.** It climbs to the root, so asked once per
-    /// element of a walk, a selection or a request it would make the
-    /// work quadratic in depth (§20 rule 11). No walk asks it per
-    /// element: an entry point asks it once of the node it is given,
-    /// anchored walks ask a memo that climbs each ancestor once over all
-    /// their anchors, and a walk's structural commands know their
-    /// targets are in the tree — the walk reached them from it — unless
-    /// an earlier command removed them, which they track themselves.
-    /// It stays a climb rather than an O(1) mark because a mark on each
-    /// detached node would have to be written on every element of a
-    /// subtree each time a journal detaches or re-attaches it — every
-    /// revert and replay of a removal — turning those O(1) steps into
-    /// O(subtree) ones to speed up a question nothing asks in a loop.
+    /// O(1): an arena look-up and a look-up in the tree's set of
+    /// detached nodes, never a climb to the root — so it can be asked
+    /// once per element of a walk, a selection or a request at no cost
+    /// that grows with depth (§20 rule 11). The set is written where a
+    /// subtree leaves or re-enters the tree: per element of that
+    /// subtree, which every consumer of the change walks anyway through
+    /// [`Journal::touched`](crate::engine::journal::Journal::touched).
     pub fn contains(&self, id: NodeId) -> bool {
-        self.arena.get(id).is_some() && id.ancestors(&self.arena).last() == Some(self.root)
+        self.arena.get(id).is_some() && !self.detached.contains(&id)
     }
 
     /// Pre-order iterator over every descendant of [`Self::root`]
@@ -273,11 +283,15 @@ impl<E: TreeElement> Tree<E> {
     /// parent, [`TreeError::PlacementCrossesKey`] for a placement
     /// sibling with a different key.
     ///
-    /// Invalidates the tree's cache. Cost: one arena slot plus a scan
-    /// of the siblings between the end of the row and the insertion
-    /// point — O(1) for children inserted in ascending key order with
-    /// [`Placement::Last`]. The new node is fresh, so no ancestor walk.
+    /// Invalidates the tree's cache. Cost: an O(1) check that `parent`
+    /// is in the tree, one arena slot and a scan of the siblings between
+    /// the end of the row and the insertion point — O(1) for children
+    /// inserted in ascending key order with [`Placement::Last`]. The new
+    /// node is fresh, so no ancestor walk.
     pub fn insert_child(&mut self, parent: NodeId, element: E, at: Placement) -> Result<NodeId, TreeError> {
+        if !self.contains(parent) {
+            return Err(TreeError::StaleNode(parent));
+        }
         let id = siblings::insert_sorted(&mut self.arena, parent, element, at, E::key)?;
         self.cache.invalidate();
         Ok(id)
@@ -295,7 +309,7 @@ impl<E: TreeElement> Tree<E> {
     ///
     /// Invalidates the tree's cache. Cost: O(subtree size).
     pub fn remove_subtree(&mut self, node: NodeId) -> Result<(), TreeError> {
-        if self.arena.get(node).is_none() {
+        if !self.contains(node) {
             return Err(TreeError::StaleNode(node));
         }
         if node == self.root {
@@ -323,8 +337,9 @@ impl<E: TreeElement> Tree<E> {
     /// [`Self::update_journaled`].
     ///
     /// Invalidates the tree's cache. Cost: `f`, two O(1) key reads and
-    /// an O(depth) check that `id` is in the tree — a one-off per call
-    /// ([`Self::contains`]); only when the key changed, a scan of the
+    /// an O(1) check that `id` is in the tree ([`Self::contains`]) — so
+    /// a caller updating many elements pays nothing per element that
+    /// grows with depth; only when the key changed, a scan of the
     /// siblings the element moves past plus a same-row re-attach
     /// (ruling R16 on #282: O(1) once indextree offers it, O(depth)
     /// until then).
@@ -596,11 +611,10 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// since a tree changed without history cannot put them back.
     ///
     /// Invalidates `tree`'s cache. Cost, with `g` given nodes, `k`
-    /// resolved anchors and `u` the elements on their paths up to the
-    /// root — the union of those paths, each element counted once
-    /// however many anchors sit below it:
-    /// - validating is O(u) — each element above a given node is
-    ///   climbed through once over all of them, never once per node;
+    /// resolved anchors and `u` the elements on the resolved anchors'
+    /// paths up to the root — the union of those paths, each element
+    /// counted once however many anchors sit below it:
+    /// - validating is O(g) — [`Tree::contains`] is O(1);
     /// - resolving is O(g) for [`Anchors::Nodes`] and
     ///   [`Anchors::ParentOf`]; [`Anchors::SiblingsOf`] scans the row of
     ///   each distinct parent of the given nodes once, which is what it
@@ -668,5 +682,45 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
             journal.unwind(tree);
         }
         result
+    }
+}
+
+/// `id` and every node above it, up to the top of whatever it hangs
+/// in: indextree's `ancestors`, and **the engine's only climb to the
+/// root**. A climb is O(depth), so it belongs only where its cost is
+/// paid once per node a user acts on — the cycle check of a re-parent
+/// ([`StructOp::Move`](crate::engine::structure::StructOp::Move)) and
+/// the refusal that names where a detached node hangs — never once per
+/// element a walk visits (§20 rule 11).
+/// `util::source_scan`'s `test_the_engine_climbs_only_through_climb`
+/// holds every other engine file to calling this rather than
+/// `ancestors`, and test builds count its steps, so a climb planted per
+/// element shows in a step count. No allocation.
+pub(in crate::engine) fn climb<E>(arena: &Arena<E>, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    id.ancestors(arena).inspect(|_| {
+        #[cfg(test)]
+        tests_support::count_climb_step();
+    })
+}
+
+/// What the tests read of [`climb`]: how many nodes every climb has
+/// gone through on this thread. Compiled for tests only.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CLIMB_STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more node climbed through.
+    pub(super) fn count_climb_step() {
+        CLIMB_STEPS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The nodes every engine climb on this thread has gone through so
+    /// far.
+    pub(crate) fn climb_steps() -> usize {
+        CLIMB_STEPS.with(Cell::get)
     }
 }

@@ -154,3 +154,57 @@ pub fn do_engine_build_refuses_spatial_descend_without_geometry() {
         "the control: another instruction in the same place builds"
     );
 }
+
+/// The deepest chain of `Void`s a JSON `MutatorNode` can spell under
+/// serde_json's default recursion limit, which admits 127 nested
+/// objects and arrays: each AST level is three of them — the variant's
+/// object, its fields' object, and the `children` array — and the last
+/// needs no array, so 42 levels take `3 × 42 − 1 = 125` and 43 would
+/// take 128. Found by parsing, and pinned by the test below.
+pub const AST_JSON_DEPTH_LIMIT: usize = 42;
+
+/// A chain of `depth` `Void`s, as JSON.
+fn void_chain_json(depth: usize) -> String {
+    let mut json = String::from(r#"{"Void":{"kind":"Plain","channel":0}}"#);
+    for _ in 1..depth {
+        json = format!(r#"{{"Void":{{"kind":"Plain","channel":0,"children":[{json}]}}}}"#);
+    }
+    json
+}
+
+#[test]
+fn test_builder_ast_from_json_nests_no_deeper_than_serde_json_allows() {
+    do_builder_ast_from_json_nests_no_deeper_than_serde_json_allows();
+}
+
+/// The builder recurses over the AST alone, and the AST's only source
+/// is JSON, whose parse bounds its depth: serde_json's default
+/// recursion limit takes a chain of [`AST_JSON_DEPTH_LIMIT`] `Void`s and
+/// refuses one more. This pins the bound the builder's recursion rests
+/// on (CONCEPTS, the mutator builder): a parser switch, or serde_json's
+/// limit lifted, turns this red.
+pub fn do_builder_ast_from_json_nests_no_deeper_than_serde_json_allows() {
+    let deepest: Node =
+        serde_json::from_str(&void_chain_json(AST_JSON_DEPTH_LIMIT)).expect("a chain at the limit parses");
+    let mut levels = 1;
+    let mut at = &deepest;
+    while let MutatorNode::Void { children, .. } = at {
+        match children.first() {
+            Some(child) => {
+                levels += 1;
+                at = child;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(
+        levels, AST_JSON_DEPTH_LIMIT,
+        "precondition: the chain parsed whole"
+    );
+    let refused = serde_json::from_str::<Node>(&void_chain_json(AST_JSON_DEPTH_LIMIT + 1))
+        .expect_err("one level more is refused");
+    assert!(
+        refused.to_string().contains("recursion limit exceeded"),
+        "refused for its depth, not for its shape: {refused}"
+    );
+}

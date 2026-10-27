@@ -86,11 +86,10 @@ where
     // All or nothing: every node the anchors are stated in terms of is
     // checked — in the arena, and under this tree's root — before
     // anything resolves, let alone walks. A node named twice is checked
-    // once, and each ancestor is climbed through once over all of them.
-    let mut members = Membership::default();
+    // once; each check is O(1) (`Tree::contains`).
     let mut given: FxHashSet<NodeId> = FxHashSet::default();
     for &id in anchors.given() {
-        if given.insert(id) && !members.contains(tree, id) {
+        if given.insert(id) && !tree.contains(id) {
             return Err(TreeError::StaleNode(id));
         }
     }
@@ -103,7 +102,7 @@ where
     let mut resolved = resolve(&tree.arena, anchors, &given, root_kind);
 
     if resolved.len() > 1 {
-        resolved = in_tree_order(tree, &mut members, &resolved, mutator_tree.reaches_below_root());
+        resolved = in_tree_order(tree, &resolved, mutator_tree.reaches_below_root());
     }
 
     // Every seed is taken from the tree as it is now, before any
@@ -183,10 +182,11 @@ fn resolve<E: TreeElement>(
 /// reached through that one.
 ///
 /// Nothing climbs from an anchor to the root more than once over all of
-/// them. Each anchor is climbed through `members`, whose climbs stop at
-/// the first element already climbed through, so afterwards its members
-/// are exactly the union of the anchors' paths to the root — each
-/// element of it climbed through once (§20 rule 11). That union is then
+/// them. Each anchor is climbed through one [`Membership`], whose climbs
+/// stop at the first element already climbed through, so afterwards its
+/// members are exactly the union of the anchors' paths to the root —
+/// each element of it climbed through once (§20 rule 11). That union is
+/// then
 /// a small tree: each member hangs under its parent, the members under
 /// one parent are ordered as their row has them — by key, the
 /// sorted-children invariant, and between equal keys by position, from
@@ -197,14 +197,10 @@ fn resolve<E: TreeElement>(
 /// Cost, with `u` the size of that union: O(u log u) for the order,
 /// one hash map and two `Vec`s of `u` entries, plus the row scans
 /// ties need. Nothing is proportional to the depth per anchor.
-fn in_tree_order<E: TreeElement>(
-    tree: &Tree<E>,
-    members: &mut Membership,
-    anchors: &[NodeId],
-    drop_nested: bool,
-) -> Vec<NodeId> {
+fn in_tree_order<E: TreeElement>(tree: &Tree<E>, anchors: &[NodeId], drop_nested: bool) -> Vec<NodeId> {
     // A resolved anchor is a given node, its parent or its sibling, so
     // it is in the tree; the climb only adds its path to the union.
+    let mut members = Membership::default();
     for &id in anchors {
         members.contains(tree, id);
     }

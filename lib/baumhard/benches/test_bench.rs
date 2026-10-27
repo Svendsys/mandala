@@ -2259,6 +2259,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("engine_deep_walks_inherit_once_per_level", |b| {
         b.iter(do_engine_deep_walks_inherit_once_per_level)
     });
+    c.bench_function("engine_subtree_impls_match_the_derived_ones", |b| {
+        b.iter(do_engine_subtree_impls_match_the_derived_ones)
+    });
+    c.bench_function(
+        "builder_ast_from_json_nests_no_deeper_than_serde_json_allows",
+        |b| b.iter(do_builder_ast_from_json_nests_no_deeper_than_serde_json_allows),
+    );
     c.bench_function("engine_journaled_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_journaled_walk_wide_and_deep_tree)
     });

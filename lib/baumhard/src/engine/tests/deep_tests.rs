@@ -408,23 +408,24 @@ fn test_engine_deep_walks_inherit_once_per_level() {
 /// they descend through, counted in calls to `inherit`, not timed. A
 /// walk that re-derived each element's state by folding down from the
 /// root would make `STEPS_DEEP²/2` calls.
+///
+/// The counts are exact. The full walk and the descent each compute the
+/// state the root hands down and the state of every element but the
+/// leaf, which has no children to hand one to: `STEPS_DEEP`. The zip
+/// computes the state below every element it pairs, the leaf's
+/// included — a `MapChildren` computes it before it looks for children —
+/// so one more.
 pub fn do_engine_deep_walks_inherit_once_per_level() {
     let (mut tree, _) = chain(STEPS_DEEP, 1);
     let before = inherit_calls();
     mirrored(STEPS_DEEP, TestMutation::SetToInherited).apply_to(&mut tree, &0);
     let full = inherit_calls() - before;
-    assert!(
-        full <= STEPS_DEEP + 1,
-        "{full} inherits for a full walk {STEPS_DEEP} deep"
-    );
+    assert_eq!(full, STEPS_DEEP, "inherits for a full walk {STEPS_DEEP} deep");
 
     let before = inherit_calls();
     repeating(TestMutation::SetToInherited).apply_to(&mut tree, &0);
     let repeat = inherit_calls() - before;
-    assert!(
-        repeat <= STEPS_DEEP + 1,
-        "{repeat} inherits for a descent {STEPS_DEEP} deep"
-    );
+    assert_eq!(repeat, STEPS_DEEP, "inherits for a descent {STEPS_DEEP} deep");
 
     let mut zipped = MutatorTree::new();
     let mut at = zipped.root;
@@ -442,14 +443,7 @@ pub fn do_engine_deep_walks_inherit_once_per_level() {
     let before = inherit_calls();
     zipped.apply_to(&mut tree, &0);
     let zip = inherit_calls() - before;
-    assert!(
-        zip <= STEPS_DEEP + 1,
-        "{zip} inherits for a zip {STEPS_DEEP} deep"
-    );
-    assert!(
-        full > 0 && repeat > 0 && zip > 0,
-        "precondition: each walk descended"
-    );
+    assert_eq!(zip, STEPS_DEEP + 1, "inherits for a zip {STEPS_DEEP} deep");
 }
 
 // The step counts below read counters the engine keeps only in test
@@ -459,9 +453,10 @@ pub fn do_engine_deep_walks_inherit_once_per_level() {
 
 /// An anchored walk at every element of a chain climbs through each
 /// element once — to check that every anchor is in the tree and to put
-/// the anchors in tree order — not once per anchor: the steps of every
-/// climb its memo makes are about the chain, where a climb per anchor
-/// would be `STEPS_DEEP²/2` of them.
+/// the anchors in tree order — not once per anchor: exactly
+/// `STEPS_DEEP` climb steps, one per element below the root (the root
+/// answers without a step). A climb per anchor would be `STEPS_DEEP²/2`
+/// of them, and a second memo for the ordering `2 × STEPS_DEEP`.
 #[test]
 fn test_engine_deep_anchors_climb_each_element_once() {
     use crate::engine::membership::tests_support::climbed_steps;
@@ -479,13 +474,9 @@ fn test_engine_deep_anchors_climb_each_element_once() {
         ids.iter().all(|&id| value(&tree, id) == 2),
         "precondition: every anchor was walked"
     );
-    assert!(
-        climbed >= STEPS_DEEP,
-        "precondition: the anchors were climbed ({climbed})"
-    );
-    assert!(
-        climbed <= 2 * STEPS_DEEP,
-        "{climbed} climb steps for {STEPS_DEEP} anchors on one chain"
+    assert_eq!(
+        climbed, STEPS_DEEP,
+        "climb steps for {STEPS_DEEP} anchors on one chain"
     );
 }
 
@@ -493,6 +484,12 @@ fn test_engine_deep_anchors_climb_each_element_once() {
 /// leaf has every entry above a node that entered the tree; its close
 /// asks, for every entry, the top of what entered with it — and climbs
 /// through each element once over all of them, counted in steps.
+///
+/// Exactly `2 × STEPS_DEEP + 3`: the climb up the arrangement after goes
+/// through every chain element, the root and the inserted node
+/// (`STEPS_DEEP + 2`), and the climb up the arrangement before through
+/// every chain element and the root (`STEPS_DEEP + 1`) — the inserted
+/// node was not in the tree before, so nothing asks where it left from.
 #[test]
 fn test_engine_deep_journal_close_climbs_each_element_once() {
     use crate::engine::journal::tests_support::presence_steps;
@@ -514,10 +511,10 @@ fn test_engine_deep_journal_close_climbs_each_element_once() {
         STEPS_DEEP + 1,
         "precondition: every element is an entry, and the insert is one more"
     );
-    assert!(steps > 0, "precondition: the close climbed");
-    assert!(
-        steps <= 4 * STEPS_DEEP,
-        "{steps} climb steps to close {STEPS_DEEP} entries on one chain"
+    assert_eq!(
+        steps,
+        2 * STEPS_DEEP + 3,
+        "climb steps to close {STEPS_DEEP} entries on one chain"
     );
     journal.discard(&mut tree);
 }
@@ -585,5 +582,216 @@ fn test_engine_deep_settle_leaves_only_children_in_place() {
     assert_eq!(
         steps, 0,
         "{steps} insert steps to settle {STEPS_DEEP} only children"
+    );
+}
+
+/// The engine climbs to the root, and inserts an existing node, in one
+/// place each — `tree::climb`, and `siblings`' checked insert — whose
+/// steps test builds count. A climb or a checked insert written
+/// anywhere else in its shipped code is a cost the counts below could
+/// not see, so it is refused by name.
+#[test]
+fn test_the_engine_climbs_only_through_climb() {
+    let (found, allowed) = crate::util::source_scan::engine_depth_cost_calls();
+    assert_eq!(
+        allowed, 3,
+        "precondition: the scan reads the counted climb and the two counted inserts"
+    );
+    assert!(
+        found.is_empty(),
+        "a climb to the root or an insert of an existing node outside `tree::climb` and \
+         `siblings::checked_attach`, which no step count sees:\n{}",
+        found
+            .iter()
+            .map(|(file, line, code)| format!("  {file}:{line}   {code}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// Structural commands and updates on a deep chain climb nothing and
+/// insert no existing node — counted, not timed:
+/// - a [`Subtree`] `STEPS_DEEP` deep inserted below the leaf (its every
+///   node new, so put in by value);
+/// - a `RepeatWhile` whose repeated mutator is a structural `Insert`,
+///   which collects a command at every element of the chain and of the
+///   inserted subtree, each checked against what earlier commands
+///   removed in O(1);
+/// - and a thousand updates of the leaf, plain and journaled, each
+///   checking in O(1) that the leaf is in the tree.
+///
+/// Exactly 0 climb steps and 0 checked inserts. A climb per command, a
+/// checked insert per new node or a `Tree::contains` that climbed would
+/// each cost the depth per element here.
+#[test]
+fn test_engine_deep_commands_and_updates_climb_nothing() {
+    use crate::engine::siblings::tests_support::checked_attaches;
+    use crate::engine::tree::tests_support::climb_steps;
+    let (mut tree, ids) = chain(STEPS_DEEP, 1);
+    let leaf = ids[STEPS_DEEP - 1];
+    let root = tree.root;
+    let (climbs, attaches) = (climb_steps(), checked_attaches());
+
+    MutatorTree::<TestElement, TestMutation>::new_with(Mutator::new_structure(
+        StructOp::Insert {
+            subtree: deep_subtree(STEPS_DEEP),
+            at: Placement::Last,
+        },
+        plain(0),
+    ))
+    .apply_at(&mut tree, &Anchors::Nodes(vec![leaf]), |_, _| 0)
+    .unwrap();
+
+    let mut every = MutatorTree::new_with(Mutator::new_instruction(
+        Instruction::RepeatWhile(Predicate::always_true()),
+        plain(0),
+    ));
+    let repeat = every.root;
+    add_mutator(
+        &mut every,
+        repeat,
+        Mutator::new_structure(
+            StructOp::Insert {
+                subtree: Subtree::leaf(TestElement::new(5, 0)),
+                at: Placement::Last,
+            },
+            plain(0),
+        ),
+    );
+    let mut builder = JournalBuilder::new();
+    every
+        .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![root]), |_, _| 0, &mut builder)
+        .unwrap();
+    for _ in 0..1_000 {
+        tree.update(leaf, |element| element.value += 1).unwrap();
+        tree.update_journaled(leaf, &mut builder, |element| element.value += 1)
+            .unwrap();
+    }
+    let journal = builder.close(&tree);
+
+    assert_eq!(
+        tree.descendants().count(),
+        1 + 2 * STEPS_DEEP + 2 * STEPS_DEEP,
+        "precondition: the subtree and a leaf below every element are in"
+    );
+    assert_eq!(value(&tree, leaf), 1 + 2_000, "precondition: every update ran");
+    assert_eq!(climb_steps() - climbs, 0, "climb steps");
+    assert_eq!(
+        checked_attaches() - attaches,
+        0,
+        "checked inserts of existing nodes"
+    );
+    journal.discard(&mut tree);
+}
+
+/// `Tree::contains` stays exact through a removal, its revert, its
+/// replay and the discard that frees it, for every element of the
+/// removed subtree — the set of detached nodes behind it is written
+/// from the journal's touches, never by a climb.
+#[test]
+fn test_engine_contains_follows_removal_revert_replay_and_discard() {
+    let (mut tree, ids) = chain(STEPS_DEEP, 1);
+    let middle = ids[STEPS_DEEP / 2];
+    let leaf = ids[STEPS_DEEP - 1];
+    let remove = MutatorTree::<TestElement, TestMutation>::new_with(Mutator::new_structure(
+        StructOp::Remove,
+        plain(0),
+    ));
+    let mut builder = JournalBuilder::new();
+    remove
+        .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![middle]), |_, _| 0, &mut builder)
+        .unwrap();
+    let journal = builder.close(&tree);
+    let out = |tree: &Tree<TestElement>| !tree.contains(middle) && !tree.contains(leaf);
+    let inside = |tree: &Tree<TestElement>| tree.contains(middle) && tree.contains(leaf);
+    assert!(out(&tree), "removed");
+    assert!(tree.contains(ids[STEPS_DEEP / 2 - 1]), "the parent stays");
+    assert_eq!(
+        tree.update(leaf, |e| e.value = 9),
+        Err(TreeError::StaleNode(leaf)),
+        "an update of a removed node is refused"
+    );
+    journal.revert(&mut tree).unwrap();
+    assert!(inside(&tree), "reverted");
+    journal.replay(&mut tree).unwrap();
+    assert!(out(&tree), "replayed");
+    journal.revert(&mut tree).unwrap();
+    assert!(inside(&tree), "reverted again");
+    journal.replay(&mut tree).unwrap();
+    journal.discard(&mut tree);
+    assert!(out(&tree), "discarded");
+    assert!(tree.arena().get(leaf).is_none(), "and freed");
+    assert!(tree.detached.is_empty(), "nothing freed is still marked");
+}
+
+/// What `#[derive(Clone, Debug, PartialEq)]` makes of a subtree: the
+/// shape `Subtree` had before its impls were written by hand, held
+/// beside them as the reference. Named apart, so its derived `Debug`
+/// writes `Mirror` where `Subtree`'s writes `Subtree`.
+#[derive(Clone, Debug, PartialEq)]
+struct Mirror {
+    root: TestElement,
+    children: Vec<Mirror>,
+}
+
+/// A random subtree up to `depth` levels and three children a node,
+/// with its derived mirror, from `rng`.
+fn random_pair(rng: &mut rand::rngs::StdRng, depth: usize) -> (Subtree<TestElement>, Mirror) {
+    use rand::RngExt;
+    let root = if rng.random_range(0..2) == 0 {
+        TestElement::new(rng.random_range(0..3), rng.random_range(-2..3))
+    } else {
+        TestElement::marked(rng.random_range(0..3), rng.random_range(-2..3))
+    };
+    let count = if depth == 0 { 0 } else { rng.random_range(0..=3) };
+    let (children, mirrors) = (0..count).map(|_| random_pair(rng, depth - 1)).unzip();
+    (
+        Subtree {
+            root: root.clone(),
+            children,
+        },
+        Mirror {
+            root,
+            children: mirrors,
+        },
+    )
+}
+
+#[test]
+fn test_engine_subtree_impls_match_the_derived_ones() {
+    do_engine_subtree_impls_match_the_derived_ones();
+}
+
+/// `Subtree`'s hand-written `Debug` (`{:?}` and `{:#?}`), `Clone` and
+/// `PartialEq` agree with what the derives make, on 2,000 random
+/// subtrees up to five levels deep: the text is byte for byte the
+/// derived text with the type's name, a clone is equal and prints the
+/// same, and two subtrees are equal exactly when their mirrors are.
+pub fn do_engine_subtree_impls_match_the_derived_ones() {
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(282);
+    let mut previous: Option<(Subtree<TestElement>, Mirror)> = None;
+    let mut equal_pairs = 0;
+    for _ in 0..2_000 {
+        let (subtree, mirror) = random_pair(&mut rng, 5);
+        let derived = |text: String| text.replace("Mirror {", "Subtree {");
+        assert_eq!(format!("{subtree:?}"), derived(format!("{mirror:?}")));
+        assert_eq!(format!("{subtree:#?}"), derived(format!("{mirror:#?}")));
+        let copy = subtree.clone();
+        assert!(copy == subtree, "a clone is equal");
+        assert_eq!(format!("{copy:#?}"), format!("{subtree:#?}"));
+        if let Some((other, other_mirror)) = &previous {
+            assert_eq!(
+                subtree == *other,
+                mirror == *other_mirror,
+                "{subtree:?} against {other:?}"
+            );
+            equal_pairs += usize::from(mirror == *other_mirror);
+        }
+        previous = Some((subtree, mirror));
+    }
+    assert!(
+        equal_pairs > 0,
+        "precondition: some pairs are equal, so `==` is tested both ways"
     );
 }

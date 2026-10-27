@@ -5,12 +5,14 @@
 //! detached — for many elements at once, at a cost that does not grow
 //! with depth per element (design §20 rule 11).
 //!
-//! [`Tree::contains`](crate::engine::tree::Tree::contains) climbs from one element to the root. Asked for
-//! every element of a selection, or every link of a request, that is
-//! the depth paid once per element. A `Membership` remembers the answer
-//! for every element it climbs through, and a later climb stops at the
-//! first element already answered, so each ancestor is climbed through
-//! once over all the questions it is asked.
+//! [`Tree::contains`](crate::engine::tree::Tree::contains) answers in
+//! O(1) from the tree's set of detached nodes; a `Membership` answers by
+//! climbing, and is what the engine uses where it needs the climb
+//! itself — the union of the paths above a set of anchors, which orders
+//! them. A `Membership` remembers the answer for every element it
+//! climbs through, and a later climb stops at the first element already
+//! answered, so each ancestor is climbed through once over all the
+//! questions it is asked.
 
 use crate::engine::element::TreeElement;
 use crate::engine::tree::Tree;

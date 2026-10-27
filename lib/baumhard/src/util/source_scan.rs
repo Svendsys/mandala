@@ -1421,6 +1421,90 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
     (found, value_inserts)
 }
 
+/// The climbs to the root and the inserts of existing nodes in the
+/// engine's shipped code (`lib/baumhard/src/engine/`, its `tests`
+/// tree excepted) that are **not** in one of the functions allowed to
+/// make them, as `(repo-relative file, 1-based line, the line's text)`,
+/// plus how many such calls the allowed functions make, so a caller can
+/// tell an empty finding from a scan that read nothing.
+///
+/// Both are O(depth): indextree's `ancestors` is a climb, and its
+/// insert of an existing node (`checked_*`, and `append` / `prepend` /
+/// `insert_after` / `insert_before` / `reparent`, which wrap them)
+/// climbs to check for a cycle. The engine keeps each in one place
+/// whose test builds count it — `tree::climb`, and `siblings`'
+/// `attach_after` / `attach_first` behind `checked_attach` — so a climb
+/// planted once per element anywhere else shows here, and one planted
+/// through those functions shows in their step counts (§20 rule 11,
+/// V1-A5 #282).
+pub(crate) fn engine_depth_cost_calls() -> (Vec<(String, usize, String)>, usize) {
+    const ALLOWED: &[(&str, &str)] = &[
+        ("tree.rs", "climb"),
+        ("siblings.rs", "attach_after"),
+        ("siblings.rs", "attach_first"),
+    ];
+    const CALLS: &[&str] = &[
+        ".ancestors(",
+        ".checked_insert_after(",
+        ".checked_insert_before(",
+        ".checked_prepend(",
+        ".checked_append(",
+        ".checked_reparent(",
+        ".append(",
+        ".prepend(",
+        ".insert_after(",
+        ".insert_before(",
+        ".reparent(",
+    ];
+    let root = repo_path("lib/baumhard/src/engine");
+    let mut files = Vec::new();
+    collect_recursively(&root, ".rs", &mut files);
+    files.sort();
+    let mut found = Vec::new();
+    let mut allowed_calls = 0;
+    for file in files {
+        if file.components().any(|c| c.as_os_str() == "tests") {
+            continue;
+        }
+        let name = file
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let source = production_source(&file, &text);
+        let mut current_fn = String::new();
+        for (number, line) in source.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            if let Some(at) = code.find("fn ") {
+                let after = &code[at + 3..];
+                let ident: String = after
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !ident.is_empty() {
+                    current_fn = ident;
+                }
+            }
+            // A Vec's `append` is not indextree's: only a call handed
+            // an arena is.
+            let calls = CALLS
+                .iter()
+                .any(|call| code.contains(call) && (*call != ".append(" || code.contains("arena")));
+            if !calls {
+                continue;
+            }
+            if ALLOWED.contains(&(name.as_str(), current_fn.as_str())) {
+                allowed_calls += 1;
+            } else {
+                found.push((relative_to_repo(&file), number + 1, code.trim().to_string()));
+            }
+        }
+    }
+    (found, allowed_calls)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

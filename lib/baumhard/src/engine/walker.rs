@@ -394,8 +394,8 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 /// holds detached among them — is refused the same way, with nothing
 /// applied, as [`Tree::update`] and the anchored walks refuse it.
 ///
-/// Cost: one O(depth) check that `target_id` is in the tree — once per
-/// call, never per element — then O(sum of matching (target, mutator)
+/// Cost: an O(1) check that `target_id` is in the tree, then O(sum of
+/// matching (target, mutator)
 /// pairs) — every pairwise match is one apply; pruned branches are
 /// free. The descent runs on heap stacks as deep as the walk goes, not
 /// on the call stack (see the module docs).

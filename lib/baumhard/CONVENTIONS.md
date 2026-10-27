@@ -146,13 +146,17 @@ it with respect.
     node probe (`engine::tests::deep_tests`,
     `document::tests::deep_tests`).
   - **Carry state down; never climb per element.** Inherited state is
-    handed from parent to child as the walk descends. A question about
-    many elements' ancestry — whether each is in the tree, which
-    selected element is nested in another — goes through a memo that
-    climbs each ancestor once over all of them
-    (`engine::membership::Membership`), never through
-    [`Tree::contains`](src/engine/tree.rs) per element, which is a
-    one-off O(depth) question.
+    handed from parent to child as the walk descends. Whether an element
+    is in the tree is O(1) ([`Tree::contains`](src/engine/tree.rs)
+    reads the tree's set of detached nodes, which the engine writes
+    where a subtree leaves or re-enters the tree); a question that needs
+    the climb itself — which selected element is nested in another —
+    goes through a memo that climbs each ancestor once over all of them
+    (`engine::membership::Membership`). The engine climbs to the root in
+    one function, `tree::climb`, and inserts an existing node in one,
+    `siblings::checked_attach`; test builds count both, and
+    `test_the_engine_climbs_only_through_climb` refuses a climb or a
+    checked insert anywhere else in its shipped code.
   - **Insert new nodes by value.** indextree's `*_value` inserts climb
     nothing; inserting an *existing* node climbs to the root to check
     for a cycle. A node the engine creates goes in by value

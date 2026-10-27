@@ -295,7 +295,7 @@ pub(crate) fn reattach_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: Nod
 fn link_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
     #[cfg(test)]
     tests_support::count_row_link(arena, prev.unwrap_or(parent));
-    attach_at(arena, parent, node, prev);
+    checked_attach(arena, parent, node, prev);
 }
 
 /// Attach the detached `node` under `parent`, right after `prev`, or
@@ -314,6 +314,17 @@ fn link_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Opti
 /// Cost: the O(depth) indextree insert check — the cycle check a real
 /// re-parent pays once per node moved.
 pub(crate) fn attach_at<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
+    #[cfg(test)]
+    tests_support::count_checked_attach();
+    checked_attach(arena, parent, node, prev);
+}
+
+/// indextree's checked insert of the detached `node` under `parent`
+/// after `prev`, behind both [`attach_at`] and [`link_in_row`] — the
+/// engine's only inserts of an existing node.
+/// `util::source_scan`'s `test_the_engine_climbs_only_through_climb`
+/// holds every other engine file to these two.
+fn checked_attach<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
     match prev {
         Some(anchor) => attach_after(arena, anchor, node),
         None => attach_first(arena, parent, node),
@@ -376,6 +387,19 @@ pub(crate) mod tests_support {
 
     thread_local! {
         static ROW_LINK_STEPS: Cell<usize> = const { Cell::new(0) };
+        static CHECKED_ATTACHES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more node put in place by [`attach_at`](super::attach_at) —
+    /// an insert that climbs to the root to check for a cycle.
+    pub(super) fn count_checked_attach() {
+        CHECKED_ATTACHES.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// How many nodes [`attach_at`](super::attach_at) has put in place on
+    /// this thread so far: each one a climb to the root.
+    pub(crate) fn checked_attaches() -> usize {
+        CHECKED_ATTACHES.with(Cell::get)
     }
 
     /// Count the steps of one same-row insert next to `anchor`: the

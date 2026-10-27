@@ -191,8 +191,12 @@ every node they insert or move within the run of its key.
 is `update` recorded in a [journal](#journals--journalbuilder-journal-touch).
 `contains(id)` says whether a node is in the tree — under the root —
 rather than merely in the arena, which also holds the subtrees a
-structural command detached and a journal still owns; `update` refuses
-those.
+structural command detached and a journal still owns; `update`,
+`insert_child` and `remove_subtree` refuse those. It is O(1): the
+tree keeps the set of its detached nodes, which only the engine writes
+— where a subtree leaves or re-enters the tree, per element of it —
+so a caller can ask it, or update, once per element at no cost that
+grows with depth (§20 rule 11).
 
 Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
 `indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,
@@ -1011,6 +1015,10 @@ removed while applied, what it inserted while reverted — and
 `Journal::discard` frees them when the journal leaves the history;
 nothing else frees them, and a revert never does.
 
+A restore also writes, per element that enters or leaves the tree,
+the tree's set of detached nodes behind the O(1) `Tree::contains`,
+from the touches it computed at close.
+
 Depth costs a journal nothing per entry (§20 rule 11): `close` asks,
 for each entry, the top of the subtree that entered or left with it,
 and those climbs are memoized, so each element above an entry is
@@ -1055,8 +1063,11 @@ Depth costs the commands nothing per node (§20 rule 11). Every node a
 command creates — an inserted subtree, the second part of a split —
 goes in through indextree's value inserts, which climb nothing. A
 command knows its target is in the tree because the walk reached it
-there; whether an earlier command of the same walk removed it is a
-look-up in the removed subtrees, gathered once. The one climb left is
+there; whether an earlier command of the same walk removed it is the
+O(1) `Tree::contains`, which reads the tree's set of detached nodes —
+written per element where a subtree leaves or re-enters the tree (a
+`Remove` or `Merge`, a journal's revert, replay or interpolated write,
+from its touches) and cleared by `discard`. The one climb left is
 a `Move` to another parent, which checks for a cycle: O(depth), once
 per node the user moves — the price of refusing a cycle, not a cost
 per visited node (ruling R16 on #282); a `Move` within its own row
@@ -2411,8 +2422,11 @@ flower-petal pattern, etc.).
 `build(ast, context)` in `lib/baumhard/src/engine/builder/build.rs`
 walks the AST recursively — over the mutator AST alone, never a
 target tree, and an AST read from JSON nests no deeper than
-`serde_json`'s recursion limit lets it (128 levels), so its depth is
-bounded where it is parsed — expands `Repeat` to N children with
+`serde_json`'s default recursion limit lets it: 127 nested objects
+and arrays, three per AST level, so 42 levels, pinned by
+`test_builder_ast_from_json_nests_no_deeper_than_serde_json_allows`.
+A mutator spelled some other way — flat, as D30 spells nodes — would
+need a bound of its own (R15 Q4) before it lands — expands `Repeat` to N children with
 incrementing channels, resolves `Runtime("<label>")` holes and
 per-iteration `Template`s via the `BuildContext`, and returns a
 fully-inflated `MutatorTree` — or a `BuildError` for a shape no
