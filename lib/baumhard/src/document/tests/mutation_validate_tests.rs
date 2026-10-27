@@ -1186,3 +1186,25 @@ fn test_document_validate_walks_a_deep_insert() {
     }
     drop_deep(bad);
 }
+
+#[test]
+fn test_document_validate_applied_skips_removed_parents() {
+    do_document_validate_applied_skips_removed_parents();
+}
+
+/// A request that removes `c`, then its parent `b`: `c` left `b`'s row,
+/// but `b` has left the tree too, so its row is not judged — the
+/// journal's touches say so (R14.5). Judged, the detached `b` would hold
+/// a connector with no node above it and be refused. Control: removing
+/// `c` alone judges `b`, which keeps the rules.
+pub fn do_document_validate_applied_skips_removed_parents() {
+    let (_, ids) = document();
+    let remove = || command(DocKind::Node, StructOp::Remove);
+    let (mut doc, _) = document();
+    assert_eq!(
+        applied(&mut doc, vec![(remove(), vec![ids.c]), (remove(), vec![ids.b])]),
+        Ok(())
+    );
+    let (mut doc, _) = document();
+    assert_eq!(applied(&mut doc, vec![(remove(), vec![ids.c])]), Ok(()));
+}

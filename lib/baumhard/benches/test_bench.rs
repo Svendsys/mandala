@@ -1875,6 +1875,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_validate_applied_judges_nested_links", |b| {
         b.iter(do_document_validate_applied_judges_nested_links)
     });
+    c.bench_function("document_validate_applied_skips_removed_parents", |b| {
+        b.iter(do_document_validate_applied_skips_removed_parents)
+    });
     c.bench_function("document_validate_walks_a_deep_mutator", |b| {
         b.iter(do_document_validate_walks_a_deep_mutator)
     });
