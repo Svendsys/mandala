@@ -322,8 +322,8 @@ pub(crate) fn attach_at<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, p
 /// indextree's checked insert of the detached `node` under `parent`
 /// after `prev`, behind both [`attach_at`] and [`link_in_row`] — the
 /// engine's only inserts of an existing node.
-/// `util::source_scan`'s `test_the_engine_climbs_only_through_climb`
-/// holds every other engine file to these two.
+/// `test_the_engine_climbs_only_where_it_may` (over `util::source_scan`) holds every
+/// other engine file to these two.
 fn checked_attach<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
     match prev {
         Some(anchor) => attach_after(arena, anchor, node),

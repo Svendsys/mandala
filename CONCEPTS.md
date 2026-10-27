@@ -1017,7 +1017,16 @@ nothing else frees them, and a revert never does.
 
 A restore also writes, per element that enters or leaves the tree,
 the tree's set of detached nodes behind the O(1) `Tree::contains`,
-from the touches it computed at close.
+from the touches it computed at close. Those touches describe the
+change between the journal's own two arrangements, so journals
+restore in their history's order — undo newest first, redo oldest
+first — and every restore checks it, in every build, in O(1): the tree
+carries a version stamp that a journaled call moves to a fresh value
+and a restore moves to the stamp of the side it writes, and a journal
+whose two stamps the tree is at neither of refuses with
+`TreeError::OutOfOrder` before writing anything. A journal that closes
+empty has one arrangement, so closing it puts the tree back at the
+stamp it started from, and dropping it never strands the history.
 
 Depth costs a journal nothing per entry (§20 rule 11): `close` asks,
 for each entry, the top of the subtree that entered or left with it,
@@ -1067,11 +1076,13 @@ there; whether an earlier command of the same walk removed it is the
 O(1) `Tree::contains`, which reads the tree's set of detached nodes —
 written per element where a subtree leaves or re-enters the tree (a
 `Remove` or `Merge`, a journal's revert, replay or interpolated write,
-from its touches) and cleared by `discard`. The one climb left is
-a `Move` to another parent, which checks for a cycle: O(depth), once
-per node the user moves — the price of refusing a cycle, not a cost
-per visited node (ruling R16 on #282); a `Move` within its own row
-climbs nothing. A `Subtree` is as deep as its builder made it, so its
+from its touches) and cleared by `discard`. The one climb a command
+owes is a `Move` to another parent, which checks for a cycle: O(depth),
+once per node the user moves — the price of refusing a cycle, not a
+cost per visited node (ruling R16 on #282). A `Move` within its own row
+owes none, since under its own parent it cannot close a cycle; it goes
+through `siblings::reattach_in_row`, whose indextree insert still
+climbs until one without the check is swapped in (above). A `Subtree` is as deep as its builder made it, so its
 `Drop`, `Clone`, `PartialEq` and `Debug` are written by hand and
 iterate.
 

@@ -241,11 +241,16 @@ pub(in crate::engine) fn run_walk<E: TreeElement, M: Mutation<E>>(
     body: impl FnOnce(&mut Tree<E>, &mut Walk<'_, E>),
 ) -> Result<(), TreeError> {
     if journal.is_some() || !mutator_tree.is_structural() {
+        let mut journal = journal;
+        if let Some(journal) = journal.as_deref_mut() {
+            journal.begin(tree);
+        }
         let mut walk = Walk::new(journal);
         body(tree, &mut walk);
         return walk.finish(tree, mutator_tree);
     }
     let mut own = JournalBuilder::new();
+    own.begin(tree);
     let mut walk = Walk::new(Some(&mut own));
     body(tree, &mut walk);
     let result = walk.finish(tree, mutator_tree);

@@ -152,11 +152,15 @@ it with respect.
     where a subtree leaves or re-enters the tree); a question that needs
     the climb itself — which selected element is nested in another —
     goes through a memo that climbs each ancestor once over all of them
-    (`engine::membership::Membership`). The engine climbs to the root in
-    one function, `tree::climb`, and inserts an existing node in one,
-    `siblings::checked_attach`; test builds count both, and
-    `test_the_engine_climbs_only_through_climb` refuses a climb or a
-    checked insert anywhere else in its shipped code.
+    (`engine::membership::Membership`). The engine calls indextree's
+    climb, `ancestors`, in one function, `tree::climb`, and inserts an
+    existing node in one, `siblings::checked_attach`; test builds count
+    both. Its hand-written climbs — a parent read inside a `loop` or a
+    `while` — are the memoized ones (`Membership::contains`, a
+    journal's `Presence::top` and `resolve`) and the walker's
+    `state_above`, which climbs once per anchored walk.
+    `test_the_engine_climbs_only_where_it_may` refuses either kind anywhere
+    else in the engine's shipped code, and a checked insert too.
   - **Insert new nodes by value.** indextree's `*_value` inserts climb
     nothing; inserting an *existing* node climbs to the root to check
     for a cycle. A node the engine creates goes in by value

@@ -51,6 +51,7 @@ use crate::engine::walker::{run_walk, walk_anchor};
 use indextree::{Arena, Children, Descendants, Node, NodeId};
 use log::error;
 use rustc_hash::FxHashSet;
+use std::cell::Cell;
 use std::fmt;
 
 /// Where [`Tree::insert_child`] / [`MutatorTree::insert_child`] puts a
@@ -127,6 +128,15 @@ pub enum TreeError {
     /// A structural command named a node that an earlier command of the
     /// same walk removed — the node itself, or a node of its subtree.
     TargetRemovedEarlier(NodeId),
+    /// [`Journal::revert`](crate::engine::journal::Journal::revert),
+    /// [`replay`](crate::engine::journal::Journal::replay) or
+    /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)
+    /// on a tree that is in neither of the journal's arrangements: a
+    /// journal recorded after it is still applied, or one recorded
+    /// before it is still undone. Undo is newest first and redo oldest
+    /// first; out of that order a restore would put the tree, and the
+    /// set behind [`Tree::contains`], in a state no history had.
+    OutOfOrder,
 }
 
 impl fmt::Display for TreeError {
@@ -152,6 +162,9 @@ impl fmt::Display for TreeError {
             TreeError::TargetRemovedEarlier(id) => {
                 write!(f, "node {id} was removed earlier in the same walk")
             }
+            TreeError::OutOfOrder => f.write_str(
+                "the tree is in neither of the journal's arrangements: undo newest first, redo oldest first",
+            ),
         }
     }
 }
@@ -195,7 +208,34 @@ pub struct Tree<E: TreeElement> {
     /// [touches](crate::engine::journal::Journal::touched) name as
     /// inserted or removed, and [`Journal::discard`](crate::engine::journal::Journal::discard),
     /// which frees them. Every other move keeps a node in the tree.
+    ///
+    /// Exact only while journals are restored in their order — undo
+    /// newest first, redo oldest first — since a journal's touches
+    /// describe the change from its own arrangements. Out of order, a
+    /// node would be marked back in by a journal whose subtree another
+    /// journal has since detached, and every refusal that trusts
+    /// [`Tree::contains`] would then accept it. So the order is checked
+    /// on every restore, in every build: see [`Tree::version`].
     pub(in crate::engine) detached: FxHashSet<NodeId>,
+    /// Which arrangement the tree is in, as far as journals go: a stamp
+    /// a journaled call moves to a fresh value, and a journal's restore
+    /// moves to the stamp of the side it writes. A journal remembers the
+    /// stamps it started and ended at, and
+    /// [`Journal::revert`](crate::engine::journal::Journal::revert),
+    /// [`replay`](crate::engine::journal::Journal::replay) and
+    /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)
+    /// refuse ([`TreeError::OutOfOrder`]) a tree at any other stamp —
+    /// one a later journal changed and that change was not undone. O(1).
+    ///
+    /// A journal that closes empty records no change, so it has no
+    /// arrangement of its own: closing it puts the tree back at the stamp
+    /// it started from, and both its stamps are that one. Without that, a
+    /// dropped empty journal would leave the tree at a stamp no journal
+    /// it can still restore holds. `close` reads the tree shared, hence
+    /// the `Cell`.
+    pub(in crate::engine) version: Cell<u64>,
+    /// The next fresh [`Self::version`].
+    pub(in crate::engine) next_version: u64,
 }
 
 impl<E: TreeElement> Tree<E> {
@@ -216,6 +256,8 @@ impl<E: TreeElement> Tree<E> {
             layer: 0,
             cache: E::Cache::default(),
             detached: FxHashSet::default(),
+            version: Cell::new(0),
+            next_version: 1,
         }
     }
 
@@ -250,6 +292,9 @@ impl<E: TreeElement> Tree<E> {
     /// subtree leaves or re-enters the tree: per element of that
     /// subtree, which every consumer of the change walks anyway through
     /// [`Journal::touched`](crate::engine::journal::Journal::touched).
+    ///
+    /// Exact while journals are restored in their order, which every
+    /// restore checks ([`TreeError::OutOfOrder`]).
     pub fn contains(&self, id: NodeId) -> bool {
         self.arena.get(id).is_some() && !self.detached.contains(&id)
     }
@@ -384,6 +429,7 @@ impl<E: TreeElement> Tree<E> {
             return Err(TreeError::StaleNode(id));
         }
         if let Some(journal) = journal.as_deref_mut() {
+            journal.begin(self);
             journal.record(&self.arena, id);
         }
         let Some(node) = self.arena.get_mut(id) else {
@@ -686,16 +732,22 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
 }
 
 /// `id` and every node above it, up to the top of whatever it hangs
-/// in: indextree's `ancestors`, and **the engine's only climb to the
-/// root**. A climb is O(depth), so it belongs only where its cost is
-/// paid once per node a user acts on — the cycle check of a re-parent
+/// in: indextree's `ancestors`, which the engine calls **only here**.
+/// A climb is O(depth), so it belongs only where its cost is paid once
+/// per node a user acts on — the cycle check of a re-parent
 /// ([`StructOp::Move`](crate::engine::structure::StructOp::Move)) and
 /// the refusal that names where a detached node hangs — never once per
 /// element a walk visits (§20 rule 11).
-/// `util::source_scan`'s `test_the_engine_climbs_only_through_climb`
-/// holds every other engine file to calling this rather than
-/// `ancestors`, and test builds count its steps, so a climb planted per
-/// element shows in a step count. No allocation.
+///
+/// The engine's other climbs are hand-written, and as few: the memoized
+/// ones, which climb through each node once over all their questions
+/// (`Membership::contains`, and a journal's `Presence::top` and
+/// `resolve`), and the walker's `state_above`, the one climb an
+/// anchored walk makes from its anchor. `test_the_engine_climbs_only_where_it_may`
+/// (over `util::source_scan`) holds every other engine file to
+/// neither calling `ancestors` nor reading a parent inside a `loop` or
+/// a `while`, and test builds count this function's steps, so a climb
+/// planted per element shows in a step count. No allocation.
 pub(in crate::engine) fn climb<E>(arena: &Arena<E>, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     id.ancestors(arena).inspect(|_| {
         #[cfg(test)]

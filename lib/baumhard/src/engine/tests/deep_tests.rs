@@ -585,22 +585,28 @@ fn test_engine_deep_settle_leaves_only_children_in_place() {
     );
 }
 
-/// The engine climbs to the root, and inserts an existing node, in one
-/// place each — `tree::climb`, and `siblings`' checked insert — whose
-/// steps test builds count. A climb or a checked insert written
+/// The engine climbs, and inserts an existing node, only where it may:
+/// indextree's climb in `tree::climb`, its checked insert behind
+/// `siblings::checked_attach` — both counted in test builds — and a
+/// hand-written climb (a parent read in a `loop` or `while`) only in
+/// the memoized `Membership::contains`, `Presence::top` and `resolve`,
+/// and the walker's one-off `state_above`. Any of them written
 /// anywhere else in its shipped code is a cost the counts below could
 /// not see, so it is refused by name.
 #[test]
-fn test_the_engine_climbs_only_through_climb() {
-    let (found, allowed) = crate::util::source_scan::engine_depth_cost_calls();
-    assert_eq!(
-        allowed, 3,
-        "precondition: the scan reads the counted climb and the two counted inserts"
+fn test_the_engine_climbs_only_where_it_may() {
+    let costs = crate::util::source_scan::engine_depth_cost_calls();
+    let unused: Vec<_> = costs.allowed.iter().filter(|(_, &calls)| calls == 0).collect();
+    assert!(
+        unused.is_empty() && costs.allowed.len() == 7,
+        "precondition: each of the seven allowed functions makes a call the scan reads; \
+         unused: {unused:?}"
     );
+    let found = costs.found;
     assert!(
         found.is_empty(),
-        "a climb to the root or an insert of an existing node outside `tree::climb` and \
-         `siblings::checked_attach`, which no step count sees:\n{}",
+        "a climb, or an insert of an existing node, outside the functions allowed to \
+         make one, which no step count sees:\n{}",
         found
             .iter()
             .map(|(file, line, code)| format!("  {file}:{line}   {code}"))

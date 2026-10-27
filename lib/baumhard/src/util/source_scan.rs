@@ -1425,23 +1425,43 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
 /// engine's shipped code (`lib/baumhard/src/engine/`, its `tests`
 /// tree excepted) that are **not** in one of the functions allowed to
 /// make them, as `(repo-relative file, 1-based line, the line's text)`,
-/// plus how many such calls the allowed functions make, so a caller can
-/// tell an empty finding from a scan that read nothing.
+/// plus, for each allowed function, how many such calls it makes — so
+/// a caller can tell an empty finding from a scan that read nothing,
+/// and an allowance nothing uses any more from one still needed.
 ///
-/// Both are O(depth): indextree's `ancestors` is a climb, and its
-/// insert of an existing node (`checked_*`, and `append` / `prepend` /
-/// `insert_after` / `insert_before` / `reparent`, which wrap them)
-/// climbs to check for a cycle. The engine keeps each in one place
-/// whose test builds count it — `tree::climb`, and `siblings`'
-/// `attach_after` / `attach_first` behind `checked_attach` — so a climb
-/// planted once per element anywhere else shows here, and one planted
-/// through those functions shows in their step counts (§20 rule 11,
-/// V1-A5 #282).
-pub(crate) fn engine_depth_cost_calls() -> (Vec<(String, usize, String)>, usize) {
+/// Two kinds of call are found:
+///
+/// - **indextree's own climbs**, by line: `ancestors`, and its insert
+///   of an existing node (`checked_*`, and `append` / `prepend` /
+///   `insert_after` / `insert_before` / `reparent`, which wrap them),
+///   which climbs to check for a cycle.
+/// - **a hand-written climb**, by syntax: a parent read — a `parent`
+///   method, or a function or method whose name starts `parent_` —
+///   anywhere inside a `loop` or a `while` (its condition included),
+///   which is what walking up a chain of parents looks like whatever
+///   the cursor is called. A parent read in a `for` is not one: a
+///   `for` walks what it is given, once per item.
+///
+/// The engine keeps each in a few places: `tree::climb` (counted in
+/// test builds), and `siblings`' `attach_after` / `attach_first`
+/// behind `checked_attach` (counted) for indextree's; and for
+/// hand-written ones the memoized climbs — `Membership::contains`
+/// (counted), the journal's `Presence::top` (counted) and its
+/// `resolve` — and the walker's `state_above`, the one-off climb an
+/// anchored walk makes to its anchor's parent. So a climb planted once
+/// per element anywhere else shows here, and one planted through those
+/// functions shows in their step counts (§20 rule 11, V1-A5 #282).
+pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
     const ALLOWED: &[(&str, &str)] = &[
         ("tree.rs", "climb"),
         ("siblings.rs", "attach_after"),
         ("siblings.rs", "attach_first"),
+    ];
+    const ALLOWED_PARENT_LOOPS: &[(&str, &str)] = &[
+        ("membership.rs", "contains"),
+        ("journal.rs", "top"),
+        ("journal.rs", "resolve"),
+        ("walker.rs", "state_above"),
     ];
     const CALLS: &[&str] = &[
         ".ancestors(",
@@ -1461,7 +1481,11 @@ pub(crate) fn engine_depth_cost_calls() -> (Vec<(String, usize, String)>, usize)
     collect_recursively(&root, ".rs", &mut files);
     files.sort();
     let mut found = Vec::new();
-    let mut allowed_calls = 0;
+    let mut allowed: BTreeMap<(String, String), usize> = ALLOWED
+        .iter()
+        .chain(ALLOWED_PARENT_LOOPS)
+        .map(|&(file, function)| ((file.to_string(), function.to_string()), 0))
+        .collect();
     for file in files {
         if file.components().any(|c| c.as_os_str() == "tests") {
             continue;
@@ -1474,8 +1498,9 @@ pub(crate) fn engine_depth_cost_calls() -> (Vec<(String, usize, String)>, usize)
         let text = std::fs::read_to_string(&file)
             .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
         let source = production_source(&file, &text);
+        let lines: Vec<&str> = source.lines().collect();
         let mut current_fn = String::new();
-        for (number, line) in source.lines().enumerate() {
+        for (number, line) in lines.iter().enumerate() {
             let code = line.split("//").next().unwrap_or(line);
             if let Some(at) = code.find("fn ") {
                 let after = &code[at + 3..];
@@ -1496,13 +1521,115 @@ pub(crate) fn engine_depth_cost_calls() -> (Vec<(String, usize, String)>, usize)
                 continue;
             }
             if ALLOWED.contains(&(name.as_str(), current_fn.as_str())) {
-                allowed_calls += 1;
+                *allowed.entry((name.clone(), current_fn.clone())).or_default() += 1;
             } else {
                 found.push((relative_to_repo(&file), number + 1, code.trim().to_string()));
             }
         }
+        for (function, line) in parent_reads_in_loops(&file, &source) {
+            if ALLOWED_PARENT_LOOPS.contains(&(name.as_str(), function.as_str())) {
+                *allowed.entry((name.clone(), function)).or_default() += 1;
+            } else {
+                let code = lines.get(line - 1).map_or("", |l| l.trim());
+                found.push((relative_to_repo(&file), line, code.to_string()));
+            }
+        }
     }
-    (found, allowed_calls)
+    found.sort();
+    found.dedup();
+    EngineDepthCosts { found, allowed }
+}
+
+/// What [`engine_depth_cost_calls`] found.
+pub(crate) struct EngineDepthCosts {
+    /// Each call outside the allowed functions: `(repo-relative file,
+    /// 1-based line, the line's text)`, one per line.
+    pub(crate) found: Vec<(String, usize, String)>,
+    /// Each allowed `(file name, function)`, with how many calls the
+    /// scan read in it; zero means the allowance is unused.
+    pub(crate) allowed: BTreeMap<(String, String), usize>,
+}
+
+/// Every parent read inside a `loop` or a `while` of `source` — a
+/// `parent` method, or a function or method named `parent_*` — as
+/// `(the enclosing function's name, 1-based line)`. A closure counts
+/// where it is written. Panics when `source` does not parse, naming
+/// `file`.
+fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
+    use syn::visit::{self, Visit};
+
+    struct Finder {
+        function: String,
+        loops: usize,
+        found: Vec<(String, usize)>,
+    }
+
+    impl Finder {
+        fn read(&mut self, name: &syn::Ident) {
+            let text = name.to_string();
+            if self.loops > 0 && (text == "parent" || text.starts_with("parent_")) {
+                self.found.push((self.function.clone(), name.span().start().line));
+            }
+        }
+
+        fn in_function(&mut self, name: &syn::Ident, body: impl FnOnce(&mut Self)) {
+            let function = std::mem::replace(&mut self.function, name.to_string());
+            let loops = std::mem::take(&mut self.loops);
+            body(self);
+            self.function = function;
+            self.loops = loops;
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Finder {
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            self.in_function(&item.sig.ident, |me| visit::visit_item_fn(me, item));
+        }
+
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            self.in_function(&item.sig.ident, |me| visit::visit_impl_item_fn(me, item));
+        }
+
+        fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+            self.in_function(&item.sig.ident, |me| visit::visit_trait_item_fn(me, item));
+        }
+
+        fn visit_expr_loop(&mut self, expr: &'ast syn::ExprLoop) {
+            self.loops += 1;
+            visit::visit_expr_loop(self, expr);
+            self.loops -= 1;
+        }
+
+        fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+            self.loops += 1;
+            visit::visit_expr_while(self, expr);
+            self.loops -= 1;
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            self.read(&call.method);
+            visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = &*call.func {
+                if let Some(last) = path.path.segments.last() {
+                    self.read(&last.ident);
+                }
+            }
+            visit::visit_expr_call(self, call);
+        }
+    }
+
+    let parsed =
+        syn::parse_file(source).unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
+    let mut finder = Finder {
+        function: String::new(),
+        loops: 0,
+        found: Vec::new(),
+    };
+    finder.visit_file(&parsed);
+    finder.found
 }
 
 #[cfg(test)]
