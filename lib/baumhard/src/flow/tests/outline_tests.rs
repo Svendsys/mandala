@@ -342,3 +342,86 @@ pub fn do_flow_curve_from_points() {
     assert_eq!(Curve::from_points(a, &[c, d], b), Some(Curve::Cubic(a, c, d, b)));
     assert_eq!(Curve::from_points(a, &[c, d, c], b), None);
 }
+
+#[test]
+fn test_flow_table_spacing_has_a_floor() {
+    do_flow_table_spacing_has_a_floor();
+}
+
+/// A tiny `Fit.min` cannot sample a table finer than any glyph can be
+/// placed: the spacing is held at a quarter of the line height of the
+/// shaper's smallest size, 0.25 · 0.5 pt · 1.2 = 0.15 pt. Counted, not
+/// timed: a cubic of three 50 pt legs (speed bound 150) is tabled in
+/// 1000 steps, 1001 samples, where `min = 1e-6` on a 14.4 pt line would
+/// ask for 0.25 · 14.4 · 1e-6 ≈ 3.6e-6 pt and hit the 2²⁰ ceiling; an
+/// ellipse of radii 100 and 50 in ⌈100 · 2π / 0.15⌉ = 4189 steps.
+pub fn do_flow_table_spacing_has_a_floor() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::{table_spacing, MIN_TABLE_SPACING};
+    use crate::flow::tests::support::{style, synthetic};
+    const ONCE_PLAIN: FitMode = FitMode::Once { filler: None };
+
+    close(MIN_TABLE_SPACING, 0.15, 1e-6, "the floor");
+    let run = synthetic(&[5.0], 14.4);
+    let tiny = FitMode::Fit { min: 1e-6, max: 2.0 };
+    let spacing = table_spacing(&run, &tiny, &style(12.0));
+    close(spacing, 0.15, 1e-6, "a tiny min is held at the floor");
+    let usual = FitMode::Fit { min: 0.5, max: 2.0 };
+    close(
+        table_spacing(&run, &usual, &style(12.0)),
+        1.8,
+        1e-5,
+        "0.25 · 14.4 · 0.5",
+    );
+    let hairline = synthetic(&[1.0], 0.4);
+    close(
+        table_spacing(&hairline, &ONCE_PLAIN, &style(12.0)),
+        0.15,
+        1e-6,
+        "a line under the floor",
+    );
+
+    let cubic = Curve::Cubic(
+        Vec2::ZERO,
+        Vec2::new(30.0, 40.0),
+        Vec2::new(60.0, 0.0),
+        Vec2::new(90.0, 40.0),
+    );
+    close(cubic.speed_bound(), 150.0, 1e-3, "three legs of 50");
+    let samples = ArcPath::open(&cubic, spacing).table_samples();
+    assert!((1000..=1002).contains(&samples), "cubic: {samples} samples");
+
+    let ellipse = outline(rect(0.0, 0.0, 200.0, 100.0), Shape::Ellipse);
+    let path = ArcPath::closed(&ellipse, start(Edge::Top, 0.0), Direction::Clockwise, spacing);
+    let samples = path.table_samples();
+    assert!((4189..=4191).contains(&samples), "ellipse: {samples} samples");
+}
+
+#[test]
+fn test_flow_non_finite_curves_build_no_table() {
+    do_flow_non_finite_curves_build_no_table();
+}
+
+/// A curve with a control point that is not finite has no speed bound —
+/// `speed_bound` is `NaN`, not the bound of its finite legs — and its
+/// path builds no table and has no length; so does an ellipse with a
+/// radius that is not a number.
+pub fn do_flow_non_finite_curves_build_no_table() {
+    let nan_cubic = Curve::Cubic(
+        Vec2::ZERO,
+        Vec2::new(f32::NAN, 10.0),
+        Vec2::new(20.0, 10.0),
+        Vec2::new(30.0, 0.0),
+    );
+    let inf_quadratic = Curve::Quadratic(Vec2::ZERO, Vec2::new(10.0, f32::INFINITY), Vec2::new(20.0, 0.0));
+    for (name, curve) in [("NaN cubic", nan_cubic), ("infinite quadratic", inf_quadratic)] {
+        assert!(curve.speed_bound().is_nan(), "{name}: {}", curve.speed_bound());
+        let path = ArcPath::open(&curve, 1.0);
+        assert_eq!(path.table_samples(), 0, "{name}");
+        assert_eq!(path.length(), 0.0, "{name}");
+    }
+    let ellipse = outline(rect(0.0, 0.0, f32::NAN, 100.0), Shape::Ellipse);
+    let path = ArcPath::closed(&ellipse, start(Edge::Top, 0.0), Direction::Clockwise, 1.0);
+    assert_eq!(path.table_samples(), 0, "NaN ellipse");
+    assert_eq!(path.length(), 0.0, "NaN ellipse");
+}

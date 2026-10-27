@@ -2023,6 +2023,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_fit_models_the_size_floor", |b| {
         b.iter(do_flow_fit_models_the_size_floor)
     });
+    c.bench_function("flow_non_finite_curves_build_no_table", |b| {
+        b.iter(do_flow_non_finite_curves_build_no_table)
+    });
+    c.bench_function("flow_place_keeps_every_position_finite", |b| {
+        b.iter(do_flow_place_keeps_every_position_finite)
+    });
+    c.bench_function("flow_table_spacing_has_a_floor", |b| {
+        b.iter(do_flow_table_spacing_has_a_floor)
+    });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
     c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {

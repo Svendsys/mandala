@@ -536,3 +536,104 @@ pub fn do_flow_place_at_point_centers_the_line() {
     assert_eq!(pos, vec![Vec2::new(95.0, 45.0), Vec2::new(99.0, 45.0)]);
     assert!(!placed.truncated);
 }
+
+#[test]
+fn test_flow_place_keeps_every_position_finite() {
+    do_flow_place_keeps_every_position_finite();
+}
+
+/// Every position placement returns is finite, whatever the path
+/// (geometry is checked at load; this is the fuzz target's guarantee,
+/// #278). A curve with a point that is not finite has no finite
+/// stretch, so it is an empty path that answers the origin; a rounded
+/// rectangle with a side that is not a number keeps only its finite
+/// stretches. Two marks with no base step zero along a horizontal
+/// tangent, so they fit even an empty path and are placed — at the
+/// origin, not at `NaN` — and `"hello"` is cut, or placed on what is
+/// finite. Every mode, and a point placement at a center that is not
+/// finite.
+pub fn do_flow_place_keeps_every_position_finite() {
+    let (marks, hello) = with_fonts(|fs| {
+        (
+            real_run("\u{301}\u{302}", &style(12.0), fs),
+            real_run("hello", &style(12.0), fs),
+        )
+    });
+    let nan = f32::NAN;
+    let inf = f32::INFINITY;
+    let curves = [
+        Curve::Line(Vec2::ZERO, Vec2::new(nan, 3.0)),
+        Curve::Line(Vec2::ZERO, Vec2::new(inf, 3.0)),
+        Curve::Cubic(
+            Vec2::ZERO,
+            Vec2::new(nan, 10.0),
+            Vec2::new(20.0, 10.0),
+            Vec2::new(30.0, 0.0),
+        ),
+        Curve::Quadratic(Vec2::ZERO, Vec2::new(10.0, inf), Vec2::new(20.0, 0.0)),
+    ];
+    let modes = [
+        ONCE,
+        FitMode::Once {
+            filler: Some("-".to_string()),
+        },
+        FitMode::Repeat,
+        FitMode::Spread,
+        FitMode::Fit { min: 0.5, max: 2.0 },
+    ];
+    let finite = |placed: &PlacedRun, what: &str| {
+        for glyph in &placed.glyphs {
+            assert!(glyph.pos.is_finite(), "{what}: placed at {}", glyph.pos);
+        }
+    };
+    for (c, curve) in curves.iter().enumerate() {
+        for fit in &modes {
+            for (name, run) in [("marks", &marks), ("hello", &hello)] {
+                let (_, placed) = with_fonts(|fs| place_on_open(run, curve, fit, 0.0, &style(12.0), fs));
+                finite(&placed, &format!("curve {c}, {fit:?}, {name}"));
+                if name == "marks" && *fit == ONCE {
+                    assert_eq!(
+                        placed.glyphs.len(),
+                        marks.glyphs.len(),
+                        "curve {c}: the fixture needs the marks placed"
+                    );
+                }
+            }
+        }
+    }
+    let broken = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(nan, 10.0)),
+        Shape::Rectangle {
+            radius: Percent::new(100),
+        },
+    );
+    let top = StartPoint {
+        edge: Edge::Top,
+        at: 0.5,
+    };
+    let mut placed_on_broken = 0;
+    for fit in &modes {
+        for (name, run) in [("marks", &marks), ("hello", &hello)] {
+            let (_, placed) = with_fonts(|fs| {
+                place_on_closed(
+                    run,
+                    &broken,
+                    top,
+                    Direction::Clockwise,
+                    fit,
+                    true,
+                    &style(12.0),
+                    fs,
+                )
+            });
+            finite(&placed, &format!("NaN rect, {fit:?}, {name}"));
+            placed_on_broken += placed.glyphs.len();
+        }
+    }
+    assert!(
+        placed_on_broken > 0,
+        "the fixture needs glyphs placed on the NaN rect"
+    );
+    finite(&place_at_point(&hello, Vec2::new(nan, 4.0)), "point at NaN");
+    finite(&place_at_point(&hello, Vec2::splat(inf)), "point at infinity");
+}

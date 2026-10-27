@@ -66,13 +66,26 @@ impl Curve {
     /// convex combination of the legs, scaled by the degree). Two points
     /// `Δt` apart are then at most `speed_bound() · Δt` apart, which is
     /// how an arc-length table picks its sample count. O(1).
+    ///
+    /// `NaN` when any leg's length is not finite — a control point that
+    /// is not finite, or legs too long for `f32` — since such a curve has
+    /// no bound. (`f32::max` would drop a `NaN` leg and bound the rest.)
     pub fn speed_bound(&self) -> f32 {
-        match *self {
-            Curve::Line(a, b) => (b - a).length(),
-            Curve::Quadratic(a, c, b) => 2.0 * (c - a).length().max((b - c).length()),
-            Curve::Cubic(a, c1, c2, b) => {
-                3.0 * (c1 - a).length().max((c2 - c1).length()).max((b - c2).length())
+        let bound = |degree: f32, legs: &[Vec2]| {
+            let mut longest = 0.0_f32;
+            for leg in legs {
+                let length = leg.length();
+                if !length.is_finite() {
+                    return f32::NAN;
+                }
+                longest = longest.max(length);
             }
+            degree * longest
+        };
+        match *self {
+            Curve::Line(a, b) => bound(1.0, &[b - a]),
+            Curve::Quadratic(a, c, b) => bound(2.0, &[c - a, b - c]),
+            Curve::Cubic(a, c1, c2, b) => bound(3.0, &[c1 - a, c2 - c1, b - c2]),
         }
     }
 }

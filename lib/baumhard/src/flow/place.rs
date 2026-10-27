@@ -442,10 +442,12 @@ pub fn place_on_open(
 
 /// Place `run` as one line centered on `center`: a portal marker.
 /// Glyphs sit at their pen positions as shaped, the line as wide as its
-/// advances, all on one baseline; nothing is cut.
+/// advances, all on one baseline; nothing is cut. A `center` that is
+/// not finite is read as the origin, so no position is `NaN`.
 ///
 /// Cost: O(glyphs); one allocation for the placement.
 pub fn place_at_point(run: &ShapedRun, center: Vec2) -> PlacedRun {
+    let center = if center.is_finite() { center } else { Vec2::ZERO };
     let width: f32 = run.glyphs.iter().map(|g| g.advance).sum();
     let left = run.glyphs.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
     let corner = center - Vec2::new(width, run.line_height) * 0.5;
@@ -465,10 +467,18 @@ pub fn place_at_point(run: &ShapedRun, center: Vec2) -> PlacedRun {
     }
 }
 
+/// The finest spacing an arc-length table is ever sampled at: a quarter
+/// of the smallest line height any glyph can be placed with, since the
+/// shaper floors every size at [`MIN_FONT_SIZE_PT`]. Finer samples are
+/// samples no placement can use.
+pub(crate) const MIN_TABLE_SPACING: f32 = 0.25 * MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR;
+
 /// The sample spacing for a path's arc-length table: a quarter of the
 /// smallest line height placement may walk with (#239 §5 step 1) — the
-/// run's, shrunk by `Fit`'s smallest scale, or a `Once` filler's.
-fn table_spacing(run: &ShapedRun, fit: &FitMode, flow: &ResolvedText) -> f32 {
+/// run's, shrunk by `Fit`'s smallest scale, or a `Once` filler's — but
+/// never finer than [`MIN_TABLE_SPACING`], however small `Fit`'s `min`
+/// (and that, too, when the line height is not a number).
+pub(crate) fn table_spacing(run: &ShapedRun, fit: &FitMode, flow: &ResolvedText) -> f32 {
     let mut line_height = run.line_height;
     match fit {
         FitMode::Fit { min, .. } if *min > 0.0 && *min < 1.0 => line_height *= min,
@@ -480,7 +490,12 @@ fn table_spacing(run: &ShapedRun, fit: &FitMode, flow: &ResolvedText) -> f32 {
         }
         _ => {}
     }
-    0.25 * line_height
+    let spacing = 0.25 * line_height;
+    if spacing >= MIN_TABLE_SPACING {
+        spacing
+    } else {
+        MIN_TABLE_SPACING
+    }
 }
 
 /// The body both placements share, over a walked path.

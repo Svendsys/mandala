@@ -83,6 +83,26 @@ enum Stretch {
 }
 
 impl Stretch {
+    /// Whether every point the stretch answers is finite: its geometry is
+    /// finite and it has a finite, positive length. A table's distances
+    /// sum the distances between its samples, so a sample that is not
+    /// finite makes its length not finite.
+    fn is_walkable(&self) -> bool {
+        let len = self.len();
+        let geometry = match self {
+            Stretch::Line { from, dir, .. } => from.is_finite() && dir.is_finite(),
+            Stretch::Arc {
+                center,
+                radius,
+                angle,
+                turn,
+                ..
+            } => center.is_finite() && radius.is_finite() && angle.is_finite() && turn.is_finite(),
+            Stretch::Table { params, .. } => params.iter().all(|t| t.is_finite()),
+        };
+        geometry && len > 0.0 && len.is_finite()
+    }
+
     fn len(&self) -> f32 {
         match self {
             Stretch::Line { len, .. } | Stretch::Arc { len, .. } => *len,
@@ -142,7 +162,8 @@ pub(crate) struct ArcPath {
     /// The distance at which each stretch begins.
     starts: Vec<f32>,
     length: f32,
-    /// Where the path begins: what a path of no length answers.
+    /// Where the path begins: what a path of no length answers. Always
+    /// finite.
     origin: Vec2,
     /// `+1` for a closed path walked clockwise, `-1` counter-clockwise,
     /// `0` for an open path, which has no outside.
@@ -150,18 +171,23 @@ pub(crate) struct ArcPath {
 }
 
 impl ArcPath {
-    /// Collect stretches, dropping those of no length.
+    /// Collect stretches, dropping those that have no length or answer a
+    /// point that is not finite, so every point the path answers is
+    /// finite: an outline or curve with no finite stretch is an empty
+    /// path, and one with some keeps only those. An `origin` that is not
+    /// finite is replaced by `Vec2::ZERO`. Geometry is checked at load;
+    /// this keeps a hand-built or fuzzed one from placing glyphs at `NaN`.
     fn from_stretches(stretches: impl IntoIterator<Item = Stretch>, origin: Vec2, winding: f32) -> Self {
         let mut path = ArcPath {
             stretches: Vec::new(),
             starts: Vec::new(),
             length: 0.0,
-            origin,
+            origin: if origin.is_finite() { origin } else { Vec2::ZERO },
             winding,
         };
         for stretch in stretches {
             let len = stretch.len();
-            if len > 0.0 && len.is_finite() {
+            if stretch.is_walkable() {
                 path.starts.push(path.length);
                 path.length += len;
                 path.stretches.push(stretch);
@@ -277,18 +303,21 @@ impl ArcPath {
                 let origin = param.point(phi);
                 let tau = std::f32::consts::TAU;
                 let largest = radii.x.max(radii.y);
-                let stretch = if (radii.x - radii.y).abs() <= largest * 1e-6 {
-                    Stretch::Arc {
+                let stretch = if !(center.is_finite() && radii.is_finite()) {
+                    // No table of points that are not finite is built.
+                    None
+                } else if (radii.x - radii.y).abs() <= largest * 1e-6 {
+                    Some(Stretch::Arc {
                         center,
                         radius: largest,
                         angle: phi,
                         turn,
                         len: largest * tau,
-                    }
+                    })
                 } else {
                     table(param, phi, phi + turn * tau, largest * tau, spacing)
                 };
-                ArcPath::from_stretches([stretch], origin, turn)
+                ArcPath::from_stretches(stretch, origin, turn)
             }
         }
     }
@@ -301,19 +330,32 @@ impl ArcPath {
     pub(crate) fn open(curve: &Curve, spacing: f32) -> Self {
         let origin = curve.point(0.0);
         let stretch = match *curve {
-            Curve::Line(a, b) => Stretch::Line {
+            Curve::Line(a, b) => Some(Stretch::Line {
                 from: a,
                 dir: (b - a).try_normalize().unwrap_or(Vec2::X),
                 len: (b - a).length(),
-            },
+            }),
             _ => table(Param::Curve(*curve), 0.0, 1.0, curve.speed_bound(), spacing),
         };
-        ArcPath::from_stretches([stretch], origin, 0.0)
+        ArcPath::from_stretches(stretch, origin, 0.0)
     }
 
     /// The path's length, `P`.
     pub(crate) fn length(&self) -> f32 {
         self.length
+    }
+
+    /// How many samples the path's arc-length tables hold, all told: 0
+    /// for a path of lines and arcs. What a test reads to hold the table
+    /// spacing to its floor without timing anything.
+    pub(crate) fn table_samples(&self) -> usize {
+        self.stretches
+            .iter()
+            .map(|stretch| match stretch {
+                Stretch::Table { params, .. } => params.len(),
+                _ => 0,
+            })
+            .sum()
     }
 
     /// The point `s` along the path and the unit direction of travel
@@ -346,7 +388,14 @@ impl ArcPath {
 /// A table walking `param` from `from` to `to`, its samples close
 /// enough that no neighbors are more than `spacing` apart, given that the
 /// curve moves at most `speed` per unit of the full parameter range.
-fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Stretch {
+///
+/// `None`, building nothing, when `speed` or the parameter range is not
+/// finite: a curve with no finite speed bound has a control point that is
+/// not finite, so every sample would be too.
+fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<Stretch> {
+    if !(speed.is_finite() && from.is_finite() && to.is_finite()) {
+        return None;
+    }
     let spacing = if spacing > 0.0 { spacing } else { 1.0 };
     let wanted = (speed / spacing).ceil();
     let count = if wanted.is_finite() {
@@ -366,9 +415,9 @@ fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Stretch 
         params.push(t);
         distances.push(walked);
     }
-    Stretch::Table {
+    Some(Stretch::Table {
         param,
         params,
         distances,
-    }
+    })
 }
