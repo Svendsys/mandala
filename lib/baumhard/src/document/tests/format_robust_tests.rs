@@ -6,7 +6,7 @@
 //! This is a deterministic stand-in for a fuzzer (V1-D29): the same
 //! property, driven over mutations of the fixtures.
 
-use crate::document::format::{load, load_bytes_under, load_from_bytes, LoadErrorKind};
+use crate::document::format::{load, load_bytes_under, load_from_bytes, Limits, LoadErrorKind};
 use crate::document::tests::format_support::{same_document, written, FIXTURES};
 
 /// A small deterministic generator (xorshift).
@@ -154,7 +154,14 @@ fn test_bytes_that_are_not_text_are_refused_not_trusted() {
     }
     assert!(load_from_bytes(&[]).is_err());
     // The size ceiling is applied to bytes before they are read as text.
-    let error = load_bytes_under(&[0xFF; 64], Some(8)).unwrap_err();
+    let error = load_bytes_under(
+        &[0xFF; 64],
+        Limits {
+            bytes: Some(8),
+            elements: None,
+        },
+    )
+    .unwrap_err();
     assert!(
         matches!(error.kind, LoadErrorKind::TooLarge { bytes: 64, max: 8 }),
         "{error:?}"

@@ -263,7 +263,19 @@ impl Builder {
 
     /// The edits, presentations and verbs: ids unique within each list,
     /// and the verbs numbered in file order.
+    ///
+    /// Each definition counts against
+    /// [`MAX_ELEMENTS`](crate::document::format::MAX_ELEMENTS) as an
+    /// element does: what it costs is per definition, not per byte of
+    /// its text.
     fn definitions(&mut self, dto: &MapHeaderDto) -> LoadResult<Definitions> {
+        for (key, count) in [
+            ("edits", dto.edits.len()),
+            ("presentations", dto.presentations.len()),
+            ("verbs", dto.verbs.len()),
+        ] {
+            self.key(key, |b| b.count(count))?;
+        }
         let edits = self.defined("edits", &dto.edits, |d| (&d.id, &d.name))?;
         let presentations = self.defined("presentations", &dto.presentations, |d| (&d.id, &d.name))?;
         let verbs = self.defined("verbs", &dto.verbs, |d| (&d.id, &d.name))?;

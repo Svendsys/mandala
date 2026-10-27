@@ -72,7 +72,7 @@ pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind,
 use crate::document::format::context::{dto_excerpt, offset_in, peek_excerpt, peek_id, position_at};
 use crate::document::format::dto::{MapHeaderDto, NodeDto};
 use crate::document::format::error::Seg;
-use crate::document::format::from_dto::Builder;
+use crate::document::format::from_dto::{Builder, Keep};
 use crate::document::format::index::MapIndex;
 use crate::document::ids::Document;
 
@@ -88,16 +88,14 @@ use crate::document::ids::Document;
 ///
 /// **`Some` on wasm32, because there the limit is physics.** `usize` is
 /// 32 bits and the address space is 4 GiB, shared with the runtime, the
-/// GPU buffers and the browser itself. A file that cannot fit is
-/// refused with a message rather than trapping mid-parse. This is a
-/// sanctioned target divergence, registered in `CLAUDE.md`'s dual-target
-/// section.
-///
-/// On wasm32 the ceiling is derived, not chosen: the text and what it
-/// expands into while it loads must fit in [`WASM32_LOAD_BUDGET`], and
-/// a map's text expands by at most [`WASM32_EXPANSION`] bytes per byte,
-/// measured (`tests/format_memory.rs`), so the text may be at most
-/// [`WASM32_MAX_MAP_BYTES`].
+/// GPU buffers and the browser itself, and a failed allocation traps and
+/// kills the page. Memory is the only limit, and it has two axes: what a
+/// map costs grows with its text and with the number of elements it
+/// becomes, and a short text can become many elements. So wasm32 bounds
+/// both — this, and [`MAX_ELEMENTS`] — each to half of
+/// [`WASM32_MEMORY_BUDGET`], from costs measured per byte and per
+/// element (see [`WASM32_MAX_MAP_BYTES`]). This is a sanctioned target
+/// divergence, registered in `CLAUDE.md`'s dual-target section.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_MAP_BYTES: Option<u64> = None;
 
@@ -106,28 +104,75 @@ pub const MAX_MAP_BYTES: Option<u64> = None;
 #[cfg(target_arch = "wasm32")]
 pub const MAX_MAP_BYTES: Option<u64> = Some(WASM32_MAX_MAP_BYTES);
 
-/// The part of wasm32's 4 GiB address space a load may use for the text
-/// and what it builds from it: 3 GiB. The remaining 1 GiB is reserved
-/// for the runtime (the module's code, data and stack, the allocator's
-/// own overhead) and for the first projection the app builds from the
-/// document — what the scene builders make of it, which this module
-/// does not measure.
-pub const WASM32_LOAD_BUDGET: u64 = 3 * 1024 * 1024 * 1024;
+/// Ceiling on the number of elements a map becomes, or `None` where the
+/// platform imposes none: [`MAX_MAP_BYTES`]'s other axis. `None` on
+/// native for the same reason; on wasm32, [`WASM32_MAX_ELEMENTS`]. The
+/// builder counts each element as it appends it and refuses the one past
+/// the bound with
+/// [`TooManyElements`](LoadErrorKind::TooManyElements), before it is
+/// built.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_ELEMENTS: Option<u64> = None;
 
-/// The most heap a load needs beside a map's text, per byte of that
-/// text, rounded up to a whole number: the tree, the ident index, the
-/// node extents' index, the chain and the pending links, at their peak,
-/// for the densest maps the format allows — nodes with nothing but an
-/// id, a parent and a position, which each become a node and a
-/// connector. Measured natively, where pointers are twice as wide as on
-/// wasm32, so it bounds wasm32's from above; `tests/format_memory.rs`
-/// measures it again and fails if it grows.
-pub const WASM32_EXPANSION: u64 = 18;
+/// See the native definition above.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_ELEMENTS: Option<u64> = Some(WASM32_MAX_ELEMENTS);
 
-/// wasm32's ceiling on a map's text: [`WASM32_LOAD_BUDGET`] over the
-/// text and its [`WASM32_EXPANSION`], so that a map under it fits while
-/// it loads and is never a trap.
-pub const WASM32_MAX_MAP_BYTES: u64 = WASM32_LOAD_BUDGET / (1 + WASM32_EXPANSION);
+/// The part of wasm32's 4 GiB address space a load or a save may use:
+/// 3 GiB. The remaining 1 GiB is reserved for the runtime (the module's
+/// code, data and stack) and for the first projection the app builds
+/// from the document — what the scene builders make of it, which this
+/// module does not measure.
+pub const WASM32_MEMORY_BUDGET: u64 = 3 * 1024 * 1024 * 1024;
+
+/// The most heap a load or a save of a map needs **per byte of its
+/// text**, beside what its elements cost: the text itself, the strings
+/// the document holds from it, the extents the index keeps of it, and
+/// on a save the text being written. Measured
+/// (`tests/format_memory.rs`) on a map that is one long text, where the
+/// elements cost nothing next to it, and rounded up.
+pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 7;
+
+/// The most heap a load or a save of a map needs **per element**,
+/// beside what its text costs ([`WASM32_BYTES_PER_TEXT_BYTE`] per
+/// byte): the arena slot, what the element holds on the heap, and a
+/// load's or a check's bookkeeping per node and per link. Measured
+/// (`tests/format_memory.rs`) on the densest maps the format allows —
+/// every kind of row a node can hold in bulk, rows of empty sections,
+/// empty rings, links and empty spans among them — at the load's peak
+/// and at the save's, and rounded up.
+pub const WASM32_BYTES_PER_ELEMENT: u64 = 560;
+
+/// wasm32's ceiling on a map's text: half of [`WASM32_MEMORY_BUDGET`]
+/// over [`WASM32_BYTES_PER_TEXT_BYTE`].
+///
+/// **Why two halves.** The measured costs say a map's peak is at most
+/// `text × WASM32_BYTES_PER_TEXT_BYTE + elements × WASM32_BYTES_PER_ELEMENT`
+/// (`tests/format_memory.rs` checks every measured map against exactly
+/// that). A map under both ceilings therefore peaks under half the
+/// budget plus half the budget — whatever its shape, a long text with
+/// few elements, many elements from a short text, or anything between.
+pub const WASM32_MAX_MAP_BYTES: u64 = WASM32_MEMORY_BUDGET / 2 / WASM32_BYTES_PER_TEXT_BYTE;
+
+/// wasm32's ceiling on a map's elements: half of
+/// [`WASM32_MEMORY_BUDGET`] over [`WASM32_BYTES_PER_ELEMENT`]. See
+/// [`WASM32_MAX_MAP_BYTES`] for the model.
+pub const WASM32_MAX_ELEMENTS: u64 = WASM32_MEMORY_BUDGET / 2 / WASM32_BYTES_PER_ELEMENT;
+
+/// The two ceilings a load and a save are held to on this target.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Limits {
+    /// The longest text: [`MAX_MAP_BYTES`].
+    pub bytes: Option<u64>,
+    /// The most elements: [`MAX_ELEMENTS`].
+    pub elements: Option<u64>,
+}
+
+/// This target's [`Limits`].
+pub(crate) const LIMITS: Limits = Limits {
+    bytes: MAX_MAP_BYTES,
+    elements: MAX_ELEMENTS,
+};
 
 /// [`load`] for bytes: the entry point for input that is not known to
 /// be text (a file read, a socket, a fuzzer's corpus). The text is
@@ -141,13 +186,13 @@ pub const WASM32_MAX_MAP_BYTES: u64 = WASM32_LOAD_BUDGET / (1 + WASM32_EXPANSION
 /// before the size ceiling and the reader's depth limit have been
 /// applied to it.
 pub fn load_from_bytes(bytes: &[u8]) -> Result<Document, LoadError> {
-    load_bytes_under(bytes, MAX_MAP_BYTES)
+    load_bytes_under(bytes, LIMITS)
 }
 
-/// [`load_from_bytes`] against a caller-supplied ceiling.
-pub(crate) fn load_bytes_under(bytes: &[u8], ceiling: Option<u64>) -> Result<Document, LoadError> {
+/// [`load_from_bytes`] against caller-supplied limits.
+pub(crate) fn load_bytes_under(bytes: &[u8], limits: Limits) -> Result<Document, LoadError> {
     let length = bytes.len() as u64;
-    if let Some(max) = ceiling.filter(|max| length > *max) {
+    if let Some(max) = limits.bytes.filter(|max| length > *max) {
         return Err(LoadError::new(
             String::new(),
             LoadErrorKind::TooLarge { bytes: length, max },
@@ -157,7 +202,7 @@ pub(crate) fn load_bytes_under(bytes: &[u8], ceiling: Option<u64>) -> Result<Doc
         return Err(LoadError::new(String::new(), LoadErrorKind::ByteOrderMark));
     }
     match std::str::from_utf8(bytes) {
-        Ok(text) => load_under(text, ceiling),
+        Ok(text) => load_under(text, limits),
         Err(error) => Err(LoadError::new(
             String::new(),
             LoadErrorKind::Syntax {
@@ -188,37 +233,48 @@ pub(crate) fn load_bytes_under(bytes: &[u8], ceiling: Option<u64>) -> Result<Doc
 /// Cost: O(text) for the index and the parse, then O(elements) with one
 /// hash insert or lookup per node, per `parent` and per link. Every
 /// insert is an append. Memory beside the text and the tree: one fat
-/// pointer per node, the chain (as long as the tree is deep), the
-/// pending links and one node's DTO.
+/// pointer per node, the ident index (made once, at its size), the
+/// chain (as long as the tree is deep), a few words per pending link
+/// and one node's DTO. Every element is counted against
+/// [`MAX_ELEMENTS`] as it is appended.
 pub fn load(json: &str) -> Result<Document, LoadError> {
-    load_under(json, MAX_MAP_BYTES)
+    load_under(json, LIMITS)
 }
 
-/// [`load`] against a caller-supplied ceiling.
+/// [`load`] against caller-supplied limits.
 ///
-/// Split out so the refusal stays testable. [`MAX_MAP_BYTES`] is `None`
-/// on every target the test suite runs on, so a test written against
-/// the constant would assert nothing and pass — and the arm it stopped
-/// covering is the one the browser depends on. This takes the ceiling
-/// as a parameter, so a native test can hand it a small one and drive
-/// the same code the wasm32 build reaches with a real one.
-pub(crate) fn load_under(json: &str, ceiling: Option<u64>) -> Result<Document, LoadError> {
-    load_counted(json, ceiling).map(|(document, _)| document)
+/// Split out so the refusals stay testable. [`MAX_MAP_BYTES`] and
+/// [`MAX_ELEMENTS`] are `None` on every target the test suite runs on,
+/// so a test written against the constants would assert nothing and
+/// pass — and the arm it stopped covering is the one the browser
+/// depends on. This takes the limits as a parameter, so a native test
+/// can hand it small ones and drive the same code the wasm32 build
+/// reaches with real ones.
+pub(crate) fn load_under(json: &str, limits: Limits) -> Result<Document, LoadError> {
+    load_counted(json, limits).map(|(document, _)| document)
 }
 
 /// [`load`], and how many elements of the document had their row
 /// checked against the shape rules: every element, which a test asserts.
 #[cfg(test)]
 pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), LoadError> {
-    load_counted(json, MAX_MAP_BYTES)
+    load_counted(json, LIMITS)
 }
 
 /// The three phases of [`load`], counting the rows checked.
-fn load_counted(json: &str, ceiling: Option<u64>) -> Result<(Document, usize), LoadError> {
-    check_text_cap_against(json, ceiling)?;
+fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadError> {
+    check_text_cap_against(json, limits.bytes)?;
     let index = index::index(json)?;
     let header = header(&index)?;
-    let mut builder = Builder::begin(&header).map_err(|error| placed(error, &index, None))?;
+    let mut builder = Builder::begin(&header, Keep::Document, limits.elements)
+        .map_err(|error| placed(error, &index, None))?;
+    // One entry per node, made once: the map does not grow, and so never
+    // holds its old table and its new one at the same time. No more than
+    // the element bound, which a list of more nodes reaches first.
+    let reserve = limits.elements.map_or(index.nodes.len(), |max| {
+        index.nodes.len().min(usize::try_from(max).unwrap_or(usize::MAX))
+    });
+    builder.idents.reserve(reserve);
     for (i, extent) in index.nodes.iter().enumerate() {
         let dto: NodeDto = index::parse_extent(index.text, extent, &[Seg::Key("nodes"), Seg::Index(i)])
             .map_err(|error| LoadError {
@@ -348,13 +404,114 @@ fn not_loadable(error: LoadError) -> SaveError {
 /// file never saves it.
 ///
 /// B3's mutations and B4's editor call this, or the parts of it they
-/// need, when they apply an edit. [`save`] runs it itself. Cost: one
-/// iterative walk of the tree, building one node's DTO at a time and
-/// the document the loader would build from it; O(elements) whatever
-/// the depth.
+/// need, when they apply an edit. [`save`] runs it itself.
+///
+/// **It holds one node, not a second document.** The builder runs in
+/// [`Keep::OneNode`]: each node is built from what the saver would
+/// write, its row checked, and its elements freed before the next. What
+/// a load answers from the nodes it keeps is answered from `doc`
+/// instead: each node's id must be the one `doc`'s ident index holds
+/// for it — which makes the ids unique — a link's `to` must be an id
+/// the index holds, other than its own node's, and at the end the index
+/// must hold no id but the nodes'. A parent is looked for on the chain,
+/// where a load finds it. So a check that passes is one the full build
+/// passes. When any of it refuses, the document is checked again by the
+/// full build, which keeps what a load keeps and so reports exactly the
+/// error a load of the file would: a refusal costs a second copy of the
+/// document, and a pass never does.
+///
+/// Cost: one iterative walk of the tree, building one node's DTO and
+/// elements at a time; O(elements) whatever the depth, with one hash
+/// lookup per node and per link. Memory beside `doc`: one node's DTO
+/// and elements, the header's elements, and the chain (a few words per
+/// level of the deepest path). On a target with [`MAX_MAP_BYTES`], one
+/// more walk counts the bytes the file would have, writing none of
+/// them, since a file longer than that does not load there.
 pub fn check_savable(doc: &Document) -> Result<(), SaveError> {
+    check_savable_under(doc, LIMITS)
+}
+
+/// [`check_savable`] against caller-supplied limits, for the reason
+/// [`load_under`] takes them.
+pub(crate) fn check_savable_under(doc: &Document, limits: Limits) -> Result<(), SaveError> {
+    if check_one_node(doc, limits.elements).is_none() {
+        check_by_building(doc, limits.elements)?;
+    }
+    if let Some(max) = limits.bytes {
+        let bytes = saved_length(doc)?;
+        if bytes > max {
+            return Err(not_loadable(LoadError::new(
+                String::new(),
+                LoadErrorKind::TooLarge { bytes, max },
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// [`check_savable`], and the most elements its builder held at once —
+/// `None` when it refused, and the full build reported why. A test
+/// bounds the count by one node's.
+#[cfg(test)]
+pub(crate) fn check_savable_holding(doc: &Document) -> (Result<(), SaveError>, Option<usize>) {
+    let held = check_one_node(doc, LIMITS.elements);
+    let result = match held {
+        Some(_) => Ok(()),
+        None => check_by_building(doc, LIMITS.elements),
+    };
+    (result, held)
+}
+
+/// The one-node check of [`check_savable`]: `Some` with the most
+/// elements its builder held at once when the file would load, and
+/// `None` when anything refused — the refusal is then the full build's
+/// to name.
+fn check_one_node(doc: &Document, max_elements: Option<u64>) -> Option<usize> {
+    let header = to_dto::header_of(doc).ok()?;
+    let mut builder = Builder::begin(&header, Keep::OneNode, max_elements).ok()?;
+    // What `each_node` is stopped with: the refusal itself is the full
+    // build's to name.
+    let stop = || {
+        SaveError::new(
+            String::new(),
+            SaveErrorKind::Io {
+                message: String::new(),
+            },
+        )
+    };
+    let mut nodes = 0usize;
+    to_dto::each_node(doc, |i, id, dto| {
+        // The ident index must hold this node under its id: no other
+        // node of the document can then have the same id.
+        let own = u32::try_from(dto.id).ok().map(crate::document::ids::NodeIdent);
+        if own.and_then(|own| doc.node_by_ident(own)) != Some(id) {
+            return Err(stop());
+        }
+        // A link names a node the index holds, other than its own.
+        for link in &dto.links {
+            let to = u32::try_from(link.to).ok().map(crate::document::ids::NodeIdent);
+            match to.and_then(|to| doc.node_by_ident(to)) {
+                Some(target) if target != id => {}
+                _ => return Err(stop()),
+            }
+        }
+        nodes += 1;
+        builder.node(i, &dto).map_err(|_| stop())
+    })
+    .ok()?;
+    // And the index holds nothing else, so every id a link named is a
+    // node the file lists.
+    if nodes != doc.ident_count() {
+        return None;
+    }
+    builder.finish_check().ok()
+}
+
+/// The full build of [`check_savable`]: the document a load of the file
+/// would make, built and dropped, so that a refusal is exactly a load's.
+fn check_by_building(doc: &Document, max_elements: Option<u64>) -> Result<(), SaveError> {
     let header = to_dto::header_of(doc)?;
-    let mut builder = Builder::begin(&header).map_err(not_loadable)?;
+    let mut builder = Builder::begin(&header, Keep::Document, max_elements).map_err(not_loadable)?;
     to_dto::each_node(doc, |i, id, dto| {
         builder.node(i, &dto).map_err(|error| {
             let mut refusal = not_loadable(error);
@@ -365,6 +522,28 @@ pub fn check_savable(doc: &Document) -> Result<(), SaveError> {
         })
     })?;
     builder.finish().map(|_| ()).map_err(not_loadable)
+}
+
+/// How many bytes [`save`] would write for `doc`, counted without
+/// keeping any of them.
+fn saved_length(doc: &Document) -> Result<u64, SaveError> {
+    let mut counter = Counter(0);
+    write_unchecked(doc, &mut counter)?;
+    Ok(counter.0)
+}
+
+/// A writer that only counts.
+struct Counter(u64);
+
+impl std::io::Write for Counter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len() as u64;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Write a document as a `.mandala.json`: deterministic, the header
@@ -394,6 +573,11 @@ pub fn save(doc: &Document) -> Result<String, SaveError> {
 /// for the header and the close).
 pub fn save_to(doc: &Document, out: &mut impl std::io::Write) -> Result<(), SaveError> {
     check_savable(doc)?;
+    write_unchecked(doc, out)
+}
+
+/// The writing half of [`save_to`], with no check.
+fn write_unchecked(doc: &Document, out: &mut impl std::io::Write) -> Result<(), SaveError> {
     let io = |path: String| {
         move |error: std::io::Error| {
             SaveError::new(

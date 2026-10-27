@@ -17,6 +17,9 @@ mod format_depth_tests;
 mod format_error_tests;
 #[cfg(test)]
 mod format_flat_tests;
+/// The maps wasm32's memory limits are derived from, shared with the
+/// native measurement and the wasm32 probe.
+pub mod format_memory_shapes;
 #[cfg(test)]
 mod format_names_tests;
 #[cfg(test)]

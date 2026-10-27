@@ -6,7 +6,7 @@
 //! else; none of these maps is a document.
 
 use crate::document::bounds::{self, BoundError};
-use crate::document::format::{load, load_under, LoadErrorKind};
+use crate::document::format::{load, load_under, Limits, LoadErrorKind};
 use crate::document::tests::format_text::{map_of, map_of_two, map_with, node_of, rejection, THEME};
 
 /// The load of `json` fails with this path and this kind.
@@ -60,7 +60,14 @@ fn test_a_map_over_the_size_ceiling_is_refused_before_it_is_read() {
     // its own: the same code, a number a test can afford.
     let json = map_of("");
     let size = json.len() as u64;
-    let error = load_under(&json, Some(size - 1)).unwrap_err();
+    let error = load_under(
+        &json,
+        Limits {
+            bytes: Some(size - 1),
+            elements: None,
+        },
+    )
+    .unwrap_err();
     assert_eq!(error.path, "");
     assert_eq!(
         error.kind,
@@ -70,15 +77,40 @@ fn test_a_map_over_the_size_ceiling_is_refused_before_it_is_read() {
         }
     );
     assert!(
-        load_under(&json, Some(size)).is_ok(),
+        load_under(
+            &json,
+            Limits {
+                bytes: Some(size),
+                elements: None
+            }
+        )
+        .is_ok(),
         "a text exactly at the ceiling is inside it"
     );
-    assert!(load_under(&json, None).is_ok(), "no ceiling means no refusal");
+    assert!(
+        load_under(
+            &json,
+            Limits {
+                bytes: None,
+                elements: None
+            }
+        )
+        .is_ok(),
+        "no ceiling means no refusal"
+    );
     // Refused before parsing: a text that is not JSON is too large, not
     // a syntax error.
     let garbage = "x".repeat(64);
     assert!(matches!(
-        load_under(&garbage, Some(32)).unwrap_err().kind,
+        load_under(
+            &garbage,
+            Limits {
+                bytes: Some(32),
+                elements: None
+            }
+        )
+        .unwrap_err()
+        .kind,
         LoadErrorKind::TooLarge { .. }
     ));
 }
@@ -92,8 +124,17 @@ fn test_the_native_ceiling_is_none_and_the_browser_is_bounded() {
         crate::document::format::MAX_MAP_BYTES,
         Some(crate::document::format::WASM32_MAX_MAP_BYTES)
     );
-    // The derived value, written out: 3 GiB over 1 + 18.
-    assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 169_538_182);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_eq!(crate::document::format::MAX_ELEMENTS, None);
+    #[cfg(target_arch = "wasm32")]
+    assert_eq!(
+        crate::document::format::MAX_ELEMENTS,
+        Some(crate::document::format::WASM32_MAX_ELEMENTS)
+    );
+    // The derived values, written out: half of 3 GiB over 7 bytes per
+    // byte of text, and over 560 bytes per element.
+    assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 230_087_533);
+    assert_eq!(crate::document::format::WASM32_MAX_ELEMENTS, 2_876_094);
 }
 
 #[test]

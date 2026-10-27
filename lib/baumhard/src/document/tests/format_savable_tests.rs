@@ -12,9 +12,14 @@ use crate::document::element::{
     DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, PaletteData, PaletteGroup, PortalEndData,
     RingData, RingStyle, SectionData, SpanData, TextStyle, ThemeData, ThemeVariant,
 };
-use crate::document::format::{check_savable, load, save, SaveError, SaveErrorKind};
+use crate::document::format::{
+    check_savable, check_savable_holding, check_savable_under, load, load_under, save, Limits, LoadErrorKind,
+    SaveError, SaveErrorKind,
+};
 use crate::document::ids::{Definitions, EditDef, VerbDef};
+use crate::document::tests::format_memory_shapes::elements_of;
 use crate::document::tests::format_support::{same_document, written};
+use crate::document::tests::format_text::{map_of, map_of_two, map_with, node_of};
 use crate::document::tests::test_support::{node_data, path_data, DocumentBuilder};
 use crate::document::values::{ColorRef, FontSize, LinkKind, PlainColor, Rgba, VarId, VerbId};
 use crate::font::fonts::AppFont;
@@ -27,6 +32,13 @@ fn refused(builder: DocumentBuilder) -> SaveError {
     assert_eq!(
         check_savable(&doc).expect_err("check_savable must refuse what save refuses"),
         error
+    );
+    // The one-node check refuses it too: a pass there is never a
+    // document the full build refuses.
+    assert_eq!(
+        check_savable_holding(&doc).1,
+        None,
+        "the one-node check passed a document the full build refuses: {error}"
     );
     error
 }
@@ -540,4 +552,118 @@ fn test_a_portal_link_does_not_carry_its_retained_path_through_a_save() {
     assert_eq!(path_of(&back), path_data());
     // Nothing else changed: the link, its kind and its target.
     assert_eq!(written(&back), written(&doc));
+}
+
+#[test]
+fn test_check_savable_holds_one_node_not_a_second_document() {
+    // A fan of 300 nodes and a chain of 300, each node with three
+    // labelled sections: a node holds 7 or 8 elements, the map 2400.
+    let label = r#","sections":[{"spans":[{"text":"a"}]},{"channel":1,"spans":[{"text":"b"}]},{"channel":2,"spans":[{"text":"c"}]}]"#;
+    let fan = (1..=300)
+        .map(|id| {
+            node_of(
+                id,
+                &if id == 1 {
+                    label.to_string()
+                } else {
+                    format!(r#","parent":1{label}"#)
+                },
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let chain = (1..=300)
+        .map(|id| {
+            node_of(
+                id,
+                &if id == 1 {
+                    label.to_string()
+                } else {
+                    format!(r#","parent":{}{label}"#, id - 1)
+                },
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    for (name, nodes) in [("fan", fan), ("chain", chain)] {
+        let doc = load(&map_with("", &nodes)).expect("the map loads");
+        let (result, held) = check_savable_holding(&doc);
+        assert_eq!(result, Ok(()), "{name}");
+        let held = held.expect("the one-node check passed");
+        // The root, the theme and the defaults, the stand-in, and one
+        // node's eight.
+        assert!(
+            held <= 3 + 1 + 8,
+            "{name}: the check held {held} elements at once"
+        );
+        assert!(elements_of(&doc) > 2000, "precondition: {name} is big");
+    }
+}
+
+#[test]
+fn test_a_map_past_the_element_bound_is_refused_at_the_element_past_it() {
+    // MAX_ELEMENTS is `None` on every target the suite runs on, so the
+    // refusal the browser depends on is driven with a bound of its own.
+    let bound = |elements: u64| Limits {
+        bytes: None,
+        elements: Some(elements),
+    };
+    // The root, the theme, the defaults, node 1, its section and its
+    // span: the span is the sixth element.
+    let json = map_of(r#","sections":[{"spans":[{"text":"x"}]}]"#);
+    let doc = load(&json).expect("the map loads");
+    assert_eq!(elements_of(&doc), 6);
+    assert!(
+        load_under(&json, bound(6)).is_ok(),
+        "a map at the bound is within it"
+    );
+    let error = load_under(&json, bound(5)).expect_err("one element past the bound");
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            "nodes[0].sections[0].spans[0]",
+            &LoadErrorKind::TooManyElements { max: 5 }
+        )
+    );
+    // A definition counts as an element does, at its list.
+    let json = map_with(
+        r#","verbs":[{"id":"a","name":"A"},{"id":"b","name":"B"}]"#,
+        &node_of(1, ""),
+    );
+    let defined = load(&json).expect("the map loads");
+    assert_eq!(elements_of(&defined), 6);
+    // Counted after the root and the theme, before the defaults.
+    assert!(load_under(&json, bound(6)).is_ok());
+    let error = load_under(&json, bound(3)).expect_err("the verbs are past the bound");
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        ("verbs", &LoadErrorKind::TooManyElements { max: 3 })
+    );
+    // And a document the bound refuses cannot be saved where it holds,
+    // at the same path: the file would not load there.
+    let refusal = check_savable_under(&doc, bound(5)).expect_err("past the bound");
+    assert_eq!(refusal.path, "nodes[0].sections[0].spans[0]");
+    assert!(
+        matches!(&refusal.kind, SaveErrorKind::NotLoadable { error } if error.kind == LoadErrorKind::TooManyElements { max: 5 }),
+        "{refusal:?}"
+    );
+    assert_eq!(check_savable_under(&doc, bound(6)), Ok(()));
+}
+
+#[test]
+fn test_a_document_whose_file_is_past_the_byte_bound_cannot_be_saved_where_it_holds() {
+    let doc = load(&map_of_two("", "")).expect("the map loads");
+    let length = save(&doc).expect("it saves").len() as u64;
+    let bound = |bytes: u64| Limits {
+        bytes: Some(bytes),
+        elements: None,
+    };
+    assert_eq!(check_savable_under(&doc, bound(length)), Ok(()));
+    let refusal = check_savable_under(&doc, bound(length - 1)).expect_err("one byte past the bound");
+    assert_eq!(refusal.path, "");
+    assert!(
+        matches!(&refusal.kind, SaveErrorKind::NotLoadable { error }
+            if error.kind == LoadErrorKind::TooLarge { bytes: length, max: length - 1 }),
+        "{refusal:?}"
+    );
 }

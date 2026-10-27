@@ -42,7 +42,7 @@ it.
 | Encoding | UTF-8. Bytes that are not UTF-8 are a `Syntax` error naming the byte offset. |
 | Byte-order mark | **Refused** (`ByteOrderMark`). Save as UTF-8 without a BOM: RFC 8259 §8.1 forbids a writer to add one, and accepting it would be a second spelling of the start of the file. |
 | Line endings | Any JSON whitespace is accepted, CR LF included. The saver writes LF only. |
-| Size | Checked against `MAX_MAP_BYTES` before anything else ([Limits](#limits)). |
+| Size | Checked against `MAX_MAP_BYTES` before anything else; the elements a map becomes are counted against `MAX_ELEMENTS` as they are built ([Limits](#limits)). |
 | One value | The text is one JSON object. Anything after it but whitespace is a `Syntax` error. |
 | Duplicate keys | Refused in every object, name-keyed ones included. |
 | Key order | **Never significant to the loader.** A file run through `jq -S` loads as the same map. The saver writes the order the tables below list. |
@@ -797,9 +797,11 @@ would have had in the file.
 
 | Limit | Value |
 |---|---|
-| The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, before it is parsed: about 162 MiB, a 3 GiB load budget over the text and what a load measurably expands it into (18 bytes per byte at most), so that a map under it never traps the page while it loads. |
+| The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, 230,087,533 bytes, before it is parsed (`TooLarge`). |
+| Elements | Unbounded on native. On wasm32 a map may become at most `MAX_ELEMENTS`, 2,876,094 elements, each verb, edit and presentation counting as one; the one past it is refused, before it is built, at its path (`TooManyElements`). |
+| Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 7 + elements × 560` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
 | The tree's depth | **None.** Every walk is iterative. |
-| The number of nodes | None beyond the ids there are; memory runs out first. |
+| The number of nodes | None beyond the ids there are and, on wasm32, the element bound above. |
 | A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |
 | Counts an index addresses | Palettes, theme variables and variants, verbs, edits, presentations: at most 65,536 each. |
 | Rows | No bound on sections, spans, rings or links per element. |

@@ -184,23 +184,45 @@ the parity trajectory (or why none is owed):
 - **FreezeWatchdog** (`src/application/app/freeze_watchdog.rs`) —
   native-only by design: browsers ship their own unresponsive-tab
   dialog; no parity owed.
-- **`MAX_MAP_BYTES`** (`lib/baumhard/src/document/format/mod.rs`) —
-  `None` on native, `Some(WASM32_MAX_MAP_BYTES)` on wasm32 —
-  about 162 MiB, derived rather than chosen: a 3 GiB load budget
-  over the text and the 18 bytes per byte a load measurably
-  expands it into (`lib/baumhard/tests/format_memory.rs`, which
-  fails if that grows). Divergent by
-  platform physics rather than policy: wasm32's `usize` is 32
-  bits and its address space is 4 GiB, shared with the runtime,
-  the GPU buffers and the browser. Native opens maps as large as
-  the machine can hold, which is the product intent; the browser
-  cannot, and says so with a message instead of trapping
-  mid-parse. No parity is owed — the trajectory is the reverse,
-  a 64-bit wasm target, which is not this project's to schedule.
+- **`MAX_MAP_BYTES` and `MAX_ELEMENTS`**
+  (`lib/baumhard/src/document/format/mod.rs`) — `None` on native;
+  on wasm32 a two-axis memory budget, because memory is the only
+  limit and a map's cost grows both with its text and with the
+  elements (and definitions) it becomes, and a short text can
+  become many elements. A map's peak while it loads, and while it
+  is then saved, is modeled as `text × 7 + elements × 560` bytes
+  (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`), and
+  each limit takes half of a 3 GiB budget: **230,087,533 bytes of
+  text** (~219 MiB, refused before parsing) and **2,876,094
+  elements** (counted as the builder appends them, the one past it
+  refused with `TooManyElements`). The two costs are measured, not
+  chosen: the densest shape of each kind of content (empty
+  sections, empty rings, portal and line links, empty spans,
+  top-level nodes, a long text, a large theme or palette, the most
+  verbs), at its worst point of container growth, by the wasm32
+  module's own memory — which counts `dlmalloc`'s headers and
+  rounding, `realloc` copies and freed chunks it could not reuse —
+  in the probe (`lib/baumhard/tests/wasm_font_lock.rs`), which
+  fails if a pin is stale; `lib/baumhard/tests/format_memory.rs`
+  holds the same maps to the model natively. `save` holds one node
+  beside the document, never a second copy, and refuses on wasm32
+  what that target's load would refuse. What is not bounded: a
+  document grown by edits past the element limit, and what the app
+  builds from the document (the scene), which the 1 GiB left of the
+  4 GiB address space is for. The old `.mindmap.json` loader keeps
+  its own 3 GiB `MAX_MAP_BYTES` (`mindmap/loader.rs`) until C3
+  retires it. Divergent by platform physics rather than policy:
+  wasm32's `usize` is 32 bits and its address space is 4 GiB,
+  shared with the runtime, the GPU buffers and the browser. Native
+  opens maps as large as the machine can hold, which is the product
+  intent; the browser cannot, and says so with a message instead of
+  trapping. No parity is owed — the trajectory is the reverse, a
+  64-bit wasm target, which is not this project's to schedule.
 - **`MAX_UNKNOWN_KEYS`**
   (`lib/baumhard/src/mindmap/unknown_keys.rs`) — `None` on
   native, `Some(2_000_000)` on wasm32, for the same reason and
-  with the same trajectory as `MAX_MAP_BYTES` above. It began as
+  with the same trajectory as the old loader's `MAX_MAP_BYTES`
+  (`mindmap/loader.rs`, 3 GiB on wasm32). It began as
   a resource ceiling standing in for a cost defect; once the
   capture and the write-back were both made linear there was
   nothing on native left for it to bound.

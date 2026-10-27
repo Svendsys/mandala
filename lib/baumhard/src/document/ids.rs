@@ -230,8 +230,7 @@ impl Document {
         ident_index: IdentIndex,
         highest: u32,
     ) -> Result<Self, DocumentError> {
-        validate_shape(&tree, tree.root()).map_err(DocumentError::Shape)?;
-        check_indexes(&tree, &definitions)?;
+        check_loaded(&tree, &definitions)?;
         Ok(Document {
             tree,
             ident_index,
@@ -256,6 +255,11 @@ impl Document {
     /// code, which holds `NodeId`s. O(1).
     pub fn node_by_ident(&self, ident: NodeIdent) -> Option<NodeId> {
         self.ident_index.get(&ident).copied()
+    }
+
+    /// How many idents the index holds: one per node of the tree. O(1).
+    pub(crate) fn ident_count(&self) -> usize {
+        self.ident_index.len()
     }
 
     /// The ident the next inserted node will be given, or `None` when
@@ -462,6 +466,14 @@ pub fn palettes(tree: &Tree<DocElement>) -> impl Iterator<Item = (PaletteId, &Pa
 
 /// Refuse a tree or definitions with more of something than its index
 /// type addresses: past the bound an id would alias another.
+/// What [`Document::from_loaded`] checks of a loaded tree beside its
+/// index: the map row and the header's counts. The format's check that a
+/// document's file would load asks the same, of the tree it builds.
+pub(crate) fn check_loaded(tree: &Tree<DocElement>, definitions: &Definitions) -> Result<(), DocumentError> {
+    validate_shape(tree, tree.root()).map_err(DocumentError::Shape)?;
+    check_indexes(tree, definitions)
+}
+
 fn check_indexes(tree: &Tree<DocElement>, definitions: &Definitions) -> Result<(), DocumentError> {
     let bound = |what: &'static str, count: usize, max: usize| {
         bounds::check_count(count, max).map_err(|error| DocumentError::Bound { what, error })

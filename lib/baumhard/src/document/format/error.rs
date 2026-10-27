@@ -125,6 +125,16 @@ pub enum LoadErrorKind {
         /// The longest text this target loads.
         max: u64,
     },
+    /// The map holds more elements than
+    /// [`MAX_ELEMENTS`](crate::document::format::MAX_ELEMENTS) allows on
+    /// this target: the other half of the memory budget
+    /// [`TooLarge`](Self::TooLarge) bounds by bytes. Counted as the
+    /// elements are built, and raised at the one past the bound, before
+    /// it is appended.
+    TooManyElements {
+        /// The most elements this target builds.
+        max: u64,
+    },
     /// The text starts with a UTF-8 byte-order mark. A file is UTF-8
     /// without one (RFC 8259 §8.1), and accepting one would be a second
     /// spelling of the start of the file.
@@ -312,6 +322,11 @@ impl fmt::Display for LoadErrorKind {
                 f,
                 "map is {bytes} bytes, over the {max} byte limit: refusing to load it. \
                  A map this size is either damaged or hostile."
+            ),
+            LoadErrorKind::TooManyElements { max } => write!(
+                f,
+                "map holds more than {max} elements, the most this build can hold in memory: \
+                 refusing to load it"
             ),
             LoadErrorKind::ByteOrderMark => f.write_str(
                 "the text starts with a byte-order mark, which a map does not have: save it as UTF-8 without a BOM",

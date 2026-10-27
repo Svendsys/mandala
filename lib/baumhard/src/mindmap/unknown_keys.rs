@@ -797,7 +797,7 @@ pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
 /// generous — it is a backstop against exhausting the browser's 4 GiB,
 /// not a judgment about how many keys a document should have.
 ///
-/// [`MAX_MAP_BYTES`]: crate::document::format::MAX_MAP_BYTES
+/// [`MAX_MAP_BYTES`]: crate::mindmap::loader::MAX_MAP_BYTES
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_UNKNOWN_KEYS: Option<usize> = None;
 

@@ -46,6 +46,7 @@
 //! run compiles baumhard for wasm32 from scratch, which takes a couple
 //! of minutes; later runs are incremental.
 
+use baumhard::document::tests::format_memory_shapes::{check_pins, derive, Measured};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -214,4 +215,21 @@ fn test_font_lock_helpers_run_on_wasm32() {
         "the font-lock helpers misbehave on {TARGET}:\n{report}{}",
         String::from_utf8_lossy(&run.stderr)
     );
+
+    // wasm32's memory limits are pinned to what the maps cost here, by
+    // the module's own memory: every map is within the model (each
+    // scenario checked that), and the pins are what the maps cost,
+    // rounded up.
+    let measured: Vec<Measured> = report.lines().filter_map(Measured::parse).collect();
+    for m in &measured {
+        println!(
+            "{}: {} bytes read, {} written, {} elements, peaks {} loading and {} saving",
+            m.shape, m.text_in, m.text_out, m.elements, m.load, m.both
+        );
+    }
+    let (per_byte, per_element) = derive(&measured);
+    println!("wasm32: {per_byte:.2} bytes per byte of text, {per_element:.1} bytes per element beyond it");
+    if let Err(why) = check_pins(&measured) {
+        panic!("{why}\n{report}");
+    }
 }

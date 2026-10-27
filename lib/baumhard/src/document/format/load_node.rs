@@ -26,7 +26,7 @@ use crate::document::format::dto::{
     PortalEndDto, RingDto, SectionDto, SpanDto,
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
-use crate::document::format::from_dto::{Builder, LoadResult, PendingLink};
+use crate::document::format::from_dto::{Builder, Keep, LoadResult, PendingLink};
 use crate::document::ids::NodeIdent;
 use crate::document::place::{sizes_its_own_text, Unit};
 use crate::document::values::{Align, Anchor, LinkKind, LinkTarget, PaletteId};
@@ -407,13 +407,16 @@ impl Builder {
             path,
         });
         self.element(node, data, |b, link| {
-            b.links.push(PendingLink {
-                link,
-                owner: node,
-                owner_at: owner,
-                to,
-                at,
-            });
+            // A check answers the link from the document it checks.
+            if b.keep == Keep::Document {
+                b.links.push(PendingLink {
+                    link,
+                    owner: node,
+                    owner_at: owner,
+                    to,
+                    at,
+                });
+            }
             match kind {
                 LinkKind::Line => b.on_path(
                     link,

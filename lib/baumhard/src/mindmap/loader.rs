@@ -34,7 +34,6 @@
 //! everything else expensive lives on the failure path, where the raw
 //! JSON is re-examined only to explain a parse that already failed.
 
-use crate::document::format::MAX_MAP_BYTES;
 use crate::mindmap::custom_mutation::{CustomMutation, TriggerBinding};
 use crate::mindmap::model::{validate, Canvas, MindEdge, MindMap, MindNode, Palette};
 use crate::mindmap::unknown_keys::{self, Step};
@@ -43,6 +42,53 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+
+/// Ceiling on the on-disk size of a `.mindmap.json`, in bytes, or
+/// `None` where the platform imposes none.
+///
+/// **This loader keeps its own ceiling until C3 deletes it.** The
+/// `.mandala.json` loader's limits (`document::format::MAX_MAP_BYTES`
+/// and `MAX_ELEMENTS`) are derived from what *that* loader measurably
+/// builds; this one builds something else, and changing its ceiling
+/// would change what the browser app opens today. C3, the app cut-over
+/// (`work_plans/UNIFIED_ARCHITECTURE.md`), retires this loader and the
+/// constant with it.
+///
+/// **`None` on native, and that is the design rather than an
+/// omission.** Mandala is meant to open maps as large as the machine
+/// can hold — the repository's own stress generator already emits one
+/// the previous 256 MiB ceiling refused — so "open this map" *is* an
+/// unconditional promise to allocate what the file asks for. The user
+/// picked the file; a 10 GB map costing 10 GB is the feature, and a
+/// failed allocation is an honest outcome of a choice they made.
+///
+/// The previous ceiling was justified by "far past any authored map —
+/// the canonical fixture is 545 KB with 252 nodes". That reasoning
+/// rested on an assumption about how large maps get, and the
+/// assumption was wrong. A limit defended by the size of today's
+/// fixtures is a limit that expires.
+///
+/// **`Some` on wasm32, because there the limit is physics.** `usize`
+/// is 32 bits and the address space is 4 GiB, shared with the runtime,
+/// the GPU buffers and the browser itself. A file that cannot fit is
+/// refused with a message rather than trapping mid-parse. This is a
+/// sanctioned target divergence, registered in `CLAUDE.md`'s
+/// dual-target section.
+///
+/// What is *not* bounded by any of this, and is documented at
+/// [`load_from_str`] instead, is the ratio: peak memory is a multiple
+/// of the file, roughly 4 KB per node and 2 KB per section on top of
+/// the text. Predicting cost from file size is what a user needs, and
+/// a ceiling never provided it.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_MAP_BYTES: Option<u64> = None;
+
+/// See the native definition above for the rationale. 3 GiB leaves
+/// headroom inside wasm32's 4 GiB address space for the typed model
+/// the text is parsed into, the scene tree built from it, and the
+/// GPU-side buffers — none of which the file length counts.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_MAP_BYTES: Option<u64> = Some(3 * 1024 * 1024 * 1024);
 
 /// Load a `MindMap` from a file path. Reads the entire file into
 /// memory via `std::fs::read_to_string`, then delegates to

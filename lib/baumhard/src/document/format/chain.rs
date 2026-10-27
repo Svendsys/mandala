@@ -29,7 +29,8 @@
 use crate::document::bounds::{self, BoundError};
 use crate::document::format::dto::NodeDto;
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, Seg, CHAIN_SHOWN};
-use crate::document::format::from_dto::{Builder, ChainEntry, LoadResult, PlacedNode};
+use crate::document::format::from_dto::{Builder, ChainEntry, Keep, LoadResult, PlacedNode};
+use indextree::NodeId;
 
 impl Builder {
     /// Place the node `dto`, listed at `index`, in the tree, and build
@@ -66,13 +67,17 @@ impl Builder {
                 if parent == id {
                     return Err(self.error_at("parent", LoadErrorKind::ParentIsSelf { id }));
                 }
-                let Some(placed) = self.idents.get(&parent).copied() else {
+                let Some(placed) = self.placed(parent) else {
                     return Err(self.error_at("parent", LoadErrorKind::ParentNotEarlier { parent }));
                 };
                 if self.chain.get(placed.depth).map(|entry| entry.node) != Some(placed.node) {
                     return Err(self.error_at("parent", self.not_on_chain(parent, placed)));
                 }
-                (placed.depth + 1, placed.node)
+                let under = match (self.keep, self.stand_in) {
+                    (Keep::OneNode, Some(stand_in)) => stand_in,
+                    _ => placed.node,
+                };
+                (placed.depth + 1, under)
             }
         };
 
@@ -101,8 +106,18 @@ impl Builder {
         let node = self.node_element(under, dto, id, channel)?;
         self.node_row(node, dto, depth == 0, (index, id))?;
 
+        // A check judges the node's row now, while it holds its content,
+        // and frees it: what is left of it is its chain entry. Its child
+        // nodes are not in its row yet, and need not be: a node holds
+        // any number of them.
+        if self.keep == Keep::OneNode {
+            self.check_and_free(node, depth, index, id)?;
+        }
+
         // Step 31.
-        self.idents.insert(id, PlacedNode { node, depth, index });
+        if self.keep == Keep::Document {
+            self.idents.insert(id, PlacedNode { node, depth, index });
+        }
         self.highest = self.highest.max(id);
         self.chain.push(ChainEntry {
             node,
@@ -111,6 +126,60 @@ impl Builder {
             index,
         });
         Ok(())
+    }
+
+    /// Where the node with id `parent` was placed, if it was. A load
+    /// asks its ident map. A check keeps no map: a parent is accepted
+    /// only on the chain, where a check finds it from the top. Every
+    /// entry it passes on the way is closed by this node, so the search
+    /// costs O(1) per node over the whole list.
+    fn placed(&self, parent: u32) -> Option<PlacedNode> {
+        match self.keep {
+            Keep::Document => self.idents.get(&parent).copied(),
+            Keep::OneNode => {
+                let depth = self.chain.iter().rposition(|entry| entry.id == parent)?;
+                let entry = self.chain[depth];
+                Some(PlacedNode {
+                    node: entry.node,
+                    depth,
+                    index: entry.index,
+                })
+            }
+        }
+    }
+
+    /// Under [`Keep::OneNode`]: check the row of `node`, just built, and
+    /// free it. The first top-level node's own element is kept, as the
+    /// stand-in every deeper node is built under.
+    fn check_and_free(&mut self, node: NodeId, depth: usize, index: usize, id: u32) -> LoadResult<()> {
+        self.checked += 1;
+        if let Err(error) = crate::document::shape::validate_shape(&self.tree, node) {
+            return Err(LoadError {
+                node: Some(self.context_of(index, id)),
+                ..LoadError::new(
+                    render_path(&[Seg::Key("nodes"), Seg::Index(index)]),
+                    LoadErrorKind::Internal {
+                        message: error.to_string(),
+                    },
+                )
+            });
+        }
+        if depth == 0 && self.stand_in.is_none() {
+            if let Some(element) = self.tree.get(node).map(|slot| slot.get().clone()) {
+                let root = self.tree.root();
+                let stand_in = self
+                    .tree
+                    .insert_child(root, element, crate::engine::tree::Placement::Last)
+                    .map_err(|error| {
+                        self.error(LoadErrorKind::Internal {
+                            message: error.to_string(),
+                        })
+                    })?;
+                self.live += 1;
+                self.stand_in = Some(stand_in);
+            }
+        }
+        self.free(node)
     }
 
     /// The refusal for a `parent` that came earlier but whose subtree has
@@ -143,6 +212,10 @@ impl Builder {
             let Some(entry) = self.chain.pop() else {
                 break;
             };
+            // A check judged the row when it built the node.
+            if self.keep == Keep::OneNode {
+                continue;
+            }
             self.checked += 1;
             if let Err(error) = crate::document::shape::validate_shape(&self.tree, entry.node) {
                 let path = render_path(&[Seg::Key("nodes"), Seg::Index(entry.index)]);

@@ -111,6 +111,20 @@ pub(super) struct ChainEntry {
     pub index: usize,
 }
 
+/// What a [`Builder`] keeps of what it builds.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum Keep {
+    /// Everything: a load, which makes the document.
+    Document,
+    /// One node at a time: [`check_savable`](super::check_savable),
+    /// which asks the builder whether a document's file would load, and
+    /// needs every check but not a second copy of the document. Each
+    /// node is built, its row checked, and its elements freed before
+    /// the next is read; the ident checks and the links are answered
+    /// from the document being saved (see `check_savable`).
+    OneNode,
+}
+
 /// The state of one load.
 pub(super) struct Builder {
     /// The tree being built.
@@ -148,12 +162,31 @@ pub(super) struct Builder {
     /// is a node, which is checked when it leaves the chain. The count
     /// is how a test sees that.
     pub checked: usize,
+    /// What the builder keeps.
+    pub keep: Keep,
+    /// Under [`Keep::OneNode`], the element every node below the top is
+    /// built under in place of its parent, which is gone: a copy of the
+    /// first top-level node's own element, so that a node below it is
+    /// judged under a node, as it is in the document.
+    pub stand_in: Option<NodeId>,
+    /// How many elements have been appended, the root included, and
+    /// definitions read: what [`Self::max_elements`] bounds.
+    pub elements: u64,
+    /// The most elements this target builds
+    /// ([`MAX_ELEMENTS`](super::MAX_ELEMENTS)), or `None` for no bound.
+    pub max_elements: Option<u64>,
+    /// How many elements are in the tree now, and the most there have
+    /// been: the memory a [`Keep::OneNode`] check holds, which a test
+    /// bounds.
+    pub live: usize,
+    /// See [`Self::live`].
+    pub live_peak: usize,
 }
 
 impl Builder {
     /// Phase 3: a builder holding the map's root and everything its
     /// nodes resolve against, built from the header. O(header).
-    pub(super) fn begin(header: &MapHeaderDto) -> LoadResult<Builder> {
+    pub(super) fn begin(header: &MapHeaderDto, keep: Keep, max_elements: Option<u64>) -> LoadResult<Builder> {
         let mut builder = Builder {
             tree: Tree::new_non_indexed_with(DocElement::Map(MapData {
                 name: header.name.clone(),
@@ -170,6 +203,12 @@ impl Builder {
             fonts: KeyedMap::default(),
             definitions: Definitions::default(),
             checked: 0,
+            keep,
+            stand_in: None,
+            elements: 1,
+            max_elements,
+            live: 1,
+            live_peak: 1,
         };
         builder.definitions = builder.map(header)?;
         Ok(builder)
@@ -201,6 +240,28 @@ impl Builder {
                     },
                 )
             })
+    }
+
+    /// [`Self::finish`] for a [`Keep::OneNode`] check: close the chain
+    /// and check the map row and the header's counts, as a load does,
+    /// without making a document. Every link was answered as it was met.
+    /// Returns the most elements the tree held at once.
+    pub(super) fn finish_check(mut self) -> LoadResult<usize> {
+        self.close(0)?;
+        if let Some(stand_in) = self.stand_in.take() {
+            self.free(stand_in)?;
+        }
+        let root = self.tree.root();
+        self.finish_element(root)?;
+        crate::document::ids::check_loaded(&self.tree, &self.definitions).map_err(|error| {
+            LoadError::new(
+                String::new(),
+                LoadErrorKind::Internal {
+                    message: error.to_string(),
+                },
+            )
+        })?;
+        Ok(self.live_peak)
     }
 
     /// The context of the node at `index` with `id`, for an error about
@@ -344,14 +405,50 @@ impl Builder {
     /// the builder adds a row in key order. [`Self::element`] calls it,
     /// and so does the node build, which checks a node's row when the
     /// node leaves the chain rather than here.
+    ///
+    /// Every element is counted here, and the one past
+    /// [`Self::max_elements`] is refused with
+    /// [`TooManyElements`](LoadErrorKind::TooManyElements) before it is
+    /// appended.
     pub(super) fn add(&mut self, parent: NodeId, element: DocElement) -> LoadResult<NodeId> {
-        self.tree
+        self.count(1)?;
+        let id = self
+            .tree
             .insert_child(parent, element, Placement::Last)
             .map_err(|error| {
                 self.error(LoadErrorKind::Internal {
                     message: error.to_string(),
                 })
+            })?;
+        self.live += 1;
+        self.live_peak = self.live_peak.max(self.live);
+        Ok(id)
+    }
+
+    /// Count `more` elements, or definitions, against
+    /// [`Self::max_elements`]: past it is
+    /// [`TooManyElements`](LoadErrorKind::TooManyElements) at the current
+    /// path, before anything is built.
+    pub(super) fn count(&mut self, more: usize) -> LoadResult<()> {
+        self.elements = self
+            .elements
+            .saturating_add(u64::try_from(more).unwrap_or(u64::MAX));
+        match self.max_elements.filter(|max| self.elements > *max) {
+            Some(max) => Err(self.error(LoadErrorKind::TooManyElements { max })),
+            None => Ok(()),
+        }
+    }
+
+    /// Under [`Keep::OneNode`], free `id` and everything under it.
+    pub(super) fn free(&mut self, id: NodeId) -> LoadResult<()> {
+        let count = id.descendants(self.tree.arena()).count();
+        self.tree.remove_subtree(id).map_err(|error| {
+            self.error(LoadErrorKind::Internal {
+                message: error.to_string(),
             })
+        })?;
+        self.live = self.live.saturating_sub(count);
+        Ok(())
     }
 
     /// Check the shape rules for the element at `id`, whose children
