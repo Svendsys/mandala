@@ -199,6 +199,7 @@ use glam::Vec2;
 use baumhard::font::fonts;
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::element::GfxElement;
+use baumhard::gfx_structs::run::GlyphRunData;
 use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
 
 use super::tree_walker::{extract_background_rect, shape_one_element_into_buffers};
@@ -277,8 +278,14 @@ pub(crate) struct ScenePassCounts {
     /// recorded offset) was re-placed in place and no shaping ran for
     /// them. Counted the way `reshaped` counts: per walk position, a
     /// `Void` whose tree moved included. The rest,
-    /// `walked - reshaped - patched`, kept their output untouched.
+    /// `walked - reshaped - patched - recaptured`, kept their output
+    /// untouched.
     pub(crate) patched: usize,
+    /// Walk positions holding a `GlyphRun` whose state changed (or that
+    /// newly hold one): the run is held again, which clones two `Arc`s
+    /// and its override vectors. Nothing is shaped and the font lock is
+    /// not taken — a run carries its shaping with it.
+    pub(crate) recaptured: usize,
 }
 
 /// What [`ShapedSceneElement::classify`] found at one walk position.
@@ -328,6 +335,10 @@ pub(crate) struct ShapedSceneElement {
     /// [`ScenePassKind::keeps_background_fills`]. An overlay-pass
     /// entry is always `None`.
     pub(super) background: Option<NodeBackgroundRect>,
+    /// The element's run, when it is a `GlyphRun`: what the
+    /// positioned-glyph pass draws ([`super::glyph_runs`]). Held by
+    /// clone, which shares the run's shaping and placement (`Arc`s).
+    pub(super) run: Option<GlyphRunData>,
 }
 
 impl ShapedSceneElement {
@@ -347,6 +358,7 @@ impl ShapedSceneElement {
             area: element.glyph_area().cloned(),
             buffers,
             background,
+            run: element.glyph_run().cloned(),
         }
     }
 
@@ -375,6 +387,21 @@ impl ShapedSceneElement {
             return Verdict::Stale;
         }
         let offset_moved = self.offset != offset;
+        // A run is compared by its own state (`same_state`: its shaping
+        // and placement by identity, everything else by value); the tree
+        // offset is added to it at draw time, so a run whose state
+        // matches in a moved tree is only moved.
+        match (&self.run, element.glyph_run()) {
+            (None, None) => {}
+            (Some(held), Some(live)) if held.same_state(live) => {
+                return if offset_moved {
+                    Verdict::Moved
+                } else {
+                    Verdict::Current
+                };
+            }
+            _ => return Verdict::Stale,
+        }
         match (self.area.as_mut(), element.glyph_area()) {
             (None, None) if offset_moved => Verdict::Moved,
             (None, None) => Verdict::Current,
@@ -483,6 +510,7 @@ pub(crate) fn refresh(
         walked: 0,
         reshaped: 0,
         patched: 0,
+        recaptured: 0,
     };
     for &id in ids {
         let Some(entry) = scene.get(id) else {
@@ -509,6 +537,17 @@ pub(crate) fn refresh(
                     }
                     Verdict::Stale => {}
                 }
+            }
+            if element.glyph_run().is_some() {
+                // A run is drawn from the shaping it carries: hold it
+                // again, without the font lock.
+                let fresh = ShapedSceneElement::new(id, element, offset, Vec::new(), None);
+                match shaped.get_mut(slot) {
+                    Some(existing) => *existing = fresh,
+                    None => shaped.push(fresh),
+                }
+                counts.recaptured += 1;
+                continue;
             }
             let font_system =
                 font_system.get_or_insert_with(|| fonts::acquire_font_system_write(kind.font_system_site()));
@@ -557,6 +596,18 @@ pub(super) fn text_buffers<'a>(
 /// into the groups.
 pub(super) fn buffer_count<'a>(shaped: impl IntoIterator<Item = &'a ShapedSceneElement>) -> usize {
     shaped.into_iter().map(|element| element.buffers.len()).sum()
+}
+
+/// Every `GlyphRun` of a pass's output, in draw order, with the
+/// registered offset of the tree it came from — what the
+/// positioned-glyph pass ([`super::glyph_runs`]) draws, as
+/// [`text_buffers`] is what glyphon draws.
+pub(super) fn glyph_runs<'a>(
+    shaped: impl IntoIterator<Item = &'a ShapedSceneElement>,
+) -> impl Iterator<Item = (&'a GlyphRunData, Vec2)> {
+    shaped
+        .into_iter()
+        .filter_map(|element| element.run.as_ref().map(|run| (run, element.offset)))
 }
 
 /// Every background fill of a pass's output, in draw order —
