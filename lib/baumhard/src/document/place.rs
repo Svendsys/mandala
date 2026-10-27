@@ -20,6 +20,8 @@
 //!   ([`sizes_its_own_text`]): the ring sizes its text;
 //! - a **font** a document holds has a family name a file can write
 //!   ([`nameable_font`]);
+//! - a **name** an author chose is not empty and holds no control or
+//!   bidi character ([`name_fault`]);
 //! - a **channel** is within
 //!   [`MAX_CHANNEL`](crate::document::bounds::MAX_CHANNEL)
 //!   ([`check_channel`](crate::document::bounds::check_channel), which
@@ -87,4 +89,31 @@ pub fn sizes_its_own_text(kind: DocKind, parent: Option<DocKind>) -> bool {
 /// O(the compiled-in families, about 30): a scan of a cached table.
 pub fn nameable_font(font: AppFont) -> bool {
     font != AppFont::Any && family_name_of(font).is_some()
+}
+
+/// Why a name an author chose cannot be one (design B.8).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NameFault {
+    /// The name is empty.
+    Empty,
+    /// The name holds a control character (C0, DEL or C1) or a bidi
+    /// embedding, override or isolate control (U+202A–U+202E,
+    /// U+2066–U+2069): a character that makes it display as something
+    /// else in a menu, a terminal or an error.
+    NotPrintable(char),
+}
+
+/// Whether `name` may name a theme variant, a theme variable, a palette,
+/// or an edit, presentation or verb: `None` when it may, else why not.
+/// A name is any non-empty string without the characters
+/// [`NameFault::NotPrintable`] lists; it is compared byte for byte and
+/// never normalized, so `"My Palette"` is a name and two names that
+/// differ only in normalization are two. O(length of the name).
+pub fn name_fault(name: &str) -> Option<NameFault> {
+    if name.is_empty() {
+        return Some(NameFault::Empty);
+    }
+    name.chars()
+        .find(|c| c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'))
+        .map(NameFault::NotPrintable)
 }

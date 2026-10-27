@@ -19,10 +19,10 @@ use crate::document::format::from_dto::{sorted_names, Builder, LoadResult};
 use crate::document::format::index::FORMAT;
 use crate::document::format::spelling::{HexDto, Named};
 use crate::document::ids::{Definitions, EditDef, PresentationDef, VerbDef};
-use crate::document::place::Unit;
+use crate::document::keyed::KeyedSet;
+use crate::document::place::{name_fault, NameFault, Unit};
 use crate::document::values::{Rgba, VerbId};
 use indextree::NodeId;
-use rustc_hash::FxHashSet;
 
 /// A name and what it names, in a file's object.
 type NameAndValue<'a, T> = (&'a str, &'a T);
@@ -154,6 +154,9 @@ impl Builder {
     /// `entries` in ascending name order. A name written twice is an
     /// error at the second. The current path is the object.
     fn names<'a, T>(&self, entries: &'a [(String, T)]) -> LoadResult<Vec<NameAndValue<'a, T>>> {
+        for (name, _) in entries {
+            self.name(&[Seg::Name(name.clone())], name)?;
+        }
         let sorted = sorted_names(entries);
         for pair in sorted.windows(2) {
             if let [before, after] = pair {
@@ -169,6 +172,21 @@ impl Builder {
             .into_iter()
             .map(|(name, value)| (name.as_str(), value))
             .collect())
+    }
+
+    /// Refuse `name`, at the current path then `at`, if it cannot name
+    /// anything ([`name_fault`], the rule the mutations share).
+    fn name(&self, at: &[Seg], name: &str) -> LoadResult<()> {
+        match name_fault(name) {
+            None => Ok(()),
+            Some(NameFault::Empty) => Err(self.error_under(at, LoadErrorKind::EmptyName)),
+            Some(NameFault::NotPrintable(c)) => Err(self.error_under(
+                at,
+                LoadErrorKind::NameNotPrintable {
+                    code_point: u32::from(c),
+                },
+            )),
+        }
     }
 
     /// Whether the variant `name`, its entries in ascending order,
@@ -271,10 +289,11 @@ impl Builder {
         items: &[T],
         parts: impl Fn(&T) -> (&String, &String),
     ) -> LoadResult<Vec<(String, String)>> {
-        let mut seen: FxHashSet<&str> = FxHashSet::default();
+        let mut seen: KeyedSet<&str> = KeyedSet::default();
         let mut out = Vec::with_capacity(items.len());
         self.each(key, items, |b, item| {
             let (id, name) = parts(item);
+            b.name(&[Seg::Key("id")], id)?;
             if !seen.insert(id.as_str()) {
                 return Err(b.error_at("id", LoadErrorKind::DuplicateDefinition { id: id.clone() }));
             }

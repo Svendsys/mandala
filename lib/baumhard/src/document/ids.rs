@@ -33,6 +33,7 @@
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
+use crate::document::keyed::KeyedMap;
 use crate::document::mutation::error::MutationError;
 use crate::document::mutation::inherited::inherited_seed;
 use crate::document::mutation::validate::validate;
@@ -42,7 +43,6 @@ use crate::engine::journal::JournalBuilder;
 use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
 use indextree::NodeId;
-use rustc_hash::FxHashMap;
 
 /// A node's external identity: unique within its document, never
 /// reused while the document is open. `0` is reserved for "not yet
@@ -147,7 +147,7 @@ impl std::error::Error for DocumentError {}
 
 /// The index from a node's ident to its element, which only
 /// [`Document::node_by_ident`] reads.
-pub(crate) type IdentIndex = FxHashMap<NodeIdent, NodeId>;
+pub(crate) type IdentIndex = KeyedMap<NodeIdent, NodeId>;
 
 /// The ident counter's start for a document whose highest node ident is
 /// `highest` (`0` for a map with no node): one past it. The design's id
@@ -188,7 +188,7 @@ impl Document {
     pub(crate) fn from_tree(tree: Tree<DocElement>, definitions: Definitions) -> Result<Self, DocumentError> {
         validate_shape(&tree, tree.root()).map_err(DocumentError::Shape)?;
         check_indexes(&tree, &definitions)?;
-        let mut ident_index = FxHashMap::default();
+        let mut ident_index = IdentIndex::default();
         let mut highest = 0;
         for id in tree.descendants() {
             let Some(node) = tree.arena()[id].get().as_node() else {

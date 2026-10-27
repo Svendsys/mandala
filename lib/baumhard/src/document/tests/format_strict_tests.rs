@@ -366,3 +366,194 @@ fn test_the_fixtures_use_every_key_the_format_defines() {
          one would pass every round trip: {unused:?}"
     );
 }
+
+// ---- nesting, by the schema -------------------------------------------
+
+/// The types whose shape a hand-written visitor decides rather than
+/// their fields, each with the deepest JSON form it accepts: a color, a
+/// hex and a weight are strings or numbers; a shape is at most
+/// `{"rectangle": {"radius": …}}`, a fit `{"fit": {"min", "max"}}` (or
+/// `{"once": {"filler"}}`), a start point `{"edge", "at"}`.
+const HAND_SPELLED: &[(&str, usize)] = &[
+    ("ColorDto", 0),
+    ("HexDto", 0),
+    ("WeightDto", 0),
+    ("ShapeDto", 2),
+    ("FitDto", 2),
+    ("StartDto", 1),
+];
+
+/// How a JSON nesting walk over the DTO graph went wrong.
+#[derive(Debug, PartialEq)]
+enum NestingFault {
+    /// A type reaches itself: its JSON could nest without bound.
+    Cycle(Vec<String>),
+}
+
+/// The deepest JSON nesting a value of `ty` can have: an object or an
+/// array is one level, a string or number none. Recursion here is over
+/// the DTO graph, which is what the test proves bounded.
+fn type_depth(graph: &TypeGraph, ty: &syn::Type, visiting: &mut Vec<String>) -> Result<usize, NestingFault> {
+    match ty {
+        syn::Type::Array(array) => Ok(1 + type_depth(graph, &array.elem, visiting)?),
+        syn::Type::Reference(reference) => type_depth(graph, &reference.elem, visiting),
+        syn::Type::Path(path) => {
+            let Some(last) = path.path.segments.last() else {
+                return Ok(0);
+            };
+            let argument = || match &last.arguments {
+                syn::PathArguments::AngleBracketed(arguments) => {
+                    arguments.args.iter().find_map(|a| match a {
+                        syn::GenericArgument::Type(ty) => Some(ty.clone()),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            };
+            let name = last.ident.to_string();
+            match name.as_str() {
+                "Option" | "Box" | "Cow" => match argument() {
+                    Some(inner) => type_depth(graph, &inner, visiting),
+                    None => Ok(0),
+                },
+                "Vec" | "Named" => match argument() {
+                    Some(inner) => Ok(1 + type_depth(graph, &inner, visiting)?),
+                    None => Ok(1),
+                },
+                _ => dto_depth(graph, &name, visiting),
+            }
+        }
+        _ => Ok(0),
+    }
+}
+
+/// The deepest JSON nesting of a value of the type named `name`.
+fn dto_depth(graph: &TypeGraph, name: &str, visiting: &mut Vec<String>) -> Result<usize, NestingFault> {
+    if let Some((_, depth)) = HAND_SPELLED.iter().find(|(spelled, _)| *spelled == name) {
+        return Ok(*depth);
+    }
+    let Some(info) = graph.get(name) else {
+        // A primitive: `String`, `str`, `f32`, `u64`, `bool`, ….
+        return Ok(0);
+    };
+    if visiting.iter().any(|seen| seen == name) {
+        let mut cycle = visiting.clone();
+        cycle.push(name.to_string());
+        return Err(NestingFault::Cycle(cycle));
+    }
+    if info.fields.is_empty() {
+        // A unit-only enum, written as a string.
+        return Ok(0);
+    }
+    visiting.push(name.to_string());
+    let mut deepest = 0;
+    for field in &info.fields {
+        deepest = deepest.max(type_depth(graph, &field.ty.0, visiting)?);
+    }
+    visiting.pop();
+    // A struct is an object; a derived enum with data is externally
+    // tagged, `{"variant": payload}`, an object too.
+    Ok(1 + deepest)
+}
+
+/// The deepest nesting of a JSON value, the value itself one level if it
+/// is an object or array.
+fn value_depth(value: &Value) -> usize {
+    match value {
+        Value::Object(map) => 1 + map.values().map(value_depth).max().unwrap_or(0),
+        Value::Array(items) => 1 + items.iter().map(value_depth).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+#[test]
+fn test_a_node_nests_at_most_nine_levels_by_its_schema() {
+    // Derived from the types a node is read into, which must reach no
+    // type twice on one path: a node's JSON nesting is bounded by its
+    // schema, never by the tree it is in (design B.7).
+    let graph = TypeGraph::build(&crate_src_root());
+    assert_eq!(dto_depth(&graph, "NodeDto", &mut Vec::new()), Ok(9));
+    // And the header's values are bounded too: the deepest is
+    // `defaults.frame.fit` as `{"fit": {"min", "max"}}`, four below the
+    // top-level object (design B.7's table).
+    assert_eq!(dto_depth(&graph, "MapHeaderDto", &mut Vec::new()), Ok(5));
+    // The deepest fixture node reaches the bound, and none passes it.
+    let mut deepest = 0;
+    for (name, text) in FIXTURES {
+        let value: Value = serde_json::from_str(text).unwrap();
+        for node in value["nodes"].as_array().into_iter().flatten() {
+            let depth = value_depth(node);
+            assert!(depth <= 9, "{name}: a node nests {depth} deep");
+            deepest = deepest.max(depth);
+        }
+    }
+    assert_eq!(deepest, 9, "deep_leaf reaches the bound");
+}
+
+#[test]
+fn test_the_nesting_walk_reports_a_type_that_reaches_itself() {
+    // Negative control: a node type holding itself would nest without
+    // bound, and the walk says so instead of answering a number.
+    let graph = graph_of(
+        "#[derive(Deserialize)] #[serde(deny_unknown_fields)] pub struct LoopDto { pub next: Option<Box<LoopDto>>, pub label: String }\n",
+    );
+    assert_eq!(
+        dto_depth(&graph, "LoopDto", &mut Vec::new()),
+        Err(NestingFault::Cycle(vec![
+            "LoopDto".to_string(),
+            "LoopDto".to_string()
+        ]))
+    );
+    // A planted chain without a loop answers its depth.
+    let graph = graph_of(
+        "#[derive(Deserialize)] #[serde(deny_unknown_fields)] pub struct OuterDto { pub inner: Vec<InnerDto> }\n\
+         #[derive(Deserialize)] #[serde(deny_unknown_fields)] pub struct InnerDto { pub label: String }\n",
+    );
+    assert_eq!(dto_depth(&graph, "OuterDto", &mut Vec::new()), Ok(3));
+}
+
+// ---- keyed maps -------------------------------------------------------
+
+/// The lines of `source` that name an unkeyed `FxHash` map or set,
+/// outside comments: in the loader and the document's ident index every
+/// map is keyed by something a file chose, and so must be keyed.
+fn unkeyed_maps_in(source: &str) -> Vec<usize> {
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| {
+            let code = line.split("//").next().unwrap_or_default();
+            code.contains("FxHashMap") || code.contains("FxHashSet") || code.contains("FxBuildHasher")
+        })
+        .map(|(n, _)| n + 1)
+        .collect()
+}
+
+#[test]
+fn test_the_loader_and_the_ident_index_use_no_unkeyed_map() {
+    let src = crate_src_root();
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(src.join("document/format"))
+        .expect("the format's sources")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect();
+    files.push(src.join("document/ids.rs"));
+    assert!(files.len() > 10, "precondition: {} files", files.len());
+    for file in files {
+        let source = std::fs::read_to_string(&file).unwrap();
+        let found = unkeyed_maps_in(&source);
+        assert!(
+            found.is_empty(),
+            "{} names an unkeyed FxHash map at lines {found:?}; a map keyed by ids or names a \
+             file chose is a `document::keyed::KeyedMap`",
+            file.display()
+        );
+    }
+}
+
+#[test]
+fn test_the_keyed_map_gate_reports_a_planted_unkeyed_map() {
+    let planted = "use rustc_hash::FxHashMap;\nstruct S {\n    // an FxHashMap in a comment is fine\n    idents: FxHashMap<u32, NodeId>,\n}\n";
+    assert_eq!(unkeyed_maps_in(planted), vec![1, 4]);
+    assert!(unkeyed_maps_in("idents: KeyedMap<u32, NodeId>,\n").is_empty());
+}

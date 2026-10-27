@@ -193,10 +193,11 @@ fn test_a_name_the_author_chose_is_quoted_in_a_path_unless_it_is_plain() {
         r#"palettes["a.b"][0].fill"#,
         unknown_variable("nope"),
     );
+    // An empty name is quoted too, and is no name at all (design B.8).
     rejects(
         &map_with(&color("", "var(nope)"), ""),
-        r#"palettes[""][0].fill"#,
-        unknown_variable("nope"),
+        r#"palettes[""]"#,
+        LoadErrorKind::EmptyName,
     );
     rejects(
         &map_with(&color("say \"hi\"", "var(nope)"), ""),
@@ -228,14 +229,12 @@ fn test_a_name_the_author_chose_is_quoted_in_a_path_unless_it_is_plain() {
             missing: true,
         },
     );
-    // The empty name sorts first, so it is the one the others are held to.
+    // An empty variant name is refused, quoted, before the variants are
+    // compared.
     rejects(
         r##"{"format":1,"name":"t","theme":{"active":"","variants":{"":{"x":"#000000"},"a":{"y":"#000000"}}}}"##,
-        "theme.variants.a",
-        LoadErrorKind::VariantsDiffer {
-            variable: "x".to_string(),
-            missing: true,
-        },
+        r#"theme.variants[""]"#,
+        LoadErrorKind::EmptyName,
     );
     // Found by the reader.
     rejects_as_invalid(

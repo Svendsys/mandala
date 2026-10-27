@@ -42,6 +42,7 @@ use crate::document::element::{DocElement, MapData};
 use crate::document::format::dto::MapHeaderDto;
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, NodeContext, Seg};
 use crate::document::ids::{Definitions, Document, IdentIndex, NodeIdent};
+use crate::document::keyed::KeyedMap;
 use crate::document::shape::validate_shape;
 use crate::document::values::{
     ColorRef, FitMode, FontSize, Percent, PlainColor, Rgba, Shape, StartPoint, VarId, VerbId, Weight,
@@ -51,7 +52,6 @@ use crate::engine::tree::{Placement, Tree};
 use crate::font::fonts::{app_font_by_family, AppFont};
 use glam::Vec2;
 use indextree::NodeId;
-use rustc_hash::FxHashMap;
 
 /// What every step of the builder returns.
 pub(super) type LoadResult<T> = Result<T, LoadError>;
@@ -112,9 +112,9 @@ pub(super) struct Builder {
     /// [`PaletteId`](crate::document::values::PaletteId).
     pub palettes: Vec<String>,
     /// The verbs, by the id the file names them with.
-    pub verbs: FxHashMap<String, VerbId>,
+    pub verbs: KeyedMap<String, VerbId>,
     /// Every node placed so far, by id.
-    pub idents: FxHashMap<u32, PlacedNode>,
+    pub idents: KeyedMap<u32, PlacedNode>,
     /// The chain: the path from a top-level node to the node placed
     /// last.
     pub chain: Vec<ChainEntry>,
@@ -124,7 +124,7 @@ pub(super) struct Builder {
     pub links: Vec<PendingLink>,
     /// The font families already looked up: `None` for one this build
     /// has no face for.
-    pub fonts: FxHashMap<String, Option<AppFont>>,
+    pub fonts: KeyedMap<String, Option<AppFont>>,
     /// The definitions the header carries, for the document.
     pub definitions: Definitions,
     /// How many elements have had their row checked against the shape
@@ -147,12 +147,12 @@ impl Builder {
             current: None,
             vars: Vec::new(),
             palettes: Vec::new(),
-            verbs: FxHashMap::default(),
-            idents: FxHashMap::default(),
+            verbs: KeyedMap::default(),
+            idents: KeyedMap::default(),
             chain: Vec::new(),
             highest: 0,
             links: Vec::new(),
-            fonts: FxHashMap::default(),
+            fonts: KeyedMap::default(),
             definitions: Definitions::default(),
             checked: 0,
         };

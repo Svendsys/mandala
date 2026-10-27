@@ -18,6 +18,8 @@ mod format_error_tests;
 #[cfg(test)]
 mod format_flat_tests;
 #[cfg(test)]
+mod format_names_tests;
+#[cfg(test)]
 mod format_order_tests;
 #[cfg(test)]
 mod format_read_tests;

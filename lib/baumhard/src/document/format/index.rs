@@ -33,7 +33,6 @@ use crate::document::format::strict;
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use serde_json::value::RawValue;
-use std::collections::HashSet;
 use std::fmt;
 
 /// The newest `format` this build reads, and the one it writes.
@@ -84,7 +83,7 @@ struct Found<'t> {
     unknown: Option<String>,
     /// Every key the format does not define, so that one written twice
     /// is found.
-    unknown_seen: HashSet<String>,
+    unknown_seen: crate::document::keyed::KeyedSet<String>,
     /// The key whose value the reader is inside, for the path of an
     /// error it raises there.
     at: Option<String>,

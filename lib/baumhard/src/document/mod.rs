@@ -48,6 +48,9 @@ pub mod inspect;
 /// The engine's `Interpolable` for the document: numbers, positions,
 /// sizes and literal colors blend; everything else snaps.
 pub mod interpolation;
+/// Hash maps keyed by what a file chose, with a key the file cannot
+/// know.
+pub mod keyed;
 /// The mutation vocabulary: every change a document can undergo.
 pub mod mutation;
 /// The rules that depend on where a value sits, shared by the format

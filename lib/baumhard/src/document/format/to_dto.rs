@@ -51,6 +51,7 @@ use crate::document::format::spelling::{
     ShapeDto, StartDto, StartPointDto, WeightDto,
 };
 use crate::document::ids::{Document, VerbDef};
+use crate::document::keyed::{KeyedMap, KeyedSet};
 use crate::document::place::{nameable_font, sizes_its_own_text, Unit};
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteField,
@@ -58,7 +59,6 @@ use crate::document::values::{
 };
 use crate::font::fonts::{family_name_of, AppFont};
 use indextree::NodeId;
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
 /// What every step of the saver returns.
@@ -83,7 +83,7 @@ struct Saver<'a> {
     /// The verbs, in the order a `VerbId` indexes.
     verbs: &'a [VerbDef],
     /// The family name of each face already looked up.
-    fonts: FxHashMap<AppFont, Option<&'static str>>,
+    fonts: KeyedMap<AppFont, Option<&'static str>>,
     /// Where in the file the saver is, as the loader would say it.
     path: Vec<Seg>,
 }
@@ -95,7 +95,7 @@ fn saver(doc: &Document) -> Saver<'_> {
         vars: &doc.theme().variables,
         palettes: doc.palettes().map(|(_, palette)| palette.name.as_str()).collect(),
         verbs: &doc.definitions().verbs,
-        fonts: FxHashMap::default(),
+        fonts: KeyedMap::default(),
         path: Vec::new(),
     }
 }
@@ -215,7 +215,7 @@ impl<'a> Saver<'a> {
         key: &'static str,
         entries: impl Iterator<Item = (&'d String, &'d String)>,
     ) -> SaveResult<Vec<(String, String)>> {
-        let mut seen: FxHashSet<&str> = FxHashSet::default();
+        let mut seen: KeyedSet<&str> = KeyedSet::default();
         let mut out = Vec::new();
         self.key(key, |s| {
             for (index, (id, name)) in entries.enumerate() {
