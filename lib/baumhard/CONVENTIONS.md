@@ -447,34 +447,43 @@ rationale.
   **The list below is not a list of permissions.** It is the shapes
   a body *cannot* take the split in, enumerated so that a body which
   could is never left off the surface by argument. Four exist, and
-  they are what a census of the tree finds: 42 plain non-wrapper
-  `#[test]` fns live in the `pub mod tests;` trees, and 31 of them
-  are one of these.
+  every plain non-wrapper `#[test]` fn in the `pub mod tests;` trees
+  is one of them or is named as unconverted. **The census is code,
+  not a count in this file:** `PLAIN_TESTS` in
+  `lib/baumhard/src/util/bench_surface.rs` lists every such test with
+  its shape, and `test_every_plain_test_is_in_the_census` holds it to
+  the trees in both directions. A new plain test is classified in the
+  commit that writes it, and a converted or deleted one leaves the
+  census with it. This paragraph once carried the counts ("42 plain
+  … 31 of them"); they had drifted to 61 by the time anyone recounted,
+  which is why the numbers now live where a test reads them.
 
   1. **The body cannot compile into the library.** `syn` is a
      dev-dependency, so a `pub` body in a `pub mod tests;` tree
      cannot call it — the tree is part of the library. The whole
      `shape_tests::log_routing` module is `cfg(test)`-gated for
-     that reason and its 18 tests are plain by construction; the
-     gate does not even see them. Eighteen.
+     that reason and its tests are plain by construction; the gate
+     does not even see them. The same holds for a body that reads a
+     `cfg(test)` step counter, as `engine::tests::deep_tests`'
+     counted-climb tests do.
   2. **The body drives a panic.** Criterion iterates what it is
      given, so a `#[should_panic]` test keeps its body inline —
-     nine of these, among them `fonts_tests`'s re-entrancy
-     regression. `metric_cache_tests`'s twin is the tenth: it
-     catches its own panic under `catch_unwind` instead of
-     declaring it, but like its sibling it holds the `FONT_SYSTEM`
-     write guard across a deliberate re-entrant acquire, so an
-     iteration measures the refusal and never reaches the code.
-     Ten.
+     `fonts_tests`'s re-entrancy regression and
+     `region_params_tests`' prime guards among them.
+     `metric_cache_tests`'s twin catches its own panic under
+     `catch_unwind` instead of declaring it, but like its sibling it
+     holds the `FONT_SYSTEM` write guard across a deliberate
+     re-entrant acquire, so an iteration measures the refusal and
+     never reaches the code.
   3. **The enumeration is the runtime, not the primitive.**
      `test_color_to_float_round_trips_through_new_f32` sweeps 16.7
      million byte quads; the number would be the loop.
      `test_clone_deep_chain_does_not_exhaust_the_stack` builds a
      50,000-node chain inside a thread spawned with a 256 KiB
-     stack, where the stack size is the assertion. Two.
+     stack, where the stack size is the assertion.
   4. **The subject is the repository, not a value a function
      returned.** `test_above_test_modules_knows_every_shape_in_this_tree`
-     reads several hundred files per call. One.
+     reads several hundred files per call.
 
   **Reading a file is not by itself a reason.**
   `do_production_code_returns_code_without_prose` and
@@ -483,20 +492,20 @@ rationale.
   not the disk. Their entries say so, so the number is read as I/O
   rather than mistaken for a classifier's.
 
-  **The other 11 are not opt-outs; they are unconverted.** Nothing
-  about them forbids the split — they are ordinary unit tests over
-  pure functions, written beside the convention rather than under
-  it: the seven `test_factor_*` in `region_params_tests`, the three
-  camera-invariance tests in `camera_tests`, and
-  `test_clone_preserves_depth_first_pre_order` in
-  `arena_utils_tests`. Converting them is a §B8 two-file change
-  each, and a judgment about what earns a criterion row rather than
-  unfinished #44 work — #44's subject was the 173 `do_*()` bodies
-  with no entry, and that set is closed. Naming them here is what keeps
-  the four classes above from quietly growing a fifth that means
-  "the author did not think it was worth it". A test that reaches
-  for the opt-out and is none of the four is in this bucket, and
-  should say so rather than write down a new reason.
+  **The unconverted are not opt-outs.** Nothing about them forbids
+  the split — they are ordinary unit tests over pure functions,
+  written beside the convention rather than under it: the
+  `test_factor_*` in `region_params_tests`, the camera-invariance
+  tests in `camera_tests`, `test_clone_preserves_depth_first_pre_order`
+  in `arena_utils_tests` and the rest the census marks `Unconverted`.
+  Converting one is a §B8 two-file change, and a judgment about what
+  earns a criterion row rather than unfinished #44 work — #44's
+  subject was the 173 `do_*()` bodies with no entry, and that set is
+  closed. Naming them is what keeps the four classes above from
+  quietly growing a fifth that means "the author did not think it was
+  worth it". A test that reaches for the opt-out and is none of the
+  four is in this bucket, and should say so rather than write down a
+  new reason.
 - **Renaming or deleting a `do_*()` is a two-file change.**
   `benches/test_bench.rs` imports them by path. The bench file is
   not compiled under `cfg(test)`, so `cargo test` will not tell you it

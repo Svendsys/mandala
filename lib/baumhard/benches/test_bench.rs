@@ -2260,6 +2260,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("engine_deep_walks_inherit_once_per_level", |b| {
         b.iter(do_engine_deep_walks_inherit_once_per_level)
     });
+    c.bench_function("engine_contains_follows_removal_revert_replay_and_discard", |b| {
+        b.iter(do_engine_contains_follows_removal_revert_replay_and_discard)
+    });
     c.bench_function("engine_subtree_impls_match_the_derived_ones", |b| {
         b.iter(do_engine_subtree_impls_match_the_derived_ones)
     });

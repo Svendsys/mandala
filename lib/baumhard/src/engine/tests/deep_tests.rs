@@ -694,8 +694,7 @@ fn test_engine_deep_commands_and_updates_climb_nothing() {
 /// replay and the discard that frees it, for every element of the
 /// removed subtree — the set of detached nodes behind it is written
 /// from the journal's touches, never by a climb.
-#[test]
-fn test_engine_contains_follows_removal_revert_replay_and_discard() {
+pub fn do_engine_contains_follows_removal_revert_replay_and_discard() {
     let (mut tree, ids) = chain(STEPS_DEEP, 1);
     let middle = ids[STEPS_DEEP / 2];
     let leaf = ids[STEPS_DEEP - 1];
@@ -728,6 +727,11 @@ fn test_engine_contains_follows_removal_revert_replay_and_discard() {
     assert!(out(&tree), "discarded");
     assert!(tree.arena().get(leaf).is_none(), "and freed");
     assert!(tree.detached.is_empty(), "nothing freed is still marked");
+}
+
+#[test]
+fn test_engine_contains_follows_removal_revert_replay_and_discard() {
+    do_engine_contains_follows_removal_revert_replay_and_discard();
 }
 
 /// What `#[derive(Clone, Debug, PartialEq)]` makes of a subtree: the
