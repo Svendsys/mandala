@@ -145,3 +145,43 @@ fn test_each_keyed_map_hashes_an_id_with_a_key_of_its_own() {
     // Control: one state hashes one id the same way every time.
     assert_eq!(hashes(&a), hashes(&a));
 }
+
+/// Set in a child of the test below: print the first state's hash of 7.
+const PRINT_HASH: &str = "MANDALA_PRINT_KEYED_HASH";
+
+#[test]
+fn test_the_hash_key_is_drawn_anew_in_each_process() {
+    // Two states of one process differ by their number alone, so that
+    // says nothing about whether a file can predict the key. Two
+    // processes can: the first state of each hashes 7 with the key it
+    // drew, and with a key a file could know they would agree.
+    use crate::document::keyed::KeyedState;
+    use std::hash::BuildHasher;
+    if std::env::var_os(PRINT_HASH).is_some() {
+        println!("KEYED {}", KeyedState::new().hash_one(7u32));
+        return;
+    }
+    let exe = std::env::current_exe().expect("the test binary");
+    let hash = || {
+        let out = std::process::Command::new(&exe)
+            .args([
+                "--exact",
+                "document::tests::format_names_tests::test_the_hash_key_is_drawn_anew_in_each_process",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PRINT_HASH, "1")
+            .output()
+            .expect("the test binary runs");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        stdout
+            .lines()
+            .find_map(|line| line.split("KEYED ").nth(1).map(|hash| hash.trim().to_string()))
+            .unwrap_or_else(|| panic!("the child printed no hash:\n{stdout}"))
+    };
+    let (first, second) = (hash(), hash());
+    assert_ne!(
+        first, second,
+        "two processes hashed 7 alike: the key is not secret"
+    );
+}

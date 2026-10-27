@@ -514,16 +514,75 @@ fn test_the_nesting_walk_reports_a_type_that_reaches_itself() {
 
 // ---- keyed maps -------------------------------------------------------
 
-/// The lines of `source` that name an unkeyed `FxHash` map or set,
-/// outside comments: in the loader and the document's ident index every
-/// map is keyed by something a file chose, and so must be keyed.
+/// The hashers and crates whose hash takes no key a file cannot know,
+/// refused by name wherever they appear.
+const UNKEYED: [&str; 7] = [
+    "FxHashMap",
+    "FxHashSet",
+    "FxBuildHasher",
+    "FxHasher",
+    "BuildHasherDefault",
+    "rustc_hash",
+    "hashbrown",
+];
+
+/// The generic arguments of the `<...>` that starts at `rest`, split at
+/// its top-level commas and trimmed; `None` when it does not close on
+/// the line.
+fn generic_args(rest: &str) -> Option<Vec<String>> {
+    let mut depth = 0usize;
+    let mut args = vec![String::new()];
+    for c in rest.chars() {
+        match c {
+            '<' => {
+                depth += 1;
+                if depth == 1 {
+                    continue;
+                }
+            }
+            '>' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(args.into_iter().map(|arg| arg.trim().to_string()).collect());
+                }
+            }
+            ',' if depth == 1 => {
+                args.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(last) = args.last_mut() {
+            last.push(c);
+        }
+    }
+    None
+}
+
+/// The lines of `source`, outside comments, that hash with a key a file
+/// could know: a name in [`UNKEYED`], a `HashMap<..>` or `HashSet<..>`
+/// whose hasher is not `KeyedState` (std's default hasher is unkeyed on
+/// wasm32), and a `HashMap::` or `HashSet::` constructor, which makes
+/// one with the default. In the loader and the document's ident index
+/// every map is keyed by something a file chose, and so must be keyed.
 fn unkeyed_maps_in(source: &str) -> Vec<usize> {
+    let keyed_type = |code: &str, name: &str, arity: usize| {
+        code.match_indices(&format!("{name}<")).all(|(at, _)| {
+            generic_args(&code[at + name.len()..]).is_some_and(|args| {
+                args.len() == arity && args.last().is_some_and(|last| last == "KeyedState")
+            })
+        })
+    };
     source
         .lines()
         .enumerate()
         .filter(|(_, line)| {
             let code = line.split("//").next().unwrap_or_default();
-            code.contains("FxHashMap") || code.contains("FxHashSet") || code.contains("FxBuildHasher")
+            UNKEYED.iter().any(|name| code.contains(name))
+                || !keyed_type(code, "HashMap", 3)
+                || !keyed_type(code, "HashSet", 2)
+                || code.contains("HashMap::")
+                || code.contains("HashSet::")
         })
         .map(|(n, _)| n + 1)
         .collect()
@@ -538,6 +597,7 @@ fn test_the_loader_and_the_ident_index_use_no_unkeyed_map() {
         .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
         .collect();
     files.push(src.join("document/ids.rs"));
+    files.push(src.join("document/keyed.rs"));
     assert!(files.len() > 10, "precondition: {} files", files.len());
     for file in files {
         let source = std::fs::read_to_string(&file).unwrap();
@@ -556,4 +616,26 @@ fn test_the_keyed_map_gate_reports_a_planted_unkeyed_map() {
     let planted = "use rustc_hash::FxHashMap;\nstruct S {\n    // an FxHashMap in a comment is fine\n    idents: FxHashMap<u32, NodeId>,\n}\n";
     assert_eq!(unkeyed_maps_in(planted), vec![1, 4]);
     assert!(unkeyed_maps_in("idents: KeyedMap<u32, NodeId>,\n").is_empty());
+    // Every other unkeyed spelling, one per line.
+    let planted = [
+        "a: HashMap<u32, NodeId>,",
+        "b: HashSet<u32>,",
+        "c: HashMap<u32, NodeId, BuildHasherDefault<FxHasher>>,",
+        "d: hashbrown::HashMap<u32, NodeId>,",
+        "e: HashMap<u32, Vec<NodeId>, foldhash::fast::FixedState>,",
+        "let f = HashMap::new();",
+        "let g = HashSet::with_capacity(8);",
+        "h: std::collections::HashMap<String, (u32, u32)>,",
+    ]
+    .join("\n");
+    assert_eq!(unkeyed_maps_in(&planted), (1..=8).collect::<Vec<_>>());
+    // And the keyed spellings pass.
+    let keyed = [
+        "pub type KeyedMap<K, V> = HashMap<K, V, KeyedState>;",
+        "pub type KeyedSet<T> = HashSet<T, KeyedState>;",
+        "a: HashMap<u32, Vec<(u32, u32)>, KeyedState>,",
+        "b: KeyedMap<String, Option<AppFont>>,",
+    ]
+    .join("\n");
+    assert_eq!(unkeyed_maps_in(&keyed), Vec::<usize>::new());
 }
