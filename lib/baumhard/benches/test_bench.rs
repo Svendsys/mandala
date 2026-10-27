@@ -843,6 +843,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_insert_str_at_grapheme_counted)
     });
     c.bench_function("delete_grapheme_at", |b| b.iter(do_delete_grapheme_at));
+    c.bench_function("delete_grapheme_range", |b| b.iter(do_delete_grapheme_range));
     c.bench_function("grapheme_display_width", |b| b.iter(do_grapheme_display_width));
     c.bench_function("truncate_to_display_width", |b| {
         b.iter(do_truncate_to_display_width)
@@ -1639,6 +1640,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_bounds_weight", |b| b.iter(do_document_bounds_weight));
     c.bench_function("document_bounds_control_points", |b| {
         b.iter(do_document_bounds_control_points)
+    });
+    c.bench_function("document_bounds_computed_font_sizes", |b| {
+        b.iter(do_document_bounds_computed_font_sizes)
+    });
+    c.bench_function("document_bounds_extent", |b| b.iter(do_document_bounds_extent));
+    c.bench_function("document_bounds_zoom_window", |b| {
+        b.iter(do_document_bounds_zoom_window)
     });
     c.bench_function("document_kind_order_is_the_declared_order", |b| {
         b.iter(do_document_kind_order_is_the_declared_order)

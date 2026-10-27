@@ -720,6 +720,29 @@ pub fn delete_grapheme_at(s: &mut String, idx: usize) {
     s.replace_range(start..end, "");
 }
 
+/// Delete the grapheme clusters `start..end` of `s`, both indices
+/// clamped to the cluster count, so a range past the end deletes up to
+/// the end and an empty or inverted range deletes nothing.
+///
+/// The grapheme-correct counterpart to `String::replace_range` over a
+/// user-facing range: a range counted in clusters never cuts an emoji
+/// or a combining mark in two.
+///
+/// Cost: one grapheme walk to `end` (both boundaries are found in the
+/// same walk, [`byte_indices_of_graphemes`]) and the shift of the bytes
+/// after the range; one two-entry `Vec`.
+pub fn delete_grapheme_range(s: &mut String, start: usize, end: usize) {
+    if start >= end {
+        return;
+    }
+    let bytes = byte_indices_of_graphemes(s, &[start, end]);
+    let Some(Some(from)) = bytes.first().copied() else {
+        return;
+    };
+    let to = bytes.get(1).copied().flatten().unwrap_or(s.len());
+    s.replace_range(from..to, "");
+}
+
 /// Number of extended grapheme clusters in `s`. O(n) walk; no
 /// allocation.
 pub fn count_grapheme_clusters(s: &str) -> usize {

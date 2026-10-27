@@ -210,3 +210,74 @@ pub fn do_document_bounds_counts() {
         );
     }
 }
+
+#[test]
+fn test_document_bounds_computed_font_sizes() {
+    do_document_bounds_computed_font_sizes();
+}
+
+/// A computed size is pinned inside its bound: points to the shaper's
+/// window, a relative size to `MIN_REL_SIZE..=1`, and `NaN` to the
+/// minimum. What either clamp returns is accepted by its check.
+pub fn do_document_bounds_computed_font_sizes() {
+    assert_eq!(clamp_font_size_pt(30.0), 30.0);
+    assert_eq!(clamp_font_size_pt(-3.0), MIN_FONT_SIZE_PT);
+    assert_eq!(clamp_font_size_pt(1.0e9), MAX_FONT_SIZE_PT);
+    assert_eq!(clamp_font_size_pt(f32::NAN), MIN_FONT_SIZE_PT);
+    assert_eq!(clamp_rel_size(0.12), 0.12);
+    assert_eq!(clamp_rel_size(0.0), MIN_REL_SIZE);
+    assert_eq!(clamp_rel_size(-1.0), MIN_REL_SIZE);
+    assert_eq!(clamp_rel_size(3.0), 1.0);
+    assert_eq!(clamp_rel_size(f32::NAN), MIN_REL_SIZE);
+    for value in [-1.0, 0.0, f32::NAN, f32::INFINITY, 2.0] {
+        assert!(check_rel_size(clamp_rel_size(value)).is_ok(), "{value}");
+        assert!(
+            check_font_size_pt(clamp_font_size_pt(value * 1.0e4)).is_ok(),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn test_document_bounds_extent() {
+    do_document_bounds_extent();
+}
+
+/// `0..=MAX_CANVAS_COORD`: zero and the bound are extents, a negative
+/// one, one past the bound and `NaN` are not.
+pub fn do_document_bounds_extent() {
+    assert_eq!(check_extent(0.0), Ok(0.0));
+    assert_eq!(check_extent(MAX_CANVAS_COORD), Ok(MAX_CANVAS_COORD));
+    assert!(matches!(
+        check_extent(-0.5),
+        Err(BoundError::Below { inclusive: true, .. })
+    ));
+    assert!(matches!(check_extent(2.0e9), Err(BoundError::Above { .. })));
+    assert!(matches!(check_extent(f32::NAN), Err(BoundError::NotFinite(_))));
+}
+
+#[test]
+fn test_document_bounds_zoom_window() {
+    do_document_bounds_zoom_window();
+}
+
+/// Each bound given is finite and above 0, and `min ≤ max` when both
+/// are given; an open window, or one open at one end, is fine.
+pub fn do_document_bounds_zoom_window() {
+    assert_eq!(check_zoom_window(None, None), Ok(()));
+    assert_eq!(check_zoom_window(Some(0.5), Some(0.5)), Ok(()));
+    assert_eq!(check_zoom_window(Some(0.25), None), Ok(()));
+    assert_eq!(check_zoom_window(None, Some(4.0)), Ok(()));
+    assert_eq!(
+        check_zoom_window(Some(2.0), Some(1.0)),
+        Err(BoundError::Inverted { min: 2.0, max: 1.0 })
+    );
+    assert!(matches!(
+        check_zoom_window(Some(0.0), None),
+        Err(BoundError::Below { inclusive: false, .. })
+    ));
+    assert!(matches!(
+        check_zoom_window(None, Some(f32::INFINITY)),
+        Err(BoundError::NotFinite(_))
+    ));
+}
