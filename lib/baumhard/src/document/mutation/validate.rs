@@ -797,7 +797,7 @@ impl<'d> Validator<'d> {
 ///
 /// What left the tree is told apart by the journal's touches: a
 /// `Removed` element is skipped, and so is a parent that one of them
-/// names. Where a link leads is answered by a [`Membership`] memo,
+/// names. Where a link leads is answered by a `Membership` memo,
 /// which climbs through each ancestor once over all the links.
 ///
 /// Errors: [`MutationError::Shape`], [`MutationError::SelfLink`],
