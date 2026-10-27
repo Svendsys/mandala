@@ -246,7 +246,7 @@ fn test_effective_section_scale_takes_the_largest_run_size() {
 
 /// The section area the builder emits is laid out at exactly
 /// [`effective_section_scale`], with the line height
-/// [`LINE_HEIGHT_FACTOR`] declares. Both halves used to be
+/// [`LINE_HEIGHT_FACTOR`](crate::flow::LINE_HEIGHT_FACTOR) declares. Both halves used to be
 /// open-coded here, which is what let the app's auto-size
 /// measurement — the other reader of both numbers — drift from
 /// what the builder actually draws.
@@ -258,7 +258,8 @@ fn test_effective_section_scale_takes_the_largest_run_size() {
 /// no rounding slack hides a wrong pick.
 #[test]
 fn test_section_area_is_laid_out_at_the_effective_scale() {
-    use crate::mindmap::tree_builder::{effective_section_scale, LINE_HEIGHT_FACTOR};
+    use crate::flow::LINE_HEIGHT_FACTOR;
+    use crate::mindmap::tree_builder::effective_section_scale;
 
     let mut node = synthetic_node("scaled", None, 0.0, 0.0);
     node.sections[0].text = "abc".to_string();

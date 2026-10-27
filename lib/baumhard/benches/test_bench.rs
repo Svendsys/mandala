@@ -24,6 +24,10 @@ use baumhard::engine::tests::routing_tests::*;
 use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::structure_tests::*;
 use baumhard::engine::tests::walker_tests::*;
+use baumhard::flow::tests::fit_tests::*;
+use baumhard::flow::tests::outline_tests::*;
+use baumhard::flow::tests::place_tests::*;
+use baumhard::flow::tests::shape_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::color_tests::*;
 use baumhard::font::tests::fonts_tests::*;
@@ -831,6 +835,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_the_text_edit_primitives_carry_no_whole_buffer_copy)
     });
     c.bench_function("count_grapheme_clusters", |b| b.iter(do_count_grapheme_clusters));
+    c.bench_function("grapheme_byte_starts", |b| b.iter(do_grapheme_byte_starts));
     c.bench_function("first_non_whitespace_grapheme", |b| {
         b.iter(do_first_non_whitespace_grapheme)
     });
@@ -1989,6 +1994,201 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("format_builder_documents_round_trip", |b| {
         b.iter(do_format_builder_documents_round_trip)
+    });
+    // TextFlow: shaping, outlines and the arc-length walk, placement,
+    // and the fit modes //
+    c.bench_function("flow_fit_fills_a_line_exactly", |b| {
+        b.iter(do_flow_fit_fills_a_line_exactly)
+    });
+    c.bench_function("flow_fit_goes_around_once", |b| {
+        b.iter(do_flow_fit_goes_around_once)
+    });
+    c.bench_function("flow_fit_shrinks_past_the_naive_scale", |b| {
+        b.iter(do_flow_fit_shrinks_past_the_naive_scale)
+    });
+    c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
+        b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
+    });
+    c.bench_function("flow_fit_clamped_at_min_cuts_without_overlap", |b| {
+        b.iter(do_flow_fit_clamped_at_min_cuts_without_overlap)
+    });
+    c.bench_function("flow_repeat_reuses_glyph_indices", |b| {
+        b.iter(do_flow_repeat_reuses_glyph_indices)
+    });
+    c.bench_function("flow_repeat_cuts_at_a_grapheme", |b| {
+        b.iter(do_flow_repeat_cuts_at_a_grapheme)
+    });
+    c.bench_function("flow_once_with_a_filler_fills_the_rest", |b| {
+        b.iter(do_flow_once_with_a_filler_fills_the_rest)
+    });
+    c.bench_function("flow_once_places_the_text_once", |b| {
+        b.iter(do_flow_once_places_the_text_once)
+    });
+    c.bench_function("flow_spread_ends_on_a_line", |b| {
+        b.iter(do_flow_spread_ends_on_a_line)
+    });
+    c.bench_function("flow_spread_ends_around_a_rounded_rect", |b| {
+        b.iter(do_flow_spread_ends_around_a_rounded_rect)
+    });
+    c.bench_function("flow_spread_too_long_is_cut", |b| {
+        b.iter(do_flow_spread_too_long_is_cut)
+    });
+    c.bench_function(
+        "flow_outline_corner_radius_is_a_share_of_half_the_shorter_side",
+        |b| b.iter(do_flow_outline_corner_radius_is_a_share_of_half_the_shorter_side),
+    );
+    c.bench_function("flow_offset_grows_the_rect_and_the_radius", |b| {
+        b.iter(do_flow_offset_grows_the_rect_and_the_radius)
+    });
+    c.bench_function("flow_ring_offset_sums_inner_rings_and_gaps", |b| {
+        b.iter(do_flow_ring_offset_sums_inner_rings_and_gaps)
+    });
+    c.bench_function("flow_pill_has_straight_sides_of_w_minus_h", |b| {
+        b.iter(do_flow_pill_has_straight_sides_of_w_minus_h)
+    });
+    c.bench_function("flow_start_points_on_a_rounded_rect", |b| {
+        b.iter(do_flow_start_points_on_a_rounded_rect)
+    });
+    c.bench_function("flow_start_points_on_an_ellipse", |b| {
+        b.iter(do_flow_start_points_on_an_ellipse)
+    });
+    c.bench_function("flow_ellipse_walk_stays_on_the_ellipse", |b| {
+        b.iter(do_flow_ellipse_walk_stays_on_the_ellipse)
+    });
+    c.bench_function("flow_bezier_walk_measures_arc_length", |b| {
+        b.iter(do_flow_bezier_walk_measures_arc_length)
+    });
+    c.bench_function("flow_open_path_holds_its_ends", |b| {
+        b.iter(do_flow_open_path_holds_its_ends)
+    });
+    c.bench_function("flow_curve_from_points", |b| b.iter(do_flow_curve_from_points));
+    c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
+        b.iter(do_flow_place_horizontal_steps_by_advance)
+    });
+    c.bench_function("flow_place_vertical_steps_by_line_height", |b| {
+        b.iter(do_flow_place_vertical_steps_by_line_height)
+    });
+    c.bench_function("flow_place_diagonal_step_blends_advance_and_height", |b| {
+        b.iter(do_flow_place_diagonal_step_blends_advance_and_height)
+    });
+    c.bench_function("flow_place_sharp_rect_touches_every_side", |b| {
+        b.iter(do_flow_place_sharp_rect_touches_every_side)
+    });
+    c.bench_function("flow_place_round_square_is_a_circle", |b| {
+        b.iter(do_flow_place_round_square_is_a_circle)
+    });
+    c.bench_function("flow_place_start_and_direction", |b| {
+        b.iter(do_flow_place_start_and_direction)
+    });
+    c.bench_function("flow_place_rings_stack_outward", |b| {
+        b.iter(do_flow_place_rings_stack_outward)
+    });
+    c.bench_function("flow_place_step_follows_the_chord_at_a_corner", |b| {
+        b.iter(do_flow_place_step_follows_the_chord_at_a_corner)
+    });
+    c.bench_function("flow_place_on_an_ellipse", |b| {
+        b.iter(do_flow_place_on_an_ellipse)
+    });
+    c.bench_function("flow_place_on_a_bezier", |b| b.iter(do_flow_place_on_a_bezier));
+    c.bench_function("flow_place_at_point_centers_the_line", |b| {
+        b.iter(do_flow_place_at_point_centers_the_line)
+    });
+    c.bench_function("flow_span_attrs_carry_weight_slant_and_size", |b| {
+        b.iter(do_flow_span_attrs_carry_weight_slant_and_size)
+    });
+    c.bench_function("flow_shape_run_keeps_each_span_attributes", |b| {
+        b.iter(do_flow_shape_run_keeps_each_span_attributes)
+    });
+    c.bench_function("flow_shape_run_sizes_each_span", |b| {
+        b.iter(do_flow_shape_run_sizes_each_span)
+    });
+    c.bench_function("flow_shape_run_maps_glyphs_to_spans", |b| {
+        b.iter(do_flow_shape_run_maps_glyphs_to_spans)
+    });
+    c.bench_function("flow_shape_run_marks_grapheme_starts", |b| {
+        b.iter(do_flow_shape_run_marks_grapheme_starts)
+    });
+    c.bench_function("flow_shape_run_of_nothing", |b| {
+        b.iter(do_flow_shape_run_of_nothing)
+    });
+    c.bench_function("flow_layout_glyphs_follow_glyphs", |b| {
+        b.iter(do_flow_layout_glyphs_follow_glyphs)
+    });
+    c.bench_function("flow_baseline_centers_the_tallest_glyph", |b| {
+        b.iter(do_flow_baseline_centers_the_tallest_glyph)
+    });
+    c.bench_function("flow_reshape_rescales_and_keeps_the_mapping", |b| {
+        b.iter(do_flow_reshape_rescales_and_keeps_the_mapping)
+    });
+    c.bench_function("flow_reshape_appends_a_filler_on_its_own_line", |b| {
+        b.iter(do_flow_reshape_appends_a_filler_on_its_own_line)
+    });
+    c.bench_function("flow_box_breaks_at_newlines", |b| {
+        b.iter(do_flow_box_breaks_at_newlines)
+    });
+    c.bench_function("flow_box_counts_empty_lines", |b| {
+        b.iter(do_flow_box_counts_empty_lines)
+    });
+    c.bench_function("flow_box_keeps_a_larger_minimum", |b| {
+        b.iter(do_flow_box_keeps_a_larger_minimum)
+    });
+    c.bench_function("flow_box_aligns_lines", |b| b.iter(do_flow_box_aligns_lines));
+    c.bench_function("flow_box_reads_a_bad_minimum_as_none", |b| {
+        b.iter(do_flow_box_reads_a_bad_minimum_as_none)
+    });
+    c.bench_function("flow_curve_point_and_derivative_by_hand", |b| {
+        b.iter(do_flow_curve_point_and_derivative_by_hand)
+    });
+    c.bench_function("flow_cut_keeps_the_reading_start", |b| {
+        b.iter(do_flow_cut_keeps_the_reading_start)
+    });
+    c.bench_function("flow_fit_shrinks_below_max", |b| {
+        b.iter(do_flow_fit_shrinks_below_max)
+    });
+    c.bench_function("flow_fit_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_fit_sweeps_a_sharp_rect)
+    });
+    c.bench_function("flow_place_corner_moves_continuously", |b| {
+        b.iter(do_flow_place_corner_moves_continuously)
+    });
+    c.bench_function("flow_place_keeps_marks_with_their_letters", |b| {
+        b.iter(do_flow_place_keeps_marks_with_their_letters)
+    });
+    c.bench_function("flow_separators_never_break_a_box", |b| {
+        b.iter(do_flow_separators_never_break_a_box)
+    });
+    c.bench_function("flow_separators_never_break_a_run", |b| {
+        b.iter(do_flow_separators_never_break_a_run)
+    });
+    c.bench_function("flow_separators_survive_a_reshape", |b| {
+        b.iter(do_flow_separators_survive_a_reshape)
+    });
+    c.bench_function("flow_shape_run_maps_a_zwj_emoji", |b| {
+        b.iter(do_flow_shape_run_maps_a_zwj_emoji)
+    });
+    c.bench_function("flow_shape_run_maps_bidi_text", |b| {
+        b.iter(do_flow_shape_run_maps_bidi_text)
+    });
+    c.bench_function("flow_spread_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_spread_sweeps_a_sharp_rect)
+    });
+    c.bench_function("flow_fit_finishes_a_creeping_shrink", |b| {
+        b.iter(do_flow_fit_finishes_a_creeping_shrink)
+    });
+    c.bench_function("flow_place_sets_glyphs_at_their_pen_positions", |b| {
+        b.iter(do_flow_place_sets_glyphs_at_their_pen_positions)
+    });
+    c.bench_function("flow_fit_models_the_size_floor", |b| {
+        b.iter(do_flow_fit_models_the_size_floor)
+    });
+    c.bench_function("flow_non_finite_curves_build_no_table", |b| {
+        b.iter(do_flow_non_finite_curves_build_no_table)
+    });
+    c.bench_function("flow_place_keeps_every_position_finite", |b| {
+        b.iter(do_flow_place_keeps_every_position_finite)
+    });
+    c.bench_function("flow_table_spacing_has_a_floor", |b| {
+        b.iter(do_flow_table_spacing_has_a_floor)
     });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //

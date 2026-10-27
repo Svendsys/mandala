@@ -374,7 +374,8 @@ fn portal_edge_selection_uses_edge_variant() {
 /// number — the padding and the scale are identical between the
 /// two fixtures, so their difference isolates the line height.
 ///
-/// This is the drift the shared [`LINE_HEIGHT_FACTOR`] exists to
+/// This is the drift the shared
+/// [`LINE_HEIGHT_FACTOR`](baumhard::flow::LINE_HEIGHT_FACTOR) exists to
 /// prevent, and the reason it is worth a test rather than a
 /// comment: the measurement here and the layout in
 /// `tree_builder::node` used to spell `1.2` separately, so a
