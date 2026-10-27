@@ -16,6 +16,16 @@
 //! entry, and all or nothing: a step that fails, or whose walk fails,
 //! abandons the builder and the document is as it was.
 //!
+//! **A step sees an unvalidated document.** The checks that only the
+//! walk can decide
+//! ([`validate_applied`](crate::document::mutation::validate::validate_applied))
+//! run once, after a request's last step, because a request's
+//! intermediate states need not be valid: a line link switched to a
+//! portal holds one portal end for a step before it holds two. So a
+//! step's closure may be handed a document that breaks the shape rules
+//! or sets a size its place does not take, and builds its walk from
+//! what is there without assuming otherwise (ruling R14.7 on #237).
+//!
 //! A step that finds nothing to do builds `None`, which is how a bounded
 //! repetition — the merges that normalize a section's spans — ends
 //! early: the composite builder emits as many as the section could ever

@@ -281,3 +281,21 @@ pub fn do_document_bounds_zoom_window() {
         Err(BoundError::NotFinite(_))
     ));
 }
+
+#[test]
+fn test_document_bounds_channel() {
+    do_document_bounds_channel();
+}
+
+/// `MAX_CHANNEL` itself is a channel; one past it — which only a target
+/// whose `usize` is wider than 32 bits can hold — is not, and the error
+/// carries the value.
+pub fn do_document_bounds_channel() {
+    assert_eq!(check_channel(0), Ok(()));
+    assert_eq!(check_channel(MAX_CHANNEL), Ok(()));
+    #[cfg(target_pointer_width = "64")]
+    assert!(MAX_CHANNEL.checked_add(1).is_some(), "a 64-bit usize holds a channel past the bound");
+    if let Some(past) = MAX_CHANNEL.checked_add(1) {
+        assert_eq!(check_channel(past), Err(BoundError::NotAChannel(1 << 32)));
+    }
+}

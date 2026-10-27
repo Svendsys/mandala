@@ -21,9 +21,10 @@
 //! - **Text is addressed in grapheme clusters** (baumhard §B3). A
 //!   section's index counts the clusters of its spans in order.
 //! - **Spans are normalized** after every text change: neighbors with an
-//!   equal style and link are merged, by repeated merge steps, as many
-//!   as the section could need — one walk merges the head of each equal
-//!   run, so a run of three takes two.
+//!   equal style and link are merged, by repeated merge steps — one walk
+//!   merges the head of each pair of equal neighbors, so a run halves at
+//!   each step and `ceil(log2(spans)) + 1` steps normalize any section
+//!   ([`merge_steps`](crate::document::mutation::compose::merge_steps)).
 //!
 //! Removing a node does not remove the links that lead to it: only the
 //! writer holds the index of incoming links, and finding them otherwise
@@ -38,6 +39,7 @@ use crate::document::element::{
 };
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::error::MutationError;
+use crate::document::mutation::membership::Membership;
 use crate::document::mutation::ops::{DocMutation, DocMutatorTree, LinkOp, SpanOp, TextOp};
 use crate::document::mutation::step::{DocStep, DocWalk};
 use crate::document::values::{Anchor, LinkKind};
@@ -49,7 +51,7 @@ use crate::engine::tree::Placement;
 use crate::util::grapheme_chad::count_grapheme_clusters;
 use glam::Vec2;
 use indextree::NodeId;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A mutator tree of one `Single` payload on `kind`.
 fn single(mutation: DocMutation, kind: DocKind) -> DocMutatorTree {
@@ -133,25 +135,53 @@ fn new_section() -> Subtree<DocElement> {
 }
 
 /// The nodes of `nodes` that are not below another of them, each once,
-/// in the order given. Every one must be a node in `doc`. O(nodes ×
-/// depth).
+/// in the order given. Every one must be a node in `doc`.
+///
+/// Cost: amortized O(1) per node and per ancestor of the selection —
+/// each ancestor is climbed through once over the whole selection — so
+/// nothing per node grows with its depth (§20 rule 11).
 fn tops(doc: &Document, nodes: &[NodeId]) -> Result<Vec<NodeId>, MutationError> {
-    for &node in nodes {
-        require(doc, node, DocKind::Node, "a node")?;
-    }
+    let tree = doc.tree();
+    let arena = tree.arena();
     let given: FxHashSet<NodeId> = nodes.iter().copied().collect();
+    let mut members = Membership::default();
+    // For every element a climb went through: whether it or one of its
+    // ancestors is given. A climb stops at the first element already
+    // answered, or at a given one, so each ancestor is climbed through
+    // once over the whole selection.
+    let mut under_given: FxHashMap<NodeId, bool> = FxHashMap::default();
+    let mut climb: Vec<NodeId> = Vec::new();
     let mut seen: FxHashSet<NodeId> = FxHashSet::default();
-    Ok(nodes
-        .iter()
-        .copied()
-        .filter(|&node| {
-            let nested = node
-                .ancestors(doc.tree().arena())
-                .skip(1)
-                .any(|a| given.contains(&a));
-            !nested && seen.insert(node)
-        })
-        .collect())
+    let mut tops = Vec::new();
+    for &node in nodes {
+        if doc.get(node).map(DocElement::kind) != Some(DocKind::Node) || !members.contains(tree, node) {
+            return Err(MutationError::NotA {
+                element: node,
+                expected: "a node",
+            });
+        }
+        let mut at = arena[node].parent();
+        let nested = loop {
+            let Some(ancestor) = at else {
+                break false;
+            };
+            if given.contains(&ancestor) {
+                break true;
+            }
+            if let Some(&known) = under_given.get(&ancestor) {
+                break known;
+            }
+            climb.push(ancestor);
+            at = arena[ancestor].parent();
+        };
+        for ancestor in climb.drain(..) {
+            under_given.insert(ancestor, nested);
+        }
+        if !nested && seen.insert(node) {
+            tops.push(node);
+        }
+    }
+    Ok(tops)
 }
 
 /// Insert a new node under `parent` at `position`, at the end of its
@@ -216,9 +246,10 @@ pub fn delete(doc: &Document, nodes: &[NodeId]) -> Result<Vec<DocStep>, Mutation
 /// left with none builds nothing.
 pub fn remove_links(links: Vec<NodeId>) -> DocStep {
     DocStep::new(move |doc| {
+        let mut members = Membership::default();
         let live: Vec<NodeId> = links
             .into_iter()
-            .filter(|&l| doc.tree().contains(l) && doc.get(l).map(DocElement::kind) == Some(DocKind::Link))
+            .filter(|&l| doc.get(l).map(DocElement::kind) == Some(DocKind::Link) && members.contains(doc.tree(), l))
             .collect();
         Ok((!live.is_empty()).then(|| walk_at(command(StructOp::Remove, DocKind::Link), live)))
     })
@@ -408,12 +439,29 @@ fn merge_step(section: NodeId) -> DocStep {
     })
 }
 
-/// `count` normalization steps over `section`: enough to merge every
-/// equal neighbor of a section that will hold at most `count - 1`
-/// spans, since each step that merges anything merges at least one
-/// pair, and the last one finds none.
-fn normalize(section: NodeId, count: usize) -> impl Iterator<Item = DocStep> {
-    (0..count).map(move |_| merge_step(section))
+/// How many normalization steps a section that will hold at most
+/// `spans` spans needs: `ceil(log2(spans)) + 1` (ruling R14.6 on #237).
+///
+/// A step merges the head of each pair of equal neighbors, pairs taken
+/// left to right without overlap, so a run of `L` equal spans leaves
+/// `ceil(L / 2)`, and merging never makes two runs equal — runs end
+/// where style or link changes, and a merge keeps both. The longest run
+/// is at most `spans` long, so `ceil(log2(spans))` steps merge it to one
+/// span; the last step finds nothing, which is what proves the section
+/// normalized. O(1).
+pub fn merge_steps(spans: usize) -> usize {
+    let log2 = if spans <= 1 {
+        0
+    } else {
+        (usize::BITS - (spans - 1).leading_zeros()) as usize
+    };
+    log2 + 1
+}
+
+/// The normalization steps of a section that will hold at most `spans`
+/// spans ([`merge_steps`]).
+fn normalize(section: NodeId, spans: usize) -> impl Iterator<Item = DocStep> {
+    (0..merge_steps(spans)).map(move |_| merge_step(section))
 }
 
 /// Apply `op` to the text of `section` between grapheme clusters
@@ -422,8 +470,8 @@ fn normalize(section: NodeId, count: usize) -> impl Iterator<Item = DocStep> {
 /// inside the range, then normalize.
 ///
 /// Errors: [`MutationError::NotA`] when `section` is not a section. No
-/// step for an empty range; otherwise two splits, the styling, and one
-/// normalization step per span the section can then hold, plus one.
+/// step for an empty range; otherwise two splits, the styling, and
+/// [`merge_steps`] of the span count the section can then hold.
 pub fn style_range(
     doc: &Document,
     section: NodeId,
@@ -445,7 +493,7 @@ pub fn style_range(
             .then(|| walk_at(single(DocMutation::Span(SpanOp::Text(op)), DocKind::Span), inside)))
     });
     let mut steps = vec![split_at(section, start), split_at(section, end), style];
-    steps.extend(normalize(section, span_count(doc, section) + 3));
+    steps.extend(normalize(section, span_count(doc, section) + 2));
     Ok(steps)
 }
 
@@ -534,7 +582,7 @@ pub fn delete_text(
         Ok((!inside.is_empty()).then(|| walk_at(command(StructOp::Remove, DocKind::Span), inside)))
     });
     let mut steps = vec![split_at(section, start), split_at(section, end), remove];
-    steps.extend(normalize(section, span_count(doc, section) + 3));
+    steps.extend(normalize(section, span_count(doc, section) + 2));
     Ok(steps)
 }
 

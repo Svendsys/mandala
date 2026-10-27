@@ -104,6 +104,29 @@ pub enum MutationError {
         /// The size given.
         size: FontSize,
     },
+    /// A grapheme range whose start is past its end: a malformed
+    /// request, not an empty one.
+    InvertedRange {
+        /// Where.
+        at: MutatorPath,
+        /// The first cluster named.
+        start: usize,
+        /// The cluster after the last one named.
+        end: usize,
+    },
+    /// A face that names no compiled-in font: `AppFont::Any` is the
+    /// shaper's fallback, which a map never stores (ruling R11.2 on #236).
+    AnyFont {
+        /// Where.
+        at: MutatorPath,
+    },
+    /// A span inside a ring with a size of its own, which a ring never
+    /// reads (one size per ring, #235 amendment 3) and a load refuses
+    /// (ruling R11.2 on #236).
+    RingSpanSize {
+        /// Where.
+        at: MutatorPath,
+    },
     /// A reference to something the document does not have.
     Missing {
         /// Where.
@@ -168,6 +191,12 @@ pub enum MutationError {
     },
     /// After the steps: an element whose row breaks the shape rules.
     Shape(ShapeError),
+    /// After the steps: a span inside a ring that sets a size of its
+    /// own (see [`MutationError::RingSpanSize`]).
+    PlacedRingSpanSize {
+        /// The span.
+        element: NodeId,
+    },
     /// After the steps: a link that leads to its own node.
     SelfLink {
         /// The link.
@@ -211,6 +240,15 @@ impl fmt::Display for MutationError {
             MutationError::Unit { at, field, size } => {
                 write!(f, "{at}: {field}: {size:?} is not the unit this place takes")
             }
+            MutationError::InvertedRange { at, start, end } => {
+                write!(f, "{at}: the range {start}..{end} ends before it starts")
+            }
+            MutationError::AnyFont { at } => {
+                write!(f, "{at}: a font must name a face; the fallback face is never stored")
+            }
+            MutationError::RingSpanSize { at } => {
+                write!(f, "{at}: a span inside a ring takes the ring's size and sets none")
+            }
             MutationError::Missing { at, what, index } => {
                 write!(f, "{at}: the document has no {what} {index}")
             }
@@ -236,6 +274,9 @@ impl fmt::Display for MutationError {
                 write!(f, "{at}: a presentation changes fields only, never structure")
             }
             MutationError::Shape(error) => write!(f, "{error}"),
+            MutationError::PlacedRingSpanSize { element } => {
+                write!(f, "{element}: a span inside a ring takes the ring's size and sets none")
+            }
             MutationError::SelfLink { link } => write!(f, "link {link} leads to its own node"),
             MutationError::DanglingLink { link, to } => {
                 write!(f, "link {link} leads to {to}, which is not a node in the map")

@@ -26,7 +26,7 @@
 //! for one step before it holds both (ruling R10 on #237).
 
 use crate::document::bounds::{
-    check_canvas_coord, check_control_points, check_extent, check_fit, check_font_size_pt,
+    check_canvas_coord, check_channel, check_control_points, check_extent, check_fit, check_font_size_pt,
     check_non_negative, check_rel_size, check_unit_interval, check_zoom_window, BoundError,
 };
 use crate::document::element::{
@@ -35,6 +35,7 @@ use crate::document::element::{
 };
 use crate::document::ids::{owning_node, Document, NodeIdent};
 use crate::document::mutation::error::{MutationError, MutatorPath, StructureRule};
+use crate::document::mutation::membership::Membership;
 use crate::document::mutation::ops::{
     DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LinkOp, MapOp, NodeOp, PaletteOp, PathOp,
     PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
@@ -49,9 +50,11 @@ use crate::engine::key::BranchKey;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Tree;
+use crate::font::fonts::AppFont;
 use glam::Vec2;
 use indextree::NodeId;
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 
 /// Judge `mutator` against `doc` before it is applied. See the module
 /// docs for what is checked; the first refusal is returned, naming the
@@ -79,7 +82,7 @@ pub fn validate_for_presentation(mutator: &DocMutatorTree, doc: &Document) -> Re
 enum Unit {
     /// Points only: everything outside a frame.
     Points,
-    /// Relative only: a frame, a ring and a ring's spans.
+    /// Relative only: a frame and a ring.
     Relative,
     /// Either: a span whose place is not known before the walk —
     /// [`validate_applied`] judges it once it is.
@@ -115,6 +118,9 @@ struct Validator<'d> {
     path: Vec<usize>,
     /// The subtree path, inside an insert.
     subtree: Option<Vec<usize>>,
+    /// Which elements are in the document's tree, remembered across the
+    /// whole walk so no element's depth is paid twice (§20 rule 11).
+    members: RefCell<Membership>,
 }
 
 impl<'d> Validator<'d> {
@@ -124,6 +130,7 @@ impl<'d> Validator<'d> {
             presentation,
             path: Vec::new(),
             subtree: None,
+            members: RefCell::new(Membership::default()),
         }
     }
 
@@ -151,12 +158,37 @@ impl<'d> Validator<'d> {
         }
     }
 
-    fn run(mut self, mutator: &DocMutatorTree) -> Result<(), MutationError> {
-        self.node(mutator, mutator.root)
+    /// Whether `id` is an element of the document's tree, not of a
+    /// subtree a journal holds detached. Amortized O(1) per question.
+    fn in_tree(&self, id: NodeId) -> bool {
+        self.members.borrow_mut().contains(self.doc.tree(), id)
     }
 
-    /// Judge the mutator at `id` and everything below it.
-    fn node(&mut self, tree: &DocMutatorTree, id: NodeId) -> Result<(), MutationError> {
+    /// Judge every mutator of `mutator`, in pre-order, keeping the path
+    /// from the root in step. Iterative, with an explicit stack, so a
+    /// mutator tree as deep as the document — a map-borne edit is
+    /// untrusted (D29) — costs no call stack (§20 rule 11).
+    fn run(mut self, mutator: &DocMutatorTree) -> Result<(), MutationError> {
+        let arena = mutator.arena();
+        // (mutator, its depth below the root, its position among its
+        // siblings).
+        let mut pending: Vec<(NodeId, usize, usize)> = vec![(mutator.root, 0, 0)];
+        while let Some((id, depth, position)) = pending.pop() {
+            self.path.truncate(depth.saturating_sub(1));
+            if depth > 0 {
+                self.path.push(position);
+            }
+            self.judge(mutator, id)?;
+            let count = id.children(arena).count();
+            for (back, child) in id.children(arena).rev().enumerate() {
+                pending.push((child, depth + 1, count - 1 - back));
+            }
+        }
+        Ok(())
+    }
+
+    /// Judge the mutator at `id` itself.
+    fn judge(&mut self, tree: &DocMutatorTree, id: NodeId) -> Result<(), MutationError> {
         let Some(node) = tree.get(id) else {
             return Ok(());
         };
@@ -188,11 +220,6 @@ impl<'d> Validator<'d> {
                 }
                 self.structure(op, key)?;
             }
-        }
-        for (position, child) in id.children(tree.arena()).enumerate() {
-            self.path.push(position);
-            self.node(tree, child)?;
-            self.path.pop();
         }
         Ok(())
     }
@@ -231,21 +258,19 @@ impl<'d> Validator<'d> {
                 SectionOp::SetOffset(offset) => self.canvas("section.offset", *offset),
                 SectionOp::Nudge(delta) => self.finite("section.nudge", *delta),
                 SectionOp::SetMinSize(size) => self.extent("section.min_size", *size),
-                SectionOp::SetAlign(_) | SectionOp::SetChannel(_) => Ok(()),
+                SectionOp::SetAlign(_) => Ok(()),
+                SectionOp::SetChannel(channel) => self.bound("section.channel", check_channel(*channel)),
                 SectionOp::Text(op) => self.text_op(op, Unit::Points),
             },
             DocMutation::Span(op) => match op {
                 SpanOp::SetText(_) | SpanOp::InsertText { .. } => Ok(()),
                 SpanOp::DeleteText { start, end } => {
                     if start > end {
-                        // An inverted range names nothing to delete; it
-                        // is a malformed request, not an empty one.
-                        #[allow(clippy::cast_precision_loss)]
-                        let (min, max) = (*start as f32, *end as f32);
-                        return self.bound(
-                            "span.delete_text",
-                            Err::<(), _>(BoundError::Inverted { min, max }),
-                        );
+                        return Err(MutationError::InvertedRange {
+                            at: self.at(),
+                            start: *start,
+                            end: *end,
+                        });
                     }
                     Ok(())
                 }
@@ -262,7 +287,7 @@ impl<'d> Validator<'d> {
             },
             DocMutation::Ring(op) => match op {
                 RingOp::SetFit(fit) => self.fit("ring.fit", fit.as_ref()),
-                RingOp::SetChannel(_) => Ok(()),
+                RingOp::SetChannel(channel) => self.bound("ring.channel", check_channel(*channel)),
                 RingOp::Text(op) => self.text_op(op, Unit::Relative),
             },
             DocMutation::Path(op) => self.path_op(op),
@@ -430,13 +455,25 @@ impl<'d> Validator<'d> {
     }
 
     fn text_style(&self, style: &TextStyle, unit: Unit) -> Result<(), MutationError> {
+        self.font(style.font)?;
         self.size("text.size", style.size, unit)?;
         self.color(style.color.as_ref())
     }
 
+    /// A face that names a font: never the fallback, `AppFont::Any`,
+    /// which no map stores (ruling R11.2 on #236).
+    fn font(&self, font: Option<AppFont>) -> Result<(), MutationError> {
+        if font == Some(AppFont::Any) {
+            Err(MutationError::AnyFont { at: self.at() })
+        } else {
+            Ok(())
+        }
+    }
+
     fn text_op(&self, op: &TextOp, unit: Unit) -> Result<(), MutationError> {
         match op {
-            TextOp::SetFont(_) | TextOp::SetWeight(_) | TextOp::SetItalic(_) => Ok(()),
+            TextOp::SetFont(font) => self.font(*font),
+            TextOp::SetWeight(_) | TextOp::SetItalic(_) => Ok(()),
             TextOp::SetSize(size) => self.size("text.size", *size, unit),
             TextOp::GrowSize(delta) => {
                 if delta.is_finite() {
@@ -473,8 +510,8 @@ impl<'d> Validator<'d> {
             NodeOp::SetShape(_)
             | NodeOp::SetFolded(_)
             | NodeOp::ToggleFolded
-            | NodeOp::SetHidden(_)
-            | NodeOp::SetChannel(_) => Ok(()),
+            | NodeOp::SetHidden(_) => Ok(()),
+            NodeOp::SetChannel(channel) => self.bound("node.channel", check_channel(*channel)),
             NodeOp::SetFill(fill) => self.color(fill.as_ref()),
             NodeOp::SetFillFade(fade) => self.non_negative("node.fill_fade", *fade),
             NodeOp::SetPalette(palette) => self.palette(*palette),
@@ -580,6 +617,7 @@ impl<'d> Validator<'d> {
                         ident: node.ident,
                     });
                 }
+                self.bound("node.channel", check_channel(node.channel))?;
                 self.canvas("node.position", node.position)?;
                 self.extent("node.min_size", node.min_size)?;
                 self.node_style(&node.style)?;
@@ -590,13 +628,19 @@ impl<'d> Validator<'d> {
                 self.verb(node.on.hover)
             }
             DocElement::Section(section) => {
+                self.bound("section.channel", check_channel(section.channel))?;
                 self.canvas("section.offset", section.offset)?;
                 self.extent("section.min_size", section.min_size)?;
                 self.text_style(&section.text, Unit::Points)
             }
             DocElement::Span(span) => {
                 let unit = match parent {
-                    Some(DocKind::Ring) => Unit::Relative,
+                    Some(DocKind::Ring) => {
+                        if span.style.size.is_some() {
+                            return Err(MutationError::RingSpanSize { at: self.at() });
+                        }
+                        Unit::Either
+                    }
                     Some(_) => Unit::Points,
                     None => Unit::Either,
                 };
@@ -605,14 +649,13 @@ impl<'d> Validator<'d> {
             }
             DocElement::Frame(frame) => self.frame_style(&frame.style),
             DocElement::Ring(ring) => {
+                self.bound("ring.channel", check_channel(ring.channel))?;
                 self.fit("ring.fit", ring.style.fit.as_ref())?;
                 self.text_style(&ring.style.text, Unit::Relative)
             }
             DocElement::Connector(connector) => self.path_data(&connector.path),
             DocElement::Link(link) => {
-                if self.doc.get(link.to).map(DocElement::kind) != Some(DocKind::Node)
-                    || !self.doc.tree().contains(link.to)
-                {
+                if self.doc.get(link.to).map(DocElement::kind) != Some(DocKind::Node) || !self.in_tree(link.to) {
                     return Err(MutationError::LinkTarget {
                         at: self.at(),
                         to: link.to,
@@ -629,20 +672,24 @@ impl<'d> Validator<'d> {
     }
 
     /// Every element of an inserted subtree, in pre-order, naming each
-    /// by its path in the subtree.
-    fn walk_subtree(
-        &mut self,
-        subtree: &Subtree<DocElement>,
-        parent: Option<DocKind>,
-    ) -> Result<(), MutationError> {
-        self.element(&subtree.root, parent)?;
-        for (position, child) in subtree.children.iter().enumerate() {
+    /// by its path in the subtree. Iterative, with an explicit stack: an
+    /// inserted subtree is as deep as its caller makes it, and depth
+    /// costs no call stack (§20 rule 11).
+    fn walk_subtree(&mut self, subtree: &Subtree<DocElement>) -> Result<(), MutationError> {
+        // (element, its parent's kind, its depth below the subtree's
+        // root, its position among its siblings).
+        let mut pending: Vec<(&Subtree<DocElement>, Option<DocKind>, usize, usize)> = vec![(subtree, None, 0, 0)];
+        while let Some((node, parent, depth, position)) = pending.pop() {
             if let Some(path) = self.subtree.as_mut() {
-                path.push(position);
+                path.truncate(depth.saturating_sub(1));
+                if depth > 0 {
+                    path.push(position);
+                }
             }
-            self.walk_subtree(child, Some(subtree.root.kind()))?;
-            if let Some(path) = self.subtree.as_mut() {
-                path.pop();
+            self.element(&node.root, parent)?;
+            let kind = Some(node.root.kind());
+            for (position, child) in node.children.iter().enumerate().rev() {
+                pending.push((child, kind, depth + 1, position));
             }
         }
         Ok(())
@@ -664,7 +711,7 @@ impl<'d> Validator<'d> {
                 Document::validate_subtree(subtree)
                     .map_err(|error| MutationError::Subtree { at: self.at(), error })?;
                 self.subtree = Some(Vec::new());
-                let result = self.walk_subtree(subtree, None);
+                let result = self.walk_subtree(subtree);
                 self.subtree = None;
                 result
             }
@@ -682,9 +729,7 @@ impl<'d> Validator<'d> {
                     return refuse(self, StructureRule::MoveNotANode);
                 }
                 let destination = self.doc.get(*to).map(DocElement::kind);
-                if !self.doc.tree().contains(*to)
-                    || !matches!(destination, Some(DocKind::Node | DocKind::Map))
-                {
+                if !matches!(destination, Some(DocKind::Node | DocKind::Map)) || !self.in_tree(*to) {
                     return refuse(self, StructureRule::MoveDestination);
                 }
                 Ok(())
@@ -738,31 +783,52 @@ impl<'d> Validator<'d> {
 /// `tree` as they left it. See the module docs.
 ///
 /// - `validate_shape` on every parent a node left or joined
-///   ([`Journal::parents`]), and on every node that joined a row —
-///   inserted at the top of its subtree, or moved — since a node's
-///   connector rule depends on where it sits;
+///   ([`Journal::parents`]) that is still in the tree, and on every node
+///   that joined a row — inserted at the top of its subtree, or moved —
+///   since a node's connector rule depends on where it sits;
 /// - `validate_shape` on every link whose kind changed;
-/// - an inserted link leads to a node in the tree other than its own;
+/// - every inserted link — at the top of an inserted subtree or nested
+///   inside one — leads to a node in the tree other than its own;
 /// - every inserted or changed element's text size is in the unit its
-///   place takes: relative in a frame, a ring and a ring's spans, points
-///   everywhere else.
+///   place takes: relative in a frame and a ring, points everywhere
+///   else, and none at all on a span inside a ring.
+///
+/// What left the tree is told apart by the journal's touches: a
+/// `Removed` element is skipped, and so is a parent that one of them
+/// names. Where a link leads is answered by a [`Membership`] memo,
+/// which climbs through each ancestor once over all the links.
 ///
 /// Errors: [`MutationError::Shape`], [`MutationError::SelfLink`],
-/// [`MutationError::DanglingLink`], [`MutationError::PlacedUnit`]. The
-/// caller undoes the request on any of them.
+/// [`MutationError::DanglingLink`], [`MutationError::PlacedUnit`],
+/// [`MutationError::PlacedRingSpanSize`]. The caller undoes the request
+/// on any of them.
 ///
 /// Cost: proportional to the journal: per touched element O(1) checks,
-/// one owning-node walk per inserted link, and one row pass per changed
-/// parent, each parent judged once (a hash set of them).
+/// one row pass per changed parent, each parent judged once (a hash set
+/// of them), and per inserted link one owning-node step and an
+/// amortized O(1) membership question. Nothing per element grows with
+/// its depth (§20 rule 11).
 pub fn validate_applied(tree: &Tree<DocElement>, journal: &Journal<DocElement>) -> Result<(), MutationError> {
+    let removed: FxHashSet<NodeId> = journal
+        .touched()
+        .filter(|&(_, touch)| touch == Touch::Removed)
+        .map(|(id, _)| id)
+        .collect();
     let mut judged: FxHashSet<NodeId> = FxHashSet::default();
     let mut shape = |id: NodeId| -> Result<(), MutationError> {
-        if tree.contains(id) && judged.insert(id) {
+        if !removed.contains(&id) && judged.insert(id) {
             validate_shape(tree, id).map_err(MutationError::Shape)?;
         }
         Ok(())
     };
+    let mut members = Membership::default();
     for (id, touch) in journal.touched() {
+        if touch == Touch::Removed {
+            if let Some((Some(parent), _)) = journal.parents(id) {
+                shape(parent)?;
+            }
+            continue;
+        }
         if let Some((before, after)) = journal.parents(id) {
             for parent in [before, after].into_iter().flatten() {
                 shape(parent)?;
@@ -770,9 +836,6 @@ pub fn validate_applied(tree: &Tree<DocElement>, journal: &Journal<DocElement>) 
             if after.is_some() {
                 shape(id)?;
             }
-        }
-        if touch == Touch::Removed || !tree.contains(id) {
-            continue;
         }
         let Some(element) = tree.get(id).map(|n| n.get()) else {
             continue;
@@ -784,8 +847,8 @@ pub fn validate_applied(tree: &Tree<DocElement>, journal: &Journal<DocElement>) 
                 shape(id)?;
             }
             if touch == Touch::Inserted {
-                let target_is_node = tree.contains(link.to)
-                    && tree.get(link.to).map(|n| n.get().kind()) == Some(DocKind::Node);
+                let target_is_node = tree.get(link.to).map(|n| n.get().kind()) == Some(DocKind::Node)
+                    && members.contains(tree, link.to);
                 if !target_is_node {
                     return Err(MutationError::DanglingLink {
                         link: id,
@@ -797,24 +860,24 @@ pub fn validate_applied(tree: &Tree<DocElement>, journal: &Journal<DocElement>) 
                 }
             }
         }
-        placed_unit(tree, id, element)?;
+        placed_size(tree, id, element)?;
     }
     Ok(())
 }
 
 /// The element at `id`'s own text size, if it sets one, is in the unit
-/// its place takes. O(1).
-fn placed_unit(tree: &Tree<DocElement>, id: NodeId, element: &DocElement) -> Result<(), MutationError> {
+/// its place takes, and a span inside a ring sets none. O(1).
+fn placed_size(tree: &Tree<DocElement>, id: NodeId, element: &DocElement) -> Result<(), MutationError> {
     let Some(size) = element.text_style().and_then(|style| style.size) else {
         return Ok(());
     };
     let unit = match element.kind() {
         DocKind::Span => {
             let parent = tree.get(id).and_then(|n| n.parent());
-            match parent.and_then(|p| tree.get(p)).map(|n| n.get().kind()) {
-                Some(DocKind::Ring) => Unit::Relative,
-                _ => Unit::Points,
+            if parent.and_then(|p| tree.get(p)).map(|n| n.get().kind()) == Some(DocKind::Ring) {
+                return Err(MutationError::PlacedRingSpanSize { element: id });
             }
+            Unit::Points
         }
         kind => Unit::of(kind),
     };

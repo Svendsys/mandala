@@ -301,6 +301,11 @@ impl Document {
     /// close, and judge with
     /// [`validate_applied`](crate::document::mutation::validate::validate_applied).
     ///
+    /// Each step is built from the document as the steps before it left
+    /// it, which is not validated until the request is over: a step's
+    /// closure may see a row that breaks the shape rules (see
+    /// [`DocStep`](crate::document::mutation::step::DocStep)).
+    ///
     /// The loop the writer (V1-B4) runs a request's steps through, and
     /// the only code that walks a mutator over a document. Visible to
     /// `document` alone: no other code changes a document (rule 4).

@@ -98,8 +98,17 @@ pub enum TextOp {
     /// and store the result, clamped, as its own: in
     /// [`Rel`](FontSize::Rel) inside a frame, in [`Pt`](FontSize::Pt)
     /// elsewhere.
+    ///
+    /// **The delta is in the unit stored at the element's place:**
+    /// points outside a frame, and inside one a fraction of the node's
+    /// shorter side. `GrowSize(2.0)` grows a section by 2 pt, but takes a
+    /// ring to the whole side (`Rel(1.0)`, the clamp); a ring grows by a
+    /// delta like `0.01`. `ScaleSize` has no unit and reads the same
+    /// everywhere.
     GrowSize(f32),
     /// Multiply the size the element displays, with `GrowSize`'s rules.
+    /// The factor is a plain ratio, so it means the same in and out of
+    /// a frame.
     ScaleSize(f32),
     /// Set the color; `None` inherits.
     SetColor(Option<ColorRef>),
