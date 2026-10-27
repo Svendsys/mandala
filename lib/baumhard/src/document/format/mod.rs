@@ -407,7 +407,7 @@ fn not_loadable(error: LoadError) -> SaveError {
 /// need, when they apply an edit. [`save`] runs it itself.
 ///
 /// **It holds one node, not a second document.** The builder runs in
-/// [`Keep::OneNode`]: each node is built from what the saver would
+/// `Keep::OneNode`: each node is built from what the saver would
 /// write, its row checked, and its elements freed before the next. What
 /// a load answers from the nodes it keeps is answered from `doc`
 /// instead: each node's id must be the one `doc`'s ident index holds

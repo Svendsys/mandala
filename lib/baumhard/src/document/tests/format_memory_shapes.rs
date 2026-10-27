@@ -9,7 +9,7 @@
 //! **The model.** A map's peak while it loads, and while it is then
 //! saved, is at most
 //! `text × WASM32_BYTES_PER_TEXT_BYTE + elements × WASM32_BYTES_PER_ELEMENT`
-//! ([`bound`]), where `text` is the longer of the text read and the text
+//! ([`bound`](crate::document::tests::format_memory_shapes::bound)), where `text` is the longer of the text read and the text
 //! written. Each shape here is the densest the format allows of one
 //! kind of content, so a map of any mix is no denser per byte or per
 //! element than the worst of them.
@@ -17,9 +17,9 @@
 //! **Measured at the worst point.** Every container doubles as it
 //! grows, so what it holds per entry depends on where in its growth it
 //! is. The tree's arena is the largest; each element shape is measured
-//! with just past [`ARENA_POINT`]` - 1` elements, right after the arena
+//! with just past [`ARENA_POINT`](crate::document::tests::format_memory_shapes::ARENA_POINT)` - 1` elements, right after the arena
 //! has doubled, where it holds twice what it needs. The text shapes are
-//! measured just past [`TEXT_POINT`]` - 1` bytes, for the same reason
+//! measured just past [`TEXT_POINT`](crate::document::tests::format_memory_shapes::TEXT_POINT)` - 1` bytes, for the same reason
 //! about the text being written.
 
 use crate::document::format::{load, save, WASM32_BYTES_PER_ELEMENT, WASM32_BYTES_PER_TEXT_BYTE};
