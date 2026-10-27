@@ -522,23 +522,24 @@ fn test_flow_fit_finishes_a_creeping_shrink() {
     do_flow_fit_finishes_a_creeping_shrink();
 }
 
-/// Where the shrink `s ← s·P/L(s)` creeps — around a long, low sharp
-/// rectangle, 39 letters of a sentence at a scale near 4 overrun, and
-/// `L(s)` falls more slowly than `s` — `Fit` finishes by bisection
-/// rather than reshaping at a scale that still overruns: the text goes
-/// around whole and ends back at the start (ruling R9.3). Without the
-/// bisection this fixture is cut.
+/// Where the shrink `s ← s·P/L(s)` creeps — around a long, flat sharp
+/// rectangle, 32 letters of a sentence scaled up near tenfold, where
+/// `L(s)` falls more slowly than `s` and the shrink stops short with the
+/// text still overrunning by more than the solver's slack — `Fit`
+/// finishes by bisection rather than reshaping at a scale that still
+/// overruns: the text goes around whole and ends back at the start
+/// (ruling R9.3). Without the bisection this fixture is cut.
 pub fn do_flow_fit_finishes_a_creeping_shrink() {
-    let path = rounded(400.0, 60.0, 0);
+    let path = rounded(800.0, 30.0, 0);
     let sentence = "the quick brown fox jumps over the lazy dog";
     let fit = FitMode::Fit { min: 0.1, max: 40.0 };
-    let (run, rescaled, placed) = shaped_around(&sentence[..39], &path, &fit);
+    let (run, rescaled, placed) = shaped_around(&sentence[..32], &path, &fit);
     let rescaled = rescaled.expect("the run is rescaled");
     assert!(!placed.truncated);
     assert_eq!(placed.glyphs.len(), run.glyphs.len());
     let (end, level) = end_on_top(&rescaled, &placed);
     close(level, 0.0, 1e-3, "the last glyph is on the top side");
-    close(end, 200.0, 0.5, "it ends at the start");
+    close(end, 400.0, 0.5, "it ends at the start");
 }
 
 #[test]
