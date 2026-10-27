@@ -557,9 +557,11 @@ impl DocElement {
 ///   a mutator for one kind never lands on another (§4.1).
 /// - `Cache` is `()`: a document derives nothing per tree. Resolved
 ///   values are projection state (V1-B7), never cached here.
-/// - `Inherited` is `()` for now. What a document walk carries down —
-///   the resolved text size, and whether the walk is inside a frame —
-///   belongs with the mutations that read it, V1-B3.
+/// - `Inherited` is [`DocInherited`](crate::document::mutation::inherited::DocInherited):
+///   what a text displays when it sets no size of its own, by kind, and
+///   whether the walk is inside a frame — what `GrowSize` and
+///   `ScaleSize` read. A walk's seed is
+///   [`inherited_seed`](crate::document::mutation::inherited::inherited_seed).
 /// - `SPATIAL` is `false`: a document element has no box to hit-test;
 ///   hit-testing happens on the glyph layers.
 /// - Only a span splits and merges: `SplitPoint` is a grapheme-cluster
@@ -568,7 +570,7 @@ impl DocElement {
 impl TreeElement for DocElement {
     type Kind = DocKind;
     type Cache = ();
-    type Inherited = ();
+    type Inherited = crate::document::mutation::inherited::DocInherited;
     /// A grapheme-cluster index into a span's text.
     type SplitPoint = usize;
     const SPATIAL: bool = false;
@@ -594,7 +596,13 @@ impl TreeElement for DocElement {
         self == other
     }
 
-    fn inherit(&self, _parent: &()) {}
+    /// See [`DocInherited`](crate::document::mutation::inherited::DocInherited). O(1).
+    fn inherit(
+        &self,
+        parent: &crate::document::mutation::inherited::DocInherited,
+    ) -> crate::document::mutation::inherited::DocInherited {
+        crate::document::mutation::inherited::inherit(self, parent)
+    }
 
     /// A span splits at a grapheme-cluster index into its first `at`
     /// clusters and the rest, both with its style and link; it splits

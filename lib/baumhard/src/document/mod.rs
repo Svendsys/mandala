@@ -22,8 +22,9 @@
 //! defaults and [`BUILT_IN`](crate::document::defaults::BUILT_IN) — recording every
 //! input it reads so the projection can track what depends on what.
 //!
-//! Nothing here mutates a document: mutations are V1-B3 and the writer
-//! V1-B4. A document is built by [`format::load`](crate::document::format::load) — the one place a
+//! Every change a document can undergo is a [`mutation`](crate::document::mutation)
+//! (V1-B3); the writer that applies them, with history, is V1-B4. A
+//! document is built by [`format::load`](crate::document::format::load) — the one place a
 //! file becomes a document — and written back by [`format::save`](crate::document::format::save).
 
 /// Every numeric bound the loader and the mutations enforce.
@@ -47,6 +48,8 @@ pub mod inspect;
 /// The engine's `Interpolable` for the document: numbers, positions,
 /// sizes and literal colors blend; everything else snaps.
 pub mod interpolation;
+/// The mutation vocabulary: every change a document can undergo.
+pub mod mutation;
 /// Per-field style resolution with read recording.
 pub mod resolve;
 /// The shape rules: which kinds may hold which.

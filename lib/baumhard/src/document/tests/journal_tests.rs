@@ -214,3 +214,207 @@ pub fn do_document_interpolate_blends_numbers_and_colors() {
     );
     assert_eq!(n.opacity, 0.5, "the number still blends");
 }
+
+#[test]
+fn test_document_interpolation_follows_the_listed_fields() {
+    do_document_interpolation_follows_the_listed_fields();
+}
+
+/// #237's list, field by field: each listed field is at its midpoint
+/// halfway, and each field outside it — a flag, a shape's radius, a fit
+/// range, a zoom window, a frame's start point, unequal control points —
+/// holds the before value under `Snap::End` and the after value under
+/// `Snap::Start`. The four that B1 blended and the list leaves out
+/// (radius, fit range, zoom window, start point) are among the snapped
+/// (ruling R10 on #237).
+pub fn do_document_interpolation_follows_the_listed_fields() {
+    use crate::document::element::{
+        ConnectorData, FrameData, FrameStyle, LabelData, LabelStyle, PaletteData, PathData, PortalEndData,
+        PortalEndStyle, SectionData, ThemeData, ThemeVariant,
+    };
+    use crate::document::tests::test_support::{palette_group, path_data};
+    use crate::document::values::{Edge, FitMode, Percent, PlainColor, Shape, StartPoint, ZoomWindow};
+
+    /// `before` and `after` at 0.5 under both snaps.
+    fn halves(before: &DocElement, after: &DocElement) -> (DocElement, DocElement) {
+        (
+            DocElement::interpolate(before, after, 0.5, Snap::End),
+            DocElement::interpolate(before, after, 0.5, Snap::Start),
+        )
+    }
+
+    let (builder, ids) = example();
+    let DocElement::Node(base) = builder.tree().arena()[ids.b].get().clone() else {
+        panic!("b is a node")
+    };
+    let node = |f: &dyn Fn(&mut NodeData)| {
+        let mut n = base.clone();
+        f(&mut n);
+        DocElement::Node(n)
+    };
+    let before = node(&|n| {
+        n.position = Vec2::new(0.0, 0.0);
+        n.min_size = Some(Vec2::new(10.0, 10.0));
+        n.style.fill_fade = Some(0.0);
+        n.opacity = 0.0;
+        n.hidden = false;
+        n.style.shape = Some(Shape::Rectangle {
+            radius: Percent::new(0),
+        });
+        n.zoom = Some(ZoomWindow {
+            min: Some(1.0),
+            max: None,
+        });
+    });
+    let after = node(&|n| {
+        n.position = Vec2::new(10.0, -20.0);
+        n.min_size = Some(Vec2::new(30.0, 50.0));
+        n.style.fill_fade = Some(4.0);
+        n.opacity = 1.0;
+        n.hidden = true;
+        n.style.shape = Some(Shape::Rectangle {
+            radius: Percent::new(100),
+        });
+        n.zoom = Some(ZoomWindow {
+            min: Some(3.0),
+            max: None,
+        });
+    });
+    let (end, start) = halves(&before, &after);
+    let (DocElement::Node(end), DocElement::Node(start)) = (end, start) else { panic!("nodes") };
+    assert_eq!(end.position, Vec2::new(5.0, -10.0));
+    assert_eq!(end.min_size, Some(Vec2::new(20.0, 30.0)));
+    assert_eq!(end.style.fill_fade, Some(2.0));
+    assert_eq!(end.opacity, 0.5);
+    assert!(!end.hidden && start.hidden, "hidden snaps");
+    assert_eq!(
+        end.style.shape,
+        Some(Shape::Rectangle {
+            radius: Percent::new(0)
+        }),
+        "a radius snaps"
+    );
+    assert_eq!(
+        start.style.shape,
+        Some(Shape::Rectangle {
+            radius: Percent::new(100)
+        })
+    );
+    assert_eq!(end.zoom.and_then(|z| z.min), Some(1.0), "a zoom window snaps");
+    assert_eq!(start.zoom.and_then(|z| z.min), Some(3.0));
+
+    let section = |offset: Vec2| {
+        DocElement::Section(SectionData {
+            offset,
+            ..SectionData::default()
+        })
+    };
+    let (end, _) = halves(&section(Vec2::ZERO), &section(Vec2::new(8.0, 2.0)));
+    assert!(matches!(end, DocElement::Section(s) if s.offset == Vec2::new(4.0, 1.0)));
+
+    let frame = |gap: f32, at: f32, max: f32| {
+        DocElement::Frame(FrameData {
+            style: FrameStyle {
+                gap: Some(gap),
+                inset: Some(gap * 2.0),
+                start: Some(StartPoint { edge: Edge::Top, at }),
+                fit: Some(FitMode::Fit { min: 0.5, max }),
+                ..FrameStyle::default()
+            },
+        })
+    };
+    let (end, start) = halves(&frame(0.0, 0.0, 1.0), &frame(2.0, 1.0, 3.0));
+    let (DocElement::Frame(end), DocElement::Frame(start)) = (end, start) else { panic!("frames") };
+    assert_eq!((end.style.gap, end.style.inset), (Some(1.0), Some(2.0)));
+    assert_eq!(end.style.start.map(|s| s.at), Some(0.0), "a start point snaps");
+    assert_eq!(start.style.start.map(|s| s.at), Some(1.0));
+    assert_eq!(
+        end.style.fit,
+        Some(FitMode::Fit { min: 0.5, max: 1.0 }),
+        "a fit range snaps"
+    );
+    assert_eq!(start.style.fit, Some(FitMode::Fit { min: 0.5, max: 3.0 }));
+
+    let connector = |spacing: f32, size: f32, points: Vec<Vec2>| {
+        let mut path: PathData = path_data();
+        path.flow.spacing = Some(spacing);
+        path.flow.size = Some(size);
+        path.control_points = points;
+        DocElement::Connector(ConnectorData { path })
+    };
+    let (end, _) = halves(
+        &connector(0.0, 10.0, vec![Vec2::ZERO]),
+        &connector(2.0, 20.0, vec![Vec2::new(4.0, 4.0)]),
+    );
+    let DocElement::Connector(end) = end else { panic!("a connector") };
+    assert_eq!(
+        (end.path.flow.spacing, end.path.flow.size),
+        (Some(1.0), Some(15.0))
+    );
+    assert_eq!(end.path.control_points, vec![Vec2::new(2.0, 2.0)]);
+    let (end, _) = halves(
+        &connector(0.0, 10.0, vec![Vec2::ZERO]),
+        &connector(0.0, 10.0, vec![Vec2::ONE, Vec2::ONE]),
+    );
+    let DocElement::Connector(end) = end else { panic!("a connector") };
+    assert_eq!(end.path.control_points, vec![Vec2::ZERO], "unequal counts snap");
+
+    let label = |t: f32| {
+        DocElement::Label(LabelData {
+            style: LabelStyle {
+                t: Some(t),
+                offset: Some(t * 10.0),
+                ..LabelStyle::default()
+            },
+        })
+    };
+    let (end, _) = halves(&label(0.0), &label(1.0));
+    assert!(matches!(end, DocElement::Label(l) if l.style.t == Some(0.5) && l.style.offset == Some(5.0)));
+
+    let portal = |t: f32| {
+        DocElement::PortalEnd(PortalEndData {
+            end: 0,
+            style: PortalEndStyle {
+                border_t: Some(t),
+                offset: Some(t),
+                size: Some(10.0 + t * 10.0),
+                ..PortalEndStyle::default()
+            },
+        })
+    };
+    let (end, _) = halves(&portal(0.0), &portal(1.0));
+    let DocElement::PortalEnd(end) = end else { panic!("a portal end") };
+    assert_eq!(
+        (end.style.border_t, end.style.offset, end.style.size),
+        (Some(0.5), Some(0.5), Some(15.0))
+    );
+
+    let theme = |v: u8| {
+        DocElement::Theme(ThemeData {
+            variables: vec!["a".to_string()],
+            variants: vec![ThemeVariant {
+                name: "v".to_string(),
+                values: vec![Rgba::opaque(v, v, v)],
+            }],
+            active: 0,
+        })
+    };
+    let (end, _) = halves(&theme(0), &theme(100));
+    assert!(matches!(end, DocElement::Theme(t) if t.variants[0].values[0] == Rgba::opaque(50, 50, 50)));
+
+    let palette = |n: u8| {
+        let mut group = palette_group(n);
+        group.title = Some(PlainColor::Rgba(Rgba::opaque(n, n, n)));
+        DocElement::Palette(PaletteData {
+            name: "p".to_string(),
+            groups: vec![group],
+        })
+    };
+    let (end, _) = halves(&palette(0), &palette(100));
+    let DocElement::Palette(end) = end else { panic!("a palette") };
+    assert_eq!(
+        end.groups[0].title,
+        Some(PlainColor::Rgba(Rgba::opaque(50, 50, 50))),
+        "a palette group's colors blend"
+    );
+}

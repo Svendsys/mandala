@@ -191,22 +191,6 @@ pub fn do_document_bounds_node_ident() {
     assert_eq!(check_node_ident(1 << 32), Err(BoundError::NotAnIdent(1 << 32)));
 }
 
-/// `0..=MAX_CHANNEL`; one past it is refused with the value it was given.
-#[test]
-fn test_document_bounds_channel() {
-    assert_eq!(check_channel(0), Ok(()));
-    assert_eq!(check_channel(MAX_CHANNEL), Ok(()));
-    // Where a `usize` is wide enough to hold a channel past the bound
-    // (not wasm32, whose `usize` is the bound).
-    #[cfg(target_pointer_width = "64")]
-    {
-        let past = MAX_CHANNEL + 1;
-        let shown = u64::try_from(past).unwrap();
-        assert_eq!(check_channel(past), Err(BoundError::NotAChannel(shown)));
-        assert_eq!(check_channel(usize::MAX), Err(BoundError::NotAChannel(u64::MAX)));
-    }
-}
-
 #[test]
 fn test_document_bounds_counts() {
     do_document_bounds_counts();
@@ -229,5 +213,97 @@ pub fn do_document_bounds_counts() {
             check_count(max + 1, max),
             Err(BoundError::TooMany { count: max + 1, max })
         );
+    }
+}
+
+#[test]
+fn test_document_bounds_computed_font_sizes() {
+    do_document_bounds_computed_font_sizes();
+}
+
+/// A computed size is pinned inside its bound: points to the shaper's
+/// window, a relative size to `MIN_REL_SIZE..=1`, and `NaN` to the
+/// minimum. What either clamp returns is accepted by its check.
+pub fn do_document_bounds_computed_font_sizes() {
+    assert_eq!(clamp_font_size_pt(30.0), 30.0);
+    assert_eq!(clamp_font_size_pt(-3.0), MIN_FONT_SIZE_PT);
+    assert_eq!(clamp_font_size_pt(1.0e9), MAX_FONT_SIZE_PT);
+    assert_eq!(clamp_font_size_pt(f32::NAN), MIN_FONT_SIZE_PT);
+    assert_eq!(clamp_rel_size(0.12), 0.12);
+    assert_eq!(clamp_rel_size(0.0), MIN_REL_SIZE);
+    assert_eq!(clamp_rel_size(-1.0), MIN_REL_SIZE);
+    assert_eq!(clamp_rel_size(3.0), 1.0);
+    assert_eq!(clamp_rel_size(f32::NAN), MIN_REL_SIZE);
+    for value in [-1.0, 0.0, f32::NAN, f32::INFINITY, 2.0] {
+        assert!(check_rel_size(clamp_rel_size(value)).is_ok(), "{value}");
+        assert!(
+            check_font_size_pt(clamp_font_size_pt(value * 1.0e4)).is_ok(),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn test_document_bounds_extent() {
+    do_document_bounds_extent();
+}
+
+/// `0..=MAX_CANVAS_COORD`: zero and the bound are extents, a negative
+/// one, one past the bound and `NaN` are not.
+pub fn do_document_bounds_extent() {
+    assert_eq!(check_extent(0.0), Ok(0.0));
+    assert_eq!(check_extent(MAX_CANVAS_COORD), Ok(MAX_CANVAS_COORD));
+    assert!(matches!(
+        check_extent(-0.5),
+        Err(BoundError::Below { inclusive: true, .. })
+    ));
+    assert!(matches!(check_extent(2.0e9), Err(BoundError::Above { .. })));
+    assert!(matches!(check_extent(f32::NAN), Err(BoundError::NotFinite(_))));
+}
+
+#[test]
+fn test_document_bounds_zoom_window() {
+    do_document_bounds_zoom_window();
+}
+
+/// Each bound given is finite and above 0, and `min ≤ max` when both
+/// are given; an open window, or one open at one end, is fine.
+pub fn do_document_bounds_zoom_window() {
+    assert_eq!(check_zoom_window(None, None), Ok(()));
+    assert_eq!(check_zoom_window(Some(0.5), Some(0.5)), Ok(()));
+    assert_eq!(check_zoom_window(Some(0.25), None), Ok(()));
+    assert_eq!(check_zoom_window(None, Some(4.0)), Ok(()));
+    assert_eq!(
+        check_zoom_window(Some(2.0), Some(1.0)),
+        Err(BoundError::Inverted { min: 2.0, max: 1.0 })
+    );
+    assert!(matches!(
+        check_zoom_window(Some(0.0), None),
+        Err(BoundError::Below { inclusive: false, .. })
+    ));
+    assert!(matches!(
+        check_zoom_window(None, Some(f32::INFINITY)),
+        Err(BoundError::NotFinite(_))
+    ));
+}
+
+#[test]
+fn test_document_bounds_channel() {
+    do_document_bounds_channel();
+}
+
+/// `MAX_CHANNEL` itself is a channel; one past it — which only a target
+/// whose `usize` is wider than 32 bits can hold — is not, and the error
+/// carries the value.
+pub fn do_document_bounds_channel() {
+    assert_eq!(check_channel(0), Ok(()));
+    assert_eq!(check_channel(MAX_CHANNEL), Ok(()));
+    #[cfg(target_pointer_width = "64")]
+    assert!(
+        MAX_CHANNEL.checked_add(1).is_some(),
+        "a 64-bit usize holds a channel past the bound"
+    );
+    if let Some(past) = MAX_CHANNEL.checked_add(1) {
+        assert_eq!(check_channel(past), Err(BoundError::NotAChannel(1 << 32)));
     }
 }

@@ -219,6 +219,33 @@ pub fn check_font_size_pt(value: f32) -> Result<f32, BoundError> {
     in_closed(value, MIN_FONT_SIZE_PT, MAX_FONT_SIZE_PT)
 }
 
+/// Bring a **computed** font size in points inside
+/// [`MIN_FONT_SIZE_PT`]`..=`[`MAX_FONT_SIZE_PT`] — the result of a
+/// relative mutation (`GrowSize`, `ScaleSize`), which has no author to
+/// refuse. `NaN` has no nearest edge and becomes the minimum. O(1).
+pub fn clamp_font_size_pt(value: f32) -> f32 {
+    if value.is_nan() {
+        return MIN_FONT_SIZE_PT;
+    }
+    value.clamp(MIN_FONT_SIZE_PT, MAX_FONT_SIZE_PT)
+}
+
+/// The smallest [`Rel`](crate::document::values::FontSize::Rel) size a
+/// computed size is pinned to: the smallest positive normal `f32`, the
+/// nearest value to the open lower bound of [`check_rel_size`] that
+/// the check accepts.
+pub const MIN_REL_SIZE: f32 = f32::MIN_POSITIVE;
+
+/// Bring a **computed** [`Rel`](crate::document::values::FontSize::Rel)
+/// size inside [`MIN_REL_SIZE`]`..=1.0`, so [`check_rel_size`] accepts
+/// it. `NaN` becomes [`MIN_REL_SIZE`]. O(1).
+pub fn clamp_rel_size(value: f32) -> f32 {
+    if value.is_nan() {
+        return MIN_REL_SIZE;
+    }
+    value.clamp(MIN_REL_SIZE, 1.0)
+}
+
 /// A [`Rel`](crate::document::values::FontSize::Rel) font size if it
 /// is in `(0.0, 1.0]`: a positive fraction of the node's shorter side,
 /// at most all of it. O(1).
@@ -292,6 +319,33 @@ pub fn check_weight(value: u16) -> Result<u16, BoundError> {
         Ok(value)
     } else {
         Err(BoundError::NotAWeight(value))
+    }
+}
+
+/// A size component — a node's or a section's `min_size` — if it is
+/// finite and in `0.0..=`[`MAX_CANVAS_COORD`]: an extent on the canvas,
+/// never negative and never larger than a coordinate can be. O(1).
+pub fn check_extent(value: f32) -> Result<f32, BoundError> {
+    in_closed(value, 0.0, MAX_CANVAS_COORD)
+}
+
+/// A zoom window's bounds if each one given is finite and above `0`,
+/// and, when both are given, `min ≤ max`. A camera zoom is a positive
+/// scale, so a bound at or below `0` names no zoom. O(1).
+pub fn check_zoom_window(min: Option<f32>, max: Option<f32>) -> Result<(), BoundError> {
+    for bound in [min, max].into_iter().flatten() {
+        let bound = finite(bound)?;
+        if bound <= 0.0 {
+            return Err(BoundError::Below {
+                value: bound,
+                min: 0.0,
+                inclusive: false,
+            });
+        }
+    }
+    match (min, max) {
+        (Some(min), Some(max)) if min > max => Err(BoundError::Inverted { min, max }),
+        _ => Ok(()),
     }
 }
 
