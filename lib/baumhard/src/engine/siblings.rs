@@ -13,8 +13,8 @@
 //! The invariant is kept by **placing** a node, never by sorting a
 //! row: a node goes in at the one position its key allows, found by
 //! scanning from the end of the row its placement names, and every
-//! other sibling stays where it is. Finding a moved node's slot
-//! (`reposition_slot`, `last_slot`) is separate from attaching it
+//! other sibling stays where it is. Finding a node's slot (`slot`,
+//! `reposition_slot`, `last_slot`) is separate from attaching it
 //! (`attach_at`), so that a [journal](crate::engine::journal::Journal) can note
 //! each move between the two. Nothing here allocates beyond the arena
 //! slot a new node takes.
@@ -23,25 +23,14 @@ use crate::engine::tree::{Placement, TreeError};
 use indextree::{Arena, NodeId};
 
 /// Insert `value` as a child of `parent` at the position `at` names
-/// within the run of children whose key equals `value`'s.
+/// within the run of children whose key equals `value`'s — the slot
+/// [`slot`] finds.
 ///
-/// - [`Placement::Last`]: after every child whose key is `<=` the new
-///   key — the end of the equal-key run. Scans backward from the last
-///   child, so appending in ascending key order is O(1).
-/// - [`Placement::First`]: before every child whose key is `>=` the
-///   new key — the start of the equal-key run. Scans forward from the
-///   first child.
-/// - [`Placement::Before`] / [`Placement::After`]: next to the named
-///   sibling, which must be a child of `parent` with an equal key.
+/// Errors: those of [`slot`]. Nothing is inserted on an error.
 ///
-/// Errors: [`TreeError::StaleNode`] when `parent` or the named sibling
-/// is not in the arena, [`TreeError::NotAChild`] when the named sibling
-/// is not `parent`'s child, [`TreeError::PlacementCrossesKey`] when its
-/// key differs from the new one. Nothing is inserted on an error.
-///
-/// Cost: O(siblings scanned) key reads plus one arena slot. The new
-/// node is fresh, so indextree's O(1) value-inserting paths apply —
-/// there is no ancestor walk.
+/// Cost: [`slot`]'s scan plus one arena slot. The new node is fresh,
+/// so indextree's O(1) value-inserting paths apply — there is no
+/// ancestor walk.
 pub(crate) fn insert_sorted<T, K: Ord>(
     arena: &mut Arena<T>,
     parent: NodeId,
@@ -49,40 +38,64 @@ pub(crate) fn insert_sorted<T, K: Ord>(
     at: Placement,
     key_of: impl Fn(&T) -> K,
 ) -> Result<NodeId, TreeError> {
+    let prev = slot(arena, parent, &key_of(&value), at, &key_of)?;
+    Ok(match prev {
+        Some(prev) => prev.insert_after_value(value, arena),
+        None => parent.prepend_value(value, arena),
+    })
+}
+
+/// Where a node keyed `key` goes among `parent`'s children, at the
+/// position `at` names within the run of children whose key equals
+/// `key`: the sibling it must follow, or `None` for the front of the
+/// row. The row must be in order and must not hold the node being
+/// placed. Reads only; [`attach_at`] or a value insert places the node.
+///
+/// - [`Placement::Last`]: after every child whose key is `<=` `key` —
+///   the end of the equal-key run. Scans backward from the last child,
+///   so appending in ascending key order is O(1).
+/// - [`Placement::First`]: before every child whose key is `>=` `key`
+///   — the start of the equal-key run. Scans forward from the first
+///   child.
+/// - [`Placement::Before`] / [`Placement::After`]: next to the named
+///   sibling, which must be a child of `parent` with an equal key.
+///
+/// Errors: [`TreeError::StaleNode`] when `parent` or the named sibling
+/// is not in the arena, [`TreeError::NotAChild`] when the named sibling
+/// is not `parent`'s child, [`TreeError::PlacementCrossesKey`] when its
+/// key differs from `key`.
+///
+/// Cost: O(siblings scanned) key reads; no allocation.
+pub(crate) fn slot<T, K: Ord>(
+    arena: &Arena<T>,
+    parent: NodeId,
+    key: &K,
+    at: Placement,
+    key_of: impl Fn(&T) -> K,
+) -> Result<Option<NodeId>, TreeError> {
     let Some(parent_node) = arena.get(parent) else {
         return Err(TreeError::StaleNode(parent));
     };
-    let key = key_of(&value);
     match at {
-        Placement::Last => {
-            let mut cursor = parent_node.last_child();
-            while let Some(id) = cursor {
-                let node = &arena[id];
-                if key_of(node.get()) <= key {
-                    return Ok(id.insert_after_value(value, arena));
-                }
-                cursor = node.previous_sibling();
-            }
-            Ok(parent.prepend_value(value, arena))
-        }
+        Placement::Last => Ok(last_slot_for(arena, parent_node.last_child(), key, &key_of)),
         Placement::First => {
             let mut cursor = parent_node.first_child();
             while let Some(id) = cursor {
                 let node = &arena[id];
-                if key_of(node.get()) >= key {
-                    return Ok(id.insert_before_value(value, arena));
+                if key_of(node.get()) >= *key {
+                    return Ok(node.previous_sibling());
                 }
                 cursor = node.next_sibling();
             }
-            Ok(parent.append_value(value, arena))
+            Ok(parent_node.last_child())
         }
         Placement::Before(sibling) => {
-            check_sibling(arena, parent, sibling, &key, &key_of)?;
-            Ok(sibling.insert_before_value(value, arena))
+            check_sibling(arena, parent, sibling, key, &key_of)?;
+            Ok(arena[sibling].previous_sibling())
         }
         Placement::After(sibling) => {
-            check_sibling(arena, parent, sibling, &key, &key_of)?;
-            Ok(sibling.insert_after_value(value, arena))
+            check_sibling(arena, parent, sibling, key, &key_of)?;
+            Ok(Some(sibling))
         }
     }
 }
@@ -185,11 +198,24 @@ pub(crate) fn last_slot<T, K: Ord>(
     let (Some(parent_node), Some(moved)) = (arena.get(parent), arena.get(node)) else {
         return None;
     };
-    let key = key_of(moved.get());
-    let mut cursor = parent_node.last_child();
+    last_slot_for(arena, parent_node.last_child(), &key_of(moved.get()), &key_of)
+}
+
+/// The nearest of the siblings from `last` backward whose key is `<=`
+/// `key` — the end of `key`'s run in a sorted row whose last child is
+/// `last` — or `None` when every one of them is keyed above it.
+///
+/// Cost: O(siblings scanned) key reads.
+fn last_slot_for<T, K: Ord>(
+    arena: &Arena<T>,
+    last: Option<NodeId>,
+    key: &K,
+    key_of: &impl Fn(&T) -> K,
+) -> Option<NodeId> {
+    let mut cursor = last;
     while let Some(id) = cursor {
         let sibling = &arena[id];
-        if key_of(sibling.get()) <= key {
+        if key_of(sibling.get()) <= *key {
             return Some(id);
         }
         cursor = sibling.previous_sibling();
@@ -200,10 +226,12 @@ pub(crate) fn last_slot<T, K: Ord>(
 /// Attach the detached `node` under `parent`, right after `prev`, or
 /// as the first child when `prev` is `None`. Places exactly where it
 /// is told — keys are not read — so the caller owns the
-/// sorted-children invariant: the walker and [`Tree::update`](crate::engine::tree::Tree::update)
-/// pass a slot found by [`last_slot`] or [`reposition_slot`], and a
+/// sorted-children invariant: the walker, [`Tree::update`](crate::engine::tree::Tree::update)
+/// and the structural commands pass a slot found by [`slot`],
+/// [`last_slot`] or [`reposition_slot`], and a
 /// [journal](crate::engine::journal::Journal) passes a position it recorded
-/// from a sorted row.
+/// from a sorted row. `parent` may itself be detached: the node then
+/// joins that detached subtree.
 ///
 /// Cost: an O(depth) indextree insert check.
 pub(crate) fn attach_at<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {

@@ -22,8 +22,13 @@
 //! [`Tree::insert_child`](crate::engine::tree::Tree::insert_child) and
 //! [`MutatorTree::insert_child`](crate::engine::tree::MutatorTree::insert_child) place a new
 //! node by its key, [`Tree::update`](crate::engine::tree::Tree::update) moves an element whose key it
-//! changed, and a walk moves the elements whose key it changed once
-//! it is over.
+//! changed, a walk moves the elements whose key it changed once
+//! it is over, and the walk's [structural commands](crate::engine::structure)
+//! — which insert, remove and move nodes after the walk — place every
+//! node within the run of its key.
+//! [`Tree::check_sorted`](crate::engine::tree::Tree::check_sorted) and
+//! [`MutatorTree::check_sorted`](crate::engine::tree::MutatorTree::check_sorted)
+//! verify it.
 //!
 //! # Journaled changes
 //!
@@ -31,19 +36,20 @@
 //! [`Tree::update_journaled`](crate::engine::tree::Tree::update_journaled) are the walk and the
 //! update recorded in a [`JournalBuilder`](crate::engine::journal::JournalBuilder), for a tree that
 //! keeps history: the closed [`Journal`](crate::engine::journal::Journal) reverts and replays
-//! them exactly. [`Tree::check_sorted`](crate::engine::tree::Tree::check_sorted) and
-//! [`MutatorTree::check_sorted`](crate::engine::tree::MutatorTree::check_sorted)
-//! verify it.
+//! them exactly, structure included. A subtree a journaled walk removes
+//! stays allocated, out of the tree, until its journal is
+//! [discarded](crate::engine::journal::Journal::discard).
 
 use crate::engine::anchor::{apply_anchored, Anchors};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::{move_among_siblings, JournalBuilder};
 use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
-use crate::engine::mutator::Mutator;
+use crate::engine::mutator::{Mutator, MutatorType};
 use crate::engine::siblings;
-use crate::engine::walker::{walk_anchor, Walk};
+use crate::engine::walker::{run_walk, walk_anchor};
 use indextree::{Arena, Children, Descendants, Node, NodeId};
+use log::error;
 use std::fmt;
 
 /// Where [`Tree::insert_child`] / [`MutatorTree::insert_child`] puts a
@@ -84,8 +90,10 @@ pub enum TreeError {
         /// The node the placement named.
         node: NodeId,
     },
-    /// [`Tree::remove_subtree`] was asked to remove the root, which
-    /// would leave the tree with nothing to walk.
+    /// [`Tree::remove_subtree`] or a
+    /// [`StructOp::Remove`](crate::engine::structure::StructOp::Remove)
+    /// was asked to remove the root, which would leave the tree with
+    /// nothing to walk.
     RemoveRoot,
     /// [`Tree::check_sorted`] / [`MutatorTree::check_sorted`] found a
     /// child whose key is below its previous sibling's.
@@ -95,6 +103,29 @@ pub enum TreeError {
         /// The first child found keyed below its previous sibling.
         child: NodeId,
     },
+    /// A [`StructOp::Move`](crate::engine::structure::StructOp::Move)
+    /// would put a node under itself or under one of its own
+    /// descendants.
+    Cycle {
+        /// The node being moved.
+        node: NodeId,
+        /// The parent it was to move under: the node itself or one of
+        /// its descendants.
+        to: NodeId,
+    },
+    /// A [`StructOp::Split`](crate::engine::structure::StructOp::Split)
+    /// on a node its element cannot cut at the given point
+    /// ([`TreeElement::split`] answered `None`), or on the root, which
+    /// has no row to put a second part in.
+    Unsplittable(NodeId),
+    /// A [`StructOp::Merge`](crate::engine::structure::StructOp::Merge)
+    /// on a node with no next sibling of an equal key, whose next
+    /// sibling has children, or whose element cannot absorb that
+    /// sibling ([`TreeElement::merge`] answered `None`).
+    Unmergeable(NodeId),
+    /// A structural command named a node that an earlier command of the
+    /// same walk removed — the node itself, or a node of its subtree.
+    TargetRemovedEarlier(NodeId),
 }
 
 impl fmt::Display for TreeError {
@@ -108,6 +139,17 @@ impl fmt::Display for TreeError {
             TreeError::RemoveRoot => f.write_str("the root of a tree cannot be removed"),
             TreeError::Unsorted { parent, child } => {
                 write!(f, "child {child} of {parent} is keyed below its previous sibling")
+            }
+            TreeError::Cycle { node, to } => {
+                write!(
+                    f,
+                    "node {node} cannot move under {to}, which is itself or in its subtree"
+                )
+            }
+            TreeError::Unsplittable(id) => write!(f, "node {id} cannot be split there"),
+            TreeError::Unmergeable(id) => write!(f, "node {id} cannot absorb its next sibling"),
+            TreeError::TargetRemovedEarlier(id) => {
+                write!(f, "node {id} was removed earlier in the same walk")
             }
         }
     }
@@ -164,7 +206,10 @@ impl<E: TreeElement> Tree<E> {
     /// The backing arena, read-only. Navigate it with indextree's
     /// `NodeId` methods (`children`, `descendants`, `parent`, …);
     /// change the tree through [`Self::insert_child`],
-    /// [`Self::update`], [`Self::remove_subtree`] or a walk. O(1).
+    /// [`Self::update`], [`Self::remove_subtree`] or a walk. Besides
+    /// the tree, the arena holds every subtree a structural command
+    /// detached and a journal still owns: walk from [`Self::root`], or
+    /// ask [`Self::contains`], to see only the tree. O(1).
     pub fn arena(&self) -> &Arena<E> {
         &self.arena
     }
@@ -173,6 +218,16 @@ impl<E: TreeElement> Tree<E> {
     /// removed. O(1).
     pub fn get(&self, id: NodeId) -> Option<&Node<E>> {
         self.arena.get(id)
+    }
+
+    /// Whether `id` names a node **in the tree**: in the arena, and with
+    /// [`Self::root`] among its ancestors (or the root itself). A
+    /// removed node and a reused slot under an old stamp answer `false`,
+    /// and so does a node of a subtree a structural command detached —
+    /// still allocated, so a journal can put it back, but not part of
+    /// the tree until it does. O(depth of `id`); no allocation.
+    pub fn contains(&self, id: NodeId) -> bool {
+        self.arena.get(id).is_some() && id.ancestors(&self.arena).last() == Some(self.root)
     }
 
     /// Pre-order iterator over every descendant of [`Self::root`]
@@ -217,7 +272,8 @@ impl<E: TreeElement> Tree<E> {
     /// Remove `node` and its whole subtree, freeing their arena slots;
     /// every id in the subtree becomes stale. This is for building
     /// trees — a removal that can be undone keeps its subtree, and is
-    /// a structural command of its own.
+    /// the structural command
+    /// [`StructOp::Remove`](crate::engine::structure::StructOp::Remove).
     ///
     /// Errors (nothing is removed): [`TreeError::StaleNode`] for a node
     /// not in the tree, [`TreeError::RemoveRoot`] for the root. The
@@ -244,15 +300,18 @@ impl<E: TreeElement> Tree<E> {
     /// every sibling keyed at or below its new key, so it ends the run
     /// of that key. It keeps its id and its subtree.
     ///
-    /// Errors: [`TreeError::StaleNode`] for an `id` not in the tree;
-    /// `f` is then not called.
+    /// Errors: [`TreeError::StaleNode`] for an `id` not in the tree
+    /// ([`Self::contains`]) — a node of a subtree a structural command
+    /// detached included, since that subtree belongs to the journal
+    /// that may put it back; `f` is then not called.
     ///
     /// Not journaled: a tree that keeps history changes through
     /// [`Self::update_journaled`].
     ///
-    /// Invalidates the tree's cache. Cost: `f` and two O(1) key reads;
-    /// only when the key changed, a scan of the siblings the element
-    /// moves past plus an O(depth) re-attach.
+    /// Invalidates the tree's cache. Cost: `f`, two O(1) key reads and
+    /// an O(depth) check that `id` is in the tree; only when the key
+    /// changed, a scan of the siblings the element moves past plus an
+    /// O(depth) re-attach.
     pub fn update<R>(&mut self, id: NodeId, f: impl FnOnce(&mut E) -> R) -> Result<R, TreeError> {
         self.update_in(id, None, f)
     }
@@ -290,7 +349,7 @@ impl<E: TreeElement> Tree<E> {
         mut journal: Option<&mut JournalBuilder<E>>,
         f: impl FnOnce(&mut E) -> R,
     ) -> Result<R, TreeError> {
-        if self.arena.get(id).is_none() {
+        if !self.contains(id) {
             return Err(TreeError::StaleNode(id));
         }
         if let Some(journal) = journal.as_deref_mut() {
@@ -340,6 +399,11 @@ pub struct MutatorTree<E: TreeElement, M: Mutation<E>> {
     pub(in crate::engine) arena: Arena<Mutator<E, M>>,
     /// Arena id of the mutator root. Every walk starts here.
     pub root: NodeId,
+    /// Whether any node is a [`Mutator::Structure`]. Kept by the two
+    /// ways a mutator tree gains a node, [`Self::new_with`] and
+    /// [`Self::insert_child`], so a walk knows before it starts whether
+    /// it will have a structural phase.
+    structural: bool,
 }
 
 /// Not derived: `derive(Default)` would demand `E: Default` and
@@ -368,9 +432,14 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// A mutator tree whose root is `node`. O(1); one arena
     /// allocation.
     pub fn new_with(node: Mutator<E, M>) -> Self {
+        let structural = node.is(MutatorType::Structure);
         let mut arena = Arena::default();
         let root = arena.new_node(node);
-        MutatorTree { arena, root }
+        MutatorTree {
+            arena,
+            root,
+            structural,
+        }
     }
 
     /// The backing arena, read-only. O(1).
@@ -398,7 +467,17 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
         mutator: Mutator<E, M>,
         at: Placement,
     ) -> Result<NodeId, TreeError> {
-        siblings::insert_sorted(&mut self.arena, parent, mutator, at, Mutator::key)
+        let structural = mutator.is(MutatorType::Structure);
+        let id = siblings::insert_sorted(&mut self.arena, parent, mutator, at, Mutator::key)?;
+        self.structural |= structural;
+        Ok(id)
+    }
+
+    /// Whether any node of this mutator tree is a
+    /// [`Mutator::Structure`] — whether a walk of it has a structural
+    /// phase. O(1).
+    pub(in crate::engine) fn is_structural(&self) -> bool {
+        self.structural
     }
 
     /// Whether every parent's children are in ascending key order. See
@@ -434,18 +513,29 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// applied anywhere. An element type whose `Inherited` is `()`
     /// passes `&()`.
     ///
-    /// The root is always in the tree, so there is nothing to refuse
-    /// and nothing to return. Invalidates `tree`'s cache once more when
-    /// the walk ends, on top of the one each applied mutator node
-    /// performs, so a walk that applied nothing still leaves no stale
-    /// memo behind.
+    /// The root is always in the tree, so there is no anchor to refuse.
+    /// A [structural command](crate::engine::structure) can still fail;
+    /// the walk is then undone as a whole — its field changes included —
+    /// and the error is logged, since there is nothing to return it to.
+    /// A tree that must see the error is changed through
+    /// [`Self::apply_at`].
+    ///
+    /// Invalidates `tree`'s cache once more when the walk ends, on top
+    /// of the one each applied mutator node performs, so a walk that
+    /// applied nothing still leaves no stale memo behind.
     ///
     /// Cost: O(matching (target, mutator) pairs) — see
-    /// [`walk_tree_from`](crate::engine::walker::walk_tree_from).
+    /// [`walk_tree_from`](crate::engine::walker::walk_tree_from) — plus,
+    /// for a mutator tree with structural commands, what a journaled
+    /// walk costs (see [`Self::apply_at`]).
     pub fn apply_to(&self, tree: &mut Tree<E>, seed: &E::Inherited) {
-        let mut walk = Walk::new(None);
-        walk_anchor(tree, self, tree.root, seed, &mut walk);
-        walk.settle(tree);
+        let root = tree.root;
+        let result = run_walk(tree, self, None, |tree, walk| {
+            walk_anchor(tree, self, root, seed, walk)
+        });
+        if let Err(e) = result {
+            error!("engine: a structural command failed, so the walk was undone: {e}");
+        }
         tree.cache.invalidate();
     }
 
@@ -471,12 +561,23 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     ///    reflects the tree as it was before the call.
     /// 5. The remaining anchors are walked in tree order: the root
     ///    applies to the anchor element and the walk continues below as
-    ///    any walk does.
+    ///    any walk does. A [`Mutator::Structure`] the walk reaches
+    ///    changes nothing yet: its target and its command are collected.
+    /// 6. When every anchor has been walked, the
+    ///    [structural commands](crate::engine::structure) collected
+    ///    are applied in the order the walk reached them.
     ///
     /// All or nothing: every given node is validated — in the tree,
     /// under its root — before anything is resolved or walked, and one
     /// that is not is [`TreeError::StaleNode`], with nothing applied
-    /// and no seed taken.
+    /// and no seed taken. A structural command that fails undoes the
+    /// whole call — the field changes of step 5 and the commands before
+    /// it included — and its error is returned
+    /// ([`StructOp`](crate::engine::structure::StructOp) lists them).
+    /// Undoing needs a record of what the walk changed, so a mutator
+    /// tree with structural commands records into a journal of its own,
+    /// which it then discards — freeing every subtree the walk removed,
+    /// since a tree changed without history cannot put them back.
     ///
     /// Invalidates `tree`'s cache. Cost, with `g` given nodes, `k`
     /// resolved anchors and `d` the depth they sit at:
@@ -492,7 +593,10 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     ///   keys order by key in O(1), and a row is scanned once, the
     ///   first time two anchors part on equal keys in it;
     /// - then one seed and one walk per kept anchor, O(matching pairs
-    ///   below it). Nothing is proportional to the rest of the tree.
+    ///   below it). Nothing is proportional to the rest of the tree;
+    /// - for a mutator tree with structural commands, what
+    ///   [`Self::apply_at_journaled`] costs on top, plus each command's
+    ///   own cost ([`StructOp`](crate::engine::structure::StructOp)).
     ///
     /// Not journaled: for a tree that needs no history (a glyph layer
     /// that is rebuilt). A tree that keeps history is changed through
@@ -511,14 +615,21 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// together with every move a key change causes. Close `journal`
     /// into a [`Journal`](crate::engine::journal::Journal) to revert or
     /// replay the walk exactly. An element the walk visits without
-    /// applying to it is not recorded.
+    /// applying to it is not recorded. The structural commands are
+    /// recorded too: what each inserts, removes or moves, as positions
+    /// in the arrangement the builder started from and the one it
+    /// closes on (see [`Journal`](crate::engine::journal::Journal)). A
+    /// subtree a command removes is detached, not freed: the journal
+    /// owns it until [`Journal::discard`](crate::engine::journal::Journal::discard).
     ///
     /// All or nothing for the whole builder: if the call returns an
     /// error, everything `journal` recorded — this call's applies and
     /// those of earlier calls on the same builder — is reverted before
     /// it returns, the builder is left empty, and the error is
     /// returned. The tree is then as it was when the builder was
-    /// created. A stale anchor is refused before anything is applied.
+    /// created, and every node the builder's commands created is
+    /// freed. A stale anchor is refused before anything is applied; a
+    /// failing structural command, after the walk.
     ///
     /// Cost: [`Self::apply_at`]'s, plus per element applied to one hash
     /// lookup and, on its first record in `journal`, a clone of it; per

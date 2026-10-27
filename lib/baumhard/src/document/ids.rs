@@ -32,8 +32,9 @@
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
-use crate::document::shape::{validate_shape, ShapeError};
+use crate::document::shape::{validate_shape, validate_subtree, ShapeError};
 use crate::document::values::PaletteId;
+use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
 use indextree::NodeId;
 use rustc_hash::FxHashMap;
@@ -284,6 +285,14 @@ impl Document {
     /// node's connector rule. O(children of `id`).
     pub fn validate_shape(&self, id: NodeId) -> Result<(), ShapeError> {
         validate_shape(&self.tree, id)
+    }
+
+    /// [`validate_subtree`]: every row of a detached subtree, judged
+    /// before a structural insert puts it into a document; the root's
+    /// connector rule is [`Self::validate_shape`]'s once it is in place.
+    /// O(elements of `subtree`).
+    pub fn validate_subtree(subtree: &Subtree<DocElement>) -> Result<(), ShapeError> {
+        validate_subtree(subtree)
     }
 }
 

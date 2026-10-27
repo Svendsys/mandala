@@ -9,9 +9,13 @@
 //! only for element types with geometry — a box to hit-test. A
 //! [journal](crate::engine::journal::Journal) needs one more: whether two values
 //! of the element hold the same state
-//! ([`TreeElement::same_state`](crate::engine::element::TreeElement::same_state)). Every
-//! other fact about an element is the business of its
-//! [`Mutation`](crate::engine::mutation::Mutation)s and its
+//! ([`TreeElement::same_state`](crate::engine::element::TreeElement::same_state)).
+//! The [structural commands](crate::engine::structure) that cut one
+//! element in two or join two into one ask the element how
+//! ([`TreeElement::split`](crate::engine::element::TreeElement::split),
+//! [`TreeElement::merge`](crate::engine::element::TreeElement::merge)); by
+//! default it cannot. Every other fact about an element is the
+//! business of its [`Mutation`](crate::engine::mutation::Mutation)s and its
 //! [`Inspect`](crate::engine::predicate::Inspect) surface.
 
 use crate::engine::key::BranchKey;
@@ -55,6 +59,11 @@ pub trait TreeElement: Clone + Debug + Inspect {
     /// a small value type. `()` for an element type that inherits
     /// nothing.
     type Inherited: Clone + Debug;
+
+    /// Where a [`StructOp::Split`](crate::engine::structure::StructOp::Split)
+    /// cuts an element of this type — a grapheme index into a text
+    /// element, say. `()` for an element type that never splits.
+    type SplitPoint: Clone + Debug + Serialize + DeserializeOwned;
 
     /// Whether [`spatial_bounds`](Self::spatial_bounds) can ever return
     /// `Some`. The builder refuses a
@@ -121,6 +130,41 @@ pub trait TreeElement: Clone + Debug + Inspect {
     /// implementation that overrides it sets
     /// [`SPATIAL`](Self::SPATIAL). O(1).
     fn spatial_bounds(&self) -> Option<(Vec2, Vec2)> {
+        None
+    }
+
+    /// This element cut in two at `at`: the first part, which takes
+    /// this element's place and keeps its children, and the second,
+    /// which the split inserts right after it as a new childless
+    /// sibling. `None` when this element cannot be cut there, which the
+    /// split refuses as
+    /// [`TreeError::Unsplittable`](crate::engine::tree::TreeError::Unsplittable).
+    ///
+    /// Both parts keep this element's [key](Self::key): the second
+    /// lands in the first's equal-key run, so a part keyed otherwise is
+    /// refused as
+    /// [`TreeError::PlacementCrossesKey`](crate::engine::tree::TreeError::PlacementCrossesKey).
+    ///
+    /// Defaults to `None`: an element type splits only if it says how.
+    fn split(&self, at: &Self::SplitPoint) -> Option<(Self, Self)> {
+        let _ = at;
+        None
+    }
+
+    /// This element with `next` — its next sibling, of an equal key and
+    /// with no children — absorbed into it, or `None` when the two
+    /// cannot be one element, which the merge refuses as
+    /// [`TreeError::Unmergeable`](crate::engine::tree::TreeError::Unmergeable).
+    /// The result takes this element's place and keeps its children,
+    /// and `next` is removed.
+    ///
+    /// The result keeps this element's [key](Self::key); one keyed
+    /// otherwise is refused as
+    /// [`TreeError::PlacementCrossesKey`](crate::engine::tree::TreeError::PlacementCrossesKey).
+    ///
+    /// Defaults to `None`: an element type merges only if it says how.
+    fn merge(&self, next: &Self) -> Option<Self> {
+        let _ = next;
         None
     }
 }

@@ -28,6 +28,12 @@
 //! or [show it part-way](crate::engine::journal::Journal::write_interpolated)
 //! for an element type that is [`Interpolable`](crate::engine::interpolate::Interpolable).
 //!
+//! A mutator can also change the **structure** of a tree — insert,
+//! remove or move a subtree, split an element in two or merge two into
+//! one ([`StructOp`](crate::engine::structure::StructOp)). The walk collects
+//! those commands and runs them once it is over, journaled like
+//! everything else, so a removal is undone with the same `NodeId`s.
+//!
 //! Nothing here knows what an element *is*. The glyph trees
 //! (`gfx_structs`) are one instantiation — `GfxElement` with the
 //! `GfxMutation` payload — and the document is meant to be another;
@@ -77,6 +83,10 @@ pub mod predicate;
 /// The sorted-children invariant as arena operations: sorted insert,
 /// single-node repair, batch re-attach and the check.
 mod siblings;
+/// Structural commands: [`StructOp`](structure::StructOp) — insert,
+/// remove, move, split, merge — and the [`Subtree`](structure::Subtree)
+/// an insert carries, applied in a walk's second phase and journaled.
+pub mod structure;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8), plus
 /// the `TestElement` instantiation that proves the engine is not
