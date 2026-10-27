@@ -11,6 +11,7 @@
 //! [`ring_offset`].
 
 use glam::Vec2;
+use serde::{Deserialize, Serialize};
 
 use crate::document::values::Shape;
 
@@ -18,7 +19,11 @@ use crate::document::values::Shape;
 /// size. The node's drawn rectangle — position plus fitted or minimum
 /// size, which the projection computes — is one of these, and so is a
 /// fill's.
-#[derive(Copy, Clone, Debug, PartialEq)]
+///
+/// Serializable because a glyph-layer mutation carries one
+/// ([`GfxMutation::FillRect`](crate::gfx_structs::mutator::GfxMutation::FillRect)):
+/// `{"origin": [x, y], "size": [w, h]}`.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
     /// The top-left corner.
     pub origin: Vec2,
