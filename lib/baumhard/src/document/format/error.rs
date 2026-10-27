@@ -24,6 +24,11 @@
 use crate::document::bounds::BoundError;
 use std::fmt;
 
+/// How many ids a [`ParentNotOnChain`](LoadErrorKind::ParentNotOnChain)
+/// error lists as acceptable. The chain can be as long as the tree is
+/// deep, and an error is not the place to print all of it.
+pub const CHAIN_SHOWN: usize = 8;
+
 /// Why a load failed, and where.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadError {
@@ -106,6 +111,31 @@ pub enum LoadErrorKind {
     DuplicateDefinition {
         /// The id.
         id: String,
+    },
+    /// A node's `parent` is not on the chain of ancestors of the node
+    /// before it (which includes that node itself). The list is in
+    /// depth-first pre-order, so a node follows its previous sibling's
+    /// whole subtree, or its parent if it is the first child. A parent
+    /// that names no node, a node that comes later and the node itself
+    /// all land here, which is why a cycle cannot be written. The path
+    /// is the node's `parent`.
+    ParentNotOnChain {
+        /// The parent the node names.
+        parent: u32,
+        /// The ids that would have been accepted: the node before this
+        /// one, then its ancestors, nearest first, at most
+        /// [`CHAIN_SHOWN`]. Empty when this is the first node.
+        chain: Vec<u32>,
+        /// Whether `chain` stops short of the root.
+        truncated: bool,
+    },
+    /// A node's `channel` is below that of the sibling listed before it.
+    /// Siblings are listed in the order the document keeps them, which
+    /// is ascending channel; equal channels keep the order they are in.
+    /// The path is the node's `channel`.
+    SiblingsOutOfOrder {
+        /// The channel of the sibling before it.
+        previous: u64,
     },
     /// A link's `to` names no node.
     DanglingLink {
@@ -195,6 +225,29 @@ impl fmt::Display for LoadErrorKind {
             LoadErrorKind::DuplicateDefinition { id } => {
                 write!(f, "another entry of this list already has the id `{id}`")
             }
+            LoadErrorKind::ParentNotOnChain {
+                parent,
+                chain,
+                truncated,
+            } => {
+                write!(f, "the parent {parent} is not on the chain of the node before this one")?;
+                if chain.is_empty() {
+                    f.write_str(": this is the first node, so it has no parent")
+                } else {
+                    let shown: Vec<String> = chain.iter().map(u32::to_string).collect();
+                    write!(
+                        f,
+                        ": nodes are listed in depth-first order, so the parent is the node before \
+                         this one or one of its ancestors ({}{}), or absent for a new root",
+                        shown.join(", "),
+                        if *truncated { ", ..." } else { "" }
+                    )
+                }
+            }
+            LoadErrorKind::SiblingsOutOfOrder { previous } => write!(
+                f,
+                "siblings are listed in ascending channel order, and the one before this has channel {previous}"
+            ),
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),
             LoadErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),
             LoadErrorKind::UnknownVerb { id } => write!(f, "the map defines no verb `{id}`"),

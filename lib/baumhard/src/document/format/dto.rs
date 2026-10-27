@@ -1293,6 +1293,15 @@ pub(crate) struct LinkDto {
 pub(crate) struct NodeDto {
     /// The id links and verbs name it by, unique in the map.
     pub id: u32,
+    /// The id of its parent node; absent on a root. The list is in
+    /// depth-first pre-order, so the parent is on the chain of ancestors
+    /// of the node before this one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub parent: Option<u32>,
     /// The channel among its sibling nodes.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub channel: u64,
@@ -1411,9 +1420,6 @@ pub(crate) struct NodeDto {
     /// Its links.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkDto>,
-    /// Its child nodes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<NodeDto>,
 }
 
 /// The whole file.
@@ -1445,7 +1451,9 @@ pub(crate) struct MapDto {
     /// The verbs the map defines.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verbs: Vec<VerbDto>,
-    /// The top-level nodes.
+    /// Every node, flat, in depth-first pre-order: each node follows the
+    /// whole subtree of its previous sibling, or its parent if it is the
+    /// first child. A node's `parent` names the node it hangs from.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<NodeDto>,
 }
