@@ -2334,6 +2334,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_run_element_answers_position_and_flags_like_any_element)
     });
     c.bench_function(
+        "authored_run_and_fill_mutations_leave_other_elements_unchanged",
+        |b| b.iter(do_authored_run_and_fill_mutations_leave_other_elements_unchanged),
+    );
+    c.bench_function(
         "run_mutations_leave_other_elements_alone_and_other_mutations_leave_runs_alone",
         |b| b.iter(do_run_mutations_leave_other_elements_alone_and_other_mutations_leave_runs_alone),
     );

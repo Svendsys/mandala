@@ -720,9 +720,11 @@ Each variant boxes its payload to keep the enum compact. Type
 mismatches (e.g. `ModelDelta` applied to a `GlyphArea`) are
 silently ignored per the [`Applicable`](#applicablet) no-panic
 rule; a run or fill mutation at an element of another kind is
-ignored the same way, and a debug build also trips a `debug_assert!`.
-`RunSet` and `FillSet` hold shaped text and are never authored:
-they are `#[serde(skip)]` and have no JSON spelling.
+ignored and logged the same way, in every build. `RunSet` and
+`FillSet` are projection-only and never authored: they are
+`#[serde(skip)]` and have no JSON spelling, and since only a
+projection bug can land one on the wrong element, that case also trips
+a `debug_assert!`.
 
 ### `GlyphAreaField` and `DeltaGlyphArea`
 

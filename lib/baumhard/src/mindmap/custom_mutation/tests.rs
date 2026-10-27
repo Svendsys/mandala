@@ -1223,3 +1223,38 @@ mod flat_mutations_tests {
         assert!(flat_mutations(&node).is_none());
     }
 }
+
+/// A map can carry a run or fill mutation in its `custom_mutations`
+/// (they have serde forms), and the app applies each authored list to
+/// every element in scope — areas today, runs, fills and voids once
+/// projection emits them. Loaded from JSON, flattened and applied to an
+/// area the way `apply_mutations_to_element` is called, `RunOpacity`
+/// must not panic (a debug build included) and must leave the element
+/// unchanged. Ruling R18 on #240; the reviewer's reproduction.
+#[test]
+fn test_a_run_mutation_in_a_loaded_custom_mutation_leaves_an_area_unchanged() {
+    use crate::engine::element::TreeElement;
+    use crate::gfx_structs::area::GlyphArea;
+    use crate::gfx_structs::element::GfxElement;
+    use glam::Vec2;
+
+    let json = r#"{"id":"fade","name":"Fade","description":"","contexts":["map.node"],
+        "mutations":[{"RunOpacity":0.5}],"target_scope":"SelfOnly"}"#;
+    let cm: CustomMutation = serde_json::from_str(json).unwrap();
+    let mutator = cm
+        .mutator
+        .as_ref()
+        .expect("the legacy shape synthesizes a mutator");
+    let flat = flat_mutations(mutator).expect("a literal macro flattens");
+    assert_eq!(
+        flat,
+        vec![GfxMutation::RunOpacity(0.5)],
+        "the fixture carries the run mutation"
+    );
+
+    let mut area =
+        GfxElement::new_area_non_indexed(GlyphArea::new(1.0, 10.0, Vec2::ZERO, Vec2::new(10.0, 10.0)), 0);
+    let before = area.clone();
+    apply_mutations_to_element(&flat, &mut area);
+    assert!(area.same_state(&before), "the area is exactly as it was");
+}

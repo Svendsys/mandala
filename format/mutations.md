@@ -231,11 +231,12 @@ extend it, padding any gap with whitespace.
 The glyph layers (design §12.1) are made of two element types besides
 areas and models. A **`GlyphRun`** is one whole TextFlow — a shaped
 box or a shaped run placed along a path — and a **`Fill`** is a node's
-background. Four run mutations and three fill mutations are *authored*:
+background. Three run mutations and three fill mutations are *authored*:
 a presentation or a custom mutation can name them. The two that
-replace a whole payload, `RunSet` and `FillSet`, hold shaped text and
-belong to projection; they have **no JSON spelling**, and `{"RunSet": …}`
-or `{"FillSet": …}` in a file is refused as an unknown variant.
+replace a whole payload, `RunSet` and `FillSet`, belong to projection
+and are never authored; they have **no JSON spelling**, and
+`{"RunSet": …}` or `{"FillSet": …}` in a file is refused as an unknown
+variant.
 
 ```json
 {
@@ -294,8 +295,10 @@ On a predicate, two element-level fields select these elements:
 comparators and matches only a run or a fill.
 
 A run or fill mutation that reaches an element of another kind changes
-nothing; a debug build also trips a `debug_assert!`, as a document
-payload at the wrong element does.
+nothing and is logged, in every build. A scope such as
+`SelfAndDescendants` sends one list to elements of every kind, so
+`{"RunOpacity": 0.5}` meets areas, models and voids and leaves them as
+they were.
 
 ### Document-actions-only mutation
 

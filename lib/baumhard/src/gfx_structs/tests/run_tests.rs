@@ -622,17 +622,18 @@ pub fn do_run_override_ops_skip_filler_glyphs() {
 
     // Only filler in range: nothing to write.
     let element = with_ops(
-        shape,
+        shape.clone(),
         vec![RunOverrideOp::Offset {
             range: 2..4,
             value: target,
         }],
     );
-    assert_eq!(
-        element.glyph_run().unwrap().overrides().offset(),
-        &[Vec2::ZERO; 4],
-        "filler keeps its neutral offset"
+    assert!(
+        element.glyph_run().unwrap().overrides().is_empty(),
+        "a range over filler only writes nothing, so it does not even materialize the overrides"
     );
+    let untouched = with_ops(shape, vec![]);
+    assert!(element.same_state(&untouched), "the run is exactly as it was");
 }
 
 // ── element metadata ──────────────────────────────────────────────
@@ -696,65 +697,164 @@ pub fn do_run_mutations_leave_other_elements_alone_and_other_mutations_leave_run
     );
 }
 
-#[cfg(all(test, debug_assertions))]
-mod refusals {
-    use super::*;
-    use crate::flow::Rect;
+#[test]
+fn test_authored_run_and_fill_mutations_leave_other_elements_unchanged() {
+    do_authored_run_and_fill_mutations_leave_other_elements_unchanged();
+}
+
+/// The six authored mutations (`RunOrigin`, `RunOpacity`,
+/// `RunOverrides`, `FillColor`, `FillOpacity`, `FillRect`) come from a
+/// map's `custom_mutations`, so they reach elements of every kind: at
+/// any element but their own they change nothing, in every build
+/// profile, and never assert (ruling R18 on #240). Each is first shown
+/// to change an element of its own kind, so "unchanged" is not just a
+/// mutation that never does anything.
+pub fn do_authored_run_and_fill_mutations_leave_other_elements_unchanged() {
     use crate::gfx_structs::area::GlyphArea;
     use crate::gfx_structs::model::GlyphModel;
+    use crate::gfx_structs::tests::fill_tests::a_fill_element;
+
+    let area =
+        || GfxElement::new_area_non_indexed(GlyphArea::new(1.0, 10.0, Vec2::ZERO, Vec2::new(10.0, 10.0)), 0);
+    let model = || GfxElement::new_model_non_indexed(GlyphModel::new(), 0, 1);
+    let void = || GfxElement::new_void(0);
+    // (name, element kind that owns it, the mutation)
+    let authored: Vec<(&str, bool, GfxMutation)> = vec![
+        ("RunOrigin", true, GfxMutation::RunOrigin(Vec2::new(1.0, 2.0))),
+        ("RunOpacity", true, GfxMutation::RunOpacity(0.25)),
+        (
+            "RunOverrides",
+            true,
+            GfxMutation::RunOverrides(RunOverrideOp::Offset {
+                range: 0..2,
+                value: Vec2::new(1.0, 1.0),
+            }),
+        ),
+        ("FillColor", false, GfxMutation::FillColor(Rgba::new(1, 2, 3, 4))),
+        ("FillOpacity", false, GfxMutation::FillOpacity(0.1)),
+        (
+            "FillRect",
+            false,
+            GfxMutation::FillRect(crate::flow::Rect::new(Vec2::new(1.0, 2.0), Vec2::new(3.0, 4.0))),
+        ),
+    ];
+    for (name, for_runs, mutation) in authored {
+        let (own, others): (GfxElement, Vec<(&str, GfxElement)>) = if for_runs {
+            (
+                four_glyph_element(),
+                vec![
+                    ("area", area()),
+                    ("model", model()),
+                    ("void", void()),
+                    ("fill", a_fill_element()),
+                ],
+            )
+        } else {
+            (
+                a_fill_element(),
+                vec![
+                    ("area", area()),
+                    ("model", model()),
+                    ("void", void()),
+                    ("run", four_glyph_element()),
+                ],
+            )
+        };
+        let mut changed = own.clone();
+        apply(&mut changed, mutation.clone());
+        assert!(
+            !changed.same_state(&own),
+            "{name} changes an element of its own kind"
+        );
+
+        for (kind, element) in others {
+            let mut target = element.clone();
+            apply(&mut target, mutation.clone());
+            assert!(
+                target.same_state(&element),
+                "{name} at {kind} leaves the element unchanged"
+            );
+        }
+    }
+}
+
+/// `RunSet` and `FillSet` come only from projection and are never
+/// authored: landing on the wrong element is a projection bug, so a
+/// debug build asserts. (A release build leaves the element unchanged,
+/// as the authored six do in both.)
+#[cfg(all(test, debug_assertions))]
+mod projection_only_refusals {
+    use super::*;
+    use crate::gfx_structs::area::GlyphArea;
+    use crate::gfx_structs::fill::FillData;
+    use crate::gfx_structs::model::GlyphModel;
+    use crate::gfx_structs::tests::fill_tests::a_fill;
 
     fn an_area() -> GfxElement {
         GfxElement::new_area_non_indexed(GlyphArea::new(1.0, 10.0, Vec2::ZERO, Vec2::new(10.0, 10.0)), 0)
     }
 
+    fn run_set() -> GfxMutation {
+        GfxMutation::RunSet(Box::new(run_of(four_glyph_shape(), Vec2::ZERO)))
+    }
+
+    fn fill_set() -> GfxMutation {
+        GfxMutation::FillSet(Box::new(FillData { ..a_fill() }))
+    }
+
     #[test]
     #[should_panic(expected = "reached a GlyphArea")]
-    fn test_a_run_mutation_at_an_area_trips_the_debug_assert() {
-        apply(&mut an_area(), GfxMutation::RunOpacity(0.5));
+    fn test_a_run_set_at_an_area_trips_the_debug_assert() {
+        apply(&mut an_area(), run_set());
     }
 
     #[test]
     #[should_panic(expected = "reached a GlyphModel")]
-    fn test_a_run_mutation_at_a_model_trips_the_debug_assert() {
+    fn test_a_run_set_at_a_model_trips_the_debug_assert() {
         let mut model = GfxElement::new_model_non_indexed(GlyphModel::new(), 0, 1);
-        apply(&mut model, GfxMutation::RunOrigin(Vec2::ONE));
+        apply(&mut model, run_set());
     }
 
     #[test]
     #[should_panic(expected = "reached a Void")]
-    fn test_a_run_mutation_at_a_void_trips_the_debug_assert() {
-        apply(
-            &mut GfxElement::new_void(0),
-            GfxMutation::RunOverrides(RunOverrideOp::Clear),
-        );
+    fn test_a_run_set_at_a_void_trips_the_debug_assert() {
+        apply(&mut GfxElement::new_void(0), run_set());
     }
 
     #[test]
     #[should_panic(expected = "reached a Fill")]
-    fn test_a_run_mutation_at_a_fill_trips_the_debug_assert() {
-        let fill = crate::gfx_structs::fill::FillData {
-            rect: Rect::new(Vec2::ZERO, Vec2::new(10.0, 10.0)),
-            shape: crate::gfx_structs::fill::FillShape::Ellipse,
-            color: RED,
-            fade: 0.0,
-            opacity: 1.0,
-            zoom: None,
-        };
-        apply(
-            &mut GfxElement::new_fill(fill, 0, 1),
-            GfxMutation::RunOpacity(0.5),
-        );
+    fn test_a_run_set_at_a_fill_trips_the_debug_assert() {
+        apply(&mut GfxElement::new_fill(a_fill(), 0, 1), run_set());
     }
 
     #[test]
     #[should_panic(expected = "reached a GlyphRun")]
-    fn test_a_fill_mutation_at_a_run_trips_the_debug_assert() {
-        apply(&mut four_glyph_element(), GfxMutation::FillOpacity(0.5));
+    fn test_a_fill_set_at_a_run_trips_the_debug_assert() {
+        apply(&mut four_glyph_element(), fill_set());
     }
 
     #[test]
     #[should_panic(expected = "reached a GlyphArea")]
-    fn test_a_fill_mutation_at_an_area_trips_the_debug_assert() {
-        apply(&mut an_area(), GfxMutation::FillColor(RED));
+    fn test_a_fill_set_at_an_area_trips_the_debug_assert() {
+        apply(&mut an_area(), fill_set());
     }
+}
+
+/// The release-profile half of the above: `RunSet` and `FillSet` at the
+/// wrong element change nothing. Runs only in a release test build.
+#[cfg(all(test, not(debug_assertions)))]
+#[test]
+fn test_projection_only_mutations_at_the_wrong_element_change_nothing_in_release() {
+    use crate::gfx_structs::tests::fill_tests::{a_fill, a_fill_element};
+    let mut run = four_glyph_element();
+    let before = run.clone();
+    apply(&mut run, GfxMutation::FillSet(Box::new(a_fill())));
+    assert!(run.same_state(&before));
+    let mut fill = a_fill_element();
+    let before = fill.clone();
+    apply(
+        &mut fill,
+        GfxMutation::RunSet(Box::new(run_of(four_glyph_shape(), Vec2::ZERO))),
+    );
+    assert!(fill.same_state(&before));
 }

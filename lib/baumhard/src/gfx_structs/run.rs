@@ -439,7 +439,8 @@ impl GlyphRunData {
     /// Apply one override op. A range is clamped to the glyph count and
     /// skips filler glyphs; the first write to a run without overrides
     /// materializes [`GlyphOverrides::new`] for it, and an op that
-    /// writes nothing leaves the run untouched.
+    /// writes nothing (an empty range, or one over filler only) leaves
+    /// the run untouched.
     ///
     /// Cost: O(glyphs in range); O(glyph count) once, to materialize.
     pub(crate) fn apply_override(&mut self, op: &RunOverrideOp) {
@@ -453,7 +454,11 @@ impl GlyphRunData {
             | RunOverrideOp::Color { range, .. }
             | RunOverrideOp::Scale { range, .. } => clamp_range(range, count),
         };
-        if range.is_empty() {
+        // An op that would write no glyph — an empty range, or one that
+        // covers filler only — leaves the run untouched: materializing
+        // would turn `none()` into three neutral vectors, a change of
+        // state for the journal that draws nothing differently.
+        if range.clone().all(|index| self.shaped.is_filler(index)) {
             return;
         }
         if self.overrides.is_empty() {

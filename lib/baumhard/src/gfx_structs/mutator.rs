@@ -6,7 +6,7 @@
 //! `GlyphTreeEvent` side channel that a [`GfxMutation::Event`](crate::gfx_structs::mutator::GfxMutation::Event)
 //! delivers to an element's subscribers.
 
-use crate::core::primitives::Applicable;
+use crate::core::primitives::{Applicable, Discriminated};
 use crate::document::values::Rgba;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
@@ -344,10 +344,9 @@ impl GfxMutation {
     }
 
     /// Apply this mutation directly to a run's data. Only the `Run*`
-    /// variants write one; any other payload is the wrong kind for the
-    /// element and is refused as [`Self::refuse_run_or_fill`] refuses a
-    /// run or fill payload at a non-run element: a no-op with a
-    /// `debug_assert!`.
+    /// variants write one; a fill payload is the wrong kind for the
+    /// element and is a no-op (see [`Self::refuse_run_or_fill`]), and an
+    /// area or model payload is ignored as at a `Void`.
     ///
     /// Cost: O(1), except `RunSet` (a payload clone) and `RunOverrides`
     /// (O(glyphs in range)). See [`Self::apply_to_area`] for the
@@ -391,14 +390,28 @@ impl GfxMutation {
     }
 
     /// A run or fill payload reached an element of another kind
-    /// (`target`): nothing changes, and a debug build trips a
-    /// `debug_assert!`, as a document payload at the wrong element
-    /// does. A release build logs at `debug!` and carries on, so a
-    /// mismatched authored mutation never takes an interactive path
-    /// down.
+    /// (`target`): nothing changes, in every build profile.
+    ///
+    /// The six authored variants (`RunOrigin`, `RunOpacity`,
+    /// `RunOverrides`, `FillColor`, `FillOpacity`, `FillRect`) can come
+    /// from a map's `custom_mutations`, which is untrusted input, and a
+    /// scope such as `SelfAndDescendants` sends one list to elements of
+    /// every kind. They are a logged no-op, as an area or model payload
+    /// at the wrong element is, and never assert.
+    ///
+    /// `RunSet` and `FillSet` come only from projection and are never
+    /// authored, so landing on the wrong element is a projection bug:
+    /// those also trip a `debug_assert!`.
     fn refuse_run_or_fill(&self, target: &str) {
-        debug!("gfx_structs: a run or fill mutation reached {target}, ignoring.");
-        debug_assert!(false, "a run or fill mutation ({self:?}) reached {target}");
+        debug!(
+            "gfx_structs: a {:?} mutation reached {target}, ignoring.",
+            self.variant()
+        );
+        debug_assert!(
+            !matches!(self, RunSet(_) | FillSet(_)),
+            "a projection-only {:?} mutation reached {target}",
+            self.variant()
+        );
     }
 }
 
@@ -412,8 +425,9 @@ impl Mutation<GfxElement> for GfxMutation {
     /// dispatched to the element's subscribers; field mutations are
     /// routed to the matching element type (area, model, run or fill).
     /// Applying to a `Void` element or a type mismatch is a no-op
-    /// (logged at debug level) — and for a run or fill payload at an
-    /// element of another kind, a `debug_assert!` as well. Cost: O(k)
+    /// (logged at debug level), a run or fill payload at an element of
+    /// another kind included; only `RunSet` and `FillSet`, which are
+    /// never authored, also trip a `debug_assert!` there. Cost: O(k)
     /// in the number of delta fields, or O(1) for commands and events.
     fn apply_to(&self, target: &mut GfxElement, _inherited: &()) {
         if let Event(event) = self {
