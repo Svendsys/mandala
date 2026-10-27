@@ -11,6 +11,8 @@ use crate::document::element::{
     TextStyle,
 };
 use crate::document::ids::Document;
+use crate::document::mutation::inherited::inherited_seed;
+use crate::document::mutation::ops::DocMutation;
 use crate::document::shape::{Cardinality, RowError, ShapeError};
 use crate::document::tests::test_support::{node_data, path_data, span, DocumentBuilder};
 use crate::document::values::{LinkKind, LinkTarget};
@@ -158,7 +160,7 @@ pub fn do_document_span_split_and_merge_are_journaled_commands() {
     let children =
         |tree: &crate::engine::tree::Tree<DocElement>| section.children(tree.arena()).collect::<Vec<_>>();
     let command = |op, kind| {
-        MutatorTree::new_with(Mutator::<DocElement, NoMutation>::new_structure(
+        MutatorTree::new_with(Mutator::<DocElement, DocMutation>::new_structure(
             op,
             BranchKey::new(kind, 0),
         ))
@@ -167,7 +169,7 @@ pub fn do_document_span_split_and_merge_are_journaled_commands() {
 
     let mut journal = JournalBuilder::new();
     command(StructOp::Split { at: 3 }, DocKind::Span)
-        .apply_at_journaled(&mut tree, &at(first), |_, _| (), &mut journal)
+        .apply_at_journaled(&mut tree, &at(first), inherited_seed, &mut journal)
         .unwrap();
     let after = children(&tree);
     assert_eq!(after.len(), 3);
@@ -184,31 +186,18 @@ pub fn do_document_span_split_and_merge_are_journaled_commands() {
     let result = command(StructOp::Merge, DocKind::Span).apply_at_journaled(
         &mut tree,
         &at(after[1]),
-        |_, _| (),
+        inherited_seed,
         &mut JournalBuilder::new(),
     );
     assert_eq!(result, Err(TreeError::Unmergeable(after[1])));
     let result = command(StructOp::Split { at: 1 }, DocKind::Section).apply_at_journaled(
         &mut tree,
         &at(section),
-        |_, _| (),
+        inherited_seed,
         &mut JournalBuilder::new(),
     );
     assert_eq!(result, Err(TreeError::Unsplittable(section)));
     assert_eq!(children(&tree), held);
-}
-
-/// A mutation type with no mutation: these walks carry structural
-/// commands only.
-#[derive(Clone, Debug)]
-pub enum NoMutation {}
-
-impl crate::engine::mutation::Mutation<DocElement> for NoMutation {
-    type Template = ();
-
-    fn apply_to(&self, _target: &mut DocElement, _inherited: &()) {
-        match *self {}
-    }
 }
 
 // ── validate_subtree ──────────────────────────────────────────────
