@@ -13,8 +13,8 @@ use crate::document::element::{
     RingData, RingStyle, SectionData, SpanData, TextStyle, ThemeData, ThemeVariant,
 };
 use crate::document::format::{
-    check_savable, check_savable_holding, check_savable_under, load, load_under, save, Limits, LoadErrorKind,
-    SaveError, SaveErrorKind,
+    check_savable, check_savable_by_building, check_savable_holding, check_savable_holding_under,
+    check_savable_under, load, load_under, save, Limits, LoadErrorKind, OneNode, SaveError, SaveErrorKind,
 };
 use crate::document::ids::{Definitions, EditDef, VerbDef};
 use crate::document::tests::format_memory_shapes::elements_of;
@@ -40,6 +40,9 @@ fn refused(builder: DocumentBuilder) -> SaveError {
         None,
         "the one-node check passed a document the full build refuses: {error}"
     );
+    // And what it refuses with, when it names the refusal itself, is
+    // exactly the full build's.
+    assert_eq!(check_savable_by_building(&doc, None), Err(error.clone()));
     error
 }
 
@@ -706,6 +709,12 @@ fn test_the_one_node_check_never_passes_what_the_full_build_refuses() {
         let doc = Document::from_loaded(tree.clone(), loaded.definitions().clone(), index, 3)
             .expect("the map row is fine");
         assert_eq!(doc.ident_count(), if name == "short" { 1 } else { 2 });
+        // An id refusal is the full build's to name.
+        assert_eq!(
+            check_savable_holding_under(&doc, None).1,
+            OneNode::Unsure,
+            "{name}"
+        );
         let (result, held) = check_savable_holding(&doc);
         assert_eq!(
             held, None,
@@ -719,4 +728,31 @@ fn test_the_one_node_check_never_passes_what_the_full_build_refuses() {
             "{name}: {refusal:?}"
         );
     }
+}
+
+#[test]
+fn test_a_bound_refusal_is_named_by_the_one_node_check_without_a_second_document() {
+    // Past the element bound, a document grown by edits — the refusal a
+    // legitimate document can reach — is refused by the one-node check
+    // itself: the full build, which would hold a second copy of the
+    // document, is not run. Its refusal is the full build's, word for
+    // word.
+    let doc = load(&map_of(r#","sections":[{"spans":[{"text":"x"}]}]"#)).expect("the map loads");
+    let (result, answer) = check_savable_holding_under(&doc, Some(5));
+    let refusal = match answer {
+        OneNode::Refused(refusal) => refusal,
+        other => panic!("the one-node check did not name the bound refusal itself: {other:?}"),
+    };
+    assert_eq!(refusal.path, "nodes[0].sections[0].spans[0]");
+    assert!(
+        matches!(&refusal.kind, SaveErrorKind::NotLoadable { error } if error.kind == LoadErrorKind::TooManyElements { max: 5 }),
+        "{refusal:?}"
+    );
+    assert_eq!(result, Err(refusal.clone()));
+    assert_eq!(check_savable_by_building(&doc, Some(5)), Err(refusal));
+    // Control: within the bound it passes.
+    assert!(matches!(
+        check_savable_holding_under(&doc, Some(6)).1,
+        OneNode::Passed(_)
+    ));
 }

@@ -415,10 +415,14 @@ fn not_loadable(error: LoadError) -> SaveError {
 /// the index holds, other than its own node's, and at the end the index
 /// must hold no id but the nodes'. A parent is looked for on the chain,
 /// where a load finds it. So a check that passes is one the full build
-/// passes. When any of it refuses, the document is checked again by the
-/// full build, which keeps what a load keeps and so reports exactly the
-/// error a load of the file would: a refusal costs a second copy of the
-/// document, and a pass never does.
+/// passes. A refusal about a node's own content, a bound, the element
+/// limit or anything the saver refuses is the one a load would give,
+/// and is returned as it is. Only a refusal about ids, parents or links
+/// — which the check answers from `doc`, not from the nodes a load keeps
+/// — is named by checking again with the full build, which keeps what a
+/// load keeps: that refusal, and only it, costs a second copy of the
+/// document. A document grown past the element limit is therefore
+/// refused without one.
 ///
 /// Cost: one iterative walk of the tree, building one node's DTO and
 /// elements at a time; O(elements) whatever the depth, with one hash
@@ -434,8 +438,10 @@ pub fn check_savable(doc: &Document) -> Result<(), SaveError> {
 /// [`check_savable`] against caller-supplied limits, for the reason
 /// [`load_under`] takes them.
 pub(crate) fn check_savable_under(doc: &Document, limits: Limits) -> Result<(), SaveError> {
-    if check_one_node(doc, limits.elements).is_none() {
-        check_by_building(doc, limits.elements)?;
+    match check_one_node(doc, limits.elements) {
+        OneNode::Passed(_) => {}
+        OneNode::Refused(refusal) => return Err(refusal),
+        OneNode::Unsure => check_by_building(doc, limits.elements)?,
     }
     if let Some(max) = limits.bytes {
         let bytes = saved_length(doc)?;
@@ -449,62 +455,148 @@ pub(crate) fn check_savable_under(doc: &Document, limits: Limits) -> Result<(), 
     Ok(())
 }
 
-/// [`check_savable`], and the most elements its builder held at once —
-/// `None` when it refused, and the full build reported why. A test
-/// bounds the count by one node's.
+/// [`check_savable_under`] without the byte bound, and what its one-node
+/// check answered: the most elements it held at once when it passed. A
+/// test bounds the count by one node's, and asserts which refusals the
+/// full build names.
+#[cfg(test)]
+pub(crate) fn check_savable_holding_under(
+    doc: &Document,
+    max_elements: Option<u64>,
+) -> (Result<(), SaveError>, OneNode) {
+    let answer = check_one_node(doc, max_elements);
+    let result = match &answer {
+        OneNode::Passed(_) => Ok(()),
+        OneNode::Refused(refusal) => Err(refusal.clone()),
+        OneNode::Unsure => check_by_building(doc, max_elements),
+    };
+    (result, answer)
+}
+
+/// [`check_savable_holding_under`] at this target's element bound, with
+/// the answer as the most elements held, `None` when the one-node check
+/// did not pass.
 #[cfg(test)]
 pub(crate) fn check_savable_holding(doc: &Document) -> (Result<(), SaveError>, Option<usize>) {
-    let held = check_one_node(doc, LIMITS.elements);
-    let result = match held {
-        Some(_) => Ok(()),
-        None => check_by_building(doc, LIMITS.elements),
+    let (result, answer) = check_savable_holding_under(doc, LIMITS.elements);
+    let held = match answer {
+        OneNode::Passed(held) => Some(held),
+        _ => None,
     };
     (result, held)
 }
 
-/// The one-node check of [`check_savable`]: `Some` with the most
-/// elements its builder held at once when the file would load, and
-/// `None` when anything refused — the refusal is then the full build's
-/// to name.
-fn check_one_node(doc: &Document, max_elements: Option<u64>) -> Option<usize> {
-    let header = to_dto::header_of(doc).ok()?;
-    let mut builder = Builder::begin(&header, Keep::OneNode, max_elements).ok()?;
-    // What `each_node` is stopped with: the refusal itself is the full
-    // build's to name.
-    let stop = || {
-        SaveError::new(
-            String::new(),
-            SaveErrorKind::Io {
-                message: String::new(),
-            },
-        )
+/// What the one-node check of [`check_savable`] found.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum OneNode {
+    /// The file would load; the most elements the check held at once.
+    Passed(usize),
+    /// The file would not load, for a reason the check names exactly as
+    /// a load would: a bound, the element limit, a value out of place,
+    /// anything the saver itself refuses. Each depends only on the node
+    /// it is in and the header, which the check holds as a load does.
+    Refused(SaveError),
+    /// Something about ids, parents or links refused, or a defect: the
+    /// check answers those from the document rather than from the nodes
+    /// a load keeps, so the full build names it.
+    Unsure,
+}
+
+/// Whether a refusal the one-node builder raised is about what that
+/// builder does not keep — ids, parents, links — or a defect, and so
+/// must be named by the full build.
+fn needs_the_full_build(kind: &LoadErrorKind) -> bool {
+    matches!(
+        kind,
+        LoadErrorKind::DuplicateId { .. }
+            | LoadErrorKind::ParentIsSelf { .. }
+            | LoadErrorKind::ParentNotEarlier { .. }
+            | LoadErrorKind::ParentNotOnChain { .. }
+            | LoadErrorKind::DanglingLink { .. }
+            | LoadErrorKind::SelfLink
+            | LoadErrorKind::Internal { .. }
+    )
+}
+
+/// The one-node check of [`check_savable`]. See [`OneNode`].
+fn check_one_node(doc: &Document, max_elements: Option<u64>) -> OneNode {
+    let header = match to_dto::header_of(doc) {
+        Ok(header) => header,
+        Err(refusal) => return OneNode::Refused(refusal),
     };
+    let mut builder = match Builder::begin(&header, Keep::OneNode, max_elements) {
+        Ok(builder) => builder,
+        Err(error) if needs_the_full_build(&error.kind) => return OneNode::Unsure,
+        Err(error) => return OneNode::Refused(not_loadable(error)),
+    };
+    // Set when `each_node` is stopped for the full build to name why.
+    let mut unsure = false;
     let mut nodes = 0usize;
-    to_dto::each_node(doc, |i, id, dto| {
+    let walked = to_dto::each_node(doc, |i, id, dto| {
+        let stop = |unsure: &mut bool| {
+            *unsure = true;
+            SaveError::new(
+                String::new(),
+                SaveErrorKind::Io {
+                    message: String::new(),
+                },
+            )
+        };
         // The ident index must hold this node under its id: no other
         // node of the document can then have the same id.
         let own = u32::try_from(dto.id).ok().map(crate::document::ids::NodeIdent);
         if own.and_then(|own| doc.node_by_ident(own)) != Some(id) {
-            return Err(stop());
+            return Err(stop(&mut unsure));
         }
         // A link names a node the index holds, other than its own.
         for link in &dto.links {
             let to = u32::try_from(link.to).ok().map(crate::document::ids::NodeIdent);
             match to.and_then(|to| doc.node_by_ident(to)) {
                 Some(target) if target != id => {}
-                _ => return Err(stop()),
+                _ => return Err(stop(&mut unsure)),
             }
         }
         nodes += 1;
-        builder.node(i, &dto).map_err(|_| stop())
-    })
-    .ok()?;
+        builder.node(i, &dto).map_err(|error| {
+            if needs_the_full_build(&error.kind) {
+                return stop(&mut unsure);
+            }
+            node_refusal(doc, i, id, error)
+        })
+    });
+    match walked {
+        Err(_) if unsure => return OneNode::Unsure,
+        Err(refusal) => return OneNode::Refused(refusal),
+        Ok(()) => {}
+    }
     // And the index holds nothing else, so every id a link named is a
     // node the file lists.
     if nodes != doc.ident_count() {
-        return None;
+        return OneNode::Unsure;
     }
-    builder.finish_check().ok()
+    match builder.finish_check() {
+        Ok(held) => OneNode::Passed(held),
+        Err(error) if needs_the_full_build(&error.kind) => OneNode::Unsure,
+        Err(error) => OneNode::Refused(not_loadable(error)),
+    }
+}
+
+/// The saver's refusal for `error`, which the builder raised building
+/// node `i` (the document's `id`), named with the node's excerpt as the
+/// document holds it.
+fn node_refusal(doc: &Document, i: usize, id: indextree::NodeId, error: LoadError) -> SaveError {
+    let mut refusal = not_loadable(error);
+    if let Some(context) = refusal.node.as_mut().filter(|context| context.index == i) {
+        context.excerpt = context::tree_excerpt(doc.tree(), id);
+    }
+    refusal
+}
+
+/// [`check_by_building`], for a test that holds the one-node check's
+/// refusals to the full build's.
+#[cfg(test)]
+pub(crate) fn check_savable_by_building(doc: &Document, max_elements: Option<u64>) -> Result<(), SaveError> {
+    check_by_building(doc, max_elements)
 }
 
 /// The full build of [`check_savable`]: the document a load of the file
@@ -513,13 +605,9 @@ fn check_by_building(doc: &Document, max_elements: Option<u64>) -> Result<(), Sa
     let header = to_dto::header_of(doc)?;
     let mut builder = Builder::begin(&header, Keep::Document, max_elements).map_err(not_loadable)?;
     to_dto::each_node(doc, |i, id, dto| {
-        builder.node(i, &dto).map_err(|error| {
-            let mut refusal = not_loadable(error);
-            if let Some(context) = refusal.node.as_mut().filter(|context| context.index == i) {
-                context.excerpt = context::tree_excerpt(doc.tree(), id);
-            }
-            refusal
-        })
+        builder
+            .node(i, &dto)
+            .map_err(|error| node_refusal(doc, i, id, error))
     })?;
     builder.finish().map(|_| ()).map_err(not_loadable)
 }

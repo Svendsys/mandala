@@ -204,12 +204,15 @@ the parity trajectory (or why none is owed):
   rounding, `realloc` copies and freed chunks it could not reuse —
   in the probe (`lib/baumhard/tests/wasm_font_lock.rs`), which
   fails if a pin is stale; `lib/baumhard/tests/format_memory.rs`
-  holds the same maps to the model natively. `save` holds one node
-  beside the document, never a second copy, and refuses on wasm32
-  what that target's load would refuse. What is not bounded: a
-  document grown by edits past the element limit, and what the app
-  builds from the document (the scene), which the 1 GiB left of the
-  4 GiB address space is for. The old `.mindmap.json` loader keeps
+  holds the same maps to the model natively. `save` holds one node's
+  row at a time beside the document — a second copy only to name a
+  refusal about ids, parents or links, which only a defect makes —
+  and refuses on wasm32 what that target's load would refuse, the
+  element limit included, without that copy. What is not bounded: an
+  edit that grows a document past the element limit (its save is
+  refused, the edit is not), and what the app builds from the
+  document (the scene), which the 1 GiB left of the 4 GiB address
+  space is for. The old `.mindmap.json` loader keeps
   its own 3 GiB `MAX_MAP_BYTES` (`mindmap/loader.rs`) until C3
   retires it. Divergent by platform physics rather than policy:
   wasm32's `usize` is 32 bits and its address space is 4 GiB,
