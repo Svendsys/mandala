@@ -332,11 +332,10 @@ fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     let position = error.position.expect("a reader's error has a place");
     assert_eq!(position.line, 50);
     let key_at = bad.lines().nth(49).unwrap().find("\"bogus\"").unwrap() as u32 + 1;
-    assert!(
-        (key_at..=key_at + 8).contains(&position.column),
-        "column {} is not at the key, which starts at {key_at}",
-        position.column
-    );
+    // The reader stops at the key's closing quote, the seventh byte of
+    // `"bogus"`: the column in the whole line, not in the node's extent,
+    // which starts four bytes in.
+    assert_eq!(position.column, key_at + 6, "the column of the key's end");
     assert!(
         error.to_string().ends_with(r#"(node 3 "the earth", line 50)"#),
         "{error}"
