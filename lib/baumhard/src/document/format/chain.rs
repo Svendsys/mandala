@@ -175,7 +175,7 @@ impl Builder {
             let (owner_index, owner_id) = link.owner_at;
             let fail = |builder: &Builder, kind| LoadError {
                 node: Some(builder.context_of(owner_index, owner_id)),
-                ..LoadError::new(render_path(&link.path), kind)
+                ..LoadError::new(render_path(&link.to_path()), kind)
             };
             let Some(target) = target else {
                 return Err(fail(self, LoadErrorKind::DanglingLink { to: link.to }));
@@ -183,7 +183,7 @@ impl Builder {
             if target == link.owner {
                 return Err(fail(self, LoadErrorKind::SelfLink));
             }
-            let updated = self.tree.update(link.link, |element| {
+            let updated = self.tree.update_known(link.link, |element| {
                 if let crate::document::element::DocElement::Link(data) = element {
                     data.to = target;
                 }

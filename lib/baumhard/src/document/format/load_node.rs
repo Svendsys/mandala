@@ -150,7 +150,12 @@ impl Builder {
                 }
             }
         }
-        self.each("links", &dto.links, |b, link| b.link(node, owner, link))
+        self.key("links", |b| {
+            for (at, link) in dto.links.iter().enumerate() {
+                b.at(Seg::Index(at), |b| b.link(node, owner, at, link))?;
+            }
+            Ok(())
+        })
     }
 
     /// A palette by name.
@@ -361,9 +366,9 @@ impl Builder {
         .map(|_| ())
     }
 
-    /// A link held by `node`, listed at `owner.0` with the id `owner.1`:
-    /// a line, or a portal with its two ends.
-    fn link(&mut self, node: NodeId, owner: (usize, u32), dto: &LinkDto) -> LoadResult<()> {
+    /// The link at `links[at]` of `node`, listed at `owner.0` with the
+    /// id `owner.1`: a line, or a portal with its two ends.
+    fn link(&mut self, node: NodeId, owner: (usize, u32), at: usize, dto: &LinkDto) -> LoadResult<()> {
         let to = self.link_target(dto.to)?;
         let kind = match dto.kind {
             LinkKindDto::Line => LinkKind::Line,
@@ -401,15 +406,13 @@ impl Builder {
             kind,
             path,
         });
-        let mut to_path = self.path.clone();
-        to_path.push(Seg::Key("to"));
         self.element(node, data, |b, link| {
             b.links.push(PendingLink {
                 link,
                 owner: node,
                 owner_at: owner,
                 to,
-                path: to_path,
+                at,
             });
             match kind {
                 LinkKind::Line => b.on_path(

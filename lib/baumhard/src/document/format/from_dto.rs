@@ -66,8 +66,23 @@ pub(super) struct PendingLink {
     pub owner_at: (usize, u32),
     /// The ident its `to` names.
     pub to: u32,
-    /// Where its `to` is, for the error.
-    pub path: Vec<Seg>,
+    /// `j` in the holder's `links[j]`: with `owner_at`, where its `to`
+    /// is, rendered only for an error. Nothing per link is kept beyond
+    /// these words.
+    pub at: usize,
+}
+
+impl PendingLink {
+    /// Where the link's `to` is: `nodes[i].links[j].to`.
+    pub fn to_path(&self) -> Vec<Seg> {
+        vec![
+            Seg::Key("nodes"),
+            Seg::Index(self.owner_at.0),
+            Seg::Key("links"),
+            Seg::Index(self.at),
+            Seg::Key("to"),
+        ]
+    }
 }
 
 /// A node the list has placed: where it is in the tree, how deep, and
