@@ -405,6 +405,26 @@ fn test_which_of_several_errors_is_reported_is_fixed() {
     // Control: with the parent fixed, the content's error is next.
     let json = list(&[(1, ""), (2, &format!(r#","parent":1{bad_var}"#))]);
     assert_eq!(rejection(&json).path, "nodes[1].fill");
+    // But an error the JSON reader finds anywhere in a node — a wrong
+    // type, an unknown key — beats its structure: the node is read whole
+    // before its `parent` is looked at.
+    let json = list(&[(1, ""), (2, r#","parent":9,"folded":"x""#)]);
+    let error = rejection(&json);
+    assert_eq!(error.path, "nodes[1].folded");
+    assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
+    // Two such errors: the first in the text is the one.
+    let json = list(&[(1, ""), (2, r#","folded":"x","bogus":1"#)]);
+    assert_eq!(rejection(&json).path, "nodes[1].folded");
+    let json = list(&[(1, ""), (2, r#","bogus":1,"folded":"x""#)]);
+    assert_eq!(
+        at(&rejection(&json)),
+        (
+            "nodes[1].bogus",
+            &LoadErrorKind::UnknownKey {
+                key: "bogus".to_string()
+            }
+        )
+    );
 
     // Links come last: a dangling link in the first node waits for the
     // second node's error.

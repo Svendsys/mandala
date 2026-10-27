@@ -26,9 +26,17 @@
 //! the order the loader reads in: the whole text (its size, its
 //! byte-order mark, its encoding), then JSON syntax anywhere in it, then
 //! `format`, then the other top-level keys in schema order, then the
-//! nodes in list order — within a node its structure (`id`, `parent`,
-//! `channel`) before its content — and the links last, because a link
-//! may name a node that appears after it.
+//! nodes in list order, and the links last, because a link may name a
+//! node that appears after it. Within a node, an error the JSON reader
+//! finds anywhere in it (a wrong type, an unknown or missing key) comes
+//! first, in text order, since the node is read whole before anything
+//! is checked; then its structure (`id`, `parent`, `channel`); then its
+//! content.
+//!
+//! **A path always names something the text holds.** A row listed below
+//! the channel before it is refused at its `channel` key, or at the
+//! element itself when its channel is 0, the default a file writes by
+//! leaving the key out.
 //!
 //! **No raw control character reaches a message.** Text from the file
 //! — a name, a key, an excerpt — is shown with its control, line

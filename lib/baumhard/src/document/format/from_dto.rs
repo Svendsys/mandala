@@ -369,17 +369,28 @@ impl Builder {
         self.each(key, items, |b, item| {
             let channel = channel_of(item);
             if let Some(previous_channel) = previous.filter(|previous| channel < *previous) {
-                return Err(b.error_at(
-                    "channel",
-                    LoadErrorKind::SiblingsOutOfOrder {
-                        previous_channel,
-                        previous_id: None,
-                    },
-                ));
+                let kind = LoadErrorKind::SiblingsOutOfOrder {
+                    previous_channel,
+                    previous_id: None,
+                };
+                return Err(b.out_of_order(channel, kind));
             }
             previous = Some(channel);
             f(b, item)
         })
+    }
+
+    /// A [`SiblingsOutOfOrder`](LoadErrorKind::SiblingsOutOfOrder)
+    /// refusal of the element at the current path, whose channel is
+    /// `channel`: at its `channel` key, or at the element itself when the
+    /// channel is 0 — the default, which a file writes by leaving the key
+    /// out, so that the path always names something the text holds.
+    pub fn out_of_order(&self, channel: u64, kind: LoadErrorKind) -> LoadError {
+        if channel == 0 {
+            self.error(kind)
+        } else {
+            self.error_at("channel", kind)
+        }
     }
 
     /// Add `element` under `parent`, let `under` add what lies under it,

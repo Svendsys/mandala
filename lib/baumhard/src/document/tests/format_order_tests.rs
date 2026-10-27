@@ -171,7 +171,9 @@ fn test_a_row_listed_out_of_channel_order_is_refused() {
             }
         )
     );
-    // Top-level nodes, the same way.
+    // Top-level nodes, the same way. Node 2 has no `channel`: its
+    // channel is 0, the default, and the refusal names the node itself,
+    // since the text holds no `channel` key to name (C.9.5).
     let error = rejection(&map_with(
         "",
         &format!("{},{}", node_of(1, r#","channel":1"#), node_of(2, "")),
@@ -179,7 +181,7 @@ fn test_a_row_listed_out_of_channel_order_is_refused() {
     assert_eq!(
         (error.path.as_str(), error.kind),
         (
-            "nodes[1].channel",
+            "nodes[1]",
             LoadErrorKind::SiblingsOutOfOrder {
                 previous_channel: 1,
                 previous_id: Some(1),
@@ -212,12 +214,30 @@ fn test_a_row_listed_out_of_channel_order_is_refused() {
             &format!(r#","frame":{{"rings":[{},{}]}}"#, section(3), section(0)),
         ),
     ));
+    // A channel of 0, written or not, is the default: the ring is named.
     assert_eq!(
         (error.path.as_str(), error.kind),
         (
-            "nodes[0].frame.rings[1].channel",
+            "nodes[0].frame.rings[1]",
             LoadErrorKind::SiblingsOutOfOrder {
                 previous_channel: 3,
+                previous_id: None,
+            }
+        )
+    );
+    let error = rejection(&map_with(
+        "",
+        &node_of(
+            1,
+            &format!(r#","sections":[{},{{"spans":[{{"text":"x"}}]}}]"#, section(2)),
+        ),
+    ));
+    assert_eq!(
+        (error.path.as_str(), error.kind),
+        (
+            "nodes[0].sections[1]",
+            LoadErrorKind::SiblingsOutOfOrder {
+                previous_channel: 2,
                 previous_id: None,
             }
         )

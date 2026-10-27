@@ -85,13 +85,11 @@ impl Builder {
         // chain is cut back to the new node's parent.
         if let Some(previous) = self.chain.get(depth).copied() {
             if channel < previous.channel {
-                return Err(self.error_at(
-                    "channel",
-                    LoadErrorKind::SiblingsOutOfOrder {
-                        previous_channel: u64::try_from(previous.channel).unwrap_or(u64::MAX),
-                        previous_id: Some(previous.id),
-                    },
-                ));
+                let kind = LoadErrorKind::SiblingsOutOfOrder {
+                    previous_channel: u64::try_from(previous.channel).unwrap_or(u64::MAX),
+                    previous_id: Some(previous.id),
+                };
+                return Err(self.out_of_order(dto.channel, kind));
             }
         }
         // Step 27: every node deeper than the parent leaves the chain;

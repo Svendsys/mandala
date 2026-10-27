@@ -754,7 +754,8 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
   brackets: `nodes[3].frame.rings[0].spans[2].color`. A key that is not
   a plain identifier (a letter or `_`, then letters, digits and `_`),
   which only a name an author chose can be, is quoted in brackets as
-  JSON quotes a string, so that it cannot be read as more path:
+  JSON quotes a string, with every control, line separator and bidi
+  control escaped too, so that it cannot be read as more path:
   `palettes["My Palette"][0].fill`, `theme.variants[""].bg`. The path
   addresses a node by its place in the list, never by its id, so it is
   always a JSON path a tool can follow (`jq '.nodes[3].frame'`). It is
@@ -762,19 +763,25 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
   not UTF-8), for the map itself (a missing top-level key), and when the
   reader died where no value had begun. An unknown key's path ends in
   the key; a missing key's path is the object that lacks it, and the
-  key is in the `kind`.
+  key is in the `kind`. **A path always names something the text
+  holds**: a row listed below the channel before it is refused at its
+  `channel`, or at the node, section or ring itself when its channel
+  is 0 — the default, which a file writes by leaving the key out.
 - **The `node`**, on every error whose path starts with `nodes[i]`: its
   place in the list, its `id` — read on its own when the rest of the
   node did not read, so it is absent only when the id itself is what is
   wrong — and an excerpt of its text: the first span of its
   lowest-channel section, else of its first ring, cut to 32 grapheme
-  clusters with `…` when cut.
+  clusters or 256 bytes, whichever comes first, with `…` when cut.
 - **The `position`**, a line and a column (1-based; the column counts
   bytes): exact for an error the JSON reader found (a syntax error, a
   wrong type, an unknown or missing key); the start of the node for one
   found after the node was read (a bound, a reference, the chain), which
   with one node per line is the node's line; the start of the value for
   one in a top-level value; absent for an error about the whole text.
+  It is the only place an error names: a message the reader wrote does
+  not carry the reader's own `at line L column C`, which counts inside
+  the node or value it read.
 - **Nothing from the file is printed raw.** In a rendered error, the
   excerpt, a name, a key and a reader's message have every control
   character, line separator and bidi control escaped, so a map cannot
@@ -782,9 +789,12 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
 - **Which error is first** is fixed: the size, the byte-order mark and
   the encoding; then JSON syntax anywhere in the text; then `format`;
   then the other top-level keys in the order of the table above; then
-  the nodes in list order, each node's `id`, `parent` and `channel`
-  before its other keys, and a node's row checked once its subtree has
-  ended; then the links, in list order.
+  the nodes in list order; then the links, in list order. Within a
+  node, an error the JSON reader finds — a wrong type, an unknown or a
+  missing key, anywhere in the node — comes first, in the order of the
+  text, since the node is read whole before anything is checked; then
+  its `id`, `parent` and `channel`; then its other keys; and a node's
+  row is checked once its subtree has ended.
 - A file whose `format` is a positive integer other than `1` is
   reported as that (`UnsupportedFormat`, which says it was written by a
   newer version and names both numbers), whatever else is wrong with it.
@@ -894,7 +904,7 @@ How it reads, line by line (the nodes start on line 47):
 Edits that make it invalid, and what the loader says:
 
 - Move node 3's line below node 4's:
-  `nodes[4].channel: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)`
+  `nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)`
 - Give node 5 `"parent": 3`:
   `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)`
 - Move node 5's line to the end of the list:

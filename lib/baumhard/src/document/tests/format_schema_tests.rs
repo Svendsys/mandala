@@ -222,7 +222,7 @@ fn test_the_schema_examples_errors_are_what_the_loader_says() {
         with_lines(&[1, 2, 3, 4, 6, 5], &same),
     ];
     let expected = [
-        r#"nodes[4].channel: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)"#,
+        r#"nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)"#,
         r#"nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)"#,
         r#"nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 52)"#,
     ];
