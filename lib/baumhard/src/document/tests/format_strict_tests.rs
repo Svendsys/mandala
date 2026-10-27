@@ -257,7 +257,9 @@ fn test_the_format_reads_no_index_and_no_predicate_field() {
         .into_iter()
         .collect();
     let expected: BTreeSet<String> = [
-        "bool", "f32", "Option", "String", "u16", "u32", "u64", "u8", "usize", "Vec",
+        // `Cow<'a, str>`: a node's text, borrowed from the document when
+        // the saver writes it, owned when the loader reads it.
+        "bool", "Cow", "f32", "Option", "str", "String", "u16", "u32", "u64", "u8", "usize", "Vec",
     ]
     .into_iter()
     .map(str::to_string)

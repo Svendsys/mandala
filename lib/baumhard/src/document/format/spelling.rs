@@ -24,6 +24,7 @@
 use serde::de::{self, IgnoredAny, MapAccess, Unexpected, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -350,16 +351,17 @@ impl<'de> Deserialize<'de> for ShapeDto {
 /// `"#rrggbbaa"`, `"var(name)"` or `"palette(fill|frame|text|title)"`.
 /// Hex is lowercase, and an opaque color has no alpha digits.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum ColorDto {
+pub(crate) enum ColorDto<'a> {
     /// A literal color.
     Hex(HexDto),
-    /// A theme variable, by name.
-    Var(String),
+    /// A theme variable, by name: borrowed from the document when the
+    /// saver writes it, owned when the loader reads it.
+    Var(Cow<'a, str>),
     /// A color of the palette bound to the owning node.
     Palette(PaletteFieldDto),
 }
 
-impl Serialize for ColorDto {
+impl Serialize for ColorDto<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             ColorDto::Hex(hex) => hex.serialize(serializer),
@@ -369,12 +371,12 @@ impl Serialize for ColorDto {
     }
 }
 
-impl<'de> Deserialize<'de> for ColorDto {
+impl<'de> Deserialize<'de> for ColorDto<'_> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct ColorVisitor;
 
         impl Visitor<'_> for ColorVisitor {
-            type Value = ColorDto;
+            type Value = ColorDto<'static>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str(
@@ -382,7 +384,7 @@ impl<'de> Deserialize<'de> for ColorDto {
                 )
             }
 
-            fn visit_str<E: de::Error>(self, text: &str) -> Result<ColorDto, E> {
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<ColorDto<'static>, E> {
                 if text.starts_with('#') {
                     return parse_hex(text)
                         .map(|rgba| ColorDto::Hex(HexDto(rgba)))
@@ -390,7 +392,7 @@ impl<'de> Deserialize<'de> for ColorDto {
                 }
                 let inner = |prefix: &str| text.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(')'));
                 if let Some(name) = inner("var(") {
-                    return Ok(ColorDto::Var(name.to_string()));
+                    return Ok(ColorDto::Var(Cow::Owned(name.to_string())));
                 }
                 if let Some(field) = inner("palette(").and_then(PaletteFieldDto::from_name) {
                     return Ok(ColorDto::Palette(field));
@@ -462,9 +464,9 @@ impl<'de> Deserialize<'de> for WeightDto {
 /// `{ "once": { "filler": "·" } }`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FitOnceDto {
+pub(crate) struct FitOnceDto<'a> {
     /// The filler.
-    pub filler: String,
+    pub filler: Cow<'a, str>,
 }
 
 /// The scale range of `{ "fit": { "min": 0.5, "max": 2.0 } }`.
@@ -481,18 +483,18 @@ pub(crate) struct FitRangeDto {
 /// `{ "once": { "filler": "·" } }`, `"fit"` (the built-in bounds) or
 /// `{ "fit": { "min": 0.5, "max": 2.0 } }`.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum FitDto {
+pub(crate) enum FitDto<'a> {
     /// `"repeat"`.
     Repeat,
     /// `"spread"`.
     Spread,
     /// `"once"`, or `{ "once": { "filler": … } }`.
-    Once(Option<FitOnceDto>),
+    Once(Option<FitOnceDto<'a>>),
     /// `"fit"`, or `{ "fit": { "min": …, "max": … } }`.
     Fit(Option<FitRangeDto>),
 }
 
-impl Serialize for FitDto {
+impl Serialize for FitDto<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             FitDto::Repeat => serializer.serialize_str("repeat"),
@@ -505,12 +507,12 @@ impl Serialize for FitDto {
     }
 }
 
-impl<'de> Deserialize<'de> for FitDto {
+impl<'de> Deserialize<'de> for FitDto<'_> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct FitVisitor;
 
         impl<'de> Visitor<'de> for FitVisitor {
-            type Value = FitDto;
+            type Value = FitDto<'static>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str(
@@ -519,7 +521,7 @@ impl<'de> Deserialize<'de> for FitDto {
                 )
             }
 
-            fn visit_str<E: de::Error>(self, text: &str) -> Result<FitDto, E> {
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<FitDto<'static>, E> {
                 match text {
                     "repeat" => Ok(FitDto::Repeat),
                     "spread" => Ok(FitDto::Spread),
@@ -529,7 +531,7 @@ impl<'de> Deserialize<'de> for FitDto {
                 }
             }
 
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<FitDto, A::Error> {
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<FitDto<'static>, A::Error> {
                 let Some(key) = map.next_key::<String>()? else {
                     return Err(de::Error::invalid_length(0, &self));
                 };

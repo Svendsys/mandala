@@ -59,15 +59,16 @@ use crate::document::values::{
 use crate::font::fonts::{family_name_of, AppFont};
 use indextree::NodeId;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 
 /// What every step of the saver returns.
 type SaveResult<T> = Result<T, SaveError>;
 
 /// The five text-style keys of one element.
-struct TextOut {
-    font: Option<String>,
+struct TextOut<'a> {
+    font: Option<Cow<'a, str>>,
     size: Option<f32>,
-    color: Option<ColorDto>,
+    color: Option<ColorDto<'a>>,
     weight: Option<WeightDto>,
     italic: Option<bool>,
 }
@@ -101,15 +102,16 @@ fn saver(doc: &Document) -> Saver<'_> {
 
 /// The header of `doc`'s file — every top-level key but `nodes` — or the
 /// first thing in it the file cannot spell. O(header).
-pub(super) fn header_of(doc: &Document) -> SaveResult<MapHeaderDto> {
+pub(crate) fn header_of(doc: &Document) -> SaveResult<MapHeaderDto<'_>> {
     saver(doc).map()
 }
 
 /// Run `each` on every node of `doc` in the order the file lists them —
 /// the depth-first pre-order of the tree, siblings in the order the
 /// arena keeps them — with its position in the list, its element, and
-/// its DTO, which names its parent. One DTO exists at a time; `each`
-/// gets it by value and drops it. The first thing a node holds that the
+/// its DTO, which names its parent and borrows every string it holds
+/// from the document, so writing a node clones no text. One DTO exists
+/// at a time; `each` gets it by value and drops it. The first thing a node holds that the
 /// file cannot spell stops the walk, with the node's context.
 ///
 /// The walk is the arena's own pre-order (`Tree::descendants`), which
@@ -117,9 +119,9 @@ pub(super) fn header_of(doc: &Document) -> SaveResult<MapHeaderDto> {
 /// element visited once, so O(elements) whatever the depth. A node's
 /// own content is turned into its DTO by a walk bounded by the schema
 /// (a node's content nests at most 9 levels), never by the tree.
-pub(super) fn each_node(
-    doc: &Document,
-    mut each: impl FnMut(usize, NodeId, NodeDto) -> SaveResult<()>,
+pub(super) fn each_node<'a>(
+    doc: &'a Document,
+    mut each: impl FnMut(usize, NodeId, NodeDto<'a>) -> SaveResult<()>,
 ) -> SaveResult<()> {
     let mut saver = saver(doc);
     let tree = doc.tree();
@@ -175,7 +177,7 @@ impl<'a> Saver<'a> {
     }
 
     /// The header: every top-level key but `nodes`.
-    fn map(&mut self) -> SaveResult<MapHeaderDto> {
+    fn map(&mut self) -> SaveResult<MapHeaderDto<'a>> {
         let doc = self.doc;
         let name = match doc.get(doc.root()) {
             Some(DocElement::Map(map)) => map.name.clone(),
@@ -307,7 +309,7 @@ impl<'a> Saver<'a> {
     }
 
     /// The palettes, by name.
-    fn palettes(&mut self) -> SaveResult<Named<Vec<PaletteGroupDto>>> {
+    fn palettes(&mut self) -> SaveResult<Named<Vec<PaletteGroupDto<'a>>>> {
         let doc = self.doc;
         let mut palettes: Vec<(String, Vec<PaletteGroupDto>)> = Vec::new();
         self.key("palettes", |s| {
@@ -342,7 +344,7 @@ impl<'a> Saver<'a> {
 
     /// A palette color. A palette group has all of its colors, so one
     /// naming a variable the theme lacks has no spelling.
-    fn plain(&self, key: &'static str, color: PlainColor) -> SaveResult<ColorDto> {
+    fn plain(&self, key: &'static str, color: PlainColor) -> SaveResult<ColorDto<'a>> {
         Ok(match color {
             PlainColor::Rgba(rgba) => ColorDto::Hex(HexDto(rgba.0)),
             PlainColor::Var(var) => ColorDto::Var(self.var_name(key, var.0)?),
@@ -351,15 +353,15 @@ impl<'a> Saver<'a> {
 
     /// A theme variable's name, or an error at `key` when the theme
     /// defines no such variable.
-    fn var_name(&self, key: &'static str, index: u16) -> SaveResult<String> {
+    fn var_name(&self, key: &'static str, index: u16) -> SaveResult<Cow<'a, str>> {
         self.vars
             .get(usize::from(index))
-            .cloned()
+            .map(|name| Cow::Borrowed(name.as_str()))
             .ok_or_else(|| self.error_at(key, SaveErrorKind::UnknownVariable { index }))
     }
 
     /// A color as the file spells it; `None` for an unset color.
-    fn color(&self, key: &'static str, color: Option<ColorRef>) -> SaveResult<Option<ColorDto>> {
+    fn color(&self, key: &'static str, color: Option<ColorRef>) -> SaveResult<Option<ColorDto<'a>>> {
         let Some(color) = color else {
             return Ok(None);
         };
@@ -378,7 +380,7 @@ impl<'a> Saver<'a> {
     /// A font's family name. The fallback face has none, and neither has
     /// a face this build cannot name: the file could not say which it
     /// was.
-    fn font(&mut self, font: Option<AppFont>) -> SaveResult<Option<String>> {
+    fn font(&mut self, font: Option<AppFont>) -> SaveResult<Option<Cow<'a, str>>> {
         let Some(font) = font else {
             return Ok(None);
         };
@@ -389,7 +391,7 @@ impl<'a> Saver<'a> {
                 None
             }
         });
-        name.map(|name| Some(name.to_string()))
+        name.map(|name| Some(Cow::Borrowed(name)))
             .ok_or_else(|| self.error_at("font", SaveErrorKind::NoFamilyName))
     }
 
@@ -415,7 +417,7 @@ impl<'a> Saver<'a> {
     }
 
     /// The five text-style keys.
-    fn text(&mut self, style: &TextStyle, unit: Unit) -> SaveResult<TextOut> {
+    fn text(&mut self, style: &'a TextStyle, unit: Unit) -> SaveResult<TextOut<'a>> {
         Ok(TextOut {
             font: self.font(style.font)?,
             size: self.size(style.size, unit)?,
@@ -426,12 +428,12 @@ impl<'a> Saver<'a> {
     }
 
     /// A fit mode as the file spells it.
-    fn fit(fit: &Option<FitMode>) -> Option<FitDto> {
+    fn fit(fit: &'a Option<FitMode>) -> Option<FitDto<'a>> {
         Some(match fit.as_ref()? {
             FitMode::Repeat => FitDto::Repeat,
             FitMode::Spread => FitDto::Spread,
             FitMode::Once { filler } => FitDto::Once(filler.as_ref().map(|filler| FitOnceDto {
-                filler: filler.clone(),
+                filler: Cow::Borrowed(filler.as_str()),
             })),
             FitMode::Fit { min, max } => {
                 if *min == FIT_MIN && *max == FIT_MAX {
@@ -453,10 +455,10 @@ impl<'a> Saver<'a> {
 
     /// A verb's id, or an error at `key` when the map defines no such
     /// verb.
-    fn verb_id(&self, key: &'static str, index: u16) -> SaveResult<String> {
+    fn verb_id(&self, key: &'static str, index: u16) -> SaveResult<Cow<'a, str>> {
         self.verbs
             .get(usize::from(index))
-            .map(|verb| verb.id.clone())
+            .map(|verb| Cow::Borrowed(verb.id.as_str()))
             .ok_or_else(|| self.error_at(key, SaveErrorKind::UnknownVerb { index }))
     }
 
@@ -466,18 +468,19 @@ impl<'a> Saver<'a> {
         doc.get(id)
     }
 
-    /// The children of `id`, with their elements, in sibling order.
-    fn children(&self, id: NodeId) -> Vec<(NodeId, &'a DocElement)> {
+    /// The children of `id`, with their elements, in sibling order. An
+    /// iterator over the arena's sibling links, borrowing the document
+    /// and not the saver: no allocation per element visited.
+    fn children(&self, id: NodeId) -> impl Iterator<Item = (NodeId, &'a DocElement)> + 'a {
         let doc: &'a Document = self.doc;
         doc.children(id)
-            .filter_map(|child| doc.get(child).map(|element| (child, element)))
-            .collect()
+            .filter_map(move |child| doc.get(child).map(|element| (child, element)))
     }
 
     /// One node, which hangs from the node with the ident `parent`, or
     /// is a top-level node. Its child nodes are not in it: the file lists
     /// them after it.
-    fn node(&mut self, id: NodeId, parent: Option<u64>) -> SaveResult<NodeDto> {
+    fn node(&mut self, id: NodeId, parent: Option<u64>) -> SaveResult<NodeDto<'a>> {
         let Some(DocElement::Node(node)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
@@ -498,7 +501,7 @@ impl<'a> Saver<'a> {
             Some(palette) => Some(
                 self.palettes
                     .get(usize::from(palette.0))
-                    .map(|name| (*name).to_string())
+                    .map(|name| Cow::Borrowed(*name))
                     .ok_or_else(|| {
                         self.error_at("palette", SaveErrorKind::UnknownPalette { index: palette.0 })
                     })?,
@@ -553,7 +556,7 @@ impl<'a> Saver<'a> {
     }
 
     /// One section.
-    fn section(&mut self, id: NodeId) -> SaveResult<SectionDto> {
+    fn section(&mut self, id: NodeId) -> SaveResult<SectionDto<'a>> {
         let Some(DocElement::Section(section)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
@@ -579,7 +582,7 @@ impl<'a> Saver<'a> {
     /// The spans under `parent`, at the current path's `spans`. A span in
     /// a ring has no size of its own: the ring sizes its text, and a size
     /// on the span would be one the file cannot say.
-    fn spans(&mut self, parent: NodeId) -> SaveResult<Vec<SpanDto>> {
+    fn spans(&mut self, parent: NodeId) -> SaveResult<Vec<SpanDto<'a>>> {
         let parent_kind = self.element(parent).map(DocElement::kind);
         let mut out = Vec::new();
         for (_, element) in self.children(parent) {
@@ -594,12 +597,12 @@ impl<'a> Saver<'a> {
                     }
                     let text = s.text(&span.style, Unit::of_place(DocKind::Span, parent_kind))?;
                     let link = match &span.link {
-                        Some(LinkTarget::Url(url)) => Some(LinkTargetDto::Url(url.clone())),
+                        Some(LinkTarget::Url(url)) => Some(LinkTargetDto::Url(Cow::Borrowed(url.as_str()))),
                         Some(LinkTarget::Verb(verb)) => Some(LinkTargetDto::Verb(s.verb_id("link", verb.0)?)),
                         None => None,
                     };
                     Ok(SpanDto {
-                        text: span.text.clone(),
+                        text: Cow::Borrowed(span.text.as_str()),
                         font: text.font,
                         size: text.size,
                         color: text.color,
@@ -615,7 +618,7 @@ impl<'a> Saver<'a> {
     }
 
     /// A frame and its rings.
-    fn frame(&mut self, id: NodeId) -> SaveResult<FrameDto> {
+    fn frame(&mut self, id: NodeId) -> SaveResult<FrameDto<'a>> {
         let Some(DocElement::Frame(frame)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
@@ -660,7 +663,7 @@ impl<'a> Saver<'a> {
     }
 
     /// A frame's style keys.
-    fn frame_style(&mut self, style: &FrameStyle) -> SaveResult<FrameOut> {
+    fn frame_style(&mut self, style: &'a FrameStyle) -> SaveResult<FrameOut<'a>> {
         Ok(FrameOut {
             visible: style.visible,
             start: style.start.map(|start| {
@@ -687,12 +690,11 @@ impl<'a> Saver<'a> {
 
     /// The connector of a node, or `None` when the file leaves it out:
     /// a connector with every field inherited and nothing under it.
-    fn connector(&mut self, id: NodeId) -> SaveResult<Option<PathDto>> {
+    fn connector(&mut self, id: NodeId) -> SaveResult<Option<PathDto<'a>>> {
         let Some(DocElement::Connector(connector)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
-        let children = self.children(id);
-        if connector.path == default_path() && children.is_empty() {
+        if connector.path == default_path() && self.children(id).next().is_none() {
             return Ok(None);
         }
         let flow = self.flow(&connector.path.flow)?;
@@ -715,13 +717,13 @@ impl<'a> Saver<'a> {
     }
 
     /// A path's style keys.
-    fn flow(&mut self, flow: &FlowStyle) -> SaveResult<FlowOut> {
+    fn flow(&mut self, flow: &'a FlowStyle) -> SaveResult<FlowOut<'a>> {
         Ok(FlowOut {
             fit: Self::fit(&flow.fit),
             spacing: flow.spacing,
             size: flow.size,
             color: self.color("color", flow.color)?,
-            content: flow.content.clone(),
+            content: flow.content.as_deref().map(Cow::Borrowed),
         })
     }
 
@@ -730,7 +732,12 @@ impl<'a> Saver<'a> {
     fn on_path(
         &mut self,
         id: NodeId,
-    ) -> SaveResult<(Vec<SpanDto>, Option<CapDto>, Option<CapDto>, Option<LabelDto>)> {
+    ) -> SaveResult<(
+        Vec<SpanDto<'a>>,
+        Option<CapDto<'a>>,
+        Option<CapDto<'a>>,
+        Option<LabelDto<'a>>,
+    )> {
         let spans = self.spans(id)?;
         let (mut cap_start, mut cap_end, mut label) = (None, None, None);
         for (child, element) in self.children(id) {
@@ -749,7 +756,7 @@ impl<'a> Saver<'a> {
     }
 
     /// A cap.
-    fn cap(&mut self, id: NodeId, cap: &CapData) -> SaveResult<CapDto> {
+    fn cap(&mut self, id: NodeId, cap: &'a CapData) -> SaveResult<CapDto<'a>> {
         let kind = self.element(id).map_or(DocKind::CapStart, DocElement::kind);
         let text = self.text(&cap.text, Unit::of_tier(kind))?;
         Ok(CapDto {
@@ -763,7 +770,7 @@ impl<'a> Saver<'a> {
     }
 
     /// A label.
-    fn label(&mut self, id: NodeId) -> SaveResult<LabelDto> {
+    fn label(&mut self, id: NodeId) -> SaveResult<LabelDto<'a>> {
         let Some(DocElement::Label(label)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
@@ -781,7 +788,7 @@ impl<'a> Saver<'a> {
     }
 
     /// A link held by `owner`.
-    fn link(&mut self, owner: NodeId, id: NodeId) -> SaveResult<LinkDto> {
+    fn link(&mut self, owner: NodeId, id: NodeId) -> SaveResult<LinkDto<'a>> {
         let Some(DocElement::Link(link)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
@@ -839,7 +846,6 @@ impl<'a> Saver<'a> {
                 let mut default_ends = true;
                 let found: Vec<(NodeId, &PortalEndData)> = self
                     .children(id)
-                    .into_iter()
                     .filter_map(|(end_id, element)| match element {
                         DocElement::PortalEnd(end) => Some((end_id, end)),
                         _ => None,
@@ -853,7 +859,7 @@ impl<'a> Saver<'a> {
                         *end == PortalEndData {
                             end: end.end,
                             style: PortalEndStyle::default(),
-                        } && self.children(end_id).is_empty();
+                        } && self.children(end_id).next().is_none();
                     let index = ends.len();
                     let dto_end =
                         self.key("ends", |s| s.at(Seg::Index(index), |s| s.portal_end(end_id, end)))?;
@@ -870,7 +876,7 @@ impl<'a> Saver<'a> {
     }
 
     /// One end of a portal link.
-    fn portal_end(&mut self, id: NodeId, end: &PortalEndData) -> SaveResult<PortalEndDto> {
+    fn portal_end(&mut self, id: NodeId, end: &'a PortalEndData) -> SaveResult<PortalEndDto<'a>> {
         let style = &end.style;
         let spans = self.spans(id)?;
         let mut label = None;
@@ -884,7 +890,7 @@ impl<'a> Saver<'a> {
             offset: style.offset,
             color: self.color("color", style.color)?,
             size: style.size,
-            content: style.content.clone(),
+            content: style.content.as_deref().map(Cow::Borrowed),
             spans,
             label,
         })
@@ -892,7 +898,7 @@ impl<'a> Saver<'a> {
 
     /// The map's defaults, or `None` when they are all unset. The
     /// current path is `defaults`.
-    fn defaults(&mut self, defaults: &DefaultsData) -> SaveResult<Option<DefaultsDto>> {
+    fn defaults(&mut self, defaults: &'a DefaultsData) -> SaveResult<Option<DefaultsDto<'a>>> {
         if *defaults == DefaultsData::default() {
             return Ok(None);
         }
@@ -920,7 +926,7 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn node_defaults(&mut self, style: &NodeStyle) -> SaveResult<Option<NodeDefaultsDto>> {
+    fn node_defaults(&mut self, style: &'a NodeStyle) -> SaveResult<Option<NodeDefaultsDto<'a>>> {
         if *style == NodeStyle::default() {
             return Ok(None);
         }
@@ -937,7 +943,11 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn text_defaults(&mut self, style: &TextStyle, kind: DocKind) -> SaveResult<Option<TextDefaultsDto>> {
+    fn text_defaults(
+        &mut self,
+        style: &'a TextStyle,
+        kind: DocKind,
+    ) -> SaveResult<Option<TextDefaultsDto<'a>>> {
         if *style == TextStyle::default() {
             return Ok(None);
         }
@@ -951,7 +961,7 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn frame_defaults(&mut self, style: &FrameStyle) -> SaveResult<Option<FrameDefaultsDto>> {
+    fn frame_defaults(&mut self, style: &'a FrameStyle) -> SaveResult<Option<FrameDefaultsDto<'a>>> {
         if *style == FrameStyle::default() {
             return Ok(None);
         }
@@ -971,7 +981,7 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn ring_defaults(&mut self, style: &RingStyle) -> SaveResult<Option<RingDefaultsDto>> {
+    fn ring_defaults(&mut self, style: &'a RingStyle) -> SaveResult<Option<RingDefaultsDto<'a>>> {
         if *style == RingStyle::default() {
             return Ok(None);
         }
@@ -986,7 +996,7 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn flow_defaults(&mut self, style: &FlowStyle) -> SaveResult<Option<FlowDefaultsDto>> {
+    fn flow_defaults(&mut self, style: &'a FlowStyle) -> SaveResult<Option<FlowDefaultsDto<'a>>> {
         if *style == FlowStyle::default() {
             return Ok(None);
         }
@@ -1000,7 +1010,7 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn label_defaults(&mut self, style: &LabelStyle) -> SaveResult<Option<LabelDefaultsDto>> {
+    fn label_defaults(&mut self, style: &'a LabelStyle) -> SaveResult<Option<LabelDefaultsDto<'a>>> {
         if *style == LabelStyle::default() {
             return Ok(None);
         }
@@ -1016,7 +1026,10 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    fn portal_end_defaults(&mut self, style: &PortalEndStyle) -> SaveResult<Option<PortalEndDefaultsDto>> {
+    fn portal_end_defaults(
+        &mut self,
+        style: &'a PortalEndStyle,
+    ) -> SaveResult<Option<PortalEndDefaultsDto<'a>>> {
         if *style == PortalEndStyle::default() {
             return Ok(None);
         }
@@ -1025,29 +1038,29 @@ impl<'a> Saver<'a> {
             offset: style.offset,
             color: self.color("color", style.color)?,
             size: style.size,
-            content: style.content.clone(),
+            content: style.content.as_deref().map(Cow::Borrowed),
         }))
     }
 }
 
 /// A frame's style keys, as the file spells them.
-struct FrameOut {
+struct FrameOut<'a> {
     visible: Option<bool>,
     start: Option<StartDto>,
     direction: Option<DirectionDto>,
-    fit: Option<FitDto>,
+    fit: Option<FitDto<'a>>,
     gap: Option<f32>,
     inset: Option<f32>,
-    text: TextOut,
+    text: TextOut<'a>,
 }
 
 /// A path's style keys, as the file spells them.
-struct FlowOut {
-    fit: Option<FitDto>,
+struct FlowOut<'a> {
+    fit: Option<FitDto<'a>>,
     spacing: Option<f32>,
     size: Option<f32>,
-    color: Option<ColorDto>,
-    content: Option<String>,
+    color: Option<ColorDto<'a>>,
+    content: Option<Cow<'a, str>>,
 }
 
 /// The path of a connector the file leaves out, and of a portal link.

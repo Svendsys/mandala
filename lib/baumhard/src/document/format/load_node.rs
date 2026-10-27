@@ -216,13 +216,13 @@ impl Builder {
         let style = self.text_style(text_in!(dto), Unit::of_place(DocKind::Span, parent_kind))?;
         let link = match &dto.link {
             Some(link) => Some(self.key("link", |b| match link {
-                LinkTargetDto::Url(url) => Ok(LinkTarget::Url(url.clone())),
+                LinkTargetDto::Url(url) => Ok(LinkTarget::Url(url.to_string())),
                 LinkTargetDto::Verb(id) => b.verb("verb", id).map(LinkTarget::Verb),
             })?),
             None => None,
         };
         let data = DocElement::Span(SpanData {
-            text: dto.text.clone(),
+            text: dto.text.to_string(),
             style,
             link,
         });

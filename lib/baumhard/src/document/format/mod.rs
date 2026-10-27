@@ -64,7 +64,7 @@ mod load_node;
 pub(crate) mod load_style;
 pub(crate) mod spelling;
 mod strict;
-mod to_dto;
+pub(crate) mod to_dto;
 mod writer;
 
 pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};
@@ -218,7 +218,7 @@ fn load_counted(json: &str, ceiling: Option<u64>) -> Result<(Document, usize), L
 
 /// The header's top-level values, each parsed from its extent in the
 /// order the schema lists them (design B.3).
-fn header(index: &MapIndex<'_>) -> Result<MapHeaderDto, LoadError> {
+fn header<'t>(index: &MapIndex<'t>) -> Result<MapHeaderDto<'t>, LoadError> {
     Ok(MapHeaderDto {
         format: index::FORMAT,
         name: optional(index, "name")?.unwrap_or_default(),

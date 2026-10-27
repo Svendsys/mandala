@@ -559,7 +559,7 @@ impl Builder {
             FitDto::Repeat => Ok(FitMode::Repeat),
             FitDto::Spread => Ok(FitMode::Spread),
             FitDto::Once(once) => Ok(FitMode::Once {
-                filler: once.as_ref().map(|once| once.filler.clone()),
+                filler: once.as_ref().map(|once| once.filler.to_string()),
             }),
             FitDto::Fit(None) => Ok(FitMode::Fit {
                 min: FIT_MIN,

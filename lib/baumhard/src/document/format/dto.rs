@@ -34,6 +34,7 @@ use crate::document::format::spelling::{
     present, ColorDto, FitDto, HexDto, Named, ShapeDto, StartDto, WeightDto,
 };
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// Whether a channel is the default, `0`.
 pub(crate) fn is_zero(value: &u64) -> bool {
@@ -145,11 +146,11 @@ spelled!(
 /// Where a span leads: `{ "url": "…" }` or `{ "verb": "verb-id" }`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum LinkTargetDto {
+pub(crate) enum LinkTargetDto<'a> {
     /// `{ "url": "…" }`.
-    Url(String),
+    Url(Cow<'a, str>),
     /// `{ "verb": "verb-id" }`.
-    Verb(String),
+    Verb(Cow<'a, str>),
 }
 
 /// The zoom range an element renders in: `{ "min": n, "max": n }`, either bound optional.
@@ -175,21 +176,21 @@ pub(crate) struct ZoomDto {
 /// A node's triggers: `{ "click": "verb-id", "hover": "verb-id" }`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct OnDto {
+pub(crate) struct OnDto<'a> {
     /// The verb a click runs.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub click: Option<String>,
+    pub click: Option<Cow<'a, str>>,
     /// The verb hovering runs.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub hover: Option<String>,
+    pub hover: Option<Cow<'a, str>>,
 }
 
 /// An edit definition. Only its identity for now.
@@ -235,26 +236,26 @@ pub(crate) struct ThemeDto {
 /// The colors of one palette depth.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PaletteGroupDto {
+pub(crate) struct PaletteGroupDto<'a> {
     /// A node's fill.
-    pub fill: ColorDto,
+    pub fill: ColorDto<'a>,
     /// A node's frame text.
-    pub frame: ColorDto,
+    pub frame: ColorDto<'a>,
     /// Section text.
-    pub text: ColorDto,
+    pub text: ColorDto<'a>,
     /// The text of a node's first section; the group's `text` when absent.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub title: Option<ColorDto>,
+    pub title: Option<ColorDto<'a>>,
 }
 
 /// `defaults.node`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct NodeDefaultsDto {
+pub(crate) struct NodeDefaultsDto<'a> {
     /// The outline.
     #[serde(
         default,
@@ -268,7 +269,7 @@ pub(crate) struct NodeDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fill: Option<ColorDto>,
+    pub fill: Option<ColorDto<'a>>,
     /// The width of the fill's soft edge.
     #[serde(
         default,
@@ -282,7 +283,7 @@ pub(crate) struct NodeDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -296,7 +297,7 @@ pub(crate) struct NodeDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -316,14 +317,14 @@ pub(crate) struct NodeDefaultsDto {
 /// `defaults.section` and `defaults.span`: text style only.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TextDefaultsDto {
+pub(crate) struct TextDefaultsDto<'a> {
     /// The font family name.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -337,7 +338,7 @@ pub(crate) struct TextDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -357,7 +358,7 @@ pub(crate) struct TextDefaultsDto {
 /// `defaults.frame`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FrameDefaultsDto {
+pub(crate) struct FrameDefaultsDto<'a> {
     /// Whether the frame is drawn.
     #[serde(
         default,
@@ -385,7 +386,7 @@ pub(crate) struct FrameDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fit: Option<FitDto>,
+    pub fit: Option<FitDto<'a>>,
     /// The space between rings.
     #[serde(
         default,
@@ -406,7 +407,7 @@ pub(crate) struct FrameDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -420,7 +421,7 @@ pub(crate) struct FrameDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -440,21 +441,21 @@ pub(crate) struct FrameDefaultsDto {
 /// `defaults.ring`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RingDefaultsDto {
+pub(crate) struct RingDefaultsDto<'a> {
     /// Overrides the frame's fit mode.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fit: Option<FitDto>,
+    pub fit: Option<FitDto<'a>>,
     /// The font family name.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -468,7 +469,7 @@ pub(crate) struct RingDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -488,14 +489,14 @@ pub(crate) struct RingDefaultsDto {
 /// `defaults.connector` and `defaults.link`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FlowDefaultsDto {
+pub(crate) struct FlowDefaultsDto<'a> {
     /// What the text does when it and the path differ in length.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fit: Option<FitDto>,
+    pub fit: Option<FitDto<'a>>,
     /// Extra space between glyphs.
     #[serde(
         default,
@@ -516,20 +517,20 @@ pub(crate) struct FlowDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The text drawn when the path has no spans.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub content: Option<String>,
+    pub content: Option<Cow<'a, str>>,
 }
 
 /// `defaults.label`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct LabelDefaultsDto {
+pub(crate) struct LabelDefaultsDto<'a> {
     /// The position along the path.
     #[serde(
         default,
@@ -550,7 +551,7 @@ pub(crate) struct LabelDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -564,7 +565,7 @@ pub(crate) struct LabelDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -584,7 +585,7 @@ pub(crate) struct LabelDefaultsDto {
 /// `defaults.portal_end`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PortalEndDefaultsDto {
+pub(crate) struct PortalEndDefaultsDto<'a> {
     /// The position around the node's outline.
     #[serde(
         default,
@@ -605,7 +606,7 @@ pub(crate) struct PortalEndDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The marker size in points.
     #[serde(
         default,
@@ -619,91 +620,91 @@ pub(crate) struct PortalEndDefaultsDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub content: Option<String>,
+    pub content: Option<Cow<'a, str>>,
 }
 
 /// The map's defaults: one optional object per kind.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DefaultsDto {
+pub(crate) struct DefaultsDto<'a> {
     /// Node defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub node: Option<NodeDefaultsDto>,
+    pub node: Option<NodeDefaultsDto<'a>>,
     /// Section text defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub section: Option<TextDefaultsDto>,
+    pub section: Option<TextDefaultsDto<'a>>,
     /// Frame defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub frame: Option<FrameDefaultsDto>,
+    pub frame: Option<FrameDefaultsDto<'a>>,
     /// Ring defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub ring: Option<RingDefaultsDto>,
+    pub ring: Option<RingDefaultsDto<'a>>,
     /// Connector defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub connector: Option<FlowDefaultsDto>,
+    pub connector: Option<FlowDefaultsDto<'a>>,
     /// Line-link defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub link: Option<FlowDefaultsDto>,
+    pub link: Option<FlowDefaultsDto<'a>>,
     /// Label defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub label: Option<LabelDefaultsDto>,
+    pub label: Option<LabelDefaultsDto<'a>>,
     /// Portal-end defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub portal_end: Option<PortalEndDefaultsDto>,
+    pub portal_end: Option<PortalEndDefaultsDto<'a>>,
     /// Span defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub span: Option<TextDefaultsDto>,
+    pub span: Option<TextDefaultsDto<'a>>,
 }
 
 /// A span: text with one style.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SpanDto {
+pub(crate) struct SpanDto<'a> {
     /// The text.
-    pub text: String,
+    pub text: Cow<'a, str>,
     /// The font family name.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -717,7 +718,7 @@ pub(crate) struct SpanDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -738,13 +739,13 @@ pub(crate) struct SpanDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub link: Option<LinkTargetDto>,
+    pub link: Option<LinkTargetDto<'a>>,
 }
 
 /// A section: a box of spans inside a node.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SectionDto {
+pub(crate) struct SectionDto<'a> {
     /// The channel among siblings of its kind.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub channel: u64,
@@ -771,7 +772,7 @@ pub(crate) struct SectionDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -785,7 +786,7 @@ pub(crate) struct SectionDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -802,13 +803,13 @@ pub(crate) struct SectionDto {
     pub italic: Option<bool>,
     /// Its spans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto>,
+    pub spans: Vec<SpanDto<'a>>,
 }
 
 /// One ring of a frame.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RingDto {
+pub(crate) struct RingDto<'a> {
     /// The channel among siblings of its kind.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub channel: u64,
@@ -818,14 +819,14 @@ pub(crate) struct RingDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fit: Option<FitDto>,
+    pub fit: Option<FitDto<'a>>,
     /// The font family name.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -839,7 +840,7 @@ pub(crate) struct RingDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -856,13 +857,13 @@ pub(crate) struct RingDto {
     pub italic: Option<bool>,
     /// Its spans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto>,
+    pub spans: Vec<SpanDto<'a>>,
 }
 
 /// A node's frame.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FrameDto {
+pub(crate) struct FrameDto<'a> {
     /// Whether the frame is drawn.
     #[serde(
         default,
@@ -890,7 +891,7 @@ pub(crate) struct FrameDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fit: Option<FitDto>,
+    pub fit: Option<FitDto<'a>>,
     /// The space between rings.
     #[serde(
         default,
@@ -911,7 +912,7 @@ pub(crate) struct FrameDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -925,7 +926,7 @@ pub(crate) struct FrameDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -942,20 +943,20 @@ pub(crate) struct FrameDto {
     pub italic: Option<bool>,
     /// Its rings, innermost first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rings: Vec<RingDto>,
+    pub rings: Vec<RingDto<'a>>,
 }
 
 /// A path's start or end cap.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CapDto {
+pub(crate) struct CapDto<'a> {
     /// The font family name.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -969,7 +970,7 @@ pub(crate) struct CapDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -986,13 +987,13 @@ pub(crate) struct CapDto {
     pub italic: Option<bool>,
     /// Its spans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto>,
+    pub spans: Vec<SpanDto<'a>>,
 }
 
 /// A label on a path or beside a portal end.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct LabelDto {
+pub(crate) struct LabelDto<'a> {
     /// The position along the path.
     #[serde(
         default,
@@ -1013,7 +1014,7 @@ pub(crate) struct LabelDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -1027,7 +1028,7 @@ pub(crate) struct LabelDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -1044,13 +1045,13 @@ pub(crate) struct LabelDto {
     pub italic: Option<bool>,
     /// Its spans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto>,
+    pub spans: Vec<SpanDto<'a>>,
 }
 
 /// One end of a portal link.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PortalEndDto {
+pub(crate) struct PortalEndDto<'a> {
     /// The position around the node's outline.
     #[serde(
         default,
@@ -1071,7 +1072,7 @@ pub(crate) struct PortalEndDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The marker size in points.
     #[serde(
         default,
@@ -1085,30 +1086,30 @@ pub(crate) struct PortalEndDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub content: Option<String>,
+    pub content: Option<Cow<'a, str>>,
     /// Its spans, the marker.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto>,
+    pub spans: Vec<SpanDto<'a>>,
     /// Its label.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub label: Option<LabelDto>,
+    pub label: Option<LabelDto<'a>>,
 }
 
 /// A node's connector: the line to its parent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PathDto {
+pub(crate) struct PathDto<'a> {
     /// What the text does when it and the path differ in length.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fit: Option<FitDto>,
+    pub fit: Option<FitDto<'a>>,
     /// Extra space between glyphs.
     #[serde(
         default,
@@ -1129,14 +1130,14 @@ pub(crate) struct PathDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The text drawn when the path has no spans.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub content: Option<String>,
+    pub content: Option<Cow<'a, str>>,
     /// Where it attaches at its start and at its end.
     #[serde(
         default,
@@ -1163,34 +1164,34 @@ pub(crate) struct PathDto {
     pub zoom: Option<ZoomDto>,
     /// Its spans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto>,
+    pub spans: Vec<SpanDto<'a>>,
     /// The glyphs at its start.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub cap_start: Option<CapDto>,
+    pub cap_start: Option<CapDto<'a>>,
     /// The glyphs at its end.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub cap_end: Option<CapDto>,
+    pub cap_end: Option<CapDto<'a>>,
     /// Its label.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub label: Option<LabelDto>,
+    pub label: Option<LabelDto<'a>>,
 }
 
 /// A link to another node.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct LinkDto {
+pub(crate) struct LinkDto<'a> {
     /// The `id` of the node it leads to, anywhere in the list. Read
     /// wider than an id may be, as a node's `id` is.
     pub to: u64,
@@ -1202,7 +1203,7 @@ pub(crate) struct LinkDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fit: Option<FitDto>,
+    pub fit: Option<FitDto<'a>>,
     /// Extra space between glyphs.
     #[serde(
         default,
@@ -1223,14 +1224,14 @@ pub(crate) struct LinkDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The text drawn when the path has no spans.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub content: Option<String>,
+    pub content: Option<Cow<'a, str>>,
     /// Where it attaches at its start and at its end.
     #[serde(
         default,
@@ -1257,41 +1258,41 @@ pub(crate) struct LinkDto {
     pub zoom: Option<ZoomDto>,
     /// Its spans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spans: Vec<SpanDto>,
+    pub spans: Vec<SpanDto<'a>>,
     /// The glyphs at its start.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub cap_start: Option<CapDto>,
+    pub cap_start: Option<CapDto<'a>>,
     /// The glyphs at its end.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub cap_end: Option<CapDto>,
+    pub cap_end: Option<CapDto<'a>>,
     /// Its label.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub label: Option<LabelDto>,
+    pub label: Option<LabelDto<'a>>,
     /// The two ends of a portal link: the source end, then the target end.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub ends: Option<[PortalEndDto; 2]>,
+    pub ends: Option<[PortalEndDto<'a>; 2]>,
 }
 
 /// A node.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct NodeDto {
+pub(crate) struct NodeDto<'a> {
     /// The id links and verbs name it by, unique in the map: an integer
     /// in `1..=4294967294`. Read wider than it may be, so that a value
     /// out of range is a bound error naming the bound rather than the
@@ -1331,7 +1332,7 @@ pub(crate) struct NodeDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub fill: Option<ColorDto>,
+    pub fill: Option<ColorDto<'a>>,
     /// The width of the fill's soft edge.
     #[serde(
         default,
@@ -1345,7 +1346,7 @@ pub(crate) struct NodeDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub palette: Option<String>,
+    pub palette: Option<Cow<'a, str>>,
     /// The zoom range it renders in.
     #[serde(
         default,
@@ -1368,14 +1369,14 @@ pub(crate) struct NodeDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub on: Option<OnDto>,
+    pub on: Option<OnDto<'a>>,
     /// The font family name.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub font: Option<String>,
+    pub font: Option<Cow<'a, str>>,
     /// The size: points, or a fraction of the node's shorter side inside a frame.
     #[serde(
         default,
@@ -1389,7 +1390,7 @@ pub(crate) struct NodeDto {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub color: Option<ColorDto>,
+    pub color: Option<ColorDto<'a>>,
     /// The weight.
     #[serde(
         default,
@@ -1406,24 +1407,24 @@ pub(crate) struct NodeDto {
     pub italic: Option<bool>,
     /// Its sections.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sections: Vec<SectionDto>,
+    pub sections: Vec<SectionDto<'a>>,
     /// Its frame.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub frame: Option<FrameDto>,
+    pub frame: Option<FrameDto<'a>>,
     /// The line to its parent; absent means a connector with every field inherited.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub connector: Option<PathDto>,
+    pub connector: Option<PathDto<'a>>,
     /// Its links.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub links: Vec<LinkDto>,
+    pub links: Vec<LinkDto<'a>>,
 }
 
 /// Every top-level key of a file but `nodes`: the header, which the
@@ -1433,7 +1434,7 @@ pub(crate) struct NodeDto {
 /// at a time as its walk reaches it (design B.14, B.15).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MapHeaderDto {
+pub(crate) struct MapHeaderDto<'a> {
     /// The format version: `1`.
     pub format: u64,
     /// The map's name.
@@ -1449,14 +1450,14 @@ pub(crate) struct MapHeaderDto {
     pub theme: Option<ThemeDto>,
     /// The palettes, by name.
     #[serde(default, skip_serializing_if = "Named::is_empty")]
-    pub palettes: Named<Vec<PaletteGroupDto>>,
+    pub palettes: Named<Vec<PaletteGroupDto<'a>>>,
     /// The map's defaults.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub defaults: Option<DefaultsDto>,
+    pub defaults: Option<DefaultsDto<'a>>,
     /// The edits the map defines.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<EditDto>,

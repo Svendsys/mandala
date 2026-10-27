@@ -24,7 +24,7 @@ pub(crate) struct TextIn<'a> {
     /// `size`.
     pub size: Option<f32>,
     /// `color`.
-    pub color: Option<&'a ColorDto>,
+    pub color: Option<&'a ColorDto<'a>>,
     /// `weight`.
     pub weight: Option<WeightDto>,
     /// `italic`.
@@ -40,7 +40,7 @@ pub(crate) struct FrameIn<'a> {
     /// `direction`.
     pub direction: Option<DirectionDto>,
     /// `fit`.
-    pub fit: Option<&'a FitDto>,
+    pub fit: Option<&'a FitDto<'a>>,
     /// `gap`.
     pub gap: Option<f32>,
     /// `inset`.
@@ -52,13 +52,13 @@ pub(crate) struct FrameIn<'a> {
 /// A view of a path's style keys.
 pub(crate) struct FlowIn<'a> {
     /// `fit`.
-    pub fit: Option<&'a FitDto>,
+    pub fit: Option<&'a FitDto<'a>>,
     /// `spacing`.
     pub spacing: Option<f32>,
     /// `size`.
     pub size: Option<f32>,
     /// `color`.
-    pub color: Option<&'a ColorDto>,
+    pub color: Option<&'a ColorDto<'a>>,
     /// `content`.
     pub content: Option<&'a str>,
 }
@@ -70,7 +70,7 @@ pub(crate) struct PortalIn<'a> {
     /// `offset`.
     pub offset: Option<f32>,
     /// `color`.
-    pub color: Option<&'a ColorDto>,
+    pub color: Option<&'a ColorDto<'a>>,
     /// `size`.
     pub size: Option<f32>,
     /// `content`.
