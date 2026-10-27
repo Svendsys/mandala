@@ -676,7 +676,13 @@ fn test_the_one_node_check_never_passes_what_the_full_build_refuses() {
     // defect could make one: the one-node check answers ids and links
     // from the index, so it must refuse here, and the full build then
     // names what a load of the file would.
-    let loaded = load(&map_of_two("", r#","links":[{"to":1,"kind":"line"}]"#)).expect("the map loads");
+    // Two top-level nodes, so that nothing but the ids tells them apart.
+    let nodes = format!(
+        "{},{}",
+        node_of(1, ""),
+        node_of(2, r#","links":[{"to":1,"kind":"line"}]"#)
+    );
+    let loaded = load(&map_with("", &nodes)).expect("the map loads");
     let first = loaded.node_by_ident(NodeIdent(1)).expect("node 1");
     let second = loaded.node_by_ident(NodeIdent(2)).expect("node 2");
     let mut tree = loaded.tree().clone();
