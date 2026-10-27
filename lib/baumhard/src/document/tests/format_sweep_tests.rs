@@ -94,6 +94,11 @@ fn is_local(kind: &LoadErrorKind) -> bool {
     )
 }
 
+/// The node a location is in: `i` when it starts with `nodes[i]`.
+fn node_of(location: &str) -> Option<usize> {
+    location.strip_prefix("nodes[")?.split(']').next()?.parse().ok()
+}
+
 #[test]
 fn test_every_wrong_type_at_every_location_names_that_location() {
     let mut swept = 0;
@@ -129,6 +134,12 @@ fn test_every_wrong_type_at_every_location_names_that_location() {
                 assert!(
                     within(&error.path, &location),
                     "{name}: {probe} at `{location}` gave an error elsewhere: {error:?}"
+                );
+                // An error inside a node names that node, and only then.
+                assert_eq!(
+                    error.node.as_ref().map(|node| node.index),
+                    node_of(&location),
+                    "{name}: {probe} at `{location}` named another node: {error:?}"
                 );
             }
             if !refused_locally {
@@ -177,6 +188,11 @@ fn test_an_unknown_key_in_every_object_names_that_object() {
             assert!(
                 within(&error.path, &location),
                 "{name}: a stray key at `{location}` gave an error elsewhere: {error:?}"
+            );
+            assert_eq!(
+                error.node.as_ref().map(|node| node.index),
+                node_of(&location),
+                "{name}: a stray key at `{location}` named another node: {error:?}"
             );
             swept += 1;
         }

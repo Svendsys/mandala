@@ -7,7 +7,7 @@ use crate::document::element::{
     ConnectorData, DocElement, FlowStyle, LabelData, LabelStyle, LinkData, PathData, ThemeData, ThemeVariant,
 };
 use crate::document::format::load;
-use crate::document::tests::format_support::{fixture, node, same_document, written};
+use crate::document::tests::format_support::{fixture, node, same_document, written, FIXTURES};
 use crate::document::tests::format_text::map_of;
 use crate::document::tests::test_support::{example, path_data, DocumentBuilder};
 use crate::document::values::{LinkKind, Rgba};
@@ -117,18 +117,23 @@ fn test_the_saver_writes_keys_in_the_order_the_schema_lists_them() {
 
 #[test]
 fn test_the_saver_writes_the_same_text_whatever_order_the_file_was_in() {
-    // The same map with its keys shuffled loads and saves to the
-    // fixture's text.
-    let value: Value = serde_json::from_str(fixture("full")).unwrap();
-    let reversed = serde_json::to_string(&value).unwrap(); // serde_json's maps are sorted
-    let doc = load(&reversed).unwrap();
-    assert_eq!(written(&doc), fixture("full"));
-    // And compact or spaced, the same.
-    let spaced = serde_json::to_string_pretty(&value).unwrap().replace("  ", "\t");
-    assert_eq!(written(&load(&spaced).unwrap()), fixture("full"));
-    // Key order never matters; the order of a row does. The same file
-    // with its node list reversed is refused, not reordered.
-    let mut rows = value.clone();
+    // Every fixture with every object's keys sorted, as `jq -S` would
+    // write it, loads to the same document and saves to the fixture's
+    // exact bytes: the order of keys never matters.
+    for (name, text) in FIXTURES {
+        let value: Value = serde_json::from_str(text).unwrap();
+        let sorted = serde_json::to_string(&value).unwrap(); // serde_json's maps are sorted
+        assert_ne!(sorted, *text, "{name}: precondition, the text changed");
+        let doc = load(&sorted).unwrap_or_else(|e| panic!("{name}, keys sorted: {e}"));
+        assert_eq!(written(&doc), *text, "{name}");
+        same_document(&doc, &load(text).unwrap()).unwrap();
+        // And compact or spaced, the same.
+        let spaced = serde_json::to_string_pretty(&value).unwrap().replace("  ", "\t");
+        assert_eq!(written(&load(&spaced).unwrap()), *text, "{name}");
+    }
+    // Key order never matters; the order of a row does. A map with its
+    // node list reversed is refused, not reordered.
+    let mut rows: Value = serde_json::from_str(fixture("full")).unwrap();
     if let Some(nodes) = rows["nodes"].as_array_mut() {
         nodes.reverse();
     }
