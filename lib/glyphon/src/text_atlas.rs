@@ -287,6 +287,7 @@ pub struct TextAtlas {
     pub(crate) mask_atlas: InnerAtlas,
     pub(crate) format: TextureFormat,
     pub(crate) color_mode: ColorMode,
+    pub(crate) rasterized: u64,
 }
 
 impl TextAtlas {
@@ -328,6 +329,7 @@ impl TextAtlas {
             mask_atlas,
             format,
             color_mode,
+            rasterized: 0,
         }
     }
 

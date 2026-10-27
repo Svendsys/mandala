@@ -20,6 +20,18 @@ pub use text_atlas::{ColorMode, TextAtlas};
 pub use text_render::TextRenderer;
 pub use viewport::Viewport;
 
+impl TextAtlas {
+    /// How many glyphs the atlas holds, both pages.
+    pub fn glyph_count(&self) -> usize {
+        self.mask_atlas.glyph_cache.len() + self.color_atlas.glyph_cache.len()
+    }
+
+    /// How many glyphs have been rasterized since the atlas was made.
+    pub fn rasterized_count(&self) -> u64 {
+        self.rasterized
+    }
+}
+
 // Re-export all top-level types from `cosmic-text` for convenience.
 #[doc(no_inline)]
 pub use cosmic_text::{
@@ -122,6 +134,20 @@ pub struct TextArea<'a> {
     pub default_color: Color,
     /// Additional custom glyphs to render.
     pub custom_glyphs: &'a [CustomGlyph],
+}
+
+/// A glyph placed by the caller rather than by a buffer's layout: the
+/// rasterization it needs and the physical pixel of its pen.
+#[derive(Clone, Copy, Debug)]
+pub struct PositionedGlyph {
+    /// The rasterization: face, glyph, size and subpixel bins.
+    pub cache_key: CacheKey,
+    /// The pen's physical x.
+    pub x: i32,
+    /// The pen's physical y (on the baseline).
+    pub y: i32,
+    /// The color: a mask glyph's tint; a color glyph takes its alpha.
+    pub color: Color,
 }
 
 pub(crate) struct State<'a> {

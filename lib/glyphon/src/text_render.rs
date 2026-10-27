@@ -1,6 +1,6 @@
 use crate::{
     custom_glyph::CustomGlyphCacheKey, ColorMode, ContentType, FontSystem, GlyphDetails,
-    GlyphToRender, GpuCacheStatus, PrepareError, RasterizeCustomGlyphRequest,
+    GlyphToRender, GpuCacheStatus, PositionedGlyph, PrepareError, RasterizeCustomGlyphRequest,
     RasterizedCustomGlyph, RenderError, State, SwashCache, SwashContent, TextArea, TextAtlas,
     Viewport,
 };
@@ -129,6 +129,60 @@ impl TextRenderer {
         atlas: &mut TextAtlas,
         viewport: &Viewport,
         text_areas: impl IntoIterator<Item = TextArea<'a>>,
+        cache: &mut SwashCache,
+        metadata_to_depth: impl FnMut(usize) -> f32,
+        rasterize_custom_glyph: impl FnMut(RasterizeCustomGlyphRequest) -> Option<RasterizedCustomGlyph>,
+    ) -> Result<(), PrepareError> {
+        self.prepare_inner(
+            device,
+            queue,
+            font_system,
+            atlas,
+            viewport,
+            text_areas,
+            &[],
+            cache,
+            metadata_to_depth,
+            rasterize_custom_glyph,
+        )
+    }
+
+    /// Prepares the provided text areas, and glyphs the caller placed
+    /// itself, for rendering in one draw.
+    pub fn prepare_with_positioned<'a>(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        font_system: &mut FontSystem,
+        atlas: &mut TextAtlas,
+        viewport: &Viewport,
+        text_areas: impl IntoIterator<Item = TextArea<'a>>,
+        positioned: &[PositionedGlyph],
+        cache: &mut SwashCache,
+    ) -> Result<(), PrepareError> {
+        self.prepare_inner(
+            device,
+            queue,
+            font_system,
+            atlas,
+            viewport,
+            text_areas,
+            positioned,
+            cache,
+            zero_depth,
+            |_| None,
+        )
+    }
+
+    fn prepare_inner<'a>(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        font_system: &mut FontSystem,
+        atlas: &mut TextAtlas,
+        viewport: &Viewport,
+        text_areas: impl IntoIterator<Item = TextArea<'a>>,
+        positioned: &[PositionedGlyph],
         cache: &mut SwashCache,
         mut metadata_to_depth: impl FnMut(usize) -> f32,
         mut rasterize_custom_glyph: impl FnMut(
@@ -313,6 +367,54 @@ impl TextRenderer {
             }
         }
 
+        let surface = GlyphBounds {
+            x: Bounds {
+                min: 0,
+                max: resolution.width as i32,
+            },
+            y: Bounds {
+                min: 0,
+                max: resolution.height as i32,
+            },
+        };
+        for glyph in positioned {
+            if let Some(glyph_to_render) = prepare_glyph(
+                &state,
+                &mut system,
+                GlyphMetadata {
+                    x: glyph.x,
+                    y: glyph.y,
+                    line_y: 0.0,
+                    color: glyph.color,
+                    metadata: 0,
+                    cache_key: GlyphonCacheKey::Text(glyph.cache_key),
+                    scale_factor: 1.0,
+                },
+                surface,
+                |system, _rasterize_custom_glyph| -> Option<GetGlyphImageResult> {
+                    let image = system
+                        .cache
+                        .get_image_uncached(system.font_system, glyph.cache_key)?;
+                    let content_type = match image.content {
+                        SwashContent::Color => ContentType::Color,
+                        SwashContent::Mask | SwashContent::SubpixelMask => ContentType::Mask,
+                    };
+                    Some(GetGlyphImageResult {
+                        content_type,
+                        top: image.placement.top as i16,
+                        left: image.placement.left as i16,
+                        width: image.placement.width as u16,
+                        height: image.placement.height as u16,
+                        data: image.data,
+                    })
+                },
+                &mut metadata_to_depth,
+                &mut rasterize_custom_glyph,
+            )? {
+                self.glyph_vertices.push(glyph_to_render);
+            }
+        }
+
         let will_render = !self.glyph_vertices.is_empty();
         if !will_render {
             return Ok(());
@@ -480,6 +582,7 @@ where
                 .insert(metadata.cache_key);
             details
         } else {
+            system.atlas.rasterized += 1;
             let Some(image) = (get_glyph_image)(system, &mut rasterize_custom_glyph) else {
                 return Ok(None);
             };

@@ -918,7 +918,7 @@ impl Renderer {
         let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
-        let glyph_runs = glyph_runs::GlyphRunPass::new(&device, surface_format);
+        let glyph_runs = glyph_runs::GlyphRunPass::default();
         let camera = Camera2D::new(size.width, size.height);
 
         // Rect pipeline: colored quads for node backgrounds and the

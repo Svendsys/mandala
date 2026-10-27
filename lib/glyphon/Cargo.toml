@@ -1,0 +1,15 @@
+[package]
+name = "glyphon"
+description = "Fast, simple 2D text rendering for wgpu (vendored 0.12.0, positioned glyphs added)"
+version = "0.12.0"
+edition = "2021"
+license = "MIT OR Apache-2.0 OR Zlib"
+publish = false
+autobenches = false
+
+[dependencies]
+wgpu = { workspace = true, features = ["wgsl"] }
+etagere = "0.3.0"
+cosmic-text.workspace = true
+lru = { version = "0.16.2", default-features = false }
+rustc-hash.workspace = true

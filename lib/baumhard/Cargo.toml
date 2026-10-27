@@ -30,7 +30,7 @@ lazy_static = "1.5.1"
 log.workspace = true
 indextree.workspace = true
 glam.workspace = true
-cosmic-text = "0.19.0"
+cosmic-text.workspace = true
 # The lock behind `font::fonts::FONT_SYSTEM`. Chosen over
 # `std::sync::RwLock` for one capability std lacks: a *timed* write
 # acquire that queues fairly (`try_write_for`) instead of a

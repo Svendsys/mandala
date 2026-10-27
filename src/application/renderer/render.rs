@@ -433,11 +433,6 @@ impl Renderer {
                 log::warn!("renderer: text_renderer.render failed: {e}");
             }
 
-            // 2b. Positioned glyph runs — every glyph of every
-            //     `GlyphRun` at its own canvas position, one instanced
-            //     draw. Canvas content, so under the palette below.
-            self.glyph_runs.render(&mut pass);
-
             // 3. Palette backdrop (rect pipeline, screen-space).
             //    Drawn AFTER the main text pass so node text
             //    sitting behind the palette is fully occluded.
@@ -616,13 +611,16 @@ impl Renderer {
         // unguarded `warn!` would write a line per spin. The flag
         // clears on the next successful prepare, so a transient fault
         // logs again if it returns.
-        if let Err(e) = self.text_renderer.prepare(
+        self.glyph_runs
+            .collect(camera, super::scene_shape_cache::glyph_runs(canvas_elements()));
+        if let Err(e) = self.text_renderer.prepare_with_positioned(
             &self.device,
             &self.queue,
             &mut font_system,
             &mut self.atlas,
             &self.viewport,
             main_text_areas,
+            &self.glyph_runs.positioned,
             &mut self.swash_cache,
         ) {
             if !self.prepare_fault_logged {
@@ -646,16 +644,8 @@ impl Renderer {
             }
             return Err(FrameSkip::PrepareFailed);
         }
-        // The positioned glyph runs, under the same guard: they shape
-        // nothing, but a glyph the atlas has not seen is rasterized.
-        self.glyph_runs.prepare(
-            &self.device,
-            &self.queue,
-            &mut font_system,
-            &mut self.swash_cache,
-            camera,
-            super::scene_shape_cache::glyph_runs(canvas_elements()),
-        );
+        self.glyph_runs.counts.atlas_entries = self.atlas.glyph_count();
+        self.glyph_runs.counts.atlas_rasterized = self.atlas.rasterized_count();
         drop(font_system);
         self.prepare_fault_logged = false;
         Ok(())

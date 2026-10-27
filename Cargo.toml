@@ -1,5 +1,5 @@
 [workspace]
-members = ["lib/baumhard", "lib/mandala_derive", "crates/maptool", "crates/mandalactl"]
+members = ["lib/baumhard", "lib/mandala_derive", "lib/glyphon", "crates/maptool", "crates/mandalactl"]
 
 [workspace.package]
 license = "MPL-2.0"
@@ -105,6 +105,10 @@ log = { version = "0.4.34", features = ["release_max_level_warn", "kv"] }
 # derive macro expansion for the benefit of one test-only reader.
 proc-macro2 = "1.0.107"
 rustc-hash = "2.1.3"
+# Spike (c): the vendored glyphon and the app both build against wgpu;
+# baumhard and the vendored glyphon both against cosmic-text.
+wgpu = "30.0.1"
+cosmic-text = "0.19.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # Two members name it: the app's screenshot encoder
@@ -170,15 +174,13 @@ rustc-hash.workspace = true
 # `::Color`, `::FontSystem`, ...). Leaving the crate out of this
 # manifest makes that containment compiler-enforced: a `use
 # cosmic_text::...` in `src/` no longer resolves.
-wgpu = { version = "30.0.1", features = ["webgl"] }
+wgpu = { workspace = true, features = ["webgl"] }
 # `derive`: the positioned-glyph pass's instance and uniform structs
 # (`renderer::glyph_runs`) are `Pod` by derive, with no `unsafe`.
 bytemuck = { version = "1.25.2", features = ["derive"] }
-glyphon = "0.12.0"
-# The positioned-glyph atlas's packer (`renderer::glyph_runs::atlas`):
-# the allocator glyphon packs its own atlas with, at the version it
-# already brings into the lockfile.
-etagere = "0.3.0"
+# Spike (c): glyphon 0.12.0, vendored (`lib/glyphon`, MIT OR Apache-2.0
+# OR Zlib) with a positioned-glyph prepare added.
+glyphon = { path = "./lib/glyphon" }
 # Alternative: https://crates.io/crates/ab_glyph
 glam.workspace = true
 # `serde`: the IPC `input.key` command spells a named key the way
