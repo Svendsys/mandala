@@ -18,16 +18,33 @@
 //! key advances, equal keys walk. Nothing is collected and nothing is
 //! sorted.
 //!
+//! # Depth costs no call stack
+//!
+//! Neither tree's depth has a bound (design D30, §20 rule 11): a map
+//! can be as deep as memory allows, and a mutator tree can mirror a
+//! path to any element of it. So the walk does not recurse. Each step
+//! of the descent — a (target, mutator) pair, a row being merged or
+//! zipped, a `RepeatWhile` level, the terminator of a loop — is a
+//! `Frame` on a heap stack in the walk, and the walk runs until the
+//! stack is empty. A frame that reaches a child pushes itself back with
+//! its cursors advanced, then the child's frame on top of it, so the
+//! child's whole subtree is walked before the row moves on: the order
+//! in which elements are tested, applied to and recorded is the
+//! depth-first order a recursive walk has, step for step.
+//!
 //! # Inherited state
 //!
-//! Every function here carries `parent_state: &E::Inherited` — the
-//! [inherited state](crate::engine::element::TreeElement::Inherited) of the current target's
-//! **parent**. A mutation applied to the target receives it; when the
-//! walk descends, the target's own state is computed with
-//! [`TreeElement::inherit`](crate::engine::element::TreeElement::inherit) *after* the target's own mutations, so a
-//! mutation sees its ancestors as the same walk left them. The state
-//! is a local of the recursion — nothing is stored on an element or in
-//! a tree, and no visited node costs an allocation for it.
+//! Every frame names the [inherited state](crate::engine::element::TreeElement::Inherited)
+//! of its target's **parent**. A mutation applied to the target
+//! receives it; when the walk descends, the target's own state is
+//! computed with [`TreeElement::inherit`](crate::engine::element::TreeElement::inherit)
+//! *after* the target's own mutations, so a mutation sees its ancestors
+//! as the same walk left them. The states live on a second heap stack
+//! beside the frames: the frame that descends into a row pushes the
+//! state its children receive and pops it when the row is done, so each
+//! state is computed once per element descended through, read by
+//! reference, and never cloned — nothing is stored on an element or in
+//! a tree, and nothing is re-derived by climbing to the root.
 //!
 //! # Keys a walk changes
 //!
@@ -77,9 +94,9 @@
 
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
+use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::{Instruction, Mutator};
-use crate::engine::predicate::Predicate;
 use crate::engine::siblings;
 use crate::engine::structure::apply_ops;
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
@@ -89,7 +106,23 @@ use indextree::{Arena, Node, NodeId};
 use log::{debug, error, warn};
 use std::cmp::Ordering;
 
-/// What a walk keeps beside the two trees: the children whose key it
+/// What a walk keeps beside the two trees: what it
+/// [records](WalkLog) — the children whose key it changed, the
+/// structural commands it reached and its journal — and the two heap
+/// stacks its descent runs on in place of the call stack: its
+/// [frames](Frame), and the inherited states those frames hand down.
+///
+/// The stacks start empty and unallocated, grow to the depth the walk
+/// reaches, and are reused by every anchor of the walk, so a descent
+/// allocates nothing per visited element.
+#[derive(Debug)]
+pub(in crate::engine) struct Walk<'j, E: TreeElement> {
+    rec: WalkLog<'j, E>,
+    frames: Vec<Frame<E::Kind>>,
+    states: Vec<E::Inherited>,
+}
+
+/// What a walk records beside the trees: the children whose key it
 /// changed, recorded so they can be moved to their sorted places once
 /// the walk is over ([`Walk::settle`]); the structural commands it
 /// reached, collected for its second phase; and — for a journaled walk —
@@ -101,10 +134,88 @@ use std::cmp::Ordering;
 /// common path. A child recorded twice (its key changed by two applies)
 /// is moved once.
 #[derive(Debug)]
-pub(in crate::engine) struct Walk<'j, E: TreeElement> {
+struct WalkLog<'j, E: TreeElement> {
     rekeyed: Vec<(NodeId, NodeId)>,
     ops: Vec<(NodeId, NodeId)>,
     journal: Option<&'j mut JournalBuilder<E>>,
+}
+
+/// Where a frame finds the inherited state of its target's parent.
+#[derive(Clone, Copy, Debug)]
+enum StateRef {
+    /// The state the walk was started with: the anchor's parent's.
+    Seed,
+    /// The state at this index of the walk's state stack, pushed by the
+    /// frame below that descended into the row.
+    Slot(usize),
+}
+
+/// One step of a walk's descent, on the walk's heap stack. Each variant
+/// is the body of what a recursive walk would have as a function, with
+/// its loop cursors made explicit; `own` is the index of the state the
+/// frame pushed for its children, which it pops when it is done.
+#[derive(Clone, Copy, Debug)]
+enum Frame<K> {
+    /// One (target, mutator) pair: apply the mutator's payload to the
+    /// target when `apply_here`, then descend — by key for a `Single`,
+    /// `Macro`, `Structure` or `Void`, through the instruction for an
+    /// `Instruction`.
+    Pair {
+        target: NodeId,
+        mutator: NodeId,
+        state: StateRef,
+        apply_here: bool,
+    },
+    /// A target row merged against a mutator row by key, each pair with
+    /// equal keys visited in turn: as a [`Frame::Pair`], or — below a
+    /// `RepeatWhile` instruction, the node `repeat` names — as the first
+    /// level of its loop, a [`Frame::Repeat`].
+    Merge {
+        target: Option<NodeId>,
+        mutator: Option<NodeId>,
+        own: usize,
+        repeat: Option<NodeId>,
+    },
+    /// A target row zipped against a mutator row by position
+    /// ([`Instruction::MapChildren`]), each pair visited in turn as a
+    /// [`Frame::Pair`] that applies whatever the keys.
+    Zip {
+        target: Option<NodeId>,
+        mutator: Option<NodeId>,
+        own: usize,
+        paired: usize,
+    },
+    /// One level of a [`Instruction::RepeatWhile`] loop: test the
+    /// predicate of the `instruction` node on the target; on a match,
+    /// apply the repeated mutator and go on to the target's children of
+    /// its kind; otherwise run the [terminator](Frame::Terminator).
+    Repeat {
+        target: NodeId,
+        mutator: NodeId,
+        instruction: NodeId,
+        state: StateRef,
+    },
+    /// The children of a target a `RepeatWhile` matched, each of the
+    /// repeated mutator's `kind` taken through a [`Frame::Repeat`] in
+    /// turn; a child of another kind is passed.
+    RepeatChildren {
+        target: Option<NodeId>,
+        mutator: NodeId,
+        instruction: NodeId,
+        kind: K,
+        own: usize,
+    },
+    /// The continuation of a `RepeatWhile` loop whose predicate failed
+    /// on `target`: the repeated mutator's own children whose key is
+    /// the target's `key` — read when the loop ended — each walked from
+    /// the target as a [`Frame::Pair`], in sibling order, up to the
+    /// first key above it.
+    Terminator {
+        target: NodeId,
+        after: Option<NodeId>,
+        key: BranchKey<K>,
+        state: StateRef,
+    },
 }
 
 /// Run one walk to its end against `tree`: `body` walks — from the
@@ -150,9 +261,13 @@ impl<'j, E: TreeElement> Walk<'j, E> {
     /// allocation.
     pub(in crate::engine) fn new(journal: Option<&'j mut JournalBuilder<E>>) -> Self {
         Walk {
-            rekeyed: Vec::new(),
-            ops: Vec::new(),
-            journal,
+            rec: WalkLog {
+                rekeyed: Vec::new(),
+                ops: Vec::new(),
+                journal,
+            },
+            frames: Vec::new(),
+            states: Vec::new(),
         }
     }
 
@@ -170,7 +285,7 @@ impl<'j, E: TreeElement> Walk<'j, E> {
         tree: &mut Tree<E>,
         mutator_tree: &MutatorTree<E, M>,
     ) -> Result<(), TreeError> {
-        let ops = std::mem::take(&mut self.ops);
+        let ops = std::mem::take(&mut self.rec.ops);
         let journal = self.settle(tree);
         if ops.is_empty() {
             return Ok(());
@@ -189,26 +304,41 @@ impl<'j, E: TreeElement> Walk<'j, E> {
     /// sorted — the children that kept their keys were in order before
     /// the walk and nothing reordered them — and each is then placed
     /// into that sorted row in the order the walk recorded it. Children
-    /// keep their ids and subtrees; nothing is sorted. A journaled walk
-    /// notes each detach and attach in its journal, which is how the
-    /// journal can put the children back.
+    /// keep their ids, their parents and their subtrees; nothing is
+    /// sorted. A journaled walk notes each detach and attach in its
+    /// journal, which is how the journal can put the children back.
+    ///
+    /// A child that is the only one in its row is already in its sorted
+    /// place whatever its key, and the detach and re-attach would put it
+    /// back where it is, so it is left alone — which makes a walk that
+    /// re-keys every element of a chain settle in O(1) per element.
     ///
     /// Hands back the walk's journal, for the commands that follow.
     ///
-    /// Invalidates `tree`'s cache when it moved anything. Cost: nothing
-    /// when nothing was recorded; otherwise, per recorded child, a
-    /// detach, a scan from the end of its row and an O(depth)
-    /// re-attach.
+    /// Invalidates `tree`'s cache when anything was recorded. Cost:
+    /// nothing when nothing was recorded; otherwise, per recorded child,
+    /// an O(1) only-child check and, for a child with siblings, a
+    /// detach, a scan from the end of its row and a same-row re-attach
+    /// ([`siblings::reattach_in_row`]).
     fn settle(self, tree: &mut Tree<E>) -> Option<&'j mut JournalBuilder<E>> {
-        let Walk {
+        let WalkLog {
             mut rekeyed,
             mut journal,
             ..
-        } = self;
+        } = self.rec;
         if rekeyed.is_empty() {
             return journal;
         }
         let arena = &mut tree.arena;
+        // Before anything is detached: a child alone in its row has no
+        // sibling recorded beside it, so leaving it is exact. Decided
+        // first, because a detach below could leave a child alone that
+        // was not.
+        rekeyed.retain(|&(_, child)| {
+            arena
+                .get(child)
+                .is_some_and(|n| n.previous_sibling().is_some() || n.next_sibling().is_some())
+        });
         // `retain` visits every record once, in order: the first record
         // of a child detaches it, and a later one finds it detached and
         // drops out.
@@ -228,60 +358,11 @@ impl<'j, E: TreeElement> Walk<'j, E> {
             if let Some(journal) = journal.as_deref_mut() {
                 journal.note_attach(arena, parent, prev);
             }
-            siblings::attach_at(arena, parent, child, prev);
+            siblings::reattach_in_row(arena, parent, child, prev);
         }
         tree.cache.invalidate();
         journal
     }
-}
-
-/// The continuation [`repeat_while`] calls when its predicate fails
-/// on a target: `(tree, mutator_tree, target_id, mutator_id,
-/// parent_state, walk)`, with `parent_state` the inherited state of
-/// `target_id`'s parent and `walk` what the walk keeps beside the trees
-/// ([`Walk`]). [`default_terminator`] is the one the walker uses.
-pub(in crate::engine) type Terminator<E, M> =
-    fn(&mut Tree<E>, &MutatorTree<E, M>, NodeId, NodeId, &<E as TreeElement>::Inherited, &mut Walk<'_, E>);
-
-/// Continuation called after a conditional loop
-/// ([`Instruction::RepeatWhile`]) exits — it resumes the normal walk
-/// from the mutator's children whose key matches the current target.
-///
-/// The after-mutations attached under `mutator_id` are in key order
-/// (the sorted-children invariant), so they are scanned in sibling
-/// order: every one whose key equals the target's is dispatched with
-/// the target's own `parent_state`, and the scan stops at the first
-/// key above the target's. No allocation.
-pub(in crate::engine) fn default_terminator<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_id: NodeId,
-    mutator_id: NodeId,
-    parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
-) {
-    // When a conditional loop terminates, both the mutator and the
-    // target are where the predicate failed: the target has not been
-    // mutated (yet), and the mutator is one step behind.
-    debug!("The Terminator has received a mission.");
-    let target_key = get_target(&tree.arena, target_id).get().key();
-    let mut after = get_mutator(&mutator_tree.arena, mutator_id).first_child();
-    while let Some(after_id) = after {
-        let node = get_mutator(&mutator_tree.arena, after_id);
-        after = node.next_sibling();
-        match node.get().key().cmp(&target_key) {
-            Ordering::Equal => {
-                debug!("Next mutator matches the target, starting walk..");
-                walk_from(tree, mutator_tree, target_id, after_id, parent_state, true, walk);
-            }
-            Ordering::Greater => {
-                debug!("Next mutator key is above the target's, ending branch..");
-                break;
-            }
-            Ordering::Less => {}
-        }
-    }
-    debug!("No more mutators, ending branch..");
 }
 
 /// Walk the entire `mutator_tree` against `tree`, starting from both
@@ -296,7 +377,7 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
     walk_tree_from(tree, mutator_tree, tree.root, mutator_tree.root, seed)
 }
 
-/// Dispatch one mutator node against one target node and recurse into
+/// Dispatch one mutator node against one target node and walk into
 /// aligned children. The pair's own mutation applies only when the two
 /// [keys](crate::engine::key::BranchKey) are equal; the walk below the
 /// pair runs either way, aligning each child row by key. `target_id`
@@ -313,9 +394,11 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 /// holds detached among them — is refused the same way, with nothing
 /// applied, as [`Tree::update`] and the anchored walks refuse it.
 ///
-/// Cost: an O(depth) check that `target_id` is in the tree, then
-/// O(sum of matching (target, mutator) pairs) — every pairwise match is
-/// one apply; pruned branches are free.
+/// Cost: one O(depth) check that `target_id` is in the tree — once per
+/// call, never per element — then O(sum of matching (target, mutator)
+/// pairs) — every pairwise match is one apply; pruned branches are
+/// free. The descent runs on heap stacks as deep as the walk goes, not
+/// on the call stack (see the module docs).
 pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
@@ -370,54 +453,538 @@ pub(in crate::engine) fn walk_anchor<E: TreeElement, M: Mutation<E>>(
     walk_from(tree, mutator_tree, anchor, root, seed, true, walk);
 }
 
-/// The walk of one (target, mutator) pair: apply the mutator's own
-/// payload to the target when `apply_here`, then descend — by key for
-/// a `Single` / `Macro` / `Void`, through the instruction for an
-/// `Instruction`.
+/// The walk of one (target, mutator) pair and everything below it:
+/// apply the mutator's own payload to the target when `apply_here`,
+/// then descend — by key for a `Single` / `Macro` / `Void`, through the
+/// instruction for an `Instruction`. `seed` is the inherited state of
+/// `target_id`'s parent.
+///
+/// Runs the walk's [frames](Frame) until none is left; the walk's
+/// stacks are empty when it starts and when it returns.
 fn walk_from<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
     target_id: NodeId,
     mutator_id: NodeId,
-    parent_state: &E::Inherited,
+    seed: &E::Inherited,
     apply_here: bool,
     walk: &mut Walk<'_, E>,
 ) {
-    let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
-
-    match mutator {
-        Mutator::Single { .. } | Mutator::Macro { .. } | Mutator::Structure { .. } => {
-            debug!("Processing Delta Node...");
-            if apply_here {
-                apply_mutator(tree, target_id, mutator_id, mutator, parent_state, walk);
-            }
-        }
-        Mutator::Void { .. } => {
-            debug!("Void mutator node, skipping")
-        }
-        Mutator::Instruction {
-            instruction,
-            mutation,
-            ..
-        } => {
-            debug!("Processing Instruction node...");
-            if apply_here && mutation.is_some() {
-                debug!("This instruction node has a Delta..");
-                apply_mutator(tree, target_id, mutator_id, mutator, parent_state, walk);
-            }
-            process_instruction_node(
-                tree,
-                mutator_tree,
-                target_id,
-                mutator_id,
+    let Walk { rec, frames, states } = walk;
+    debug_assert!(
+        frames.is_empty() && states.is_empty(),
+        "engine invariant: a walk starts on empty stacks"
+    );
+    frames.clear();
+    states.clear();
+    let mut driver = Driver {
+        mutator_tree,
+        seed,
+        rec,
+        frames,
+        states,
+    };
+    driver.frames.push(Frame::Pair {
+        target: target_id,
+        mutator: mutator_id,
+        state: StateRef::Seed,
+        apply_here,
+    });
+    while let Some(frame) = driver.frames.pop() {
+        match frame {
+            Frame::Pair {
+                target,
+                mutator,
+                state,
+                apply_here,
+            } => driver.pair(tree, target, mutator, state, apply_here),
+            Frame::Merge {
+                target,
+                mutator,
+                own,
+                repeat,
+            } => driver.merge(tree, target, mutator, own, repeat),
+            Frame::Zip {
+                target,
+                mutator,
+                own,
+                paired,
+            } => driver.zip(tree, target, mutator, own, paired),
+            Frame::Repeat {
+                target,
+                mutator,
                 instruction,
-                parent_state,
-                walk,
-            );
-            return;
+                state,
+            } => driver.repeat(tree, target, mutator, instruction, state),
+            Frame::RepeatChildren {
+                target,
+                mutator,
+                instruction,
+                kind,
+                own,
+            } => driver.repeat_children(tree, target, mutator, instruction, kind, own),
+            Frame::Terminator {
+                target,
+                after,
+                key,
+                state,
+            } => driver.terminator(target, after, key, state),
         }
     }
-    align_child_walks(tree, mutator_tree, target_id, mutator_id, parent_state, walk);
+    debug_assert!(
+        driver.states.is_empty(),
+        "engine invariant: every frame pops the state it pushed"
+    );
+}
+
+/// The walk of one anchor in progress: the mutator tree, the anchor's
+/// seed, and the walk's recorder and stacks, borrowed apart so a frame
+/// can read a state while it records an apply. Each method is one
+/// [`Frame`] variant's step: it is handed the frame popped off the
+/// stack, and pushes back what remains of it, then the child it
+/// reaches — so the child runs, subtree and all, before the frame goes
+/// on.
+struct Driver<'w, 'j, E: TreeElement, M: Mutation<E>> {
+    mutator_tree: &'w MutatorTree<E, M>,
+    seed: &'w E::Inherited,
+    rec: &'w mut WalkLog<'j, E>,
+    frames: &'w mut Vec<Frame<E::Kind>>,
+    states: &'w mut Vec<E::Inherited>,
+}
+
+impl<E: TreeElement, M: Mutation<E>> Driver<'_, '_, E, M> {
+    /// [`Frame::Pair`].
+    fn pair(
+        &mut self,
+        tree: &mut Tree<E>,
+        target: NodeId,
+        mutator_id: NodeId,
+        state: StateRef,
+        apply_here: bool,
+    ) {
+        let mutator = get_mutator(&self.mutator_tree.arena, mutator_id).get();
+        let parent_state = state_at(self.seed, self.states, state);
+        match mutator {
+            Mutator::Single { .. } | Mutator::Macro { .. } | Mutator::Structure { .. } => {
+                debug!("Processing Delta Node...");
+                if apply_here {
+                    apply_mutator(tree, target, mutator_id, mutator, parent_state, self.rec);
+                }
+                self.align_child_walks(tree, target, mutator_id, state);
+            }
+            Mutator::Void { .. } => {
+                debug!("Void mutator node, skipping");
+                self.align_child_walks(tree, target, mutator_id, state);
+            }
+            Mutator::Instruction {
+                instruction,
+                mutation,
+                ..
+            } => {
+                debug!("Processing Instruction node...");
+                if apply_here && mutation.is_some() {
+                    debug!("This instruction node has a Delta..");
+                    apply_mutator(tree, target, mutator_id, mutator, parent_state, self.rec);
+                }
+                self.instruction(tree, target, mutator_id, instruction, state);
+            }
+        }
+    }
+
+    /// Start merging the children of the mutator and of the target by
+    /// key ([`Frame::Merge`]): each pair with equal keys is walked as a
+    /// pair. A mutator reaches every target with its key that the merge
+    /// has not already passed: the first mutator on a key consumes that
+    /// key's targets, so a later sibling mutator on the same key reaches
+    /// none of them. The children receive `target`'s own state, computed
+    /// here, after its own mutations.
+    ///
+    /// See also [`Instruction::MapChildren`] ([`Self::instruction`]) —
+    /// the opt-out alternative that pairs children by sibling position
+    /// (zip) instead of by key, for mutations that need per-index
+    /// targeting.
+    fn align_child_walks(&mut self, tree: &mut Tree<E>, target: NodeId, mutator: NodeId, state: StateRef) {
+        debug!("Aligning children of target node {target} and mutator node {mutator}.");
+        let Some(mutator_head) = get_mutator(&self.mutator_tree.arena, mutator).first_child() else {
+            debug!("Mutator has no children - nothing to align.");
+            return;
+        };
+        let Some(target_head) = get_target(&tree.arena, target).first_child() else {
+            return;
+        };
+        let own = self.push_state(tree, target, state);
+        self.frames.push(Frame::Merge {
+            target: Some(target_head),
+            mutator: Some(mutator_head),
+            own,
+            repeat: None,
+        });
+    }
+
+    /// The descent through an instruction, whose own mutation (if any)
+    /// has already been applied to `target`.
+    ///
+    /// - `RepeatWhile` merges the instruction's children against the
+    ///   target's by key, each pair the first level of the loop
+    ///   ([`Frame::Repeat`]).
+    /// - `SpatialDescend` applies the instruction's mutation to the
+    ///   descendant its point hits ([`spatial_descend`]); nothing below
+    ///   it is walked.
+    /// - `MapChildren` zips the instruction's children against the
+    ///   target's by sibling position ([`Frame::Zip`]).
+    fn instruction(
+        &mut self,
+        tree: &mut Tree<E>,
+        target: NodeId,
+        mutator: NodeId,
+        instruction: &Instruction<E>,
+        state: StateRef,
+    ) {
+        match instruction {
+            Instruction::RepeatWhile(_) => {
+                // Interactive path: a malformed RepeatWhile mutator (no
+                // children to repeat) should degrade the walk, not abort
+                // mutation application. The caller treats a no-op as
+                // success.
+                let Some(mutator_head) = get_mutator(&self.mutator_tree.arena, mutator).first_child() else {
+                    warn!("engine::walker: RepeatWhile instruction node has no children, skipping branch");
+                    return;
+                };
+                let Some(target_head) = get_target(&tree.arena, target).first_child() else {
+                    debug!("The target has no children - completing walk down this branch.");
+                    return;
+                };
+                let own = self.push_state(tree, target, state);
+                self.frames.push(Frame::Merge {
+                    target: Some(target_head),
+                    mutator: Some(mutator_head),
+                    own,
+                    repeat: Some(mutator),
+                });
+            }
+            Instruction::SpatialDescend(point) => {
+                let parent_state = state_at(self.seed, self.states, state);
+                spatial_descend(
+                    tree,
+                    self.mutator_tree,
+                    target,
+                    mutator,
+                    point,
+                    parent_state,
+                    self.rec,
+                );
+            }
+            Instruction::MapChildren => {
+                let mutator_head = get_mutator(&self.mutator_tree.arena, mutator).first_child();
+                let target_head = get_target(&tree.arena, target).first_child();
+                let own = self.push_state(tree, target, state);
+                self.frames.push(Frame::Zip {
+                    target: target_head,
+                    mutator: mutator_head,
+                    own,
+                    paired: 0,
+                });
+            }
+        }
+    }
+
+    /// [`Frame::Merge`]: walk the two rows **in step** from their
+    /// cursors — a target keyed below the current mutator is passed, a
+    /// mutator keyed below the current target is passed — up to the
+    /// next pair with equal keys, which is visited with the target
+    /// passed. The mutator stays, so it reaches every consecutive target
+    /// with its key (broadcast); the targets it reached are behind the
+    /// merge, so a later sibling mutator with the same key reaches none
+    /// of them.
+    ///
+    /// The next target is read before the visit runs. A visit changes
+    /// only the visited target's subtree — and its key, whose re-sort
+    /// waits for the end of the walk — so the row ahead of the merge is
+    /// the row as it was.
+    ///
+    /// Cost: O(mutator row + target row) key reads over the frame's
+    /// life, plus the visits; no allocation and no sort.
+    fn merge(
+        &mut self,
+        tree: &mut Tree<E>,
+        mut target: Option<NodeId>,
+        mut mutator: Option<NodeId>,
+        own: usize,
+        repeat: Option<NodeId>,
+    ) {
+        while let (Some(m_id), Some(t_id)) = (mutator, target) {
+            let m_node = get_mutator(&self.mutator_tree.arena, m_id);
+            let t_node = get_target(&tree.arena, t_id);
+            match t_node.get().key().cmp(&m_node.get().key()) {
+                Ordering::Equal => {
+                    self.frames.push(Frame::Merge {
+                        target: t_node.next_sibling(),
+                        mutator,
+                        own,
+                        repeat,
+                    });
+                    self.frames.push(match repeat {
+                        None => Frame::Pair {
+                            target: t_id,
+                            mutator: m_id,
+                            state: StateRef::Slot(own),
+                            apply_here: true,
+                        },
+                        Some(instruction) => Frame::Repeat {
+                            target: t_id,
+                            mutator: m_id,
+                            instruction,
+                            state: StateRef::Slot(own),
+                        },
+                    });
+                    return;
+                }
+                Ordering::Greater => {
+                    debug!("Target key exceeds the mutator key, advancing to the next mutator.");
+                    mutator = m_node.next_sibling();
+                }
+                Ordering::Less => {
+                    target = t_node.next_sibling();
+                }
+            }
+        }
+        self.pop_state(own);
+    }
+
+    /// [`Frame::Zip`]: pair the next mutator child with the next target
+    /// child by sibling position and walk the pair, the mutator's own
+    /// effect **force-applied** to its target — bypassing the key match
+    /// the merge enforces. That bypass is the point of
+    /// [`Instruction::MapChildren`]: keys on the paired children are
+    /// broadcast tags, and its job is to ignore them at the pairing
+    /// site. Below the pair the walk is the standard one: by key, or
+    /// through a nested instruction (a nested `MapChildren` zips one
+    /// level deeper).
+    ///
+    /// Excess children on either side are dropped with a single
+    /// `debug!` line when the zip ends. No allocation (§B7).
+    fn zip(
+        &mut self,
+        tree: &mut Tree<E>,
+        target: Option<NodeId>,
+        mutator: Option<NodeId>,
+        own: usize,
+        paired: usize,
+    ) {
+        if let (Some(m_id), Some(t_id)) = (mutator, target) {
+            self.frames.push(Frame::Zip {
+                target: get_target(&tree.arena, t_id).next_sibling(),
+                mutator: get_mutator(&self.mutator_tree.arena, m_id).next_sibling(),
+                own,
+                paired: paired + 1,
+            });
+            self.frames.push(Frame::Pair {
+                target: t_id,
+                mutator: m_id,
+                state: StateRef::Slot(own),
+                apply_here: true,
+            });
+            return;
+        }
+        // Count any leftover children on either side — useful when a
+        // runtime-expanded mutator (via Repeat) disagrees with the actual
+        // target fan-out and the author wants to see it in logs. Only one
+        // of the two loops runs: the zip ended as soon as either side
+        // ran dry.
+        let mut excess_mutator: usize = 0;
+        let mut cursor = mutator;
+        while let Some(m) = cursor {
+            excess_mutator += 1;
+            cursor = self.mutator_tree.arena.get(m).and_then(|n| n.next_sibling());
+        }
+        let mut excess_target: usize = 0;
+        let mut cursor = target;
+        while let Some(t) = cursor {
+            excess_target += 1;
+            cursor = tree.arena.get(t).and_then(|n| n.next_sibling());
+        }
+        if excess_mutator > 0 || excess_target > 0 {
+            debug!(
+                "MapChildren zip paired {} children; {} excess mutators, {} excess targets ignored",
+                paired, excess_mutator, excess_target
+            );
+        }
+        self.pop_state(own);
+    }
+
+    /// [`Frame::Repeat`], the engine behind
+    /// [`Instruction::RepeatWhile`]: as long as the predicate of the
+    /// `instruction` node holds on the target, apply `mutator` to it and
+    /// go on to its children ([`Frame::RepeatChildren`]); when it fails,
+    /// resume the normal walk from the mutator's own children
+    /// ([`Frame::Terminator`]).
+    fn repeat(
+        &mut self,
+        tree: &mut Tree<E>,
+        target: NodeId,
+        mutator: NodeId,
+        instruction: NodeId,
+        state: StateRef,
+    ) {
+        let Mutator::Instruction {
+            instruction: Instruction::RepeatWhile(condition),
+            ..
+        } = get_mutator(&self.mutator_tree.arena, instruction).get()
+        else {
+            error!("engine: a RepeatWhile frame names node {instruction}, which is no RepeatWhile");
+            debug_assert!(
+                false,
+                "engine invariant: a Repeat frame's instruction is a RepeatWhile"
+            );
+            return;
+        };
+        if !condition.test(get_target(&tree.arena, target).get()) {
+            // When a conditional loop terminates, both the mutator and
+            // the target are where the predicate failed: the target has
+            // not been mutated (yet), and the mutator is one step behind.
+            debug!("The Terminator has received a mission.");
+            self.frames.push(Frame::Terminator {
+                target,
+                after: get_mutator(&self.mutator_tree.arena, mutator).first_child(),
+                key: get_target(&tree.arena, target).get().key(),
+                state,
+            });
+            return;
+        }
+        debug!("Condition is met, applying mutator {mutator} to target {target}");
+        let repeated = get_mutator(&self.mutator_tree.arena, mutator).get();
+        let parent_state = state_at(self.seed, self.states, state);
+        apply_mutator(tree, target, mutator, repeated, parent_state, self.rec);
+        let Some(head) = get_target(&tree.arena, target).first_child() else {
+            return;
+        };
+        let own = self.push_state(tree, target, state);
+        // The descent is routed by kind, as every walk is: a child of
+        // another kind than the repeated mutator is not tested, not
+        // mutated and not descended into. The channel is not compared —
+        // the descent broadcasts across channels on purpose.
+        self.frames.push(Frame::RepeatChildren {
+            target: Some(head),
+            mutator,
+            instruction,
+            kind: repeated.key().kind,
+            own,
+        });
+    }
+
+    /// [`Frame::RepeatChildren`]: the next child of the repeated
+    /// mutator's `kind` goes through the loop. The sibling link is read
+    /// before the child's level runs, because that level may mutate the
+    /// child it is handed and there must still be somewhere to go next.
+    fn repeat_children(
+        &mut self,
+        tree: &mut Tree<E>,
+        mut target: Option<NodeId>,
+        mutator: NodeId,
+        instruction: NodeId,
+        kind: E::Kind,
+        own: usize,
+    ) {
+        while let Some(id) = target {
+            let child = get_target(&tree.arena, id);
+            target = child.next_sibling();
+            if child.get().kind() != kind {
+                debug!("Child of another kind, not descending into it");
+                continue;
+            }
+            debug!("Found child, descending into its sub-tree");
+            self.frames.push(Frame::RepeatChildren {
+                target,
+                mutator,
+                instruction,
+                kind,
+                own,
+            });
+            self.frames.push(Frame::Repeat {
+                target: id,
+                mutator,
+                instruction,
+                state: StateRef::Slot(own),
+            });
+            return;
+        }
+        self.pop_state(own);
+    }
+
+    /// [`Frame::Terminator`]: the after-mutations attached under the
+    /// repeated mutator are in key order (the sorted-children
+    /// invariant), so they are scanned in sibling order: every one whose
+    /// key equals the target's — as it was when the loop ended — is
+    /// walked from the target with the target's own parent state, and
+    /// the scan stops at the first key above it. No allocation.
+    fn terminator(
+        &mut self,
+        target: NodeId,
+        mut after: Option<NodeId>,
+        key: BranchKey<E::Kind>,
+        state: StateRef,
+    ) {
+        while let Some(after_id) = after {
+            let node = get_mutator(&self.mutator_tree.arena, after_id);
+            after = node.next_sibling();
+            match node.get().key().cmp(&key) {
+                Ordering::Equal => {
+                    debug!("Next mutator matches the target, starting walk..");
+                    self.frames.push(Frame::Terminator {
+                        target,
+                        after,
+                        key,
+                        state,
+                    });
+                    self.frames.push(Frame::Pair {
+                        target,
+                        mutator: after_id,
+                        state,
+                        apply_here: true,
+                    });
+                    return;
+                }
+                Ordering::Greater => {
+                    debug!("Next mutator key is above the target's, ending branch..");
+                    return;
+                }
+                Ordering::Less => {}
+            }
+        }
+        debug!("No more mutators, ending branch..");
+    }
+
+    /// Push the state `target` hands its children — its own
+    /// [`TreeElement::inherit`] of its parent's, read after its own
+    /// mutations — and return its slot. O(1) plus the element type's
+    /// `inherit`; the stack grows only past the depth it has reached.
+    fn push_state(&mut self, tree: &Tree<E>, target: NodeId, state: StateRef) -> usize {
+        let own = get_target(&tree.arena, target)
+            .get()
+            .inherit(state_at(self.seed, self.states, state));
+        self.states.push(own);
+        self.states.len() - 1
+    }
+
+    /// Pop the state the finishing frame pushed at `own`, the top of the
+    /// state stack: every frame above it has finished first.
+    fn pop_state(&mut self, own: usize) {
+        debug_assert_eq!(
+            self.states.len(),
+            own + 1,
+            "engine invariant: a frame pops the state it pushed, last"
+        );
+        self.states.truncate(own);
+    }
+}
+
+/// The state a [`StateRef`] names. O(1).
+#[inline]
+fn state_at<'s, I>(seed: &'s I, states: &'s [I], state: StateRef) -> &'s I {
+    match state {
+        StateRef::Seed => seed,
+        StateRef::Slot(i) => &states[i],
+    }
 }
 
 /// Apply `mutator`'s payload to `target_id` through [`apply_recorded`].
@@ -434,16 +1001,16 @@ fn apply_mutator<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     mutator: &Mutator<E, M>,
     parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
+    rec: &mut WalkLog<'_, E>,
 ) {
     if let Mutator::Structure { .. } = mutator {
-        walk.ops.push((target_id, mutator_id));
+        rec.ops.push((target_id, mutator_id));
         return;
     }
     if !mutator.has_payload() {
         return;
     }
-    apply_recorded(tree, target_id, walk, |target| {
+    apply_recorded(tree, target_id, rec, |target| {
         mutator.apply_to(target, parent_state)
     });
 }
@@ -461,10 +1028,10 @@ fn apply_mutator<E: TreeElement, M: Mutation<E>>(
 fn apply_recorded<E: TreeElement>(
     tree: &mut Tree<E>,
     target_id: NodeId,
-    walk: &mut Walk<'_, E>,
+    rec: &mut WalkLog<'_, E>,
     f: impl FnOnce(&mut E),
 ) {
-    if let Some(journal) = walk.journal.as_deref_mut() {
+    if let Some(journal) = rec.journal.as_deref_mut() {
         journal.record(&tree.arena, target_id);
     }
     let node = get_target_mut(&mut tree.arena, target_id);
@@ -472,124 +1039,10 @@ fn apply_recorded<E: TreeElement>(
     f(node.get_mut());
     if node.get().key() != before {
         if let Some(parent) = node.parent() {
-            walk.rekeyed.push((parent, target_id));
+            rec.rekeyed.push((parent, target_id));
         }
     }
     tree.cache.invalidate();
-}
-
-/// The inherited state `target_id` hands its children: its own
-/// [`TreeElement::inherit`] of `parent_state`, read after its own
-/// mutations. O(1) plus the element type's `inherit`.
-#[inline]
-fn own_state<E: TreeElement>(tree: &Tree<E>, target_id: NodeId, parent_state: &E::Inherited) -> E::Inherited {
-    get_target(&tree.arena, target_id).get().inherit(parent_state)
-}
-
-#[inline]
-fn process_instruction_node<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_id: NodeId,
-    mutator_id: NodeId,
-    instruction: &Instruction<E>,
-    parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
-) {
-    match instruction {
-        Instruction::RepeatWhile(condition) => {
-            let mutator = get_mutator(&mutator_tree.arena, mutator_id);
-            let target = get_target(&tree.arena, target_id);
-            // Interactive path: a malformed RepeatWhile mutator (no
-            // children to repeat) should degrade the walk, not abort
-            // mutation application. The caller treats a no-op as
-            // success.
-            if mutator.first_child().is_none() {
-                warn!("engine::walker: RepeatWhile instruction node has no children, skipping branch");
-                return;
-            }
-            if target.first_child().is_none() {
-                debug!("The target has no children - completing walk down this branch.");
-                return;
-            }
-            let state = own_state(tree, target_id, parent_state);
-            merge_rows(tree, mutator_tree, target_id, mutator_id, |tree, t_id, m_id| {
-                repeat_while(
-                    tree,
-                    mutator_tree,
-                    t_id,
-                    m_id,
-                    condition,
-                    default_terminator::<E, M>,
-                    &state,
-                    walk,
-                );
-            });
-        }
-        Instruction::SpatialDescend(point) => {
-            spatial_descend(
-                tree,
-                mutator_tree,
-                target_id,
-                mutator_id,
-                point,
-                parent_state,
-                walk,
-            );
-        }
-        Instruction::MapChildren => {
-            zip_map_children(tree, mutator_tree, target_id, mutator_id, parent_state, walk);
-        }
-    };
-}
-
-/// Merge the children of `target_parent_id` against the children of
-/// `mutator_parent_id` by key, calling `visit(tree, target, mutator)`
-/// for every pair with equal keys.
-///
-/// Both rows are in ascending key order (the sorted-children
-/// invariant), so they are walked **in step** through `first_child` /
-/// `next_sibling`: a target keyed below the current mutator is passed,
-/// a mutator keyed below the current target is passed, and on equal
-/// keys the pair is visited and the target passed. The mutator stays,
-/// so it reaches every consecutive target with its key (broadcast);
-/// the targets it reached are behind the merge, so a later sibling
-/// mutator with the same key reaches none of them.
-///
-/// The next target is read before `visit` runs. A visit changes only
-/// the visited target's subtree — and its key, whose re-sort waits for
-/// the end of the walk — so the row ahead of the merge is the row as it
-/// was.
-///
-/// Cost: O(mutator row + target row) key reads plus the visits; no
-/// allocation and no sort.
-#[inline]
-fn merge_rows<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_parent_id: NodeId,
-    mutator_parent_id: NodeId,
-    mut visit: impl FnMut(&mut Tree<E>, NodeId, NodeId),
-) {
-    let mut mutator_cursor = get_mutator(&mutator_tree.arena, mutator_parent_id).first_child();
-    let mut target_cursor = get_target(&tree.arena, target_parent_id).first_child();
-    while let (Some(m_id), Some(t_id)) = (mutator_cursor, target_cursor) {
-        let mutator = get_mutator(&mutator_tree.arena, m_id);
-        let target = get_target(&tree.arena, t_id);
-        match target.get().key().cmp(&mutator.get().key()) {
-            Ordering::Equal => {
-                target_cursor = target.next_sibling();
-                visit(tree, t_id, m_id);
-            }
-            Ordering::Greater => {
-                debug!("Target key exceeds the mutator key, advancing to the next mutator.");
-                mutator_cursor = mutator.next_sibling();
-            }
-            Ordering::Less => {
-                target_cursor = target.next_sibling();
-            }
-        }
-    }
 }
 
 /// Look up a mutator-tree node by id.
@@ -632,260 +1085,6 @@ fn get_target_mut<E: TreeElement>(arena: &mut Arena<E>, id: NodeId) -> &mut Node
         .expect("walker invariant: target NodeId must belong to tree.arena")
 }
 
-/// Take the children of the mutator and of the target, and start a
-/// walk for each pair with equal keys ([`merge_rows`]). A mutator
-/// reaches every target with its key that the merge has not already
-/// passed: the first mutator on a key consumes that key's targets, so a
-/// later sibling mutator on the same key reaches none of them.
-/// `parent_state` is the inherited state of `target_id`'s parent; the
-/// children receive `target_id`'s own state.
-///
-/// See also [`zip_map_children`] — the opt-out alternative that pairs
-/// children by sibling position (zip) instead of by key, for mutations
-/// that need per-index targeting.
-///
-/// Cost: O(mutator row + target row) key reads plus the per-pair
-/// recursion; no allocation and no sort.
-#[inline]
-fn align_child_walks<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_id: NodeId,
-    mutator_id: NodeId,
-    parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
-) {
-    debug!(
-        "Aligning children of target node {} and mutator node {}.",
-        target_id, mutator_id
-    );
-    if get_mutator(&mutator_tree.arena, mutator_id)
-        .first_child()
-        .is_none()
-    {
-        debug!("Mutator has no children - nothing to align.");
-        return;
-    }
-    if get_target(&tree.arena, target_id).first_child().is_none() {
-        return;
-    }
-    let state = own_state(tree, target_id, parent_state);
-    merge_rows(tree, mutator_tree, target_id, mutator_id, |tree, t_id, m_id| {
-        walk_from(tree, mutator_tree, t_id, m_id, &state, true, walk);
-    });
-}
-
-/// Zip the mutator's direct children against the target's direct
-/// children by sibling position — the alternative to
-/// [`align_child_walks`] for consumers that need per-index targeting
-/// independent of keys (e.g. size-aware layouts where every target
-/// child sits on the same broadcast channel).
-///
-/// For each pair up to `min(mutator_children_len,
-/// target_children_len)`, the mutator's own effect is
-/// **force-applied** to its paired target — bypassing the key-match
-/// check the merge normally enforces. That bypass is the whole point:
-/// keys on the paired children are broadcast tags, and MapChildren's
-/// job is to ignore them at the pairing site.
-///
-/// After the force-apply, the mutator's subtree descends against the
-/// target's subtree through the standard path:
-/// - Single/Macro/Void → [`align_child_walks`] (key-aware).
-/// - Instruction → [`process_instruction_node`], which re-dispatches
-///   into whichever instruction body the child carries (including a
-///   nested MapChildren, which will zip one level deeper).
-///
-/// Excess children on either side are silently dropped with a single
-/// `debug!` line at termination. No allocation inside the loop (§B7).
-/// Graceful no-op on empty children on either side.
-///
-/// The *outer* instruction's own attached mutation is already applied
-/// to the current target by [`walk_from`] before this function is
-/// called (same precedent as `RepeatWhile`) — this function handles
-/// only the descent into paired children, which receive `target_id`'s
-/// own inherited state.
-#[inline]
-fn zip_map_children<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_id: NodeId,
-    mutator_id: NodeId,
-    parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
-) {
-    let mut option_mutator_child = get_mutator(&mutator_tree.arena, mutator_id).first_child();
-    let mut option_target_child = get_target(&tree.arena, target_id).first_child();
-    let state = own_state(tree, target_id, parent_state);
-
-    let mut paired: usize = 0;
-    while let (Some(mutator_child_id), Some(target_child_id)) = (option_mutator_child, option_target_child) {
-        // Look up the next-siblings *before* the force-apply that
-        // takes `&mut tree.arena`, so the read-only borrows end
-        // cleanly.
-        let next_mutator = get_mutator(&mutator_tree.arena, mutator_child_id).next_sibling();
-        let next_target = get_target(&tree.arena, target_child_id).next_sibling();
-
-        // Force-apply the mutator to its paired target. The mutator is
-        // borrowed from `mutator_tree`, which the dispatch below only
-        // reads, so a nested instruction is handed on by reference.
-        let mutator = get_mutator(&mutator_tree.arena, mutator_child_id).get();
-        apply_mutator(tree, target_child_id, mutator_child_id, mutator, &state, walk);
-        match mutator {
-            Mutator::Instruction { instruction, .. } => {
-                // Nested instruction: dispatch at the paired target.
-                // Matches `walk_from`'s post-apply path for
-                // Instruction (`process_instruction_node` + early
-                // return — no align_child_walks).
-                process_instruction_node(
-                    tree,
-                    mutator_tree,
-                    target_child_id,
-                    mutator_child_id,
-                    instruction,
-                    &state,
-                    walk,
-                );
-            }
-            Mutator::Single { .. }
-            | Mutator::Macro { .. }
-            | Mutator::Void { .. }
-            | Mutator::Structure { .. } => {
-                // Descend via key-based align at the next level down.
-                // A user who wants the deeper level to also zip nests
-                // MapChildren inside.
-                align_child_walks(
-                    tree,
-                    mutator_tree,
-                    target_child_id,
-                    mutator_child_id,
-                    &state,
-                    walk,
-                );
-            }
-        }
-
-        paired += 1;
-        option_mutator_child = next_mutator;
-        option_target_child = next_target;
-    }
-
-    // Count any leftover children on either side — useful when a
-    // runtime-expanded mutator (via Repeat) disagrees with the actual
-    // target fan-out and the author wants to see it in logs. Only one
-    // of the two loops runs because we broke out as soon as either
-    // side ran dry.
-    let mut excess_mutator: usize = 0;
-    while let Some(m) = option_mutator_child {
-        excess_mutator += 1;
-        option_mutator_child = mutator_tree.arena.get(m).and_then(|n| n.next_sibling());
-    }
-    let mut excess_target: usize = 0;
-    while let Some(t) = option_target_child {
-        excess_target += 1;
-        option_target_child = tree.arena.get(t).and_then(|n| n.next_sibling());
-    }
-    if excess_mutator > 0 || excess_target > 0 {
-        debug!(
-            "MapChildren zip paired {} children; {} excess mutators, {} excess targets ignored",
-            paired, excess_mutator, excess_target
-        );
-    }
-}
-
-/// As long as `condition` holds true, keep applying `mutator_id` (and
-/// its descendants) to `target_id` (and its descendants). When the
-/// condition fails, call `terminator` to resume the normal walk.
-/// `parent_state` is the inherited state of `target_id`'s parent, and
-/// `walk` the walk's record of changed keys.
-///
-/// This is the engine behind [`Instruction::RepeatWhile`]. Below
-/// `target_id` it visits only the children of the repeated mutator's
-/// **kind**, whatever their channel; a child of another kind is not
-/// tested, not mutated and not descended into. The `terminator` —
-/// [`default_terminator`] in every walk — receives the same tree pair,
-/// the current target/mutator ids, `parent_state` and `walk`.
-/// Internal to the engine: `walk` must be settled when the walk is
-/// over, which only the walk's entry points do.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::engine) fn repeat_while<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_id: NodeId,
-    mutator_id: NodeId,
-    condition: &Predicate<E>,
-    terminator: Terminator<E, M>,
-    parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
-) {
-    let condition_matches = condition.test(get_target(&tree.arena, target_id).get());
-    if condition_matches {
-        debug!(
-            "Condition is met, applying mutator {} to target {}",
-            mutator_id, target_id
-        );
-        let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
-        apply_mutator(tree, target_id, mutator_id, mutator, parent_state, walk);
-        apply_repeat_while_to_children(
-            tree,
-            mutator_tree,
-            target_id,
-            mutator_id,
-            condition,
-            terminator,
-            parent_state,
-            walk,
-        );
-    } else {
-        terminator(tree, mutator_tree, target_id, mutator_id, parent_state, walk);
-    }
-}
-
-#[inline]
-#[allow(clippy::too_many_arguments)]
-fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
-    tree: &mut Tree<E>,
-    mutator_tree: &MutatorTree<E, M>,
-    target_id: NodeId,
-    mutator_id: NodeId,
-    condition: &Predicate<E>,
-    terminator: Terminator<E, M>,
-    parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
-) {
-    let mut head = get_target(&tree.arena, target_id).first_child();
-    if head.is_none() {
-        return;
-    }
-    let state = own_state(tree, target_id, parent_state);
-    // The descent is routed by kind, as every walk is: a child of
-    // another kind than the repeated mutator is not tested, not mutated
-    // and not descended into. The channel is not compared — the
-    // descent broadcasts across channels on purpose.
-    let kind = get_mutator(&mutator_tree.arena, mutator_id).get().key().kind;
-    // The sibling link is read *before* recursing, because the
-    // recursion may mutate the child it is handed and we still need
-    // somewhere to go next.
-    while let Some(head_id) = head {
-        let child = get_target(&tree.arena, head_id);
-        head = child.next_sibling();
-        if child.get().kind() != kind {
-            debug!("Child of another kind, not descending into it");
-            continue;
-        }
-        debug!("Found child, recursing down sub-tree");
-        repeat_while(
-            tree,
-            mutator_tree,
-            head_id,
-            mutator_id,
-            condition,
-            terminator,
-            &state,
-            walk,
-        );
-    }
-}
-
 // ── SpatialDescend ────────────────────────────────────────────────
 
 /// Find the smallest descendant of `target_id` whose own box
@@ -918,7 +1117,7 @@ fn spatial_descend<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     point: &OrderedVec2,
     parent_state: &E::Inherited,
-    walk: &mut Walk<'_, E>,
+    rec: &mut WalkLog<'_, E>,
 ) {
     let point = point.to_vec2();
     let mut best: Option<(NodeId, f32)> = None;
@@ -953,7 +1152,7 @@ fn spatial_descend<E: TreeElement, M: Mutation<E>>(
         return;
     };
     let state = state_above(tree, target_id, hit_id, parent_state);
-    apply_recorded(tree, hit_id, walk, |hit| mutation.apply_to(hit, &state));
+    apply_recorded(tree, hit_id, rec, |hit| mutation.apply_to(hit, &state));
 }
 
 /// The inherited state of `descendant`'s parent, where `descendant` is

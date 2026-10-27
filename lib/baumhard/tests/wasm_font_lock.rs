@@ -23,8 +23,10 @@
 //! because that is the shaping path every frame, connector and section
 //! takes in the browser.
 //!
-//! **It also runs one document walk 100,000 levels deep** — the
-//! mutation validator over a deep mutator tree — because design §20
+//! **It also runs the tree walks 100,000 levels deep** — the mutation
+//! validator over a deep mutator tree, and every engine and document
+//! walk over a deep chain (`engine::tests::deep_tests`,
+//! `document::tests::deep_tests`, V1-A5 #282) — because design §20
 //! rule 11 asks every tree walk to prove, under wasm32 debug, that depth
 //! costs it no call stack, and this is the probe that runs code there.
 //!

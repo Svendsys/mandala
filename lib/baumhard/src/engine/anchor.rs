@@ -16,14 +16,19 @@
 //! subtree mutation reaches each element exactly once however the
 //! selection nests. What remains is walked in tree order.
 //!
-//! The work is proportional to the anchors, never to the tree: no
-//! anchor is resolved, positioned or seeded twice, a sibling row is
-//! scanned at most once to resolve `SiblingsOf` and at most once to
-//! order two anchors whose keys tie, and siblings of different keys are
-//! ordered by their keys alone — the sorted-children invariant.
+//! The work is proportional to the anchors and the paths above them,
+//! never to the rest of the tree: no anchor is resolved, positioned or
+//! seeded twice, no element above an anchor is climbed through twice —
+//! however many anchors sit below it, so a selection of every element
+//! of a deep chain costs the chain once, not once per element (§20
+//! rule 11) — a sibling row is scanned at most once to resolve
+//! `SiblingsOf` and at most once to order two anchors whose keys tie,
+//! and siblings of different keys are ordered by their keys alone — the
+//! sorted-children invariant.
 
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
+use crate::engine::membership::Membership;
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
 use crate::engine::walker::{run_walk, walk_anchor};
@@ -81,10 +86,11 @@ where
     // All or nothing: every node the anchors are stated in terms of is
     // checked — in the arena, and under this tree's root — before
     // anything resolves, let alone walks. A node named twice is checked
-    // once.
+    // once, and each ancestor is climbed through once over all of them.
+    let mut members = Membership::default();
     let mut given: FxHashSet<NodeId> = FxHashSet::default();
     for &id in anchors.given() {
-        if given.insert(id) && !tree.contains(id) {
+        if given.insert(id) && !members.contains(tree, id) {
             return Err(TreeError::StaleNode(id));
         }
     }
@@ -97,22 +103,7 @@ where
     let mut resolved = resolve(&tree.arena, anchors, &given, root_kind);
 
     if resolved.len() > 1 {
-        let mut placed: Vec<Placed> = resolved
-            .iter()
-            .map(|&id| Placed {
-                id,
-                path: path_from_root(&tree.arena, id),
-            })
-            .collect();
-        if mutator_tree.reaches_below_root() {
-            let anchor_set: FxHashSet<NodeId> = resolved.iter().copied().collect();
-            // `path` ends at the anchor itself; an anchor with another
-            // anchor among its ancestors is reached through that one.
-            placed.retain(|p| !p.path[..p.path.len() - 1].iter().any(|a| anchor_set.contains(a)));
-        }
-        let ties = TiePositions::default();
-        placed.sort_by(|a, b| tree_order(&tree.arena, &ties, a, b));
-        resolved = placed.into_iter().map(|p| p.id).collect();
+        resolved = in_tree_order(tree, &mut members, &resolved, mutator_tree.reaches_below_root());
     }
 
     // Every seed is taken from the tree as it is now, before any
@@ -186,19 +177,70 @@ fn resolve<E: TreeElement>(
     }
 }
 
-/// An anchor and the path to it from the root, root first and the
-/// anchor last.
-struct Placed {
-    id: NodeId,
-    path: Vec<NodeId>,
-}
-
-/// `id`'s ancestors from the root down to `id` itself. O(depth); one
-/// `Vec` of that length.
-fn path_from_root<E>(arena: &Arena<E>, id: NodeId) -> Vec<NodeId> {
-    let mut path: Vec<NodeId> = id.ancestors(arena).collect();
-    path.reverse();
-    path
+/// `anchors` — distinct, every one in the tree — in tree order
+/// (pre-order), without the ones nested in another when
+/// `drop_nested`: an anchor with another anchor among its ancestors is
+/// reached through that one.
+///
+/// Nothing climbs from an anchor to the root more than once over all of
+/// them. Each anchor is climbed through `members`, whose climbs stop at
+/// the first element already climbed through, so afterwards its members
+/// are exactly the union of the anchors' paths to the root — each
+/// element of it climbed through once (§20 rule 11). That union is then
+/// a small tree: each member hangs under its parent, the members under
+/// one parent are ordered as their row has them — by key, the
+/// sorted-children invariant, and between equal keys by position, from
+/// one scan of that row the first time a tie needs it — and one
+/// pre-order pass over it from the root lists the anchors, not
+/// descending below an anchor when nested ones are dropped.
+///
+/// Cost, with `u` the size of that union: O(u log u) for the order,
+/// one hash map and two `Vec`s of `u` entries, plus the row scans
+/// ties need. Nothing is proportional to the depth per anchor.
+fn in_tree_order<E: TreeElement>(
+    tree: &Tree<E>,
+    members: &mut Membership,
+    anchors: &[NodeId],
+    drop_nested: bool,
+) -> Vec<NodeId> {
+    // A resolved anchor is a given node, its parent or its sibling, so
+    // it is in the tree; the climb only adds its path to the union.
+    for &id in anchors {
+        members.contains(tree, id);
+    }
+    let arena = tree.arena();
+    let mut edges: Vec<(NodeId, NodeId)> = members
+        .members()
+        .filter_map(|id| arena[id].parent().map(|parent| (parent, id)))
+        .collect();
+    let ties = TiePositions::default();
+    edges.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| sibling_order(arena, &ties, a.0, a.1, b.1))
+    });
+    // Each parent's members are one run of `edges`.
+    let mut runs: FxHashMap<NodeId, (usize, usize)> = FxHashMap::default();
+    let mut start = 0;
+    while let Some(&(parent, _)) = edges.get(start) {
+        let len = edges[start..].iter().take_while(|edge| edge.0 == parent).count();
+        runs.insert(parent, (start, start + len));
+        start += len;
+    }
+    let is_anchor: FxHashSet<NodeId> = anchors.iter().copied().collect();
+    let mut ordered = Vec::with_capacity(anchors.len());
+    let mut pending = vec![tree.root()];
+    while let Some(node) = pending.pop() {
+        if is_anchor.contains(&node) {
+            ordered.push(node);
+            if drop_nested {
+                continue;
+            }
+        }
+        if let Some(&(from, to)) = runs.get(&node) {
+            pending.extend(edges[from..to].iter().rev().map(|&(_, child)| child));
+        }
+    }
+    ordered
 }
 
 /// Sibling positions within the parent rows where two anchors' paths
@@ -223,28 +265,19 @@ impl TiePositions {
     }
 }
 
-/// Pre-order of two anchors. Their paths share the root; where they
-/// part, the two nodes are siblings, ordered by key — the sorted-children
-/// invariant — and, between equal keys, by position in their row. A
-/// path that is a prefix of the other is an ancestor and comes first.
-/// O(depth) plus, on a tie, the row's one-time scan.
-fn tree_order<E: TreeElement>(arena: &Arena<E>, ties: &TiePositions, a: &Placed, b: &Placed) -> Ordering {
-    let shared = a.path.iter().zip(&b.path).take_while(|(x, y)| x == y).count();
-    match (a.path.get(shared), b.path.get(shared)) {
-        (Some(&x), Some(&y)) => {
-            let by_key = arena[x].get().key().cmp(&arena[y].get().key());
-            if by_key != Ordering::Equal {
-                return by_key;
-            }
-            // Every path starts at the tree's root — each anchor was
-            // validated as under it — so two paths share at least that
-            // first node, and the nodes where they part have a parent.
-            debug_assert!(shared > 0, "anchor paths share the root");
-            let parent = a.path[shared - 1];
-            ties.of(arena, parent, x).cmp(&ties.of(arena, parent, y))
-        }
-        (None, Some(_)) => Ordering::Less,
-        (Some(_), None) => Ordering::Greater,
-        (None, None) => Ordering::Equal,
+/// The order of `x` and `y`, two children of `parent`, in its row: by
+/// key — the sorted-children invariant — and between equal keys by
+/// position, from the row's one-time scan.
+fn sibling_order<E: TreeElement>(
+    arena: &Arena<E>,
+    ties: &TiePositions,
+    parent: NodeId,
+    x: NodeId,
+    y: NodeId,
+) -> Ordering {
+    let by_key = arena[x].get().key().cmp(&arena[y].get().key());
+    if by_key != Ordering::Equal {
+        return by_key;
     }
+    ties.of(arena, parent, x).cmp(&ties.of(arena, parent, y))
 }

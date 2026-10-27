@@ -39,12 +39,12 @@ use crate::document::element::{
 };
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::error::MutationError;
-use crate::document::mutation::membership::Membership;
 use crate::document::mutation::ops::{DocMutation, DocMutatorTree, LinkOp, SpanOp, TextOp};
 use crate::document::mutation::step::{DocStep, DocWalk};
 use crate::document::values::{Anchor, LinkKind};
 use crate::engine::anchor::Anchors;
 use crate::engine::key::BranchKey;
+use crate::engine::membership::Membership;
 use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Placement;

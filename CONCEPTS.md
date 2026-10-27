@@ -243,8 +243,11 @@ an anchor inside another anchor's subtree is dropped, so a subtree
 mutation reaches each element once; the rest are walked in tree order.
 Every anchor's seed is taken before any anchor is walked, and a stale
 anchor refuses the whole call with nothing applied. The resolution
-costs work in the anchors and their rows, never in the rest of the
-tree. `apply_to(&mut target, &seed)` is `apply_at` anchored at the
+costs work in the anchors, their rows and the paths above them, never
+in the rest of the tree: checking and ordering climb each element
+above an anchor once over all of them, through a memo, so a selection
+of every element of a deep chain costs the chain once, not once per
+element (§20 rule 11). `apply_to(&mut target, &seed)` is `apply_at` anchored at the
 root. `apply_at_journaled(&mut target, &anchors, seed_for, &mut
 journal)` is `apply_at` recorded in a
 [journal](#journals--journalbuilder-journal-touch), for a tree that
@@ -258,9 +261,10 @@ inherits rather than stores. The walker carries `E::Inherited` down
 every walk: the seed is the state of the walk root's parent, a mutation
 receives its target's *parent's* state, and each element hands its
 children `inherit(parent's state)` computed after its own mutations
-in the same walk. The state lives on the walker's call stack — never
-on an element, never in a tree, no allocation per visited node. The
-glyph trees inherit nothing (`Inherited = ()`, seed `&()`).
+in the same walk. The state lives on a heap stack beside the walk's
+frames — never on an element, never in a tree, never re-derived by
+climbing to the root, no allocation per visited node. The glyph trees
+inherit nothing (`Inherited = ()`, seed `&()`).
 
 ### `Applicable<T>`
 
@@ -906,31 +910,54 @@ inside the matched tree.
 
 ### Tree walker — `walk_tree_from`
 
-The recursive dispatch engine (a set of functions, not a type) that walks a
-`MutatorTree` against a `Tree` and applies matched mutations.
+The dispatch engine that walks a `MutatorTree` against a `Tree` and
+applies matched mutations — iteratively, so a tree of any depth walks
+in a bounded call stack.
 
 Every mutation that a mutator tree delivers goes through the
 walker. The walker aligns children by key (or by position, depending
 on instruction): both rows are sorted by key, so it walks the two
 sibling lists in step — the lower key advances, equal keys walk — with
-no `Vec` and no sort. It recurses, and dispatches each payload to
+no `Vec` and no sort. It dispatches each payload to
 `Mutation::apply_to` with the target's parent's
 [inherited state](#mutatortreee-m). A target whose key a mutation
 changed is recorded and moved to its sorted place when the walk is
 over, so no walk sees a half-sorted row. Cost is `O(sum of matching
 pairs)` — pruned branches are free.
 
+**Depth costs no call stack** (design D30, §20 rule 11: a map's depth
+has no bound). The walk does not recurse: each step of the descent —
+a (target, mutator) pair, a row merged by key or zipped by position, a
+`RepeatWhile` level and its terminator — is a `Frame` on a heap stack,
+and the inherited states the frames hand down sit on a second one. A
+frame that reaches a child pushes itself back with its cursors
+advanced and the child on top, so the child's whole subtree runs
+before the row moves on: the visit, apply and journal order is the
+depth-first order a recursive walk has. The stacks are reused across a
+walk's anchors and grow only to the depth reached.
+
 `lib/baumhard/src/engine/walker.rs`, generic over the element type
 and the payload — no `dyn`, no `Any`, no runtime type checks.
-Key functions: `walk_tree_from` (the pair entry), `align_child_walks`
-and `merge_rows` (the key-based pairing), `process_instruction_node`
-(the loop/spatial/map dispatch), `default_terminator` (the
-continuation that resumes key alignment after a `RepeatWhile` exits),
-and `Walk` (what a walk keeps beside the two trees: the children whose
-key it changed, and the journal a journaled walk records into). Every
-apply goes through one function, `apply_recorded`, which is where a
-journaled walk records its before-images. Branchless enough that
-matching-pair cost dominates.
+Key items: `walk_tree_from` (the pair entry), `Frame` (one step of
+the descent: `Pair`, `Merge` — the key-based pairing — `Zip`
+(`MapChildren`), `Repeat` and `RepeatChildren` (a `RepeatWhile` level)
+and `Terminator` (the continuation that resumes key alignment after a
+`RepeatWhile` exits)), `Driver` (the step of each frame;
+`align_child_walks` starts a key merge), and `Walk` (what a walk keeps
+beside the two trees: the children whose key it changed, the journal a
+journaled walk records into, and its two stacks). Every apply goes
+through one function, `apply_recorded`, which is where a journaled
+walk records its before-images. Branchless enough that matching-pair
+cost dominates.
+
+A re-keyed child is put back into the row it never left through one
+function, `siblings::reattach_in_row`; a child alone in its row is not
+moved at all. Putting a node back under its own parent cannot close a
+cycle, so ruling R16 (#282) requires that insert to cost O(1);
+indextree 4.9 offers none for an existing node (every such insert
+climbs to the root to check for a cycle), so until it is swapped the
+one call site in `siblings` is where the O(depth) remains, held by the
+ignored `test_same_row_rearrangement_is_linear_in_depth`.
 
 ### Journals — `JournalBuilder`, `Journal`, `Touch`
 
@@ -984,6 +1011,14 @@ removed while applied, what it inserted while reverted — and
 `Journal::discard` frees them when the journal leaves the history;
 nothing else frees them, and a revert never does.
 
+Depth costs a journal nothing per entry (§20 rule 11): `close` asks,
+for each entry, the top of the subtree that entered or left with it,
+and those climbs are memoized, so each element above an entry is
+climbed through once over the whole close; a restore puts an element
+that keeps its parent back through `siblings::reattach_in_row` (the
+same-row insert above), and only one that changes parent pays the
+O(depth) cycle check of a re-parent.
+
 `lib/baumhard/src/engine/journal.rs`.
 
 ### Structural commands — `StructOp`, `Subtree`
@@ -1013,7 +1048,21 @@ the journal, the walk's field changes included. A removed subtree is
 same `NodeId`s and every id held elsewhere stays valid. A walk without
 a journal journals into one of its own when it has a command, and
 discards it after, which frees what it removed. Structure is never
-authored as JSON: the variant is skipped by serde.
+authored as JSON: the variant is skipped by serde, and `Subtree` is
+not serializable at all.
+
+Depth costs the commands nothing per node (§20 rule 11). Every node a
+command creates — an inserted subtree, the second part of a split —
+goes in through indextree's value inserts, which climb nothing. A
+command knows its target is in the tree because the walk reached it
+there; whether an earlier command of the same walk removed it is a
+look-up in the removed subtrees, gathered once. The one climb left is
+a `Move` to another parent, which checks for a cycle: O(depth), once
+per node the user moves — the price of refusing a cycle, not a cost
+per visited node (ruling R16 on #282); a `Move` within its own row
+climbs nothing. A `Subtree` is as deep as its builder made it, so its
+`Drop`, `Clone`, `PartialEq` and `Debug` are written by hand and
+iterate.
 
 `lib/baumhard/src/engine/structure.rs`.
 
@@ -2360,7 +2409,10 @@ children at consecutive channels with the same template" (the
 flower-petal pattern, etc.).
 
 `build(ast, context)` in `lib/baumhard/src/engine/builder/build.rs`
-walks the AST recursively, expands `Repeat` to N children with
+walks the AST recursively — over the mutator AST alone, never a
+target tree, and an AST read from JSON nests no deeper than
+`serde_json`'s recursion limit lets it (128 levels), so its depth is
+bounded where it is parsed — expands `Repeat` to N children with
 incrementing channels, resolves `Runtime("<label>")` holes and
 per-iteration `Template`s via the `BuildContext`, and returns a
 fully-inflated `MutatorTree` — or a `BuildError` for a shape no

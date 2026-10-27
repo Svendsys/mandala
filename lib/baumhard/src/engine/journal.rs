@@ -257,18 +257,28 @@ impl<E: TreeElement> JournalBuilder<E> {
         });
     }
 
-    /// Record `node`, which a structural command has just created and
-    /// is about to attach: as it was created, with no start position —
-    /// it was not in the tree when the builder was created — and as
-    /// moved, since it is about to enter the tree. The nodes below it
-    /// are not recorded: they stand where it was created with them.
+    /// Record `node`, which a structural command has just created — and
+    /// may already have put in place, since a new node goes in through
+    /// an insert that climbs nothing: as it was created, with no start
+    /// position — it was not in the tree when the builder was created —
+    /// and as moved, since it enters the tree. The nodes below it are
+    /// not recorded: they stand where it was created with them.
     ///
     /// Cost: one clone of the element and one `Vec` / hash-map slot.
     pub(in crate::engine) fn record_created(&mut self, arena: &Arena<E>, node: NodeId) {
-        self.record(arena, node);
-        if let Some(&i) = self.index.get(&node) {
-            self.recorded[i].moved = true;
-        }
+        let MapEntry::Vacant(slot) = self.index.entry(node) else {
+            return;
+        };
+        let Some(current) = arena.get(node) else {
+            return;
+        };
+        slot.insert(self.recorded.len());
+        self.recorded.push(Recorded {
+            node,
+            before: current.get().clone(),
+            at: None,
+            moved: true,
+        });
     }
 
     /// Note that the engine is about to detach `node` — to move it
@@ -330,7 +340,8 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// only when an element moved, O(entries) flags and hash maps over
     /// the moved elements alone; only when a node entered, left or
     /// changed parent, the [touches](Journal::touched) of every node of
-    /// each subtree that entered or left, at O(depth) each at worst.
+    /// each subtree that entered or left, with each node above an entry
+    /// climbed through once per side — never once per entry.
     #[must_use = "a journal owns detached subtrees: discard it, do not drop it"]
     pub fn close(self, tree: &Tree<E>) -> Journal<E> {
         let arena = &tree.arena;
@@ -538,7 +549,8 @@ fn out_of_place<E>(read: &[(Recorded<E>, E, Option<At>)]) -> Vec<bool> {
 ///
 /// Cost: an O(entries) scan; when something entered, left or changed
 /// parent, hash maps over the recorded nodes and the nodes looked at,
-/// an O(depth) climb per entry, each subtree that entered or left
+/// each node above an entry climbed through once per arrangement (the
+/// memoized [`Presence`] climbs), each subtree that entered or left
 /// walked once, and the rows of the before arrangement rebuilt only
 /// where a moved node stood in them.
 fn structural_touches<E>(
@@ -583,7 +595,10 @@ fn structural_touches<E>(
         before_parent,
         before: FxHashMap::default(),
         after: FxHashMap::default(),
+        entered: FxHashMap::default(),
+        left: FxHashMap::default(),
         chain: Vec::new(),
+        top_chain: Vec::new(),
     };
     // The touch of a node in the tree at both ends: what its own entry
     // says, or none when it has no entry.
@@ -739,9 +754,17 @@ struct Presence<'a, E> {
     before_parent: FxHashMap<NodeId, Option<NodeId>>,
     before: FxHashMap<NodeId, bool>,
     after: FxHashMap<NodeId, bool>,
+    /// [`Self::top_entered`] of every node a question has climbed
+    /// through.
+    entered: FxHashMap<NodeId, Option<NodeId>>,
+    /// [`Self::top_left`] of every node a question has climbed through.
+    left: FxHashMap<NodeId, Option<NodeId>>,
     /// Scratch for [`resolve`]'s chain, kept so a close allocates it
     /// once.
     chain: Vec<NodeId>,
+    /// Scratch for [`Self::top`]'s chain, apart from `chain` because
+    /// `top` asks `before` and `after` while it holds its own.
+    top_chain: Vec<NodeId>,
 }
 
 impl<E> Presence<'_, E> {
@@ -787,44 +810,86 @@ impl<E> Presence<'_, E> {
     /// is in the tree after the journal: the highest node on its chain
     /// of parents after — `node` included — that was not in the tree
     /// before. `None` when `node` and every node above it were.
-    /// O(depth).
+    /// Amortized O(1) over a close: see [`Self::top`].
     fn top_entered(&mut self, node: NodeId) -> Option<NodeId> {
-        let mut top = None;
-        let mut cursor = Some(node);
-        let mut steps = 0;
-        while let Some(id) = cursor {
-            if !self.before(id) {
-                top = Some(id);
-            }
-            steps += 1;
-            if steps > self.arena.len() {
-                break;
-            }
-            cursor = self.arena.get(id).and_then(|n| n.parent());
-        }
-        top
+        self.top(node, Side::After)
     }
 
     /// The top of the subtree that left the tree with `node`, which was
     /// in the tree before the journal: the highest node on its chain of
     /// parents before — `node` included — that is not in the tree after.
-    /// `None` when `node` and every node above it still are. O(depth).
+    /// `None` when `node` and every node above it still are. Amortized
+    /// O(1) over a close: see [`Self::top`].
     fn top_left(&mut self, node: NodeId) -> Option<NodeId> {
-        let mut top = None;
+        self.top(node, Side::Before)
+    }
+
+    /// [`Self::top_entered`] (`side` [`Side::After`]: the chain of
+    /// parents after, nodes not in the tree before) or
+    /// [`Self::top_left`] (`side` [`Side::Before`]: the chain before,
+    /// nodes not in the tree after), memoized for every node on the
+    /// chain: a node's answer is its parent's when that has one, and
+    /// otherwise the node itself if it is out on the other side. The
+    /// climb stops at the first node already answered, so over a whole
+    /// close each node is climbed through once per side, however many
+    /// entries sit below it — never once per entry (§20 rule 11). A
+    /// chain longer than the arena is a cycle no real arrangement has,
+    /// and is cut there.
+    fn top(&mut self, node: NodeId, side: Side) -> Option<NodeId> {
+        let mut chain = std::mem::take(&mut self.top_chain);
+        chain.clear();
         let mut cursor = Some(node);
-        let mut steps = 0;
+        let mut above = None;
         while let Some(id) = cursor {
-            if !self.after(id) {
-                top = Some(id);
-            }
-            steps += 1;
-            if steps > self.arena.len() {
+            let memo = match side {
+                Side::After => &self.entered,
+                Side::Before => &self.left,
+            };
+            if let Some(&known) = memo.get(&id) {
+                above = known;
                 break;
             }
-            cursor = self.parent_before(id);
+            if chain.len() > self.arena.len() {
+                error!("engine: a journal's recorded parents form a cycle at node {id}");
+                break;
+            }
+            chain.push(id);
+            #[cfg(test)]
+            tests_support::count_presence_step();
+            cursor = match side {
+                Side::After => self.arena.get(id).and_then(|n| n.parent()),
+                Side::Before => self.parent_before(id),
+            };
         }
-        top
+        for &id in chain.iter().rev() {
+            if above.is_none() {
+                let out = match side {
+                    Side::After => !self.before(id),
+                    Side::Before => !self.after(id),
+                };
+                if out {
+                    above = Some(id);
+                }
+            }
+            match side {
+                Side::After => self.entered.insert(id, above),
+                Side::Before => self.left.insert(id, above),
+            };
+        }
+        self.top_chain = chain;
+        above_of(
+            match side {
+                Side::After => &self.entered,
+                Side::Before => &self.left,
+            },
+            node,
+        )
     }
+}
+
+/// A memoized top's answer for `node`. O(1).
+fn above_of(memo: &FxHashMap<NodeId, Option<NodeId>>, node: NodeId) -> Option<NodeId> {
+    memo.get(&node).copied().flatten()
 }
 
 /// Whether the chain of `parent_of` from `node` reaches `root`, with
@@ -1113,7 +1178,10 @@ impl<E: TreeElement> Journal<E> {
     /// recorded sibling no longer under its recorded parent.
     ///
     /// Invalidates the tree's cache. Cost: one clone per entry; for
-    /// moved elements a detach and an O(depth) re-attach each.
+    /// moved elements a detach and a re-attach each: a same-row one for
+    /// an element that keeps its parent (O(1) once indextree offers it,
+    /// ruling R16 on #282), and an O(depth) one — the cycle check of a
+    /// re-parent — for an element that changes parent, enters or leaves.
     pub fn revert(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
         self.validate(tree)?;
         self.side.set(Side::Before);
@@ -1246,13 +1314,30 @@ impl<E: TreeElement> Journal<E> {
     /// after its recorded previous sibling, in `order` — the order that
     /// has each previous sibling in place first. Unmoved nodes never
     /// leave their rows. Nothing to do when nothing moved.
+    ///
+    /// An entry under the same parent in both arrangements only changes
+    /// its place in its row, and goes back through
+    /// [`siblings::reattach_in_row`]; one that changes parent, enters or
+    /// leaves the tree is a re-parent ([`siblings::attach_at`]).
     fn arrange(&self, arena: &mut Arena<E>, order: &[usize], pick: fn(&Positions) -> Option<At>) {
         for &i in &self.out {
             self.entries[i].node.detach(arena);
         }
         for &i in order {
             let entry = &self.entries[i];
-            if let Some(at) = entry.position.as_ref().and_then(pick) {
+            let Some(position) = entry.position.as_ref() else {
+                continue;
+            };
+            let Some(at) = pick(position) else {
+                continue;
+            };
+            let same_row = matches!(
+                (position.before, position.after),
+                (Some(before), Some(after)) if before.parent == after.parent
+            );
+            if same_row {
+                siblings::reattach_in_row(arena, at.parent, entry.node, at.prev);
+            } else {
                 siblings::attach_at(arena, at.parent, entry.node, at.prev);
             }
         }
@@ -1277,8 +1362,8 @@ impl<E: Interpolable> Journal<E> {
     ///
     /// The same errors as [`Self::revert`], checked before anything is
     /// written. Invalidates the tree's cache. Cost: one
-    /// `interpolate` per entry; for moved elements a detach and an
-    /// O(depth) re-attach each.
+    /// `interpolate` per entry; for moved elements the
+    /// detach and re-attach [`Self::revert`] describes.
     pub fn write_interpolated(&self, tree: &mut Tree<E>, t: f32, snap: Snap) -> Result<(), TreeError> {
         self.validate(tree)?;
         let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
@@ -1316,8 +1401,9 @@ fn write<E>(arena: &mut Arena<E>, node: NodeId, value: E) {
 /// noting the move in `journal` when there is one. The one way the
 /// engine moves an element among its siblings outside a batch.
 ///
-/// Cost: a detach and an O(depth) re-attach, plus O(1) bookkeeping
-/// with a journal.
+/// Cost: a detach and a same-row re-attach
+/// ([`siblings::reattach_in_row`]), plus O(1) bookkeeping with a
+/// journal.
 pub(in crate::engine) fn move_among_siblings<E: TreeElement>(
     arena: &mut Arena<E>,
     parent: NodeId,
@@ -1332,5 +1418,26 @@ pub(in crate::engine) fn move_among_siblings<E: TreeElement>(
     if let Some(journal) = journal {
         journal.note_attach(arena, parent, prev);
     }
-    siblings::attach_at(arena, parent, node, prev);
+    siblings::reattach_in_row(arena, parent, node, prev);
+}
+
+/// What the tests read of a journal's close: how many steps the climbs
+/// of [`Presence`] have taken on this thread. Compiled for tests only.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        static PRESENCE_STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more node climbed through.
+    pub(super) fn count_presence_step() {
+        PRESENCE_STEPS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The nodes every close on this thread has climbed through so far.
+    pub(crate) fn presence_steps() -> usize {
+        PRESENCE_STEPS.with(Cell::get)
+    }
 }

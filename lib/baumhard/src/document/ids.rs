@@ -249,7 +249,8 @@ impl Document {
 
     /// How many [`Node`](DocKind::Node) elements are above `id`: `0`
     /// for a root node and for everything outside the nodes, `1` for a
-    /// root node's children, and so on. O(depth).
+    /// root node's children, and so on. O(depth): a one-off question —
+    /// no walk asks it once per element (§20 rule 11).
     pub fn depth(&self, id: NodeId) -> usize {
         depth(&self.tree, id)
     }

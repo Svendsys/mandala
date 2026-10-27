@@ -2,6 +2,7 @@
 
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::document::tests::bounds_tests::*;
+use baumhard::document::tests::deep_tests::*;
 use baumhard::document::tests::deps_tests::*;
 use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::ids_tests::*;
@@ -16,6 +17,7 @@ use baumhard::document::tests::shape_tests::*;
 use baumhard::document::tests::structure_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
+use baumhard::engine::tests::deep_tests::*;
 use baumhard::engine::tests::inherited_tests::*;
 use baumhard::engine::tests::interpolate_tests::*;
 use baumhard::engine::tests::journal_tests::*;
@@ -1886,6 +1888,27 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_validate_walks_a_deep_mutator", |b| {
         b.iter(do_document_validate_walks_a_deep_mutator)
     });
+    c.bench_function("document_validate_walks_a_deep_insert", |b| {
+        b.iter(do_document_validate_walks_a_deep_insert)
+    });
+    c.bench_function("document_deep_chain_full_walk", |b| {
+        b.iter(do_document_deep_chain_full_walk)
+    });
+    c.bench_function("document_deep_chain_repeat_while_to_the_leaf", |b| {
+        b.iter(do_document_deep_chain_repeat_while_to_the_leaf)
+    });
+    c.bench_function("document_deep_chain_journaled_edit_at_the_leaf", |b| {
+        b.iter(do_document_deep_chain_journaled_edit_at_the_leaf)
+    });
+    c.bench_function("document_deep_chain_moves_whole", |b| {
+        b.iter(do_document_deep_chain_moves_whole)
+    });
+    c.bench_function("document_deep_subtree_validates_and_inserts", |b| {
+        b.iter(do_document_deep_subtree_validates_and_inserts)
+    });
+    c.bench_function("document_deep_chain_resolves_at_the_leaf", |b| {
+        b.iter(do_document_deep_chain_resolves_at_the_leaf)
+    });
     c.bench_function("document_compose_normalizes_in_log_steps", |b| {
         b.iter(do_document_compose_normalizes_in_log_steps)
     });
@@ -2214,6 +2237,27 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
     c.bench_function("engine_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_walk_wide_and_deep_tree)
+    });
+    c.bench_function("engine_deep_chain_full_walk", |b| {
+        b.iter(do_engine_deep_chain_full_walk)
+    });
+    c.bench_function("engine_deep_chain_repeat_while_to_the_leaf", |b| {
+        b.iter(do_engine_deep_chain_repeat_while_to_the_leaf)
+    });
+    c.bench_function("engine_deep_chain_anchored_walks", |b| {
+        b.iter(do_engine_deep_chain_anchored_walks)
+    });
+    c.bench_function("engine_deep_chain_journaled_edit_at_the_leaf", |b| {
+        b.iter(do_engine_deep_chain_journaled_edit_at_the_leaf)
+    });
+    c.bench_function("engine_deep_chain_moves_whole", |b| {
+        b.iter(do_engine_deep_chain_moves_whole)
+    });
+    c.bench_function("engine_deep_subtree_inserts_and_is_a_value", |b| {
+        b.iter(do_engine_deep_subtree_inserts_and_is_a_value)
+    });
+    c.bench_function("engine_deep_walks_inherit_once_per_level", |b| {
+        b.iter(do_engine_deep_walks_inherit_once_per_level)
     });
     c.bench_function("engine_journaled_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_journaled_walk_wide_and_deep_tree)

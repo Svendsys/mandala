@@ -226,6 +226,20 @@ impl<E: TreeElement> Tree<E> {
     /// and so does a node of a subtree a structural command detached —
     /// still allocated, so a journal can put it back, but not part of
     /// the tree until it does. O(depth of `id`); no allocation.
+    ///
+    /// **A one-off question.** It climbs to the root, so asked once per
+    /// element of a walk, a selection or a request it would make the
+    /// work quadratic in depth (§20 rule 11). No walk asks it per
+    /// element: an entry point asks it once of the node it is given,
+    /// anchored walks ask a memo that climbs each ancestor once over all
+    /// their anchors, and a walk's structural commands know their
+    /// targets are in the tree — the walk reached them from it — unless
+    /// an earlier command removed them, which they track themselves.
+    /// It stays a climb rather than an O(1) mark because a mark on each
+    /// detached node would have to be written on every element of a
+    /// subtree each time a journal detaches or re-attaches it — every
+    /// revert and replay of a removal — turning those O(1) steps into
+    /// O(subtree) ones to speed up a question nothing asks in a loop.
     pub fn contains(&self, id: NodeId) -> bool {
         self.arena.get(id).is_some() && id.ancestors(&self.arena).last() == Some(self.root)
     }
@@ -309,9 +323,11 @@ impl<E: TreeElement> Tree<E> {
     /// [`Self::update_journaled`].
     ///
     /// Invalidates the tree's cache. Cost: `f`, two O(1) key reads and
-    /// an O(depth) check that `id` is in the tree; only when the key
-    /// changed, a scan of the siblings the element moves past plus an
-    /// O(depth) re-attach.
+    /// an O(depth) check that `id` is in the tree — a one-off per call
+    /// ([`Self::contains`]); only when the key changed, a scan of the
+    /// siblings the element moves past plus a same-row re-attach
+    /// (ruling R16 on #282: O(1) once indextree offers it, O(depth)
+    /// until then).
     pub fn update<R>(&mut self, id: NodeId, f: impl FnOnce(&mut E) -> R) -> Result<R, TreeError> {
         self.update_in(id, None, f)
     }
@@ -580,20 +596,23 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// since a tree changed without history cannot put them back.
     ///
     /// Invalidates `tree`'s cache. Cost, with `g` given nodes, `k`
-    /// resolved anchors and `d` the depth they sit at:
-    /// - validating is O(g × d) — one walk up to the root per distinct
-    ///   given node;
+    /// resolved anchors and `u` the elements on their paths up to the
+    /// root — the union of those paths, each element counted once
+    /// however many anchors sit below it:
+    /// - validating is O(u) — each element above a given node is
+    ///   climbed through once over all of them, never once per node;
     /// - resolving is O(g) for [`Anchors::Nodes`] and
     ///   [`Anchors::ParentOf`]; [`Anchors::SiblingsOf`] scans the row of
     ///   each distinct parent of the given nodes once, which is what it
     ///   resolves to;
-    /// - a single anchor needs nothing more; for `k > 1`, one path
-    ///   `Vec` of length `d` per anchor, O(k × d) to drop nested
-    ///   anchors, and an O(k log k × d) sort — siblings of different
-    ///   keys order by key in O(1), and a row is scanned once, the
-    ///   first time two anchors part on equal keys in it;
+    /// - a single anchor needs nothing more; for `k > 1`, an
+    ///   O(u log u) order over that union, which also drops nested
+    ///   anchors — siblings of different keys order by key in O(1), and
+    ///   a row is scanned once, the first time two anchors part on equal
+    ///   keys in it;
     /// - then one seed and one walk per kept anchor, O(matching pairs
-    ///   below it). Nothing is proportional to the rest of the tree;
+    ///   below it). Nothing is proportional to the rest of the tree,
+    ///   and nothing to the depth once per anchor;
     /// - for a mutator tree with structural commands, what
     ///   [`Self::apply_at_journaled`] costs on top, plus each command's
     ///   own cost ([`StructOp`](crate::engine::structure::StructOp)).

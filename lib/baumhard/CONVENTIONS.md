@@ -134,6 +134,41 @@ it with respect.
   `Journal::discard` — never free a node a journal may put back, and
   never write a second structural path (hand-written topology code)
   beside the commands.
+- **Depth costs nothing extra** (design D30, §20 rule 11, V1-A5 #282).
+  A tree's depth has no bound — a map is as deep as memory allows — so
+  no code walks it by recursing once per level, and no code spends work
+  per element that grows with the depth.
+  - **Walk with a heap stack.** The walker's descent is a stack of
+    `Frame`s, the inherited states beside it a second stack;
+    `Subtree`'s `Drop`, `Clone`, `PartialEq` and `Debug` are written by
+    hand for the same reason, since derived ones recurse. A new walk
+    proves itself on a 100,000-deep chain, natively and in the wasm32
+    node probe (`engine::tests::deep_tests`,
+    `document::tests::deep_tests`).
+  - **Carry state down; never climb per element.** Inherited state is
+    handed from parent to child as the walk descends. A question about
+    many elements' ancestry — whether each is in the tree, which
+    selected element is nested in another — goes through a memo that
+    climbs each ancestor once over all of them
+    (`engine::membership::Membership`), never through
+    [`Tree::contains`](src/engine/tree.rs) per element, which is a
+    one-off O(depth) question.
+  - **Insert new nodes by value.** indextree's `*_value` inserts climb
+    nothing; inserting an *existing* node climbs to the root to check
+    for a cycle. A node the engine creates goes in by value
+    (`siblings::insert_value_at`, `append_value_sorted`).
+  - **Same-row moves through one function.** A node moved within the
+    row it is in — a settle, an `update`, a journal restoring its place
+    — goes back through `siblings::reattach_in_row` and nothing else:
+    under its own parent it cannot close a cycle, so ruling R16 holds
+    that insert to O(1). indextree 4.9 has no insert of an existing
+    node without the climb; until one is swapped in there, that call
+    site is the one O(depth) left on the path, and
+    `test_same_row_rearrangement_is_linear_in_depth` (ignored until
+    then) is the test that goes green with the swap. A node moved to
+    **another** parent (`StructOp::Move`, a journal restoring a
+    re-parent) keeps its O(depth) cycle check: the price of refusing a
+    cycle, paid once per node moved, never per node visited.
 - **Iterate with `NodeId::children(tree.arena())` and `descendants(tree.arena())`.**
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if

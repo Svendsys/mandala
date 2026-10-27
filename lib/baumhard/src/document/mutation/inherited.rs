@@ -305,7 +305,8 @@ pub(crate) fn inherit(element: &DocElement, parent: &DocInherited) -> DocInherit
 ///
 /// Cost: O(depth below the nearest node) to fold, which the shape rules
 /// keep at five elements at most, plus the defaults look-up, O(palettes).
-/// No allocation.
+/// Never a climb to the root: a node's state depends on nothing above
+/// it but the defaults (§20 rule 11). One `Vec` as long as the fold.
 pub fn inherited_seed(tree: &Tree<DocElement>, node: NodeId) -> DocInherited {
     let outside = DocInherited::outside(defaults(tree).map(|(_, d)| d));
     match tree.get(node).and_then(|n| n.parent()) {
@@ -315,14 +316,23 @@ pub fn inherited_seed(tree: &Tree<DocElement>, node: NodeId) -> DocInherited {
 }
 
 /// The state `id` hands its children: `inherit` folded down from the
-/// nearest node at or above it, or from the map. Recursion as deep as
-/// `id` is below that node.
+/// nearest node at or above it, or from the map. The elements up to
+/// that node are gathered bottom-up, then folded top-down — a loop,
+/// not a recursion, whatever shape the tree holds.
 fn state_of(tree: &Tree<DocElement>, id: NodeId, outside: &DocInherited) -> DocInherited {
     let arena = tree.arena();
-    let element = arena[id].get();
-    let parent_state = match arena[id].parent() {
-        Some(parent) if element.kind() != DocKind::Node => state_of(tree, parent, outside),
-        _ => *outside,
-    };
-    inherit(element, &parent_state)
+    let mut chain: Vec<&DocElement> = Vec::new();
+    let mut at = Some(id);
+    while let Some(current) = at {
+        let element = arena[current].get();
+        chain.push(element);
+        if element.kind() == DocKind::Node {
+            break;
+        }
+        at = arena[current].parent();
+    }
+    chain
+        .iter()
+        .rev()
+        .fold(*outside, |state, element| inherit(element, &state))
 }

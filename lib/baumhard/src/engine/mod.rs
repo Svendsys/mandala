@@ -11,7 +11,8 @@
 //! and applies each payload through
 //! [`Mutation::apply_to`](crate::engine::mutation::Mutation::apply_to),
 //! carrying the element type's [inherited state](crate::engine::element::TreeElement::Inherited)
-//! down the walk on its own call stack. Both arenas keep every parent's
+//! down the walk on heap stacks rather than the call stack, so a tree
+//! of any depth walks in bounded call stack. Both arenas keep every parent's
 //! children sorted by key, so the walk merges sibling rows in step, and a
 //! walk can start at [anchors](crate::engine::anchor::Anchors) — the
 //! selection — rather than at the root. [`Predicate`](crate::engine::predicate::Predicate)s
@@ -68,6 +69,9 @@ pub mod journal;
 /// [`BranchKey`](key::BranchKey) — the kind and channel the walker
 /// routes on, and every parent's children are sorted by.
 pub mod key;
+/// Whether many elements are in the tree, at no per-element depth
+/// cost.
+pub(crate) mod membership;
 /// [`Mutation`](mutation::Mutation) — the payload trait a mutator
 /// carries to an element.
 pub mod mutation;

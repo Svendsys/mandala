@@ -1357,9 +1357,10 @@ pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
     out
 }
 
-/// Every checked indextree insert in the body of the engine's
-/// `siblings::insert_sorted` — the one path every new tree node and
-/// mutator-tree node goes through — as `(repo-relative file, 1-based
+/// Every checked indextree insert in the bodies of the engine's
+/// `siblings::insert_sorted` and `siblings::insert_value_at` — the
+/// path every new tree node and mutator-tree node goes through, and
+/// the insert it places a new node with — as `(repo-relative file, 1-based
 /// line, the line's text)`, plus the count of the value-inserting
 /// calls the body makes, so a caller can tell an empty finding from a
 /// scan that read nothing.
@@ -1386,10 +1387,13 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
     let mut value_inserts = 0;
     let mut in_body = false;
     for (number, line) in source.lines().enumerate() {
-        if line.starts_with("pub(crate) fn insert_sorted") {
+        if line.starts_with("pub(crate) fn insert_sorted")
+            || line.starts_with("pub(crate) fn insert_value_at")
+        {
             in_body = true;
         } else if in_body && line == "}" {
-            break;
+            in_body = false;
+            continue;
         }
         if !in_body {
             continue;
