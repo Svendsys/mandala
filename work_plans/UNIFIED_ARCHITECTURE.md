@@ -54,7 +54,7 @@ develops it.
 | D27 | A verb target naming a node id that does not exist is **skipped at run time with a logged warning**, never a load error. Deleting a node a verb names is an ordinary delete. | §11.1 |
 | D28 | **One open transaction, and who yields.** While an interactive transaction is open (text editor session, drag or resize, color picker, frame preview), any other `apply` or `begin` is refused and the user sees a short status message; a verb's `Edit` step in that state is skipped with a warning. An animated edit is not interactive: any new `apply` or `begin` first fast-forwards it to its end and commits it, then proceeds. | §9 |
 | D29 | **Untrusted input is fuzzed, permanently.** Maps are shared with strangers, so every untrusted-input boundary (the `.mandala.json` loader, map-borne edits, presentations and verbs, shaping of arbitrary text, IPC frames) has a coverage-guided fuzz target (`fuzz/`, cargo-fuzz, outside the workspace), run as a short smoke on PRs and nightly once V1 is on `main`. Every finding becomes a stable regression test in `./test.sh`. Infrastructure and the loader target: V1-B8 (#278). | §16, §20 |
-| D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth; depth is bounded by `MAX_NODE_DEPTH = 1024`, a safety bound for untrusted input that every tree walk is proven against (§20 rule 11). | §7, §20 |
+| D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
 
 ---
 
@@ -740,7 +740,7 @@ nesting is the same at any tree depth.
   ancestor chain of the node before it (or absent, for a new root);
   anything else, including a parent that appears later, a missing
   one or the node itself, is a load error naming that node's path.
-  A node deeper than `MAX_NODE_DEPTH` is a `Bound` error.
+  Depth itself is never an error (D30).
 - **Nothing derived is written.** No fitted sizes, no depth, no
   child lists, no resolved colors, no copied defaults. Optional
   fields equal to their inherited value are omitted on save.
@@ -1519,8 +1519,11 @@ workers who could not see the whole.
    changes an untrusted-input surface ships its fuzz target in the
    same PR (`fuzz/`, see V1-B8, #278), with the properties that apply
    and a seed corpus; findings become stable regression tests.
-11. **No recursion in tree depth** (D30). Code that walks the
-   document tree, or a glyph tree built from it, does not recurse in
-   proportion to depth unless a test proves it at `MAX_NODE_DEPTH`
-   on wasm32's default stack in a debug build (TEST_CONVENTIONS §T9's
-   node probe); otherwise it iterates with an explicit stack.
+11. **Depth costs nothing extra** (D30). Code that walks the
+   document tree, or a glyph tree built from it, never recurses in
+   proportion to depth (it iterates with an explicit heap stack) and
+   never spends per-node work proportional to depth (inherited state
+   is carried down the walk, not re-derived by climbing to the root).
+   A sub-issue that adds a tree walk proves it on a 100,000-deep
+   chain, natively and under wasm32 debug in TEST_CONVENTIONS §T9's
+   node probe. Engine and document walks: V1-A5 (#282).
