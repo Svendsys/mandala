@@ -9,6 +9,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use glam::Vec2;
 use indextree::NodeId;
@@ -27,7 +28,7 @@ use crate::gfx_structs::element::{GfxElement, GfxElementField, GfxElementType};
 use crate::gfx_structs::fill::{FillData, FillShape};
 use crate::gfx_structs::model::GlyphModel;
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance};
-use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp};
+use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, RunShape};
 use crate::gfx_structs::tests::fill_tests::{a_fill, a_fill_element};
 use crate::gfx_structs::tests::run_tests::{apply, box_shape, four_glyph_element, four_glyph_shape, run_of};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
@@ -85,6 +86,18 @@ const RUN_VARIATIONS: &[Variation] = &[
         apply(
             e,
             GfxMutation::RunSet(Box::new(base_run_data(four_glyph_shape()))),
+        );
+    }),
+    ("shaped (the same shaping, placed again)", |e| {
+        // The shaped run is shared; only the placement is a new
+        // allocation. A re-placed flow is a changed flow.
+        let RunShape::Path { run, placed } = e.glyph_run().unwrap().shaped().clone() else {
+            unreachable!("the base is a path run");
+        };
+        let placed = Arc::new((*placed).clone());
+        apply(
+            e,
+            GfxMutation::RunSet(Box::new(base_run_data(RunShape::Path { run, placed }))),
         );
     }),
     ("origin", |e| {
@@ -230,6 +243,15 @@ pub fn do_glyph_layer_same_state_compares_every_state_field() {
         .subscribers_mut()
         .push(Rc::new(RefCell::new(|_: &mut GfxElement, _| {})));
     assert!(subscribed.same_state(&run), "subscribers are not state");
+
+    // A box run's shaping is compared by identity too.
+    let boxed = || GfxElement::new_run(base_run_data(box_shape(Vec2::new(80.0, 30.0), 4)), 1, 7);
+    let first = boxed();
+    assert!(first.same_state(&first.clone()));
+    assert!(
+        !first.same_state(&boxed()),
+        "a second box shaping is a different state"
+    );
 
     let mut nan = run.clone();
     apply(&mut nan, GfxMutation::RunOpacity(f32::NAN));
@@ -1193,6 +1215,16 @@ pub fn do_hostile_authored_values_degrade_without_panicking() {
     tree.insert_child(root, element, Placement::Last).unwrap();
     assert_eq!(tree.descendant_at(Vec2::new(5.0, 5.0)), Some(fill));
     assert_eq!(tree.descendant_at(Vec2::new(5000.0, 5000.0)), None);
+
+    // The same for a fill whose authored rectangle is not finite.
+    for wire in [
+        r#"{"FillRect":{"origin":[1e39,0.0],"size":[10.0,10.0]}}"#,
+        r#"{"FillRect":{"origin":[0.0,0.0],"size":[1e39,10.0]}}"#,
+    ] {
+        let mut hostile_fill = a_fill_element();
+        apply(&mut hostile_fill, parse(wire));
+        assert_eq!(hostile_fill.spatial_bounds(), None, "{wire}");
+    }
 }
 
 // ── depth ─────────────────────────────────────────────────────────

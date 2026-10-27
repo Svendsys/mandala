@@ -242,6 +242,7 @@ pub fn do_run_bounds_are_the_union_of_the_placed_glyph_boxes() {
             &[
                 (9, Vec2::new(-500.0, -500.0)),
                 (0, Vec2::new(f32::NAN, 0.0)),
+                (0, Vec2::new(f32::INFINITY, 0.0)),
                 (0, Vec2::new(3.0, 4.0)),
             ],
         ),
