@@ -36,7 +36,7 @@ use crate::document::format::spelling::{
 use serde::{Deserialize, Serialize};
 
 /// Whether a channel is the default, `0`.
-pub(crate) fn is_zero(value: &usize) -> bool {
+pub(crate) fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
@@ -747,7 +747,7 @@ pub(crate) struct SpanDto {
 pub(crate) struct SectionDto {
     /// The channel among siblings of its kind.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub channel: usize,
+    pub channel: u64,
     /// The top-left corner, relative to the node's.
     #[serde(default, skip_serializing_if = "is_origin")]
     pub offset: [f32; 2],
@@ -811,7 +811,7 @@ pub(crate) struct SectionDto {
 pub(crate) struct RingDto {
     /// The channel among siblings of its kind.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub channel: usize,
+    pub channel: u64,
     /// Overrides the frame's fit mode.
     #[serde(
         default,
@@ -1295,7 +1295,7 @@ pub(crate) struct NodeDto {
     pub id: u32,
     /// The channel among its sibling nodes.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub channel: usize,
+    pub channel: u64,
     /// The top-left corner.
     pub position: [f32; 2],
     /// The size the user set, a minimum.

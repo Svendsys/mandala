@@ -47,6 +47,12 @@ pub const MAX_CONTROL_POINTS: usize = 2;
 /// rather than issue one twice.
 pub const MAX_NODE_IDENT: u32 = u32::MAX - 1;
 
+/// The largest channel a node, section or ring may carry. A channel is a
+/// `usize` in the document and `u32::MAX` is the most a `usize` holds on
+/// every target (wasm32's is 32 bits), so a file that loads on one target
+/// loads on all of them.
+pub const MAX_CHANNEL: u32 = u32::MAX;
+
 /// The most palettes a map may have: a
 /// [`PaletteId`](crate::document::values::PaletteId) is a `u16`.
 pub const MAX_PALETTES: usize = 1 << 16;
@@ -116,6 +122,8 @@ pub enum BoundError {
     /// A node ident outside `1..=`[`MAX_NODE_IDENT`]; `0` is reserved
     /// for "not yet assigned".
     NotAnIdent(u32),
+    /// A channel above [`MAX_CHANNEL`].
+    NotAChannel(u64),
     /// More items than the bound allows.
     TooMany {
         /// How many there are.
@@ -143,6 +151,9 @@ impl std::fmt::Display for BoundError {
             BoundError::Inverted { min, max } => write!(f, "the range {min}..={max} is empty"),
             BoundError::NotAnIdent(value) => {
                 write!(f, "{value} is not a node id: 1..={MAX_NODE_IDENT}")
+            }
+            BoundError::NotAChannel(value) => {
+                write!(f, "{value} is not a channel: 0..={MAX_CHANNEL}")
             }
             BoundError::NotAWeight(value) => write!(
                 f,
@@ -304,6 +315,13 @@ pub fn check_node_ident(value: u32) -> Result<u32, BoundError> {
     } else {
         Err(BoundError::NotAnIdent(value))
     }
+}
+
+/// A channel if it is at most [`MAX_CHANNEL`]. Takes the widest integer
+/// a reader can hold, so a value no `usize` holds is refused here, by the
+/// same bound on every target. O(1).
+pub fn check_channel(value: u64) -> Result<u32, BoundError> {
+    u32::try_from(value).map_err(|_| BoundError::NotAChannel(value))
 }
 
 /// A count if it is at most `max`: the index bounds

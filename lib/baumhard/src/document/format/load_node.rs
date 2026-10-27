@@ -56,6 +56,7 @@ impl Builder {
         if self.idents.contains_key(&ident) {
             return Err(self.error_at("id", LoadErrorKind::DuplicateId { id: ident }));
         }
+        let channel = self.channel(dto.channel)?;
         let position = self.pair("position", dto.position, bounds::check_canvas_coord)?;
         let min_size = dto
             .min_size
@@ -95,7 +96,7 @@ impl Builder {
 
         let data = DocElement::Node(NodeData {
             ident: NodeIdent(ident),
-            channel: dto.channel,
+            channel,
             position,
             min_size,
             style,
@@ -164,6 +165,7 @@ impl Builder {
 
     /// A section and its spans.
     fn section(&mut self, node: NodeId, dto: &SectionDto) -> LoadResult<()> {
+        let channel = self.channel(dto.channel)?;
         let offset = self.pair("offset", dto.offset, bounds::check_canvas_coord)?;
         let min_size = dto
             .min_size
@@ -171,7 +173,7 @@ impl Builder {
             .transpose()?;
         let text = self.text_style(text_in!(dto), SizeUnit::Pt)?;
         let data = DocElement::Section(SectionData {
-            channel: dto.channel,
+            channel,
             offset,
             min_size,
             align: dto.align.map(|align| match align {
@@ -229,13 +231,14 @@ impl Builder {
 
     /// One ring and its spans.
     fn ring(&mut self, frame: NodeId, dto: &RingDto) -> LoadResult<()> {
+        let channel = self.channel(dto.channel)?;
         let fit = match &dto.fit {
             Some(fit) => Some(self.fit("fit", fit)?),
             None => None,
         };
         let text = self.text_style(text_in!(dto), SizeUnit::Rel)?;
         let data = DocElement::Ring(RingData {
-            channel: dto.channel,
+            channel,
             style: RingStyle { fit, text },
         });
         self.element(frame, data, |b, ring| b.spans(ring, &dto.spans, true))

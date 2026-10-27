@@ -1318,6 +1318,64 @@ fn test_a_node_id_must_be_a_node_id() {
     );
 }
 
+#[test]
+fn test_a_channel_is_a_bound_every_target_holds() {
+    // A `usize` is 32 bits on wasm32, so the bound is `u32::MAX`
+    // and the number is read as a `u64` first: one refusal, with one
+    // message, on every target (a `usize` field would refuse a smaller
+    // range there, with the reader's wording).
+    let past = u64::from(bounds::MAX_CHANNEL) + 1;
+    let not_a_channel = BoundError::NotAChannel(past);
+    rejects_bound(
+        &map_with("", &format!(r#"{{"id":1,"channel":{past},"position":[0,0]}}"#)),
+        "nodes[0].channel",
+        not_a_channel,
+    );
+    rejects_bound(
+        &map_of(&format!(
+            r#","children":[{{"id":2,"channel":{past},"position":[0,0]}}]"#
+        )),
+        "nodes[0].children[0].channel",
+        not_a_channel,
+    );
+    rejects_bound(
+        &map_of(&format!(r#","sections":[{{}},{{"channel":{past}}}]"#)),
+        "nodes[0].sections[1].channel",
+        not_a_channel,
+    );
+    rejects_bound(
+        &map_of(&format!(r#","frame":{{"rings":[{{"channel":{past}}}]}}"#)),
+        "nodes[0].frame.rings[0].channel",
+        not_a_channel,
+    );
+    // A negative number is not a channel either, and the reader says so.
+    rejects_as_invalid(
+        &map_with("", r#"{"id":1,"channel":-1,"position":[0,0]}"#),
+        "nodes[0].channel",
+    );
+    // The bound itself loads, in all three places.
+    let top = bounds::MAX_CHANNEL;
+    let doc = load(&map_with(
+        "",
+        &format!(
+            r#"{{"id":1,"channel":{top},"position":[0,0],"sections":[{{"channel":{top}}}],"frame":{{"rings":[{{"channel":{top}}}]}}}}"#
+        ),
+    ))
+    .unwrap();
+    let top = usize::try_from(top).unwrap();
+    let mut channels = Vec::new();
+    let mut open = vec![doc.root()];
+    while let Some(id) = open.pop() {
+        channels.push(doc.get(id).unwrap().channel());
+        open.extend(doc.children(id));
+    }
+    assert_eq!(
+        channels.iter().filter(|channel| **channel == top).count(),
+        3,
+        "the node, its section and its ring: {channels:?}"
+    );
+}
+
 /// `count` entries named `p000000`, …, as the text of the object's
 /// members.
 fn members(count: usize, value: &str) -> String {

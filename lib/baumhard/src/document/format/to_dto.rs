@@ -344,7 +344,7 @@ impl<'a> Saver<'a> {
         }
         Some(NodeDto {
             id: node.ident.0,
-            channel: node.channel,
+            channel: channel_of(node.channel),
             position: node.position.to_array(),
             min_size: node.min_size.map(|size| size.to_array()),
             shape: node.style.shape.map(shape),
@@ -388,7 +388,7 @@ impl<'a> Saver<'a> {
         };
         let text = self.text(&section.text, SizeUnit::Pt);
         Some(SectionDto {
-            channel: section.channel,
+            channel: channel_of(section.channel),
             offset: section.offset.to_array(),
             min_size: section.min_size.map(|size| size.to_array()),
             align: section.align.map(|align| match align {
@@ -446,7 +446,7 @@ impl<'a> Saver<'a> {
             };
             let text = self.text(&ring.style.text, SizeUnit::Rel);
             rings.push(RingDto {
-                channel: ring.channel,
+                channel: channel_of(ring.channel),
                 fit: Self::fit(&ring.style.fit),
                 font: text.font,
                 size: text.size,
@@ -847,6 +847,12 @@ fn default_path() -> PathData {
         visible: true,
         zoom: None,
     }
+}
+
+/// A channel as the file's integer. A `usize` always fits a `u64` on the
+/// targets this builds for.
+fn channel_of(channel: usize) -> u64 {
+    u64::try_from(channel).unwrap_or(u64::MAX)
 }
 
 /// A node's outline as the file spells it.

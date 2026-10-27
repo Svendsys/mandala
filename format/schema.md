@@ -260,7 +260,7 @@ text-style `size` is a [fraction](#size-units).
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `id` | integer, `1` to `4294967294` | yes | | The id links and verbs name the node by, unique in the map. `0` is reserved. Ids do not encode structure; moving a node never renames anything. |
-| `channel` | integer `>= 0` | no | `0` | The node's place among its sibling nodes. |
+| `channel` | integer `0..=4294967295` | no | `0` | The node's place among its sibling nodes. |
 | `position` | `[x, y]` | yes | | The top-left corner, canvas units. |
 | `min_size` | `[w, h]` | no | none | The size the user set, a *minimum*: the node grows to fit its content (D5). |
 | `shape` | [shape](#shape) | no | unset | The outline its fill and frame share. |
@@ -307,7 +307,7 @@ A box of spans inside a node. A box breaks lines at `\n` only (D26).
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `channel` | integer `>= 0` | no | `0` | The place among the node's sections. |
+| `channel` | integer `0..=4294967295` | no | `0` | The place among the node's sections. |
 | `offset` | `[x, y]` | no | `[0, 0]` | The top-left corner, relative to the node's. |
 | `min_size` | `[w, h]` | no | none | The size the user set, a minimum. |
 | `align` | `"left"`, `"center"` or `"right"` | no | unset | How the lines align in the box. |
@@ -369,7 +369,7 @@ key is unset when absent; the built-in values that then apply are
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `channel` | integer `>= 0` | no | `0` | The place among the frame's rings. |
+| `channel` | integer `0..=4294967295` | no | `0` | The place among the frame's rings. |
 | `fit` | [fit](#fit) | no | the frame's | Overrides the frame's fit. |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | The ring's size: a fraction of the node's shorter side, the one `size` a ring has. |
@@ -580,6 +580,7 @@ its path.
 | Weight | 100, 200, ... 900 |
 | `control_points` | at most 2 (`MAX_CONTROL_POINTS`) |
 | Node `id` | `1` to `4294967294` (`MAX_NODE_IDENT`) |
+| `channel` (node, section, ring) | `0` to `4294967295` (`MAX_CHANNEL`), the most a `usize` holds on wasm32, so every target accepts the same files |
 | `palettes`, theme variables, theme variants, `verbs`, `edits`, `presentations` | at most 65536 each, the most an index addresses |
 
 ## Errors

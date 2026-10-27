@@ -186,6 +186,18 @@ pub fn do_document_bounds_node_ident() {
     assert_eq!(check_node_ident(u32::MAX), Err(BoundError::NotAnIdent(u32::MAX)));
 }
 
+/// `0..=MAX_CHANNEL`, and the check takes a `u64` so one past the bound
+/// is refused by value on every target rather than failing to fit a
+/// `usize`.
+#[test]
+fn test_document_bounds_channel() {
+    assert_eq!(check_channel(0), Ok(0));
+    assert_eq!(check_channel(u64::from(MAX_CHANNEL)), Ok(MAX_CHANNEL));
+    let past = u64::from(MAX_CHANNEL) + 1;
+    assert_eq!(check_channel(past), Err(BoundError::NotAChannel(past)));
+    assert_eq!(check_channel(u64::MAX), Err(BoundError::NotAChannel(u64::MAX)));
+}
+
 #[test]
 fn test_document_bounds_counts() {
     do_document_bounds_counts();

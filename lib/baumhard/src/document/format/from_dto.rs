@@ -199,7 +199,7 @@ impl Builder {
         &mut self,
         key: &'static str,
         items: &'a [T],
-        channel_of: impl Fn(&T) -> usize,
+        channel_of: impl Fn(&T) -> u64,
         mut f: impl FnMut(&mut Self, &'a T) -> LoadResult<()>,
     ) -> LoadResult<()> {
         let ascending = items.windows(2).all(|pair| match pair {
@@ -321,6 +321,22 @@ impl Builder {
                 .bounded("size", bounds::check_rel_size(value))
                 .map(FontSize::Rel),
         }
+    }
+
+    /// A `channel`, checked against [`bounds::MAX_CHANNEL`] as a `u64`,
+    /// so that every target refuses the same files: a `usize` is 32 bits
+    /// on wasm32, and reading the number into one would refuse a smaller
+    /// range there, with another message.
+    pub fn channel(&self, value: u64) -> LoadResult<usize> {
+        let channel = self.bounded("channel", bounds::check_channel(value))?;
+        usize::try_from(channel).map_err(|error| {
+            self.error_at(
+                "channel",
+                LoadErrorKind::Internal {
+                    message: error.to_string(),
+                },
+            )
+        })
     }
 
     /// A font weight, checked.
