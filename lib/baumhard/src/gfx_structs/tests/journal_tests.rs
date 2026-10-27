@@ -62,6 +62,8 @@ fn set_channel(element: &mut GfxElement, to: usize) {
     match element {
         GfxElement::GlyphArea { channel, .. }
         | GfxElement::GlyphModel { channel, .. }
+        | GfxElement::GlyphRun { channel, .. }
+        | GfxElement::Fill { channel, .. }
         | GfxElement::Void { channel, .. } => *channel = to,
     }
 }

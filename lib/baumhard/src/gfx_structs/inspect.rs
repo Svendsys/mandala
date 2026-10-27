@@ -7,7 +7,9 @@
 //! `GlyphArea` / `GlyphModel` field enums, a color-font region, the
 //! channel, the id or a flag — so a mutator can express things like
 //! "repeat on every child whose text starts empty" without hand-coding
-//! a walker. O(1) evaluations, no allocation.
+//! a walker. The element-level fields also select by variant
+//! (`ElementType`, so a presentation can reach the runs or the fills of
+//! a layer) and by the opacity of a run or fill. O(1) evaluations, no allocation.
 //!
 //! **Negation flag worked example.** A
 //! `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
@@ -15,7 +17,7 @@
 //! `Equals(false)` is the un-negated `==`. The negation form
 //! `Equals(true)` matches every element *without* the flag.
 
-use crate::core::primitives::{ColorFontRegionField, Flaggable};
+use crate::core::primitives::{ColorFontRegionField, Discriminated, Flaggable};
 use crate::engine::element::TreeElement;
 use crate::engine::predicate::Comparator::{Equals, Exists, GreaterThan, LessThan};
 use crate::engine::predicate::{Comparator, Inspect};
@@ -89,6 +91,33 @@ fn evaluate_field(element: &GfxElement, field: &GfxElementField, comparator: &Co
                 return Some(false);
             };
             Some(evaluate_glyph_model_match(target_model, model_field, comparator))
+        }
+        GfxElementField::ElementType(element_type) => Some(match comparator {
+            Equals(negation) => (element.variant() == *element_type) != *negation,
+            // The tag is always present on an element, as a channel is.
+            Exists(negation) => !negation,
+            // Tags are unordered — degrade to non-match rather than
+            // panic (§9).
+            _ => {
+                log::warn!(
+                    "predicate: unsupported Comparator {:?} on ElementType({:?}) \
+                     — treating as non-match",
+                    comparator,
+                    element_type,
+                );
+                false
+            }
+        }),
+        GfxElementField::Opacity(opacity) => {
+            // Only runs and fills have an opacity. Another element
+            // decides the predicate as false, as a missing area does
+            // for the area fields.
+            let own = match element {
+                GfxElement::GlyphRun { run, .. } => run.opacity(),
+                GfxElement::Fill { fill, .. } => fill.opacity,
+                _ => return Some(false),
+            };
+            Some(comparator.compare_f32(own, opacity.0))
         }
         GfxElementField::Flag(flag) => {
             let is_set = element.flag_is_set(*flag);
