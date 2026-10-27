@@ -1191,8 +1191,9 @@ pub(crate) struct PathDto {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LinkDto {
-    /// The `id` of the node it leads to.
-    pub to: u32,
+    /// The `id` of the node it leads to, anywhere in the list. Read
+    /// wider than an id may be, as a node's `id` is.
+    pub to: u64,
     /// Whether it draws a path or two portal ends.
     pub kind: LinkKindDto,
     /// What the text does when it and the path differ in length.
@@ -1291,8 +1292,20 @@ pub(crate) struct LinkDto {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NodeDto {
-    /// The id links and verbs name it by, unique in the map.
-    pub id: u32,
+    /// The id links and verbs name it by, unique in the map: an integer
+    /// in `1..=4294967294`. Read wider than it may be, so that a value
+    /// out of range is a bound error naming the bound rather than the
+    /// reader's message about a `u32`.
+    pub id: u64,
+    /// The `id` of the node it hangs from, which comes before it in the
+    /// list and is on the chain of the node listed just before it
+    /// (design B.4). Absent on a top-level node.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub parent: Option<u64>,
     /// The channel among its sibling nodes.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub channel: u64,
@@ -1411,15 +1424,16 @@ pub(crate) struct NodeDto {
     /// Its links.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkDto>,
-    /// Its child nodes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<NodeDto>,
 }
 
-/// The whole file.
+/// Every top-level key of a file but `nodes`: the header, which the
+/// loader reads before any node and the saver writes before the node
+/// list. The nodes are never held as a list of DTOs: the loader parses
+/// and builds one at a time from its extent, and the saver writes one
+/// at a time as its walk reaches it (design B.14, B.15).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MapDto {
+pub(crate) struct MapHeaderDto {
     /// The format version: `1`.
     pub format: u64,
     /// The map's name.
@@ -1452,7 +1466,4 @@ pub(crate) struct MapDto {
     /// The verbs the map defines.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verbs: Vec<VerbDto>,
-    /// The top-level nodes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub nodes: Vec<NodeDto>,
 }

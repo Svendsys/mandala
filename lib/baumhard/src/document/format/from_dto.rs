@@ -1,41 +1,48 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The loader's builder: the DTOs of a parsed file become a
-//! [`Document`], in one pass.
+//! The loader's builder: a parsed header, then the nodes one at a time,
+//! become a [`Document`].
 //!
-//! **One pass, in key order.** The builder walks the DTOs depth first
-//! and appends each element to its parent. It never inserts into the
-//! middle of a row: a parent's children are sorted by key (kind, then
-//! channel) and the builder hands them to the tree in that order, so
-//! every insert is the O(1) append at the end of the row. A file lists
-//! sections, rings and sibling nodes in the order its author wrote
-//! them, which may descend by channel; each such row is put in order
-//! first (a stable sort, skipped when the row is already ascending),
-//! because `Tree::insert_child` finds a new child's place by scanning
-//! back from the end of its row, and a row inserted in descending order
-//! would scan past every sibling already placed: quadratic, from a file
-//! alone.
+//! **Phase 3, the header** ([`Builder::begin`]): the theme's variables,
+//! the palettes and the verbs are read first, so that a color, a node's
+//! palette or a trigger can be resolved to its [`VarId`],
+//! [`PaletteId`](crate::document::values::PaletteId) or [`VerbId`] as
+//! it is met. Names become indices here and nowhere else.
 //!
-//! **Names become indices here and nowhere else.** The theme's
-//! variables, the palettes and the verbs are read first, so a color,
-//! a node's palette or a trigger can be resolved to its
-//! [`VarId`],
-//! [`PaletteId`](crate::document::values::PaletteId) or
-//! [`VerbId`] as it is met. Links are
-//! the exception: a link may name a node that comes later in the file,
-//! so each is recorded and resolved once every node has an arena id.
+//! **Phase 4, the nodes** ([`Builder::node`], in `chain.rs`): each node
+//! of the flat list is placed on the chain of ancestors the list's
+//! pre-order implies, appended under its parent, and its own content is
+//! built under it. Only one node's DTO is alive at a time. Nothing
+//! recurses on the depth of the tree: the chain is a heap `Vec` and a
+//! node's row is checked when it leaves the chain.
+//!
+//! **Phases 5 and 6** ([`Builder::finish`]): links are resolved last,
+//! because a link may name a node that comes later in the list, then the
+//! map row is checked and the document made, with the ident index the
+//! build already holds.
+//!
+//! **Every insert is an append.** A parent's children are sorted by key
+//! (kind, then channel), and the builder hands them to the tree in that
+//! order, so every insert is the O(1) append at the end of the row. A
+//! row the file lists out of order — nodes, sections or rings with a
+//! descending channel — is refused, never sorted (design B.4, C.2): a
+//! streaming loader cannot sort siblings spread across the list, and
+//! appending them out of order would make `Tree::insert_child` scan back
+//! past every sibling already placed — quadratic, from a file alone.
 //!
 //! **The first error ends the load**, with the path of the value
 //! ([`LoadError`]). The builder keeps the path as a stack of segments
 //! and renders it only for an error, so the happy path allocates no
-//! strings for it.
+//! strings for it. An error inside a node carries the node's context
+//! ([`NodeContext`]), which the caller completes with the excerpt and
+//! the position it alone knows.
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DocElement, MapData};
-use crate::document::format::dto::MapDto;
-use crate::document::format::error::{render_path, LoadError, LoadErrorKind, Seg};
+use crate::document::format::dto::MapHeaderDto;
+use crate::document::format::error::{render_path, LoadError, LoadErrorKind, NodeContext, Seg};
 use crate::document::format::SizeUnit;
-use crate::document::ids::Document;
+use crate::document::ids::{Definitions, Document, IdentIndex, NodeIdent};
 use crate::document::shape::validate_shape;
 use crate::document::values::{
     ColorRef, FitMode, FontSize, Percent, PlainColor, Rgba, Shape, StartPoint, VarId, VerbId, Weight,
@@ -56,10 +63,38 @@ pub(super) struct PendingLink {
     pub link: NodeId,
     /// The node that holds it.
     pub owner: NodeId,
+    /// The holder's place in the list and its id, for the error.
+    pub owner_at: (usize, u32),
     /// The ident its `to` names.
     pub to: u32,
     /// Where its `to` is, for the error.
     pub path: Vec<Seg>,
+}
+
+/// A node the list has placed: where it is in the tree, how deep, and
+/// where it is in the list.
+#[derive(Copy, Clone, Debug)]
+pub(super) struct PlacedNode {
+    /// Its element.
+    pub node: NodeId,
+    /// How many nodes are above it: `0` for a top-level node.
+    pub depth: usize,
+    /// `i` in `nodes[i]`.
+    pub index: usize,
+}
+
+/// One node of the chain: the path from a top-level node to the node
+/// listed last. `chain[d]` is the node at depth `d` on that path.
+#[derive(Copy, Clone, Debug)]
+pub(super) struct ChainEntry {
+    /// Its element.
+    pub node: NodeId,
+    /// Its id.
+    pub id: u32,
+    /// Its channel, which the next sibling's may not be below.
+    pub channel: usize,
+    /// `i` in `nodes[i]`.
+    pub index: usize,
 }
 
 /// The state of one load.
@@ -68,6 +103,9 @@ pub(super) struct Builder {
     pub tree: Tree<DocElement>,
     /// Where in the file the builder is.
     pub path: Vec<Seg>,
+    /// The node being built, while there is one: its place in the list
+    /// and, once read, its id. Every error raised meanwhile names it.
+    pub current: Option<(usize, Option<u32>)>,
     /// The theme's variable names, ascending: a name's position is its
     /// [`VarId`].
     pub vars: Vec<String>,
@@ -76,58 +114,112 @@ pub(super) struct Builder {
     pub palettes: Vec<String>,
     /// The verbs, by the id the file names them with.
     pub verbs: FxHashMap<String, VerbId>,
-    /// The node idents seen so far, with their arena ids.
-    pub idents: FxHashMap<u32, NodeId>,
+    /// Every node placed so far, by id.
+    pub idents: FxHashMap<u32, PlacedNode>,
+    /// The chain: the path from a top-level node to the node placed
+    /// last.
+    pub chain: Vec<ChainEntry>,
+    /// The highest id placed so far, for the ident counter.
+    pub highest: u32,
     /// The links to resolve once every node is built.
     pub links: Vec<PendingLink>,
     /// The font families already looked up: `None` for one this build
     /// has no face for.
     pub fonts: FxHashMap<String, Option<AppFont>>,
+    /// The definitions the header carries, for the document.
+    pub definitions: Definitions,
     /// How many elements have had their row checked against the shape
-    /// rules. Every element is checked once, because
-    /// [`Self::element`] is the only way to add one; the count is how a
-    /// test sees that.
+    /// rules. Every element is checked once: an element is added by
+    /// [`Self::element`], which checks it once its children are in, or
+    /// is a node, which is checked when it leaves the chain. The count
+    /// is how a test sees that.
     pub checked: usize,
 }
 
-/// The document a parsed file describes and how many of its elements
-/// were checked against the shape rules, or the first thing wrong with
-/// it. O(file): one pass over the DTOs, one hash insert per node.
-pub(super) fn build(dto: &MapDto) -> LoadResult<(Document, usize)> {
-    let mut builder = Builder {
-        tree: Tree::new_non_indexed_with(DocElement::Map(MapData {
-            name: dto.name.clone(),
-        })),
-        path: Vec::new(),
-        vars: Vec::new(),
-        palettes: Vec::new(),
-        verbs: FxHashMap::default(),
-        idents: FxHashMap::default(),
-        links: Vec::new(),
-        fonts: FxHashMap::default(),
-        checked: 0,
-    };
-    let definitions = builder.map(dto)?;
-    builder.resolve_links()?;
-    let root = builder.tree.root();
-    builder.finish(root)?;
-    let checked = builder.checked;
-    Document::from_tree(builder.tree, definitions)
-        .map(|document| (document, checked))
-        .map_err(|error| {
-            LoadError::new(
-                String::new(),
-                LoadErrorKind::Internal {
-                    message: error.to_string(),
-                },
-            )
-        })
-}
-
 impl Builder {
+    /// Phase 3: a builder holding the map's root and everything its
+    /// nodes resolve against, built from the header. O(header).
+    pub(super) fn begin(header: &MapHeaderDto) -> LoadResult<Builder> {
+        let mut builder = Builder {
+            tree: Tree::new_non_indexed_with(DocElement::Map(MapData {
+                name: header.name.clone(),
+            })),
+            path: Vec::new(),
+            current: None,
+            vars: Vec::new(),
+            palettes: Vec::new(),
+            verbs: FxHashMap::default(),
+            idents: FxHashMap::default(),
+            chain: Vec::new(),
+            highest: 0,
+            links: Vec::new(),
+            fonts: FxHashMap::default(),
+            definitions: Definitions::default(),
+            checked: 0,
+        };
+        builder.definitions = builder.map(header)?;
+        Ok(builder)
+    }
+
+    /// Phases 5 and 6, once every node is in: close the chain, resolve
+    /// the links, check the map row, and make the document — with the
+    /// ident index the build already holds, so nothing walks the tree
+    /// again. Returns the document and how many elements had their row
+    /// checked. O(nodes + links).
+    pub(super) fn finish(mut self) -> LoadResult<(Document, usize)> {
+        self.close(0)?;
+        self.resolve_links()?;
+        let root = self.tree.root();
+        self.finish_element(root)?;
+        let checked = self.checked;
+        let index: IdentIndex = self
+            .idents
+            .iter()
+            .map(|(id, placed)| (NodeIdent(*id), placed.node))
+            .collect();
+        Document::from_loaded(self.tree, self.definitions, index, self.highest)
+            .map(|document| (document, checked))
+            .map_err(|error| {
+                LoadError::new(
+                    String::new(),
+                    LoadErrorKind::Internal {
+                        message: error.to_string(),
+                    },
+                )
+            })
+    }
+
+    /// The context of the node at `index` with `id`, for an error about
+    /// a node that is no longer the one being built (its row, its links).
+    /// The excerpt is read from the tree, where the node already is.
+    pub fn context_of(&self, index: usize, id: u32) -> NodeContext {
+        let excerpt = self
+            .idents
+            .get(&id)
+            .and_then(|placed| crate::document::format::context::tree_excerpt(&self.tree, placed.node));
+        NodeContext {
+            index,
+            id: Some(id),
+            excerpt,
+        }
+    }
+
     /// An error of `kind` at the current path.
     pub fn error(&self, kind: LoadErrorKind) -> LoadError {
-        LoadError::new(render_path(&self.path), kind)
+        self.located(render_path(&self.path), kind)
+    }
+
+    /// An error of `kind` at `path`, naming the node being built, if
+    /// there is one.
+    fn located(&self, path: String, kind: LoadErrorKind) -> LoadError {
+        LoadError {
+            node: self.current.map(|(index, id)| NodeContext {
+                index,
+                id,
+                excerpt: None,
+            }),
+            ..LoadError::new(path, kind)
+        }
     }
 
     /// An error of `kind` at the current path and then `key`.
@@ -137,14 +229,14 @@ impl Builder {
             path.push('.');
         }
         path.push_str(key);
-        LoadError::new(path, kind)
+        self.located(path, kind)
     }
 
     /// An error of `kind` at the current path followed by `segs`.
     pub fn error_under(&self, segs: &[Seg], kind: LoadErrorKind) -> LoadError {
         let mut path = self.path.clone();
         path.extend_from_slice(segs);
-        LoadError::new(render_path(&path), kind)
+        self.located(render_path(&path), kind)
     }
 
     /// `result` with a bound error placed under the current path at
@@ -182,38 +274,36 @@ impl Builder {
         })
     }
 
-    /// Run `f` for each item of the array under `key` in ascending
-    /// order of `channel_of` (a stable sort, so equal channels keep the
-    /// file's order), inside `key[i]` where `i` is the item's position
-    /// in the file.
+    /// Run `f` for each item of the array under `key`, in file order,
+    /// inside `key[i]`, refusing an item whose channel (`channel_of`) is
+    /// below the one before it with
+    /// [`SiblingsOutOfOrder`](LoadErrorKind::SiblingsOutOfOrder) at its
+    /// `channel`. Equal channels keep the file's order.
     ///
-    /// This is how a row reaches the tree in key order. A row already
-    /// ascending, which is every row this crate's saver writes, is read
-    /// in place; only a row that descends somewhere is sorted, and the
-    /// sort is of positions, not of the items.
-    pub fn each_by_channel<'a, T>(
+    /// This is how a row of sections or rings reaches the tree in key
+    /// order without a sort: the file must already be in it (design
+    /// B.4). One spelling per row, and every insert an append.
+    pub fn each_ascending<'a, T>(
         &mut self,
         key: &'static str,
         items: &'a [T],
         channel_of: impl Fn(&T) -> u64,
         mut f: impl FnMut(&mut Self, &'a T) -> LoadResult<()>,
     ) -> LoadResult<()> {
-        let ascending = items.windows(2).all(|pair| match pair {
-            [before, after] => channel_of(before) <= channel_of(after),
-            _ => true,
-        });
-        if ascending {
-            return self.each(key, items, f);
-        }
-        let mut order: Vec<usize> = (0..items.len()).collect();
-        order.sort_by_key(|&index| items.get(index).map_or(0, &channel_of));
-        self.key(key, |b| {
-            for index in order {
-                if let Some(item) = items.get(index) {
-                    b.at(Seg::Index(index), |b| f(b, item))?;
-                }
+        let mut previous: Option<u64> = None;
+        self.each(key, items, |b, item| {
+            let channel = channel_of(item);
+            if let Some(previous_channel) = previous.filter(|previous| channel < *previous) {
+                return Err(b.error_at(
+                    "channel",
+                    LoadErrorKind::SiblingsOutOfOrder {
+                        previous_channel,
+                        previous_id: None,
+                    },
+                ));
             }
-            Ok(())
+            previous = Some(channel);
+            f(b, item)
         })
     }
 
@@ -232,14 +322,15 @@ impl Builder {
     ) -> LoadResult<NodeId> {
         let id = self.add(parent, element)?;
         under(self, id)?;
-        self.finish(id)?;
+        self.finish_element(id)?;
         Ok(id)
     }
 
     /// Append `element` under `parent`: the O(1) end of its row, since
-    /// the builder adds a row in key order. Only [`Self::element`] calls
-    /// it.
-    fn add(&mut self, parent: NodeId, element: DocElement) -> LoadResult<NodeId> {
+    /// the builder adds a row in key order. [`Self::element`] calls it,
+    /// and so does the node build, which checks a node's row when the
+    /// node leaves the chain rather than here.
+    pub(super) fn add(&mut self, parent: NodeId, element: DocElement) -> LoadResult<NodeId> {
         self.tree
             .insert_child(parent, element, Placement::Last)
             .map_err(|error| {
@@ -251,7 +342,7 @@ impl Builder {
 
     /// Check the shape rules for the element at `id`, whose children
     /// are all in.
-    fn finish(&mut self, id: NodeId) -> LoadResult<()> {
+    pub(super) fn finish_element(&mut self, id: NodeId) -> LoadResult<()> {
         self.checked += 1;
         validate_shape(&self.tree, id).map_err(|error| {
             self.error(LoadErrorKind::Internal {
@@ -520,34 +611,6 @@ impl Builder {
             bounds::check_non_negative(value).and_then(bounds::check_canvas_coord)
         }
         self.pair(key, value, extent)
-    }
-
-    /// Resolve every recorded link's `to` now that every node has an
-    /// arena id.
-    pub fn resolve_links(&mut self) -> LoadResult<()> {
-        let links = std::mem::take(&mut self.links);
-        for link in links {
-            let target = self.idents.get(&link.to).copied();
-            let fail = |kind| LoadError::new(render_path(&link.path), kind);
-            let Some(target) = target else {
-                return Err(fail(LoadErrorKind::DanglingLink { to: link.to }));
-            };
-            if target == link.owner {
-                return Err(fail(LoadErrorKind::SelfLink));
-            }
-            self.tree
-                .update(link.link, |element| {
-                    if let DocElement::Link(data) = element {
-                        data.to = target;
-                    }
-                })
-                .map_err(|error| {
-                    fail(LoadErrorKind::Internal {
-                        message: error.to_string(),
-                    })
-                })?;
-        }
-        Ok(())
     }
 }
 

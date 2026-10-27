@@ -10,11 +10,12 @@ use crate::document::element::{
     PortalEndStyle, RingStyle, TextStyle, ThemeData, ThemeVariant,
 };
 use crate::document::format::dto::{
-    DefaultsDto, FlowDefaultsDto, LabelDefaultsDto, MapDto, NodeDefaultsDto, PaletteGroupDto,
+    DefaultsDto, FlowDefaultsDto, LabelDefaultsDto, MapHeaderDto, NodeDefaultsDto, PaletteGroupDto,
     RingDefaultsDto, TextDefaultsDto, ThemeDto,
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{sorted_names, Builder, LoadResult};
+use crate::document::format::index::FORMAT;
 use crate::document::format::spelling::{HexDto, Named};
 use crate::document::format::SizeUnit;
 use crate::document::ids::{Definitions, EditDef, PresentationDef, VerbDef};
@@ -26,16 +27,17 @@ use rustc_hash::FxHashSet;
 type NameAndValue<'a, T> = (&'a str, &'a T);
 
 impl Builder {
-    /// The map: check `format`, read what nodes resolve against, then
-    /// the nodes. Returns the definitions, which the document holds
-    /// beside the tree.
-    pub(super) fn map(&mut self, dto: &MapDto) -> LoadResult<Definitions> {
-        if dto.format != 1 {
+    /// The map's header: check `format`, then read what nodes resolve
+    /// against — the theme, the palettes, the definitions, the defaults —
+    /// into the map's row. Returns the definitions, which the document
+    /// holds beside the tree.
+    pub(super) fn map(&mut self, dto: &MapHeaderDto) -> LoadResult<Definitions> {
+        if dto.format != FORMAT {
             return Err(self.error_at(
                 "format",
                 LoadErrorKind::UnsupportedFormat {
                     found: dto.format,
-                    newest: 1,
+                    newest: FORMAT,
                 },
             ));
         }
@@ -53,18 +55,12 @@ impl Builder {
             None => DefaultsData::default(),
         };
         self.element(root, DocElement::Defaults(Box::new(defaults)), |_, _| Ok(()))?;
-        self.each_by_channel(
-            "nodes",
-            &dto.nodes,
-            |node| node.channel,
-            |b, node| b.node(root, node, true),
-        )?;
         Ok(definitions)
     }
 
     /// Refuse a file with more of something than an index addresses,
     /// before any of it is read.
-    fn counts(&self, dto: &MapDto) -> LoadResult<()> {
+    fn counts(&self, dto: &MapHeaderDto) -> LoadResult<()> {
         let check = |segs: &[Seg], count: usize, max: usize| {
             bounds::check_count(count, max)
                 .map(|_| ())
@@ -248,7 +244,7 @@ impl Builder {
 
     /// The edits, presentations and verbs: ids unique within each list,
     /// and the verbs numbered in file order.
-    fn definitions(&mut self, dto: &MapDto) -> LoadResult<Definitions> {
+    fn definitions(&mut self, dto: &MapHeaderDto) -> LoadResult<Definitions> {
         let edits = self.defined("edits", &dto.edits, |d| (&d.id, &d.name))?;
         let presentations = self.defined("presentations", &dto.presentations, |d| (&d.id, &d.name))?;
         let verbs = self.defined("verbs", &dto.verbs, |d| (&d.id, &d.name))?;

@@ -8,7 +8,7 @@ use crate::document::element::{DocElement, DocKind};
 use crate::document::format::load;
 use crate::document::tests::format_support::written;
 use crate::document::tests::format_support::{kid, kids, node};
-use crate::document::tests::format_text::{load_node, map_of, map_with, node_of};
+use crate::document::tests::format_text::{load_node, map_of_two, map_with, node_of};
 use crate::document::values::{
     Align, Anchor, ColorRef, FitMode, FontSize, PaletteField, PlainColor, Rgba, StartPoint, VarId, Weight,
 };
@@ -40,10 +40,7 @@ fn test_format_reads_what_the_loader_defaults() {
 fn test_a_path_without_anchors_or_visibility_reads_as_auto_and_drawn() {
     // The defaults for fields that are not `Option`: anchors `auto,auto`,
     // visible `true`, no control points, no zoom.
-    let doc = load(&map_of(
-        r#","links":[{"to":2,"kind":"line"}],"children":[{"id":2,"position":[0,0]}]"#,
-    ))
-    .unwrap();
+    let doc = load(&map_of_two(r#","links":[{"to":2,"kind":"line"}]"#, r#""#)).unwrap();
     let (one, _) = node(&doc, 1);
     let DocElement::Link(link) = kid(&doc, one, DocKind::Link, 0).1 else { panic!("a link") };
     assert_eq!(link.path.anchors, (Anchor::Auto, Anchor::Auto));
@@ -52,8 +49,9 @@ fn test_a_path_without_anchors_or_visibility_reads_as_auto_and_drawn() {
     assert_eq!(link.path.zoom, None);
     // And an explicit default is the same document: it reads, and saves
     // without the key.
-    let explicit = load(&map_of(
-        r#","links":[{"to":2,"kind":"line","anchors":["auto","auto"],"visible":true}],"children":[{"id":2,"position":[0,0]}]"#,
+    let explicit = load(&map_of_two(
+        r#","links":[{"to":2,"kind":"line","anchors":["auto","auto"],"visible":true}]"#,
+        r#""#,
     ))
     .unwrap();
     assert_eq!(written(&explicit), written(&doc));
@@ -117,9 +115,10 @@ fn test_a_size_is_points_or_a_fraction_by_where_it_sits() {
     let DocElement::Ring(ring) = kid(&doc, frame, DocKind::Ring, 0).1 else { panic!("a ring") };
     assert_eq!(ring.style.text.size, Some(FontSize::Rel(0.25)));
     // A path's and a portal end's `size` is points too.
-    let doc = load_node(
-        r#","links":[{"to":2,"kind":"line","size":15}],"children":[{"id":2,"position":[0,0],"connector":{"size":16}}]"#,
-    )
+    let doc = load(&map_of_two(
+        r#","links":[{"to":2,"kind":"line","size":15}]"#,
+        r#","connector":{"size":16}"#,
+    ))
     .unwrap();
     let (one, _) = node(&doc, 1);
     let DocElement::Link(link) = kid(&doc, one, DocKind::Link, 0).1 else { panic!("a link") };

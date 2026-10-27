@@ -34,16 +34,18 @@
 
 use crate::document::defaults::{FIT_MAX, FIT_MIN};
 use crate::document::element::{
-    CapData, DefaultsData, DocElement, DocKind, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData,
-    PortalEndData, PortalEndStyle, RingStyle, TextStyle,
+    CapData, DefaultsData, DocElement, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData, PortalEndData,
+    PortalEndStyle, RingStyle, TextStyle,
 };
+use crate::document::format::context::tree_excerpt;
 use crate::document::format::dto::{
     AlignDto, AnchorDto, CapDto, DefaultsDto, DirectionDto, EditDto, FlowDefaultsDto, FrameDefaultsDto,
-    FrameDto, LabelDefaultsDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, MapDto, NodeDefaultsDto,
+    FrameDto, LabelDefaultsDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, MapHeaderDto, NodeDefaultsDto,
     NodeDto, OnDto, PaletteGroupDto, PathDto, PortalEndDefaultsDto, PortalEndDto, PresentationDto,
     RingDefaultsDto, RingDto, SectionDto, SpanDto, TextDefaultsDto, ThemeDto, VerbDto, ZoomDto,
 };
-use crate::document::format::error::{render_path, SaveError, SaveErrorKind, Seg};
+use crate::document::format::error::{render_path, NodeContext, SaveError, SaveErrorKind, Seg};
+use crate::document::format::index::FORMAT;
 use crate::document::format::spelling::{
     ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, Named, PaletteFieldDto, RectangleDto,
     ShapeDto, StartDto, StartPointDto, WeightDto,
@@ -85,18 +87,65 @@ struct Saver<'a> {
     path: Vec<Seg>,
 }
 
-/// The DTOs of `doc`, or the first thing in it the file cannot spell.
-/// O(nodes + elements): one walk.
-pub(super) fn dtos_of(doc: &Document) -> SaveResult<MapDto> {
-    let mut saver = Saver {
+/// A saver for `doc`, at the top of the file.
+fn saver(doc: &Document) -> Saver<'_> {
+    Saver {
         doc,
         vars: &doc.theme().variables,
         palettes: doc.palettes().map(|(_, palette)| palette.name.as_str()).collect(),
         verbs: &doc.definitions().verbs,
         fonts: FxHashMap::default(),
         path: Vec::new(),
-    };
-    saver.map()
+    }
+}
+
+/// The header of `doc`'s file — every top-level key but `nodes` — or the
+/// first thing in it the file cannot spell. O(header).
+pub(super) fn header_of(doc: &Document) -> SaveResult<MapHeaderDto> {
+    saver(doc).map()
+}
+
+/// Run `each` on every node of `doc` in the order the file lists them —
+/// the depth-first pre-order of the tree, siblings in the order the
+/// arena keeps them — with its position in the list, its element, and
+/// its DTO, which names its parent. One DTO exists at a time; `each`
+/// gets it by value and drops it. The first thing a node holds that the
+/// file cannot spell stops the walk, with the node's context.
+///
+/// The walk is the arena's own pre-order (`Tree::descendants`), which
+/// follows parent and sibling links: no stack, no recursion, every
+/// element visited once, so O(elements) whatever the depth. A node's
+/// own content is turned into its DTO by a walk bounded by the schema
+/// (a node's content nests at most 9 levels), never by the tree.
+pub(super) fn each_node(
+    doc: &Document,
+    mut each: impl FnMut(usize, NodeId, NodeDto) -> SaveResult<()>,
+) -> SaveResult<()> {
+    let mut saver = saver(doc);
+    let tree = doc.tree();
+    let mut index = 0;
+    for id in tree.descendants() {
+        let Some(DocElement::Node(node)) = doc.get(id) else {
+            continue;
+        };
+        let parent = doc.parent(id).and_then(|parent| match doc.get(parent) {
+            Some(DocElement::Node(parent)) => Some(u64::from(parent.ident.0)),
+            _ => None,
+        });
+        saver.path.clear();
+        saver.path.extend([Seg::Key("nodes"), Seg::Index(index)]);
+        let dto = saver.node(id, parent).map_err(|error| SaveError {
+            node: Some(NodeContext {
+                index,
+                id: Some(node.ident.0),
+                excerpt: tree_excerpt(tree, id),
+            }),
+            ..error
+        })?;
+        each(index, id, dto)?;
+        index += 1;
+    }
+    Ok(())
 }
 
 impl<'a> Saver<'a> {
@@ -125,8 +174,8 @@ impl<'a> Saver<'a> {
         self.at(Seg::Key(key), f)
     }
 
-    /// The whole file.
-    fn map(&mut self) -> SaveResult<MapDto> {
+    /// The header: every top-level key but `nodes`.
+    fn map(&mut self) -> SaveResult<MapHeaderDto> {
         let doc = self.doc;
         let name = match doc.get(doc.root()) {
             Some(DocElement::Map(map)) => map.name.clone(),
@@ -142,9 +191,8 @@ impl<'a> Saver<'a> {
             definitions.presentations.iter().map(|d| (&d.id, &d.name)),
         )?;
         let verbs = self.definitions("verbs", definitions.verbs.iter().map(|d| (&d.id, &d.name)))?;
-        let nodes = self.key("nodes", |s| s.nodes(doc.root()))?;
-        Ok(MapDto {
-            format: 1,
+        Ok(MapHeaderDto {
+            format: FORMAT,
             name,
             theme,
             palettes,
@@ -155,7 +203,6 @@ impl<'a> Saver<'a> {
                 .map(|(id, name)| PresentationDto { id, name })
                 .collect(),
             verbs: verbs.into_iter().map(|(id, name)| VerbDto { id, name }).collect(),
-            nodes,
         })
     }
 
@@ -422,22 +469,10 @@ impl<'a> Saver<'a> {
             .collect()
     }
 
-    /// The child nodes of `parent`, with everything under them. The
-    /// current path is the array they sit in.
-    fn nodes(&mut self, parent: NodeId) -> SaveResult<Vec<NodeDto>> {
-        let mut out = Vec::new();
-        for (id, element) in self.children(parent) {
-            if element.kind() != DocKind::Node {
-                continue;
-            }
-            let index = out.len();
-            out.push(self.at(Seg::Index(index), |s| s.node(id))?);
-        }
-        Ok(out)
-    }
-
-    /// One node.
-    fn node(&mut self, id: NodeId) -> SaveResult<NodeDto> {
+    /// One node, which hangs from the node with the ident `parent`, or
+    /// is a top-level node. Its child nodes are not in it: the file lists
+    /// them after it.
+    fn node(&mut self, id: NodeId, parent: Option<u64>) -> SaveResult<NodeDto> {
         let Some(DocElement::Node(node)) = self.element(id) else {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
@@ -466,8 +501,7 @@ impl<'a> Saver<'a> {
             None => None,
         };
         // What lies under the node, in the order of the kinds.
-        let (mut sections, mut frame, mut connector, mut links, mut children) =
-            (Vec::new(), None, None, Vec::new(), Vec::new());
+        let (mut sections, mut frame, mut connector, mut links) = (Vec::new(), None, None, Vec::new());
         for (child, element) in self.children(id) {
             match element {
                 DocElement::Section(_) => {
@@ -482,16 +516,13 @@ impl<'a> Saver<'a> {
                     let link = self.key("links", |s| s.at(Seg::Index(index), |s| s.link(id, child)))?;
                     links.push(link);
                 }
-                DocElement::Node(_) => {
-                    let index = children.len();
-                    let node = self.key("children", |s| s.at(Seg::Index(index), |s| s.node(child)))?;
-                    children.push(node);
-                }
+                // A child node is listed after this one.
                 _ => {}
             }
         }
         Ok(NodeDto {
-            id: node.ident.0,
+            id: u64::from(node.ident.0),
+            parent,
             channel: channel_of(node.channel),
             position: node.position.to_array(),
             min_size: node.min_size.map(|size| size.to_array()),
@@ -513,7 +544,6 @@ impl<'a> Saver<'a> {
             frame,
             connector,
             links,
-            children,
         })
     }
 
@@ -749,7 +779,7 @@ impl<'a> Saver<'a> {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
         let to = match self.element(link.to) {
-            Some(DocElement::Node(target)) => target.ident.0,
+            Some(DocElement::Node(target)) => u64::from(target.ident.0),
             _ => return Err(self.error_at("to", SaveErrorKind::LinkToNothing)),
         };
         if link.to == owner {

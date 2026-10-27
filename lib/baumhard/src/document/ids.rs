@@ -140,13 +140,26 @@ impl std::fmt::Display for DocumentError {
 
 impl std::error::Error for DocumentError {}
 
+/// The index from a node's ident to its element, which only
+/// [`Document::node_by_ident`] reads.
+pub(crate) type IdentIndex = FxHashMap<NodeIdent, NodeId>;
+
+/// The ident counter's start for a document whose highest node ident is
+/// `highest` (`0` for a map with no node): one past it. The design's id
+/// rule (§5.2) in one place, so that the loader and the test builder
+/// cannot start it differently. `highest <= MAX_NODE_IDENT < u32::MAX`,
+/// so this cannot wrap.
+pub(crate) fn first_free_ident(highest: u32) -> u32 {
+    highest.saturating_add(1)
+}
+
 /// A map: a `Tree<DocElement>` whose root is the
 /// [`Map`](DocKind::Map), its ident index and counter, and the
 /// definitions it carries.
 #[derive(Clone, Debug)]
 pub struct Document {
     tree: Tree<DocElement>,
-    ident_index: FxHashMap<NodeIdent, NodeId>,
+    ident_index: IdentIndex,
     next_ident: u32,
     definitions: Definitions,
 }
@@ -179,7 +192,7 @@ impl Document {
             if node.ident == NodeIdent::UNASSIGNED {
                 return Err(DocumentError::UnassignedIdent(id));
             }
-            bounds::check_node_ident(node.ident.0).map_err(|error| DocumentError::Bound {
+            bounds::check_node_ident(u64::from(node.ident.0)).map_err(|error| DocumentError::Bound {
                 what: "node id",
                 error,
             })?;
@@ -188,12 +201,36 @@ impl Document {
             }
             highest = highest.max(node.ident.0);
         }
-        // `highest <= MAX_NODE_IDENT < u32::MAX`, so this cannot wrap.
-        let next_ident = highest + 1;
+        let next_ident = first_free_ident(highest);
         Ok(Document {
             tree,
             ident_index,
             next_ident,
+            definitions,
+        })
+    }
+
+    /// Make a document of what the loader built: `tree`, whose every row
+    /// the loader has checked, `ident_index`, which the loader built as
+    /// it placed each node (unique idents, each within the bound, none
+    /// unassigned), and the highest ident in it. Checks the map row and
+    /// the index bounds as [`Self::from_tree`] does, but does not walk the
+    /// tree again to index it. Crate-private: only the loader holds an
+    /// index it built itself.
+    ///
+    /// Cost: one pass over the map's row (the palettes are counted).
+    pub(crate) fn from_loaded(
+        tree: Tree<DocElement>,
+        definitions: Definitions,
+        ident_index: IdentIndex,
+        highest: u32,
+    ) -> Result<Self, DocumentError> {
+        validate_shape(&tree, tree.root()).map_err(DocumentError::Shape)?;
+        check_indexes(&tree, &definitions)?;
+        Ok(Document {
+            tree,
+            ident_index,
+            next_ident: first_free_ident(highest),
             definitions,
         })
     }

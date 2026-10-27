@@ -22,6 +22,20 @@ pub fn map_of(body: &str) -> String {
     map_with("", &node_of(1, body))
 }
 
+/// A map holding a top-level node with id 1, to which `body` is added,
+/// and its child, node 2, to which `child` is added: the flat list's
+/// way of writing a node under another.
+pub fn map_of_two(body: &str, child: &str) -> String {
+    map_with(
+        "",
+        &format!(
+            "{},{}",
+            node_of(1, body),
+            node_of(2, &format!(r#","parent":1{child}"#))
+        ),
+    )
+}
+
 /// A node with `id` at the origin, to which `body` (a run of
 /// `,"key":value` pairs) is added.
 pub fn node_of(id: u32, body: &str) -> String {

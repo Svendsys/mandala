@@ -5,11 +5,16 @@
 //! and portal ends of the paths.
 //!
 //! Each function adds its element, then its children in the order of
-//! the document's kinds (a node's sections, frame, connector, links,
-//! child nodes; a path's spans, start cap, end cap, label), and then
-//! checks the element's row against the shape rules. Sections, rings
-//! and sibling nodes are read in ascending channel order
-//! ([`Builder::each_by_channel`]), so every insert is an append.
+//! the document's kinds (a node's sections, frame, connector, links; a
+//! path's spans, start cap, end cap, label), and then checks the
+//! element's row against the shape rules. A node's child nodes are not
+//! here: they come later in the flat list (`chain.rs`). Sections and
+//! rings must be listed in ascending channel order
+//! ([`Builder::each_ascending`]), so every insert is an append.
+//!
+//! A node's own content nests at most 9 levels of JSON below the node
+//! (design B.7), so the recursion here is bounded by the schema, never
+//! by the tree.
 
 use crate::document::bounds;
 use crate::document::element::{
@@ -50,27 +55,29 @@ const SPAN_SIZE_IN_RING: &str =
 const PORTAL_HAS_NO_PATH: &str = "a portal link draws no path, only its two ends";
 
 impl Builder {
-    /// A node and everything under it, as a child of `parent`.
-    pub(super) fn node(&mut self, parent: NodeId, dto: &NodeDto, is_root: bool) -> LoadResult<()> {
-        let ident = self.bounded("id", bounds::check_node_ident(dto.id))?;
-        if self.idents.contains_key(&ident) {
-            return Err(self.error_at("id", LoadErrorKind::DuplicateId { id: ident }));
-        }
-        let channel = self.channel(dto.channel)?;
+    /// The node element itself, appended under `under` (the map's root
+    /// for a top-level node): its own keys, checked in the order the
+    /// schema lists them. `id` and `channel` are already checked. Its
+    /// row is checked when it leaves the chain, so this appends without
+    /// checking.
+    pub(super) fn node_element(
+        &mut self,
+        under: NodeId,
+        dto: &NodeDto,
+        id: u32,
+        channel: usize,
+    ) -> LoadResult<NodeId> {
         let position = self.pair("position", dto.position, bounds::check_canvas_coord)?;
         let min_size = dto
             .min_size
             .map(|size| self.extent("min_size", size))
             .transpose()?;
-        let style = NodeStyle {
-            shape: dto.shape.map(|shape| self.shape(shape)).transpose()?,
-            fill: match &dto.fill {
-                Some(fill) => Some(self.color("fill", fill)?),
-                None => None,
-            },
-            fill_fade: self.opt_number("fill_fade", dto.fill_fade, bounds::check_non_negative)?,
-            text: self.text_style(text_in!(dto), SizeUnit::Pt)?,
+        let shape = dto.shape.map(|shape| self.shape(shape)).transpose()?;
+        let fill = match &dto.fill {
+            Some(fill) => Some(self.color("fill", fill)?),
+            None => None,
         };
+        let fill_fade = self.opt_number("fill_fade", dto.fill_fade, bounds::check_non_negative)?;
         let palette = match &dto.palette {
             Some(name) => Some(self.palette(name)?),
             None => None,
@@ -90,16 +97,18 @@ impl Builder {
             })?,
             None => Triggers::default(),
         };
-        if is_root && dto.connector.is_some() {
-            return Err(self.error_at("connector", LoadErrorKind::ConnectorOnRoot));
-        }
-
+        let text = self.text_style(text_in!(dto), SizeUnit::Pt)?;
         let data = DocElement::Node(NodeData {
-            ident: NodeIdent(ident),
+            ident: NodeIdent(id),
             channel,
             position,
             min_size,
-            style,
+            style: NodeStyle {
+                shape,
+                fill,
+                fill_fade,
+                text,
+            },
             palette,
             zoom,
             folded: dto.folded,
@@ -107,17 +116,21 @@ impl Builder {
             opacity,
             on,
         });
-        self.element(parent, data, |b, node| {
-            b.idents.insert(ident, node);
-            b.node_row(node, dto, is_root)
-        })?;
-        Ok(())
+        self.add(under, data)
     }
 
     /// What a node holds, in the order of the kinds: its sections, its
-    /// frame, its connector, its links, its child nodes.
-    fn node_row(&mut self, node: NodeId, dto: &NodeDto, is_root: bool) -> LoadResult<()> {
-        self.each_by_channel(
+    /// frame, its connector, its links. Its child nodes are later in the
+    /// list. `owner` is the node's place in the list and its id, which a
+    /// link's error names.
+    pub(super) fn node_row(
+        &mut self,
+        node: NodeId,
+        dto: &NodeDto,
+        is_root: bool,
+        owner: (usize, u32),
+    ) -> LoadResult<()> {
+        self.each_ascending(
             "sections",
             &dto.sections,
             |s| s.channel,
@@ -137,13 +150,7 @@ impl Builder {
                 }
             }
         }
-        self.each("links", &dto.links, |b, link| b.link(node, link))?;
-        self.each_by_channel(
-            "children",
-            &dto.children,
-            |n| n.channel,
-            |b, child| b.node(node, child, false),
-        )
+        self.each("links", &dto.links, |b, link| b.link(node, owner, link))
     }
 
     /// A palette by name.
@@ -224,7 +231,7 @@ impl Builder {
     fn frame(&mut self, node: NodeId, dto: &FrameDto) -> LoadResult<()> {
         let style = self.frame_style(frame_in!(dto))?;
         self.element(node, DocElement::Frame(FrameData { style }), |b, frame| {
-            b.each_by_channel("rings", &dto.rings, |r| r.channel, |b, ring| b.ring(frame, ring))
+            b.each_ascending("rings", &dto.rings, |r| r.channel, |b, ring| b.ring(frame, ring))
         })
         .map(|_| ())
     }
@@ -351,8 +358,10 @@ impl Builder {
         .map(|_| ())
     }
 
-    /// A link: a line, or a portal with its two ends.
-    fn link(&mut self, node: NodeId, dto: &LinkDto) -> LoadResult<()> {
+    /// A link held by `node`, listed at `owner.0` with the id `owner.1`:
+    /// a line, or a portal with its two ends.
+    fn link(&mut self, node: NodeId, owner: (usize, u32), dto: &LinkDto) -> LoadResult<()> {
+        let to = self.link_target(dto.to)?;
         let kind = match dto.kind {
             LinkKindDto::Line => LinkKind::Line,
             LinkKindDto::Portal => LinkKind::Portal,
@@ -395,7 +404,8 @@ impl Builder {
             b.links.push(PendingLink {
                 link,
                 owner: node,
-                to: dto.to,
+                owner_at: owner,
+                to,
                 path: to_path,
             });
             match kind {

@@ -1,21 +1,29 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The file format: a [`Document`] as
-//! strict, nested, typed JSON — `.mandala.json` (design §7).
+//! The file format: a [`Document`] as strict, typed JSON with a flat
+//! node list — `.mandala.json` (design §7, D30).
 //!
-//! [`load`] reads a file into a document and
-//! [`save`] writes one. The
-//! shape, key by key, is `format/schema.md`; this module is its
-//! reference implementation, and the two are held to each other by the
-//! fixture corpus.
+//! [`load`] reads a file into a document and [`save`] (or [`save_to`])
+//! writes one. The shape, key by key, is `format/schema.md`; this module
+//! is its reference implementation, and the two are held to each other
+//! by the fixture corpus.
+//!
+//! **Flat.** `nodes` is one array holding every node of the map in
+//! depth-first pre-order, and each node names its parent by `id`. No
+//! node has a `children` key, so the JSON nesting of a file does not
+//! grow with the depth of its tree: a node's own content nests at most
+//! 9 levels, and the tree may be as deep as memory allows (D30, R13).
+//! Every walk here — the load, the save, [`check_savable`] — is
+//! iterative and linear in the size of the map, whatever its depth.
 //!
 //! **Strict.** Every object denies unknown keys, a wrong type is an
-//! error, and a reference — a link's `to`, a verb, a palette, a theme
-//! variable, a font — that names nothing is an error. There is no
-//! preserved-unknown-keys mechanism and no skipped-construct report: a
-//! file is a document or it does not load, and the error is the first
-//! thing wrong, with the JSON path of the value
-//! ([`LoadError`]).
+//! error, and a reference — a `parent`, a link's `to`, a verb, a
+//! palette, a theme variable, a font — that names nothing is an error.
+//! A row listed out of order (nodes, sections, rings) is refused, never
+//! sorted. There is no preserved-unknown-keys mechanism and no
+//! skipped-construct report: a file is a document or it does not load,
+//! and the error is the first thing wrong, with the JSON path of the
+//! value, the node it is in and its line ([`LoadError`]).
 //!
 //! **Typed on read.** Names are resolved to their typed forms while the
 //! file is read (`"var(accent)"` to a
@@ -26,10 +34,11 @@
 //! [`bounds`](crate::document::bounds).
 //!
 //! **Deterministic on write.** An unchanged document saves
-//! byte-identically, and a one-field edit is a one-line diff: keys in
-//! schema order, name-keyed objects in ascending byte order, nodes in
-//! sibling order, numbers in serde_json's shortest form of the stored
-//! `f32`, two-space indentation, a trailing newline.
+//! byte-identically: keys in schema order, name-keyed objects in
+//! ascending byte order, nodes in the tree's pre-order, numbers in
+//! serde_json's shortest form of the stored `f32`. The layout — the
+//! header pretty-printed, then one node per line — is decided in one
+//! place, `writer.rs`.
 //!
 //! **One spelling per value, in the whole file.** The value spellings
 //! (a color, a weight, a fit mode, a start point) are the types in
@@ -44,20 +53,27 @@
 
 #[macro_use]
 mod macros;
+mod chain;
 pub mod context;
 pub(crate) mod dto;
 pub mod error;
 mod from_dto;
+mod index;
 mod load_map;
 mod load_node;
 pub(crate) mod load_style;
 pub(crate) mod spelling;
 mod strict;
 mod to_dto;
+mod writer;
 
 pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};
 
-use crate::document::format::dto::MapDto;
+use crate::document::format::context::{dto_excerpt, offset_in, peek_excerpt, peek_id, position_at};
+use crate::document::format::dto::{MapHeaderDto, NodeDto};
+use crate::document::format::error::Seg;
+use crate::document::format::from_dto::Builder;
+use crate::document::format::index::MapIndex;
 use crate::document::ids::Document;
 
 /// Ceiling on the length of a map's text, in bytes, or `None` where the
@@ -129,6 +145,9 @@ pub(crate) fn load_bytes_under(bytes: &[u8], ceiling: Option<u64>) -> Result<Doc
             LoadErrorKind::TooLarge { bytes: length, max },
         ));
     }
+    if bytes.starts_with(BOM.as_bytes()) {
+        return Err(LoadError::new(String::new(), LoadErrorKind::ByteOrderMark));
+    }
     match std::str::from_utf8(bytes) {
         Ok(text) => load_under(text, ceiling),
         Err(error) => Err(LoadError::new(
@@ -142,17 +161,27 @@ pub(crate) fn load_bytes_under(bytes: &[u8], ceiling: Option<u64>) -> Result<Doc
 
 /// Read a `.mandala.json` into a document.
 ///
-/// Refuses the text outright if it is longer than [`MAX_MAP_BYTES`]
-/// (checked before anything is parsed, on every transport: the browser
-/// receives its map as a string and never touches the filesystem path).
-/// Otherwise one pass parses the text into the DTOs, one pass builds the
-/// tree — resolving names, checking every number against
-/// [`bounds`](crate::document::bounds) and every element against the
-/// shape rules as it goes — and links are resolved last. The first
-/// error is returned and nothing else: no partial document.
+/// Three linear passes over the text, none recursing on the depth of
+/// the tree (design B.14):
 ///
-/// Cost: O(text) for the parse, then O(elements) with one hash insert
-/// per node. The tree is built in key order, so no insert scans a row.
+/// 1. **Gates**: the text is refused outright if it is longer than
+///    [`MAX_MAP_BYTES`] (checked before anything is parsed, on every
+///    transport: the browser receives its map as a string and never
+///    touches the filesystem path), or starts with a byte-order mark.
+/// 2. **Index**: one parse finds the extent of each top-level value and
+///    of each node, borrowed from the text, building nothing; a syntax
+///    error anywhere is reported here, then `format` is checked.
+/// 3. **Build**: the header is read, then each node is parsed from its
+///    extent and appended to the tree — only one node's DTO is alive at
+///    a time — and links are resolved last.
+///
+/// The first error is returned and nothing else: no partial document.
+///
+/// Cost: O(text) for the index and the parse, then O(elements) with one
+/// hash insert or lookup per node, per `parent` and per link. Every
+/// insert is an append. Memory beside the text and the tree: one fat
+/// pointer per node, the chain (as long as the tree is deep), the
+/// pending links and one node's DTO.
 pub fn load(json: &str) -> Result<Document, LoadError> {
     load_under(json, MAX_MAP_BYTES)
 }
@@ -166,58 +195,144 @@ pub fn load(json: &str) -> Result<Document, LoadError> {
 /// as a parameter, so a native test can hand it a small one and drive
 /// the same code the wasm32 build reaches with a real one.
 pub(crate) fn load_under(json: &str, ceiling: Option<u64>) -> Result<Document, LoadError> {
-    check_text_cap_against(json, ceiling)?;
-    let dto = parse(json)?;
-    from_dto::build(&dto).map(|(document, _)| document)
+    load_counted(json, ceiling).map(|(document, _)| document)
 }
 
 /// [`load`], and how many elements of the document had their row
 /// checked against the shape rules: every element, which a test asserts.
 #[cfg(test)]
 pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), LoadError> {
-    check_text_cap_against(json, MAX_MAP_BYTES)?;
-    from_dto::build(&parse(json)?)
+    load_counted(json, MAX_MAP_BYTES)
 }
 
-/// Refuse `json` if it is longer than `ceiling`. O(1).
+/// The three phases of [`load`], counting the rows checked.
+fn load_counted(json: &str, ceiling: Option<u64>) -> Result<(Document, usize), LoadError> {
+    check_text_cap_against(json, ceiling)?;
+    let index = index::index(json)?;
+    let header = header(&index)?;
+    let mut builder = Builder::begin(&header).map_err(|error| placed(error, &index, None))?;
+    for (i, extent) in index.nodes.iter().enumerate() {
+        let dto: NodeDto = index::parse_extent(index.text, extent, &[Seg::Key("nodes"), Seg::Index(i)])
+            .map_err(|error| LoadError {
+                // The node did not read, so its id and text are read on
+                // their own, leniently, for the error.
+                node: Some(NodeContext {
+                    index: i,
+                    id: peek_id(extent),
+                    excerpt: peek_excerpt(extent),
+                }),
+                ..error
+            })?;
+        builder
+            .node(i, &dto)
+            .map_err(|error| placed(error, &index, Some((i, &dto))))?;
+    }
+    builder.finish().map_err(|error| placed(error, &index, None))
+}
+
+/// The header's top-level values, each parsed from its extent in the
+/// order the schema lists them (design B.3).
+fn header(index: &MapIndex<'_>) -> Result<MapHeaderDto, LoadError> {
+    Ok(MapHeaderDto {
+        format: index::FORMAT,
+        name: optional(index, "name")?.unwrap_or_default(),
+        theme: optional(index, "theme")?,
+        palettes: optional(index, "palettes")?.unwrap_or_default(),
+        defaults: optional(index, "defaults")?,
+        edits: optional(index, "edits")?.unwrap_or_default(),
+        presentations: optional(index, "presentations")?.unwrap_or_default(),
+        verbs: optional(index, "verbs")?.unwrap_or_default(),
+    })
+}
+
+/// The top-level value at `key`, parsed from its extent, or `None` when
+/// the text leaves the key out.
+fn optional<'t, T: serde::Deserialize<'t>>(
+    index: &MapIndex<'t>,
+    key: &'static str,
+) -> Result<Option<T>, LoadError> {
+    index
+        .value(key)
+        .map(|extent| index::parse_extent(index.text, extent, &[Seg::Key(key)]))
+        .transpose()
+}
+
+/// `error`, found after its value was read, completed with what only the
+/// loader knows: the excerpt of the node being built (`current`, its
+/// place in the list and its DTO), and a position — the start of the
+/// node an error is in, or of the top-level value its path starts in.
+/// An error the reader raised keeps its own, exact, position.
+fn placed(mut error: LoadError, index: &MapIndex<'_>, current: Option<(usize, &NodeDto)>) -> LoadError {
+    if let Some(context) = error.node.as_mut() {
+        if let Some((_, dto)) = current.filter(|(i, _)| *i == context.index) {
+            if context.excerpt.is_none() {
+                context.excerpt = dto_excerpt(dto);
+            }
+            if context.id.is_none() {
+                context.id = crate::document::bounds::check_node_ident(dto.id).ok();
+            }
+        }
+    }
+    if error.position.is_none() {
+        let extent = match &error.node {
+            Some(context) => index.nodes.get(context.index).copied(),
+            None => {
+                let key = error.path.split(['.', '[']).next().unwrap_or_default();
+                index.value(key)
+            }
+        };
+        error.position =
+            extent.map(|extent| position_at(index.text, offset_in(index.text, extent.get()).unwrap_or(0)));
+    }
+    error
+}
+
+/// The UTF-8 byte-order mark, which a map does not start with.
+const BOM: &str = "\u{FEFF}";
+
+/// Phase 1 of a load, for a text: refuse `json` if it is longer than
+/// `ceiling`, then if it starts with a byte-order mark (design B.2).
+/// O(1).
 pub(crate) fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result<(), LoadError> {
     let bytes = json.len() as u64;
-    match ceiling.filter(|max| bytes > *max) {
-        Some(max) => Err(LoadError::new(
+    if let Some(max) = ceiling.filter(|max| bytes > *max) {
+        return Err(LoadError::new(
             String::new(),
             LoadErrorKind::TooLarge { bytes, max },
-        )),
-        None => Ok(()),
+        ));
     }
+    if json.starts_with(BOM) {
+        return Err(LoadError::new(String::new(), LoadErrorKind::ByteOrderMark));
+    }
+    Ok(())
 }
 
-/// The DTOs of `doc`, if the file can say all of it and the loader would
-/// accept what is said.
-///
-/// Two steps. The saver's own walk refuses what the file has no spelling
-/// for (a size in the wrong unit, a name two entries share, a color
-/// naming a variable that is not there), at the path the value would have
-/// had. Then the DTOs are built into a document by the loader's own
-/// builder, which refuses a number outside its bound, a channel past
-/// [`MAX_CHANNEL`](crate::document::bounds::MAX_CHANNEL) and every other
-/// rule the loader holds, at the same path. The saver therefore cannot
-/// disagree with the loader about what a loadable file is: it asks it.
-fn checked_dtos(doc: &Document) -> Result<MapDto, SaveError> {
-    let dto = to_dto::dtos_of(doc)?;
-    from_dto::build(&dto).map_err(|error| {
-        SaveError::new(
-            error.path.clone(),
-            SaveErrorKind::NotLoadable {
-                error: Box::new(error),
-            },
-        )
-    })?;
-    Ok(dto)
+/// `error`, which the loader's builder raised against what the saver
+/// would write, as the saver's refusal at the same path.
+fn not_loadable(error: LoadError) -> SaveError {
+    SaveError {
+        path: error.path.clone(),
+        node: error.node.clone(),
+        kind: SaveErrorKind::NotLoadable {
+            error: Box::new(error),
+        },
+    }
 }
 
 /// Whether `doc` can be saved: `Ok` exactly when [`save`] would give a
 /// file that [`load`] reads back as the same document. Otherwise the
-/// first thing the file cannot say, with the path it would have had.
+/// first thing the file cannot say, with the path it would have had and
+/// the node it is in.
+///
+/// Two checks, in one walk. The saver's own walk refuses what the file
+/// has no spelling for (a size in the wrong unit, a name two entries
+/// share, a color naming a variable that is not there), at the path the
+/// value would have had. Then what it would write is handed, node by
+/// node, to the loader's own builder, which refuses a number outside its
+/// bound, a channel past
+/// [`MAX_CHANNEL`](crate::document::bounds::MAX_CHANNEL) and every other
+/// rule the loader holds, at the same path. The saver therefore cannot
+/// disagree with the loader about what a loadable file is: it asks it.
 ///
 /// The one exception to "the same document" is deliberate and stated in
 /// `format/schema.md`: a portal link keeps the path it had as a line link
@@ -225,114 +340,69 @@ fn checked_dtos(doc: &Document) -> Result<MapDto, SaveError> {
 /// file never saves it.
 ///
 /// B3's mutations and B4's editor call this, or the parts of it they
-/// need, when they apply an edit. [`save`] runs it itself. Cost: one walk
-/// of the tree to build the DTOs, then one build of them; O(elements).
+/// need, when they apply an edit. [`save`] runs it itself. Cost: one
+/// iterative walk of the tree, building one node's DTO at a time and
+/// the document the loader would build from it; O(elements) whatever
+/// the depth.
 pub fn check_savable(doc: &Document) -> Result<(), SaveError> {
-    checked_dtos(doc).map(|_| ())
+    let header = to_dto::header_of(doc)?;
+    let mut builder = Builder::begin(&header).map_err(not_loadable)?;
+    to_dto::each_node(doc, |i, id, dto| {
+        builder.node(i, &dto).map_err(|error| {
+            let mut refusal = not_loadable(error);
+            if let Some(context) = refusal.node.as_mut().filter(|context| context.index == i) {
+                context.excerpt = context::tree_excerpt(doc.tree(), id);
+            }
+            refusal
+        })
+    })?;
+    builder.finish().map(|_| ()).map_err(not_loadable)
 }
 
-/// Write a document as a `.mandala.json`: deterministic, two-space
-/// indented, ending in a newline.
+/// Write a document as a `.mandala.json`: deterministic, the header
+/// two-space indented, then one node per line, ending in a newline.
 ///
 /// Nothing derived is written, and nothing is dropped: what the file
 /// cannot spell is a [`SaveError`] (see [`check_savable`]), never a
-/// value left out with a warning. Cost: [`check_savable`]'s, then
-/// serde_json's writer; O(elements).
+/// value left out with a warning. Cost: [`check_savable`]'s, then one
+/// more iterative walk writing each node as it is reached; O(elements).
 pub fn save(doc: &Document) -> Result<String, SaveError> {
-    let dto = checked_dtos(doc)?;
-    let mut text = serde_json::to_string_pretty(&dto).map_err(|error| {
+    let mut text = Vec::new();
+    save_to(doc, &mut text)?;
+    String::from_utf8(text).map_err(|error| {
         SaveError::new(
             String::new(),
             SaveErrorKind::Io {
                 message: error.to_string(),
             },
         )
-    })?;
-    text.push('\n');
-    Ok(text)
+    })
 }
 
-/// Parse `json` into the DTOs, naming the path of whatever is wrong.
-fn parse(json: &str) -> Result<MapDto, LoadError> {
-    let mut deserializer = serde_json::Deserializer::from_str(json);
-    let parsed: Result<MapDto, serde_path_to_error::Error<serde_json::Error>> =
-        serde_path_to_error::deserialize(strict::Objects(&mut deserializer));
-    match parsed {
-        Ok(dto) => match deserializer.end() {
-            Ok(()) => Ok(dto),
-            Err(error) => Err(LoadError::new(
-                String::new(),
-                LoadErrorKind::Syntax {
+/// [`save`], streamed to `out`: the header, then each node's line as the
+/// walk reaches it, so a large map is never held as one text. Nothing is
+/// written unless [`check_savable`] passes first. A failure of `out` is
+/// [`SaveErrorKind::Io`] at the path of the node being written (empty
+/// for the header and the close).
+pub fn save_to(doc: &Document, out: &mut impl std::io::Write) -> Result<(), SaveError> {
+    check_savable(doc)?;
+    let io = |path: String| {
+        move |error: std::io::Error| {
+            SaveError::new(
+                path,
+                SaveErrorKind::Io {
                     message: error.to_string(),
                 },
-            )),
-        },
-        Err(error) => Err(refusal(json, error)),
-    }
-}
-
-/// The [`LoadError`] for a parse that failed.
-///
-/// The reader's messages are the only place the kind of a data error is
-/// written, so the kinds that name a key are read back out of them; the
-/// tests pin every message shape this depends on, and a message that is
-/// not recognized is an [`Invalid`](LoadErrorKind::Invalid) with the
-/// reader's text, which still carries the path.
-fn refusal(json: &str, error: serde_path_to_error::Error<serde_json::Error>) -> LoadError {
-    use serde_json::error::Category;
-    let (path, has_unknown_step) = error::render_parse_path(error.path());
-    let inner = error.into_inner();
-    let message = inner.to_string();
-
-    if matches!(inner.classify(), Category::Syntax | Category::Eof | Category::Io) {
-        // Malformed text: the message says where, by line and column,
-        // and the path is the last value the reader entered, which is
-        // where it gave up. It has none to give when it died on a key.
-        let path = if has_unknown_step { String::new() } else { path };
-        return LoadError::new(path, LoadErrorKind::Syntax { message });
-    }
-
-    // A file with a `format` other than 1 is a file this build does not
-    // read, whatever else is wrong with it: a later format will have
-    // keys this one does not know, and "unknown key" would be the wrong
-    // thing to say about it.
-    if let Some(found) = format_number(json).filter(|found| *found != 1) {
-        return LoadError::new(
-            "format".to_string(),
-            LoadErrorKind::UnsupportedFormat { found, newest: 1 },
-        );
-    }
-
-    let quoted = |prefix: &str| {
-        message
-            .strip_prefix(prefix)
-            .and_then(|rest| rest.split('`').next())
-            .map(str::to_string)
+            )
+        }
     };
-    if let Some(key) = quoted("unknown field `") {
-        // The reader has already entered the key: the path ends in it.
-        return LoadError::new(path, LoadErrorKind::UnknownKey { key });
-    }
-    if let Some(key) = quoted("missing field `") {
-        return LoadError::new(path, LoadErrorKind::MissingKey { key });
-    }
-    if let Some(key) = quoted("duplicate field `") {
-        return LoadError::new(path, LoadErrorKind::DuplicateKey { key });
-    }
-    LoadError::new(path, LoadErrorKind::Invalid { message })
-}
-
-/// The number a file gives as its top-level `format`, if it gives one.
-/// Only read for a file that failed to parse as the current format, so
-/// its cost is the failure's.
-fn format_number(json: &str) -> Option<u64> {
-    #[derive(serde::Deserialize)]
-    struct Peek {
-        format: Option<u64>,
-    }
-    // `Peek` has no `deny_unknown_fields`, so everything else in the
-    // file is skipped; a file that is not an object at all has none.
-    serde_json::from_str::<Peek>(json)
-        .ok()
-        .and_then(|peek| peek.format)
+    let header = to_dto::header_of(doc)?;
+    let has_nodes = doc
+        .children(doc.root())
+        .any(|child| doc.get(child).is_some_and(|element| element.as_node().is_some()));
+    writer::header(out, &header, has_nodes).map_err(io(String::new()))?;
+    to_dto::each_node(doc, |i, _, dto| {
+        writer::node(out, i == 0, &dto).map_err(io(error::render_path(&[Seg::Key("nodes"), Seg::Index(i)])))
+    })?;
+    writer::end(out, has_nodes).map_err(io(String::new()))
 }

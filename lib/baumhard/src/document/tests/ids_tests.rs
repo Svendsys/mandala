@@ -207,14 +207,14 @@ pub fn do_document_never_reissues_an_ident() {
         with_ident(MAX_NODE_IDENT - 1).unwrap().next_ident(),
         Some(NodeIdent(MAX_NODE_IDENT))
     );
-    assert_eq!(check_node_ident(MAX_NODE_IDENT), Ok(MAX_NODE_IDENT));
+    assert_eq!(check_node_ident(u64::from(MAX_NODE_IDENT)), Ok(MAX_NODE_IDENT));
     let at_bound = with_ident(MAX_NODE_IDENT).expect("an ident the bound admits loads");
     assert_eq!(at_bound.next_ident(), None, "no ident is left to issue");
     assert_eq!(
         with_ident(u32::MAX).unwrap_err(),
         DocumentError::Bound {
             what: "node id",
-            error: BoundError::NotAnIdent(u32::MAX),
+            error: BoundError::NotAnIdent(u64::from(u32::MAX)),
         }
     );
 }

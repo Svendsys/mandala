@@ -182,6 +182,8 @@ pub enum LoadErrorKind {
     DuplicateId {
         /// The id.
         id: u32,
+        /// Where the first node with it is: `i` in `nodes[i]`.
+        first_index: usize,
     },
     /// A node's `parent` is its own `id`.
     ParentIsSelf {
@@ -325,7 +327,9 @@ impl fmt::Display for LoadErrorKind {
                 "this map is format {found}, written by a newer version of Mandala: this build reads format {newest}"
             ),
             LoadErrorKind::Bound { error } => write!(f, "{error}"),
-            LoadErrorKind::DuplicateId { id } => write!(f, "another node already has the id {id}"),
+            LoadErrorKind::DuplicateId { id, first_index } => {
+                write!(f, "another node, nodes[{first_index}], already has the id {id}")
+            }
             LoadErrorKind::ParentIsSelf { id } => write!(f, "node {id} names itself as its parent"),
             LoadErrorKind::ParentNotEarlier { parent } => write!(
                 f,
@@ -724,14 +728,15 @@ pub(crate) fn render_path(segs: &[Seg]) -> String {
     out
 }
 
-/// The path the JSON reader was at, in the notation of [`render_path`],
-/// and whether it had a step it could not name (a key that was not a
-/// string). Rendered from the path's segments rather than its `Display`,
-/// which writes every key bare.
-pub(crate) fn render_parse_path(path: &serde_path_to_error::Path) -> (String, bool) {
+/// `prefix`, then the path the JSON reader was at inside the value
+/// `prefix` names, in the notation of [`render_path`]; and whether the
+/// reader had a step it could not name (a key that was not a string).
+/// Rendered from the path's segments rather than its `Display`, which
+/// writes every key bare.
+pub(crate) fn render_parse_path(prefix: &[Seg], path: &serde_path_to_error::Path) -> (String, bool) {
     use serde_path_to_error::Segment;
     use std::fmt::Write;
-    let mut out = String::new();
+    let mut out = render_path(prefix);
     let mut unknown = false;
     for segment in path.iter() {
         match segment {

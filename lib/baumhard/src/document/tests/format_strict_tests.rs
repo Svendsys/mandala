@@ -18,8 +18,19 @@ use crate::util::test_temp::TempDir;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-/// The type the loader reads a file into.
-const ROOT: &str = "MapDto";
+/// The types the loader reads a file into: the header, every top-level
+/// key but `nodes`, and each node of the list, which is parsed on its
+/// own from its extent. Everything the loader reads is reachable from
+/// one of them.
+const ROOTS: [&str; 2] = ["MapHeaderDto", "NodeDto"];
+
+/// What `f` gives for each of [`ROOTS`], gathered.
+fn from_roots<T: Ord>(f: impl Fn(&str) -> Vec<T>) -> Vec<T> {
+    let mut out: Vec<T> = ROOTS.iter().flat_map(|root| f(root)).collect();
+    out.sort();
+    out.dedup();
+    out
+}
 
 /// Every reason a type reachable from `root` could let an unknown key
 /// through a load, as `"<type> — <reason>"`: it is a struct (or an enum
@@ -91,14 +102,21 @@ fn index_forms_in(graph: &TypeGraph, root: &str) -> Vec<String> {
 #[test]
 fn test_every_type_the_format_reads_denies_unknown_fields() {
     let graph = TypeGraph::build(&crate_src_root());
-    let reached = graph.reachable_from(ROOT);
+    let reached: Vec<&crate::util::serde_coverage::TypeInfo> = {
+        let mut seen = BTreeSet::new();
+        ROOTS
+            .iter()
+            .flat_map(|root| graph.reachable_from(root))
+            .filter(|info| seen.insert(info.name.clone()))
+            .collect()
+    };
 
     // The walk found the format: every struct of any size, the nested
     // ones among them. A walk that reached a handful would pass the
     // check below for the wrong reason.
     let names: BTreeSet<&str> = reached.iter().map(|info| info.name.as_str()).collect();
     for expected in [
-        "MapDto",
+        "MapHeaderDto",
         "ThemeDto",
         "PaletteGroupDto",
         "DefaultsDto",
@@ -123,7 +141,7 @@ fn test_every_type_the_format_reads_denies_unknown_fields() {
     ] {
         assert!(
             names.contains(expected),
-            "the walk from {ROOT} did not reach {expected}"
+            "the walk from {ROOTS:?} did not reach {expected}"
         );
     }
     let with_fields = reached
@@ -135,7 +153,7 @@ fn test_every_type_the_format_reads_denies_unknown_fields() {
         "precondition: the walk reached {with_fields} types with named fields, and the format has more"
     );
 
-    let leaks = leaks_from(&graph, ROOT);
+    let leaks = from_roots(|root| leaks_from(&graph, root));
     assert!(
         leaks.is_empty(),
         "these types are read by the loader and could let an unknown key through, so a \
@@ -221,7 +239,7 @@ fn test_the_strictness_gate_reports_a_type_that_lets_a_key_through() {
 #[test]
 fn test_the_format_reads_no_index_and_no_predicate_field() {
     let graph = TypeGraph::build(&crate_src_root());
-    let found = index_forms_in(&graph, ROOT);
+    let found = from_roots(|root| index_forms_in(&graph, root));
     assert!(
         found.is_empty(),
         "the types the loader reads mention {found:?}. An index is assigned by sorted \
@@ -235,7 +253,9 @@ fn test_the_format_reads_no_index_and_no_predicate_field() {
     // What the walk does reach is the format's own spelling, and the
     // primitives under it. The set is pinned so a new unresolved name
     // goes red here rather than slipping past the check above.
-    let terminators = graph.unresolved_from(ROOT);
+    let terminators: BTreeSet<String> = from_roots(|root| graph.unresolved_from(root).into_iter().collect())
+        .into_iter()
+        .collect();
     let expected: BTreeSet<String> = [
         "bool", "f32", "Option", "String", "u16", "u32", "u64", "u8", "usize", "Vec",
     ]
@@ -245,7 +265,7 @@ fn test_the_format_reads_no_index_and_no_predicate_field() {
     let unvetted: Vec<&String> = terminators.difference(&expected).collect();
     assert!(
         unvetted.is_empty(),
-        "the walk from {ROOT} ends in names nobody has vetted: {unvetted:?}. Add the \
+        "the walk from {ROOTS:?} ends in names nobody has vetted: {unvetted:?}. Add the \
          name to this list if it is a primitive, or look at what the format now reads."
     );
 }
@@ -295,14 +315,19 @@ fn keys_of(value: &Value, out: &mut BTreeSet<String>) {
 fn test_the_fixtures_use_every_key_the_format_defines() {
     let graph = TypeGraph::build(&crate_src_root());
     let mut defined: BTreeSet<String> = BTreeSet::new();
-    for (_, members) in graph.member_names_from(ROOT) {
-        defined.extend(members);
+    for root in ROOTS {
+        for (_, members) in graph.member_names_from(root) {
+            defined.extend(members);
+        }
     }
+    // `nodes` is the one top-level key no header field holds: the list
+    // is read element by element, never as a field.
+    defined.insert("nodes".to_string());
     // The keys of a type that reads its own shape (an enum tag spelled
     // by a visitor) are not fields to the graph; they are listed by
     // the enum or here.
     defined.extend(["rectangle", "once", "fit"].map(str::to_string));
-    for info in graph.reachable_from(ROOT) {
+    for info in ROOTS.iter().flat_map(|root| graph.reachable_from(root)) {
         if info.name == "LinkTargetDto" {
             defined.extend(info.variants.iter().cloned());
         }
@@ -315,6 +340,7 @@ fn test_the_fixtures_use_every_key_the_format_defines() {
     );
     for key in [
         "id",
+        "parent",
         "radius",
         "filler",
         "edge",

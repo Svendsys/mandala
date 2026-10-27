@@ -9,8 +9,14 @@
 pub mod bounds_tests;
 pub mod deps_tests;
 pub mod element_tests;
+/// R13's deep chain, shared with the wasm32 probe.
+pub mod format_depth;
+#[cfg(test)]
+mod format_depth_tests;
 #[cfg(test)]
 mod format_error_tests;
+#[cfg(test)]
+mod format_flat_tests;
 #[cfg(test)]
 mod format_order_tests;
 #[cfg(test)]

@@ -7,6 +7,7 @@
 //! order, goes red here.
 
 use crate::document::format::load;
+use crate::document::tests::format_support::{fixture, node};
 use crate::util::doc_fixtures::{documented_json_block, format_doc_path};
 use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
 use std::collections::{BTreeMap, BTreeSet};
@@ -60,7 +61,7 @@ fn documented_keys() -> BTreeMap<String, Vec<String>> {
 /// DTOs each describes. A heading with several DTOs describes them all
 /// at once: they have the same keys.
 const SECTIONS: &[(&str, &[&str])] = &[
-    ("Top level", &["MapDto"]),
+    ("Top level", &["MapHeaderDto"]),
     ("Theme", &["ThemeDto"]),
     ("Palette group", &["PaletteGroupDto"]),
     ("Definitions", &["EditDto", "PresentationDto", "VerbDto"]),
@@ -111,9 +112,15 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
             .get(*heading)
             .unwrap_or_else(|| panic!("format/schema.md has no table under `### {heading}`"));
         for dto in *dtos {
+            let mut keys = members(&graph, dto);
+            if *dto == "MapHeaderDto" {
+                // The header holds every top-level key but the node list,
+                // which the loader reads element by element and the saver
+                // writes last.
+                keys.push("nodes".to_string());
+            }
             assert_eq!(
-                &members(&graph, dto),
-                listed,
+                &keys, listed,
                 "`### {heading}` lists the keys of {dto} in another order, or lacks one"
             );
         }
@@ -137,9 +144,9 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
         .flat_map(|(_, dtos)| dtos.iter().copied())
         .chain(SPELLING_OBJECTS.iter().copied())
         .collect();
-    let read: BTreeSet<String> = graph
-        .reachable_from("MapDto")
+    let read: BTreeSet<String> = ["MapHeaderDto", "NodeDto"]
         .iter()
+        .flat_map(|root| graph.reachable_from(root))
         .filter(|info| info.kind == TypeKind::Struct && info.derives_deserialize && info.has_named_fields)
         .map(|info| info.name.clone())
         .collect();
@@ -165,8 +172,66 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
 fn test_the_schema_example_loads() {
     let path = format_doc_path("schema.md");
     let example = documented_json_block(&path, "## Example", 0);
+    // It is the fixture, so the saver writes it byte for byte.
+    assert_eq!(
+        format!("{example}\n"),
+        fixture("tree"),
+        "the example in format/schema.md is the `tree` fixture"
+    );
     let doc =
         load(&example).unwrap_or_else(|error| panic!("the example in format/schema.md must load: {error}"));
-    assert_eq!(doc.theme().variables, ["accent", "bg"]);
-    assert!(doc.node_by_ident(crate::document::ids::NodeIdent(2)).is_some());
+    assert_eq!(doc.theme().variables, ["accent", "bg", "fg"]);
+    let (five, _) = node(&doc, 5);
+    let (two, _) = node(&doc, 2);
+    assert_eq!(doc.parent(five), Some(two), "node 5 sits under node 2");
+}
+
+#[test]
+fn test_the_schema_examples_errors_are_what_the_loader_says() {
+    // Each edit the example section describes, made to the example, and
+    // the error the section quotes for it, word for word.
+    let path = format_doc_path("schema.md");
+    let doc_text = std::fs::read_to_string(&path).unwrap();
+    let example = fixture("tree");
+    let line = |id: u32| {
+        example
+            .lines()
+            .find(|line| line.starts_with(&format!("    {{\"id\": {id},")))
+            .unwrap_or_else(|| panic!("node {id} has a line"))
+            .trim_end_matches(',')
+            .to_string()
+    };
+    let with_lines = |order: &[u32], edit: &dyn Fn(u32, String) -> String| {
+        let head = example.split("    {\"id\": 1,").next().unwrap();
+        let nodes: Vec<String> = order.iter().map(|id| edit(*id, line(*id))).collect();
+        format!("{head}{}\n  ]\n}}\n", nodes.join(",\n"))
+    };
+    let same = |_: u32, line: String| line;
+    // The text this rebuilds is the example itself, unedited.
+    assert_eq!(with_lines(&[1, 2, 5, 3, 4, 6], &same), example);
+
+    let cases = [
+        with_lines(&[1, 2, 5, 4, 3, 6], &same),
+        with_lines(&[1, 2, 5, 3, 4, 6], &|id, line| {
+            if id == 5 {
+                line.replace(r#""parent": 2"#, r#""parent": 3"#)
+            } else {
+                line
+            }
+        }),
+        with_lines(&[1, 2, 3, 4, 6, 5], &same),
+    ];
+    let expected = [
+        r#"nodes[4].channel: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)"#,
+        r#"nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)"#,
+        r#"nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 52)"#,
+    ];
+    for (text, message) in cases.iter().zip(expected) {
+        let error = load(text).expect_err("the edit makes the example invalid");
+        assert_eq!(error.to_string(), message);
+        assert!(
+            doc_text.contains(message),
+            "format/schema.md quotes the error `{message}`"
+        );
+    }
 }

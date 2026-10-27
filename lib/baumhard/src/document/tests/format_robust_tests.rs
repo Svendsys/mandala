@@ -166,12 +166,42 @@ fn test_hostile_nesting_is_an_error_not_a_stack_overflow() {
     // A million opening brackets: refused by shape, at the first.
     let deep = "[".repeat(1_000_000);
     assert!(load(&deep).is_err());
-    // A million levels of objects under a valid prefix: the reader's
-    // depth limit stops it, long before the stack matters.
-    let mut text = String::from(r#"{"format":1,"name":"t","nodes":[{"id":1,"position":[0,0],"children":["#);
-    text.push_str(&r#"{"id":2,"position":[0,0],"children":["#.repeat(100_000));
-    let error = load(&text).unwrap_err();
+    // 100,000 levels of arrays inside one node, closed: the index skips
+    // them without recursing, and the node is refused at the first value
+    // its schema has no room for, never by the stack.
+    let nested = |inner: &str| {
+        format!(
+            r#"{{"format":1,"name":"t","nodes":[{{"id":1,"position":[0,0],"sections":{}{inner}{}}}]}}"#,
+            "[".repeat(100_000),
+            "]".repeat(100_000)
+        )
+    };
+    let error = load(&nested("")).unwrap_err();
+    assert!(error.path.starts_with("nodes[0].sections"), "{error:?}");
+    // The same, left open: a truncated text, found by the index.
+    let open = format!(
+        r#"{{"format":1,"name":"t","nodes":[{{"id":1,"position":[0,0],"sections":{}"#,
+        "[".repeat(100_000)
+    );
+    let error = load(&open).unwrap_err();
     assert!(matches!(error.kind, LoadErrorKind::Syntax { .. }), "{error:?}");
+    // And inside a top-level value the format does not define, which is
+    // skipped, then refused by name once `format` has been read.
+    let unknown = format!(
+        r#"{{"format":1,"name":"t","bogus":{}{}}}"#,
+        "[".repeat(100_000),
+        "]".repeat(100_000)
+    );
+    let error = load(&unknown).unwrap_err();
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            "bogus",
+            &LoadErrorKind::UnknownKey {
+                key: "bogus".to_string()
+            }
+        )
+    );
     // And one the deserializer does follow to the end, with a long
     // run of spans: a size the loader pays for linearly.
     let spans = r#"{"text":"x"},"#.repeat(100_000);

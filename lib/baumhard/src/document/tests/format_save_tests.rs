@@ -46,30 +46,61 @@ fn test_the_saver_writes_keys_in_the_order_the_schema_lists_them() {
         "nodes",
     ];
     assert_eq!(key_positions(text, 2, &top).len(), top.len());
-    let node = [
-        "id",
-        "position",
-        "min_size",
-        "shape",
-        "fill",
-        "fill_fade",
-        "palette",
-        "zoom",
-        "folded",
-        "opacity",
-        "on",
-        "font",
-        "size",
-        "color",
-        "weight",
-        "italic",
-        "sections",
-        "frame",
-        "links",
-        "children",
-    ];
-    let start = text.find("\n      \"id\": 1").expect("the first node");
-    assert_eq!(key_positions(&text[start..], 6, &node).len(), node.len());
+    // A node is one line, its keys in schema order: the first node, a
+    // top-level one, then a nested one for `parent` and `channel`.
+    let in_line = |line: &str, keys: &[&str]| {
+        let mut at = 0;
+        for key in keys {
+            let needle = format!("\"{key}\": ");
+            let found = line[at..]
+                .find(&needle)
+                .unwrap_or_else(|| panic!("`{key}` not found after offset {at} in {line}"));
+            at += found + needle.len();
+        }
+    };
+    let line = |id: u32| {
+        text.lines()
+            .find(|line| line.starts_with(&format!("    {{\"id\": {id},")))
+            .unwrap_or_else(|| panic!("node {id} has a line of its own"))
+    };
+    in_line(
+        line(1),
+        &[
+            "id",
+            "position",
+            "min_size",
+            "shape",
+            "fill",
+            "fill_fade",
+            "palette",
+            "zoom",
+            "folded",
+            "opacity",
+            "on",
+            "font",
+            "size",
+            "color",
+            "weight",
+            "italic",
+            "sections",
+            "frame",
+            "links",
+        ],
+    );
+    assert!(line(4).starts_with(r#"    {"id": 4, "parent": 2, "channel": 3, "position": "#));
+    assert!(line(2).contains(r#""sections": "#) && line(2).contains(r#""connector": "#));
+    in_line(
+        line(2),
+        &[
+            "id",
+            "parent",
+            "position",
+            "shape",
+            "hidden",
+            "sections",
+            "connector",
+        ],
+    );
     let defaults = [
         "node",
         "section",
@@ -95,6 +126,13 @@ fn test_the_saver_writes_the_same_text_whatever_order_the_file_was_in() {
     // And compact or spaced, the same.
     let spaced = serde_json::to_string_pretty(&value).unwrap().replace("  ", "\t");
     assert_eq!(written(&load(&spaced).unwrap()), fixture("full"));
+    // Key order never matters; the order of a row does. The same file
+    // with its node list reversed is refused, not reordered.
+    let mut rows = value.clone();
+    if let Some(nodes) = rows["nodes"].as_array_mut() {
+        nodes.reverse();
+    }
+    assert!(load(&serde_json::to_string(&rows).unwrap()).is_err());
 }
 
 /// Whether a JSON object at the end of `path` in `value` has `key`.
@@ -127,6 +165,7 @@ fn test_the_saver_leaves_out_what_the_file_would_say_by_default() {
     // Not written: defaults, empty arrays, empty objects, derived data.
     let a = ["nodes", "0"];
     for key in [
+        "parent",
         "channel",
         "folded",
         "hidden",
@@ -140,18 +179,18 @@ fn test_the_saver_leaves_out_what_the_file_would_say_by_default() {
     ] {
         assert!(!has(&value, &a, key), "node a has no `{key}` to write");
     }
-    let b = ["nodes", "0", "children", "0"];
+    let b = ["nodes", "1"];
     assert!(
         has(&value, &b, "connector"),
         "b's connector has spans, caps and a label"
     );
-    let c = ["nodes", "0", "children", "0", "children", "0"];
+    let c = ["nodes", "2"];
     assert!(
         !has(&value, &c, "connector"),
         "a child node's connector with every field inherited and nothing under it is not written"
     );
     for key in [
-        "channel", "children", "sections", "links", "frame", "palette", "font", "size", "color",
+        "channel", "sections", "links", "frame", "palette", "font", "size", "color",
     ] {
         assert!(!has(&value, &c, key), "node c has no `{key}` to write");
     }
@@ -187,7 +226,7 @@ fn test_the_saver_leaves_out_what_the_file_would_say_by_default() {
     collect(&value, &mut keys);
     for derived in [
         "depth",
-        "parent",
+        "children",
         "parent_id",
         "fitted_size",
         "width",

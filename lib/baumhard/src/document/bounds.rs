@@ -121,7 +121,7 @@ pub enum BoundError {
     NotAWeight(u16),
     /// A node ident outside `1..=`[`MAX_NODE_IDENT`]; `0` is reserved
     /// for "not yet assigned".
-    NotAnIdent(u32),
+    NotAnIdent(u64),
     /// A channel above [`MAX_CHANNEL`].
     NotAChannel(u64),
     /// More items than the bound allows.
@@ -308,12 +308,14 @@ pub fn check_control_points(count: usize) -> Result<usize, BoundError> {
     }
 }
 
-/// A node ident if it is in `1..=`[`MAX_NODE_IDENT`]. O(1).
-pub fn check_node_ident(value: u32) -> Result<u32, BoundError> {
-    if (1..=MAX_NODE_IDENT).contains(&value) {
-        Ok(value)
-    } else {
-        Err(BoundError::NotAnIdent(value))
+/// A node ident if it is in `1..=`[`MAX_NODE_IDENT`], as the `u32` an
+/// ident is. Takes a `u64` so that a file's `id`, `parent` or `to` past
+/// `u32::MAX` is refused with this bound rather than with a reader's
+/// message about the width of a type. O(1).
+pub fn check_node_ident(value: u64) -> Result<u32, BoundError> {
+    match u32::try_from(value) {
+        Ok(ident) if (1..=MAX_NODE_IDENT).contains(&ident) => Ok(ident),
+        _ => Err(BoundError::NotAnIdent(value)),
     }
 }
 

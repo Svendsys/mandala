@@ -17,7 +17,14 @@ autobenches = false
 [dependencies]
 rand = "0.10.3"
 serde.workspace = true
-serde_json.workspace = true
+# `raw_value` is what lets `document::format`'s loader index a map
+# before it builds one (`format/index.rs`): every top-level value and
+# every node is captured as a `&RawValue` borrowed from the text, with
+# no copy and no tree built, and then parsed on its own. That keeps the
+# order of keys in a file insignificant, gives every node an exact
+# place in the text, and starts the reader's nesting count at each node
+# rather than at the top of the file (design B.7, B.14).
+serde_json = { workspace = true, features = ["raw_value"] }
 slab = "0.4.12"
 lazy_static = "1.5.1"
 # `release_max_level_warn` is what keeps baumhard's §9 degrade paths

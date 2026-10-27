@@ -12,8 +12,11 @@ use indextree::NodeId;
 
 /// The fixture corpus, by name: every key at least once
 /// (`test_the_fixtures_use_every_key_the_format_defines`), every fit,
-/// start and color spelling. Each is the exact text the saver writes.
-pub const FIXTURES: [(&str, &str); 7] = [
+/// start and color spelling; `tree` is the example of design B.13 (two
+/// roots, three levels, ids out of list order, forward links), and
+/// `deep_leaf` holds the deepest content a node can hold (design B.7).
+/// Each is the exact text the saver writes.
+pub const FIXTURES: [(&str, &str); 9] = [
     ("minimal", include_str!("../format/fixtures/minimal.mandala.json")),
     ("full", include_str!("../format/fixtures/full.mandala.json")),
     ("portals", include_str!("../format/fixtures/portals.mandala.json")),
@@ -21,6 +24,11 @@ pub const FIXTURES: [(&str, &str); 7] = [
     ("fits", include_str!("../format/fixtures/fits.mandala.json")),
     ("starts", include_str!("../format/fixtures/starts.mandala.json")),
     ("colors", include_str!("../format/fixtures/colors.mandala.json")),
+    ("tree", include_str!("../format/fixtures/tree.mandala.json")),
+    (
+        "deep_leaf",
+        include_str!("../format/fixtures/deep_leaf.mandala.json"),
+    ),
 ];
 
 /// The text [`save`](crate::document::format::save) writes for `doc`;
@@ -76,19 +84,21 @@ pub fn same_document(a: &Document, b: &Document) -> Result<(), String> {
     if a.next_ident() != b.next_ident() {
         return Err("the ident counters differ".to_string());
     }
-    let mut left = a.tree().descendants();
-    let mut right = b.tree().descendants();
+    // Both trees in lockstep, as edges: entering an element, and leaving
+    // it once everything under it is done. Two trees whose edge sequences
+    // agree have the same shape, and the walk is linear whatever their
+    // depth.
+    use indextree::NodeEdge;
+    let mut left = a.root().traverse(a.tree().arena());
+    let mut right = b.root().traverse(b.tree().arena());
     loop {
         match (left.next(), right.next()) {
             (None, None) => return Ok(()),
-            (Some(l), Some(r)) => {
+            (Some(NodeEdge::End(_)), Some(NodeEdge::End(_))) => {}
+            (Some(NodeEdge::Start(l)), Some(NodeEdge::Start(r))) => {
                 let (Some(x), Some(y)) = (a.get(l), b.get(r)) else {
                     return Err("an element is missing from its tree".to_string());
                 };
-                let levels = |doc: &Document, id: NodeId| id.ancestors(doc.tree().arena()).count();
-                if levels(a, l) != levels(b, r) {
-                    return Err(format!("{:?} sits at another place", x.kind()));
-                }
                 match (x, y) {
                     (DocElement::Link(p), DocElement::Link(q)) => {
                         let target = |doc: &Document, id| match doc.get(id) {
@@ -107,6 +117,7 @@ pub fn same_document(a: &Document, b: &Document) -> Result<(), String> {
                     _ => {}
                 }
             }
+            (Some(_), Some(_)) => return Err("an element sits at another place".to_string()),
             _ => return Err("the trees have different sizes".to_string()),
         }
     }

@@ -7,7 +7,7 @@
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::format::{load, load_under, LoadErrorKind};
-use crate::document::tests::format_text::{map_of, map_with, node_of, rejection, THEME};
+use crate::document::tests::format_text::{map_of, map_of_two, map_with, node_of, rejection, THEME};
 
 /// The load of `json` fails with this path and this kind.
 fn rejects(json: &str, path: &str, kind: LoadErrorKind) {
@@ -123,23 +123,38 @@ fn test_a_number_the_reader_cannot_hold_is_refused() {
 
 #[test]
 fn test_nesting_past_the_readers_depth_is_refused_not_a_crash() {
-    // A chain of child nodes: each level is an object in an array.
-    // The reader follows 128 levels and stops with an error; a stack
-    // is never the limit.
-    let mut json = String::new();
-    for id in 1..=200 {
-        json.push_str(&format!(r#"{{"id":{id},"position":[0,0],"children":["#));
-    }
-    json.push_str(&"]}".repeat(200));
-    let error = rejection(&map_with("", &json));
+    // JSON nesting inside one node's content, far past anything the
+    // schema allows there: refused at the node, by the first value the
+    // schema has no room for, and never by exhausting a stack. The index
+    // skips nested values iteratively, and a node is read from its own
+    // extent, so the reader never descends further than the schema does.
+    let deep = format!(r#","sections":{}{}"#, "[".repeat(200), "]".repeat(200));
+    let error = rejection(&map_of(&deep));
+    assert!(error.path.starts_with("nodes[0].sections"), "{error:?}");
+    assert_eq!(error.node.as_ref().and_then(|node| node.id), Some(1), "{error:?}");
+    // The same inside a top-level value names that value.
+    let error = rejection(&map_with(
+        &format!(r#","defaults":{}1{}"#, r#"{"node":"#.repeat(150), "}".repeat(150)),
+        "",
+    ));
+    assert!(error.path.starts_with("defaults.node"), "{error:?}");
+    // A syntax error deep inside such a nesting is still a syntax error,
+    // found by the index before anything is read, at the node.
+    let broken = format!(r#","sections":{}{}"#, "[".repeat(200), "]".repeat(199));
+    let error = rejection(&map_of(&broken));
     assert!(matches!(error.kind, LoadErrorKind::Syntax { .. }), "{error:?}");
-    // And a chain inside the limit loads.
-    let mut json = String::new();
-    for id in 1..=50 {
-        json.push_str(&format!(r#"{{"id":{id},"position":[0,0],"children":["#));
-    }
-    json.push_str(&"]}".repeat(50));
-    assert!(load(&map_with("", &json)).is_ok());
+    assert_eq!(error.path, "nodes[0]", "{error:?}");
+    // A tree's depth is not JSON nesting: a chain of 200 nodes, far past
+    // what the reader would follow nested, is a flat list and loads.
+    let chain: Vec<String> = (1..=200)
+        .map(|id| match id {
+            1 => node_of(1, ""),
+            _ => node_of(id, &format!(r#","parent":{}"#, id - 1)),
+        })
+        .collect();
+    let doc = load(&map_with("", &chain.join(","))).unwrap();
+    let (leaf, _) = crate::document::tests::format_support::node(&doc, 200);
+    assert_eq!(doc.depth(leaf), 199);
 }
 
 // ---- keys ---------------------------------------------------------
@@ -581,11 +596,10 @@ fn test_the_format_must_be_one() {
         "format",
         unsupported(2),
     );
-    rejects(
-        &format!(r#"{{"format":0,"name":"t",{THEME}}}"#),
-        "format",
-        unsupported(0),
-    );
+    // A number that is not a positive integer is not a format at all.
+    for format in ["0", "-1", "1.0", "1e0", r#""1""#] {
+        rejects_as_invalid(&format!(r#"{{"format":{format},"name":"t",{THEME}}}"#), "format");
+    }
     // Whatever else is wrong with a file of another format, that is the
     // thing to report: it will have keys this build does not know.
     rejects(
@@ -600,26 +614,34 @@ fn test_the_format_must_be_one() {
 
 #[test]
 fn test_a_duplicate_node_id_is_refused_where_the_second_is() {
+    // The second 2 is under 3, two lines after the first: the error is
+    // at the second, and names where the first is.
     let json = map_with(
         "",
-        &format!(
-            r#"{},{}"#,
-            node_of(1, r#","children":[{"id":2,"position":[0,0]}]"#),
-            node_of(
-                3,
-                r#","children":[{"id":4,"position":[0,0]},{"id":2,"position":[0,0]}]"#
-            )
-        ),
+        &[
+            node_of(1, ""),
+            node_of(2, r#","parent":1"#),
+            node_of(3, ""),
+            node_of(4, r#","parent":3"#),
+            node_of(2, r#","parent":3,"channel":1"#),
+        ]
+        .join(","),
     );
     rejects(
         &json,
-        "nodes[1].children[1].id",
-        LoadErrorKind::DuplicateId { id: 2 },
+        "nodes[4].id",
+        LoadErrorKind::DuplicateId {
+            id: 2,
+            first_index: 1,
+        },
     );
     rejects(
         &map_with("", &format!("{},{}", node_of(7, ""), node_of(7, ""))),
         "nodes[1].id",
-        LoadErrorKind::DuplicateId { id: 7 },
+        LoadErrorKind::DuplicateId {
+            id: 7,
+            first_index: 0,
+        },
     );
 }
 
@@ -630,10 +652,11 @@ fn test_a_link_to_no_node_is_refused() {
         "nodes[0].links[0].to",
         LoadErrorKind::DanglingLink { to: 99 },
     );
-    rejects(
+    // `0` is no node's id, and is refused as the bound it breaks.
+    rejects_bound(
         &map_of(r#","links":[{"to":0,"kind":"portal"}]"#),
         "nodes[0].links[0].to",
-        LoadErrorKind::DanglingLink { to: 0 },
+        BoundError::NotAnIdent(0),
     );
     // The second of two links is the one at fault.
     let json = map_with(
@@ -665,12 +688,16 @@ fn test_a_link_to_its_own_node_is_refused() {
     );
     // A link inside a child that names the child.
     rejects(
-        &map_of(r#","children":[{"id":2,"position":[0,0],"links":[{"to":2,"kind":"line"}]}]"#),
-        "nodes[0].children[0].links[0].to",
+        &map_of_two(r#""#, r#","links":[{"to":2,"kind":"line"}]"#),
+        "nodes[1].links[0].to",
         LoadErrorKind::SelfLink,
     );
     // But a link to the parent, or the child, is not a self link.
-    assert!(load(&map_of(r#","links":[{"to":2,"kind":"line"}],"children":[{"id":2,"position":[0,0],"links":[{"to":1,"kind":"line"}]}]"#)).is_ok());
+    assert!(load(&map_of_two(
+        r#","links":[{"to":2,"kind":"line"}]"#,
+        r#","links":[{"to":1,"kind":"line"}]"#,
+    ))
+    .is_ok());
 }
 
 #[test]
@@ -897,10 +924,7 @@ fn test_a_top_level_node_has_no_connector() {
         LoadErrorKind::ConnectorOnRoot,
     );
     // A child may.
-    assert!(load(&map_of(
-        r#","children":[{"id":2,"position":[0,0],"connector":{}}]"#
-    ))
-    .is_ok());
+    assert!(load(&map_of_two(r#""#, r#","connector":{}"#,)).is_ok());
 }
 
 #[test]
@@ -942,7 +966,7 @@ fn test_a_key_an_element_cannot_use_is_refused() {
 
     // Only a portal link has ends.
     rejects(
-        &map_of(r#","links":[{"to":2,"kind":"line","ends":[{},{}]}],"children":[{"id":2,"position":[0,0]}]"#),
+        &map_of_two(r#","links":[{"to":2,"kind":"line","ends":[{},{}]}]"#, r#""#),
         "nodes[0].links[0].ends",
         not_allowed("ends", "only a portal link has ends"),
     );
@@ -966,9 +990,10 @@ fn test_a_key_an_element_cannot_use_is_refused() {
     ] {
         let key: &'static str = key;
         rejects(
-            &map_of(&format!(
-                r#","links":[{{"to":2,"kind":"portal","{key}":{value}}}],"children":[{{"id":2,"position":[0,0]}}]"#
-            )),
+            &map_of_two(
+                &format!(r#","links":[{{"to":2,"kind":"portal","{key}":{value}}}]"#),
+                "",
+            ),
             &format!("nodes[0].links[0].{key}"),
             not_allowed(key, reason),
         );
@@ -1004,20 +1029,22 @@ fn test_a_canvas_coordinate_past_the_ceiling_is_refused() {
         past,
     );
     rejects_bound(
-        &map_of(
-            r#","links":[{"to":2,"kind":"line","control_points":[[0,0],[0,2000000000]]}],"children":[{"id":2,"position":[0,0]}]"#,
+        &map_of_two(
+            r#","links":[{"to":2,"kind":"line","control_points":[[0,0],[0,2000000000]]}]"#,
+            r#""#,
         ),
         "nodes[0].links[0].control_points[1][1]",
         past,
     );
     rejects_bound(
-        &map_of(r#","children":[{"id":2,"position":[0,0],"connector":{"control_points":[[2000000000,0]]}}]"#),
-        "nodes[0].children[0].connector.control_points[0][0]",
+        &map_of_two(r#""#, r#","connector":{"control_points":[[2000000000,0]]}"#),
+        "nodes[1].connector.control_points[0][0]",
         past,
     );
     rejects_bound(
-        &map_of(
-            r#","links":[{"to":2,"kind":"line","label":{"offset":2000000000}}],"children":[{"id":2,"position":[0,0]}]"#,
+        &map_of_two(
+            r#","links":[{"to":2,"kind":"line","label":{"offset":2000000000}}]"#,
+            r#""#,
         ),
         "nodes[0].links[0].label.offset",
         past,
@@ -1075,14 +1102,15 @@ fn test_a_font_size_in_points_outside_the_shapers_range_is_refused() {
         high,
     );
     rejects_bound(
-        &map_of(
-            r#","links":[{"to":2,"kind":"portal","ends":[{"size":0.25},{}]}],"children":[{"id":2,"position":[0,0]}]"#,
+        &map_of_two(
+            r#","links":[{"to":2,"kind":"portal","ends":[{"size":0.25},{}]}]"#,
+            r#""#,
         ),
         "nodes[0].links[0].ends[0].size",
         low,
     );
     rejects_bound(
-        &map_of(r#","links":[{"to":2,"kind":"line","size":5000}],"children":[{"id":2,"position":[0,0]}]"#),
+        &map_of_two(r#","links":[{"to":2,"kind":"line","size":5000}]"#, r#""#),
         "nodes[0].links[0].size",
         high,
     );
@@ -1169,15 +1197,14 @@ fn test_a_number_outside_the_unit_interval_is_refused() {
         over,
     );
     rejects_bound(
-        &map_of(
-            r#","links":[{"to":2,"kind":"line","label":{"t":-0.25}}],"children":[{"id":2,"position":[0,0]}]"#,
-        ),
+        &map_of_two(r#","links":[{"to":2,"kind":"line","label":{"t":-0.25}}]"#, r#""#),
         "nodes[0].links[0].label.t",
         under,
     );
     rejects_bound(
-        &map_of(
-            r#","links":[{"to":2,"kind":"portal","ends":[{},{"border_t":1.5}]}],"children":[{"id":2,"position":[0,0]}]"#,
+        &map_of_two(
+            r#","links":[{"to":2,"kind":"portal","ends":[{},{"border_t":1.5}]}]"#,
+            r#""#,
         ),
         "nodes[0].links[0].ends[1].border_t",
         over,
@@ -1238,7 +1265,7 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
         negative(-4.0),
     );
     rejects_bound(
-        &map_of(r#","links":[{"to":2,"kind":"line","spacing":-5}],"children":[{"id":2,"position":[0,0]}]"#),
+        &map_of_two(r#","links":[{"to":2,"kind":"line","spacing":-5}]"#, r#""#),
         "nodes[0].links[0].spacing",
         negative(-5.0),
     );
@@ -1373,9 +1400,10 @@ fn test_a_weight_must_be_one_of_the_nine() {
 #[test]
 fn test_a_path_has_at_most_two_control_points() {
     let json = |points: &str| {
-        map_of(&format!(
-            r#","links":[{{"to":2,"kind":"line","control_points":{points}}}],"children":[{{"id":2,"position":[0,0]}}]"#
-        ))
+        map_of_two(
+            &format!(r#","links":[{{"to":2,"kind":"line","control_points":{points}}}]"#),
+            "",
+        )
     };
     for points in ["[]", "[[1,1]]", "[[1,1],[2,2]]"] {
         assert!(load(&json(points)).is_ok(), "{points}");
@@ -1389,10 +1417,11 @@ fn test_a_path_has_at_most_two_control_points() {
         },
     );
     rejects_bound(
-        &map_of(
-            r#","children":[{"id":2,"position":[0,0],"connector":{"control_points":[[0,0],[0,0],[0,0],[0,0]]}}]"#,
+        &map_of_two(
+            r#""#,
+            r#","connector":{"control_points":[[0,0],[0,0],[0,0],[0,0]]}"#,
         ),
-        "nodes[0].children[0].connector.control_points",
+        "nodes[1].connector.control_points",
         BoundError::TooMany {
             count: 4,
             max: bounds::MAX_CONTROL_POINTS,
@@ -1411,11 +1440,14 @@ fn test_a_node_id_must_be_a_node_id() {
     rejects_bound(
         &map_with("", &format!(r#"{{"id":{},"position":[0,0]}}"#, u32::MAX)),
         "nodes[0].id",
-        not_an_id(u32::MAX),
+        not_an_id(u64::from(u32::MAX)),
     );
     rejects_bound(
-        &map_of(r#","children":[{"id":0,"position":[0,0]}]"#),
-        "nodes[0].children[0].id",
+        &map_with(
+            "",
+            &format!(r#"{},{{"id":0,"parent":1,"position":[0,0]}}"#, node_of(1, "")),
+        ),
+        "nodes[1].id",
         not_an_id(0),
     );
     // The highest id there is loads, and leaves the counter nothing to issue.
@@ -1451,10 +1483,8 @@ fn test_a_channel_is_a_bound_every_target_holds() {
         not_a_channel,
     );
     rejects_bound(
-        &map_of(&format!(
-            r#","children":[{{"id":2,"channel":{past},"position":[0,0]}}]"#
-        )),
-        "nodes[0].children[0].channel",
+        &map_of_two("", &format!(r#","channel":{past}"#)),
+        "nodes[1].channel",
         not_a_channel,
     );
     rejects_bound(

@@ -1,12 +1,15 @@
 # The `.mandala.json` format
 
 A map is one JSON text with the extension `.mandala.json`. It is
-**strict, nested and typed** (design D4, §7): the structure of the
-file is the structure of the document, a node's children are nested
-inside it, every key is defined here, and a file is either valid or it
-does not load. The reference implementation is
+**strict, typed and flat** (design D4, D30, §7): every key is defined
+here, a file is either valid or it does not load, and the nodes of the
+map are one flat list in which each node names its parent. A node's
+own content (its sections, frame, connector and links) is nested
+inside it, at most 9 levels of JSON deep; the tree of nodes is not, so
+the depth of a map's tree costs nothing in the file and has no bound
+of its own. The reference implementation is
 `lib/baumhard/src/document/format/` (`load`, `load_from_bytes`,
-`save`); the fixture corpus in
+`save`, `save_to`, `check_savable`); the fixture corpus in
 `lib/baumhard/src/document/format/fixtures/` is a set of maps that save
 back byte for byte.
 
@@ -15,7 +18,59 @@ older `.mindmap.json` is described in
 [`legacy-schema.md`](./legacy-schema.md) until that sub-issue deletes
 it.
 
+## Principles
+
+- **One document, one text.** A given map saves to exactly one text,
+  byte for byte, and a loader accepts a text if and only if it spells a
+  valid map. A map can be spelled in more than one way only at the JSON
+  level — whitespace, string escapes, number forms (`24`, `24.0`,
+  `2.4e1`) and the order of keys within an object — never in the
+  format's own values, except where a value below lists more than one
+  spelling.
+- **The order of the node list is part of the document.** It is never
+  a choice of whoever wrote the file ([The node list](#the-node-list)).
+- **Nothing is derived.** No depth, no child list, no fitted size, no
+  resolved value, no index.
+- **Depth costs nothing.** Neither the format nor the loader bounds the
+  depth of the tree, the JSON nesting of a file does not grow with it,
+  and every walk over a map is iterative and linear in its size.
+
+## The text
+
+| Rule | Detail |
+|---|---|
+| Encoding | UTF-8. Bytes that are not UTF-8 are a `Syntax` error naming the byte offset. |
+| Byte-order mark | **Refused** (`ByteOrderMark`). Save as UTF-8 without a BOM: RFC 8259 §8.1 forbids a writer to add one, and accepting it would be a second spelling of the start of the file. |
+| Line endings | Any JSON whitespace is accepted, CR LF included. The saver writes LF only. |
+| Size | Checked against `MAX_MAP_BYTES` before anything else ([Limits](#limits)). |
+| One value | The text is one JSON object. Anything after it but whitespace is a `Syntax` error. |
+| Duplicate keys | Refused in every object, name-keyed ones included. |
+| Key order | **Never significant to the loader.** A file run through `jq -S` loads as the same map. The saver writes the order the tables below list. |
+| Strings | Any JSON escape is accepted. A lone surrogate escape is a `Syntax` error. |
+| Numbers | Any JSON number form is accepted where a number is expected, and must be finite once read as the field's type. An integer field (`format`, `id`, `parent`, `channel`, `to`, `radius`, a numeric weight) refuses a number written with a fraction or an exponent. |
+| Comments | None: JSON has none, and JSONC and JSON5 are not accepted. |
+
 ## How a file is read
+
+A load is three linear passes over the text, none of them recursing on
+the depth of the tree:
+
+1. **Gates.** The size, then the byte-order mark, then UTF-8.
+2. **Index.** One parse reads where each top-level value and each node
+   of `nodes` is in the text, building nothing. A JSON syntax error
+   anywhere is reported here, before anything is read for meaning, so
+   a truncated file says it is truncated. Then `format` is checked,
+   wherever it sits in the object, and only then is a top-level key the
+   format does not define refused: a file of a newer format may have
+   keys this build does not know, and `format` is the one useful thing
+   to say about it.
+3. **Build.** The top-level values are read in the order of the table
+   below, then each node is read on its own from its place in the text
+   and appended to the tree, so only one node is being read at a time.
+   Links are resolved last, because a link may name a node that comes
+   later in the list.
+
+What holds for every value:
 
 - **Unknown keys are an error.** Every object below denies keys it does
   not list. Nothing is preserved and nothing is skipped.
@@ -28,37 +83,110 @@ it.
   `700`, a start point by name or by side and fraction, a color with or
   without alpha digits), they read to the same value and the saver
   writes the canonical one.
-- **A reference that names nothing is an error:** a link's `to`, a
-  verb, a palette, a theme variable, a font.
+- **A reference that names nothing is an error:** a `parent`, a link's
+  `to`, a verb, a palette, a theme variable, a font.
 - **Names become indices when the file is read and never again.** A
   `var(accent)` is a variable of the theme, resolved by name. The
   document holds indices; the file never does, because an index is
   assigned by sorted name and would name another entry once a name was
-  added. The order of the keys in the file never matters: variables,
-  variants and palettes get their index from the ascending byte order
-  of their names.
+  added. Variables, variants and palettes get their index from the
+  ascending byte order of their names, whatever order the file gives
+  them in.
 - **The first error ends the load,** and nothing else is returned (no
   partial document). Every error names the JSON path of the value
-  (`nodes[3].frame.rings[0].spans[2].color`); see
-  [Errors](#errors).
+  (`nodes[3].frame.rings[0].spans[2].color`), the node it is in, and
+  its line; see [Errors](#errors).
 - **Every number is checked** against the bounds in
   [Bounds](#bounds) as it is read. A number outside its bound is an
   error, never clamped, saturated or aliased.
-- **A row is read in key order.** Sections, rings and sibling nodes are
-  ordered by `channel`, then by their place in the file. A file that
-  lists them in another order loads (the loader sorts each row, stably,
-  before it builds it), and saves in the sorted order.
+- **A row is listed in the order the map keeps it, or refused.**
+  Sibling nodes, top-level nodes, a node's `sections` and a frame's
+  `rings` appear in ascending `channel`, and equal channels appear in
+  the order written. One whose `channel` is below the one listed before
+  it is refused (`SiblingsOutOfOrder`), never sorted: a sorted file
+  would be a second spelling of the same map, and the saver would
+  rewrite it on the next save. `links` and `spans` have no channel; their
+  order is the order written.
+
+## The node list
+
+`nodes` holds every node of the map exactly once, **flat, in
+depth-first pre-order**:
+
+- a node with no `parent` key is a **top-level node**, and a map has
+  any number of them, none included;
+- a node with `"parent": p` hangs from the node whose `id` is `p`;
+- there is no `children` key, no depth key and no other key that says
+  where a node is;
+- a node comes right after its parent if it is the parent's first
+  child, else right after the last node of its previous sibling's
+  subtree; a top-level node follows the last node of the previous one's.
+
+So every subtree is one contiguous block of the list — cutting the
+block and pasting it elsewhere, then changing its first node's
+`parent`, moves it — and a node's `parent` is always on the **chain**
+of the node listed before it: that node, or one of its ancestors. The
+loader checks exactly that, at the node's `parent`:
+
+| Refusal | When |
+|---|---|
+| `ParentIsSelf` | the node names itself |
+| `ParentNotEarlier` | no node before this one has that id: one that never appears, or appears later. A parent comes before its children. |
+| `ParentNotOnChain` | the parent comes earlier, but its subtree has already ended. The message names where the parent is and lists the ids a node here could name — the node before it, then its ancestors, nearest first, at most 8 — or none, for a new top-level node. |
+
+Because a parent must already be on the chain when its child is read,
+no cycle, orphan or second parent can be written.
+
+**Identity.** `id` is required on every node, an integer in
+`1..=4294967294`, unique in the map, and the node's identity for the
+life of the map: the saver writes it as the document holds it and
+never renumbers. Moving a node changes only its `parent`. Ids say
+nothing about structure, and the list is ordered by structure, not by
+id. Two nodes with one `id` are refused (`DuplicateId`) at the second,
+naming where the first is; the usual cause is a git merge of two
+branches that each added a node.
+
+| Who names a node by `id` | Checked at load |
+|---|---|
+| a node's `parent` | on the chain, as above |
+| a link's `to` | names a node anywhere in the list but the link's own; a later node is fine |
+| a verb or presentation target | not at load: a missing node is skipped with a warning when it runs (D27) |
+| IPC, the console, `mandalactl` | through the document's ident index |
+
+The counter that gives a new node its id is not saved; a loaded map
+starts it one above the highest node id in the list.
 
 ## How a file is written
 
 - **Deterministic.** Keys are written in the order the tables below
-  list them. Name-keyed objects (theme variants and variables,
-  palettes) are written in ascending byte order of the name. Nodes are
-  written in sibling order. Numbers are written in serde_json's
-  shortest round-trip form of the stored `f32` (`24.0`, `0.06`),
-  indentation is two spaces, and the text ends with a newline. An
-  unchanged map saves byte-identically, and a one-field edit is a
-  one-line diff.
+  list them, `id` and then `parent` first on every node. Name-keyed
+  objects (theme variants and variables, palettes) are written in
+  ascending byte order of the name. Nodes are written in the tree's
+  pre-order, siblings in the order the map keeps them, which is exactly
+  the order [the node list](#the-node-list) requires. Numbers are
+  written in serde_json's shortest round-trip form of the stored `f32`
+  (`24.0`, `0.06`, `1e-7`), integers as integers. An unchanged map saves
+  byte-identically.
+- **The layout.** The top-level values other than `nodes` are written
+  with two-space indentation. Then `"nodes": [`, one line per node, each
+  four spaces and the node object on that one line, with `", "` between
+  members and elements and `": "` after each key, and a `,` ending every
+  node's line but the last; then `  ]` and `}`. A map with no nodes
+  leaves `nodes` out. LF line endings, exactly one trailing newline, no
+  byte-order mark. A node never spans two lines, so a changed node is
+  one changed line in a diff, a moved subtree is a moved block of lines,
+  `grep '{"id": 7,'` finds a node and `grep '"parent": 7,'` its
+  children.
+- **Escapes.** Strings are escaped as serde_json escapes them (`"`, `\`,
+  and the characters below U+0020), and on top of that U+0085, U+2028
+  and U+2029 — where some editors and diff viewers break a line — and
+  the bidi controls U+202A–U+202E and U+2066–U+2069 — which can make a
+  line display in an order other than its bytes — are written as
+  `\uXXXX`. All other text is written as raw UTF-8.
+- **Streaming.** `save_to` writes the header, then each node's line as
+  its walk reaches it, to any `io::Write`, so a large map is never held
+  as one text; `save` is `save_to` into a string. A failing writer is a
+  `SaveError` with the kind `Io`, at the node being written.
 - **Omitted:** every optional key that is unset (inheriting); `channel`
   `0`, `folded` `false`, `hidden` `false`, `opacity` `1.0`; a section's
   `offset` `[0, 0]`; a path's `anchors` `["auto", "auto"]` and `visible`
@@ -66,14 +194,15 @@ it.
   inherited and nothing under it; a portal link's `ends` when both ends
   are all-inherited with nothing under them; and `defaults`, and any
   object inside it, that sets nothing.
-- **Never written:** anything derived: fitted sizes, depth, resolved
-  colors, parent pointers.
+- **Never written:** anything derived: fitted sizes, depth, child lists,
+  resolved colors.
 - **Nothing is dropped, and nothing is written that does not load.** A
   document that holds a value the file cannot spell is not saved: `save`
-  returns a `SaveError` naming the path the value would have had, in the
-  notation of [Errors](#errors), and writes nothing. `check_savable`
-  gives the same answer without writing, for the mutations and the
-  editor to call when they apply an edit. What it refuses:
+  returns a `SaveError` naming the path the value would have had and
+  the node it is in, in the notation of [Errors](#errors), and writes
+  nothing. `check_savable` gives the same answer without writing, for
+  the mutations and the editor to call when they apply an edit. What it
+  refuses:
   - a size in the wrong unit for where it sits (points on a frame or a
     ring, a fraction elsewhere), and a span `size` inside a ring;
   - the fallback face as an explicit `font`;
@@ -88,8 +217,8 @@ it.
     node, and a portal link without exactly two ends;
   - everything the loader would refuse in the file it would write: a
     number outside its [bound](#bounds), a `channel` past `MAX_CHANNEL`,
-    and so on. The saver builds the file it wrote with the loader's own
-    builder, so the two cannot disagree about what loads.
+    and so on. The saver hands what it would write, node by node, to the
+    loader's own builder, so the two cannot disagree about what loads.
 - **The empty theme has one spelling: no `theme` key.** A document with
   no variables and no variants saves without one, and a file without one
   loads as that theme. A `theme` that is present has at least one
@@ -111,7 +240,7 @@ built-in value, unless the table gives a default of its own.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `format` | integer | yes | | The format number: `1`. Any other number is an error, reported before anything else in the file. |
+| `format` | integer | yes | | The format number: `1`. Read and checked before anything else in the file, wherever it sits; a newer one is refused as written by a newer version. |
 | `name` | string | yes | | The map's name. |
 | `theme` | [theme](#theme) | no | the empty theme | The theme. Absent is the empty theme (no variables, no variants), which has no other spelling. A theme that is present has at least one variant. |
 | `palettes` | object: name to array of [palette groups](#palette-group) | no | none | The palettes. |
@@ -119,7 +248,7 @@ built-in value, unless the table gives a default of its own.
 | `edits` | array of [definitions](#definitions) | no | `[]` | The edits the map defines. V1-D1 extends this schema. |
 | `presentations` | array of [definitions](#definitions) | no | `[]` | The presentations the map defines. V1-D2 extends this schema. |
 | `verbs` | array of [definitions](#definitions) | no | `[]` | The verbs the map defines. V1-D3 extends this schema. |
-| `nodes` | array of [nodes](#node) | no | `[]` | The top-level nodes, in sibling order. |
+| `nodes` | array of [nodes](#node) | no | `[]` | Every node of the map, flat, in depth-first pre-order ([The node list](#the-node-list)). |
 
 ### Theme
 
@@ -285,8 +414,9 @@ text-style `size` is a [fraction](#size-units).
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `id` | integer, `1` to `4294967294` | yes | | The id links and verbs name the node by, unique in the map. `0` is reserved. Ids do not encode structure; moving a node never renames anything. |
-| `channel` | integer `0..=4294967295` | no | `0` | The node's place among its sibling nodes. |
+| `id` | integer, `1` to `4294967294` | yes | | The node's identity ([The node list](#the-node-list)): unique in the map, stable across saves. `0` is reserved. Ids do not encode structure; moving a node never renames anything. |
+| `parent` | integer, `1` to `4294967294` | no | absent: a top-level node | The `id` of the node it hangs from, which is on the chain of the node listed before it. |
+| `channel` | integer `0..=4294967295` | no | `0` | The node's place among its sibling nodes: siblings are listed in ascending channel. |
 | `position` | `[x, y]` | yes | | The top-left corner, canvas units. |
 | `min_size` | `[w, h]` | no | none | The size the user set, a *minimum*: the node grows to fit its content (D5). |
 | `shape` | [shape](#shape) | no | unset | The outline its fill and frame share. |
@@ -303,11 +433,12 @@ text-style `size` is a [fraction](#size-units).
 | `color` | [color](#colors) | no | unset | |
 | `weight` | [weight](#weight) | no | unset | |
 | `italic` | boolean | no | unset | |
-| `sections` | array of [sections](#section) | no | `[]` | |
+| `sections` | array of [sections](#section) | no | `[]` | In ascending `channel`. |
 | `frame` | [frame](#frame) | no | none | The node's outline text. A node with no `frame` draws none; a `frame` of `{}` draws one with every field unset. |
 | `connector` | [connector](#connector) | no | see meaning | The line to the node's parent. **Forbidden on a top-level node.** On a child node it is optional: absent means a connector with every field unset and nothing under it, and the saver omits it in exactly that case. |
 | `links` | array of [links](#link) | no | `[]` | |
-| `children` | array of [nodes](#node) | no | `[]` | Child nodes, in sibling order. |
+
+A node's child nodes are not inside it: they follow it in the list.
 
 ### Triggers
 
@@ -605,41 +736,72 @@ its path.
 | Corner radius | `0` to `100` |
 | Weight | 100, 200, ... 900 |
 | `control_points` | at most 2 (`MAX_CONTROL_POINTS`) |
-| Node `id` | `1` to `4294967294` (`MAX_NODE_IDENT`) |
+| A node's `id` and `parent`, a link's `to` | `1` to `4294967294` (`MAX_NODE_IDENT`); a larger integer is this bound, not another error |
 | `channel` (node, section, ring) | `0` to `4294967295` (`MAX_CHANNEL`), the most a `usize` holds on wasm32, so every target accepts the same files |
 | `palettes`, theme variables, theme variants, `verbs`, `edits`, `presentations` | at most 65536 each, the most an index addresses |
 
 ## Errors
 
-A load returns a `LoadError` with a `path` and a `kind`.
+A load returns a `LoadError`: a `path`, the `node` it is in, a
+`position` in the text, and a `kind`. Rendered, it reads
 
-- The `path` writes keys after a dot and array positions in brackets:
-  `nodes[3].frame.rings[0].spans[2].color`. A key that is not a plain
-  identifier (a letter or `_`, then letters, digits and `_`), which only
-  a name an author chose can be, is quoted in brackets as JSON quotes a
-  string, so that it cannot be read as more path: `palettes["a.b"][0].fill`,
-  `theme.variants[""].bg`, `nodes[0][""]`. A `SaveError`'s path is written
-  the same way. It is empty for an error
-  about the whole text (too large; not UTF-8), for the map itself (a
-  missing top-level key) and when the reader died where it has no path
-  to give (the end of the text).
-- An unknown key's path ends in the key. A missing key's path is the
-  object that lacks it, and the key is in the `kind`.
-- Which error is "first" follows the order the loader reads the file in:
-  the text, then the map's keys in schema order, then each node depth
-  first. Links are resolved last, because a link may name a node that
-  comes after it.
-- A file whose `format` is not `1` is reported as that, whatever else is
-  wrong with it.
+```text
+nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)
+```
+
+- **The `path`** writes keys after a dot and array positions in
+  brackets: `nodes[3].frame.rings[0].spans[2].color`. A key that is not
+  a plain identifier (a letter or `_`, then letters, digits and `_`),
+  which only a name an author chose can be, is quoted in brackets as
+  JSON quotes a string, so that it cannot be read as more path:
+  `palettes["My Palette"][0].fill`, `theme.variants[""].bg`. The path
+  addresses a node by its place in the list, never by its id, so it is
+  always a JSON path a tool can follow (`jq '.nodes[3].frame'`). It is
+  empty for an error about the whole text (too large, a byte-order mark,
+  not UTF-8), for the map itself (a missing top-level key), and when the
+  reader died where no value had begun. An unknown key's path ends in
+  the key; a missing key's path is the object that lacks it, and the
+  key is in the `kind`.
+- **The `node`**, on every error whose path starts with `nodes[i]`: its
+  place in the list, its `id` — read on its own when the rest of the
+  node did not read, so it is absent only when the id itself is what is
+  wrong — and an excerpt of its text: the first span of its
+  lowest-channel section, else of its first ring, cut to 32 grapheme
+  clusters with `…` when cut.
+- **The `position`**, a line and a column (1-based; the column counts
+  bytes): exact for an error the JSON reader found (a syntax error, a
+  wrong type, an unknown or missing key); the start of the node for one
+  found after the node was read (a bound, a reference, the chain), which
+  with one node per line is the node's line; the start of the value for
+  one in a top-level value; absent for an error about the whole text.
+- **Nothing from the file is printed raw.** In a rendered error, the
+  excerpt, a name, a key and a reader's message have every control
+  character, line separator and bidi control escaped, so a map cannot
+  rewrite the line its error is shown on.
+- **Which error is first** is fixed: the size, the byte-order mark and
+  the encoding; then JSON syntax anywhere in the text; then `format`;
+  then the other top-level keys in the order of the table above; then
+  the nodes in list order, each node's `id`, `parent` and `channel`
+  before its other keys, and a node's row checked once its subtree has
+  ended; then the links, in list order.
+- A file whose `format` is a positive integer other than `1` is
+  reported as that (`UnsupportedFormat`, which says it was written by a
+  newer version and names both numbers), whatever else is wrong with it.
+  A `format` that is not a positive integer is invalid.
+
+A `SaveError` has the same `path` and `node`, for the place the value
+would have had in the file.
 
 ## Limits
 
-- **The size of the text.** Unbounded on native. On wasm32 the text
-  is refused above 3 GiB (`MAX_MAP_BYTES`), before it is parsed.
-- **Nesting.** The JSON reader follows 128 levels of array and object.
-  A node nested in a node costs two (the node and its `children`), so a
-  chain of about 60 nested nodes is the deepest a file can hold; deeper
-  is an error, never a crash.
+| Limit | Value |
+|---|---|
+| The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, before it is parsed. |
+| The tree's depth | **None.** Every walk is iterative. |
+| The number of nodes | None beyond the ids there are; memory runs out first. |
+| A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |
+| Counts an index addresses | Palettes, theme variables and variants, verbs, edits, presentations: at most 65,536 each. |
+| Rows | No bound on sections, spans, rings or links per element. |
 
 ## Predicates
 
@@ -650,36 +812,87 @@ type in this format that holds an index.
 
 ## Example
 
+A small map, exactly as the saver writes it (it is the fixture
+`tree.mandala.json`): two top-level nodes, three levels, two node
+channels and two section channels, a line link and a portal link that
+both name later nodes, a verb named from a node's `on` and from a span's
+`link`, a palette, two theme variants and a default. The ids are
+deliberately not in list order: the list is ordered by structure, and
+node 5 was made after node 3 but sits under node 2.
+
 ```json
 {
   "format": 1,
-  "name": "Testament",
+  "name": "Genesis",
   "theme": {
     "active": "dark",
     "variants": {
-      "dark": { "accent": "#d4a24c", "bg": "#101014" }
+      "dark": {
+        "accent": "#d4a24c",
+        "bg": "#101014",
+        "fg": "#e0e0e0"
+      },
+      "light": {
+        "accent": "#8a5a00",
+        "bg": "#f6f3ec",
+        "fg": "#202024"
+      }
     }
   },
-  "nodes": [
-    {
-      "id": 1,
-      "position": [0.0, 0.0],
-      "shape": { "rectangle": { "radius": 25 } },
-      "sections": [
-        { "spans": [ { "text": "In the beginning", "size": 24.0, "weight": "bold" } ] }
-      ],
-      "frame": {
-        "fit": "fit",
-        "rings": [ { "spans": [ { "text": "And the earth was without form, and void; " } ] } ]
+  "palettes": {
+    "rainbow": [
+      {
+        "fill": "#2a1b3d",
+        "frame": "#a239ca",
+        "text": "#e0e0e0",
+        "title": "#ffffff"
       },
-      "links": [ { "to": 2, "kind": "portal" } ],
-      "children": [
-        { "id": 2, "position": [320.0, 40.0], "connector": { "spans": [ { "text": "·" } ] } }
-      ]
+      {
+        "fill": "var(bg)",
+        "frame": "var(accent)",
+        "text": "var(fg)"
+      }
+    ]
+  },
+  "defaults": {
+    "connector": {
+      "fit": "repeat",
+      "content": "─"
     }
+  },
+  "verbs": [
+    {
+      "id": "reveal-days",
+      "name": "Reveal the days"
+    }
+  ],
+  "nodes": [
+    {"id": 1, "position": [0.0, 0.0], "shape": {"rectangle": {"radius": 25}}, "palette": "rainbow", "on": {"click": "reveal-days"}, "sections": [{"spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}]}, {"channel": 1, "offset": [0.0, 40.0], "spans": [{"text": "Genesis 1:1"}]}], "frame": {"fit": "fit", "rings": [{"spans": [{"text": "And the earth was without form, and void; "}]}]}, "links": [{"to": 6, "kind": "portal"}]},
+    {"id": 2, "parent": 1, "position": [320.0, -80.0], "sections": [{"spans": [{"text": "the heaven"}]}], "links": [{"to": 4, "kind": "line", "control_points": [[400.0, 0.0]]}]},
+    {"id": 5, "parent": 2, "position": [640.0, -120.0], "sections": [{"spans": [{"text": "the firmament", "link": {"verb": "reveal-days"}}]}]},
+    {"id": 3, "parent": 1, "position": [320.0, 80.0], "sections": [{"spans": [{"text": "the earth"}]}], "connector": {"spans": [{"text": "·"}]}},
+    {"id": 4, "parent": 1, "channel": 1, "position": [320.0, 240.0], "sections": [{"spans": [{"text": "darkness upon the face of the deep"}]}]},
+    {"id": 6, "position": [0.0, 600.0], "sections": [{"spans": [{"text": "Day one"}]}]}
   ]
 }
 ```
 
-A saved file puts each array element on its own line; this one is
-condensed to read.
+How it reads, line by line (the nodes start on line 47):
+
+| Line | Node | Parent | The chain before it | Accepted because |
+|---|---|---|---|---|
+| 47 | 1 | none | empty | a top-level node may always start |
+| 48 | 2 | 1 | 1 | 1 is the node before it |
+| 49 | 5 | 2 | 1, 2 | 2 is the node before it |
+| 50 | 3 | 1 | 1, 2, 5 | 1 is on the chain, which closes 5 and 2; its previous sibling, 2, has channel 0, as 3 does |
+| 51 | 4 | 1 | 1, 3 | 1 is on the chain, which closes 3; channel 1 is not below 3's channel 0 |
+| 52 | 6 | none | 1, 4 | a top-level node, which closes 4 and 1; the previous one, 1, has channel 0, as 6 does |
+
+Edits that make it invalid, and what the loader says:
+
+- Move node 3's line below node 4's:
+  `nodes[4].channel: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)`
+- Give node 5 `"parent": 3`:
+  `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)`
+- Move node 5's line to the end of the list:
+  `nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 52)`

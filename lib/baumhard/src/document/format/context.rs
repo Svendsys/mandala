@@ -15,7 +15,12 @@
 //! **Everything here runs on the error path only.** Counting the lines
 //! before an offset is O(offset), which a load that succeeds never pays.
 
+use crate::document::element::{DocElement, DocKind};
+use crate::document::format::dto::NodeDto;
 use crate::document::format::error::TextPosition;
+use crate::engine::tree::Tree;
+use indextree::NodeId;
+use serde_json::value::RawValue;
 use std::fmt::{self, Write};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -156,4 +161,120 @@ pub fn within(base: TextPosition, line: usize, column: usize) -> TextPosition {
 /// is information, never a reason to fail.
 fn saturate(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+/// The excerpt of a node as the loader read it: the text of the first
+/// span of its lowest-channel section, else of its first ring. The
+/// lowest channel, the first among equals, so that it names the same
+/// text the built node would show first even in a node refused for
+/// listing its sections out of order.
+pub(crate) fn dto_excerpt(node: &NodeDto) -> Option<String> {
+    let section = lowest_first_text(
+        node.sections
+            .iter()
+            .map(|section| (section.channel, section.spans.first().map(|span| &*span.text))),
+    );
+    let ring = || {
+        node.frame.as_ref().and_then(|frame| {
+            lowest_first_text(
+                frame
+                    .rings
+                    .iter()
+                    .map(|ring| (ring.channel, ring.spans.first().map(|span| &*span.text))),
+            )
+        })
+    };
+    section.or_else(ring).map(excerpt)
+}
+
+/// Of rows given as (channel, the text of the first span), the text of
+/// the row with the lowest channel, the first among equals.
+fn lowest_first_text<'a>(rows: impl Iterator<Item = (u64, Option<&'a str>)>) -> Option<&'a str> {
+    let mut best: Option<(u64, Option<&'a str>)> = None;
+    for (channel, text) in rows {
+        if best.is_none_or(|(low, _)| channel < low) {
+            best = Some((channel, text));
+        }
+    }
+    best.and_then(|(_, text)| text)
+}
+
+/// The excerpt of the node at `node` in `tree`: the text of the first
+/// span of its first section, else of its frame's first ring. Rows are
+/// kept in channel order, so the first is the lowest. O(the node's
+/// row).
+pub(crate) fn tree_excerpt(tree: &Tree<DocElement>, node: NodeId) -> Option<String> {
+    let arena = tree.arena();
+    let first_of = |parent: NodeId, kind: DocKind| {
+        parent
+            .children(arena)
+            .find(|&child| arena.get(child).is_some_and(|n| n.get().kind() == kind))
+    };
+    let first_text = |parent: NodeId| {
+        first_of(parent, DocKind::Span).and_then(|span| match arena.get(span).map(|n| n.get()) {
+            Some(DocElement::Span(span)) => Some(span.text.as_str()),
+            _ => None,
+        })
+    };
+    let section = first_of(node, DocKind::Section).and_then(first_text);
+    let ring = || {
+        first_of(node, DocKind::Frame)
+            .and_then(|frame| first_of(frame, DocKind::Ring))
+            .and_then(first_text)
+    };
+    section.or_else(ring).map(excerpt)
+}
+
+/// The id of the node whose extent is `extent`, read leniently — only
+/// that key, everything else skipped — for an error from a node whose
+/// DTO did not parse. `None` when the id itself is missing, not a
+/// number, or out of range: when the id is what is wrong.
+pub(crate) fn peek_id(extent: &RawValue) -> Option<u32> {
+    #[derive(serde::Deserialize)]
+    struct IdPeek {
+        id: Option<u64>,
+    }
+    serde_json::from_str::<IdPeek>(extent.get())
+        .ok()
+        .and_then(|peek| peek.id)
+        .and_then(|id| crate::document::bounds::check_node_ident(id).ok())
+}
+
+/// The excerpt of the node whose extent is `extent`, read leniently:
+/// only the spans' text of its sections and rings, everything else
+/// skipped. `None` when those do not read, or hold no text.
+pub(crate) fn peek_excerpt(extent: &RawValue) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct SpanPeek {
+        text: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RowPeek {
+        #[serde(default)]
+        channel: u64,
+        #[serde(default)]
+        spans: Vec<SpanPeek>,
+    }
+    #[derive(serde::Deserialize)]
+    struct FramePeek {
+        #[serde(default)]
+        rings: Vec<RowPeek>,
+    }
+    #[derive(serde::Deserialize)]
+    struct TextPeek {
+        #[serde(default)]
+        sections: Vec<RowPeek>,
+        frame: Option<FramePeek>,
+    }
+    let peek = serde_json::from_str::<TextPeek>(extent.get()).ok()?;
+    let first = |rows: &[RowPeek]| {
+        rows.iter()
+            .enumerate()
+            .min_by_key(|(n, row)| (row.channel, *n))
+            .and_then(|(_, row)| row.spans.first())
+            .and_then(|span| span.text.clone())
+    };
+    first(&peek.sections)
+        .or_else(|| peek.frame.as_ref().and_then(|frame| first(&frame.rings)))
+        .map(|text| excerpt(&text))
 }

@@ -1,52 +1,56 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Order in the format: rows are built in key order whatever order the
-//! file lists them in, and names get their indices from sorted order,
-//! never from where they sit in the file.
+//! Order in the format: a row is listed in the order the document
+//! keeps it — ascending channel, equal channels in the order written —
+//! and a row listed in any other order is refused, never sorted (design
+//! B.4); so every row is built by appending. Names get their indices
+//! from sorted order, never from where they sit in the file.
 
 use crate::document::element::{DocElement, DocKind};
-use crate::document::format::load;
+use crate::document::format::{load, LoadErrorKind};
 use crate::document::ids::Document;
 use crate::document::tests::format_support::written;
 use crate::document::tests::format_support::{kids, node, same_document};
-use crate::document::tests::format_text::{map_with, node_of};
+use crate::document::tests::format_text::{map_with, node_of, rejection};
 use crate::document::values::{ColorRef, PaletteId, VarId};
 use indextree::NodeId;
 
-/// How many siblings the descending rows hold. Enough that a scan past
-/// each one before the next is placed would be a million key reads.
+/// How many siblings the rows of [`ascending_map`] hold. Enough that a
+/// scan past each one before the next is placed would be a million key
+/// reads.
 const SIBLINGS: usize = 1000;
 
-/// A map whose every row the file lists in descending order of channel:
-/// the top-level nodes, one node's sections, its rings and its child
-/// nodes, with a link and a frame between them (kinds that do not sort
-/// among the channels).
-fn descending_map() -> String {
-    // `item(i, channel)` for channels SIBLINGS down to 1, joined.
-    let descending = |item: &dyn Fn(usize, usize) -> String| {
+/// A map whose every row is long and lists its channels from 1 up: the
+/// top-level nodes, one node's sections, its rings and its child nodes,
+/// with a link and a frame between them (kinds that do not sort among
+/// the channels).
+fn ascending_map() -> String {
+    // `item(i, channel)` for channels 1 up to SIBLINGS, joined.
+    let ascending = |item: &dyn Fn(usize, usize) -> String| {
         (0..SIBLINGS)
-            .map(|i| item(i, SIBLINGS - i))
+            .map(|i| item(i, i + 1))
             .collect::<Vec<_>>()
             .join(",")
     };
     let sections =
-        descending(&|_, channel| format!(r#"{{"channel":{channel},"spans":[{{"text":"s{channel}"}}]}}"#));
+        ascending(&|_, channel| format!(r#"{{"channel":{channel},"spans":[{{"text":"s{channel}"}}]}}"#));
     let rings =
-        descending(&|_, channel| format!(r#"{{"channel":{channel},"spans":[{{"text":"r{channel}"}}]}}"#));
-    let children = descending(&|i, channel| node_of(5000 + i as u32, &format!(r#","channel":{channel}"#)));
-    // The first root, on the highest channel, holds everything above;
-    // the rest are bare. Node 2, the second, is where the link leads.
-    let roots = descending(&|i, channel| {
-        let body = if i == 0 {
-            format!(
-                r#","channel":{channel},"sections":[{sections}],"frame":{{"rings":[{rings}]}},"links":[{{"to":2,"kind":"line"}}],"children":[{children}]"#
-            )
-        } else {
-            format!(r#","channel":{channel}"#)
-        };
-        node_of(1 + i as u32, &body)
-    });
-    map_with("", &roots)
+        ascending(&|_, channel| format!(r#"{{"channel":{channel},"spans":[{{"text":"r{channel}"}}]}}"#));
+    let children =
+        ascending(&|i, channel| node_of(5000 + i as u32, &format!(r#","parent":1,"channel":{channel}"#)));
+    // The first root, on the lowest channel, holds everything above and
+    // is followed by its children; the rest are bare. Node 2 is where
+    // the link leads.
+    let first = node_of(
+        1,
+        &format!(
+            r#","channel":1,"sections":[{sections}],"frame":{{"rings":[{rings}]}},"links":[{{"to":2,"kind":"line"}}]"#
+        ),
+    );
+    let rest: Vec<String> = (1..SIBLINGS)
+        .map(|i| node_of(1 + i as u32, &format!(r#","channel":{}"#, i + 1)))
+        .collect();
+    map_with("", &format!("{first},{children},{}", rest.join(",")))
 }
 
 /// Every row of `doc` is in ascending arena order: each child was
@@ -76,13 +80,10 @@ fn assert_every_row_was_appended(doc: &Document) -> usize {
 
 #[test]
 fn test_every_row_of_a_loaded_map_is_built_by_appending() {
-    let doc = load(&descending_map()).expect("the descending map loads");
+    let doc = load(&ascending_map()).expect("the ascending map loads");
 
     let rows = assert_every_row_was_appended(&doc);
     assert!(rows > SIBLINGS, "precondition: every row was read ({rows})");
-
-    // The rows are in channel order: the file's descending order was
-    // put right, not kept.
     doc.tree().check_sorted().expect("every row is sorted by key");
     let channels = |parent: NodeId, kind: DocKind| -> Vec<usize> {
         kids(&doc, parent, kind)
@@ -91,16 +92,18 @@ fn test_every_row_of_a_loaded_map_is_built_by_appending() {
             .collect()
     };
     let ascending: Vec<usize> = (1..=SIBLINGS).collect();
-    let roots = channels(doc.root(), DocKind::Node);
-    assert_eq!(roots, ascending, "the top-level nodes");
-    // The node holding the rest is the one with the highest channel.
+    assert_eq!(
+        channels(doc.root(), DocKind::Node),
+        ascending,
+        "the top-level nodes"
+    );
     let (one, _) = node(&doc, 1);
     assert_eq!(channels(one, DocKind::Section), ascending, "the sections");
     assert_eq!(channels(one, DocKind::Node), ascending, "the child nodes");
     let (frame, _) = kids(&doc, one, DocKind::Frame)[0];
     assert_eq!(channels(frame, DocKind::Ring), ascending, "the rings");
     // And what is not on a channel stayed where the kinds put it:
-    // sections, frame, links, then nodes.
+    // sections, frame, connector, links, then nodes.
     let order: Vec<DocKind> = doc
         .children(one)
         .filter_map(|c| doc.get(c).map(DocElement::kind))
@@ -111,56 +114,200 @@ fn test_every_row_of_a_loaded_map_is_built_by_appending() {
     assert_eq!(order.iter().filter(|k| **k == DocKind::Link).count(), 1);
 }
 
+/// A fan: node 1 and `count` children of it, with `channel(i)` for the
+/// `i`th.
+fn fan(count: usize, channel: impl Fn(usize) -> usize) -> String {
+    let children: Vec<String> = (0..count)
+        .map(|i| node_of(2 + i as u32, &format!(r#","parent":1,"channel":{}"#, channel(i))))
+        .collect();
+    map_with("", &format!("{},{}", node_of(1, ""), children.join(",")))
+}
+
+#[test]
+fn test_a_wide_fan_in_channel_order_loads_by_appending_and_a_descending_one_is_refused() {
+    // 100,000 siblings in ascending order: every one an append.
+    const WIDE: usize = 100_000;
+    let doc = load(&fan(WIDE, |i| i)).expect("an ascending fan loads");
+    let (one, _) = node(&doc, 1);
+    assert_eq!(kids(&doc, one, DocKind::Node).len(), WIDE);
+    assert_every_row_was_appended(&doc);
+    // The same fan descending is refused at its second child, the first
+    // sibling below the one before it, before anything else is read: it
+    // is never loaded slowly.
+    let error = rejection(&fan(WIDE, |i| WIDE - i));
+    assert_eq!(error.path, "nodes[2].channel");
+    assert_eq!(
+        error.kind,
+        LoadErrorKind::SiblingsOutOfOrder {
+            previous_channel: WIDE as u64,
+            previous_id: Some(2),
+        }
+    );
+    assert_eq!(error.node.as_ref().and_then(|node| node.id), Some(3));
+}
+
+#[test]
+fn test_a_row_listed_out_of_channel_order_is_refused() {
+    // Sibling nodes: node 3 is listed after node 2's subtree, on a lower
+    // channel than node 2.
+    let json = map_with(
+        "",
+        &[
+            node_of(1, ""),
+            node_of(2, r#","parent":1,"channel":5"#),
+            node_of(4, r#","parent":2"#),
+            node_of(3, r#","parent":1,"channel":4"#),
+        ]
+        .join(","),
+    );
+    let error = rejection(&json);
+    assert_eq!(
+        (error.path.as_str(), error.kind),
+        (
+            "nodes[3].channel",
+            LoadErrorKind::SiblingsOutOfOrder {
+                previous_channel: 5,
+                previous_id: Some(2),
+            }
+        )
+    );
+    // Top-level nodes, the same way.
+    let error = rejection(&map_with(
+        "",
+        &format!("{},{}", node_of(1, r#","channel":1"#), node_of(2, "")),
+    ));
+    assert_eq!(
+        (error.path.as_str(), error.kind),
+        (
+            "nodes[1].channel",
+            LoadErrorKind::SiblingsOutOfOrder {
+                previous_channel: 1,
+                previous_id: Some(1),
+            }
+        )
+    );
+    // Sections and rings, which have no id.
+    let section = |channel: u32| format!(r#"{{"channel":{channel},"spans":[{{"text":"x"}}]}}"#);
+    let error = rejection(&map_with(
+        "",
+        &node_of(
+            1,
+            &format!(r#","sections":[{},{},{}]"#, section(0), section(2), section(1)),
+        ),
+    ));
+    assert_eq!(
+        (error.path.as_str(), error.kind),
+        (
+            "nodes[0].sections[2].channel",
+            LoadErrorKind::SiblingsOutOfOrder {
+                previous_channel: 2,
+                previous_id: None,
+            }
+        )
+    );
+    let error = rejection(&map_with(
+        "",
+        &node_of(
+            1,
+            &format!(r#","frame":{{"rings":[{},{}]}}"#, section(3), section(0)),
+        ),
+    ));
+    assert_eq!(
+        (error.path.as_str(), error.kind),
+        (
+            "nodes[0].frame.rings[1].channel",
+            LoadErrorKind::SiblingsOutOfOrder {
+                previous_channel: 3,
+                previous_id: None,
+            }
+        )
+    );
+    // The controls: each row ascending, or with equal channels in either
+    // order, loads.
+    assert!(load(&map_with(
+        "",
+        &[
+            node_of(1, ""),
+            node_of(2, r#","parent":1,"channel":4"#),
+            node_of(4, r#","parent":2"#),
+            node_of(3, r#","parent":1,"channel":4"#),
+        ]
+        .join(",")
+    ))
+    .is_ok());
+    assert!(load(&map_with(
+        "",
+        &format!(
+            "{},{}",
+            node_of(1, r#","channel":1"#),
+            node_of(2, r#","channel":1"#)
+        )
+    ))
+    .is_ok());
+    assert!(load(&map_with(
+        "",
+        &node_of(
+            1,
+            &format!(r#","sections":[{},{},{}]"#, section(0), section(1), section(1))
+        )
+    ))
+    .is_ok());
+    assert!(load(&map_with(
+        "",
+        &node_of(
+            1,
+            &format!(r#","frame":{{"rings":[{},{}]}}"#, section(0), section(3))
+        )
+    ))
+    .is_ok());
+}
+
 #[test]
 fn test_rows_with_equal_channels_keep_the_files_order() {
-    // The sort is stable: three sections on one channel stay in file
-    // order, and so do sibling nodes, whatever surrounds them.
+    // Three sections on one channel stay in file order, and so do
+    // sibling nodes, whatever surrounds them, through a save and a load.
     let json = map_with(
         "",
         &format!(
             "{},{}",
             node_of(
                 1,
-                r#","sections":[{"channel":2,"spans":[{"text":"c"}]},{"channel":1,"spans":[{"text":"a"}]},{"channel":1,"spans":[{"text":"b"}]},{"channel":2,"spans":[{"text":"d"}]}]"#
+                r#","sections":[{"channel":1,"spans":[{"text":"b"}]},{"channel":1,"spans":[{"text":"a"}]},{"channel":2,"spans":[{"text":"d"}]},{"channel":2,"spans":[{"text":"c"}]}]"#
             ),
             node_of(2, "")
         ),
     );
     let doc = load(&json).unwrap();
-    let (one, _) = node(&doc, 1);
-    let texts: Vec<String> = kids(&doc, one, DocKind::Section)
-        .into_iter()
-        .map(|(section, _)| match kids(&doc, section, DocKind::Span)[0].1 {
-            DocElement::Span(span) => span.text.clone(),
-            _ => panic!("a span"),
-        })
-        .collect();
-    assert_eq!(texts, ["a", "b", "c", "d"]);
+    let texts = |doc: &Document| -> Vec<String> {
+        let (one, _) = node(doc, 1);
+        kids(doc, one, DocKind::Section)
+            .into_iter()
+            .map(|(section, _)| match kids(doc, section, DocKind::Span)[0].1 {
+                DocElement::Span(span) => span.text.clone(),
+                _ => panic!("a span"),
+            })
+            .collect()
+    };
+    assert_eq!(texts(&doc), ["b", "a", "d", "c"]);
+    let again = load(&written(&doc)).unwrap();
+    assert_eq!(texts(&again), ["b", "a", "d", "c"]);
 
-    // Nodes on one channel: file order.
+    // Nodes on one channel: file order, and again after a round trip.
     let json = map_with(
         "",
         &format!("{},{},{}", node_of(30, ""), node_of(10, ""), node_of(20, "")),
     );
     let doc = load(&json).unwrap();
-    let idents: Vec<u32> = kids(&doc, doc.root(), DocKind::Node)
-        .into_iter()
-        .map(|(_, e)| e.as_node().map_or(0, |n| n.ident.0))
-        .collect();
-    assert_eq!(idents, [30, 10, 20]);
-}
-
-#[test]
-fn test_a_descending_file_saves_in_ascending_order() {
-    // Not byte-identical to its input, and meant not to be: the saver
-    // writes the order the document holds, and that order reloads to
-    // the same document.
-    let doc = load(&descending_map()).unwrap();
-    let saved = written(&doc);
-    let again = load(&saved).unwrap();
+    let idents = |doc: &Document| -> Vec<u32> {
+        kids(doc, doc.root(), DocKind::Node)
+            .into_iter()
+            .map(|(_, e)| e.as_node().map_or(0, |n| n.ident.0))
+            .collect()
+    };
+    assert_eq!(idents(&doc), [30, 10, 20]);
+    let again = load(&written(&doc)).unwrap();
     same_document(&doc, &again).unwrap();
-    assert_eq!(written(&again), saved);
-    assert!(saved.find("\"s1\"").unwrap() < saved.find("\"s2\"").unwrap());
+    assert_eq!(idents(&again), [30, 10, 20]);
 }
 
 #[test]
