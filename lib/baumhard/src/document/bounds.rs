@@ -47,11 +47,11 @@ pub const MAX_CONTROL_POINTS: usize = 2;
 /// rather than issue one twice.
 pub const MAX_NODE_IDENT: u32 = u32::MAX - 1;
 
-/// The largest channel a node, section or ring may carry. A channel is a
-/// `usize` in the document and `u32::MAX` is the most a `usize` holds on
-/// every target (wasm32's is 32 bits), so a file that loads on one target
-/// loads on all of them.
-pub const MAX_CHANNEL: u32 = u32::MAX;
+/// The largest channel a node, section or ring may carry. A channel is
+/// a `usize` in the document, and `u32::MAX` is the most a `usize`
+/// holds on every target (wasm32's is 32 bits), so a map that is valid
+/// on one target is valid on all of them (ruling R11.1 on #236).
+pub const MAX_CHANNEL: usize = u32::MAX as usize;
 
 /// The most palettes a map may have: a
 /// [`PaletteId`](crate::document::values::PaletteId) is a `u16`.
@@ -317,11 +317,20 @@ pub fn check_node_ident(value: u32) -> Result<u32, BoundError> {
     }
 }
 
-/// A channel if it is at most [`MAX_CHANNEL`]. Takes the widest integer
-/// a reader can hold, so a value no `usize` holds is refused here, by the
-/// same bound on every target. O(1).
-pub fn check_channel(value: u64) -> Result<u32, BoundError> {
-    u32::try_from(value).map_err(|_| BoundError::NotAChannel(value))
+/// A channel if it is at most [`MAX_CHANNEL`]: a node's, a section's or
+/// a ring's. O(1).
+// On wasm32 a `usize` is 32 bits, so `MAX_CHANNEL` is its maximum and the
+// comparison is always true there; on 64-bit targets it is not. One body
+// for every target is the point.
+#[allow(clippy::absurd_extreme_comparisons)]
+pub fn check_channel(channel: usize) -> Result<(), BoundError> {
+    if channel <= MAX_CHANNEL {
+        Ok(())
+    } else {
+        Err(BoundError::NotAChannel(
+            u64::try_from(channel).unwrap_or(u64::MAX),
+        ))
+    }
 }
 
 /// A count if it is at most `max`: the index bounds

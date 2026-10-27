@@ -290,7 +290,7 @@ fn test_a_size_in_the_wrong_unit_has_no_spelling() {
         .tree()
         .root()
         .children(builder.tree().arena())
-        .last()
+        .next_back()
         .unwrap();
     builder.add(
         node,
@@ -313,7 +313,7 @@ fn test_a_size_in_the_wrong_unit_has_no_spelling() {
         .tree()
         .root()
         .children(builder.tree().arena())
-        .last()
+        .next_back()
         .unwrap();
     builder.add(
         node,
@@ -337,7 +337,7 @@ fn test_a_size_in_the_wrong_unit_has_no_spelling() {
         .tree()
         .root()
         .children(builder.tree().arena())
-        .last()
+        .next_back()
         .unwrap();
     let frame = builder.add(node, DocElement::Frame(FrameData::default()));
     builder.add(
@@ -389,7 +389,7 @@ fn test_a_span_in_a_ring_has_no_size_of_its_own() {
         .tree()
         .root()
         .children(builder.tree().arena())
-        .last()
+        .next_back()
         .unwrap();
     let frame = builder.add(node, DocElement::Frame(FrameData::default()));
     let ring = builder.add(frame, DocElement::Ring(RingData::default()));
@@ -488,7 +488,7 @@ fn test_a_value_the_loader_would_refuse_is_refused_at_the_same_path() {
     // A channel past the bound every target holds.
     #[cfg(target_pointer_width = "64")]
     {
-        let past = usize::try_from(u64::from(crate::document::bounds::MAX_CHANNEL) + 1).unwrap();
+        let past = crate::document::bounds::MAX_CHANNEL + 1;
         let builder = with_node(|node| node.channel = past);
         let error = refused(builder);
         assert_eq!(error.path, "nodes[0].channel");
@@ -498,7 +498,7 @@ fn test_a_value_the_loader_would_refuse_is_refused_at_the_same_path() {
         );
     }
     // And the highest one there is saves.
-    let top = usize::try_from(crate::document::bounds::MAX_CHANNEL).unwrap();
+    let top = crate::document::bounds::MAX_CHANNEL;
     let doc = with_node(|node| node.channel = top).build().unwrap();
     load(&written(&doc)).unwrap();
 }

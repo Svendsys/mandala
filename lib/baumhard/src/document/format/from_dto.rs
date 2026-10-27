@@ -328,15 +328,10 @@ impl Builder {
     /// on wasm32, and reading the number into one would refuse a smaller
     /// range there, with another message.
     pub fn channel(&self, value: u64) -> LoadResult<usize> {
-        let channel = self.bounded("channel", bounds::check_channel(value))?;
-        usize::try_from(channel).map_err(|error| {
-            self.error_at(
-                "channel",
-                LoadErrorKind::Internal {
-                    message: error.to_string(),
-                },
-            )
-        })
+        let channel = usize::try_from(value)
+            .map_err(|_| BoundError::NotAChannel(value))
+            .and_then(|channel| bounds::check_channel(channel).map(|()| channel));
+        self.bounded("channel", channel)
     }
 
     /// A font weight, checked.

@@ -1443,7 +1443,7 @@ fn test_a_channel_is_a_bound_every_target_holds() {
     // and the number is read as a `u64` first: one refusal, with one
     // message, on every target (a `usize` field would refuse a smaller
     // range there, with the reader's wording).
-    let past = u64::from(bounds::MAX_CHANNEL) + 1;
+    let past = u64::try_from(bounds::MAX_CHANNEL).unwrap() + 1;
     let not_a_channel = BoundError::NotAChannel(past);
     rejects_bound(
         &map_with("", &format!(r#"{{"id":1,"channel":{past},"position":[0,0]}}"#)),
@@ -1481,7 +1481,6 @@ fn test_a_channel_is_a_bound_every_target_holds() {
         ),
     ))
     .unwrap();
-    let top = usize::try_from(top).unwrap();
     let mut channels = Vec::new();
     let mut open = vec![doc.root()];
     while let Some(id) = open.pop() {

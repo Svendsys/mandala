@@ -186,16 +186,20 @@ pub fn do_document_bounds_node_ident() {
     assert_eq!(check_node_ident(u32::MAX), Err(BoundError::NotAnIdent(u32::MAX)));
 }
 
-/// `0..=MAX_CHANNEL`, and the check takes a `u64` so one past the bound
-/// is refused by value on every target rather than failing to fit a
-/// `usize`.
+/// `0..=MAX_CHANNEL`; one past it is refused with the value it was given.
 #[test]
 fn test_document_bounds_channel() {
-    assert_eq!(check_channel(0), Ok(0));
-    assert_eq!(check_channel(u64::from(MAX_CHANNEL)), Ok(MAX_CHANNEL));
-    let past = u64::from(MAX_CHANNEL) + 1;
-    assert_eq!(check_channel(past), Err(BoundError::NotAChannel(past)));
-    assert_eq!(check_channel(u64::MAX), Err(BoundError::NotAChannel(u64::MAX)));
+    assert_eq!(check_channel(0), Ok(()));
+    assert_eq!(check_channel(MAX_CHANNEL), Ok(()));
+    // Where a `usize` is wide enough to hold a channel past the bound
+    // (not wasm32, whose `usize` is the bound).
+    #[cfg(target_pointer_width = "64")]
+    {
+        let past = MAX_CHANNEL + 1;
+        let shown = u64::try_from(past).unwrap();
+        assert_eq!(check_channel(past), Err(BoundError::NotAChannel(shown)));
+        assert_eq!(check_channel(usize::MAX), Err(BoundError::NotAChannel(u64::MAX)));
+    }
 }
 
 #[test]
