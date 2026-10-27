@@ -2129,7 +2129,9 @@ mod tests {
     ///    a review decision, not a silent one.
     /// 4. **Types this walk genuinely cannot see** — `AppFont`, which
     ///    `lib/baumhard/build.rs` emits into `$OUT_DIR`, and strum's
-    ///    generated `Discriminant` tags. Both are unit enums today,
+    ///    generated tags — `Discriminant` and `GfxElementType`, the
+    ///    payload-free tag `GfxElementField::ElementType` names. Both
+    ///    kinds are unit enums today,
     ///    so they carry no JSON keys and cost nothing. They are on
     ///    the list because the module's promise — a new field of a
     ///    new type extends the covered set on its own — is *false*
@@ -2165,6 +2167,7 @@ mod tests {
         // 4. real types this walk cannot see
         "AppFont",
         "Discriminant",
+        "GfxElementType",
     ];
 
     /// **The walker's blind spot, made visible.** The walk stops at

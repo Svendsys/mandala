@@ -316,11 +316,12 @@ mutable field type in the delta world carries all four.
 ### `GfxElement`
 
 The tagged union every `Tree<GfxElement, _>` node is
-— either a `GlyphArea`, a `GlyphModel`, or a `Void`.
+— a `GlyphArea`, a `GlyphModel`, a `GlyphRun`, a `Fill`, or a `Void`.
 
 This is *the* tree-node type in the codebase.
 All visual things — every text region, every composed-glyph
-shape, every structural padding node — is one variant of this
+shape, every shaped TextFlow, every node background, every
+structural padding node — is one variant of this
 enum. Shared metadata rides on every variant: a `channel` for
 mutation routing, a `unique_id` assigned by the host app (Mandala
 uses it for the mindmap node id), a `flags` set, and an
@@ -330,8 +331,9 @@ hit-test — lives in the tree's `GlyphTreeCache`, keyed by `NodeId`,
 never on an element.
 
 `lib/baumhard/src/gfx_structs/element.rs`.
-`GlyphArea` and `GlyphModel` each box their payload (one heap
-allocation per element of that kind); `Void` has no payload.
+`GlyphArea`, `GlyphModel`, `GlyphRun` and `Fill` each box their
+payload (one heap allocation per element of that kind); `Void` has no
+payload.
 There is a companion `GfxElementType` enum for cheap variant
 checks without destructuring, and a `GfxElementField` enum used
 by predicates and field-level mutations to name "which part of
@@ -396,6 +398,56 @@ arbitrary coordinates without pre-sizing. The central
 `GlyphMatrix::place_in` method paints the matrix into the owning
 area's `String + ColorFontRegions`, padding with newlines and
 spaces so every component lands on the intended grapheme cell.
+
+### `GlyphRun`
+
+One whole TextFlow as one glyph element: a reference to what was
+shaped, the placement that positions it, and the per-glyph effects
+layered on top. It never splits into one element per glyph.
+
+A box flow (a section, a label) is a `RunShape::Box` — the shaped
+box, drawn whole with its top-left at the run's `origin`. A path flow
+(a frame ring, a connection, a portal marker) is a `RunShape::Path` —
+the shaped run *the placement refers to* (the rescaled or filled run
+when placement returned one) plus its `PlacedRun`, one canvas position
+per placed glyph. Both hold `Arc`s, so cloning a run for a journal's
+before-image copies pointers, and re-placing a moved flow swaps the
+`placed` pointer without reshaping. `GlyphOverrides` — an offset, a
+color and a scale per **placed** glyph — are what glyph-layer
+presentations write, through `RunOverrideOp`; the placed glyph count
+is not the shaped glyph count, because `Repeat` and fillers reuse
+indices, and a range op skips filler glyphs. The run's `bounds` (its
+hit-test box) are computed when the shape or origin is set: the
+shaped size at the origin for a box, the union of the glyph boxes for
+a path. Overrides do not move them. `zoom` is evaluated at render
+time, never by projection.
+
+The run changes through `RunSet` (the whole payload, what projection
+writes), `RunOrigin`, `RunOpacity` and `RunOverrides`; interpolation
+blends `origin`, `opacity` and the override vectors and snaps the
+shaping. State comparison (`same_state`) compares the shaping by
+`Arc` identity. Introduced in V1-B6 (#240); nothing draws a run until
+the renderer sub-issues.
+
+`lib/baumhard/src/gfx_structs/run.rs`; the mutations are
+`GfxMutation::Run*` in `mutator.rs`.
+
+### `Fill`
+
+A node's background as a glyph element: a rectangle, the shape it
+takes in it (a rounded rectangle, or the inscribed ellipse), a color,
+a soft `fade` at its edge, an opacity and an optional zoom window.
+
+The rectangle is `flow::Rect`, the one the node's frame runs around,
+so the fill and the frame share one outline (design §13.4). A fill is
+hit by its rectangle, ellipses included. It changes through `FillSet`
+(projection's), `FillColor`, `FillOpacity` and `FillRect`;
+interpolation blends the rectangle, the color, `fade` and `opacity`
+and snaps the `shape` and `zoom`. Introduced in V1-B6 (#240); the
+renderer's shader fill that draws it is V1-C2.
+
+`lib/baumhard/src/gfx_structs/fill.rs`; the mutations are
+`GfxMutation::Fill*`.
 
 ### `Void`
 
@@ -665,7 +717,9 @@ A mutation is not one uniform thing — a
 `GlyphArea` and a `GlyphModel` accept different kinds of change.
 The `GfxMutation` enum is the sum type covering all of them: two
 flavors each for area and model (field-level `Delta` vs.
-imperative `Command`), plus `Event` (subscriber dispatch). It
+imperative `Command`), plus `Event` (subscriber dispatch), the `Run*`
+mutations that change a `GlyphRun` and the `Fill*` mutations that
+change a `Fill`. It
 implements the engine's `Mutation<GfxElement>`; its builder template
 is a list of `CellField` slots (`gfx_structs/template.rs`).
 
@@ -673,7 +727,12 @@ is a list of `CellField` slots (`gfx_structs/template.rs`).
 Each variant boxes its payload to keep the enum compact. Type
 mismatches (e.g. `ModelDelta` applied to a `GlyphArea`) are
 silently ignored per the [`Applicable`](#applicablet) no-panic
-rule.
+rule; a run or fill mutation at an element of another kind is
+ignored and logged the same way, in every build. `RunSet` and
+`FillSet` are projection-only and never authored: they are
+`#[serde(skip)]` and have no JSON spelling, and since only a
+projection bug can land one on the wrong element, that case also trips
+a `debug_assert!`.
 
 ### `GlyphAreaField` and `DeltaGlyphArea`
 
@@ -1112,8 +1171,10 @@ interpolate; every other field takes the before or the after value by
 entry's interpolated element, and stands moved elements in the
 before or the after arrangement by the same snap, so the rows stay
 sorted. The glyph instantiation interpolates an area's position,
-render bounds, scale, line height and background color, and a
-model's position.
+render bounds, scale, line height and background color, a model's
+position, a run's origin, opacity and per-glyph overrides, and a
+fill's rectangle, color, fade and opacity; a run's shaping and zoom
+window and a fill's shape and zoom window snap.
 
 `lib/baumhard/src/engine/interpolate.rs`; `Interpolable for
 GfxElement` in `lib/baumhard/src/gfx_structs/element.rs`.
@@ -1384,7 +1445,8 @@ flows: shaped once as a single line (`shape_run`), then placed around
 the node's outline (`place_on_closed`), along the connection curve
 (`place_on_open`) or at a point (`place_at_point`) — shape once, place
 many. Built in V1-B5 (#239); nothing draws it until the renderer
-sub-issues.
+sub-issues. A flow's result becomes one [`GlyphRun`](#glyphrun)
+element.
 
 - **Spans are real.** Each `FlowSpan` is text, a `ResolvedText` and
   an optional link. Its face, size (per span, through cosmic-text's
