@@ -377,7 +377,9 @@ pub fn check_channel(channel: usize) -> Result<(), BoundError> {
     if channel <= MAX_CHANNEL {
         Ok(())
     } else {
-        Err(BoundError::NotAChannel(u64::try_from(channel).unwrap_or(u64::MAX)))
+        Err(BoundError::NotAChannel(
+            u64::try_from(channel).unwrap_or(u64::MAX),
+        ))
     }
 }
 

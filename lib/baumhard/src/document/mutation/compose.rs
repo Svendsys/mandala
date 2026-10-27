@@ -153,7 +153,11 @@ pub(crate) fn tops_counting(doc: &Document, nodes: &[NodeId]) -> (Result<Vec<Nod
     (result, climbed)
 }
 
-fn tops_climbing(doc: &Document, nodes: &[NodeId], climbed: &mut usize) -> Result<Vec<NodeId>, MutationError> {
+fn tops_climbing(
+    doc: &Document,
+    nodes: &[NodeId],
+    climbed: &mut usize,
+) -> Result<Vec<NodeId>, MutationError> {
     let tree = doc.tree();
     let arena = tree.arena();
     let given: FxHashSet<NodeId> = nodes.iter().copied().collect();
@@ -264,7 +268,9 @@ pub fn remove_links(links: Vec<NodeId>) -> DocStep {
         let mut members = Membership::default();
         let live: Vec<NodeId> = links
             .into_iter()
-            .filter(|&l| doc.get(l).map(DocElement::kind) == Some(DocKind::Link) && members.contains(doc.tree(), l))
+            .filter(|&l| {
+                doc.get(l).map(DocElement::kind) == Some(DocKind::Link) && members.contains(doc.tree(), l)
+            })
             .collect();
         Ok((!live.is_empty()).then(|| walk_at(command(StructOp::Remove, DocKind::Link), live)))
     })

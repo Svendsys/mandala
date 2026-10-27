@@ -15,10 +15,11 @@
 use crate::document::element::{DocElement, DocKind, SectionData, SpanData, TextStyle};
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::compose::{
-    add_section, create_child, create_root, delete, delete_text, insert_text, remove_links, reparent,
-    set_link_kind, split_section, style_range,
+    add_section, create_child, create_root, delete, delete_text, insert_text, merge_steps, remove_links,
+    reparent, set_link_kind, split_section, style_range, tops_counting,
 };
 use crate::document::mutation::error::MutationError;
+use crate::document::mutation::membership::Membership;
 use crate::document::mutation::ops::TextOp;
 use crate::document::mutation::step::DocStep;
 use crate::document::mutation::validate::validate_applied;
@@ -490,4 +491,129 @@ pub fn do_document_compose_splits_and_adds_sections() {
         add_section(&doc, node2, Some(node2)),
         Err(MutationError::NotA { .. })
     ));
+}
+
+#[test]
+fn test_document_compose_normalizes_in_log_steps() {
+    do_document_compose_normalizes_in_log_steps();
+}
+
+/// Normalization takes `ceil(log2(spans)) + 1` steps (R14.6), counted
+/// from the table below, not from `merge_steps` itself: `style_range`
+/// over a section of four spans emits its two splits, the styling and
+/// four merges (it can hold six spans). Eight equal spans — the longest
+/// run three steps can merge — become one, which a step fewer cannot
+/// do: run alone, two merge steps leave two spans.
+pub fn do_document_compose_normalizes_in_log_steps() {
+    for (spans, steps) in [
+        (0, 1),
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 3),
+        (5, 4),
+        (8, 4),
+        (9, 5),
+        (1024, 11),
+    ] {
+        assert_eq!(merge_steps(spans), steps, "{spans} spans");
+    }
+
+    let plain = TextStyle::default();
+    let four: Vec<DocElement> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|t| span_of(t, plain.clone(), None))
+        .collect();
+    let (doc, _, section) = section_of(four);
+    let steps = style_range(&doc, section, 1, 3, TextOp::SetItalic(Some(true))).unwrap();
+    assert_eq!(steps.len(), 3 + 4, "two splits, the styling, four merges");
+
+    // Eight spans that differ only in slant, all made italic: one run of
+    // eight, merged in three steps.
+    let eight: Vec<DocElement> = (0..8)
+        .map(|n| span_of(&n.to_string(), italic((n % 2 == 0).then_some(false)), None))
+        .collect();
+    let (mut doc, _, section) = section_of(eight);
+    let steps = style_range(&doc, section, 0, 8, TextOp::SetItalic(Some(true))).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans(&doc, section), vec![("01234567".to_string(), Some(true))]);
+
+    // Control: the same run given two merge steps is not done.
+    let eight: Vec<DocElement> = (0..8)
+        .map(|n| span_of(&n.to_string(), italic(Some(true)), None))
+        .collect();
+    let (mut doc, _, section) = section_of(eight);
+    let mut steps = insert_text(&doc, section, 0, "x".to_string()).unwrap();
+    steps.truncate(1 + 2);
+    apply(&mut doc, steps);
+    assert_eq!(spans(&doc, section).len(), 2, "two halvings of eight leave two");
+}
+
+/// How deep the chains of the climb-count tests go.
+const DEEP: usize = 100_000;
+
+/// A document holding one chain of `DEEP` nodes below a root node, and
+/// the chain from the top down.
+fn chain() -> (Document, Vec<NodeId>) {
+    let mut builder = DocumentBuilder::new();
+    let mut at = builder.root();
+    let mut nodes = Vec::with_capacity(DEEP);
+    for _ in 0..DEEP {
+        at = builder.node(at);
+        nodes.push(at);
+    }
+    (builder.build().unwrap(), nodes)
+}
+
+#[test]
+fn test_document_compose_trims_a_deep_selection_once_per_ancestor() {
+    do_document_compose_trims_a_deep_selection_once_per_ancestor();
+}
+
+/// The climbs `tops` makes go through each ancestor once over the whole
+/// selection (§20 rule 11, R14.5), counted in steps, not timed.
+///
+/// - Every node of a `DEEP` chain, deepest first: the top is the one
+///   top, in at most two climbs' worth of the chain (membership and
+///   nesting).
+/// - A chain of 2,000 with 2,000 leaves at its bottom, the chain's top
+///   and every leaf selected: each leaf is nested, found by a climb that
+///   stops at the bottom of the chain after the first, so the steps are
+///   about the chain plus the leaves, where a climb per leaf would be
+///   their product, four million.
+pub fn do_document_compose_trims_a_deep_selection_once_per_ancestor() {
+    let (doc, nodes) = chain();
+    let deepest_first: Vec<NodeId> = nodes.iter().rev().copied().collect();
+    let (tops, climbed) = tops_counting(&doc, &deepest_first);
+    assert_eq!(tops.unwrap(), vec![nodes[0]]);
+    assert!(climbed <= 2 * DEEP + 2, "{climbed} steps for {DEEP} nodes");
+
+    const SIDE: usize = 2_000;
+    let mut builder = DocumentBuilder::new();
+    let mut at = builder.root();
+    let mut spine = Vec::with_capacity(SIDE);
+    for _ in 0..SIDE {
+        at = builder.node(at);
+        spine.push(at);
+    }
+    let leaves: Vec<NodeId> = (0..SIDE).map(|_| builder.node(at)).collect();
+    let doc = builder.build().unwrap();
+    let mut selection = vec![spine[0]];
+    selection.extend(&leaves);
+    let (tops, climbed) = tops_counting(&doc, &selection);
+    assert_eq!(tops.unwrap(), vec![spine[0]]);
+    assert!(
+        climbed <= 4 * SIDE,
+        "{climbed} steps for {SIDE} ancestors and {SIDE} leaves"
+    );
+
+    let mut members = Membership::default();
+    for &leaf in &leaves {
+        assert!(members.contains(doc.tree(), leaf));
+    }
+    assert!(
+        members.climbed() <= 3 * SIDE,
+        "{} steps for {SIDE} ancestors and {SIDE} leaves",
+        members.climbed()
+    );
 }

@@ -1652,6 +1652,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_bounds_zoom_window", |b| {
         b.iter(do_document_bounds_zoom_window)
     });
+    c.bench_function("document_bounds_channel", |b| b.iter(do_document_bounds_channel));
     c.bench_function("document_kind_order_is_the_declared_order", |b| {
         b.iter(do_document_kind_order_is_the_declared_order)
     });
@@ -1861,6 +1862,27 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_run_steps_validates_and_is_all_or_nothing", |b| {
         b.iter(do_document_run_steps_validates_and_is_all_or_nothing)
+    });
+    c.bench_function("document_validate_refuses_the_fallback_font", |b| {
+        b.iter(do_document_validate_refuses_the_fallback_font)
+    });
+    c.bench_function("document_validate_bounds_channels", |b| {
+        b.iter(do_document_validate_bounds_channels)
+    });
+    c.bench_function("document_validate_refuses_an_inverted_range", |b| {
+        b.iter(do_document_validate_refuses_an_inverted_range)
+    });
+    c.bench_function("document_validate_applied_judges_nested_links", |b| {
+        b.iter(do_document_validate_applied_judges_nested_links)
+    });
+    c.bench_function("document_validate_walks_a_deep_mutator", |b| {
+        b.iter(do_document_validate_walks_a_deep_mutator)
+    });
+    c.bench_function("document_compose_normalizes_in_log_steps", |b| {
+        b.iter(do_document_compose_normalizes_in_log_steps)
+    });
+    c.bench_function("document_compose_trims_a_deep_selection_once_per_ancestor", |b| {
+        b.iter(do_document_compose_trims_a_deep_selection_once_per_ancestor)
     });
     c.bench_function("document_compose_creates_nodes", |b| {
         b.iter(do_document_compose_creates_nodes)

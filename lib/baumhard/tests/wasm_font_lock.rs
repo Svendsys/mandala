@@ -19,6 +19,11 @@
 //! re-entrancy case panics with its own message — rather than hanging,
 //! or trapping for some unrelated reason.
 //!
+//! **It also runs one document walk 100,000 levels deep** — the
+//! mutation validator over a deep mutator tree — because design §20
+//! rule 11 asks every tree walk to prove, under wasm32 debug, that depth
+//! costs it no call stack, and this is the probe that runs code there.
+//!
 //! **What it needs.** The `wasm32-unknown-unknown` target and `node`.
 //! Without either, the test prints a note and passes, the same
 //! conditional-locally, unconditional-in-CI arrangement as `test.sh`'s

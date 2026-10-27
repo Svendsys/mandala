@@ -294,7 +294,10 @@ pub fn do_document_bounds_channel() {
     assert_eq!(check_channel(0), Ok(()));
     assert_eq!(check_channel(MAX_CHANNEL), Ok(()));
     #[cfg(target_pointer_width = "64")]
-    assert!(MAX_CHANNEL.checked_add(1).is_some(), "a 64-bit usize holds a channel past the bound");
+    assert!(
+        MAX_CHANNEL.checked_add(1).is_some(),
+        "a 64-bit usize holds a channel past the bound"
+    );
     if let Some(past) = MAX_CHANNEL.checked_add(1) {
         assert_eq!(check_channel(past), Err(BoundError::NotAChannel(1 << 32)));
     }

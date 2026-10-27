@@ -507,10 +507,9 @@ impl<'d> Validator<'d> {
             NodeOp::SetPosition(position) => self.canvas("node.position", *position),
             NodeOp::Nudge(delta) => self.finite("node.nudge", *delta),
             NodeOp::SetMinSize(size) => self.extent("node.min_size", *size),
-            NodeOp::SetShape(_)
-            | NodeOp::SetFolded(_)
-            | NodeOp::ToggleFolded
-            | NodeOp::SetHidden(_) => Ok(()),
+            NodeOp::SetShape(_) | NodeOp::SetFolded(_) | NodeOp::ToggleFolded | NodeOp::SetHidden(_) => {
+                Ok(())
+            }
             NodeOp::SetChannel(channel) => self.bound("node.channel", check_channel(*channel)),
             NodeOp::SetFill(fill) => self.color(fill.as_ref()),
             NodeOp::SetFillFade(fade) => self.non_negative("node.fill_fade", *fade),
@@ -655,7 +654,9 @@ impl<'d> Validator<'d> {
             }
             DocElement::Connector(connector) => self.path_data(&connector.path),
             DocElement::Link(link) => {
-                if self.doc.get(link.to).map(DocElement::kind) != Some(DocKind::Node) || !self.in_tree(link.to) {
+                if self.doc.get(link.to).map(DocElement::kind) != Some(DocKind::Node)
+                    || !self.in_tree(link.to)
+                {
                     return Err(MutationError::LinkTarget {
                         at: self.at(),
                         to: link.to,
@@ -678,7 +679,8 @@ impl<'d> Validator<'d> {
     fn walk_subtree(&mut self, subtree: &Subtree<DocElement>) -> Result<(), MutationError> {
         // (element, its parent's kind, its depth below the subtree's
         // root, its position among its siblings).
-        let mut pending: Vec<(&Subtree<DocElement>, Option<DocKind>, usize, usize)> = vec![(subtree, None, 0, 0)];
+        let mut pending: Vec<(&Subtree<DocElement>, Option<DocKind>, usize, usize)> =
+            vec![(subtree, None, 0, 0)];
         while let Some((node, parent, depth, position)) = pending.pop() {
             if let Some(path) = self.subtree.as_mut() {
                 path.truncate(depth.saturating_sub(1));

@@ -136,3 +136,15 @@ pub extern "C" fn reentrant_read_write() -> u32 {
     let _inner = acquire_font_system_write("probe::inner");
     0
 }
+
+/// Validate a document mutator tree 100,000 levels deep (design §20
+/// rule 11, ruling R14.4 on #237): the validator's walk iterates, so it
+/// fits wasm32's default stack in a debug build. Runs the native test's
+/// body, `do_document_validate_walks_a_deep_mutator`, which panics on
+/// any failure.
+#[no_mangle]
+pub extern "C" fn deep_mutator_validates() -> u32 {
+    install_hook();
+    baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_mutator();
+    1
+}

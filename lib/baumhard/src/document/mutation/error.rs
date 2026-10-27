@@ -244,10 +244,16 @@ impl fmt::Display for MutationError {
                 write!(f, "{at}: the range {start}..{end} ends before it starts")
             }
             MutationError::AnyFont { at } => {
-                write!(f, "{at}: a font must name a face; the fallback face is never stored")
+                write!(
+                    f,
+                    "{at}: a font must name a face; the fallback face is never stored"
+                )
             }
             MutationError::RingSpanSize { at } => {
-                write!(f, "{at}: a span inside a ring takes the ring's size and sets none")
+                write!(
+                    f,
+                    "{at}: a span inside a ring takes the ring's size and sets none"
+                )
             }
             MutationError::Missing { at, what, index } => {
                 write!(f, "{at}: the document has no {what} {index}")
@@ -275,7 +281,10 @@ impl fmt::Display for MutationError {
             }
             MutationError::Shape(error) => write!(f, "{error}"),
             MutationError::PlacedRingSpanSize { element } => {
-                write!(f, "{element}: a span inside a ring takes the ring's size and sets none")
+                write!(
+                    f,
+                    "{element}: a span inside a ring takes the ring's size and sets none"
+                )
             }
             MutationError::SelfLink { link } => write!(f, "link {link} leads to its own node"),
             MutationError::DanglingLink { link, to } => {

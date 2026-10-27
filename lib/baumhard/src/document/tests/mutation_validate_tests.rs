@@ -881,7 +881,12 @@ fn test_document_validate_refuses_the_fallback_font() {
 pub fn do_document_validate_refuses_the_fallback_font() {
     use crate::font::fonts::AppFont;
     let (doc, _) = document();
-    let set_font = |font| at_root(DocKind::Span, DocMutation::Span(SpanOp::Text(TextOp::SetFont(font))));
+    let set_font = |font| {
+        at_root(
+            DocKind::Span,
+            DocMutation::Span(SpanOp::Text(TextOp::SetFont(font))),
+        )
+    };
     assert!(matches!(
         validate(&set_font(Some(AppFont::Any)), &doc),
         Err(MutationError::AnyFont { .. })
@@ -973,7 +978,10 @@ pub fn do_document_validate_bounds_channels() {
     }
     assert_eq!(validate(&insert_section(MAX_CHANNEL), &doc), Ok(()));
     #[cfg(target_pointer_width = "64")]
-    assert!(MAX_CHANNEL.checked_add(1).is_some(), "a 64-bit usize holds a channel past the bound");
+    assert!(
+        MAX_CHANNEL.checked_add(1).is_some(),
+        "a 64-bit usize holds a channel past the bound"
+    );
     if let Some(past) = MAX_CHANNEL.checked_add(1) {
         match validate(&insert_section(past), &doc) {
             Err(MutationError::Bound { field, error, at }) => {
@@ -996,7 +1004,12 @@ fn test_document_validate_refuses_an_inverted_range() {
 /// float; an empty range passes.
 pub fn do_document_validate_refuses_an_inverted_range() {
     let (doc, _) = document();
-    let delete = |start, end| at_root(DocKind::Span, DocMutation::Span(SpanOp::DeleteText { start, end }));
+    let delete = |start, end| {
+        at_root(
+            DocKind::Span,
+            DocMutation::Span(SpanOp::DeleteText { start, end }),
+        )
+    };
     let huge = (1usize << 24) + 1;
     assert_eq!(
         validate(&delete(huge, 1), &doc),
@@ -1045,7 +1058,10 @@ pub fn do_document_validate_applied_judges_nested_links() {
         Err(MutationError::DanglingLink { to, .. }) if to == ids.d
     ));
     let (mut doc, _) = document();
-    assert_eq!(applied(&mut doc, vec![(node_with_link(ids.d), vec![ids.b])]), Ok(()));
+    assert_eq!(
+        applied(&mut doc, vec![(node_with_link(ids.d), vec![ids.b])]),
+        Ok(())
+    );
 }
 
 /// How deep the deep tests go: §20 rule 11's chain.
@@ -1067,19 +1083,30 @@ pub fn do_document_validate_walks_a_deep_mutator() {
     let mut at = deep.root;
     for _ in 1..DEEP {
         at = deep
-            .insert_child(at, Mutator::new_void(BranchKey::new(DocKind::Node, 0)), Placement::Last)
+            .insert_child(
+                at,
+                Mutator::new_void(BranchKey::new(DocKind::Node, 0)),
+                Placement::Last,
+            )
             .unwrap();
     }
     assert_eq!(validate(&deep, &doc), Ok(()));
     deep.insert_child(
         at,
-        Mutator::new(DocMutation::Node(NodeOp::SetHidden(true)), BranchKey::new(DocKind::Section, 0)),
+        Mutator::new(
+            DocMutation::Node(NodeOp::SetHidden(true)),
+            BranchKey::new(DocKind::Section, 0),
+        ),
         Placement::Last,
     )
     .unwrap();
     match validate(&deep, &doc) {
         Err(MutationError::PayloadKind { at, .. }) => {
-            assert_eq!(at.mutator.len(), DEEP, "the path runs from the root to the bottom");
+            assert_eq!(
+                at.mutator.len(),
+                DEEP,
+                "the path runs from the root to the bottom"
+            );
             assert!(at.mutator.iter().all(|&p| p == 0));
         }
         other => panic!("expected the payload at the bottom refused, got {other:?}"),
