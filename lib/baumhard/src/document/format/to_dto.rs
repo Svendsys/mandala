@@ -102,20 +102,14 @@ pub(super) fn dtos_of(doc: &Document) -> SaveResult<MapDto> {
 impl<'a> Saver<'a> {
     /// An error of `kind` at the current path.
     fn error(&self, kind: SaveErrorKind) -> SaveError {
-        SaveError {
-            path: render_path(&self.path),
-            kind,
-        }
+        SaveError::new(render_path(&self.path), kind)
     }
 
     /// An error of `kind` at the current path and then `key`.
     fn error_at(&self, key: &'static str, kind: SaveErrorKind) -> SaveError {
         let mut path = self.path.clone();
         path.push(Seg::Key(key));
-        SaveError {
-            path: render_path(&path),
-            kind,
-        }
+        SaveError::new(render_path(&path), kind)
     }
 
     /// Run `f` one segment deeper.

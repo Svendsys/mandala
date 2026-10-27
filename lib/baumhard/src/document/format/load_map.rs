@@ -31,7 +31,13 @@ impl Builder {
     /// beside the tree.
     pub(super) fn map(&mut self, dto: &MapDto) -> LoadResult<Definitions> {
         if dto.format != 1 {
-            return Err(self.error_at("format", LoadErrorKind::UnsupportedFormat { found: dto.format }));
+            return Err(self.error_at(
+                "format",
+                LoadErrorKind::UnsupportedFormat {
+                    found: dto.format,
+                    newest: 1,
+                },
+            ));
         }
         self.counts(dto)?;
         let root = self.tree.root();

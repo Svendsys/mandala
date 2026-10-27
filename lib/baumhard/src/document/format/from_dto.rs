@@ -114,21 +114,20 @@ pub(super) fn build(dto: &MapDto) -> LoadResult<(Document, usize)> {
     let checked = builder.checked;
     Document::from_tree(builder.tree, definitions)
         .map(|document| (document, checked))
-        .map_err(|error| LoadError {
-            path: String::new(),
-            kind: LoadErrorKind::Internal {
-                message: error.to_string(),
-            },
+        .map_err(|error| {
+            LoadError::new(
+                String::new(),
+                LoadErrorKind::Internal {
+                    message: error.to_string(),
+                },
+            )
         })
 }
 
 impl Builder {
     /// An error of `kind` at the current path.
     pub fn error(&self, kind: LoadErrorKind) -> LoadError {
-        LoadError {
-            path: render_path(&self.path),
-            kind,
-        }
+        LoadError::new(render_path(&self.path), kind)
     }
 
     /// An error of `kind` at the current path and then `key`.
@@ -138,17 +137,14 @@ impl Builder {
             path.push('.');
         }
         path.push_str(key);
-        LoadError { path, kind }
+        LoadError::new(path, kind)
     }
 
     /// An error of `kind` at the current path followed by `segs`.
     pub fn error_under(&self, segs: &[Seg], kind: LoadErrorKind) -> LoadError {
         let mut path = self.path.clone();
         path.extend_from_slice(segs);
-        LoadError {
-            path: render_path(&path),
-            kind,
-        }
+        LoadError::new(render_path(&path), kind)
     }
 
     /// `result` with a bound error placed under the current path at
@@ -532,10 +528,7 @@ impl Builder {
         let links = std::mem::take(&mut self.links);
         for link in links {
             let target = self.idents.get(&link.to).copied();
-            let fail = |kind| LoadError {
-                path: render_path(&link.path),
-                kind,
-            };
+            let fail = |kind| LoadError::new(render_path(&link.path), kind);
             let Some(target) = target else {
                 return Err(fail(LoadErrorKind::DanglingLink { to: link.to }));
             };

@@ -1,28 +1,79 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! [`LoadError`]: why a
-//! `.mandala.json` did not load, and where in the file.
+//! [`LoadError`] and [`SaveError`]: why a `.mandala.json` did not load
+//! or could not be saved, and where in the file.
 //!
 //! **Every error names its JSON path** (design §16): the location of
 //! the offending value, written the way a reader would navigate to it,
-//! `nodes[3].frame.rings[0].spans[2].color`. The only error without
-//! one is [`TooLarge`](LoadErrorKind::TooLarge), which is about the
-//! whole text rather than a place in it. A
-//! [`Syntax`](LoadErrorKind::Syntax) error carries the line and column
-//! the reader gave up at, and the path of the value it was in when it
-//! did, unless it died on something that has no path (the end of the
-//! text, a key that is not a string), in which case the path is empty.
+//! `nodes[3].frame.rings[0].spans[2].color`. Paths address nodes by
+//! their position in the flat `nodes` list, never by id, so a path is
+//! always one `jq` can follow. The errors without one are about the
+//! whole text: [`TooLarge`](LoadErrorKind::TooLarge),
+//! [`ByteOrderMark`](LoadErrorKind::ByteOrderMark), text that is not
+//! UTF-8, and a [`Syntax`](LoadErrorKind::Syntax) error the reader
+//! raised where no value had begun.
+//!
+//! **A path alone does not help a person at 100,000 nodes**, so an
+//! error inside `nodes[i]` also carries the node's context
+//! ([`NodeContext`]: its `id` and an excerpt of its text), and every
+//! error that has a place in the text carries a [`TextPosition`]. The
+//! rendered error reads
+//! `nodes[48213].sections[0].spans[2].color: the theme defines no variable `acent` (node 70211 "In the beginning…", line 48217)`.
 //!
 //! **There is one error.** A load is refused at the first thing wrong
 //! with it and returns nothing else (§7.2): no partial document, no
-//! list of problems, no recovery. Where a file has several, which one
-//! is "first" is decided by the order the loader reads it in: the text
-//! as a whole, then the map's own keys in schema order, then each node
-//! depth first; links are resolved last, because a link may name a node
-//! that appears after it.
+//! list of problems, no recovery. Which error is "first" is fixed by
+//! the order the loader reads in: the whole text (its size, its
+//! byte-order mark, its encoding), then JSON syntax anywhere in it, then
+//! `format`, then the other top-level keys in schema order, then the
+//! nodes in list order — within a node its structure (`id`, `parent`,
+//! `channel`) before its content — and the links last, because a link
+//! may name a node that appears after it.
+//!
+//! **No raw control character reaches a message.** Text from the file
+//! — a name, a key, an excerpt — is shown with its control, line
+//! separator and bidi characters escaped
+//! ([`context::shown`](crate::document::format::context::shown)), so a
+//! hostile map cannot rewrite the terminal, dialog or IPC line an error
+//! is printed on.
 
 use crate::document::bounds::BoundError;
+use crate::document::format::context::shown;
 use std::fmt;
+
+/// How many ids a [`ParentNotOnChain`](LoadErrorKind::ParentNotOnChain)
+/// error lists as the ones a node there could name. The chain can be as
+/// long as the tree is deep, and an error is not the place to print all
+/// of it.
+pub const CHAIN_SHOWN: usize = 8;
+
+/// The node an error is inside: present on every [`LoadError`] and
+/// [`SaveError`] whose path starts with `nodes[i]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeContext {
+    /// `i` in `nodes[i]`: the node's position in the list.
+    pub index: usize,
+    /// The node's `id`. `None` only when the id itself is what is wrong
+    /// (missing, not a number, out of range): a node whose other keys
+    /// fail to read still has its id read on its own.
+    pub id: Option<u32>,
+    /// The start of the node's text — the first span of its
+    /// lowest-channel section, else of its first ring — cut to 32
+    /// grapheme clusters (`…` when cut) and escaped
+    /// ([`context::excerpt`](crate::document::format::context::excerpt)).
+    /// `None` when the node has no text.
+    pub excerpt: Option<String>,
+}
+
+/// A place in the text, both parts 1-based. The column counts bytes
+/// from the start of the line, as the JSON reader counts them.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct TextPosition {
+    /// The line.
+    pub line: u32,
+    /// The column, in bytes.
+    pub column: u32,
+}
 
 /// Why a load failed, and where.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,14 +82,35 @@ pub struct LoadError {
     /// A key is written after a `.`, an array position in brackets, and
     /// the first segment has no leading dot. A key that is not a plain
     /// identifier (a name an author chose, holding a dot, or empty) is
-    /// quoted in brackets instead, `palettes["a.b"][0].fill`. Empty when the error is
-    /// about the whole text. For a key that is missing, the path is the
-    /// object that lacks it and the key is in the
+    /// quoted in brackets instead, `palettes["a.b"][0].fill`. Empty when
+    /// the error is about the whole text. For a key that is missing, the
+    /// path is the object that lacks it and the key is in the
     /// [kind](LoadErrorKind::MissingKey); for a key that is not allowed,
     /// the path ends in the key itself.
     pub path: String,
+    /// The node the path is inside, when it starts with `nodes[i]`.
+    pub node: Option<NodeContext>,
+    /// Where in the text: exact for an error the JSON reader raised (a
+    /// syntax error, a wrong type, an unknown or missing key); the start
+    /// of the node, or of the top-level value, for one the loader found
+    /// after reading it (a bound, a reference, the chain); `None` for an
+    /// error about the whole text.
+    pub position: Option<TextPosition>,
     /// What is wrong there.
     pub kind: LoadErrorKind,
+}
+
+impl LoadError {
+    /// An error of `kind` at `path`, with no node context or position
+    /// yet: the phase that knows them adds them.
+    pub(crate) fn new(path: String, kind: LoadErrorKind) -> Self {
+        LoadError {
+            path,
+            node: None,
+            position: None,
+            kind,
+        }
+    }
 }
 
 /// What is wrong at a [`LoadError`]'s path.
@@ -53,9 +125,14 @@ pub enum LoadErrorKind {
         /// The longest text this target loads.
         max: u64,
     },
-    /// The text is not JSON, or nests deeper than the JSON reader
-    /// follows (128 levels of array and object, which is a chain of
-    /// about 60 nested nodes). `message` says where, by line and column.
+    /// The text starts with a UTF-8 byte-order mark. A file is UTF-8
+    /// without one (RFC 8259 §8.1), and accepting one would be a second
+    /// spelling of the start of the file.
+    ByteOrderMark,
+    /// The text is not UTF-8, is not JSON, or nests deeper than the JSON
+    /// reader follows inside one value (128 levels of array and object;
+    /// a node's own content nests at most 9, so only a hostile text
+    /// reaches it). `message` says what the reader reported.
     Syntax {
         /// What the reader reported.
         message: String,
@@ -79,16 +156,19 @@ pub enum LoadErrorKind {
     },
     /// A value is of the wrong JSON type, or is not one of the
     /// spellings the schema allows for it. `message` is the reader's,
-    /// naming what was found and what was expected, with its line and
-    /// column.
+    /// naming what was found and what was expected.
     Invalid {
         /// What the reader reported.
         message: String,
     },
-    /// `format` is not `1`.
+    /// `format` is a positive integer this build does not read: a file
+    /// written by a newer version. Reported before anything else in the
+    /// file, whose other keys may be ones this build does not know.
     UnsupportedFormat {
         /// The number the file gives.
         found: u64,
+        /// The newest format this build reads.
+        newest: u64,
     },
     /// A number or a count is outside the bound
     /// [`document::bounds`](crate::document::bounds) puts on it.
@@ -96,10 +176,58 @@ pub enum LoadErrorKind {
         /// Which bound, and the value that broke it.
         error: BoundError,
     },
-    /// Two nodes carry the same `id`. The path is the second.
+    /// Two nodes carry the same `id`. The path is the second one's `id`.
+    /// A git merge of two branches that each added a node is the usual
+    /// cause.
     DuplicateId {
         /// The id.
         id: u32,
+    },
+    /// A node's `parent` is its own `id`.
+    ParentIsSelf {
+        /// The id.
+        id: u32,
+    },
+    /// A node's `parent` names no node before it in the list: one that
+    /// never appears, or one that appears later. A parent comes before
+    /// its children.
+    ParentNotEarlier {
+        /// The id `parent` gives.
+        parent: u32,
+    },
+    /// A node's `parent` comes earlier in the list, but its subtree has
+    /// already ended: the list is in depth-first pre-order, so a node's
+    /// parent is the node before it or one of that node's ancestors.
+    ParentNotOnChain {
+        /// The id `parent` gives.
+        parent: u32,
+        /// Where that node is: `i` in `nodes[i]`.
+        parent_index: usize,
+        /// The ids a node here could name: the node before it, then its
+        /// ancestors, nearest first, at most [`CHAIN_SHOWN`].
+        expected: Vec<u32>,
+        /// Whether `expected` stops short of a root.
+        truncated: bool,
+    },
+    /// A node, a section or a ring has a lower `channel` than the
+    /// sibling listed before it. Siblings are listed in the order the
+    /// document keeps them: ascending channel, equal channels in the
+    /// order written. The path is the element's `channel`.
+    SiblingsOutOfOrder {
+        /// The channel of the sibling listed before it.
+        previous_channel: u64,
+        /// That sibling's `id`, when it is a node.
+        previous_id: Option<u32>,
+    },
+    /// A name an author chose — a theme variant or variable, a palette,
+    /// the id of an edit, presentation or verb — is empty.
+    EmptyName,
+    /// A name an author chose holds a control character (C0, DEL or C1)
+    /// or a bidi embedding, override or isolate control, which can make
+    /// it display as something else in a menu, a terminal or an error.
+    NameNotPrintable {
+        /// The offending character's code point.
+        code_point: u32,
     },
     /// Two entries of an `edits`, `presentations` or `verbs` list carry
     /// the same `id`. The path is the second.
@@ -183,39 +311,99 @@ impl fmt::Display for LoadErrorKind {
                 "map is {bytes} bytes, over the {max} byte limit: refusing to load it. \
                  A map this size is either damaged or hostile."
             ),
-            LoadErrorKind::Syntax { message } | LoadErrorKind::Invalid { message } => f.write_str(message),
-            LoadErrorKind::UnknownKey { key } => write!(f, "unknown key `{key}`"),
-            LoadErrorKind::MissingKey { key } => write!(f, "missing key `{key}`"),
-            LoadErrorKind::DuplicateKey { key } => write!(f, "the key `{key}` appears twice"),
-            LoadErrorKind::UnsupportedFormat { found } => {
-                write!(f, "format {found} is not supported: this build reads format 1")
+            LoadErrorKind::ByteOrderMark => f.write_str(
+                "the text starts with a byte-order mark, which a map does not have: save it as UTF-8 without a BOM",
+            ),
+            LoadErrorKind::Syntax { message } | LoadErrorKind::Invalid { message } => {
+                write!(f, "{}", shown(message))
             }
+            LoadErrorKind::UnknownKey { key } => write!(f, "unknown key `{}`", shown(key)),
+            LoadErrorKind::MissingKey { key } => write!(f, "missing key `{}`", shown(key)),
+            LoadErrorKind::DuplicateKey { key } => write!(f, "the key `{}` appears twice", shown(key)),
+            LoadErrorKind::UnsupportedFormat { found, newest } => write!(
+                f,
+                "this map is format {found}, written by a newer version of Mandala: this build reads format {newest}"
+            ),
             LoadErrorKind::Bound { error } => write!(f, "{error}"),
             LoadErrorKind::DuplicateId { id } => write!(f, "another node already has the id {id}"),
+            LoadErrorKind::ParentIsSelf { id } => write!(f, "node {id} names itself as its parent"),
+            LoadErrorKind::ParentNotEarlier { parent } => write!(
+                f,
+                "no node before this one has the id {parent}; a parent comes before its children"
+            ),
+            LoadErrorKind::ParentNotOnChain {
+                parent,
+                parent_index,
+                expected,
+                truncated,
+            } => {
+                write!(
+                    f,
+                    "node {parent} (nodes[{parent_index}]) is earlier, but its subtree has ended; a node here can name "
+                )?;
+                for (n, id) in expected.iter().enumerate() {
+                    if n > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{id}")?;
+                }
+                if *truncated {
+                    f.write_str(", …")?;
+                }
+                if expected.is_empty() {
+                    f.write_str("none, as a new root")
+                } else {
+                    f.write_str(", or none for a new root")
+                }
+            }
+            LoadErrorKind::SiblingsOutOfOrder {
+                previous_channel,
+                previous_id,
+            } => match previous_id {
+                Some(id) => write!(
+                    f,
+                    "siblings are listed in ascending channel, and the sibling before this one (node {id}) has channel {previous_channel}"
+                ),
+                None => write!(
+                    f,
+                    "siblings are listed in ascending channel, and the one before this has channel {previous_channel}"
+                ),
+            },
+            LoadErrorKind::EmptyName => f.write_str("a name cannot be empty"),
+            LoadErrorKind::NameNotPrintable { code_point } => write!(
+                f,
+                "a name cannot hold U+{code_point:04X}, a control or bidi character that would change how it displays"
+            ),
             LoadErrorKind::DuplicateDefinition { id } => {
-                write!(f, "another entry of this list already has the id `{id}`")
+                write!(f, "another entry of this list already has the id `{}`", shown(id))
             }
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),
             LoadErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),
-            LoadErrorKind::UnknownVerb { id } => write!(f, "the map defines no verb `{id}`"),
-            LoadErrorKind::UnknownPalette { name } => write!(f, "the map defines no palette `{name}`"),
-            LoadErrorKind::UnknownVariable { name } => write!(f, "the theme defines no variable `{name}`"),
+            LoadErrorKind::UnknownVerb { id } => write!(f, "the map defines no verb `{}`", shown(id)),
+            LoadErrorKind::UnknownPalette { name } => {
+                write!(f, "the map defines no palette `{}`", shown(name))
+            }
+            LoadErrorKind::UnknownVariable { name } => {
+                write!(f, "the theme defines no variable `{}`", shown(name))
+            }
             LoadErrorKind::UnknownFont { family } => {
-                write!(f, "no font named `{family}` is compiled into this build")
+                write!(f, "no font named `{}` is compiled into this build", shown(family))
             }
             LoadErrorKind::ActiveNotAVariant { name } => {
-                write!(f, "`{name}` is not one of the theme's variants")
+                write!(f, "`{}` is not one of the theme's variants", shown(name))
             }
             LoadErrorKind::VariantsDiffer { variable, missing } => {
                 if *missing {
                     write!(
                         f,
-                        "this variant lacks the variable `{variable}`, which the others define"
+                        "this variant lacks the variable `{}`, which the others define",
+                        shown(variable)
                     )
                 } else {
                     write!(
                         f,
-                        "this variant defines the variable `{variable}`, which the others lack"
+                        "this variant defines the variable `{}`, which the others lack",
+                        shown(variable)
                     )
                 }
             }
@@ -231,20 +419,55 @@ impl fmt::Display for LoadErrorKind {
             LoadErrorKind::Internal { message } => {
                 write!(
                     f,
-                    "the loader built a map the document refuses ({message}): this is a bug"
+                    "the loader built a map the document refuses ({}): this is a bug",
+                    shown(message)
                 )
             }
         }
     }
 }
 
+/// Write ` (node 70211 "In the beginning…", line 48217)`, leaving out
+/// each part that is absent, and nothing at all when none is known.
+fn write_context(
+    f: &mut fmt::Formatter<'_>,
+    node: Option<&NodeContext>,
+    position: Option<TextPosition>,
+) -> fmt::Result {
+    let id = node.and_then(|node| node.id);
+    let excerpt = node.and_then(|node| node.excerpt.as_deref());
+    if id.is_none() && excerpt.is_none() && position.is_none() {
+        return Ok(());
+    }
+    f.write_str(" (")?;
+    let mut written = false;
+    if id.is_some() || excerpt.is_some() {
+        f.write_str("node")?;
+        if let Some(id) = id {
+            write!(f, " {id}")?;
+        }
+        if let Some(excerpt) = excerpt {
+            // Already escaped: the excerpt holds no raw control or quote.
+            write!(f, " \"{excerpt}\"")?;
+        }
+        written = true;
+    }
+    if let Some(position) = position {
+        if written {
+            f.write_str(", ")?;
+        }
+        write!(f, "line {}", position.line)?;
+    }
+    f.write_str(")")
+}
+
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.path.is_empty() {
-            write!(f, "{}", self.kind)
-        } else {
-            write!(f, "{}: {}", self.path, self.kind)
+        if !self.path.is_empty() {
+            write!(f, "{}: ", self.path)?;
         }
+        write!(f, "{}", self.kind)?;
+        write_context(f, self.node.as_ref(), self.position)
     }
 }
 
@@ -263,8 +486,22 @@ impl std::error::Error for LoadError {}
 pub struct SaveError {
     /// Where in the file the offending value would be.
     pub path: String,
+    /// The node the path is inside, when it starts with `nodes[i]`: its
+    /// position in the list the saver writes, its id and its excerpt.
+    pub node: Option<NodeContext>,
     /// What is wrong with it.
     pub kind: SaveErrorKind,
+}
+
+impl SaveError {
+    /// An error of `kind` at `path`, with no node context yet.
+    pub(crate) fn new(path: String, kind: SaveErrorKind) -> Self {
+        SaveError {
+            path,
+            node: None,
+            kind,
+        }
+    }
 }
 
 /// What is wrong at a [`SaveError`]'s path.
@@ -351,8 +588,10 @@ pub enum SaveErrorKind {
         /// The loader's refusal.
         error: Box<LoadError>,
     },
-    /// The text could not be written.
-    Write {
+    /// The text could not be written: the writer [`save_to`](crate::document::format::save_to)
+    /// was given failed. The path is the node being written, or empty
+    /// for the header.
+    Io {
         /// What the writer reported.
         message: String,
     },
@@ -379,10 +618,10 @@ impl fmt::Display for SaveErrorKind {
             SaveErrorKind::UnknownPalette { index } => write!(f, "the map defines no palette {index}"),
             SaveErrorKind::UnknownVerb { index } => write!(f, "the map defines no verb {index}"),
             SaveErrorKind::DuplicateName { name } => {
-                write!(f, "two entries are named `{name}`, and the file keys them by name")
+                write!(f, "two entries are named `{}`, and the file keys them by name", shown(name))
             }
             SaveErrorKind::DuplicateDefinition { id } => {
-                write!(f, "two entries of this list have the id `{id}`")
+                write!(f, "two entries of this list have the id `{}`", shown(id))
             }
             SaveErrorKind::ThemeWithoutVariants { variables, active } => write!(
                 f,
@@ -406,18 +645,18 @@ impl fmt::Display for SaveErrorKind {
             SaveErrorKind::NotLoadable { error } => {
                 write!(f, "the file this would write does not load ({})", error.kind)
             }
-            SaveErrorKind::Write { message } => write!(f, "the text could not be written: {message}"),
+            SaveErrorKind::Io { message } => write!(f, "the text could not be written: {}", shown(message)),
         }
     }
 }
 
 impl fmt::Display for SaveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.path.is_empty() {
-            write!(f, "{}", self.kind)
-        } else {
-            write!(f, "{}: {}", self.path, self.kind)
+        if !self.path.is_empty() {
+            write!(f, "{}: ", self.path)?;
         }
+        write!(f, "{}", self.kind)?;
+        write_context(f, self.node.as_ref(), None)
     }
 }
 

@@ -575,7 +575,7 @@ fn test_a_color_has_one_spelling_and_the_refusal_names_it() {
 
 #[test]
 fn test_the_format_must_be_one() {
-    let unsupported = |found| LoadErrorKind::UnsupportedFormat { found };
+    let unsupported = |found| LoadErrorKind::UnsupportedFormat { found, newest: 1 };
     rejects(
         &format!(r#"{{"format":2,"name":"t",{THEME}}}"#),
         "format",

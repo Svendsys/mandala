@@ -44,6 +44,7 @@
 
 #[macro_use]
 mod macros;
+pub mod context;
 pub(crate) mod dto;
 pub mod error;
 mod from_dto;
@@ -54,7 +55,7 @@ pub(crate) mod spelling;
 mod strict;
 mod to_dto;
 
-pub use error::{LoadError, LoadErrorKind, SaveError, SaveErrorKind};
+pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};
 
 use crate::document::format::dto::MapDto;
 use crate::document::ids::Document;
@@ -123,19 +124,19 @@ pub fn load_from_bytes(bytes: &[u8]) -> Result<Document, LoadError> {
 pub(crate) fn load_bytes_under(bytes: &[u8], ceiling: Option<u64>) -> Result<Document, LoadError> {
     let length = bytes.len() as u64;
     if let Some(max) = ceiling.filter(|max| length > *max) {
-        return Err(LoadError {
-            path: String::new(),
-            kind: LoadErrorKind::TooLarge { bytes: length, max },
-        });
+        return Err(LoadError::new(
+            String::new(),
+            LoadErrorKind::TooLarge { bytes: length, max },
+        ));
     }
     match std::str::from_utf8(bytes) {
         Ok(text) => load_under(text, ceiling),
-        Err(error) => Err(LoadError {
-            path: String::new(),
-            kind: LoadErrorKind::Syntax {
+        Err(error) => Err(LoadError::new(
+            String::new(),
+            LoadErrorKind::Syntax {
                 message: format!("the text is not UTF-8: {error}"),
             },
-        }),
+        )),
     }
 }
 
@@ -182,10 +183,10 @@ pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), Load
 pub(crate) fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result<(), LoadError> {
     let bytes = json.len() as u64;
     match ceiling.filter(|max| bytes > *max) {
-        Some(max) => Err(LoadError {
-            path: String::new(),
-            kind: LoadErrorKind::TooLarge { bytes, max },
-        }),
+        Some(max) => Err(LoadError::new(
+            String::new(),
+            LoadErrorKind::TooLarge { bytes, max },
+        )),
         None => Ok(()),
     }
 }
@@ -203,11 +204,13 @@ pub(crate) fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result
 /// disagree with the loader about what a loadable file is: it asks it.
 fn checked_dtos(doc: &Document) -> Result<MapDto, SaveError> {
     let dto = to_dto::dtos_of(doc)?;
-    from_dto::build(&dto).map_err(|error| SaveError {
-        path: error.path.clone(),
-        kind: SaveErrorKind::NotLoadable {
-            error: Box::new(error),
-        },
+    from_dto::build(&dto).map_err(|error| {
+        SaveError::new(
+            error.path.clone(),
+            SaveErrorKind::NotLoadable {
+                error: Box::new(error),
+            },
+        )
     })?;
     Ok(dto)
 }
@@ -237,11 +240,13 @@ pub fn check_savable(doc: &Document) -> Result<(), SaveError> {
 /// serde_json's writer; O(elements).
 pub fn save(doc: &Document) -> Result<String, SaveError> {
     let dto = checked_dtos(doc)?;
-    let mut text = serde_json::to_string_pretty(&dto).map_err(|error| SaveError {
-        path: String::new(),
-        kind: SaveErrorKind::Write {
-            message: error.to_string(),
-        },
+    let mut text = serde_json::to_string_pretty(&dto).map_err(|error| {
+        SaveError::new(
+            String::new(),
+            SaveErrorKind::Io {
+                message: error.to_string(),
+            },
+        )
     })?;
     text.push('\n');
     Ok(text)
@@ -255,12 +260,12 @@ fn parse(json: &str) -> Result<MapDto, LoadError> {
     match parsed {
         Ok(dto) => match deserializer.end() {
             Ok(()) => Ok(dto),
-            Err(error) => Err(LoadError {
-                path: String::new(),
-                kind: LoadErrorKind::Syntax {
+            Err(error) => Err(LoadError::new(
+                String::new(),
+                LoadErrorKind::Syntax {
                     message: error.to_string(),
                 },
-            }),
+            )),
         },
         Err(error) => Err(refusal(json, error)),
     }
@@ -284,10 +289,7 @@ fn refusal(json: &str, error: serde_path_to_error::Error<serde_json::Error>) -> 
         // and the path is the last value the reader entered, which is
         // where it gave up. It has none to give when it died on a key.
         let path = if has_unknown_step { String::new() } else { path };
-        return LoadError {
-            path,
-            kind: LoadErrorKind::Syntax { message },
-        };
+        return LoadError::new(path, LoadErrorKind::Syntax { message });
     }
 
     // A file with a `format` other than 1 is a file this build does not
@@ -295,10 +297,10 @@ fn refusal(json: &str, error: serde_path_to_error::Error<serde_json::Error>) -> 
     // keys this one does not know, and "unknown key" would be the wrong
     // thing to say about it.
     if let Some(found) = format_number(json).filter(|found| *found != 1) {
-        return LoadError {
-            path: "format".to_string(),
-            kind: LoadErrorKind::UnsupportedFormat { found },
-        };
+        return LoadError::new(
+            "format".to_string(),
+            LoadErrorKind::UnsupportedFormat { found, newest: 1 },
+        );
     }
 
     let quoted = |prefix: &str| {
@@ -309,27 +311,15 @@ fn refusal(json: &str, error: serde_path_to_error::Error<serde_json::Error>) -> 
     };
     if let Some(key) = quoted("unknown field `") {
         // The reader has already entered the key: the path ends in it.
-        return LoadError {
-            path,
-            kind: LoadErrorKind::UnknownKey { key },
-        };
+        return LoadError::new(path, LoadErrorKind::UnknownKey { key });
     }
     if let Some(key) = quoted("missing field `") {
-        return LoadError {
-            path,
-            kind: LoadErrorKind::MissingKey { key },
-        };
+        return LoadError::new(path, LoadErrorKind::MissingKey { key });
     }
     if let Some(key) = quoted("duplicate field `") {
-        return LoadError {
-            path,
-            kind: LoadErrorKind::DuplicateKey { key },
-        };
+        return LoadError::new(path, LoadErrorKind::DuplicateKey { key });
     }
-    LoadError {
-        path,
-        kind: LoadErrorKind::Invalid { message },
-    }
+    LoadError::new(path, LoadErrorKind::Invalid { message })
 }
 
 /// The number a file gives as its top-level `format`, if it gives one.
