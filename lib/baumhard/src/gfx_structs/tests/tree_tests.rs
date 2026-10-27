@@ -647,6 +647,10 @@ pub fn do_area_block_commands() {
                             unreachable!("AREA_COMMANDS does not emit GlyphModel on Add — see MODEL_COMMANDS",)
                         }
                         GfxElementField::Flag(_) => {}
+                        // Predicate-only fields: no area command emits them.
+                        GfxElementField::ElementType(_) | GfxElementField::Opacity(_) => {
+                            unreachable!("AREA_COMMANDS does not emit predicate-only fields")
+                        }
                     }
                 }
                 ApplyOperation::Assign => match element_field {
@@ -735,6 +739,10 @@ pub fn do_area_block_commands() {
                         unreachable!("AREA_COMMANDS does not emit GlyphModel on Assign — see MODEL_COMMANDS",)
                     }
                     GfxElementField::Flag(_) => {}
+                    // Predicate-only fields: no area command emits them.
+                    GfxElementField::ElementType(_) | GfxElementField::Opacity(_) => {
+                        unreachable!("AREA_COMMANDS does not emit predicate-only fields")
+                    }
                 },
                 ApplyOperation::Subtract => {
                     match element_field {
@@ -851,6 +859,10 @@ pub fn do_area_block_commands() {
                             )
                         }
                         GfxElementField::Flag(_) => {}
+                        // Predicate-only fields: no area command emits them.
+                        GfxElementField::ElementType(_) | GfxElementField::Opacity(_) => {
+                            unreachable!("AREA_COMMANDS does not emit predicate-only fields")
+                        }
                     }
                 }
                 ApplyOperation::Multiply => {
@@ -964,6 +976,10 @@ pub fn do_area_block_commands() {
                             )
                         }
                         GfxElementField::Flag(_) => {}
+                        // Predicate-only fields: no area command emits them.
+                        GfxElementField::ElementType(_) | GfxElementField::Opacity(_) => {
+                            unreachable!("AREA_COMMANDS does not emit predicate-only fields")
+                        }
                     }
                 }
                 ApplyOperation::Noop => {}
@@ -1043,6 +1059,10 @@ pub fn do_area_block_commands() {
                     GfxElementField::Id(_) => {}
                     GfxElementField::GlyphModel(_) => {}
                     GfxElementField::Flag(_) => {}
+                    // Predicate-only fields: no area command emits them.
+                    GfxElementField::ElementType(_) | GfxElementField::Opacity(_) => {
+                        unreachable!("AREA_COMMANDS does not emit predicate-only fields")
+                    }
                 },
             }
         }

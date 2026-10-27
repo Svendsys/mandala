@@ -226,6 +226,77 @@ extend it, padding any gap with whitespace.
 > `maptool` path used these keys, so there was nothing to migrate in
 > the same commit.
 
+### Glyph run and fill mutations
+
+The glyph layers (design §12.1) are made of two element types besides
+areas and models. A **`GlyphRun`** is one whole TextFlow — a shaped
+box or a shaped run placed along a path — and a **`Fill`** is a node's
+background. Four run mutations and three fill mutations are *authored*:
+a presentation or a custom mutation can name them. The two that
+replace a whole payload, `RunSet` and `FillSet`, hold shaped text and
+belong to projection; they have **no JSON spelling**, and `{"RunSet": …}`
+or `{"FillSet": …}` in a file is refused as an unknown variant.
+
+```json
+{
+  "mutations": [
+    {"RunOpacity": 0.5},
+    {"RunOrigin": [12.0, -4.0]},
+    {"RunOverrides": {"Offset": {"range": {"start": 0, "end": 3}, "value": [0.0, -2.0]}}},
+    {"RunOverrides": {"Color": {"range": {"start": 0, "end": 3}, "value": [255, 0, 0, 255]}}},
+    {"RunOverrides": {"Color": {"range": {"start": 4, "end": 6}, "value": null}}},
+    {"RunOverrides": {"Scale": {"range": {"start": 3, "end": 6}, "value": 1.5}}},
+    {"RunOverrides": "Clear"},
+    {"FillColor": [30, 60, 90, 255]},
+    {"FillOpacity": 0.25},
+    {"FillRect": {"origin": [0.0, 0.0], "size": [120.0, 60.0]}}
+  ]
+}
+```
+
+- `RunOpacity` / `FillOpacity` — a number, multiplied into the alpha of
+  every glyph of the run, or of the fill's color.
+- `RunOrigin` — a two-element `[x, y]` array (not an `{"x", "y"}`
+  object, as for every `Vec2`): the canvas position of a box run's
+  top-left, or the offset applied to every placed glyph of a path run.
+  The run's hit-test box moves with it.
+- `RunOverrides` — per-glyph presentation effects, one of four ops.
+  `Offset` adds `value` to the position of each glyph in `range`;
+  `Color` replaces their color with `value` (`null` returns them to
+  their own); `Scale` multiplies their size by `value`; the bare string
+  `"Clear"` drops every override. `range` is `{"start": s, "end": e}`,
+  half-open, and indexes the run's **placed glyphs** — the glyphs as
+  drawn, so a `Repeat`ed run counts every copy and a combining mark
+  counts as a glyph. A range is clamped to the glyph count: one that
+  runs past the end writes up to it, and one that starts past the end,
+  runs backward or is empty writes nothing. A `Once` frame's filler
+  glyphs are skipped by every range, since they belong to no span. A
+  run's hit-test box does not move with its overrides.
+- `FillColor` — an `[r, g, b, a]` array of bytes.
+- `FillRect` — `{"origin": [x, y], "size": [w, h]}`: the rectangle the
+  fill covers, and its hit-test box.
+
+On a predicate, two element-level fields select these elements:
+`GfxElementField::ElementType` names an element's variant, and
+`GfxElementField::Opacity` compares the opacity of a run or a fill.
+
+```json
+[
+  {"ElementType": "GlyphRun"},
+  {"ElementType": "Fill"},
+  {"Opacity": 0.5}
+]
+```
+
+`ElementType` is tested with `Equals` (`Equals(false)` is `==`,
+`Equals(true)` is `!=`); the variants are `GlyphArea`, `GlyphModel`,
+`GlyphRun`, `Fill` and `Void`. `Opacity` accepts the ordering
+comparators and matches only a run or a fill.
+
+A run or fill mutation that reaches an element of another kind changes
+nothing; a debug build also trips a `debug_assert!`, as a document
+payload at the wrong element does.
+
 ### Document-actions-only mutation
 
 A mutation can carry only canvas-level work (e.g. a theme switch)

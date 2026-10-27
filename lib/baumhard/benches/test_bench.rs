@@ -40,6 +40,8 @@ use baumhard::gfx_structs::tests::bvh_descent_tests::*;
 use baumhard::gfx_structs::tests::camera_tests::*;
 use baumhard::gfx_structs::tests::delta_tests::*;
 use baumhard::gfx_structs::tests::element_tests::*;
+use baumhard::gfx_structs::tests::fill_tests::*;
+use baumhard::gfx_structs::tests::glyph_layer_tests::*;
 use baumhard::gfx_structs::tests::journal_tests::*;
 use baumhard::gfx_structs::tests::map_children_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
@@ -48,6 +50,7 @@ use baumhard::gfx_structs::tests::predicate_tests::*;
 use baumhard::gfx_structs::tests::region_indexer_tests::*;
 use baumhard::gfx_structs::tests::region_params_tests::*;
 use baumhard::gfx_structs::tests::region_rect_tests::*;
+use baumhard::gfx_structs::tests::run_tests::*;
 use baumhard::gfx_structs::tests::scene_tests::*;
 use baumhard::gfx_structs::tests::shape_tests::*;
 use baumhard::gfx_structs::tests::spatial_descend_tests::*;
@@ -2300,6 +2303,81 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("gfx_interpolates_geometry_and_color_and_snaps_the_rest", |b| {
         b.iter(do_gfx_interpolates_geometry_and_color_and_snaps_the_rest)
+    });
+    // glyph runs and fills: the two glyph-layer element types //
+    c.bench_function("run_construction_validates_override_lengths", |b| {
+        b.iter(do_run_construction_validates_override_lengths)
+    });
+    c.bench_function("run_bounds_are_the_union_of_the_placed_glyph_boxes", |b| {
+        b.iter(do_run_bounds_are_the_union_of_the_placed_glyph_boxes)
+    });
+    c.bench_function("run_origin_moves_the_bounds_and_nothing_else", |b| {
+        b.iter(do_run_origin_moves_the_bounds_and_nothing_else)
+    });
+    c.bench_function("run_opacity_sets_only_the_opacity", |b| {
+        b.iter(do_run_opacity_sets_only_the_opacity)
+    });
+    c.bench_function("run_set_replaces_the_run_and_recomputes_its_bounds", |b| {
+        b.iter(do_run_set_replaces_the_run_and_recomputes_its_bounds)
+    });
+    c.bench_function(
+        "run_override_ops_write_their_range_and_materialize_the_rest_neutral",
+        |b| b.iter(do_run_override_ops_write_their_range_and_materialize_the_rest_neutral),
+    );
+    c.bench_function("run_override_ranges_are_clamped_to_the_placed_glyphs", |b| {
+        b.iter(do_run_override_ranges_are_clamped_to_the_placed_glyphs)
+    });
+    c.bench_function("run_override_ops_skip_filler_glyphs", |b| {
+        b.iter(do_run_override_ops_skip_filler_glyphs)
+    });
+    c.bench_function("run_element_answers_position_and_flags_like_any_element", |b| {
+        b.iter(do_run_element_answers_position_and_flags_like_any_element)
+    });
+    c.bench_function(
+        "run_mutations_leave_other_elements_alone_and_other_mutations_leave_runs_alone",
+        |b| b.iter(do_run_mutations_leave_other_elements_alone_and_other_mutations_leave_runs_alone),
+    );
+    c.bench_function("fill_mutations_set_exactly_their_field", |b| {
+        b.iter(do_fill_mutations_set_exactly_their_field)
+    });
+    c.bench_function("fill_element_answers_position_and_debug", |b| {
+        b.iter(do_fill_element_answers_position_and_debug)
+    });
+    c.bench_function("glyph_layer_same_state_compares_every_state_field", |b| {
+        b.iter(do_glyph_layer_same_state_compares_every_state_field)
+    });
+    c.bench_function("glyph_layer_elements_deliver_events_to_their_subscribers", |b| {
+        b.iter(do_glyph_layer_elements_deliver_events_to_their_subscribers)
+    });
+    c.bench_function(
+        "run_interpolates_origin_opacity_and_overrides_and_snaps_the_shape",
+        |b| b.iter(do_run_interpolates_origin_opacity_and_overrides_and_snaps_the_shape),
+    );
+    c.bench_function("fill_interpolates_geometry_and_color_and_snaps_the_shape", |b| {
+        b.iter(do_fill_interpolates_geometry_and_color_and_snaps_the_shape)
+    });
+    c.bench_function("interpolation_between_other_variants_still_snaps_whole", |b| {
+        b.iter(do_interpolation_between_other_variants_still_snaps_whole)
+    });
+    c.bench_function(
+        "predicates_select_runs_and_fills_by_element_type_and_opacity",
+        |b| b.iter(do_predicates_select_runs_and_fills_by_element_type_and_opacity),
+    );
+    c.bench_function("descendant_at_finds_runs_and_fills_by_their_boxes", |b| {
+        b.iter(do_descendant_at_finds_runs_and_fills_by_their_boxes)
+    });
+    c.bench_function("descendants_aabb_covers_runs_and_fills", |b| {
+        b.iter(do_descendants_aabb_covers_runs_and_fills)
+    });
+    c.bench_function("journal_round_trips_a_tree_of_runs_and_fills", |b| {
+        b.iter(do_journal_round_trips_a_tree_of_runs_and_fills)
+    });
+    c.bench_function(
+        "authored_glyph_layer_mutations_have_the_documented_wire_shape",
+        |b| b.iter(do_authored_glyph_layer_mutations_have_the_documented_wire_shape),
+    );
+    c.bench_function("hit_test_reaches_a_run_and_a_fill_in_a_deep_chain", |b| {
+        b.iter(do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain)
     });
     // structural commands: insert, remove, move, split, merge //
     c.bench_function("structure_move_under_its_own_subtree_is_a_cycle", |b| {

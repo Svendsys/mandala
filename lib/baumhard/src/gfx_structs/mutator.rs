@@ -7,14 +7,22 @@
 //! delivers to an element's subscribers.
 
 use crate::core::primitives::Applicable;
+use crate::document::values::Rgba;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
+use crate::flow::Rect;
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand};
 use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::fill::FillData;
 use crate::gfx_structs::model::{DeltaGlyphModel, GlyphModel, GlyphModelCommand};
-use crate::gfx_structs::mutator::GfxMutation::{AreaCommand, AreaDelta, Event, ModelCommand, ModelDelta};
+use crate::gfx_structs::mutator::GfxMutation::{
+    AreaCommand, AreaDelta, Event, FillColor, FillOpacity, FillRect, FillSet, ModelCommand, ModelDelta,
+    RunOpacity, RunOrigin, RunOverrides, RunSet,
+};
+use crate::gfx_structs::run::{GlyphRunData, RunOverrideOp};
 use crate::gfx_structs::template::CellField;
 use crate::gfx_structs::tree::TreeEventConsumer;
+use glam::Vec2;
 use log::debug;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
@@ -160,6 +168,35 @@ pub enum GfxMutation {
     /// event subscribers. Does not modify element data directly;
     /// subscribers may enqueue further mutations in response.
     Event(GlyphTreeEventInstance),
+    /// Replace the whole [`GlyphRun`](GfxElement::GlyphRun) payload: what
+    /// projection writes when a flow is reshaped or re-placed. The
+    /// bounds come with the new data. Cost: one clone of the payload —
+    /// two `Arc` bumps and the override vectors.
+    ///
+    /// **Never authored, never serialized.** It holds `Arc`s of shaped
+    /// text, which have no wire form, so it is `#[serde(skip)]`:
+    /// serializing one is an error and no file can contain one.
+    #[serde(skip)]
+    RunSet(Box<GlyphRunData>),
+    /// Move a run: set its `origin`. The bounds follow. O(1).
+    RunOrigin(Vec2),
+    /// Set a run's opacity, multiplied into every glyph's alpha. O(1).
+    RunOpacity(f32),
+    /// Edit a run's per-glyph overrides: what glyph-layer presentations
+    /// write. See [`RunOverrideOp`]. Cost: O(glyphs in the range).
+    RunOverrides(RunOverrideOp),
+    /// Replace the whole [`Fill`](GfxElement::Fill) payload: what
+    /// projection writes. Never authored and never serialized, for the
+    /// reason [`GfxMutation::RunSet`] is not: it is projection-only.
+    /// O(1).
+    #[serde(skip)]
+    FillSet(Box<FillData>),
+    /// Set a fill's color. O(1).
+    FillColor(Rgba),
+    /// Set a fill's opacity. O(1).
+    FillOpacity(f32),
+    /// Set the rectangle a fill covers (its hit-test box with it). O(1).
+    FillRect(Rect),
 }
 
 impl AsRef<GfxMutation> for GfxMutation {
@@ -243,6 +280,22 @@ impl GfxMutation {
         self == other || format!("{self:?}") == format!("{other:?}")
     }
 
+    /// Whether this is one of the run or fill payloads
+    /// (`RunSet` … `FillRect`). O(1).
+    fn is_run_or_fill(&self) -> bool {
+        matches!(
+            self,
+            RunSet(_)
+                | RunOrigin(_)
+                | RunOpacity(_)
+                | RunOverrides(_)
+                | FillSet(_)
+                | FillColor(_)
+                | FillOpacity(_)
+                | FillRect(_)
+        )
+    }
+
     /// Apply this mutation directly to a [`GlyphArea`]. A model
     /// variant is silently ignored (debug-logged). Cost: O(k) for
     /// deltas, O(1) for commands.
@@ -259,6 +312,8 @@ impl GfxMutation {
             ModelDelta(_) | ModelCommand(_) => {
                 debug!("Tried to apply a model mutation to an area, ignoring.")
             }
+            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) | FillSet(_) | FillColor(_)
+            | FillOpacity(_) | FillRect(_) => self.refuse_run_or_fill("a GlyphArea"),
             // `apply_to` filters `Event` before reaching here.
             // A direct caller hitting this arm is a regression in
             // the dispatch invariant, not a runtime user error.
@@ -280,10 +335,70 @@ impl GfxMutation {
             AreaDelta(_) | AreaCommand(_) => {
                 debug!("Tried to apply an area mutation to a model, ignoring.");
             }
+            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) | FillSet(_) | FillColor(_)
+            | FillOpacity(_) | FillRect(_) => self.refuse_run_or_fill("a GlyphModel"),
             Event(_) => {
                 unreachable!("Event reached apply_to_model; apply_to() must filter Event before dispatch")
             }
         }
+    }
+
+    /// Apply this mutation directly to a run's data. Only the `Run*`
+    /// variants write one; any other payload is the wrong kind for the
+    /// element and is refused as [`Self::refuse_run_or_fill`] refuses a
+    /// run or fill payload at a non-run element: a no-op with a
+    /// `debug_assert!`.
+    ///
+    /// Cost: O(1), except `RunSet` (a payload clone) and `RunOverrides`
+    /// (O(glyphs in range)). See [`Self::apply_to_area`] for the
+    /// `pub(crate)` rationale.
+    pub(crate) fn apply_to_run(&self, run: &mut GlyphRunData) {
+        match self {
+            RunSet(data) => *run = (**data).clone(),
+            RunOrigin(origin) => run.set_origin(*origin),
+            RunOpacity(opacity) => run.set_opacity(*opacity),
+            RunOverrides(op) => run.apply_override(op),
+            FillSet(_) | FillColor(_) | FillOpacity(_) | FillRect(_) => self.refuse_run_or_fill("a GlyphRun"),
+            // An area or model payload at a run: not the run's to
+            // apply, as at a `Void`.
+            AreaDelta(_) | AreaCommand(_) | ModelDelta(_) | ModelCommand(_) => {
+                debug!("Tried to apply an area or model mutation to a run, ignoring.");
+            }
+            Event(_) => {
+                unreachable!("Event reached apply_to_run; apply_to() must filter Event before dispatch")
+            }
+        }
+    }
+
+    /// Apply this mutation directly to a fill's data. Counterpart of
+    /// [`Self::apply_to_run`].
+    ///
+    /// Cost: O(1), `FillSet` included.
+    pub(crate) fn apply_to_fill(&self, fill: &mut FillData) {
+        match self {
+            FillSet(data) => *fill = (**data).clone(),
+            FillColor(color) => fill.color = *color,
+            FillOpacity(opacity) => fill.opacity = *opacity,
+            FillRect(rect) => fill.rect = *rect,
+            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) => self.refuse_run_or_fill("a Fill"),
+            AreaDelta(_) | AreaCommand(_) | ModelDelta(_) | ModelCommand(_) => {
+                debug!("Tried to apply an area or model mutation to a fill, ignoring.");
+            }
+            Event(_) => {
+                unreachable!("Event reached apply_to_fill; apply_to() must filter Event before dispatch")
+            }
+        }
+    }
+
+    /// A run or fill payload reached an element of another kind
+    /// (`target`): nothing changes, and a debug build trips a
+    /// `debug_assert!`, as a document payload at the wrong element
+    /// does. A release build logs at `debug!` and carries on, so a
+    /// mismatched authored mutation never takes an interactive path
+    /// down.
+    fn refuse_run_or_fill(&self, target: &str) {
+        debug!("gfx_structs: a run or fill mutation reached {target}, ignoring.");
+        debug_assert!(false, "a run or fill mutation ({self:?}) reached {target}");
     }
 }
 
@@ -295,10 +410,11 @@ impl Mutation<GfxElement> for GfxMutation {
 
     /// Apply this mutation to the given [`GfxElement`]. Events are
     /// dispatched to the element's subscribers; field mutations are
-    /// routed to the matching element type (area or model). Applying
-    /// to a `Void` element or a type mismatch is a silent no-op
-    /// (logged at debug level). Cost: O(k) in the number of delta
-    /// fields, or O(1) for commands and events.
+    /// routed to the matching element type (area, model, run or fill).
+    /// Applying to a `Void` element or a type mismatch is a no-op
+    /// (logged at debug level) — and for a run or fill payload at an
+    /// element of another kind, a `debug_assert!` as well. Cost: O(k)
+    /// in the number of delta fields, or O(1) for commands and events.
     fn apply_to(&self, target: &mut GfxElement, _inherited: &()) {
         if let Event(event) = self {
             target.accept_event(event);
@@ -311,7 +427,17 @@ impl Mutation<GfxElement> for GfxMutation {
             GfxElement::GlyphModel { glyph_model, .. } => {
                 self.apply_to_model(glyph_model);
             }
-            GfxElement::Void { .. } => {}
+            GfxElement::GlyphRun { run, .. } => {
+                self.apply_to_run(run);
+            }
+            GfxElement::Fill { fill, .. } => {
+                self.apply_to_fill(fill);
+            }
+            GfxElement::Void { .. } => {
+                if self.is_run_or_fill() {
+                    self.refuse_run_or_fill("a Void");
+                }
+            }
         }
     }
 }

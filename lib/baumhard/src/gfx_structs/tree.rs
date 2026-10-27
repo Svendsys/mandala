@@ -9,7 +9,7 @@
 //! as it does for every other element type (§B2); this module only adds what
 //! a glyph tree derives.
 
-use crate::engine::element::TreeCache;
+use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::tree::{MutatorTree, Tree};
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::{GfxMutation, GlyphTreeEventInstance};
@@ -299,15 +299,12 @@ impl Tree<GfxElement> {
                 continue;
             }
 
-            // This node's own AABB.
+            // This node's own AABB: the box it answers
+            // `spatial_bounds` with, which is positive on both axes by
+            // definition — an area's, a run's or a fill's.
             let own_aabb = arena.get(node_id).and_then(|n| {
-                let area = n.get().glyph_area()?;
-                let bounds = area.render_bounds.to_vec2();
-                if bounds.x <= 0.0 || bounds.y <= 0.0 {
-                    return None;
-                }
-                let pos = area.position.to_vec2();
-                Some((pos, pos + bounds))
+                let (pos, size) = n.get().spatial_bounds()?;
+                Some((pos, pos + size))
             });
 
             // Merge the children's subtree AABBs, already computed
@@ -336,14 +333,9 @@ impl Tree<GfxElement> {
             let Some(node) = self.arena().get(node_id) else {
                 continue;
             };
-            let Some(area) = node.get().glyph_area() else {
+            let Some((pos, bounds)) = node.get().spatial_bounds() else {
                 continue;
             };
-            let bounds = area.render_bounds.to_vec2();
-            if bounds.x <= 0.0 || bounds.y <= 0.0 {
-                continue;
-            }
-            let pos = area.position.to_vec2();
             any = true;
             if pos.x < min.x {
                 min.x = pos.x;
@@ -453,59 +445,61 @@ fn bvh_find(
             continue; // no subtree AABB → no renderable content
         }
 
-        // 2. Check this node's own GlyphArea AABB.
-        if let Some(area) = element.glyph_area() {
-            let pos = area.position.to_vec2();
-            let bounds = area.render_bounds.to_vec2();
-            if bounds.x > 0.0 && bounds.y > 0.0 {
-                let min = Vec2::new(pos.x - slack, pos.y - slack);
-                let max = Vec2::new(pos.x + bounds.x + slack, pos.y + bounds.y + slack);
-                if aabb_contains(point, min, max) {
-                    let hit = {
-                        // Shift into the inflated local frame so
-                        // rectangle and ellipse get the same isotropic
-                        // fuzzy margin the caller asked for. `slack == 0`
-                        // is the exact-hit case (no-op inflation).
-                        //
-                        // The frame is derived from the very `min` / `max`
-                        // the AABB test above used, not recomputed from
-                        // `pos` and `bounds`. Float addition is not
-                        // associative: for an area at x = 872.0 of width
-                        // 22.4, `pos.x + bounds.x` rounds to 894.40002
-                        // while `894.40002 - 872.0` rounds to 22.400024,
-                        // which is *greater* than `bounds.x`. Refining
-                        // against `bounds` therefore rejected points the
-                        // AABB test had just accepted — a click exactly on
-                        // a rectangle's right or bottom edge fell through
-                        // to whatever lay beneath. Whether it bit depended
-                        // on the coordinates: the same fixture's y axis
-                        // rounds the other way (22.399994), so one edge
-                        // could misbehave while the opposite one did not.
-                        //
-                        // Every hit test in the app funnels through here —
-                        // `Tree::descendant_at` backs both the canvas-role
-                        // routing and `document::hit_test`'s node and
-                        // section picking — so this was a whole-app edge
-                        // defect, not a portal one.
-                        //
-                        // Subtracting the same `min` from both sides makes
-                        // the boundary compare exact. For a rectangle the
-                        // refinement is then a provable no-op (the
-                        // accepted set is exactly the closed AABB); for an
-                        // ellipse the frame shifts by at most an ULP and
-                        // stays inside the unchanged AABB.
-                        let local = point - min;
-                        let inflated = max - min;
-                        area.shape.contains_local(local, inflated)
-                    };
-                    if hit {
-                        // Tie-break by *original* (un-slacked) area so a
-                        // physically smaller element still wins.
-                        let size = bounds.x * bounds.y;
-                        match *best {
-                            Some((_, best_size)) if best_size <= size => {}
-                            _ => *best = Some((child_id, size)),
-                        }
+        // 2. Check this node's own box: a `GlyphArea`'s, a `GlyphRun`'s
+        //    or a `Fill`'s, whichever it has.
+        if let Some((pos, bounds)) = element.spatial_bounds() {
+            let min = Vec2::new(pos.x - slack, pos.y - slack);
+            let max = Vec2::new(pos.x + bounds.x + slack, pos.y + bounds.y + slack);
+            if aabb_contains(point, min, max) {
+                let hit = {
+                    // Shift into the inflated local frame so
+                    // rectangle and ellipse get the same isotropic
+                    // fuzzy margin the caller asked for. `slack == 0`
+                    // is the exact-hit case (no-op inflation).
+                    //
+                    // The frame is derived from the very `min` / `max`
+                    // the AABB test above used, not recomputed from
+                    // `pos` and `bounds`. Float addition is not
+                    // associative: for an area at x = 872.0 of width
+                    // 22.4, `pos.x + bounds.x` rounds to 894.40002
+                    // while `894.40002 - 872.0` rounds to 22.400024,
+                    // which is *greater* than `bounds.x`. Refining
+                    // against `bounds` therefore rejected points the
+                    // AABB test had just accepted — a click exactly on
+                    // a rectangle's right or bottom edge fell through
+                    // to whatever lay beneath. Whether it bit depended
+                    // on the coordinates: the same fixture's y axis
+                    // rounds the other way (22.399994), so one edge
+                    // could misbehave while the opposite one did not.
+                    //
+                    // Every hit test in the app funnels through here —
+                    // `Tree::descendant_at` backs both the canvas-role
+                    // routing and `document::hit_test`'s node and
+                    // section picking — so this was a whole-app edge
+                    // defect, not a portal one.
+                    //
+                    // Subtracting the same `min` from both sides makes
+                    // the boundary compare exact. For a rectangle the
+                    // refinement is then a provable no-op (the
+                    // accepted set is exactly the closed AABB); for an
+                    // ellipse the frame shifts by at most an ULP and
+                    // stays inside the unchanged AABB.
+                    //
+                    // Only a `GlyphArea` carries a shape to refine
+                    // with. A run or a fill is hit by its box.
+                    let local = point - min;
+                    let inflated = max - min;
+                    element
+                        .glyph_area()
+                        .is_none_or(|area| area.shape.contains_local(local, inflated))
+                };
+                if hit {
+                    // Tie-break by *original* (un-slacked) area so a
+                    // physically smaller element still wins.
+                    let size = bounds.x * bounds.y;
+                    match *best {
+                        Some((_, best_size)) if best_size <= size => {}
+                        _ => *best = Some((child_id, size)),
                     }
                 }
             }
