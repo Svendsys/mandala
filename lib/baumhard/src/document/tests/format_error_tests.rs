@@ -4,10 +4,13 @@
 //! the escaping that keeps text from the file out of the line an error
 //! is printed on, the position, and how the three render.
 
-use crate::document::format::context::{excerpt, position_at, shown, within, EXCERPT_GRAPHEMES};
+use crate::document::format::context::{
+    excerpt, position_at, shown, within, EXCERPT_BYTES, EXCERPT_GRAPHEMES,
+};
 use crate::document::format::{
     LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition,
 };
+use crate::document::tests::format_text::{map_of, map_with, node_of, rejection};
 
 /// The characters an error must never print raw: C0, DEL, C1, the line
 /// and paragraph separators, and the bidi controls.
@@ -121,4 +124,103 @@ fn test_a_position_is_one_based_and_translates_out_of_an_extent() {
     assert_eq!(within(base, 2, 4), TextPosition { line: 4, column: 4 });
     // Line 0 is the reader's "no position".
     assert_eq!(within(base, 0, 0), base);
+}
+
+#[test]
+fn test_an_excerpt_is_bounded_in_bytes_as_well_as_in_clusters() {
+    // One cluster of any length: a letter and 100,000 combining marks.
+    // It is cut at a character boundary at the byte bound: `a` and 127
+    // marks of two bytes each are 255 bytes, and one more is 257.
+    let one_cluster = format!("a{}", "\u{301}".repeat(100_000));
+    assert_eq!(excerpt(&one_cluster), format!("a{}…", "\u{301}".repeat(127)));
+    // Clusters of 25 bytes each: ten fit in the bound, the eleventh does
+    // not, and is left whole rather than parted.
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+    assert_eq!(family.len(), 25);
+    assert_eq!(excerpt(&family.repeat(40)), format!("{}…", family.repeat(10)));
+    // Short clusters still stop at 32.
+    assert_eq!(excerpt(&"€".repeat(100)), format!("{}…", "€".repeat(32)));
+    assert_eq!(EXCERPT_BYTES, 256);
+    // And an error on a node holding the long cluster stays short.
+    let json = map_of(&format!(
+        r#","sections":[{{"spans":[{{"text":"{one_cluster}"}}]}}],"fill":"var(nope)""#
+    ));
+    let error = rejection(&json);
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            "nodes[0].fill",
+            &LoadErrorKind::UnknownVariable {
+                name: "nope".to_string()
+            }
+        )
+    );
+    let rendered = error.to_string();
+    assert!(rendered.len() < 512, "{} bytes: {rendered}", rendered.len());
+}
+
+#[test]
+fn test_a_key_from_the_file_is_escaped_in_a_path_wherever_it_is() {
+    // Every character a message must not print raw, in a key, spelled
+    // as JSON escapes in the file and read as the characters.
+    let key = r"x\u202e\u2028\u0085\u007f\u009b\u2066\u001by";
+    let in_path = format!(r#"["{key}"]"#);
+    // An unknown key in a node.
+    let error = rejection(&map_of(&format!(r#","{key}":1"#)));
+    assert_eq!(error.path, format!("nodes[0]{in_path}"));
+    assert!(
+        matches!(error.kind, LoadErrorKind::UnknownKey { .. }),
+        "{error:?}"
+    );
+    let rendered = error.to_string();
+    assert!(!rendered.chars().any(is_dangerous), "{rendered:?}");
+    // An unknown key at the top.
+    let error = rejection(&map_with(&format!(r#","{key}":1"#), &node_of(1, "")));
+    assert_eq!(error.path, in_path);
+    assert!(
+        matches!(error.kind, LoadErrorKind::UnknownKey { .. }),
+        "{error:?}"
+    );
+    let rendered = error.to_string();
+    assert!(!rendered.chars().any(is_dangerous), "{rendered:?}");
+    // A palette name refused for what it holds, at its own path.
+    let error = rejection(&map_with(
+        &format!(r#","palettes":{{"{key}":[{{"fill":"var(bg)","frame":"var(bg)","text":"var(fg)"}}]}}"#),
+        &node_of(1, ""),
+    ));
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            format!("palettes{in_path}").as_str(),
+            &LoadErrorKind::NameNotPrintable { code_point: 0x202E }
+        )
+    );
+    let rendered = error.to_string();
+    assert!(!rendered.chars().any(is_dangerous), "{rendered:?}");
+}
+
+#[test]
+fn test_a_content_error_inside_a_value_names_its_place_once() {
+    // The reader's ` at line L column C` counts inside the value it read
+    // (here node 4's own line), not the text: it is left out, and the
+    // place is the error's position, shown once in its context.
+    let nodes = format!(
+        "{},\n{},\n{},\n{}",
+        node_of(1, ""),
+        node_of(2, ""),
+        node_of(3, ""),
+        r#"{"id":4,"position":"x"}"#
+    );
+    let error = rejection(&map_with("", &nodes));
+    assert_eq!(error.path, "nodes[3].position");
+    assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
+    assert_eq!(error.position.map(|p| p.line), Some(4));
+    let rendered = error.to_string();
+    assert!(!rendered.contains("at line"), "{rendered}");
+    assert_eq!(rendered.matches("line ").count(), 1, "{rendered}");
+    // The same in a header value.
+    let error = rejection(&map_with(r#","verbs":[{"id":1,"name":"v"}]"#, &node_of(1, "")));
+    assert_eq!(error.path, "verbs[0].id");
+    assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
+    assert!(!error.to_string().contains("at line"), "{error}");
 }

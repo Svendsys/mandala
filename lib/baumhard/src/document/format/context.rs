@@ -27,6 +27,11 @@ use unicode_segmentation::UnicodeSegmentation;
 /// How many grapheme clusters an [`excerpt`] keeps.
 pub const EXCERPT_GRAPHEMES: usize = 32;
 
+/// How many bytes of the text an [`excerpt`] keeps, before escaping: a
+/// grapheme cluster can hold any number of combining marks, so the
+/// cluster count alone does not bound it.
+pub const EXCERPT_BYTES: usize = 256;
+
 /// Whether the saver writes `c` as a `\uXXXX` escape although JSON lets
 /// it stand raw (design B.9): U+0085, U+2028 and U+2029, which some
 /// editors and diff viewers break a line at, and the bidi embedding,
@@ -89,29 +94,68 @@ pub fn shown(text: &str) -> Shown<'_> {
 }
 
 /// The excerpt an error shows for a node whose first span reads `text`:
-/// at most [`EXCERPT_GRAPHEMES`] grapheme clusters, then `…` if any
-/// were cut, escaped as a JSON string's content is (`"` and `\` too) and
-/// with every control, line separator and bidi control escaped as well.
-/// Cut by grapheme cluster, so a base letter is never parted from its
-/// combining marks; cut before it is escaped, so an escape is never cut
-/// in half.
+/// at most [`EXCERPT_GRAPHEMES`] grapheme clusters and at most
+/// [`EXCERPT_BYTES`] bytes of `text`, whichever ends first, then `…` if
+/// anything was cut; escaped as a JSON string's content is (`"` and `\`
+/// too) and with every control, line separator and bidi control escaped
+/// as well. Cut by grapheme cluster, so a base letter is not parted from
+/// its combining marks — unless the first cluster alone passes the byte
+/// bound, which is then cut at a character boundary. Cut before it is
+/// escaped, so an escape is never cut in half.
 pub fn excerpt(text: &str) -> String {
-    let mut out = String::new();
-    let mut graphemes = text.graphemes(true);
-    for grapheme in graphemes.by_ref().take(EXCERPT_GRAPHEMES) {
-        for c in grapheme.chars() {
-            // Writing to a `String` cannot fail.
-            let _ = match c {
-                '"' => out.write_str("\\\""),
-                '\\' => out.write_str("\\\\"),
-                c if escaped_when_shown(c) => write_escape(&mut out, c),
-                c => out.write_char(c),
-            };
+    let mut kept = 0;
+    let mut graphemes = 0;
+    for grapheme in text.graphemes(true) {
+        if graphemes == EXCERPT_GRAPHEMES {
+            break;
         }
+        if kept + grapheme.len() > EXCERPT_BYTES {
+            if graphemes > 0 {
+                break;
+            }
+            // The first cluster alone passes the byte bound: keep what
+            // fits of it, by whole characters.
+            kept += grapheme
+                .char_indices()
+                .map(|(at, c)| at + c.len_utf8())
+                .take_while(|end| kept + end <= EXCERPT_BYTES)
+                .last()
+                .unwrap_or(0);
+            break;
+        }
+        kept += grapheme.len();
+        graphemes += 1;
     }
-    if graphemes.next().is_some() {
+    let mut out = String::new();
+    write_quoted_content(&mut out, &text[..kept]);
+    if kept < text.len() {
         out.push('…');
     }
+    out
+}
+
+/// Write `text` as the content of a JSON string — `"` and `\` escaped —
+/// with every control, line separator and bidi control escaped too.
+fn write_quoted_content(out: &mut String, text: &str) {
+    for c in text.chars() {
+        // Writing to a `String` cannot fail.
+        let _ = match c {
+            '"' => out.write_str("\\\""),
+            '\\' => out.write_str("\\\\"),
+            c if escaped_when_shown(c) => write_escape(out, c),
+            c => out.write_char(c),
+        };
+    }
+}
+
+/// `name` quoted as a JSON string, with the escapes [`Shown`] adds: how
+/// a path writes a key that is not a plain identifier. A key comes from
+/// the file, so it is shown as file text is, never raw.
+pub(crate) fn quoted(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 2);
+    out.push('"');
+    write_quoted_content(&mut out, name);
+    out.push('"');
     out
 }
 

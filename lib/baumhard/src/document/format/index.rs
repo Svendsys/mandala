@@ -348,6 +348,23 @@ pub(crate) fn parse_extent<'t, T: Deserialize<'t>>(
     })
 }
 
+/// The reader's message for `error`, without the ` at line L column C`
+/// its `Display` ends with. That place is counted inside the extent the
+/// value was read from, not the text; the error's own
+/// [`position`](LoadError::position) is the place in the text, and a
+/// message names one place, once, in its context.
+fn without_position(error: &serde_json::Error) -> String {
+    let message = error.to_string();
+    if error.line() == 0 {
+        return message;
+    }
+    let suffix = format!(" at line {} column {}", error.line(), error.column());
+    match message.strip_suffix(&suffix) {
+        Some(stripped) => stripped.to_string(),
+        None => message,
+    }
+}
+
 /// The [`LoadError`] for a value that failed to parse, inside an extent
 /// that starts at `base`.
 ///
@@ -365,7 +382,7 @@ fn refusal(
     let (path, has_unknown_step) = render_parse_path(prefix, error.path());
     let inner = error.into_inner();
     let position = Some(within(base, inner.line(), inner.column()));
-    let message = inner.to_string();
+    let message = without_position(&inner);
     let at = |path: String, kind| LoadError {
         position,
         ..LoadError::new(path, kind)

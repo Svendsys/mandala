@@ -702,9 +702,11 @@ fn is_plain(name: &str) -> bool {
 
 /// Write the key `name` after what `out` holds: `.name` when it is a
 /// plain identifier (and just `name` first), otherwise `["name"]`, quoted
-/// the way JSON quotes a string. A name an author chose can hold a dot, a
-/// bracket or nothing at all, and unquoted it would read as more path
-/// (`palettes.a.b[0].fill`) or none.
+/// the way JSON quotes a string and with every control, line separator
+/// and bidi control escaped as well, as all file text in a message is
+/// ([`quoted`](crate::document::format::context::quoted)). A name an
+/// author chose can hold a dot, a bracket or nothing at all, and
+/// unquoted it would read as more path (`palettes.a.b[0].fill`) or none.
 fn push_key(out: &mut String, name: &str) {
     if is_plain(name) {
         if !out.is_empty() {
@@ -713,12 +715,7 @@ fn push_key(out: &mut String, name: &str) {
         out.push_str(name);
     } else {
         out.push('[');
-        match serde_json::to_string(name) {
-            Ok(quoted) => out.push_str(&quoted),
-            // A string always serializes; this keeps the path well formed
-            // if that ever stops being so.
-            Err(_) => out.push_str("\"\""),
-        }
+        out.push_str(&crate::document::format::context::quoted(name));
         out.push(']');
     }
 }
