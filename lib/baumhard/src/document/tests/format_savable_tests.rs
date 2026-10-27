@@ -667,3 +667,37 @@ fn test_a_document_whose_file_is_past_the_byte_bound_cannot_be_saved_where_it_ho
         "{refusal:?}"
     );
 }
+
+#[test]
+fn test_the_one_node_check_never_passes_what_the_full_build_refuses() {
+    use crate::document::element::DocElement;
+    use crate::document::ids::{Document, IdentIndex, NodeIdent};
+    // A document whose ident index disagrees with its tree, as only a
+    // defect could make one: the one-node check answers ids and links
+    // from the index, so it must refuse here, and the full build then
+    // names what a load of the file would.
+    let loaded = load(&map_of_two("", r#","links":[{"to":1,"kind":"line"}]"#)).expect("the map loads");
+    let first = loaded.node_by_ident(NodeIdent(1)).expect("node 1");
+    let second = loaded.node_by_ident(NodeIdent(2)).expect("node 2");
+    let mut tree = loaded.tree().clone();
+    // Node 2 now says it is node 1 too; the index still says 1 is the
+    // first.
+    tree.update(second, |element| {
+        if let DocElement::Node(node) = element {
+            node.ident = NodeIdent(1);
+        }
+    })
+    .expect("node 2 is in the tree");
+    let index: IdentIndex = [(NodeIdent(1), first)].into_iter().collect();
+    let doc =
+        Document::from_loaded(tree, loaded.definitions().clone(), index, 1).expect("the map row is fine");
+    let (result, held) = check_savable_holding(&doc);
+    assert_eq!(held, None, "the one-node check passed two nodes with one id");
+    let refusal = result.expect_err("two nodes with one id do not load");
+    assert_eq!(refusal.path, "nodes[1].id");
+    assert!(
+        matches!(&refusal.kind, SaveErrorKind::NotLoadable { error }
+            if error.kind == LoadErrorKind::DuplicateId { id: 1, first_index: 0 }),
+        "{refusal:?}"
+    );
+}

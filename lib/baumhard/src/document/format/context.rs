@@ -104,27 +104,25 @@ pub fn shown(text: &str) -> Shown<'_> {
 /// escaped, so an escape is never cut in half.
 pub fn excerpt(text: &str) -> String {
     let mut kept = 0;
-    let mut graphemes = 0;
-    for grapheme in text.graphemes(true) {
-        if graphemes == EXCERPT_GRAPHEMES {
+    for (index, grapheme) in text.graphemes(true).enumerate() {
+        if index == EXCERPT_GRAPHEMES {
             break;
         }
         if kept + grapheme.len() > EXCERPT_BYTES {
-            if graphemes > 0 {
+            if index > 0 {
                 break;
             }
             // The first cluster alone passes the byte bound: keep what
             // fits of it, by whole characters.
-            kept += grapheme
+            kept = grapheme
                 .char_indices()
                 .map(|(at, c)| at + c.len_utf8())
-                .take_while(|end| kept + end <= EXCERPT_BYTES)
+                .take_while(|end| *end <= EXCERPT_BYTES)
                 .last()
                 .unwrap_or(0);
             break;
         }
         kept += grapheme.len();
-        graphemes += 1;
     }
     let mut out = String::new();
     write_quoted_content(&mut out, &text[..kept]);

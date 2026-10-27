@@ -33,14 +33,14 @@ pub const ELEMENT_SHAPES: [&str; 10] = [
     "chain",
     // Every node at the top: one element each, the most nodes per
     // element — the ident index's worst case.
-    "tops", // A short label on each: a section and a span.
-    "labels", // 200 empty sections `{}` on each: 3 bytes an element.
+    "tops",     // A short label on each: a section and a span.
+    "labels",   // 200 empty sections `{}` on each: 3 bytes an element.
     "sections", // A frame of 200 empty rings `{}` on each.
     "rings",
     // 50 portal links on each: a link and two ends, three elements in
     // 25 bytes.
     "portals", // 50 line links on each.
-    "lines", // One section of 100 empty spans `{"text":""}` on each.
+    "lines",   // One section of 100 empty spans `{"text":""}` on each.
     "spans",
     // `MAX_VERBS` verbs, each an id and an empty name: a definition is
     // counted as an element is. Edits and presentations are the same
@@ -52,7 +52,7 @@ pub const ELEMENT_SHAPES: [&str; 10] = [
 /// text and no element.
 pub const TEXT_SHAPES: [&str; 3] = [
     // One node, one span, one long text.
-    "text", // A theme of 4096 variables in as many variants as the length takes.
+    "text",  // A theme of 4096 variables in as many variants as the length takes.
     "theme", // One palette of many groups.
     "palettes",
 ];
