@@ -16,11 +16,11 @@
 
 use crate::document::element::DocElement;
 use crate::document::format::{check_savable, load, save};
-use crate::document::tests::format_fuzz::check_load_bytes;
 use crate::document::ids::NodeIdent;
 use crate::document::tests::format_depth::{
     chain_text, deep_chain_survives_every_walk, planted_recursive_count, CHAIN_DEPTH,
 };
+use crate::document::tests::format_fuzz::check_load_bytes;
 
 /// Set in the child process of the control: run a recursive walk over
 /// the chain instead.
