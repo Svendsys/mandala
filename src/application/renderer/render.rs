@@ -219,7 +219,8 @@ impl Renderer {
     /// The CPU half of a frame, for a target `camera.viewport_size`
     /// pixels large: rebuild both rect batches through `camera` and
     /// upload them, size the glyphon viewport to the target, and run
-    /// both glyphon prepares ([`Self::prepare_text_for_pass`]).
+    /// both glyphon prepares and the positioned-glyph pass's
+    /// ([`Self::prepare_text_for_pass`]).
     ///
     /// **Everything the frame draws is projected through `camera`, and
     /// nothing else.** Canvas content goes through its transform and
@@ -433,6 +434,11 @@ impl Renderer {
                 log::warn!("renderer: text_renderer.render failed: {e}");
             }
 
+            // 2b. Positioned glyph runs — every glyph of every
+            //     `GlyphRun` at its own canvas position, one instanced
+            //     draw. Canvas content, so under the palette below.
+            self.glyph_runs.render(&mut pass);
+
             // 3. Palette backdrop (rect pipeline, screen-space).
             //    Drawn AFTER the main text pass so node text
             //    sitting behind the palette is fully occluded.
@@ -467,16 +473,20 @@ impl Renderer {
     /// carries borders, connections, labels, and handles through the
     /// tree pipeline — console, color picker, FPS overlay) and run both
     /// `text_renderer.prepare()` and `console_text_renderer.prepare()`
-    /// against the atlas. Returns the [`FrameSkip`] (and the caller
-    /// skips the rest of its frame) on font-system lock contention or
-    /// on either prepare failing.
+    /// against the atlas; then, under the same font guard, prepare the
+    /// positioned-glyph pass over the canvas set's `GlyphRun`s
+    /// ([`super::glyph_runs`]). Returns the [`FrameSkip`] (and the
+    /// caller skips the rest of its frame) on font-system lock
+    /// contention or on either glyphon prepare failing; the glyph-run
+    /// pass cannot fail the frame — a glyph it has no room for is left
+    /// out and warned of once.
     ///
     /// Reached through [`Self::prepare_frame`], by `render()`
     /// (steady-state, and `prewarm()` through it) and by the offscreen
     /// capture, so every frame the app draws sees one glyph set rule.
     ///
     /// Note: this performs disjoint mutable borrows of
-    /// `text_renderer`, `atlas` and `swash_cache` while holding
+    /// `text_renderer`, `atlas`, `glyph_runs` and `swash_cache` while holding
     /// immutable borrows of the buffer-map fields; the borrow
     /// checker permits this within a single `&mut self` body but
     /// would reject it across a method boundary, which is why the
@@ -641,6 +651,16 @@ impl Renderer {
             }
             return Err(FrameSkip::PrepareFailed);
         }
+        // The positioned glyph runs, under the same guard: they shape
+        // nothing, but a glyph the atlas has not seen is rasterized.
+        self.glyph_runs.prepare(
+            &self.device,
+            &self.queue,
+            &mut font_system,
+            &mut self.swash_cache,
+            camera,
+            super::scene_shape_cache::glyph_runs(canvas_elements()),
+        );
         drop(font_system);
         self.prepare_fault_logged = false;
         Ok(())

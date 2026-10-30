@@ -22,6 +22,10 @@
 //! - [`tree_buffers`] / [`tree_walker`] — `GfxElement` tree
 //!   → text-buffer + rect-buffer projection. The tree walker
 //!   is where the bulk of canvas-content shaping happens.
+//! - [`glyph_runs`] — the positioned-glyph pass: every glyph of a
+//!   `GlyphRun` at its own canvas position, from the run's one
+//!   shaped buffer, through an atlas and a pipeline of its own, in
+//!   one draw call per frame (design §13.2).
 //! - [`selection_overlay`] — the rubber-band selection
 //!   rectangle, the one canvas visual with no model behind it.
 //! - [`borders`] — node-frame buffers (the box-drawing
@@ -69,6 +73,7 @@ mod console_geometry;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod console_pass;
 mod decree;
+mod glyph_runs;
 // Renderer entry points for the two overlay rebuilds. Same shells
 // as `console_pass` and `color_picker`.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -466,6 +471,12 @@ pub struct Renderer {
     /// (otherwise re-preparing the single text renderer would
     /// race with the pass's already-recorded draw commands).
     console_text_renderer: TextRenderer,
+    /// The positioned-glyph pass: draws the `GlyphRun` elements the
+    /// canvas trees hold, each glyph at its own position, between the
+    /// main text pass and the palette backdrop. Shares the font system,
+    /// the swash cache and the render pass with glyphon; holds its own
+    /// atlas, because glyphon's cannot be reached from outside it.
+    glyph_runs: glyph_runs::GlyphRunPass,
     /// Whether the current glyphon-`prepare` fault episode has already
     /// been reported. Set when either `prepare()` fails, cleared on
     /// the next fully successful prepare, so a *persistent* fault —
@@ -907,6 +918,7 @@ impl Renderer {
         let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
+        let glyph_runs = glyph_runs::GlyphRunPass::new(&device, surface_format);
         let camera = Camera2D::new(size.width, size.height);
 
         // Rect pipeline: colored quads for node backgrounds and the
@@ -978,6 +990,7 @@ impl Renderer {
             swash_cache: SwashCache::new(),
             text_renderer,
             console_text_renderer,
+            glyph_runs,
             prepare_fault_logged: false,
             should_render: false,
             fps: None,
@@ -1027,6 +1040,30 @@ impl Renderer {
     #[cfg(test)]
     pub(crate) fn text_buffer_owner_count(&self) -> usize {
         self.mindmap_buffers.len()
+    }
+
+    /// What the positioned-glyph pass held at the last prepared frame,
+    /// and its running totals — for the GPU-backed tests, which assert
+    /// on structure (runs, instances, draw calls, atlas insertions),
+    /// never on pixels.
+    #[cfg(test)]
+    pub(crate) fn glyph_run_counts(&self) -> glyph_runs::GlyphRunCounts {
+        self.glyph_runs.counts()
+    }
+
+    /// Stop the positioned-glyph atlas growing past its present size,
+    /// so a GPU-backed test can fill a page.
+    #[cfg(test)]
+    pub(crate) fn freeze_glyph_atlas_growth(&mut self) {
+        self.glyph_runs.freeze_atlas_growth();
+    }
+
+    /// How many glyphon text areas the canvas scene hands the main
+    /// pass: one per shaped buffer. A `GlyphRun` adds none — that is
+    /// the per-glyph buffer the positioned-glyph pass does away with.
+    #[cfg(test)]
+    pub(crate) fn canvas_text_buffer_count(&self) -> usize {
+        scene_shape_cache::buffer_count(&self.canvas_scene_elements)
     }
 
     /// Current camera zoom level, used by the event loop when it
