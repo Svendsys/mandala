@@ -29,7 +29,7 @@
 
 use crate::document::format::context::{offset_in, position_at, within};
 use crate::document::format::error::{
-    push_parse_path, render_parse_path, LoadError, LoadErrorKind, Seg, TextPosition,
+    push_parse_path, render_parse_path, LoadError, LoadErrorKind, NodeContext, Seg, TextPosition,
 };
 use crate::document::format::rows;
 use crate::document::format::strict;
@@ -297,17 +297,29 @@ pub(crate) fn index(text: &str) -> Result<MapIndex<'_>, LoadError> {
 /// object, or a `nodes` that is not an array. The position is the
 /// reader's, which is already in the whole text, and is named once: the
 /// message leaves out the reader's own ` at line L column C`.
+///
+/// A refusal inside `nodes[i]` — malformed text in the middle of a node
+/// — carries the node's context, as every error inside a node does
+/// (§7.2), with its index alone: a node whose text is not JSON has no id
+/// or text that can be read from it, and the position is exact.
 fn index_refusal(found: &Found<'_>, error: &serde_json::Error) -> LoadError {
     use serde_json::error::Category;
     let position = reader_position(error.line(), error.column());
     let mut path = String::new();
+    let mut node = None;
     if let Some(key) = &found.at {
         let mut segs = vec![Seg::Name(key.clone())];
         segs.extend(found.node.map(Seg::Index));
         path = crate::document::format::error::render_path(&segs);
+        node = found.node.map(|index| NodeContext {
+            index,
+            id: None,
+            excerpt: None,
+        });
     }
     let kind = if let Some(key) = &found.duplicate {
         path = String::new();
+        node = None;
         LoadErrorKind::DuplicateKey { key: key.clone() }
     } else if matches!(error.classify(), Category::Data) {
         LoadErrorKind::Invalid {
@@ -320,6 +332,7 @@ fn index_refusal(found: &Found<'_>, error: &serde_json::Error) -> LoadError {
     };
     LoadError {
         position,
+        node,
         ..LoadError::new(path, kind)
     }
 }

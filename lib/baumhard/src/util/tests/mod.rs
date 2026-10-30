@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 pub mod arena_utils_tests;
+/// The choice source of the structure-aware fuzz targets
+/// (TEST_CONVENTIONS §T14).
+pub mod choices;
 pub mod color_tests;
 pub mod geometry_tests;
 pub mod grapheme_chad_tests;

@@ -606,8 +606,10 @@ fn node_refusal(doc: &Document, i: usize, id: indextree::NodeId, error: LoadErro
 }
 
 /// [`check_by_building`], for a test that holds the one-node check's
-/// refusals to the full build's.
-#[cfg(test)]
+/// refusals to the full build's, and for the fuzz property that does
+/// the same on every document the load_structured fuzz target makes
+/// (`document::tests::format_fuzz`, which is not compiled only under
+/// `cfg(test)`).
 pub(crate) fn check_savable_by_building(doc: &Document, max_elements: Option<u64>) -> Result<(), SaveError> {
     check_by_building(doc, max_elements)
 }

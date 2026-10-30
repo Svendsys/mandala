@@ -17,6 +17,11 @@ mod format_depth_tests;
 mod format_error_tests;
 #[cfg(test)]
 mod format_flat_tests;
+/// The loader's fuzz properties, which the `fuzz/` targets call
+/// (TEST_CONVENTIONS §T14).
+pub mod format_fuzz;
+#[cfg(test)]
+mod format_fuzz_tests;
 /// The maps wasm32's memory limits are derived from, shared with the
 /// native measurement and the wasm32 probe.
 pub mod format_memory_shapes;

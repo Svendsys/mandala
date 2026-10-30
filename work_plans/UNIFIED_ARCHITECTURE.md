@@ -899,8 +899,10 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
     - keys in schema order;
     - name-keyed objects in ascending byte order of the name;
     - `f32` values in their shortest round-trip form;
-    - U+0085, U+2028, U+2029 and the bidi controls escaped as
-      `\uXXXX`.
+    - U+2028, U+2029, the bidi controls, DEL (U+007F) and the C1
+      controls (U+0080–U+009F, U+0085 among them) escaped as
+      `\uXXXX`, lowercase hex (R23), so no control character stands
+      raw in a saved file.
 
     An unchanged document saves byte-identically.
   - **Nothing derived is written**: no fitted sizes, depth, child

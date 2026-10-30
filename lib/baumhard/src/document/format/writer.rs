@@ -20,11 +20,12 @@
 //! lines. A newline inside a string
 //! is `\n` in JSON, and on top of serde_json's escaping this writes
 //! U+0085, U+2028 and U+2029 — where some editors and diff viewers break
-//! a line — and the bidi controls as `\uXXXX`
+//! a line — the bidi controls, and DEL and the C1 controls as `\uXXXX`
 //! ([`saver_escapes`]),
-//! so a line count agrees with a reported line number and a diff cannot
-//! be shown in an order other than its bytes. This applies to every
-//! string in the file, the header's too.
+//! so a line count agrees with a reported line number, a diff cannot
+//! be shown in an order other than its bytes, and no control character
+//! stands raw in the file for a terminal to act on. This applies to
+//! every string in the file, the header's too.
 
 use crate::document::format::context::saver_escapes;
 use crate::document::format::dto::{MapHeaderDto, NodeDto};

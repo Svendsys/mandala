@@ -64,14 +64,16 @@ pub struct NodeContext {
     /// `i` in `nodes[i]`: the node's position in the list.
     pub index: usize,
     /// The node's `id`. `None` only when the id itself is what is wrong
-    /// (missing, not a number, out of range): a node whose other keys
-    /// fail to read still has its id read on its own.
+    /// (missing, not a number, out of range), or when the node's text is
+    /// not JSON at all — a syntax error inside it, where nothing of the
+    /// node can be read and the position is exact: a node whose other
+    /// keys fail to read still has its id read on its own.
     pub id: Option<u32>,
     /// The start of the node's text — the first span of its
     /// lowest-channel section, else of its first ring — cut to 32
     /// grapheme clusters (`…` when cut) and escaped
     /// ([`context::excerpt`](crate::document::format::context::excerpt)).
-    /// `None` when the node has no text.
+    /// `None` when the node has no text, or its text is not JSON.
     pub excerpt: Option<String>,
 }
 
