@@ -239,13 +239,174 @@ fn lock_drift(root: &str, fuzz: &str) -> Vec<String> {
         .collect()
 }
 
+/// One locked package: its name, version and source (`None` for a path
+/// package).
+type Locked = (String, String, Option<String>);
+
+/// The names baumhard's manifest lists only as dev-dependencies: a
+/// workspace lockfile locks a member's dev-dependencies, while
+/// `fuzz/Cargo.lock`, where baumhard is a path dependency and no
+/// member, does not. Reads each dependency table's keys
+/// (`name = ...` and `name.workspace = true`).
+fn dev_only_dependencies(manifest: &str) -> BTreeSet<String> {
+    let (mut dev, mut other) = (BTreeSet::new(), BTreeSet::new());
+    let mut table = String::new();
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            table = line.to_string();
+            continue;
+        }
+        if !table.ends_with("dependencies]") {
+            continue;
+        }
+        let name: String = line
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if name.is_empty() || !line[name.len()..].trim_start().starts_with(['=', '.']) {
+            continue;
+        }
+        if table.ends_with("dev-dependencies]") {
+            dev.insert(name);
+        } else {
+            other.insert(name);
+        }
+    }
+    dev.difference(&other).cloned().collect()
+}
+
+/// The packages `from` depends on directly in the lockfile `text`, its
+/// entries named in `skip` left out, and every package they reach in
+/// turn: the `dependencies = [...]` lists, each entry `"name"`,
+/// `"name version"` or `"name version (source)"`, followed from one
+/// `[[package]]` table to the next, iteratively. `Err` names an entry
+/// that resolves to no table, or to more than one.
+fn lock_closure(
+    text: &str,
+    from: &str,
+    skip: &BTreeSet<String>,
+) -> Result<(BTreeSet<Locked>, BTreeSet<Locked>), String> {
+    let tables: Vec<(Locked, Vec<String>)> = text
+        .split("[[package]]")
+        .skip(1)
+        .map(|table| {
+            let field = |key: &str| {
+                table.lines().find_map(|line| {
+                    line.strip_prefix(key)
+                        .and_then(|rest| rest.strip_prefix(" = \""))
+                        .and_then(|rest| rest.strip_suffix('"'))
+                        .map(str::to_string)
+                })
+            };
+            let dependencies = table
+                .split_once("dependencies = [")
+                .map(|(_, rest)| rest.split(']').next().unwrap_or_default())
+                .unwrap_or_default()
+                .split('"')
+                .skip(1)
+                .step_by(2)
+                .map(str::to_string)
+                .collect();
+            (
+                (
+                    field("name").unwrap_or_default(),
+                    field("version").unwrap_or_default(),
+                    field("source"),
+                ),
+                dependencies,
+            )
+        })
+        .collect();
+    let find = |entry: &str| -> Result<usize, String> {
+        let mut words = entry.split(' ');
+        let name = words.next().unwrap_or_default();
+        let version = words.next();
+        let found: Vec<usize> = (0..tables.len())
+            .filter(|&k| tables[k].0 .0 == name && version.is_none_or(|v| tables[k].0 .1 == v))
+            .collect();
+        match found.as_slice() {
+            [k] => Ok(*k),
+            _ => Err(format!(
+                "`{entry}` names {} locked packages, not one",
+                found.len()
+            )),
+        }
+    };
+    let start = find(from)?;
+    let mut stack: Vec<usize> = Vec::new();
+    for entry in &tables[start].1 {
+        if !skip.contains(entry.split(' ').next().unwrap_or_default()) {
+            stack.push(find(entry)?);
+        }
+    }
+    let direct: BTreeSet<Locked> = stack.iter().map(|&k| tables[k].0.clone()).collect();
+    let mut seen: BTreeSet<usize> = BTreeSet::new();
+    while let Some(k) = stack.pop() {
+        if seen.insert(k) {
+            for entry in &tables[k].1 {
+                stack.push(find(entry)?);
+            }
+        }
+    }
+    Ok((direct, seen.into_iter().map(|k| tables[k].0.clone()).collect()))
+}
+
+/// How `fuzz/Cargo.lock` fails to lock baumhard's build as the
+/// workspace's lockfile `root` does, each named: baumhard's direct
+/// (non-dev) dependencies are not the same packages in both; an entry of
+/// baumhard's dependency closure in `fuzz` names no table (a package
+/// deleted, or never added); or a package of that closure is not locked
+/// by `root` at the same version and source.
+///
+/// The closure is walked in `fuzz`'s own edges, not the workspace's: a
+/// lockfile records the dependencies the features its own workspace
+/// enables, so the root lock's `js-sys` lists `futures-util` (a feature
+/// the app turns on) where the fuzz lock's does not, and the root's
+/// closure of baumhard holds packages a fuzz build never compiles.
+fn fuzz_lock_problems(root: &str, fuzz: &str, dev_only: &BTreeSet<String>) -> Vec<String> {
+    let mut problems = Vec::new();
+    let (workspace_direct, _) = match lock_closure(root, "baumhard", dev_only) {
+        Ok(found) => found,
+        Err(why) => return vec![format!("Cargo.lock: {why}")],
+    };
+    let (fuzz_direct, closure) = match lock_closure(fuzz, "baumhard", dev_only) {
+        Ok(found) => found,
+        Err(why) => return vec![format!("fuzz/Cargo.lock: {why}")],
+    };
+    for (name, version, _) in workspace_direct.symmetric_difference(&fuzz_direct) {
+        let side = if fuzz_direct.iter().any(|(n, v, _)| n == name && v == version) {
+            "fuzz/Cargo.lock alone"
+        } else {
+            "Cargo.lock alone"
+        };
+        problems.push(format!("baumhard depends on {name} {version} in {side}"));
+    }
+    let workspace = locked(root);
+    for (name, version, source) in closure {
+        let held = workspace
+            .get(&name)
+            .is_some_and(|locked| locked.contains(&(version.clone(), source.clone())));
+        if !held {
+            problems.push(format!("{name} {version} is not locked so by Cargo.lock"));
+        }
+    }
+    problems
+}
+
 /// `fuzz/Cargo.lock` builds baumhard with the dependencies the
 /// workspace's `Cargo.lock` does: a fuzz run on other versions would
-/// hold other code to the properties (review of #293, blocking item 3).
-/// `fuzz/` is outside the workspace, so nothing else keeps the two in
-/// step; after the root lockfile changes, copy it over `fuzz/Cargo.lock`
-/// and run `cargo update -p mandala-fuzz` in `fuzz/` on its nightly,
-/// which adds the fuzz-only packages and keeps every shared version.
+/// hold other code to the properties (review of #293, blocking item 3,
+/// and round 3). Two ways it can drift, both held here: a package both
+/// lock at another version or source, and a package of baumhard's
+/// dependency closure that `fuzz/Cargo.lock` lacks — which `cargo fuzz`,
+/// having no `--locked`, would resolve afresh at the newest compatible
+/// version. (`scripts/fuzz.sh` also refuses to run when the fuzz
+/// lockfile would have to change.) `fuzz/` is outside the workspace, so
+/// nothing else keeps the two in step; after the root lockfile changes,
+/// copy it over `fuzz/Cargo.lock` and run `cargo update -p mandala-fuzz`
+/// in `fuzz/` on its nightly, which adds the fuzz-only packages and
+/// keeps every shared version.
 #[test]
 fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
     let root = std::fs::read_to_string(repo_path("Cargo.lock")).unwrap();
@@ -278,6 +439,72 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
     );
     assert_ne!(moved, fuzz, "precondition: the control edits the text");
     assert_eq!(lock_drift(&root, &moved).len(), 1, "a moved version is drift");
+
+    // The closure: every package baumhard's build reaches is locked, as
+    // the workspace locks it.
+    let manifest = std::fs::read_to_string(repo_path("lib/baumhard/Cargo.toml")).unwrap();
+    let dev_only = dev_only_dependencies(&manifest);
+    assert!(
+        dev_only.contains("criterion") && !dev_only.contains("serde"),
+        "precondition: the dev-only dependencies are read ({dev_only:?})"
+    );
+    let problems = fuzz_lock_problems(&root, &fuzz, &dev_only);
+    assert!(
+        problems.is_empty(),
+        "fuzz/Cargo.lock does not lock baumhard's build as Cargo.lock does:\n{}",
+        problems.join("\n")
+    );
+    let (direct, closure) = lock_closure(&fuzz, "baumhard", &dev_only).unwrap();
+    assert!(
+        direct.iter().any(|(name, _, _)| name == "indextree") && closure.len() >= 50,
+        "precondition: baumhard's closure is walked ({} direct, {} in all)",
+        direct.len(),
+        closure.len()
+    );
+    // Negative controls, each of which the shared-package check above
+    // passes. A direct dependency's table deleted:
+    let table = |text: &str, name: &str| {
+        let start = text
+            .find(&format!("[[package]]\nname = \"{name}\"\n"))
+            .unwrap_or_else(|| panic!("precondition: the lockfile locks {name}"));
+        let end = text[start + 1..]
+            .find("[[package]]")
+            .map_or(text.len(), |at| start + 1 + at);
+        (start, end)
+    };
+    let (start, end) = table(&fuzz, "indextree");
+    let deleted = format!("{}{}", &fuzz[..start], &fuzz[end..]);
+    assert!(
+        lock_drift(&root, &deleted).is_empty(),
+        "precondition: the shared check misses it"
+    );
+    let found = fuzz_lock_problems(&root, &deleted, &dev_only);
+    assert!(
+        found.len() == 1 && found[0].contains("`indextree` names 0 locked packages"),
+        "a deleted table is found: {found:?}"
+    );
+    // A dependency baumhard gained that the fuzz lockfile never added:
+    // its table and its entry in baumhard's list both absent.
+    let (start, end) = table(&deleted, "baumhard");
+    let entry = deleted[start..end].replacen(" \"indextree\",\n", "", 1);
+    assert_ne!(
+        entry,
+        deleted[start..end],
+        "precondition: the control edits baumhard's list"
+    );
+    let never = format!("{}{entry}{}", &deleted[..start], &deleted[end..]);
+    assert!(
+        lock_drift(&root, &never).is_empty(),
+        "precondition: the shared check misses it"
+    );
+    let found = fuzz_lock_problems(&root, &never, &dev_only);
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.starts_with("baumhard depends on indextree")
+                && problem.ends_with("in Cargo.lock alone")),
+        "a dependency never added is found: {found:?}"
+    );
 }
 
 /// `scripts/fuzz.sh`'s `-max_len` for each target, from its

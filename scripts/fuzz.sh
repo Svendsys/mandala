@@ -29,7 +29,8 @@
 # Needs: the nightly in fuzz/rust-toolchain.toml (rustup installs it on
 # first use) and cargo-fuzz (`cargo install cargo-fuzz --version 0.13.2
 # --locked`). Exit codes: 0 the budget ran out with no finding, 1 a
-# finding (or a failed build), 2 a bad command line.
+# finding (or a failed build, or a fuzz/Cargo.lock that would have to
+# change), 2 a bad command line.
 
 set -euo pipefail
 
@@ -37,7 +38,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGETS=(load_raw load_structured flow_raw flow_structured glyph_mutation_raw glyph_mutation_structured)
 
 usage() {
-  sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 if [ "${1:-}" = "--list" ]; then
@@ -113,6 +114,15 @@ done
 
 cd "$ROOT/fuzz"
 export CARGO_INCREMENTAL=0
+# `cargo fuzz` has no `--locked`: a package fuzz/Cargo.lock lacks would be
+# resolved afresh, at the newest compatible version, and the lockfile
+# rewritten without a word. Refuse to run instead whenever it would have
+# to change; ./test.sh holds it to the workspace's lockfile
+# (test_the_fuzz_lockfile_locks_what_the_workspace_locks).
+if ! cargo metadata --locked --format-version 1 >/dev/null; then
+  echo "fuzz.sh: fuzz/Cargo.lock is out of date; see test_the_fuzz_lockfile_locks_what_the_workspace_locks for how to refresh it" >&2
+  exit 1
+fi
 cargo fuzz run "$TARGET" "${ARGS[@]}" -- \
   -max_total_time="$SECONDS_BUDGET" \
   -max_len="$MAX_LEN" \
