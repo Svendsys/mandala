@@ -6,6 +6,11 @@
 //! counts, never pixels (TEST_CONVENTIONS §T10).
 
 pub mod fit_tests;
+/// TextFlow's fuzz properties, which the `fuzz/` targets call
+/// (TEST_CONVENTIONS §T14).
+pub mod flow_fuzz;
+#[cfg(test)]
+mod flow_fuzz_tests;
 pub mod outline_tests;
 pub mod place_tests;
 pub mod shape_tests;

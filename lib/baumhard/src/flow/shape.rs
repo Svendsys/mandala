@@ -28,6 +28,14 @@
 //! stretch of each line came from — and maps every glyph back through
 //! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
 //! caller's span and bytes of the caller's text.
+//!
+//! **Tabs** (ruling R24 on #278). A tab is drawn as cosmic-text draws
+//! it: a space widened to the next tab stop, eight spaces apart from the
+//! start of its line. A face whose space has no width cannot measure a
+//! stop, and cosmic-text then gives the tab, and every glyph after it on
+//! the line, a `NaN` advance and position; such a flow is shaped again
+//! with each tab as one space. Every advance, position, line width and
+//! box size shaping returns is therefore finite.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -346,6 +354,21 @@ fn families_of<'s>(styles: impl Iterator<Item = &'s ResolvedText>, fs: &FontSyst
 
 /// A buffer with no wrapping, no size limit and metrics no smaller than
 /// the shaper accepts, holding `rich`.
+///
+/// **Tabs (ruling R24 on #278).** cosmic-text shapes a tab as a space
+/// and widens it to the next stop, `tab width × the space's advance`
+/// from the line's start. A face whose space has no advance makes that
+/// `0 / 0`: the tab's advance, and the position of every glyph after it
+/// on the line, come out `NaN`. So when the laid-out buffer holds a
+/// width or a position that is not finite and the text holds a tab, the
+/// flow is shaped again with each tab as a space — one byte for one, so
+/// the piece table and every glyph's span bytes stay valid. A tab keeps
+/// its stops wherever the face can measure them; where it cannot, it is
+/// one space wide.
+///
+/// Cost: one pass over the laid-out glyphs when the text holds a tab;
+/// a second shaping only when that pass finds a value that is not
+/// finite. Text without a tab is shaped once and not checked.
 fn new_buffer(
     fs: &mut FontSystem,
     rich: Vec<(&str, Attrs<'_>)>,
@@ -355,13 +378,49 @@ fn new_buffer(
 ) -> Buffer {
     let font_size = font_size.max(MIN_FONT_SIZE_PT);
     let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
-    let mut buffer = Buffer::new(fs, Metrics::new(font_size, line_height));
+    let metrics = Metrics::new(font_size, line_height);
+    if !rich.iter().any(|(text, _)| text.contains('\t')) {
+        return filled_buffer(fs, rich, metrics, align);
+    }
+    let buffer = filled_buffer(fs, rich.clone(), metrics, align);
+    if laid_out_finite(&buffer) {
+        return buffer;
+    }
+    let spaced: Vec<String> = rich.iter().map(|(text, _)| text.replace('\t', " ")).collect();
+    let rich = spaced
+        .iter()
+        .zip(rich)
+        .map(|(text, (_, attrs))| (text.as_str(), attrs))
+        .collect();
+    filled_buffer(fs, rich, metrics, align)
+}
+
+/// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
+fn filled_buffer(
+    fs: &mut FontSystem,
+    rich: Vec<(&str, Attrs<'_>)>,
+    metrics: Metrics,
+    align: Option<Align>,
+) -> Buffer {
+    let mut buffer = Buffer::new(fs, metrics);
     buffer.set_wrap(Wrap::None);
     buffer.set_size(None, None);
-    let defaults = Attrs::new().metrics(Metrics::new(font_size, line_height));
+    let defaults = Attrs::new().metrics(metrics);
     buffer.set_rich_text(rich, &defaults, SHAPING_ADVANCED, align.map(cosmic_align));
     buffer.shape_until_scroll(fs, false);
     buffer
+}
+
+/// Whether every laid-out line's width, and every glyph's width and
+/// position on it, is finite.
+fn laid_out_finite(buffer: &Buffer) -> bool {
+    buffer.layout_runs().all(|run| {
+        run.line_w.is_finite()
+            && run
+                .glyphs
+                .iter()
+                .all(|glyph| glyph.w.is_finite() && glyph.x.is_finite())
+    })
 }
 
 /// The document's alignment as cosmic-text's.
