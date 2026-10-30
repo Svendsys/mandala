@@ -52,6 +52,31 @@ use indextree::{Arena, Children, Descendants, Node, NodeId};
 use log::error;
 use std::fmt;
 
+/// A count of the ancestor steps [`Tree::contains`] takes, so a test can
+/// show that a path which must not walk a node's ancestors does not.
+/// Counted per thread and only in a test build; in any other build
+/// [`ancestor_steps::step`] is an empty function.
+pub(crate) mod ancestor_steps {
+    #[cfg(test)]
+    thread_local! {
+        static STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Count one ancestor step.
+    #[inline]
+    pub(crate) fn step() {
+        #[cfg(test)]
+        STEPS.with(|steps| steps.set(steps.get() + 1));
+    }
+
+    /// The steps this thread has counted since the last call, and
+    /// restart the count.
+    #[cfg(test)]
+    pub(crate) fn take() -> u64 {
+        STEPS.with(|steps| steps.replace(0))
+    }
+}
+
 /// Where [`Tree::insert_child`] / [`MutatorTree::insert_child`] puts a
 /// new child **within the run of siblings whose key equals its own**.
 /// The key decides the run; the placement only orders the new child
@@ -227,7 +252,12 @@ impl<E: TreeElement> Tree<E> {
     /// still allocated, so a journal can put it back, but not part of
     /// the tree until it does. O(depth of `id`); no allocation.
     pub fn contains(&self, id: NodeId) -> bool {
-        self.arena.get(id).is_some() && id.ancestors(&self.arena).last() == Some(self.root)
+        self.arena.get(id).is_some()
+            && id
+                .ancestors(&self.arena)
+                .inspect(|_| ancestor_steps::step())
+                .last()
+                == Some(self.root)
     }
 
     /// Pre-order iterator over every descendant of [`Self::root`]
@@ -340,6 +370,40 @@ impl<E: TreeElement> Tree<E> {
             journal.unwind(self);
         }
         result
+    }
+
+    /// [`Self::update`] for a caller that **knows** `id` is in the tree
+    /// because it put it there: only the arena slot is checked, so a
+    /// node of a detached subtree is not refused. O(1) where
+    /// [`Self::update`]'s membership check is O(depth of `id`) — the
+    /// difference between a linear and a quadratic load for a document
+    /// builder that writes into a node at every depth.
+    ///
+    /// Errors: [`TreeError::StaleNode`] for an `id` with no live arena
+    /// slot; `f` is then not called. Not journaled.
+    ///
+    /// Invalidates the tree's cache. Cost: `f` and two O(1) key reads;
+    /// only when the key changed, [`Self::update`]'s move.
+    pub(crate) fn update_known<R>(
+        &mut self,
+        id: NodeId,
+        f: impl FnOnce(&mut E) -> R,
+    ) -> Result<R, TreeError> {
+        let Some(node) = self.arena.get_mut(id).filter(|node| !node.is_removed()) else {
+            return Err(TreeError::StaleNode(id));
+        };
+        let element = node.get_mut();
+        let before = element.key();
+        let out = f(element);
+        let rekeyed = element.key() != before;
+        let parent = node.parent();
+        if let (true, Some(parent)) = (rekeyed, parent) {
+            if let Some(prev) = siblings::reposition_slot(&self.arena, id, E::key) {
+                move_among_siblings(&mut self.arena, parent, id, prev, None);
+            }
+        }
+        self.cache.invalidate();
+        Ok(out)
     }
 
     /// The body of [`Self::update`] and [`Self::update_journaled`].

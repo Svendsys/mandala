@@ -21,7 +21,7 @@ that moved.
    is not any more, and the reason matters — a key no field claims is
    now **kept**, so an older build can open a newer map without losing
    what it does not understand. See
-   [schema.md](./schema.md#unknown-keys-are-kept). The loader warns
+   [legacy-schema.md](./legacy-schema.md#unknown-keys-are-kept). The loader warns
    once, into a log, and carries on. A warning at load is not a moment
    at which anybody finds out; a nonzero exit is. So an unrecognized
    key is an **error** under `verify`, reported at the part of the
@@ -255,7 +255,7 @@ again: it is written back at every save and read by nothing. A typo
 (`min_zoom_to_rendr`) and a genuinely newer field look identical from
 here, and both are worth a nonzero exit — one to fix, the other to
 tell you the build is behind the file. See
-[schema.md](./schema.md#unknown-keys-are-kept).
+[legacy-schema.md](./legacy-schema.md#unknown-keys-are-kept).
 
 Interiors of `macros` and a node's `inline_macros` are exempt: they
 are opaque JSON by design and nothing in them is ever unrecognized.
@@ -287,7 +287,7 @@ failed: dropping one `Mutation` out of a macro would leave an entry
 that still fires and silently does less than it says. Nothing else is
 skippable — a node, an edge, the canvas or a palette this build cannot
 read still fails the load outright. See
-[schema.md](./schema.md#unknown-keys-are-kept).
+[legacy-schema.md](./legacy-schema.md#unknown-keys-are-kept).
 
 ## What's not checked
 

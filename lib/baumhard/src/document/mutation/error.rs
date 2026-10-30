@@ -120,6 +120,19 @@ pub enum MutationError {
         /// Where.
         at: MutatorPath,
     },
+    /// A name an author chose — a theme variant or variable, a palette —
+    /// that a file cannot hold: empty, or with a control or bidi
+    /// character ([`name_fault`](crate::document::place::name_fault),
+    /// the rule the loader holds a file's names to).
+    Name {
+        /// Where.
+        at: MutatorPath,
+        /// What the name names: `"theme variant"`, `"theme variable"`,
+        /// `"palette"`.
+        what: &'static str,
+        /// Why it may not.
+        fault: crate::document::place::NameFault,
+    },
     /// A span inside a ring with a size of its own, which a ring never
     /// reads (one size per ring, #235 amendment 3) and a load refuses
     /// (ruling R11.2 on #236).
@@ -249,6 +262,14 @@ impl fmt::Display for MutationError {
                     "{at}: a font must name a face; the fallback face is never stored"
                 )
             }
+            MutationError::Name { at, what, fault } => match fault {
+                crate::document::place::NameFault::Empty => write!(f, "{at}: a {what} name is empty"),
+                crate::document::place::NameFault::NotPrintable(c) => write!(
+                    f,
+                    "{at}: a {what} name holds U+{:04X}, a control or bidi character a file cannot hold",
+                    u32::from(*c)
+                ),
+            },
             MutationError::RingSpanSize { at } => {
                 write!(
                     f,

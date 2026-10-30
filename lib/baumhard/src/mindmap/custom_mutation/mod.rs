@@ -193,7 +193,7 @@ pub enum MutationBehavior {
 /// must fail the suite rather than leave a hand-kept list one row
 /// short: the `covers_reach` table pin, the serde round-trip, the
 /// differential harness's scope list, and the `target_scope` value
-/// list published in `format/schema.md` are all driven off
+/// list published in `format/legacy-schema.md` are all driven off
 /// `TargetScope::iter()`, so none of them can silently omit a new
 /// variant (CLAUDE.md §4 — make the drift impossible, don't fix it
 /// once).

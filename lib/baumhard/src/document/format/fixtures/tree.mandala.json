@@ -1,0 +1,90 @@
+{
+  "format": 1,
+  "name": "Genesis",
+  "theme": {
+    "active": "dark",
+    "variants": {
+      "dark": {
+        "accent": "#d4a24c",
+        "bg": "#101014",
+        "fg": "#e0e0e0"
+      },
+      "light": {
+        "accent": "#8a5a00",
+        "bg": "#f6f3ec",
+        "fg": "#202024"
+      }
+    }
+  },
+  "palettes": {
+    "rainbow": [
+      {
+        "fill": "#2a1b3d",
+        "frame": "#a239ca",
+        "text": "#e0e0e0",
+        "title": "#ffffff"
+      },
+      {
+        "fill": "var(bg)",
+        "frame": "var(accent)",
+        "text": "var(fg)"
+      }
+    ]
+  },
+  "defaults": {
+    "connector": {
+      "fit": "repeat",
+      "content": "─"
+    }
+  },
+  "verbs": [
+    {
+      "id": "reveal-days",
+      "name": "Reveal the days"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "shape": {"rectangle": {"radius": 25}},
+      "palette": "rainbow",
+      "on": {"click": "reveal-days"},
+      "sections": [{"spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}]}, {"channel": 1, "offset": [0.0, 40.0], "spans": [{"text": "Genesis 1:1"}]}],
+      "frame": {"fit": "fit", "rings": [{"spans": [{"text": "And the earth was without form, and void; "}]}]},
+      "links": [{"to": 6, "kind": "portal"}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [320.0, -80.0],
+      "sections": [{"spans": [{"text": "the heaven"}]}],
+      "links": [{"to": 4, "kind": "line", "control_points": [[400.0, 0.0]]}]
+    },
+    {
+      "id": 5,
+      "parent": 2,
+      "position": [640.0, -120.0],
+      "sections": [{"spans": [{"text": "the firmament", "link": {"verb": "reveal-days"}}]}]
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "position": [320.0, 80.0],
+      "sections": [{"spans": [{"text": "the earth"}]}],
+      "connector": {"spans": [{"text": "·"}]}
+    },
+    {
+      "id": 4,
+      "parent": 1,
+      "channel": 1,
+      "position": [320.0, 240.0],
+      "sections": [{"spans": [{"text": "darkness upon the face of the deep"}]}]
+    },
+    {
+      "id": 6,
+      "position": [0.0, 600.0],
+      "sections": [{"spans": [{"text": "Day one"}]}]
+    }
+  ]
+}

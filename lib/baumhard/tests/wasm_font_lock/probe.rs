@@ -218,6 +218,166 @@ pub extern "C" fn deep_mutator_validates() -> u32 {
     1
 }
 
+/// R13's acceptance on wasm32's default stack, in a debug build: a map
+/// 100,000 nodes deep through `load`, `validate_subtree`,
+/// `check_savable` and `save`, and back
+/// (`baumhard::document::tests::format_depth`). It also builds every
+/// keyed map the loader and the document hold, so it runs the hash
+/// key's draw from `getrandom` here too.
+#[no_mangle]
+pub extern "C" fn deep_chain_survives_every_walk() -> u32 {
+    install_hook();
+    use baumhard::document::tests::format_depth::{deep_chain_survives_every_walk, CHAIN_DEPTH};
+    match deep_chain_survives_every_walk(CHAIN_DEPTH) {
+        Ok(()) => 1,
+        Err(why) => panic!("the deep chain failed on wasm32: {why}"),
+    }
+}
+
+/// The negative control of `deep_chain_survives_every_walk`: the same
+/// chain counted by a walk that recurses on depth, which must not
+/// return. See the runner for what it is expected to do instead.
+#[no_mangle]
+pub extern "C" fn planted_recursive_walk() -> u32 {
+    install_hook();
+    use baumhard::document::tests::format_depth::{planted_recursive_count, CHAIN_DEPTH};
+    u32::try_from(planted_recursive_count(CHAIN_DEPTH)).unwrap_or(0)
+}
+
+/// The module's memory, in bytes: a high-water mark, since a module's
+/// memory only grows. It counts what the allocator holds, not what was
+/// asked of it — headers, rounding, a `realloc` that had to copy, and
+/// freed chunks too small for a later request.
+fn memory_bytes() -> u64 {
+    (core::arch::wasm32::memory_size::<0>() as u64) * 65_536
+}
+
+/// Load and save one of the maps wasm32's memory limits are derived
+/// from (`baumhard::document::tests::format_memory_shapes`), by the
+/// module's own memory, and hold it to the model the limits are derived
+/// from. The measurement is left in the message buffer for the runner
+/// to print; a map past the model panics with why.
+fn measure_memory(shape: &str) -> u32 {
+    install_hook();
+    use baumhard::document::tests::format_memory_shapes::{measure, measured_text};
+    let base = memory_bytes();
+    let text = measured_text(shape);
+    let measured = measure(shape, text, base, memory_bytes);
+    record_panic(&measured.line());
+    match measured.check() {
+        Ok(()) => 1,
+        Err(why) => panic!("{why}"),
+    }
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_fan() -> u32 {
+    measure_memory("fan")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_chain() -> u32 {
+    measure_memory("chain")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_tops() -> u32 {
+    measure_memory("tops")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_labels() -> u32 {
+    measure_memory("labels")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_sections() -> u32 {
+    measure_memory("sections")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_rings() -> u32 {
+    measure_memory("rings")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_portals() -> u32 {
+    measure_memory("portals")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_lines() -> u32 {
+    measure_memory("lines")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_spans() -> u32 {
+    measure_memory("spans")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_lines() -> u32 {
+    measure_memory("one_lines")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_portals() -> u32 {
+    measure_memory("one_portals")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_sections() -> u32 {
+    measure_memory("one_sections")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_rings() -> u32 {
+    measure_memory("one_rings")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_one_spans() -> u32 {
+    measure_memory("one_spans")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_text() -> u32 {
+    measure_memory("text")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_theme() -> u32 {
+    measure_memory("theme")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_verbs() -> u32 {
+    measure_memory("verbs")
+}
+
+/// See [`measure_memory`].
+#[no_mangle]
+pub extern "C" fn memory_palettes() -> u32 {
+    measure_memory("palettes")
+}
+
 /// Hit-test a glyph tree 100,000 levels deep that ends in a fill and a
 /// run (design §20 rule 11): the box passes that read a run's and a
 /// fill's bounds iterate, so they fit wasm32's default stack in a debug

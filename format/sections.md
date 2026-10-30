@@ -471,7 +471,7 @@ verify): a zero-section map is rejected at parse time with a
 
 ## See also
 
-- [`schema.md`](./schema.md#mindsection) — the per-field type table.
+- [`legacy-schema.md`](./legacy-schema.md#mindsection) — the per-field type table.
 - [`text-runs.md`](./text-runs.md) — per-grapheme styling, now
   anchored on a section instead of on the node.
 - [`CONCEPTS.md` §3 "Sections"](../CONCEPTS.md) — conceptual

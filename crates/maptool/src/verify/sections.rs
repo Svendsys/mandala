@@ -9,7 +9,7 @@
 //! is load-blocking and comes from `verify::numeric` via the shared
 //! `validate::section_extent_violations`. What is left here is the
 //! part that is genuinely `verify`'s: fitting inside the parent
-//! (`format/schema.md` says a section hanging past its node still
+//! (`format/legacy-schema.md` says a section hanging past its node still
 //! renders), the per-node section cap, and channel collisions.
 //! Reporting either half twice is the failure this split exists to
 //! prevent.

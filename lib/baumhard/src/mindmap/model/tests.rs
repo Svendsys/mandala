@@ -498,7 +498,7 @@ fn display_mode_portal_round_trips_through_json() {
     assert!(is_portal_edge(&back));
 }
 
-/// `format/schema.md` §"Portal-mode edges" prints a portal edge as
+/// `format/legacy-schema.md` §"Portal-mode edges" prints a portal edge as
 /// literal JSON, and `maptool convert` emits exactly this shape for
 /// every folded legacy portal. A documented example that does not
 /// deserialize is worse than none — a reader hand-authoring an edge
@@ -510,11 +510,11 @@ fn display_mode_portal_round_trips_through_json() {
 /// as `gfx_structs::tests::area_tests::documented_rotate_example`).
 #[test]
 fn test_documented_portal_edge_example_deserializes() {
-    let doc = crate::util::doc_fixtures::format_doc_path("schema.md");
+    let doc = crate::util::doc_fixtures::format_doc_path("legacy-schema.md");
     let published = crate::util::doc_fixtures::documented_json_block(&doc, "### Portal-mode edges", 0);
 
     let edge: MindEdge = serde_json::from_str(&published).unwrap_or_else(|e| {
-        panic!("format/schema.md's portal-edge example must deserialize: {e}\n{published}")
+        panic!("format/legacy-schema.md's portal-edge example must deserialize: {e}\n{published}")
     });
     assert!(is_portal_edge(&edge));
     assert_eq!(edge.from_id, "0.3");
@@ -1406,7 +1406,7 @@ fn test_text_run_start_and_end_stay_required() {
 /// Negative control for the defaults (issue #138's
 /// default-shadowed shape): a run that authors every field keeps
 /// every authored value, including a fractional `size_pt` —
-/// `format/schema.md` types the field "number", and `14.5` was a
+/// `format/legacy-schema.md` types the field "number", and `14.5` was a
 /// parse error while the model held a `u32`.
 #[test]
 fn test_text_run_defaults_do_not_shadow_authored_values() {

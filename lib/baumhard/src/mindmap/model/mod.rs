@@ -21,7 +21,7 @@
 //! rule is not maintained by hand — `mindmap::loader`'s
 //! `test_no_loadable_type_can_swallow_an_unknown_key` walks the
 //! model's own source and fails the moment one appears. See
-//! `format/schema.md` §"Unknown keys are kept".
+//! `format/legacy-schema.md` §"Unknown keys are kept".
 
 pub mod canvas;
 pub mod edge;

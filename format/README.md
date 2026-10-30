@@ -1,12 +1,19 @@
-# MindMap Format
+# Map formats
 
-This directory documents the `.mindmap.json` format — the on-disk
-representation of a Mandala mindmap. The format is designed to feel native
-to the application, not as a converted import from an external tool.
+This directory documents the on-disk representation of a Mandala map.
 
 ## Start here
 
-- [`schema.md`](./schema.md) — complete field reference for every type
+- [`schema.md`](./schema.md) — the `.mandala.json` format (V1): strict,
+  nested, typed JSON, with one table per object. The loader and saver are
+  `lib/baumhard/src/document/format/`.
+
+Everything below describes the older `.mindmap.json` format and its tooling,
+which the app reads until V1-C3 replaces it; the documents specific to it
+are deleted with it.
+
+- [`legacy-schema.md`](./legacy-schema.md) — complete field reference for
+  every type of the `.mindmap.json` format
 - [`validation.md`](./validation.md) — the invariants a valid file must
   satisfy (and what `maptool verify` checks)
 

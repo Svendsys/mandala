@@ -181,9 +181,14 @@ fn test_document_bounds_node_ident() {
 /// `1..=MAX_NODE_IDENT`: the reserved 0 and `u32::MAX` are out.
 pub fn do_document_bounds_node_ident() {
     assert_eq!(check_node_ident(1), Ok(1));
-    assert_eq!(check_node_ident(MAX_NODE_IDENT), Ok(MAX_NODE_IDENT));
+    assert_eq!(check_node_ident(u64::from(MAX_NODE_IDENT)), Ok(MAX_NODE_IDENT));
     assert_eq!(check_node_ident(0), Err(BoundError::NotAnIdent(0)));
-    assert_eq!(check_node_ident(u32::MAX), Err(BoundError::NotAnIdent(u32::MAX)));
+    assert_eq!(
+        check_node_ident(u64::from(u32::MAX)),
+        Err(BoundError::NotAnIdent(u64::from(u32::MAX)))
+    );
+    // Past the width of an ident is the same bound, not another error.
+    assert_eq!(check_node_ident(1 << 32), Err(BoundError::NotAnIdent(1 << 32)));
 }
 
 #[test]

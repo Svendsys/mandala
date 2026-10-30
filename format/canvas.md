@@ -9,7 +9,7 @@ console verb; the data model lives at
 
 Every field of `Canvas` is listed here, plus `palettes`, which is
 map-wide but lives beside `canvas` rather than inside it. The
-struct is the authority; [schema.md](./schema.md#canvas) carries
+struct is the authority; [legacy-schema.md](./legacy-schema.md#canvas) carries
 the same table in brief.
 
 | Field | Type | Default | Notes |

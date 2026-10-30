@@ -1438,7 +1438,7 @@ HashMap<String, Palette>`, `custom_mutations: Vec<CustomMutation>`,
 an opaque `macros: Vec<serde_json::Value>`, and the two
 `#[serde(skip)]` carriers a load fills and a save writes back —
 `unknown_keys` and `skipped_constructs`. See
-[`format/schema.md`](./format/schema.md) for the JSON surface and
+[`format/legacy-schema.md`](./format/legacy-schema.md) for the JSON surface and
 [`format/README.md`](./format/README.md) for a minimum-viable
 example.
 
@@ -1483,7 +1483,7 @@ fails the moment one appears.
 
 **A derivation is a reading, and a reading can be wrong in a way the
 document it feeds is wrong in too.** The same walk produces the list
-of arrays `format/schema.md` publishes — the places a captured key's
+of arrays `format/legacy-schema.md` publishes — the places a captured key's
 route stops naming a node by its id and starts naming an element by
 its index — and for a long time it produced that list by matching the
 token `Vec` and one spelling of `#[serde(rename …)]`. Three live
@@ -1537,7 +1537,7 @@ model means something else by, and each has a `maptool convert` verb.
 `lib/baumhard/src/mindmap/loader.rs`,
 `lib/baumhard/src/util/serde_coverage.rs`,
 `lib/baumhard/src/util/serde_probe.rs`. See
-[`format/schema.md`](./format/schema.md) §"Unknown keys are kept" for
+[`format/legacy-schema.md`](./format/legacy-schema.md) §"Unknown keys are kept" for
 the policy as authors read it, and
 [`format/validation.md`](./format/validation.md) for the split between
 what the loader reports and what `verify` fails on. Its severe
@@ -1596,7 +1596,7 @@ against the array with the constructs already lifted out. See
 `excise_unreadable_constructs`),
 `crates/maptool/src/verify/unknown_keys.rs`
 (`check_skipped_constructs`). See
-[`format/schema.md`](./format/schema.md) §"Unknown keys are kept" and
+[`format/legacy-schema.md`](./format/legacy-schema.md) §"Unknown keys are kept" and
 [`format/validation.md`](./format/validation.md) §"Unknown variants".
 
 ### `Canvas`
@@ -1644,7 +1644,7 @@ shadow) and structural pieces (`channel`, `color_schema`,
 user-typed text lives on its sections.
 
 `lib/baumhard/src/mindmap/model/node.rs`. Full
-field reference in [`format/schema.md`](./format/schema.md). Author
+field reference in [`format/legacy-schema.md`](./format/legacy-schema.md). Author
 owns non-overlap of node AABBs; the model does no collision
 checking. The tree builder excludes folded subtrees from the
 display tree; the underlying data persists either way. The node
@@ -1702,7 +1702,7 @@ have **no stable id** — they are identified by the tuple
 `display_mode` field switches rendering style without changing the
 underlying edge identity; flipping a long edge from line to portal
 is a one-field change. Field reference in
-[`format/schema.md`](./format/schema.md).
+[`format/legacy-schema.md`](./format/legacy-schema.md).
 
 Multiple edges between the same pair with different
 `type` are allowed (rare but legitimate). Multiple edges with the

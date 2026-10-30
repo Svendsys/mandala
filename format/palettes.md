@@ -89,7 +89,7 @@ An **empty** value in the frame, text or title column is a hole rather
 than a color, in the *override* column as much as the palette one: the
 reader skips that tier and takes the next one. Only `background`
 passes an empty string along, where it means "no fill".
-See [schema.md](./schema.md#palette-on-the-map).
+See [legacy-schema.md](./legacy-schema.md#palette-on-the-map).
 
 ## Overriding one channel on one node
 

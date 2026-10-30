@@ -5,7 +5,7 @@
 //!
 //! [`crate::util::serde_coverage`] answers the same questions by
 //! parsing baumhard's own `.rs` files with `syn`. That walk is the
-//! only thing `format/schema.md`'s published array list rests on, and
+//! only thing `format/legacy-schema.md`'s published array list rests on, and
 //! a walk is a *reading* of the source — it can be wrong in ways the
 //! document it feeds is then wrong in too. The two agree because they
 //! share a derivation, not because the derivation is right, and
@@ -157,7 +157,7 @@ pub struct DerivedShape {
 impl DerivedShape {
     /// Every JSON member name that holds a growable array whose
     /// elements can carry named keys — the compiler's answer to the
-    /// question `format/schema.md` publishes.
+    /// question `format/legacy-schema.md` publishes.
     ///
     /// Cost: one pass over the recorded sequences; allocates the set.
     pub fn key_bearing_sequences(&self) -> BTreeSet<String> {
@@ -1681,7 +1681,7 @@ mod tests {
     }
 
     /// An array at a place with no member name is reported rather
-    /// than dropped. `format/schema.md` publishes member names, and
+    /// than dropped. `format/legacy-schema.md` publishes member names, and
     /// there is none here to publish — so the honest answer is to
     /// hand it to a reader, not to leave a positional route the
     /// document cannot mention.
