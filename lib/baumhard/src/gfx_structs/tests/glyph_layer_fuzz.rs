@@ -52,7 +52,7 @@ use crate::gfx_structs::fill::{FillData, FillShape};
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, RunShape};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
-use crate::util::tests::choices::Choices;
+use crate::util::tests::choices::{encode, Choices};
 
 /// The most placed glyphs a structured run holds.
 pub const MAX_RUN_GLYPHS: u32 = 64;
@@ -82,8 +82,30 @@ pub fn parse_mutations(bytes: &[u8]) -> Option<Vec<GfxMutation>> {
         })
 }
 
+/// The choices [`build_tree`] reads to make the tree the JSON half
+/// applies its mutations to: a fixed, committed sequence (found by a
+/// seeded search, `Choices::seeded(1374)`), so that the raw target's
+/// tree is one whose properties can fail. An empty source builds a tree
+/// of one-glyph runs, empty boxes and no overrides, where an override
+/// range of any length is clipped to nothing (review of #293, blocking
+/// item 2). [`json_tree_holds_what_it_must`] holds it to that, in
+/// `glyph_layer_fuzz_tests`.
+pub const JSON_TREE: [u32; 61] = [
+    341, 3780627411, 3479967389, 3941801709, 2034049271, 3640511300,
+    2373088975, 1141193928, 3800543117, 4096921798, 2166864594, 1469876867,
+    1019249133, 3007793384, 2243236915, 24439844, 2764531850, 1300509306,
+    964450253, 1222312308, 3893388356, 1279525931, 435554519, 3204477107,
+    3376091548, 2617255042, 26104618, 2103131497, 3524303660, 863718469,
+    2012667715, 2150245066, 3341369651, 2444540886, 4077263468, 11814033,
+    3285160055, 3711619468, 285931741, 2300057731, 1592884704, 2709092807,
+    3127291753, 1583682287, 4081518031, 617716496, 3782182341, 60381133,
+    1735745581, 2439500713, 3543589798, 1687220900, 2266203320, 3401289666,
+    1052482158, 314356266, 2300337973, 1008283417, 3857795123, 1810831333,
+    2707312616,
+];
+
 /// Every property of `bytes` read as JSON mutations
-/// ([`parse_mutations`]) applied to the default tree: the
+/// ([`parse_mutations`]) applied to the tree [`JSON_TREE`] builds: the
 /// glyph_mutation_raw target's whole body. Bytes that are not mutations
 /// are refused by the reader, which must not panic; that is all there is
 /// to check of them.
@@ -93,7 +115,7 @@ pub fn check_glyph_mutations_json(bytes: &[u8]) -> Result<(), String> {
     };
     // Every mutation goes to every element, as a scope such as
     // `SelfAndDescendants` sends one list to elements of every kind.
-    let (mut tree, targets) = build_tree(&mut Choices::new(&[]));
+    let (mut tree, targets) = build_tree(&mut Choices::new(&encode(&JSON_TREE)));
     let assigned: Vec<(usize, GfxMutation)> = (0..targets.len())
         .flat_map(|target| mutations.iter().map(move |mutation| (target, mutation.clone())))
         .collect();
@@ -130,7 +152,7 @@ pub type Target = Vec<usize>;
 /// it: under the root a box run, a path run, a fill and an area (which
 /// run and fill mutations must leave alone), then a void holding a path
 /// run and a fill, so that a box has an ancestor below the root.
-fn build_tree(choices: &mut Choices<'_>) -> (GfxTree, Vec<Target>) {
+pub fn build_tree(choices: &mut Choices<'_>) -> (GfxTree, Vec<Target>) {
     let mut tree = GfxTree::new_non_indexed();
     let root = tree.root;
     let add = |tree: &mut GfxTree, parent: NodeId, element: GfxElement| {
@@ -447,6 +469,55 @@ pub fn boxes_are_finite(tree: &mut GfxTree) -> Result<(), String> {
         Vec2::splat(f32::INFINITY),
     ] {
         let _ = tree.descendant_at(point);
+    }
+    Ok(())
+}
+
+/// What the tree the JSON half applies mutations to must hold, so that
+/// its properties can fail there (review of #293, blocking item 2): a
+/// box run and two path runs of several glyphs, filler among a path
+/// run's, a box and fills of positive size, two runs without overrides
+/// (so a range op materializes them) and one with them materialized.
+/// `Err` names the first that does not hold.
+pub fn json_tree_holds_what_it_must(tree: &GfxTree) -> Result<(), String> {
+    let elements: Vec<&GfxElement> = tree
+        .descendants()
+        .filter_map(|id| tree.get(id).map(|node| node.get()))
+        .collect();
+    let runs: Vec<&GlyphRunData> = elements.iter().filter_map(|element| element.glyph_run()).collect();
+    let fills: Vec<&FillData> = elements.iter().filter_map(|element| element.fill()).collect();
+    let positive = |size: Vec2| size.is_finite() && size.x > 0.0 && size.y > 0.0;
+    if runs.len() != 3 || fills.len() != 2 {
+        return Err(format!("{} runs and {} fills", runs.len(), fills.len()));
+    }
+    let boxes: Vec<&&GlyphRunData> = runs
+        .iter()
+        .filter(|run| matches!(run.shaped(), RunShape::Box(_)))
+        .collect();
+    match boxes.as_slice() {
+        [run] if run.shaped().glyph_count() >= 4 && positive(run.bounds().1) => {}
+        _ => return Err("the box run has fewer than 4 glyphs or no positive box".to_string()),
+    }
+    let paths: Vec<&&GlyphRunData> = runs
+        .iter()
+        .filter(|run| matches!(run.shaped(), RunShape::Path { .. }))
+        .collect();
+    if paths.len() != 2 || paths.iter().any(|run| run.shaped().glyph_count() < 4) {
+        return Err("two path runs of at least 4 glyphs each".to_string());
+    }
+    if !paths.iter().any(|run| {
+        let count = run.shaped().glyph_count();
+        let fillers = (0..count).filter(|&i| run.shaped().is_filler(i)).count();
+        fillers > 0 && fillers < count
+    }) {
+        return Err("no path run mixes filler and text glyphs".to_string());
+    }
+    let materialized = runs.iter().filter(|run| !run.overrides().is_empty()).count();
+    if materialized != 1 {
+        return Err(format!("{materialized} runs with overrides, not one"));
+    }
+    if fills.iter().any(|fill| !positive(fill.rect.size) || !fill.rect.origin.is_finite()) {
+        return Err("a fill without a finite, positive rectangle".to_string());
     }
     Ok(())
 }

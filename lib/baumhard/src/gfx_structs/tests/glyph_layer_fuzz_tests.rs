@@ -14,11 +14,12 @@ use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::tests::fill_tests::a_fill;
 use crate::gfx_structs::tests::glyph_layer_fuzz::{
-    boxes_are_finite, check_glyph_mutations_generated, check_glyph_mutations_json,
+    boxes_are_finite, build_tree, check_glyph_mutations_generated, check_glyph_mutations_json,
+    json_tree_holds_what_it_must, JSON_TREE,
 };
 use crate::gfx_structs::tests::glyph_layer_tests::authored_glyph_layer_mutations;
 use crate::gfx_structs::tree::GfxTree;
-use crate::util::tests::choices::Choices;
+use crate::util::tests::choices::{encode, Choices};
 
 #[test]
 fn test_generated_glyph_mutations_hold_every_property() {
@@ -105,5 +106,24 @@ fn test_an_area_moved_to_infinity_has_no_box_and_stretches_no_ancestor() {
         tree.subtree_aabb(void),
         Some((Vec2::new(10.0, 20.0), Vec2::new(110.0, 70.0))),
         "the void's box is its fill's alone"
+    );
+}
+
+/// The tree the JSON half mutates is one its properties can fail on: a
+/// multi-glyph box run and path runs, filler among a path run's glyphs,
+/// a box and fills of positive size, and one run whose overrides are
+/// already materialized (review of #293, blocking item 2). An empty
+/// choice source builds none of that, which is the negative control on
+/// the precondition itself.
+#[test]
+fn test_the_json_tree_holds_what_its_properties_need() {
+    let (tree, _) = build_tree(&mut Choices::new(&encode(&JSON_TREE)));
+    if let Err(why) = json_tree_holds_what_it_must(&tree) {
+        panic!("the JSON half's tree: {why}");
+    }
+    let (empty, _) = build_tree(&mut Choices::new(&[]));
+    assert!(
+        json_tree_holds_what_it_must(&empty).is_err(),
+        "an empty choice source builds a tree that satisfies the precondition, so it checks nothing"
     );
 }
