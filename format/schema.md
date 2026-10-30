@@ -798,14 +798,15 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
   rewrite the line its error is shown on.
 - **Which error is first** is fixed: the size, the byte-order mark and
   the encoding; then JSON syntax anywhere in the text; then `format`;
-  then the other top-level values, each first read in the order of the
-  table above (a wrong type, an unknown or a missing key) and only then
-  checked: the counts an index addresses, the theme, the palettes, the
-  edits, presentations and verbs, and the defaults last; then the nodes
-  in list order; then the links, in list order. Within a
-  node, an error the JSON reader finds — a wrong type, an unknown or a
-  missing key, anywhere in the node — comes first, in the order of the
-  text, since the node is read whole before anything is checked; then
+  then the other top-level values, all of which are read first, in the
+  order of the table above (a wrong type, an unknown or a missing key),
+  before any of their content is checked: the counts an index
+  addresses, the theme, the palettes, the edits, presentations and
+  verbs, and the defaults last; then the nodes in list order; then the
+  links, in list order. Within a node, an error the JSON reader finds —
+  a wrong type, an unknown or a missing key, anywhere in the node —
+  comes first, in the order of the text, since the node is read whole
+  before anything is checked; then
   its `id`, `parent` and `channel`; then its other keys; and a node's
   row is checked once its subtree has ended.
 - A file whose `format` is a positive integer other than `1` is
