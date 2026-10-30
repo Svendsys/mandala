@@ -108,7 +108,7 @@ turns the same loop into a short captioned GIF for a human to review;
 | [`CODE_CONVENTIONS.md`](CODE_CONVENTIONS.md)    | Workspace-wide coding conventions and philosophy (mandatory)              |
 | [`lib/baumhard/CONVENTIONS.md`](lib/baumhard/CONVENTIONS.md) | Crate-local rules for Baumhard (mutation-not-rebuild, arena, ...)        |
 | [`TEST_CONVENTIONS.md`](TEST_CONVENTIONS.md)    | Testing philosophy + the `do_*()` benchmark-reuse pattern                 |
-| [`format/`](format/)                            | The `.mindmap.json` format spec; start with `format/schema.md`            |
+| [`format/`](format/)                            | The file format specs; start with `format/schema.md` (`.mandala.json`) |
 
 ## Repository layout
 

@@ -172,6 +172,12 @@ struct Recorded<E> {
 /// check can detect that afterwards: [`Journal::revert`] refuses stale
 /// ids only.
 ///
+/// **Builders run strictly one after another** — each closed before the
+/// next one's first call — or the undo history ends at the interleave:
+/// a builder that finds the tree moved since its own last call cuts its
+/// journal from every earlier one, which then refuses to restore
+/// ([`TreeError::OutOfOrder`]).
+///
 /// A builder is all or nothing: when a journaled call on it fails, the
 /// call reverts everything the builder recorded — the tree returns to
 /// where it stood when the builder was created, and every node the
@@ -1277,8 +1283,9 @@ impl<E: TreeElement> Journal<E> {
     ///
     /// Invalidates the tree's cache. Cost: one clone per entry; for
     /// moved elements a detach and a re-attach each: a same-row one for
-    /// an element that keeps its parent (O(1) once indextree offers it,
-    /// ruling R16 on #282), and an O(depth) one — the cycle check of a
+    /// an element that keeps its parent (O(1) once the engine's own
+    /// arena tree replaces indextree, V1-A6 #290), and an O(depth) one —
+    /// the cycle check of a
     /// re-parent — for an element that changes parent, enters or leaves.
     pub fn revert(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
         self.validate(tree)?;

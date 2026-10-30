@@ -5,6 +5,7 @@ use baumhard::document::tests::bounds_tests::*;
 use baumhard::document::tests::deep_tests::*;
 use baumhard::document::tests::deps_tests::*;
 use baumhard::document::tests::element_tests::*;
+use baumhard::document::tests::format_tests::*;
 use baumhard::document::tests::ids_tests::*;
 use baumhard::document::tests::inspect_tests::*;
 use baumhard::document::tests::journal_tests::*;
@@ -2010,6 +2011,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_shape_checks_only_its_own_row", |b| {
         b.iter(do_document_shape_checks_only_its_own_row)
+    });
+    // the format: load and save //
+    c.bench_function("format_fixtures_round_trip_byte_for_byte", |b| {
+        b.iter(do_format_fixtures_round_trip_byte_for_byte)
+    });
+    c.bench_function("format_full_fixture_reads_as_written", |b| {
+        b.iter(do_format_full_fixture_reads_as_written)
+    });
+    c.bench_function("format_builder_documents_round_trip", |b| {
+        b.iter(do_format_builder_documents_round_trip)
     });
     // TextFlow: shaping, outlines and the arc-length walk, placement,
     // and the fit modes //

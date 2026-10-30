@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "Deep leaf",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "the target"}]}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [0.0, 200.0],
+      "sections": [{"spans": [{"text": "the deepest content a node holds"}]}],
+      "links": [{"to": 1, "kind": "portal", "ends": [{}, {"label": {"spans": [{"text": "nine levels down", "link": {"url": "https://example.org/deep"}}]}}]}]
+    }
+  ]
+}

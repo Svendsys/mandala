@@ -176,9 +176,10 @@ it with respect.
   - **Same-row moves through one function.** A node moved within the
     row it is in — a settle, an `update`, a journal restoring its place
     — goes back through `siblings::reattach_in_row` and nothing else:
-    under its own parent it cannot close a cycle, so ruling R16 holds
-    that insert to O(1). indextree 4.9 has no insert of an existing
-    node without the climb; until one is swapped in there, that call
+    under its own parent it cannot close a cycle, so ruling R16 (#282)
+    holds that insert to O(1). indextree 4.9 has no insert of an
+    existing node without the climb; until the engine's own arena tree
+    replaces it (V1-A6, #290), that call
     site is the one O(depth) left on the path, and
     `test_same_row_rearrangement_is_linear_in_depth` (ignored until
     then) is the test that goes green with the swap. A node moved to

@@ -526,12 +526,12 @@ fn test_engine_deep_journal_close_climbs_each_element_once() {
 /// the root (ruling R16 on #282). Counted in the steps of every
 /// same-row insert.
 ///
-/// Ignored until the insert is swapped: indextree 4.9 has no insert of
-/// an existing node without its O(depth) cycle check, and R16 keeps the
-/// swap — a patched indextree or an upstream release — for the owner to
-/// decide. It fails today, by design; it is not counted as passing.
+/// Ignored until V1-A6 (#290) replaces indextree with the engine's own
+/// arena tree, whose same-row insert makes no cycle check: indextree 4.9
+/// has no insert of an existing node without its O(depth) one. It fails
+/// today, by design; it is not counted as passing.
 #[test]
-#[ignore = "#282 R16: same-row re-attach is O(depth) until indextree gains an unchecked insert"]
+#[ignore = "#290 (V1-A6): same-row re-attach is O(depth) until the engine's own arena tree replaces indextree"]
 fn test_same_row_rearrangement_is_linear_in_depth() {
     use crate::engine::siblings::tests_support::row_link_steps;
     const WIDE_DEEP: usize = 5_000;
@@ -585,21 +585,23 @@ fn test_engine_deep_settle_leaves_only_children_in_place() {
     );
 }
 
-/// The engine climbs, and inserts an existing node, only where it may:
-/// indextree's climb in `tree::climb`, its checked insert behind
-/// `siblings::checked_attach` — both counted in test builds — and a
-/// hand-written climb (a parent read in a `loop` or `while`) only in
-/// the memoized `Membership::contains`, `Presence::top` and `resolve`,
-/// and the walker's one-off `state_above`. Any of them written
-/// anywhere else in its shipped code is a cost the counts below could
-/// not see, so it is refused by name.
+/// The engine and the document model climb, and insert an existing
+/// node, only where they may: indextree's climb in `tree::climb`, its
+/// checked insert behind `siblings::checked_attach` — both counted in
+/// test builds — and a hand-written climb (a parent read in the
+/// spellings `engine_depth_cost_calls` reads) only in the memoized
+/// `Membership::contains`, `Presence::top` and `resolve`, the walker's
+/// one-off `state_above`, and the document's `tops_climbing`,
+/// `state_of` and `find_binding`. Any of them written anywhere else in
+/// the shipped code of `engine/` or `document/` is a cost the counts
+/// below could not see, so it is refused by name.
 #[test]
 fn test_the_engine_climbs_only_where_it_may() {
     let costs = crate::util::source_scan::engine_depth_cost_calls();
     let unused: Vec<_> = costs.allowed.iter().filter(|(_, &calls)| calls == 0).collect();
     assert!(
-        unused.is_empty() && costs.allowed.len() == 7,
-        "precondition: each of the seven allowed functions makes a call the scan reads; \
+        unused.is_empty() && costs.allowed.len() == 10,
+        "precondition: each of the ten allowed functions makes a call the scan reads; \
          unused: {unused:?}"
     );
     let found = costs.found;

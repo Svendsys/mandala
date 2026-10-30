@@ -698,6 +698,21 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             "test_projection_only_mutations_at_the_wrong_element_change_nothing_in_release",
             Unconverted,
         ),
+        (
+            "document/tests/ids_tests.rs",
+            "test_a_loaded_map_starts_its_counter_through_the_one_hook",
+            Unconverted,
+        ),
+        (
+            "document/tests/ids_tests.rs",
+            "test_the_ident_counter_starts_above_every_ident_the_map_names",
+            Unconverted,
+        ),
+        (
+            "document/tests/mutation_validate_tests.rs",
+            "test_document_validate_holds_an_inserted_name_to_the_files_rule",
+            Unconverted,
+        ),
     ]
 };
 

@@ -207,14 +207,14 @@ pub fn do_document_never_reissues_an_ident() {
         with_ident(MAX_NODE_IDENT - 1).unwrap().next_ident(),
         Some(NodeIdent(MAX_NODE_IDENT))
     );
-    assert_eq!(check_node_ident(MAX_NODE_IDENT), Ok(MAX_NODE_IDENT));
+    assert_eq!(check_node_ident(u64::from(MAX_NODE_IDENT)), Ok(MAX_NODE_IDENT));
     let at_bound = with_ident(MAX_NODE_IDENT).expect("an ident the bound admits loads");
     assert_eq!(at_bound.next_ident(), None, "no ident is left to issue");
     assert_eq!(
         with_ident(u32::MAX).unwrap_err(),
         DocumentError::Bound {
             what: "node id",
-            error: BoundError::NotAnIdent(u32::MAX),
+            error: BoundError::NotAnIdent(u64::from(u32::MAX)),
         }
     );
 }
@@ -291,4 +291,55 @@ pub fn do_document_refuses_more_than_an_index_addresses() {
         with_verbs(MAX_VERBS + 1),
         Err(DocumentError::Bound { what: "verbs", .. })
     ));
+}
+
+#[test]
+fn test_the_ident_counter_starts_above_every_ident_the_map_names() {
+    use crate::document::bounds::MAX_NODE_IDENT;
+    use crate::document::ids::first_free_ident;
+    // Q3 (ruling R20 on #236). The node with ident 5 was deleted while a
+    // definition still names it: after a save and a reload the highest
+    // node is 4, and the next node must still not be 5, or the target
+    // would silently retarget to it.
+    let highest_left = 4;
+    let deleted = 5;
+    let next = first_free_ident(highest_left, [deleted, 2]);
+    assert_eq!(next, 6);
+    assert_ne!(next, deleted, "a new node took an ident a definition names");
+    // Nothing named: one above the highest node.
+    assert_eq!(first_free_ident(highest_left, []), 5);
+    assert_eq!(first_free_ident(0, []), 1);
+    // A named ident below the highest changes nothing.
+    assert_eq!(first_free_ident(9, [3]), 10);
+    // At the bound the counter passes it, and no ident is issued.
+    assert_eq!(first_free_ident(MAX_NODE_IDENT, [3]), MAX_NODE_IDENT + 1);
+    assert_eq!(first_free_ident(3, [u32::MAX]), u32::MAX);
+}
+
+/// A placeholder for ruling R20's end-to-end test of Q3, and one that
+/// cannot fail today: [`idents_named_by`](crate::document::ids::idents_named_by)
+/// yields nothing until definitions have targets, so the hook and an
+/// empty list agree (TEST_CONVENTIONS §T13). The end-to-end test deletes
+/// the highest node, keeps a verb naming it, saves, reloads and adds a
+/// node, whose id must not be the deleted one; its control, the old rule
+/// that ignores named ids, turns it red. It arrives with V1-D3 (#252),
+/// which gives verbs targets, and is recorded there.
+#[test]
+fn test_a_loaded_map_starts_its_counter_through_the_one_hook() {
+    use crate::document::ids::{first_free_ident, idents_named_by};
+    use crate::document::tests::format_text::{map_with, node_of};
+    // A map whose verbs and presentations name no node yet (their
+    // targets arrive with V1-D1–D3): the counter is one above the
+    // highest node, through the same hook that will count them.
+    let json = map_with(
+        r#","verbs":[{"id":"v","name":"V"}],"presentations":[{"id":"p","name":"P"}]"#,
+        &format!("{},{}", node_of(7, ""), node_of(3, "")),
+    );
+    let doc = crate::document::format::load(&json).expect("the map loads");
+    assert_eq!(idents_named_by(doc.definitions()).count(), 0);
+    assert_eq!(
+        doc.next_ident(),
+        Some(NodeIdent(first_free_ident(7, idents_named_by(doc.definitions()))))
+    );
+    assert_eq!(doc.next_ident(), Some(NodeIdent(8)));
 }

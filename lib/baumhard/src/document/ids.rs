@@ -33,6 +33,7 @@
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
+use crate::document::keyed::KeyedMap;
 use crate::document::mutation::error::MutationError;
 use crate::document::mutation::inherited::inherited_seed;
 use crate::document::mutation::validate::validate;
@@ -42,7 +43,6 @@ use crate::engine::journal::JournalBuilder;
 use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
 use indextree::NodeId;
-use rustc_hash::FxHashMap;
 
 /// A node's external identity: unique within its document, never
 /// reused while the document is open. `0` is reserved for "not yet
@@ -145,13 +145,55 @@ impl std::fmt::Display for DocumentError {
 
 impl std::error::Error for DocumentError {}
 
+/// The index from a node's ident to its element, which only
+/// [`Document::node_by_ident`] reads.
+pub(crate) type IdentIndex = KeyedMap<NodeIdent, NodeId>;
+
+/// The ident counter's start for a document whose highest node ident is
+/// `highest` (`0` for a map with no node), and whose definitions name the
+/// node idents `named`: one past the highest of them all (Q3, ruling R20
+/// on #236). A node deleted while something still names it keeps its
+/// ident retired across a save and a reload: a new node never takes an
+/// ident a verb or a presentation still targets. The design's id rule
+/// (§5.2) in one place, so that the loader and the test builder cannot
+/// start it differently. O(the named idents); it saturates rather than
+/// wraps, and a counter past
+/// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT) issues
+/// no ident ([`Document::next_ident`]).
+pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32>) -> u32 {
+    named.into_iter().fold(highest, u32::max).saturating_add(1)
+}
+
+/// Every node ident `definitions` name: the hook through which a
+/// definition's targets reach the ident counter ([`first_free_ident`]).
+///
+/// **Today it names none.** A verb, an edit and a presentation carry
+/// only an id and a name until V1-D1–D3 give them targets; those land
+/// here, and nowhere else. No other field of a saved map can name a
+/// node that is not in it. A node's `parent` and a link's `to` must name
+/// a node of the map on load and in
+/// [`check_savable`](crate::document::format::check_savable), so no
+/// saved file can hold one that does not. The writer (B4) removes the
+/// links into a removed node in the same request. Both are therefore
+/// covered by the highest node ident.
+pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item = u32> + '_ {
+    // The targets V1-D1–D3 add are named here, as `definitions.verbs`
+    // and `definitions.presentations` grow them.
+    let Definitions {
+        edits: _,
+        presentations: _,
+        verbs: _,
+    } = definitions;
+    std::iter::empty()
+}
+
 /// A map: a `Tree<DocElement>` whose root is the
 /// [`Map`](DocKind::Map), its ident index and counter, and the
 /// definitions it carries.
 #[derive(Clone, Debug)]
 pub struct Document {
     tree: Tree<DocElement>,
-    ident_index: FxHashMap<NodeIdent, NodeId>,
+    ident_index: IdentIndex,
     next_ident: u32,
     definitions: Definitions,
 }
@@ -175,7 +217,7 @@ impl Document {
     pub(crate) fn from_tree(tree: Tree<DocElement>, definitions: Definitions) -> Result<Self, DocumentError> {
         validate_shape(&tree, tree.root()).map_err(DocumentError::Shape)?;
         check_indexes(&tree, &definitions)?;
-        let mut ident_index = FxHashMap::default();
+        let mut ident_index = IdentIndex::default();
         let mut highest = 0;
         for id in tree.descendants() {
             let Some(node) = tree.arena()[id].get().as_node() else {
@@ -184,7 +226,7 @@ impl Document {
             if node.ident == NodeIdent::UNASSIGNED {
                 return Err(DocumentError::UnassignedIdent(id));
             }
-            bounds::check_node_ident(node.ident.0).map_err(|error| DocumentError::Bound {
+            bounds::check_node_ident(u64::from(node.ident.0)).map_err(|error| DocumentError::Bound {
                 what: "node id",
                 error,
             })?;
@@ -193,12 +235,35 @@ impl Document {
             }
             highest = highest.max(node.ident.0);
         }
-        // `highest <= MAX_NODE_IDENT < u32::MAX`, so this cannot wrap.
-        let next_ident = highest + 1;
+        let next_ident = first_free_ident(highest, idents_named_by(&definitions));
         Ok(Document {
             tree,
             ident_index,
             next_ident,
+            definitions,
+        })
+    }
+
+    /// Make a document of what the loader built: `tree`, whose every row
+    /// the loader has checked, `ident_index`, which the loader built as
+    /// it placed each node (unique idents, each within the bound, none
+    /// unassigned), and the highest ident in it. Checks the map row and
+    /// the index bounds as [`Self::from_tree`] does, but does not walk the
+    /// tree again to index it. Crate-private: only the loader holds an
+    /// index it built itself.
+    ///
+    /// Cost: one pass over the map's row (the palettes are counted).
+    pub(crate) fn from_loaded(
+        tree: Tree<DocElement>,
+        definitions: Definitions,
+        ident_index: IdentIndex,
+        highest: u32,
+    ) -> Result<Self, DocumentError> {
+        check_loaded(&tree, &definitions)?;
+        Ok(Document {
+            tree,
+            ident_index,
+            next_ident: first_free_ident(highest, idents_named_by(&definitions)),
             definitions,
         })
     }
@@ -219,6 +284,11 @@ impl Document {
     /// code, which holds `NodeId`s. O(1).
     pub fn node_by_ident(&self, ident: NodeIdent) -> Option<NodeId> {
         self.ident_index.get(&ident).copied()
+    }
+
+    /// How many idents the index holds: one per node of the tree. O(1).
+    pub(crate) fn ident_count(&self) -> usize {
+        self.ident_index.len()
     }
 
     /// The ident the next inserted node will be given, or `None` when
@@ -373,7 +443,7 @@ pub fn depth(tree: &Tree<DocElement>, id: NodeId) -> usize {
     if tree.get(id).is_none() {
         return 0;
     }
-    id.ancestors(tree.arena())
+    crate::engine::tree::climb(tree.arena(), id)
         .skip(1)
         .filter(|&a| tree.arena()[a].get().kind() == DocKind::Node)
         .count()
@@ -382,8 +452,7 @@ pub fn depth(tree: &Tree<DocElement>, id: NodeId) -> usize {
 /// [`Document::owning_node`] over a tree. O(depth within the node).
 pub fn owning_node(tree: &Tree<DocElement>, id: NodeId) -> Option<NodeId> {
     tree.get(id)?;
-    id.ancestors(tree.arena())
-        .find(|&a| tree.arena()[a].get().kind() == DocKind::Node)
+    crate::engine::tree::climb(tree.arena(), id).find(|&a| tree.arena()[a].get().kind() == DocKind::Node)
 }
 
 /// The theme element of `tree` and its data: the map's first child.
@@ -426,6 +495,14 @@ pub fn palettes(tree: &Tree<DocElement>) -> impl Iterator<Item = (PaletteId, &Pa
 
 /// Refuse a tree or definitions with more of something than its index
 /// type addresses: past the bound an id would alias another.
+/// What [`Document::from_loaded`] checks of a loaded tree beside its
+/// index: the map row and the header's counts. The format's check that a
+/// document's file would load asks the same, of the tree it builds.
+pub(crate) fn check_loaded(tree: &Tree<DocElement>, definitions: &Definitions) -> Result<(), DocumentError> {
+    validate_shape(tree, tree.root()).map_err(DocumentError::Shape)?;
+    check_indexes(tree, definitions)
+}
+
 fn check_indexes(tree: &Tree<DocElement>, definitions: &Definitions) -> Result<(), DocumentError> {
     let bound = |what: &'static str, count: usize, max: usize| {
         bounds::check_count(count, max).map_err(|error| DocumentError::Bound { what, error })

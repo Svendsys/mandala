@@ -1195,3 +1195,72 @@ pub fn do_document_validate_applied_skips_removed_parents() {
     let (mut doc, _) = document();
     assert_eq!(applied(&mut doc, vec![(remove(), vec![ids.c])]), Ok(()));
 }
+
+#[test]
+fn test_document_validate_holds_an_inserted_name_to_the_files_rule() {
+    use crate::document::element::{PaletteData, ThemeData, ThemeVariant};
+    use crate::document::mutation::validate::judge_element;
+    use crate::document::place::NameFault;
+    use crate::document::values::Rgba;
+    let (doc, _) = document();
+    let palette = |name: &str| {
+        DocElement::Palette(PaletteData {
+            name: name.to_string(),
+            groups: vec![palette_group(1)],
+        })
+    };
+    let theme = |variant: &str, variable: &str| {
+        DocElement::Theme(ThemeData {
+            variables: vec![variable.to_string()],
+            variants: vec![ThemeVariant {
+                name: variant.to_string(),
+                values: vec![Rgba::opaque(0, 0, 0)],
+            }],
+            active: 0,
+        })
+    };
+    // No edit reaches a name today: a theme or a palette goes only in
+    // the map row, and inserting into it is refused before any element
+    // is judged; no op renames one.
+    let insert = |element: DocElement| {
+        command(
+            DocKind::Map,
+            StructOp::Insert {
+                subtree: Subtree::leaf(element),
+                at: Placement::Last,
+            },
+        )
+    };
+    assert!(matches!(
+        validate(&insert(palette("")), &doc),
+        Err(MutationError::Structure {
+            rule: StructureRule::MapRow,
+            ..
+        })
+    ));
+    // Where an inserted theme or palette is judged, its names are held
+    // to the rule a file's are.
+    let name = |result: Result<(), MutationError>| match result {
+        Err(MutationError::Name { what, fault, .. }) => (what, fault),
+        other => panic!("expected a name refusal, got {other:?}"),
+    };
+    assert_eq!(
+        name(judge_element(&doc, &palette(""))),
+        ("palette", NameFault::Empty)
+    );
+    assert_eq!(
+        name(judge_element(&doc, &palette("a\u{202E}b"))),
+        ("palette", NameFault::NotPrintable('\u{202E}'))
+    );
+    assert_eq!(
+        name(judge_element(&doc, &theme("d\u{7}", "bg"))),
+        ("theme variant", NameFault::NotPrintable('\u{7}'))
+    );
+    assert_eq!(
+        name(judge_element(&doc, &theme("d", ""))),
+        ("theme variable", NameFault::Empty)
+    );
+    // Control: names a file can hold pass.
+    assert_eq!(judge_element(&doc, &palette("My Palette")), Ok(()));
+    assert_eq!(judge_element(&doc, &theme("d", "bg")), Ok(()));
+}

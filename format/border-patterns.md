@@ -49,7 +49,7 @@ explicitly so the resolver reads the `glyphs` payload.
 ## Reference: Border-side patterns
 
 The four side fields under
-[`GlyphBorderConfig.glyphs`](./schema.md#glyphborderconfig)
+[`GlyphBorderConfig.glyphs`](./legacy-schema.md#glyphborderconfig)
 (`top`, `bottom`, `left`, `right`) are parsed as **side patterns**:
 small strings that describe how to fill a border side between its
 two corners. Two shapes:

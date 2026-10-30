@@ -304,7 +304,7 @@ pub fn documented_paragraph(path: &Path, heading: &str, marker: &str) -> String 
 /// variant published the moment a section names the wide one. That
 /// is not hypothetical: with `contains`, `Descendants` could be
 /// deleted from all three normative `target_scope` surfaces —
-/// `format/schema.md`, `format/mutations.md`, `CONCEPTS.md` — and
+/// `format/legacy-schema.md`, `format/mutations.md`, `CONCEPTS.md` — and
 /// the suite stayed green.
 ///
 /// An identifier character is `[A-Za-z0-9_]`, so every delimiter the
@@ -638,10 +638,10 @@ Trailing prose about Descendants again.
     /// from wherever the suite runs.
     #[test]
     fn test_format_doc_path_resolves_to_the_repo_specs() {
-        let path = format_doc_path("schema.md");
+        let path = format_doc_path("legacy-schema.md");
         assert!(
             path.is_file(),
-            "format/schema.md must be readable at {}",
+            "format/legacy-schema.md must be readable at {}",
             path.display()
         );
     }

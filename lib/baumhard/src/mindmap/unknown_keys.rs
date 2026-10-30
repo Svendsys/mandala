@@ -257,7 +257,7 @@ impl UnknownKey {
         format!(
             "{}: unrecognized key `{}` — this build has no field for it, so it is \
              kept as written and saved back with the value it was authored with. Check the \
-             spelling if you meant an existing key; see format/schema.md.",
+             spelling if you meant an existing key; see format/legacy-schema.md.",
             self.location(),
             self.path_within_location()
         )
@@ -351,7 +351,7 @@ impl SkippedConstruct {
             "{}: this build cannot read this construct ({}), so it is skipped — \
              it does not appear in the model and nothing it describes will run. It is \
              written back to the file unchanged, so a build that understands it still \
-             has it. See format/schema.md.",
+             has it. See format/legacy-schema.md.",
             self.location(),
             self.reason
         )
@@ -575,7 +575,7 @@ impl UnknownKeys {
     /// The three refusals above are the whole residue, and every one
     /// of them needs an **edit** to reach: a zero-edit load → save
     /// keeps every authored key, in every position.
-    /// `format/schema.md` §"Where a preserved key can still be lost"
+    /// `format/legacy-schema.md` §"Where a preserved key can still be lost"
     /// states it for the reader and
     /// `loader::tests::test_a_zero_edit_round_trip_keeps_every_authored_key`
     /// is what keeps it honest — table-driven over every position a
@@ -1171,7 +1171,7 @@ enum Descend {
 /// probe**, and the walk falls back to the shape: a one-member object
 /// that cannot answer the step is taken as a wrapper. That is the old
 /// guess, kept only where nothing better exists, and it is bounded —
-/// the containers the saver omits (`format/schema.md`
+/// the containers the saver omits (`format/legacy-schema.md`
 /// §"Where a preserved key can still be lost") hold no externally
 /// tagged enum today, so the fallback resolves plain objects.
 ///
@@ -1947,7 +1947,7 @@ mod tests {
              directly inside another one, as `Vec<Vec<T>>` is. Only the probe can see \
              that last shape: the walk classifies *fields*, and a nested array is one \
              field, so an empty answer from it is not evidence. A captured key's route \
-             crosses whichever it is positionally and `format/schema.md`'s \
+             crosses whichever it is positionally and `format/legacy-schema.md`'s \
              one-name-per-line block has no way to name it, so what the document should \
              say is a decision somebody has to make:\n  walk: {:?}\n  generated impls: \
              {:?}",
@@ -2135,7 +2135,7 @@ mod tests {
     }
 
     /// **The one list of arrays, held to the model in both
-    /// directions.** `format/schema.md` publishes where a captured
+    /// directions.** `format/legacy-schema.md` publishes where a captured
     /// key's route turns positional, because that is where an edit
     /// can move it and where the three save-time refusals live. It
     /// published a hand-written version of that list first, and the
@@ -2174,7 +2174,7 @@ mod tests {
              every one of them, so the derivation broke rather than the model"
         );
 
-        let doc = format_doc_path("schema.md");
+        let doc = format_doc_path("legacy-schema.md");
         let published: std::collections::BTreeSet<String> =
             documented_plain_block(&doc, "## Unknown keys are kept", 1)
                 .lines()
@@ -2187,7 +2187,7 @@ mod tests {
         let stale: Vec<&String> = published.difference(&derived).collect();
         assert!(
             missing.is_empty() && stale.is_empty(),
-            "format/schema.md §\"Unknown keys are kept\" publishes the arrays a captured \
+            "format/legacy-schema.md §\"Unknown keys are kept\" publishes the arrays a captured \
              key's route can cross, and it no longer matches the model.\n  \
              the model has, the doc does not list: {missing:?}\n  \
              the doc lists, the model does not have: {stale:?}\n\n\

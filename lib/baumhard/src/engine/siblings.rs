@@ -268,10 +268,11 @@ fn last_slot_for<T, K: Ord>(
 /// so the cycle check a checked insert makes — a climb from the insert
 /// point to the root — has nothing to find here. Ruling R16 on #282:
 /// this re-arrangement must cost O(1), which indextree 4.9 offers no
-/// insert for (every insert of an existing node climbs). Until that
-/// insert exists, [`link_in_row`] is the single call site that will
-/// change, and `test_same_row_rearrangement_is_linear_in_depth` the
-/// test that holds it to O(1).
+/// insert for (every insert of an existing node climbs); the engine's
+/// own arena tree, V1-A6 (#290), will. Until it lands, [`link_in_row`]
+/// is the single call site that will change, and
+/// `test_same_row_rearrangement_is_linear_in_depth` the test that holds
+/// it to O(1).
 ///
 /// Debug builds check that `node` is detached and that `prev` is a
 /// child of `parent` — that the parent is unchanged.
@@ -290,8 +291,8 @@ pub(crate) fn reattach_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: Nod
 }
 
 /// The insert behind [`reattach_in_row`], and the only one: swapping
-/// in an insert without the cycle check is a change to this function
-/// alone (ruling R16 on #282).
+/// in an insert without the cycle check — V1-A6 (#290) — is a change
+/// to this function alone (ruling R16 on #282).
 fn link_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
     #[cfg(test)]
     tests_support::count_row_link(arena, prev.unwrap_or(parent));
@@ -405,7 +406,8 @@ pub(crate) mod tests_support {
     /// Count the steps of one same-row insert next to `anchor`: the
     /// checked insert's cycle check visits `anchor` and every ancestor
     /// of it. When an insert without the check is swapped into
-    /// `link_in_row` (R16), this counts one per insert instead.
+    /// `link_in_row` (V1-A6, #290), this counts one per insert instead
+    /// — counted inside that insert, never by editing this model alone.
     pub(super) fn count_row_link<T>(arena: &Arena<T>, anchor: NodeId) {
         let steps = anchor.ancestors(arena).count();
         ROW_LINK_STEPS.with(|cell| cell.set(cell.get() + steps));

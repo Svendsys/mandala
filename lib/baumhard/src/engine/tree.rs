@@ -443,8 +443,8 @@ impl<E: TreeElement> Tree<E> {
     /// a caller updating many elements pays nothing per element that
     /// grows with depth; only when the key changed, a scan of the
     /// siblings the element moves past plus a same-row re-attach
-    /// (ruling R16 on #282: O(1) once indextree offers it, O(depth)
-    /// until then).
+    /// (O(1) once the engine's own arena tree replaces indextree, V1-A6
+    /// #290; O(depth) until then).
     pub fn update<R>(&mut self, id: NodeId, f: impl FnOnce(&mut E) -> R) -> Result<R, TreeError> {
         self.update_in(id, None, f)
     }
@@ -826,7 +826,7 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
 /// hidden behind a helper called in a loop is caught by neither. Test
 /// builds count this function's steps, so a climb planted per element
 /// through it shows in a step count. No allocation.
-pub(in crate::engine) fn climb<E>(arena: &Arena<E>, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+pub(crate) fn climb<E>(arena: &Arena<E>, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     id.ancestors(arena).inspect(|_| {
         #[cfg(test)]
         tests_support::count_climb_step();

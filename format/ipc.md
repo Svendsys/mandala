@@ -1246,7 +1246,7 @@ and, on request, the whole model as `mindmap`.
 | `undo_depth` | integer | Entries on the undo stack (`query.undo` lists them). |
 | `map` | object | `{"name", "version"}` of the loaded map. |
 | `counts` | object | `{"nodes", "edges", "sections", "palettes", "custom_mutations", "macros"}`. `sections` is summed over every node. |
-| `mindmap` | object | The model through its own serde, the `.mindmap.json` shape (`schema.md`). A save adds the loader's preserved unknown keys; a query does not, because they are the loader's bookkeeping and not part of the model. With `pointer`, the value found there. |
+| `mindmap` | object | The model through its own serde, the `.mindmap.json` shape (`legacy-schema.md`). A save adds the loader's preserved unknown keys; a query does not, because they are the loader's bookkeeping and not part of the model. With `pointer`, the value found there. |
 | `path`, `bytes` | string, integer | With `to_file` only, and then the *only* fields: the absolute path written and its size. |
 
 The `mindmap` field round-trips: parsed back as a `MindMap` and

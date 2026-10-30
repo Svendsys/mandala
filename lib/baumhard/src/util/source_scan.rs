@@ -1458,20 +1458,35 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
 /// hand-written ones the memoized climbs — `Membership::contains`
 /// (counted), the journal's `Presence::top` (counted) and its
 /// `resolve` — and the walker's `state_above`, the one-off climb an
-/// anchored walk makes to its anchor's parent. So a climb planted once
-/// per element anywhere else shows here, and one planted through those
-/// functions shows in their step counts (§20 rule 11, V1-A5 #282).
+/// anchored walk makes to its anchor's parent; in the document, the
+/// three named in `ALLOWED_PARENT_LOOPS`. The scan reads the engine and
+/// the document model built on it, its format modules included. So a
+/// climb planted once per element anywhere else shows here, and one
+/// planted through those functions shows in their step counts (§20
+/// rule 11, V1-A5 #282).
 pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
+    /// The trees read: the engine, and the document model built on it
+    /// (its format modules included), which walk trees of any depth.
+    const SCANNED: &[&str] = &["lib/baumhard/src/engine", "lib/baumhard/src/document"];
     const ALLOWED: &[(&str, &str)] = &[
-        ("tree.rs", "climb"),
-        ("siblings.rs", "attach_after"),
-        ("siblings.rs", "attach_first"),
+        ("engine/tree.rs", "climb"),
+        ("engine/siblings.rs", "attach_after"),
+        ("engine/siblings.rs", "attach_first"),
     ];
     const ALLOWED_PARENT_LOOPS: &[(&str, &str)] = &[
-        ("membership.rs", "contains"),
-        ("journal.rs", "top"),
-        ("journal.rs", "resolve"),
-        ("walker.rs", "state_above"),
+        ("engine/membership.rs", "contains"),
+        ("engine/journal.rs", "top"),
+        ("engine/journal.rs", "resolve"),
+        ("engine/walker.rs", "state_above"),
+        // The document's three: B3's memoized climb over a selection,
+        // which climbs each ancestor once however many nodes are given
+        // (and counts it); the inherited-state fold up to the nearest
+        // node, which the shape rules bound at five elements; and a
+        // resolution's palette-binding search, a one-off per resolution,
+        // O(distance to the binding) (ruling R16.3 on #282).
+        ("document/mutation/compose.rs", "tops_climbing"),
+        ("document/mutation/inherited.rs", "state_of"),
+        ("document/resolve.rs", "find_binding"),
     ];
     const CALLS: &[&str] = &[
         ".ancestors(",
@@ -1486,9 +1501,10 @@ pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
         ".insert_before(",
         ".reparent(",
     ];
-    let root = repo_path("lib/baumhard/src/engine");
     let mut files = Vec::new();
-    collect_recursively(&root, ".rs", &mut files);
+    for root in SCANNED {
+        collect_recursively(&repo_path(root), ".rs", &mut files);
+    }
     files.sort();
     let mut found = Vec::new();
     let mut allowed: BTreeMap<(String, String), usize> = ALLOWED
@@ -1500,11 +1516,8 @@ pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
         if file.components().any(|c| c.as_os_str() == "tests") {
             continue;
         }
-        let name = file
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+        let rel = relative_to_repo(&file);
+        let name = rel.strip_prefix("lib/baumhard/src/").unwrap_or(&rel).to_string();
         let text = std::fs::read_to_string(&file)
             .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
         let source = production_source(&file, &text);

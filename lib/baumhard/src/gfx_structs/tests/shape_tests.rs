@@ -937,7 +937,7 @@ pub fn do_shape_shader_ids_are_stable() {
 ///
 /// **Deriving from the source is not the same as being right**, and
 /// the precedent cited above has since been caught at it: issue #122
-/// found `serde_coverage` publishing a list `format/schema.md`
+/// found `serde_coverage` publishing a list `format/legacy-schema.md`
 /// carried verbatim, both of them wrong in the same three places
 /// because the document was written by reading the walk. The lesson
 /// that transfers is the one this module already applies in its own
