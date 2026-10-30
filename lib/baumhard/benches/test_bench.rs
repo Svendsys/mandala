@@ -2237,6 +2237,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_readable_cuts_copies_rather_than_overlap", |b| {
         b.iter(do_flow_readable_cuts_copies_rather_than_overlap)
     });
+    c.bench_function("flow_readable_a_short_side_reads_top_to_bottom", |b| {
+        b.iter(do_flow_readable_a_short_side_reads_top_to_bottom)
+    });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
     c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {

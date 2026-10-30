@@ -526,8 +526,8 @@ fn test_flow_readable_cuts_copies_rather_than_overlap() {
 /// gap, and the text read in order is longer than the text walked — the
 /// spacing stays at zero and the placement is cut rather than overlapped
 /// (ruling R25): a suffix of step 1's glyphs, whole repeat clusters or
-/// whole filler copies (`~:~` is three), never the text, so the run is
-/// not truncated. No two cluster boxes overlap.
+/// whole filler copies (`~:~` is three), and the run is not truncated,
+/// since no text was cut. No two cluster boxes overlap.
 pub fn do_flow_readable_cuts_copies_rather_than_overlap() {
     let rect = rounded(300.0, 160.0, 25);
     let filler = FitMode::Once {
@@ -550,18 +550,70 @@ pub fn do_flow_readable_cuts_copies_rather_than_overlap() {
         ),
     ] {
         let placed = around(POEM, &rect, from, direction, &fit, true);
-        let text = with_fonts(|fs| real_run(POEM, &style(12.0), fs)).glyphs.len();
+        assert_no_overlap(what, &placed);
         let cut = assert_keeps_the_walk(what, &placed);
         assert!(cut > 0, "{what}: the fixture needs a placement with no slack");
         assert_eq!(cut % copy, 0, "{what}: cut {cut}, not whole copies of {copy}");
         assert!(
-            placed.placed.glyphs.len() > text,
-            "{what}: the cut reached the text"
-        );
-        assert!(
             !placed.placed.truncated,
             "{what}: dropping copies is no truncation"
         );
-        assert_no_overlap(what, &placed);
+    }
+}
+
+#[test]
+fn test_flow_readable_a_short_side_reads_top_to_bottom() {
+    do_flow_readable_a_short_side_reads_top_to_bottom();
+}
+
+/// A straight side too short to be a stretch of its own — 40 points, under
+/// three line heights of 14.4 — joins the stretch that reads it top to
+/// bottom (#291 §1 step 2): its steps have no horizontal motion at all,
+/// so going down it joins the rightward stretch (placed as walked) and
+/// going up the leftward one (placed reversed). On a 300 × 50 rectangle
+/// each way round, consecutive clusters on either side, in one stretch,
+/// move down in text order. Glyph centers sit on the outline.
+pub fn do_flow_readable_a_short_side_reads_top_to_bottom() {
+    let rect = rounded(300.0, 50.0, 20);
+    for direction in [Direction::Clockwise, Direction::CounterClockwise] {
+        let placed = around(
+            VERSE,
+            &rect,
+            start(Edge::Top, 0.5),
+            direction,
+            &FitMode::Repeat,
+            false,
+        );
+        assert!(
+            placed
+                .trace
+                .stretches
+                .iter()
+                .all(|s| matches!(s.travel, Travel::Rightward | Travel::Leftward)),
+            "{direction:?}: the fixture needs sides too short to be stretches"
+        );
+        let on_side = |c: &ClusterBox| {
+            let p = c.center();
+            (p.x.abs() < 1e-3 || (p.x - 300.0).abs() < 1e-3) && p.y > 5.0 && p.y < 45.0
+        };
+        let clusters = boxes(&placed.run, &placed.placed);
+        let mut pairs = [0, 0];
+        for pair in clusters.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            let same = stretch_of(&placed.trace, a.glyphs.start) == stretch_of(&placed.trace, b.glyphs.start);
+            if on_side(a) && on_side(b) && same && (a.center().x - b.center().x).abs() < 1e-3 {
+                pairs[usize::from(a.center().x > 150.0)] += 1;
+                assert!(
+                    b.center().y > a.center().y,
+                    "{direction:?}: a short side reads bottom to top: {} then {}",
+                    a.center(),
+                    b.center()
+                );
+            }
+        }
+        assert!(
+            pairs[0] > 0 && pairs[1] > 0,
+            "{direction:?}: the fixture needs clusters stacked on both sides, not {pairs:?}"
+        );
     }
 }
