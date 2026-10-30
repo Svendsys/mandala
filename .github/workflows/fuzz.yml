@@ -46,6 +46,10 @@ on:
   schedule:
     # Nightly, at an off-peak minute.
     - cron: "17 3 * * *"
+  # TEMPORARY, on a throwaway branch only: runs the nightly path (budget,
+  # cmin, corpus save) on push so it can be validated before V1 is on main.
+  push:
+    branches: [v1/b8-fuzz-nightly-check]
   workflow_dispatch:
     inputs:
       seconds:
@@ -55,7 +59,7 @@ on:
 
 env:
   SMOKE_SECONDS: "300"
-  NIGHTLY_SECONDS: "900"
+  NIGHTLY_SECONDS: "60"
 
 jobs:
   fuzz:
