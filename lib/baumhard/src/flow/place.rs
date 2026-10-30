@@ -95,6 +95,9 @@ use crate::flow::span::{point_size, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{clamp_font_metric, FontSystemWriteGuard, MIN_FONT_SIZE_PT};
 use crate::font::FontSystem;
 
+mod lines;
+pub(crate) use lines::frame_halves;
+
 /// The most glyphs one placement places (ruling R6, reading 9). A
 /// repeating flow on a path long enough to need more stops here and
 /// reports [`PlacedRun::truncated`].
@@ -191,6 +194,11 @@ struct Cluster {
     /// Whether the text may be parted before it without tearing a word
     /// ([`GlyphMetrics::word_break`] of its first glyph).
     word_break: bool,
+    /// Whether it is whitespace ([`GlyphMetrics::blank`]).
+    blank: bool,
+    /// Whether it is the space laid for a line break
+    /// ([`GlyphMetrics::line_break`]).
+    line_break: bool,
 }
 
 /// The clusters of `glyphs[range]`, in visual order: a cluster begins
@@ -216,6 +224,8 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
                 left: glyph.x,
                 reading,
                 word_break: glyph.word_break,
+                blank: glyph.blank,
+                line_break: glyph.line_break,
             }),
         }
     }
@@ -303,6 +313,29 @@ pub(crate) struct Trace {
     /// Each stretch's glyphs as the walk classified them, before any
     /// boundary was moved to a word break: where words were torn.
     pub(crate) walked_stretches: Vec<Range<usize>>,
+    /// A text frame's lines (ruling R27): none for a path walked whole.
+    pub(crate) lines: Vec<TracedLine>,
+    /// Each cluster's step as laid, in the order laid: where it starts
+    /// along the path (along its half, for a text frame's line) and how
+    /// long it is.
+    pub(crate) laid: Vec<(f32, f32)>,
+    /// For a text frame, the half each of [`laid`](Self::laid)'s steps is
+    /// on, 0 the top and 1 the bottom; empty for a path walked whole.
+    pub(crate) laid_on: Vec<usize>,
+}
+
+/// One line of a text frame ([`Trace::lines`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TracedLine {
+    /// The half it is on: 0 the top, 1 the bottom ([`frame_halves`]).
+    pub(crate) half: usize,
+    /// Its glyphs: indices into the placement.
+    pub(crate) glyphs: Range<usize>,
+    /// Where along its half it starts and ends.
+    pub(crate) from: f32,
+    pub(crate) to: f32,
+    /// Whether it was cut to fit its span.
+    pub(crate) cut: bool,
 }
 
 /// One stretch of a [`Trace`].
@@ -928,7 +961,8 @@ impl PathWalk<'_> {
             Ends::Within => (Spacing::Keep(gap), self.path.length()),
         };
         let mut stretches = self.stretches(steps, self.line_height, end, whole_words);
-        if let Some(trace) = trace {
+        let mut trace = trace;
+        if let Some(trace) = trace.as_deref_mut() {
             let mut walked_stretches: Vec<Range<usize>> = Vec::new();
             let travels = self.travels(steps, self.line_height);
             for (index, step) in steps.iter().enumerate() {
@@ -955,6 +989,9 @@ impl PathWalk<'_> {
                 .collect();
         }
         if !stretches.iter().any(PathStretch::is_reversed) {
+            if let Some(trace) = trace {
+                trace.laid = steps.iter().map(|step| (step.s, step.step)).collect();
+            }
             let placed = PlacedRun {
                 glyphs: laying.glyphs,
                 truncated,
@@ -1005,6 +1042,15 @@ impl PathWalk<'_> {
             walk_gap: gap,
             end,
         };
+        if let Some(trace) = trace {
+            let mut laid = Vec::with_capacity(steps.len());
+            let width = |index: usize| steps[index].advance;
+            let keep = |index: usize| kept[index];
+            self.lay_reading(&stretches, width, keep, spacing, gap, end, h, |_, s, step, _| {
+                laid.push((s, step));
+            });
+            trace.laid = laid;
+        }
         self.lay_readable(laying, &lay, run, truncated)
     }
 
@@ -1330,6 +1376,9 @@ pub(crate) fn place_on_closed_traced(
     fs: &mut FontSystemWriteGuard,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
+    if !matches!(fit, FitMode::Repeat) {
+        return lines::place_lines(run, path, fit, outward, flow, fs, trace);
+    }
     let spacing = table_spacing(run, fit, flow);
     let arc = ArcPath::closed(path, start, direction, spacing);
     place(run, &arc, fit, 0.0, outward, flow, fs, trace)

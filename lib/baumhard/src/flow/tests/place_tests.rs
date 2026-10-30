@@ -157,7 +157,9 @@ fn test_flow_place_step_follows_the_chord_at_a_corner() {
 /// So the center is 8.736 on, at (100, 3.736): between the corner, where
 /// the tangent taken half a step on would put it, and (100, 5), where the
 /// tangent at the glyph's start alone would. The first glyph, entirely
-/// on the top side, steps its advance either way.
+/// on the top side, steps its advance either way. `Repeat`, the one mode
+/// a frame ring walks its whole outline in (ruling R27); the first two
+/// glyphs are its first copy's, on stretches it does not reverse.
 pub fn do_flow_place_step_follows_the_chord_at_a_corner() {
     let run = synthetic(&[20.0, 20.0], 10.0);
     let path = sharp(0.0, 0.0, 100.0, 100.0);
@@ -166,7 +168,7 @@ pub fn do_flow_place_step_follows_the_chord_at_a_corner() {
         &path,
         start(Edge::Top, 0.75),
         Direction::Clockwise,
-        &ONCE,
+        &FitMode::Repeat,
         false,
     );
     let c = centers(&run, &placed);
@@ -195,7 +197,7 @@ pub fn do_flow_place_corner_moves_continuously() {
             &path,
             start(Edge::Top, at),
             Direction::Clockwise,
-            &ONCE,
+            &FitMode::Repeat,
             false,
         );
         let second = centers(&run, &placed)[1];
@@ -414,22 +416,38 @@ fn test_flow_place_start_and_direction() {
     do_flow_place_start_and_direction();
 }
 
-/// From the top-left corner, clockwise text runs rightward along the
-/// top; counter-clockwise it runs downward along the left side.
+/// From the top-left corner, clockwise a `Repeat` ring runs rightward
+/// along the top; counter-clockwise it runs downward along the left side.
+/// (`start` and `direction` belong to `Repeat` rings: a text frame reads
+/// in two lines, over the top and along the bottom — ruling R27.)
 pub fn do_flow_place_start_and_direction() {
     let run = synthetic(&[8.0; 3], 10.0);
     let path = sharp(0.0, 0.0, 200.0, 100.0);
     let top_left = start(Edge::Top, 0.0);
     let cw = centers(
         &run,
-        &closed(&run, &path, top_left, Direction::Clockwise, &ONCE, false),
+        &closed(
+            &run,
+            &path,
+            top_left,
+            Direction::Clockwise,
+            &FitMode::Repeat,
+            false,
+        ),
     );
     assert!(cw[1].x > cw[0].x + 1.0, "rightward: {:?}", &cw[..2]);
     close(cw[1].y, cw[0].y, 1e-3, "level");
     close(cw[0].y, 0.0, 1e-3, "on the top side");
     let ccw = centers(
         &run,
-        &closed(&run, &path, top_left, Direction::CounterClockwise, &ONCE, false),
+        &closed(
+            &run,
+            &path,
+            top_left,
+            Direction::CounterClockwise,
+            &FitMode::Repeat,
+            false,
+        ),
     );
     assert!(ccw[1].y > ccw[0].y + 1.0, "downward: {:?}", &ccw[..2]);
     close(ccw[1].x, ccw[0].x, 1e-3, "plumb");
@@ -456,7 +474,7 @@ pub fn do_flow_place_rings_stack_outward() {
             &path,
             start(Edge::Top, 0.5),
             Direction::Clockwise,
-            &ONCE,
+            &FitMode::Repeat,
             true,
         );
         centers(&run, &placed)[0]

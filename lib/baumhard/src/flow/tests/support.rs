@@ -107,6 +107,8 @@ pub(crate) fn positioned(glyphs: &[(f32, f32, bool)], line_height: f32) -> Shape
                 descent: line_height * 0.2,
                 grapheme_start,
                 word_break: grapheme_start,
+                blank: false,
+                line_break: false,
             })
             .collect(),
         line_height,

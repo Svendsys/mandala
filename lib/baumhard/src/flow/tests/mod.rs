@@ -6,6 +6,7 @@
 //! counts, never pixels (TEST_CONVENTIONS §T10).
 
 pub mod fit_tests;
+pub mod lines_tests;
 pub mod outline_tests;
 pub mod place_tests;
 pub mod readable_tests;

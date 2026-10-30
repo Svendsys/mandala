@@ -28,6 +28,7 @@ use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::structure_tests::*;
 use baumhard::engine::tests::walker_tests::*;
 use baumhard::flow::tests::fit_tests::*;
+use baumhard::flow::tests::lines_tests::*;
 use baumhard::flow::tests::outline_tests::*;
 use baumhard::flow::tests::place_tests::*;
 use baumhard::flow::tests::readable_tests::*;
@@ -2028,12 +2029,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_fit_fills_a_line_exactly", |b| {
         b.iter(do_flow_fit_fills_a_line_exactly)
     });
-    c.bench_function("flow_fit_goes_around_once", |b| {
-        b.iter(do_flow_fit_goes_around_once)
-    });
-    c.bench_function("flow_fit_shrinks_past_the_naive_scale", |b| {
-        b.iter(do_flow_fit_shrinks_past_the_naive_scale)
-    });
     c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
         b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
     });
@@ -2054,9 +2049,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_spread_ends_on_a_line", |b| {
         b.iter(do_flow_spread_ends_on_a_line)
-    });
-    c.bench_function("flow_spread_ends_around_a_rounded_rect", |b| {
-        b.iter(do_flow_spread_ends_around_a_rounded_rect)
     });
     c.bench_function("flow_spread_too_long_is_cut", |b| {
         b.iter(do_flow_spread_too_long_is_cut)
@@ -2170,12 +2162,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_cut_keeps_the_reading_start", |b| {
         b.iter(do_flow_cut_keeps_the_reading_start)
     });
-    c.bench_function("flow_fit_shrinks_below_max", |b| {
-        b.iter(do_flow_fit_shrinks_below_max)
-    });
-    c.bench_function("flow_fit_sweeps_a_sharp_rect", |b| {
-        b.iter(do_flow_fit_sweeps_a_sharp_rect)
-    });
     c.bench_function("flow_place_corner_moves_continuously", |b| {
         b.iter(do_flow_place_corner_moves_continuously)
     });
@@ -2196,12 +2182,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_shape_run_maps_bidi_text", |b| {
         b.iter(do_flow_shape_run_maps_bidi_text)
-    });
-    c.bench_function("flow_spread_sweeps_a_sharp_rect", |b| {
-        b.iter(do_flow_spread_sweeps_a_sharp_rect)
-    });
-    c.bench_function("flow_fit_finishes_a_creeping_shrink", |b| {
-        b.iter(do_flow_fit_finishes_a_creeping_shrink)
     });
     c.bench_function("flow_place_sets_glyphs_at_their_pen_positions", |b| {
         b.iter(do_flow_place_sets_glyphs_at_their_pen_positions)
@@ -2241,14 +2221,42 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_readable_parts_a_word_too_long_to_move", |b| {
         b.iter(do_flow_readable_parts_a_word_too_long_to_move)
     });
-    c.bench_function("flow_readable_fit_keeps_the_poem_whole", |b| {
-        b.iter(do_flow_readable_fit_keeps_the_poem_whole)
+    c.bench_function("flow_readable_fit_keeps_a_connectors_text_whole", |b| {
+        b.iter(do_flow_readable_fit_keeps_a_connectors_text_whole)
     });
     c.bench_function("flow_readable_cuts_copies_rather_than_overlap", |b| {
         b.iter(do_flow_readable_cuts_copies_rather_than_overlap)
     });
     c.bench_function("flow_readable_a_short_side_reads_top_to_bottom", |b| {
         b.iter(do_flow_readable_a_short_side_reads_top_to_bottom)
+    });
+    // a text frame in two lines (#291, ruling R27) //
+    c.bench_function("flow_lines_balance_a_sentence", |b| {
+        b.iter(do_flow_lines_balance_a_sentence)
+    });
+    c.bench_function("flow_lines_part_at_a_line_break", |b| {
+        b.iter(do_flow_lines_part_at_a_line_break)
+    });
+    c.bench_function("flow_lines_keep_one_word_on_top", |b| {
+        b.iter(do_flow_lines_keep_one_word_on_top)
+    });
+    c.bench_function("flow_lines_fit_to_the_fuller_line", |b| {
+        b.iter(do_flow_lines_fit_to_the_fuller_line)
+    });
+    c.bench_function("flow_lines_cut_the_bottom_line_at_min", |b| {
+        b.iter(do_flow_lines_cut_the_bottom_line_at_min)
+    });
+    c.bench_function("flow_lines_spread_over_their_spans", |b| {
+        b.iter(do_flow_lines_spread_over_their_spans)
+    });
+    c.bench_function("flow_lines_center_and_fill", |b| {
+        b.iter(do_flow_lines_center_and_fill)
+    });
+    c.bench_function("flow_lines_fit_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_lines_fit_sweeps_a_sharp_rect)
+    });
+    c.bench_function("flow_lines_spread_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_lines_spread_sweeps_a_sharp_rect)
     });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
