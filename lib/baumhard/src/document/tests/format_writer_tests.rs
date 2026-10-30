@@ -38,13 +38,17 @@ fn node_blocks(text: &str) -> Vec<Vec<&str>> {
 #[test]
 fn test_a_saved_map_is_a_pretty_header_then_a_block_per_node_and_a_line_per_key() {
     let mut keys = 0;
-    for (name, text) in FIXTURES {
+    for (name, fixture_text) in FIXTURES {
+        // What the saver writes now, not the fixture as it was written:
+        // the layout is the writer's.
+        let doc = load(fixture_text).unwrap();
+        let saved = written(&doc);
+        let text = saved.as_str();
         assert!(!text.contains('\r'), "{name}: LF only");
         assert!(
             text.ends_with("}\n") && !text.ends_with("\n\n"),
             "{name}: one trailing newline"
         );
-        let doc = load(text).unwrap();
         let blocks = node_blocks(text);
         let count = doc
             .tree()
