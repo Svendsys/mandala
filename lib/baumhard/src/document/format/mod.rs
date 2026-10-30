@@ -239,7 +239,7 @@ pub(crate) fn load_bytes_under(bytes: &[u8], limits: Limits) -> Result<Document,
 /// pointer per node, the ident index (made once, at its size), the
 /// chain (as long as the tree is deep), a few words per pending link,
 /// and one node's DTO with one item of each row it holds: a row is its
-/// captured text, read one item at a time ([`rows`]), however many items
+/// captured text, read one item at a time (`format/rows.rs`), however many items
 /// it has. Every element is counted against
 /// [`MAX_ELEMENTS`] as it is appended.
 pub fn load(json: &str) -> Result<Document, LoadError> {
