@@ -2,7 +2,7 @@
 
 //! The fuzz properties of authored glyph-layer mutations (design D29;
 //! TEST_CONVENTIONS §T14): the run and fill variants of
-//! [`GfxMutation`] a map can carry (`RunOrigin`, `RunOpacity`,
+//! [`GfxMutation`](crate::gfx_structs::mutator::GfxMutation) a map can carry (`RunOrigin`, `RunOpacity`,
 //! `RunOverrides`, `FillColor`, `FillOpacity`, `FillRect`;
 //! `format/mutations.md`), applied by the journaled walker to a glyph
 //! tree of runs and fills.

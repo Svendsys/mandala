@@ -737,7 +737,8 @@ script adds each surface's fixtures and findings where they live (the
 format's fixtures, `maps/*.mandala.json`, the `fuzz_findings`
 directories), never copied. `test_every_fuzz_seed_holds_its_targets_properties`
 replays every committed seed through its target's properties and holds
-the targets in `fuzz/fuzz_targets/` to the table above, both ways. The
+the targets in `fuzz/fuzz_targets/`, their bin entries and its own table of
+targets to one another, both ways. The
 generated corpus (`fuzz/corpus/`) and crash artifacts are never
 committed.
 

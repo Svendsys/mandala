@@ -392,11 +392,15 @@ fn spec(id: i64, parent: Option<i64>, channel: i64) -> NodeSpec {
     }
 }
 
+/// A named case of `chain_ref.py`: its name, its nodes, and the
+/// refusal both models expect (`None`: it loads).
+type NamedCase = (&'static str, Vec<NodeSpec>, Option<(&'static str, &'static str)>);
+
 /// `chain_ref.py`'s named cases, against both models: the oracle's
 /// verdict and the reference's refusal.
 #[test]
 fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
-    let cases: [(&str, Vec<NodeSpec>, Option<(&str, &str)>); 8] = [
+    let cases: [NamedCase; 8] = [
         (
             "valid",
             vec![spec(1, None, 0), spec(2, Some(1), 0), spec(3, Some(1), 1)],

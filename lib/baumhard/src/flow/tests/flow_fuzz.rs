@@ -13,7 +13,7 @@
 //!
 //! - **No panic**, under the font lock the caller holds.
 //! - **Every glyph names where it came from:** its span is one of the
-//!   flow's or [`FILLER_SPAN`], and its bytes are a range of that span's
+//!   flow's or [`FILLER_SPAN`](crate::flow::FILLER_SPAN), and its bytes are a range of that span's
 //!   text that starts and ends on a character boundary — what a click on
 //!   a linked glyph is resolved through.
 //! - **The metrics are numbers:** every advance, size, pen position,
@@ -21,7 +21,7 @@
 //! - **Placement is finite and bounded** (#239, ruling R6): every placed
 //!   position is finite whatever the path, every placed glyph names a
 //!   glyph of the run it refers to, and no placement holds more than
-//!   [`MAX_PLACED_GLYPHS`].
+//!   [`MAX_PLACED_GLYPHS`](crate::flow::MAX_PLACED_GLYPHS).
 //! - **A box is a box:** its size is finite, non-negative, at least the
 //!   usable part of the minimum asked for, and one glyph-span entry per
 //!   laid-out glyph.

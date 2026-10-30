@@ -20,7 +20,7 @@
 //!
 //! - **A refusal is well-formed.** Its `Display` holds no raw control,
 //!   line separator or bidi control; its excerpt is at most
-//!   [`EXCERPT_BYTES`] bytes of the node's text; its path resolves in the
+//!   [`EXCERPT_BYTES`](crate::document::format::context::EXCERPT_BYTES) bytes of the node's text; its path resolves in the
 //!   input (`SiblingsOutOfOrder` included) and names `nodes[i]` exactly
 //!   when it carries the node context of node `i`; its line is inside
 //!   that node.
@@ -369,15 +369,28 @@ pub fn node_lines(text: &str) -> Option<Vec<(u32, u32)>> {
         nodes: Vec<&'a serde_json::value::RawValue>,
     }
     let top: Top<'_> = serde_json::from_str(text).ok()?;
-    let line_of = |offset: usize| {
-        u32::try_from(text.as_bytes()[..offset].iter().filter(|&&b| b == b'\n').count() + 1)
-            .unwrap_or(u32::MAX)
+    // The nodes are in text order, so one pass over the text counts the
+    // lines to every boundary: counting from the start for each node was
+    // quadratic, and held the load_structured target to one input in
+    // several seconds on a 4,096-node chain.
+    let bytes = text.as_bytes();
+    let mut line = 1u32;
+    let mut counted = 0usize;
+    let mut line_at = |offset: usize| {
+        let offset = offset.min(bytes.len());
+        if offset >= counted {
+            let newlines = bytes[counted..offset].iter().filter(|&&b| b == b'\n').count();
+            line = line.saturating_add(u32::try_from(newlines).unwrap_or(u32::MAX));
+            counted = offset;
+        }
+        line
     };
     top.nodes
         .iter()
         .map(|raw| {
             let start = crate::document::format::context::offset_in(text, raw.get())?;
-            Some((line_of(start), line_of(start + raw.get().len())))
+            let first = line_at(start);
+            Some((first, line_at(start + raw.get().len())))
         })
         .collect()
 }
@@ -796,7 +809,7 @@ fn rows(choices: &mut crate::util::tests::choices::Choices<'_>, most: u32) -> u3
 /// first choice is its shape:
 ///
 /// 0. a random tree of up to 24 nodes, with random content and links;
-/// 1. a chain as deep as the next choices say ([`rows`]), every node
+/// 1. a chain as deep as the next choices say (`rows`), every node
 ///    but the root linking somewhere (the root, its parent, the bottom);
 /// 2. a fan: one root and that many children;
 /// 3. one node holding rows of empty sections, of empty rings and of
@@ -1256,7 +1269,7 @@ pub fn kind_name(kind: &LoadErrorKind) -> String {
 /// Every property of the map `bytes` choose (the load_structured
 /// target's whole body): those of [`check_load_bytes`] on its text; the
 /// loader's verdict against [`oracle`], and its refusal against
-/// [`reference`] or the injected fault; the same refusal in a second key
+/// [`reference()`] or the injected fault; the same refusal in a second key
 /// order (C.9.14, single fault); and, when it loads, `check_savable`
 /// against the full build on the document with up to two values a
 /// buggy writer could leave, under this target's limits and a small
