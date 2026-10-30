@@ -9,6 +9,35 @@ as a WebAssembly build. `.mindmap.json` files load and render as
 interactive canvases where every visual element — text, borders,
 connection paths — is laid out as positioned font glyphs.
 
+## A preview of where it is going
+
+Every mark in these images is a font glyph. Glyphs are never rotated:
+curves are made by placing upright glyphs along a path, the way ASCII
+art makes them. Each image is drawn by the new glyph-run renderer in a
+single draw call. They are rendered offscreen from the V1 work in
+progress ([#230](https://github.com/Svendsys/mandala/issues/230)); the
+app draws this way once V1 lands.
+
+![Ecclesiastes 3 as a mind map: "To every thing there is a season" at the center, framed by "and a time to every purpose under the heaven", with six child nodes joined by glyph connectors](docs/images/demo-ecclesiastes.png)
+
+*Ecclesiastes 3:1–8 (King James Version) as a mind map: each node in a
+frame of text or ornaments, joined by glyph connectors.*
+
+![William Blake's Auguries of Innocence fitted once around an ellipse, with Psalm 19:1 on an inner ring](docs/images/demo-blake.png)
+
+*William Blake, "Auguries of Innocence", fitted exactly once around an
+ellipse, with Psalm 19:1 (King James Version) on an inner ring.*
+
+![Emily Dickinson's "Hope" is the thing with feathers, the letters of "feathers" drifting up and fading](docs/images/demo-dickinson.png)
+
+*Emily Dickinson, "'Hope' is the thing with feathers": one frame of an
+animation, with each glyph offset, scaled and faded on its own.*
+
+![Text around a rounded rectangle and an ellipse, joined by a connector, with emoji markers at full and half opacity](docs/images/demo-frames.png)
+
+*Text around a rounded rectangle and an ellipse, a connector at half
+opacity, and emoji at full and half opacity.*
+
 ## What..?
 
 A few years ago I decided to start developing a "next-gen ascii art" game engine (Baumhard, under lib/baumhard). 
