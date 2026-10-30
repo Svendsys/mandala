@@ -1217,7 +1217,9 @@ rotated; a pan or a zoom touches no run. Proven on lavapipe through
 the frame every window and capture draws: 500 glyphs on a circle are
 one run, 500 instances and one draw call, add no glyphon buffer, and
 are rasterized once per distinct glyph and subpixel bin; a
-re-placement rasterizes nothing.
+re-placement by whole canvas units, and a pan by whole pixels,
+rasterize nothing (a sub-pixel move lands glyphs in other subpixel
+bins, up to four keys per glyph, each rasterized once).
 
 - **Placement.** Glyph *i* of a path run is item `placed.glyphs[i].glyph`
   of `ShapedRun::layout_glyphs()`, collected once per run. Its pen is
@@ -1225,26 +1227,44 @@ re-placement rasterizes nothing.
   shaper offsets are added as `LayoutGlyph::physical` adds them
   (`font_size × x_offset`, `font_size × y_offset` subtracted), so mark
   stacking survives placement. A box run is its buffer drawn whole at
-  `origin`, each glyph on its line's baseline. Zoom is applied at
+  `origin`, each glyph on its line's baseline; that baseline is
+  floored to a whole pixel, where glyphon truncates the glyph's offset
+  and rounds the line's, so a box run can sit up to one pixel from the
+  same text drawn as a `TextArea` (V1-C2 switches box flows over and
+  should expect it). Zoom is applied at
   render time: the glyph is rasterized at
   `font size × scale override × pixels per unit`, and the baseline
   lands on a whole pixel while `x` keeps cosmic-text's subpixel bin.
 - **Overrides and opacity.** Overrides are indexed by drawn glyph
   (placed glyph, or layout order for a box). An offset moves the pen in
   canvas units; a scale multiplies the font size about the center of
-  the glyph's box; a color replaces a mask glyph's color. The run's
-  opacity multiplies every glyph's alpha, a color glyph (emoji)
-  included, which keeps its own colors and takes only the alpha.
-  Values a map authors (D29) degrade: a non-finite position or scale, a
-  scale that is not positive, or a rasterized size past
-  `MAX_RASTER_FONT_PX` (2048 px) skips that glyph.
+  the glyph's **grapheme cluster's** box (the box placement gave the
+  cluster; for a box run, the glyphs sharing one span byte range), so a
+  combining mark scaled with its base stays on it; a color replaces a
+  mask glyph's color, alpha included. The run's opacity multiplies the
+  alpha of every glyph. A color glyph (emoji) keeps its own colors:
+  neither its text color nor an override color reaches it, their alpha
+  included, and its alpha is the run's opacity alone. A run with
+  overrides is culled glyph by glyph rather than by its box, which is
+  its hit-test box and does not move with them. Values a map authors
+  (D29) degrade: a non-finite position or scale, a scale that is not
+  positive, or a rasterized size past `MAX_RASTER_FONT_PX` (2048 px)
+  skips that glyph.
 - **The atlas.** Two pages, as glyphon has (`R8Unorm` masks,
-  `Rgba8UnormSrgb` color), packed by etagere, starting at 256² and
-  doubling to the device limit; growth re-rasterizes the page's
-  entries, as glyphon's does. A page full at its largest evicts every
-  entry the current frame has not drawn; a glyph that still does not
-  fit is left out of that frame and warned of once, and the frame is
-  drawn. A glyph with no bitmap is remembered as such.
+  `Rgba8UnormSrgb` color), packed by etagere, starting at 256². When a
+  bitmap does not fit, every entry of its page the current frame has
+  not drawn is evicted first, and the page doubles (to the device
+  limit) only when the frame's own glyphs do not fit — glyphon's order,
+  evict before grow, though glyphon evicts least recently used one at a
+  time and this atlas everything stale at once, because etagere frees a
+  column only when all of it is free. So under a continuous zoom, where
+  every frame asks for every glyph at a new size, a page stays near one
+  frame's working set (201 frames from zoom 1 to 3: one growth). A grown
+  page is filled by rasterizing its entries again, as glyphon's is. A
+  glyph that still does not fit is left out of that frame, warned of
+  once, and asked for again next frame; the frame is drawn. A glyph
+  with no bitmap, and one larger than the largest page, are remembered
+  as drawing nothing, and forgotten with the stale entries.
 - **Shared with glyphon:** the `FontSystem` (under the guard the frame
   already holds), cosmic-text's `SwashCache`, the render pass, the
   surface format and the camera. **Not shared:** the atlas, because

@@ -176,10 +176,10 @@ fn circle(count: usize, glyphs: usize, center: Vec2, radius: f32, box_size: Vec2
 ///
 /// Re-placing the run — a new placement, the whole circle moved by whole
 /// canvas units, the same `Arc` of shaping — and drawing again
-/// rasterizes nothing: all 500 glyphs are atlas hits. A pan rasterizes
+/// rasterizes nothing: all 500 glyphs are atlas hits. A pan by whole pixels rasterizes
 /// nothing either, and touches no run (the canvas pass is not even
 /// asked). The control is a zoom: the same run at zoom 2 is rasterized
-/// at twice the size, so the atlas grows — the counter can move, and
+/// at twice the size, so it is rasterized anew — the counter can move, and
 /// the re-placement's zero is a zero it chose.
 #[test]
 fn test_a_glyph_run_of_500_glyphs_on_a_circle_draws_from_one_shaped_run_in_one_draw_call() {
@@ -270,7 +270,7 @@ fn test_a_glyph_run_of_500_glyphs_on_a_circle_draws_from_one_shaped_run_in_one_d
     let panned = init.renderer.glyph_run_counts();
     assert_eq!(
         panned.atlas.rasterized, first.atlas.rasterized,
-        "a pan rasterizes nothing"
+        "a whole-pixel pan rasterizes nothing"
     );
 
     // Control: a zoom rasterizes at a new size.
