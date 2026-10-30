@@ -418,11 +418,19 @@ The run changes through `RunSet` (the whole payload, what projection
 writes), `RunOrigin`, `RunOpacity` and `RunOverrides`; interpolation
 blends `origin`, `opacity` and the override vectors and snaps the
 shaping. State comparison (`same_state`) compares the shaping by
-`Arc` identity. Introduced in V1-B6 (#240); nothing draws a run until
-the renderer sub-issues.
+`Arc` identity. Introduced in V1-B6 (#240).
+
+A run in a canvas tree is drawn by the renderer's positioned-glyph
+pass (V1-C1, #242; design §13.2): every glyph of the run's one shaped
+buffer at its own placed position — upright, with its shaper offsets
+kept, its overrides applied and the run's opacity in its alpha — from
+an atlas the pass holds, in one instanced draw call per frame for
+every run there is. Nothing is shaped to draw it, and a pan or a zoom
+touches no run. No projection emits runs yet (V1-B7, C3).
 
 `lib/baumhard/src/gfx_structs/run.rs`; the mutations are
-`GfxMutation::Run*` in `mutator.rs`.
+`GfxMutation::Run*` in `mutator.rs`; the pass is
+`src/application/renderer/glyph_runs/`.
 
 ### `Fill`
 
@@ -3625,6 +3633,11 @@ The dual pipeline lives here:
   fills via `RECT_SHADER_WGSL`), background fills.
 - **Glyph pipeline** — every visible character, via
   cosmic-text + glyphon atlas.
+- **Positioned-glyph pipeline** (`glyph_runs/`) — every glyph of a
+  [`GlyphRun`](#glyphrun) at its own canvas position, rasterized by
+  cosmic-text into an atlas of its own (glyphon's cannot be reached
+  from outside it) and drawn as one instanced quad per glyph, in one
+  draw call per frame.
 
 Sub-passes sit in `borders.rs`, `console_pass.rs`,
 `color_picker.rs` and `selection_overlay.rs`; connection glyphs

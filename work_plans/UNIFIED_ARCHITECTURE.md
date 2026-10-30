@@ -1202,14 +1202,115 @@ without reshaping.
 
 Drawing glyphs at arbitrary positions from one shaped run is the one
 renderer capability V1 needs that glyphon does not offer directly:
-glyphon draws whole buffers at a single position. The renderer
-sub-issue opens with a spike that chooses between (a) placing glyphs
-through the shaped layout glyphon already consumes, (b) a quad
-pipeline of our own over glyphon's glyph atlas, and (c) vendoring
-glyphon into the workspace with per-glyph placement added. The choice
-is recorded in this section before implementation starts. It is the
-highest technical risk in V1, which is why it is scheduled early
-(§17).
+glyphon draws whole buffers at a single position. The spike (V1-C1,
+#242) evaluated three ways to do it, two of them in code, and chose
+the second.
+
+**Decision: (b), a positioned-glyph pass of our own**
+(`src/application/renderer/glyph_runs/`). For each `GlyphRun` in a
+canvas tree, every glyph of its one shaped buffer is emitted at its
+own position (`emit`), rasterized once into an atlas the pass holds
+(`atlas`), and drawn as one instanced quad, every glyph of every run
+in **one draw call per frame**, between glyphon's main text pass and
+the palette backdrop. Nothing is shaped to draw a run and nothing is
+rotated; a pan or a zoom touches no run. Proven on lavapipe through
+the frame every window and capture draws: 500 glyphs on a circle are
+one run, 500 instances and one draw call, add no glyphon buffer, and
+are rasterized once per distinct glyph and subpixel bin; a
+re-placement rasterizes nothing.
+
+- **Placement.** Glyph *i* of a path run is item `placed.glyphs[i].glyph`
+  of `ShapedRun::layout_glyphs()`, collected once per run. Its pen is
+  `origin + pos + (0, baseline())` plus the tree's offset; the glyph's
+  shaper offsets are added as `LayoutGlyph::physical` adds them
+  (`font_size × x_offset`, `font_size × y_offset` subtracted), so mark
+  stacking survives placement. A box run is its buffer drawn whole at
+  `origin`, each glyph on its line's baseline. Zoom is applied at
+  render time: the glyph is rasterized at
+  `font size × scale override × pixels per unit`, and the baseline
+  lands on a whole pixel while `x` keeps cosmic-text's subpixel bin.
+- **Overrides and opacity.** Overrides are indexed by drawn glyph
+  (placed glyph, or layout order for a box). An offset moves the pen in
+  canvas units; a scale multiplies the font size about the center of
+  the glyph's box; a color replaces a mask glyph's color. The run's
+  opacity multiplies every glyph's alpha, a color glyph (emoji)
+  included, which keeps its own colors and takes only the alpha.
+  Values a map authors (D29) degrade: a non-finite position or scale, a
+  scale that is not positive, or a rasterized size past
+  `MAX_RASTER_FONT_PX` (2048 px) skips that glyph.
+- **The atlas.** Two pages, as glyphon has (`R8Unorm` masks,
+  `Rgba8UnormSrgb` color), packed by etagere, starting at 256² and
+  doubling to the device limit; growth re-rasterizes the page's
+  entries, as glyphon's does. A page full at its largest evicts every
+  entry the current frame has not drawn; a glyph that still does not
+  fit is left out of that frame and warned of once, and the frame is
+  drawn. A glyph with no bitmap is remembered as such.
+- **Shared with glyphon:** the `FontSystem` (under the guard the frame
+  already holds), cosmic-text's `SwashCache`, the render pass, the
+  surface format and the camera. **Not shared:** the atlas, because
+  glyphon's cannot be reached (below); until C2 and C3 move the
+  remaining `TextArea` users to runs, a glyph drawn by both paths is
+  rasterized into both atlases.
+- **Public APIs relied on.** cosmic-text 0.19 (through glyphon's
+  re-exports): `CacheKey::new`, `SubpixelBin`, `LayoutGlyph`'s public
+  fields (`font_id`, `glyph_id`, `font_size`, `font_weight`,
+  `cache_key_flags`, `x_offset`, `y_offset`, `color_opt`, and for a
+  box `x`, `y`, `w`), `Buffer::layout_runs` (`LayoutRun::glyphs`,
+  `line_y`, `line_top`, `line_height`), `SwashCache::get_image_uncached`
+  and `SwashImage { content, placement, data }`. etagere 0.3:
+  `BucketedAtlasAllocator::{new, allocate, deallocate, grow}`. wgpu 30:
+  an instanced vertex buffer of `f32` attributes only (no integer
+  attributes, which some WebGL2 browsers lack), one uniform buffer,
+  `textureDimensions` and `vertex_index` in the vertex stage — nothing
+  WebGPU or WebGL2 lacks.
+
+**Rejected: (c), vendoring glyphon.** glyphon 0.12.0 is
+`MIT OR Apache-2.0 OR Zlib`, so vendoring is allowed. The spike
+vendored it and added a positioned-glyph prepare
+(`TextRenderer::prepare_with_positioned`, a `PositionedGlyph` type and
+an alpha multiply for color glyphs in the shader): 134 lines added
+and 2 changed in upstream's 1,768, plus its manifest; every existing `TextArea` caller unchanged, the same frames
+drawn from glyphon's one atlas in glyphon's one draw (branch
+`v1/c1-spike-c-vendored-glyphon`, never to merge). It is rejected for
+what the fork brings with it, not for what it does: as vendored, it
+fails four of this workspace's gates — rustfmt (18 hunks under
+`rustfmt.toml`), clippy at `-D warnings` (7 errors), the `unwrap`
+posture scan (4 sites, one of them a panic on the atlas's growth
+path) and the SPDX header check (7 files) — and brings two `unsafe`
+blocks into a workspace that has none. Conforming it rewrites much of upstream and makes every
+upstream release (glyphon follows each wgpu major) a hand merge;
+exempting it carves a third-party tree out of the gates. Either is a
+dependency-policy cost the positioned path does not need, since the
+part of glyphon it would reuse — the atlas — is a few hundred lines
+the renderer can own outright.
+
+**Rejected: (a), placing glyphs through the layout glyphon consumes.**
+cosmic-text 0.19 keeps a line's layout in a private field
+(`BufferLine::layout_opt`) with no setter, and `LayoutGlyph::physical`
+takes one offset and one scale for a whole line, so no glyph can be
+moved inside a `Buffer`. The one upstream route to arbitrary positions,
+glyphon 0.12.0's custom glyphs (`TextArea::custom_glyphs`,
+`CustomGlyph`, `TextRenderer::prepare_with_custom` with a
+`RasterizedCustomGlyph` callback), is rejected: a glyph is named by a
+16-bit `CustomGlyphId`, which would have to name face, glyph and size
+together, and glyphon offers no way to evict one key, so an id can
+never be reused; the callback's output must match a size known before
+the prepare or glyphon panics (`assert_eq!` in `validate`) inside the
+frame; its subpixel bins come from the bitmap's corner, not the pen;
+and a color glyph ignores the color, so a run's opacity could not
+reach an emoji.
+
+**What V1-C2 builds on it:** the positioned pass draws **every** run,
+box runs included, and replaces per-element glyphon buffers for the
+roles it migrates; renderer state is keyed by glyph element and
+updated from the glyph journal (§13.1), replacing the comparison the
+canvas pass still makes (`scene_shape_cache`); the per-frame instance
+rebuild (O(visible glyphs), as glyphon's prepare is) may be cached per
+run and zoom, with a pan as a uniform write, if C2 can keep whole-pixel
+baselines; draw order between runs is walk order within the one draw,
+and runs sit above glyphon's text only while both paths coexist. Once
+nothing draws through glyphon, the renderer imports cosmic-text's
+types through baumhard rather than through glyphon's re-exports.
 
 ### §13.3 What is no longer done
 
