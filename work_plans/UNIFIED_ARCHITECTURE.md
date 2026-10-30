@@ -55,6 +55,8 @@ develops it.
 | D28 | **One open transaction, and who yields.** While an interactive transaction is open (text editor session, drag or resize, color picker, frame preview), any other `apply` or `begin` is refused and the user sees a short status message; a verb's `Edit` step in that state is skipped with a warning. An animated edit is not interactive: any new `apply` or `begin` first fast-forwards it to its end and commits it, then proceeds. | §9 |
 | D29 | **Untrusted input is fuzzed, permanently.** Maps are shared with strangers, so every untrusted-input boundary (the `.mandala.json` loader, map-borne edits, presentations and verbs, shaping of arbitrary text, IPC frames) has a coverage-guided fuzz target (`fuzz/`, cargo-fuzz, outside the workspace), run as a short smoke on PRs and nightly once V1 is on `main`. Every finding becomes a stable regression test in `./test.sh`. Infrastructure and the loader target: V1-B8 (#278). | §16, §20 |
 | D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
+| D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line, and edits to keys of one node that are not on adjacent lines merge cleanly. Two edits to neighboring keys, or an edit to a node's last key while another branch appends a key after it, are one git conflict, as for any line-based text. The layout lives in the saver's writer alone. | §7.1 |
+| D32 | **New ids start above every id the map names** (amends §5.2's id rule; owner, #236 Q3 option B, R20). The counter is still not saved. At load it starts one above the highest node id and above every node id a verb or presentation target names, so a verb or presentation can never be silently retargeted to a new node after a reload. The named ids come from one hook, `ids::idents_named_by`, which V1-D1 to V1-D3 (#250–#252) extend when definitions gain targets. | §5.2, §7.2 |
 
 ---
 
@@ -457,18 +459,21 @@ bindings (triggers are node-level, D14).
   journals, the projection map, presentations and link targets hold
   `NodeId`s. No string is hashed to find an element.
 - **On disk and from outside:** a node carries `id: u32`, unique within
-  the map and never reused within it. It exists so links and verbs can
-  reference nodes in the file, and so the console, IPC and
-  `mandalactl` can name a node. One `id → NodeId` index serves those
-  external callers and the loader; no internal path consults it.
+  the map and not reused, as the id rule below says. It exists so
+  links and verbs can reference nodes in the file, and so the console,
+  IPC and `mandalactl` can name a node. One `id → NodeId` index serves
+  those external callers and the loader; no internal path consults
+  it.
 - A node inserted by a mutation carries the reserved ident `0`
   (unassigned); `Document::apply` assigns the next id in tree order.
-- **The id rule:** at load the counter starts at `max_id + 1`; within
-  a session it only increases, so an id is never reused while the
-  document is open. The counter is not saved (§2.2): after a save and
-  reload, the id of a node deleted at the top of the range may be
-  issued again. Ids do not encode structure, so moving a node never
-  renames anything.
+- **The id rule:** at load the counter starts one above the highest
+  node id and above every node id a verb or presentation target names
+  (D32, §7.2); within a session it only increases, so an id is never
+  reused while the document is open. The counter is not saved (§2.2):
+  after a save and reload, the id of a deleted node that nothing in
+  the map names may be issued again, if it was at the top of the
+  range. Ids do not encode structure, so moving a node never renames
+  anything.
 
 ### §5.3 Typed values
 
@@ -674,100 +679,307 @@ connectors start at their source end.
 
 ## §7 The file format
 
+This section is the normative summary of the format. Field-level
+detail (every object's keys, value spellings, bounds and the error
+kinds) is in `format/schema.md`. Where the two say the same thing they
+must agree exactly. The implementation is
+`lib/baumhard/src/document/format/`.
+
 ### §7.1 Shape
 
-Strict, typed JSON (D4) with a flat node list (D30): `nodes` is the
-tree in depth-first pre-order, each node naming its `parent` by `id`
-(absent on a root). Sibling order is order of appearance, so every
-subtree is one contiguous block of the list, and the file's JSON
-nesting is the same at any tree depth.
+A map is one strict, typed JSON object (D4). It holds these top-level
+keys, in the order the saver writes them:
+
+- `format`: an integer, `1`;
+- `name`;
+- `theme`: absent is the one spelling of the empty theme;
+- `palettes`;
+- `defaults`;
+- `edits`, `presentations` and `verbs`: definitions (§10, §11);
+- `nodes`.
+
+Only `format` and `name` are required. Every object denies keys it
+does not define.
+
+**The node list is flat** (D30). `nodes` holds every node exactly
+once, in depth-first pre-order. A node with no `parent` key is a
+top-level node; one with `"parent": p` hangs from the node whose `id`
+is `p`. No key says where a node is: there is no `children` key and no
+depth. A node's own content (sections, frame, connector, links) is
+nested inside it, at most 9 JSON levels below the node object, by the
+schema. The tree is not nested, so neither the format nor the loader
+bounds its depth.
+
+**Pre-order is checked, not repaired.** A node's `parent` must be on
+the chain of the node listed before it: that node, or one of its
+ancestors. Anything else is refused at the node's `parent`:
+- `ParentIsSelf`: the node names itself;
+- `ParentNotEarlier`: no earlier node has that id;
+- `ParentNotOnChain`: the parent's subtree has already ended. The
+  message lists the ids a node here could name, nearest first, at most
+  8.
+
+So every subtree is one contiguous block of the list, and no cycle,
+orphan or second parent can be written.
+
+**Rows are listed in the order the map keeps them, or refused.** The
+following are in ascending `channel`, and equal channels keep the
+order written:
+- sibling nodes, and the top-level nodes among themselves;
+- a node's `sections`;
+- a frame's `rings`.
+
+One whose channel is below the one before it is refused
+(`SiblingsOutOfOrder`). Neither the loader nor the saver ever sorts a
+row. `links` and `spans` have no channel; their order is the order
+written.
+
+**The saved layout** (D31):
+- The header is pretty-printed with two spaces.
+- Each node is a block: `    {` on its own line, then one line per
+  key the node has, then `    }`.
+- A key line is six spaces and `"key": value`. The value is in compact
+  form, with `", "` between members and `": "` after each key, and it
+  never spans two lines.
+- Keys come in the node table's order, so `id` and then `parent` lead
+  every block.
+
+A two-node map, exactly as the saver writes it:
 
 ```json
 {
   "format": 1,
-  "name": "Testament",
-  "theme": {
-    "active": "dark",
-    "variants": {
-      "dark":  { "bg": "#101014", "fg": "#e0e0e0", "accent": "#d4a24c" },
-      "light": { "bg": "#f6f3ec", "fg": "#202024", "accent": "#8a5a00" }
-    }
-  },
-  "palettes": {
-    "rainbow": [ { "fill": "#2a1b3d", "frame": "#a239ca", "text": "#e0e0e0", "title": "#ffffff" } ]
-  },
-  "defaults": {
-    "ring":      { "size": 0.06, "color": "var(accent)" },
-    "connector": { "content": "─", "fit": "repeat", "size": 12 }
-  },
-  "edits":         [ ],
-  "presentations": [ ],
-  "verbs":         [ ],
+  "name": "Genesis",
   "nodes": [
     {
       "id": 1,
-      "position": [0, 0],
-      "shape": { "rectangle": { "radius": 25 } },
-      "palette": "rainbow",
-      "sections": [
-        { "spans": [ { "text": "In the beginning", "size": 24, "weight": "bold" } ] }
-      ],
-      "frame": {
-        "fit": "fit", "start": "top-left", "direction": "clockwise",
-        "rings": [ { "spans": [ { "text": "And the earth was without form, and void; " } ] } ]
-      },
-      "on": { "hover": "glow", "click": "reveal-chapter-2" },
-      "links": [ { "to": 9, "kind": "portal" } ]
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}]}],
+      "links": [{"to": 2, "kind": "line"}]
     },
-    { "id": 2, "parent": 1, "position": [320, 40], "connector": { "spans": [ { "text": "·" } ] },
-      "sections": [ { "spans": [ { "text": "the heaven and the earth" } ] } ] }
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [320.0, -80.0],
+      "sections": [{"spans": [{"text": "the heaven"}]}],
+      "connector": {"spans": [{"text": "·"}]}
+    }
   ]
 }
 ```
 
+A changed key is one changed line in a diff. Edits to keys of one
+node that are not on adjacent lines merge cleanly. Two edits to
+neighboring keys are one git conflict, as for any line-based text. So
+is an edit to a node's last key while another branch appends a key
+after it, because the append adds a `,` to that line. A moved subtree
+is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
+`format/schema.md` ends with a larger example, the fixture
+`tree.mandala.json`.
+
 ### §7.2 Rules
 
-- **Strict.** Every type denies unknown fields; an unknown key, a
-  wrong type, a dangling `to` / verb reference or a duplicate `id` is
-  a load error naming the JSON path. There is no preserved-unknown-keys
-  mechanism and no skipped-construct report — a map is either valid
-  or it does not load.
+- **One document, one text.** A document saves to exactly one text,
+  byte for byte. A text loads if and only if it spells a valid
+  document. The only alternative spellings are at the JSON level
+  (whitespace, string escapes, number forms, key order) and the few
+  value spellings `format/schema.md` lists. The order of the node list
+  is part of the document.
+- **Strict.** These are load errors that name the JSON path:
+  - an unknown key, or a wrong type (`null` is not an absent key);
+  - a duplicate key;
+  - a reference that names nothing (a `parent`, a link's `to`, a verb,
+    a palette, a theme variable, a font);
+  - a number outside its bound, which is never clamped.
+
+  The first error ends the load and no partial document is returned.
+  Nothing unknown is preserved, and there is no skipped-construct
+  report.
 - **Typed on read.** `"var(accent)"`, palette names, font families,
-  shapes, anchors, fit modes, weights and verb references are
-  resolved to their typed forms (§5.3) during parsing; the document
-  never holds the string forms.
-- **Flat, pre-order** (D30). A node's `parent` must be on the
-  ancestor chain of the node before it (or absent, for a new root);
-  anything else, including a parent that appears later, a missing
-  one or the node itself, is a load error naming that node's path.
-  Depth itself is never an error (D30).
-- **Nothing derived is written.** No fitted sizes, no depth, no
-  child lists, no resolved colors, no copied defaults. Optional
-  fields equal to their inherited value are omitted on save.
-- **Deterministic output.** Keys in schema order, nodes in
-  depth-first pre-order, numbers in a canonical form, so an unchanged map saves
-  byte-identically and a one-field edit is a one-line diff.
-- **One pass.** Load is parse → build the tree with links and verb
-  references resolved through a load-time `id → NodeId` table →
-  validate. Save is one walk.
-- **Platform limits.** `MAX_MAP_BYTES` (wasm32 only, platform physics)
-  stays as it is. `MAX_UNKNOWN_KEYS` is deleted with the mechanism it
-  bounded.
-- **Extension.** `.mandala.json` (D19), so a file in the old format
-  is never mistaken for one in the new. The WASM build's `?map=`
+  shapes, anchors, fit modes, weights and verb references become their
+  typed forms (§5.3) while the file is read. The document never holds
+  the string forms.
+- **The text.**
+  - It must be UTF-8.
+  - A byte-order mark is refused (`ByteOrderMark`).
+  - CR LF is accepted. The saver writes LF only, ending with exactly
+    one newline.
+  - Key order is never significant to the loader.
+- **Identity.**
+  - Every node has an `id` in `1..=4294967294` (`MAX_NODE_IDENT`).
+  - Ids are unique: a repeated id is `DuplicateId`, which names where
+    the id first appears.
+  - Ids are written as the document holds them and never renumbered,
+    and they say nothing about structure.
+  - A link's `to` names any node but the link's own (`DanglingLink`,
+    `SelfLink`). It is resolved after the last node, so it may name a
+    later node.
+  - Verb and presentation targets are not resolved at load: a missing
+    node is skipped when the step runs (D27).
+- **The id counter** (D32, §5.2) is not saved. A load starts it one
+  above the highest node id and above every node id a verb or
+  presentation target names. `ids::first_free_ident` applies the rule.
+  `ids::idents_named_by` is its one source of named ids:
+  - It runs once when a document is made, a load included, and stores
+    no field.
+  - It names nothing today, because definitions have no targets until
+    V1-D1 to V1-D3 (#250–#252), which extend it there and nowhere
+    else.
+  - `parent` and `to` need no entry. They must name a node of the map
+    on load and in `check_savable`, so no saved file can hold one that
+    does not. The writer (B4) removes the links into a removed node in
+    the same request.
+- **Names.** Theme variants and variables, palettes, and the ids of
+  edits, presentations and verbs must be non-empty (`EmptyName`). They
+  may not hold a C0 or C1 control, DEL or a bidi control
+  (`NameNotPrintable`). Names are compared byte for byte, without
+  normalization. A name that is not a plain identifier is quoted in
+  paths (`palettes["My Palette"][0].fill`).
+- **Loading: three linear passes.** No pass recurses on the depth of
+  the tree.
+  1. *Gates:* `MAX_MAP_BYTES`, then the byte-order mark, then UTF-8.
+  2. *Index:* one parse captures each top-level value, and each node,
+     as a borrowed `&RawValue`. A JSON syntax error anywhere in the
+     text is reported here. Then `format` is checked, wherever it sits:
+     a positive integer other than `1` is `UnsupportedFormat`. Only
+     after that is an unknown top-level key refused.
+  3. *Build:*
+     - The top-level values are read in the order §7.1 lists them.
+     - Each node is read from its own extent and appended, so one node
+       is read at a time.
+     - A row is checked where it stands, then read one item at a time
+       as each element is appended (`Rows`), however many items a node
+       holds.
+     - A node's row of child elements is shape-checked when the node
+       leaves the chain, so each element is checked once.
+     - Links resolve last.
+     - The document takes the loader's ident index
+       (`Document::from_loaded`).
+
+  The ident maps are keyed (below). Every append is O(1), because a
+  row is never out of order.
+- **Errors.** A `LoadError` is `{ path, node, position, kind }`.
+  - **`path`** is the JSON path from the root. It addresses a node by
+    its place in the list (`nodes[3].frame.rings[0]`), never by its
+    id.
+  - **`node`** is `NodeContext { index, id, excerpt }`, present on
+    every error inside `nodes[i]`. If the rest of the node does not
+    read, the id is read on its own. The excerpt is the first span of
+    the lowest-channel section, else of the first ring. It is cut at
+    32 grapheme clusters or 256 bytes, whichever comes first.
+  - **`position`** is `TextPosition { line, column }`, 1-based, with
+    the column in bytes. It is exact for an error the JSON reader
+    finds. For an error found after the node is read, it is the line
+    of the node's opening `{`.
+  - **Rendered**, an error in `format/schema.md`'s example map reads
+    `nodes[2].parent: no node before this one has the id 3; a parent
+    comes before its children (node 5 "the firmament", line 64)`.
+  - File text in a message (the excerpt, names, keys and reader
+    messages) has every control, line separator and bidi control
+    escaped.
+  - Which error is first is fixed:
+    1. the gates;
+    2. syntax;
+    3. `format`;
+    4. the other top-level keys;
+    5. the nodes in list order, and within a node, reader errors first,
+       in text order;
+    6. the links.
+
+  A `SaveError` is `{ path, node, kind }`, with the same `path` and
+  `node`.
+- **Saving.**
+  - `save_to(&Document, &mut impl Write)` streams. It writes the
+    header, then each node's block as the arena's pre-order walk
+    reaches it, so one node's DTO exists at a time and no text is
+    cloned. A failing writer is `SaveErrorKind::Io` at that node.
+  - `save(&Document) -> Result<String, SaveError>` is `save_to` into a
+    buffer.
+  - **Deterministic output:**
+    - keys in schema order;
+    - name-keyed objects in ascending byte order of the name;
+    - `f32` values in their shortest round-trip form;
+    - U+0085, U+2028, U+2029 and the bidi controls escaped as
+      `\uXXXX`.
+
+    An unchanged document saves byte-identically.
+  - **Nothing derived is written**: no fitted sizes, depth, child
+    lists, resolved colors or copied defaults. An unset optional key
+    is omitted, and so are the defaults `format/schema.md` lists.
+  - **`check_savable(&Document)`** refuses, with the path the value
+    would have, any document whose file would not load. `save_to`, and
+    so `save`, calls it first and writes nothing on a refusal.
+    - It hands each node to the loader's own builder, so the two
+      cannot disagree.
+    - It holds one node at a time (`Keep::OneNode`): each node is
+      built, checked and freed before the next.
+    - It runs the full build only when it cannot decide alone, for a
+      refusal about ids, parents or links (`OneNode::Unsure`). That
+      build names exactly the error a load would.
+- **One rule per place-dependent value.** The loader and
+  `check_savable` judge what a file may say. B3's `validate` and
+  `validate_applied` judge what an edit may make. Both call the same
+  predicates:
+  - in `document::place`: a text size's `Unit`, `sizes_its_own_text`
+    (a span in a ring sets no size), `nameable_font` and `name_fault`;
+  - in `document::bounds`: `check_channel` (a channel is at most
+    `MAX_CHANNEL`, 4294967295) and `check_zoom_window` (each zoom
+    bound is above 0, and `min` is not above `max`).
+- **Keyed id maps.** File ids and names are chosen by whoever wrote
+  the file, so every map or set keyed by one is a `document::keyed`
+  `KeyedMap` or `KeyedSet`. That covers the loader's node ids, verb
+  ids, definition ids, font names and unknown top-level keys, and the
+  document's ident index. The hash is SipHash-2-4 under a per-process
+  key from `getrandom` (in the browser, `crypto.getRandomValues`).
+  With no system randomness, the key falls back to std's
+  `RandomState`, with a warning.
+- **Platform limits.** On wasm32, memory is the only limit, and a map
+  costs it on two axes. Its peak while loading and then saving is at
+  most `text × 7 + elements × 576` bytes
+  (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`, measured
+  by the wasm32 probe). Each axis takes half of the 3 GiB
+  `WASM32_MEMORY_BUDGET`:
+  - `MAX_MAP_BYTES` is `WASM32_MAX_MAP_BYTES`, 230,087,533 bytes. A
+    larger text is refused before parsing (`TooLarge`).
+  - `MAX_ELEMENTS` is `WASM32_MAX_ELEMENTS`, 2,796,202. Each verb,
+    edit and presentation counts as one element. The element past the
+    limit is refused at its path before it is built
+    (`TooManyElements`).
+
+  Both are `None` on native. On wasm32, `check_savable` refuses what
+  that target's load would. The legacy loader
+  (`mindmap/loader.rs`) keeps its own 3 GiB `MAX_MAP_BYTES`, and
+  `MAX_UNKNOWN_KEYS`, until C3 deletes it. Tree depth has no limit. A
+  count that an index addresses (palettes, theme variables and
+  variants, verbs, edits, presentations) is at most 65,536.
+- **Versioning.** `format` is `1`. Any change that a format-1 reader
+  would refuse, or would read differently, bumps it. A newer file is
+  refused as `UnsupportedFormat` before anything in it but its JSON
+  syntax is judged.
+- **Extension.** `.mandala.json` (D19), so a file in the old format is
+  never mistaken for one in the new. The WASM build's `?map=`
   parameter and every tool accept only this extension.
 
 ### §7.3 What happens to existing maps and tools
 
-- The repository's maps (`maps/*.mindmap.json`, test fixtures) are
-  converted **once**, in the cut-over sub-issue, by a throwaway
-  script that is not committed. The converted maps are checked by
-  screenshot against the old app's rendering.
+- The repository's maps (`maps/*.mindmap.json` and the test fixtures
+  still in the old format) are converted **once**, in the cut-over
+  sub-issue, by a throwaway script that is not committed. The
+  converted maps are checked by screenshot against the old app's
+  rendering. The format's own fixtures
+  (`lib/baumhard/src/document/format/fixtures/`) are already in this
+  format, and every one of them saves back byte for byte.
 - `maps/testament.mind` (the miMind original) and every legacy path
-  are deleted: the baumhard loader's legacy shapes, `maptool convert`
-  (`--legacy`, `--portals`, `--sections`), `format/migration.md`,
-  `crates/maptool/src/migration_advice.rs`, the legacy custom-mutation
-  shape (`mutations` + `target_scope`), and `unknown_keys.rs`.
+  are deleted:
+  - the baumhard loader's legacy shapes, with `mindmap/loader.rs`'s
+    own `MAX_MAP_BYTES` (§7.2);
+  - `maptool convert` (`--legacy`, `--portals`, `--sections`);
+  - `format/migration.md`;
+  - `format/legacy-schema.md`, which is where B2 moved the old schema
+    when `format/schema.md` became this format's reference;
+  - `crates/maptool/src/migration_advice.rs`;
+  - the legacy custom-mutation shape (`mutations` + `target_scope`);
+  - `unknown_keys.rs`, with `MAX_UNKNOWN_KEYS`.
 - `maptool` is rebuilt as a client of `Document` (§14): `show`,
   `grep`, `export` and `verify` read through it; `apply` runs its
   command and writes through `Document::apply`.
@@ -1052,7 +1264,8 @@ group of nodes ("animate the channel-2 children out") — the purpose
 `format/channels.md` gave them from the start. A `{ "nodes": [ids] }`
 id that names no node is skipped at run time with a logged warning
 (D27); deleting a node a verb names is an ordinary delete, and the map
-still loads.
+still loads. Its id is never issued to a new node while the verb names
+it (D32).
 
 **Edits are visible in a verb.** A verb that contains `edit` steps is
 listed as changing the map (`verb list`, `describe`), so "Flower
@@ -1379,9 +1592,10 @@ distance at its edge, giving a soft transition into the glyph frame.
 - **maptool**: rebuilt on `Document` — `show`, `grep`, `export`,
   `verify`, `apply`; `convert` is deleted.
 - **CLAUDE.md "Dual-target status"**: the `MAX_UNKNOWN_KEYS` entry is
-  deleted; the entries that describe drags, previews, the animation
-  pause and the per-frame drain are rewritten for transactions and
-  the presentation layer. No carve-out is added.
+  deleted; the `MAX_MAP_BYTES` entry names its second axis,
+  `MAX_ELEMENTS` (B2, §7.2); the entries that describe drags,
+  previews, the animation pause and the per-frame drain are rewritten
+  for transactions and the presentation layer. No carve-out is added.
 
 ---
 
@@ -1415,7 +1629,8 @@ Grouped; each is removed by the sub-issue that replaces it.
   OnLink}` as separate triggers (links are span-level), `RotateWhile`
   (to V2).
 - **Tools and docs:** `maptool convert`, `migration_advice.rs`,
-  `format/migration.md`, `maps/testament.mind`.
+  `format/migration.md`, `format/legacy-schema.md`,
+  `maps/testament.mind`.
 - **Dead fields** (D13).
 
 ---

@@ -20,7 +20,7 @@ An earlier revision stored portals in a separate top-level
 file that still carries a `portals` key at all — an empty array is
 still the old spelling, and the loader would otherwise keep it
 forever as a key nothing acts on. This is the deliberate exception to
-[keeping unknown keys](./schema.md#unknown-keys-are-kept): a key from
+[keeping unknown keys](./legacy-schema.md#unknown-keys-are-kept): a key from
 the *past* that the current model means something else by is not a
 key from the future, and it has a one-command answer. Migrate with:
 

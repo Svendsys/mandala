@@ -40,6 +40,7 @@ use crate::document::mutation::ops::{
     DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LinkOp, MapOp, NodeOp, PaletteOp, PathOp,
     PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
 };
+use crate::document::place::{name_fault, nameable_font, sizes_its_own_text, Unit};
 use crate::document::shape::validate_shape;
 use crate::document::values::{
     ColorRef, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, StartPoint, VarId, VerbId,
@@ -68,6 +69,17 @@ pub fn validate(mutator: &DocMutatorTree, doc: &Document) -> Result<(), Mutation
     Validator::new(doc, false).run(mutator)
 }
 
+/// How [`validate`] judges `element` as the root of an inserted subtree:
+/// the element rules alone, without the structural ones that an insert
+/// meets first. For a test of a rule that no insert reaches today — a
+/// theme or a palette can only be inserted into the map row, which
+/// [`StructureRule::MapRow`](crate::document::mutation::error::StructureRule::MapRow)
+/// refuses before any element is judged.
+#[cfg(test)]
+pub(crate) fn judge_element(doc: &Document, element: &DocElement) -> Result<(), MutationError> {
+    Validator::new(doc, false).element(element, None)
+}
+
 /// [`validate`], and refuse every structural command: a presentation
 /// changes fields only (D17). Hiding a node and fading it are fields,
 /// so a presentation can still conceal and reveal.
@@ -75,38 +87,6 @@ pub fn validate(mutator: &DocMutatorTree, doc: &Document) -> Result<(), Mutation
 /// Cost: [`validate`]'s.
 pub fn validate_for_presentation(mutator: &DocMutatorTree, doc: &Document) -> Result<(), MutationError> {
     Validator::new(doc, true).run(mutator)
-}
-
-/// What a text size may be where it sits.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Unit {
-    /// Points only: everything outside a frame.
-    Points,
-    /// Relative only: a frame and a ring.
-    Relative,
-    /// Either: a span whose place is not known before the walk —
-    /// [`validate_applied`] judges it once it is.
-    Either,
-}
-
-impl Unit {
-    /// The unit an element of `kind` takes, when its own kind decides
-    /// it.
-    fn of(kind: DocKind) -> Unit {
-        match kind {
-            DocKind::Frame | DocKind::Ring => Unit::Relative,
-            DocKind::Span => Unit::Either,
-            _ => Unit::Points,
-        }
-    }
-
-    /// Whether `size` is a unit this place takes.
-    fn admits(self, size: FontSize) -> bool {
-        matches!(
-            (self, size),
-            (Unit::Either, _) | (Unit::Points, FontSize::Pt(_)) | (Unit::Relative, FontSize::Rel(_))
-        )
-    }
 }
 
 /// The walk over a mutator tree, with what the document says the
@@ -260,7 +240,7 @@ impl<'d> Validator<'d> {
                 SectionOp::SetMinSize(size) => self.extent("section.min_size", *size),
                 SectionOp::SetAlign(_) => Ok(()),
                 SectionOp::SetChannel(channel) => self.bound("section.channel", check_channel(*channel)),
-                SectionOp::Text(op) => self.text_op(op, Unit::Points),
+                SectionOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Section)),
             },
             DocMutation::Span(op) => match op {
                 SpanOp::SetText(_) | SpanOp::InsertText { .. } => Ok(()),
@@ -275,7 +255,7 @@ impl<'d> Validator<'d> {
                     Ok(())
                 }
                 SpanOp::SetLink(link) => self.link_target(link.as_ref()),
-                SpanOp::Text(op) => self.text_op(op, Unit::Either),
+                SpanOp::Text(op) => self.text_op(op, Unit::of_place(DocKind::Span, None)),
             },
             DocMutation::Frame(op) => match op {
                 FrameOp::SetVisible(_) | FrameOp::SetDirection(_) => Ok(()),
@@ -283,20 +263,20 @@ impl<'d> Validator<'d> {
                 FrameOp::SetFit(fit) => self.fit("frame.fit", fit.as_ref()),
                 FrameOp::SetGap(gap) => self.non_negative("frame.gap", *gap),
                 FrameOp::SetInset(inset) => self.non_negative("frame.inset", *inset),
-                FrameOp::Text(op) => self.text_op(op, Unit::Relative),
+                FrameOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Frame)),
             },
             DocMutation::Ring(op) => match op {
                 RingOp::SetFit(fit) => self.fit("ring.fit", fit.as_ref()),
                 RingOp::SetChannel(channel) => self.bound("ring.channel", check_channel(*channel)),
-                RingOp::Text(op) => self.text_op(op, Unit::Relative),
+                RingOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Ring)),
             },
             DocMutation::Path(op) => self.path_op(op),
             DocMutation::Link(LinkOp::SetKind(link_kind)) => self.kind_switch(tree, id, *link_kind),
-            DocMutation::Cap(op) => self.text_op(op, Unit::Points),
+            DocMutation::Cap(op) => self.text_op(op, Unit::of_tier(DocKind::CapStart)),
             DocMutation::Label(op) => match op {
                 LabelOp::SetT(t) => self.unit_interval("label.t", *t),
                 LabelOp::SetOffset(offset) => self.canvas_scalar("label.offset", *offset),
-                LabelOp::Text(op) => self.text_op(op, Unit::Points),
+                LabelOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Label)),
             },
             DocMutation::PortalEnd(op) => match op {
                 PortalEndOp::SetBorderT(t) => self.unit_interval("portal_end.border_t", *t),
@@ -463,7 +443,7 @@ impl<'d> Validator<'d> {
     /// A face that names a font: never the fallback, `AppFont::Any`,
     /// which no map stores (ruling R11.2 on #236).
     fn font(&self, font: Option<AppFont>) -> Result<(), MutationError> {
-        if font == Some(AppFont::Any) {
+        if font.is_some_and(|font| !nameable_font(font)) {
             Err(MutationError::AnyFont { at: self.at() })
         } else {
             Ok(())
@@ -517,7 +497,7 @@ impl<'d> Validator<'d> {
             NodeOp::SetZoom(zoom) => self.zoom("node.zoom", zoom.as_ref()),
             NodeOp::SetOpacity(opacity) => self.bound("node.opacity", check_unit_interval(*opacity)),
             NodeOp::SetClick(verb) | NodeOp::SetHover(verb) => self.verb(*verb),
-            NodeOp::Text(op) => self.text_op(op, Unit::Points),
+            NodeOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Node)),
         }
     }
 
@@ -565,7 +545,7 @@ impl<'d> Validator<'d> {
     fn node_style(&self, style: &NodeStyle) -> Result<(), MutationError> {
         self.color(style.fill.as_ref())?;
         self.non_negative("node.fill_fade", style.fill_fade)?;
-        self.text_style(&style.text, Unit::Points)
+        self.text_style(&style.text, Unit::of_tier(DocKind::Node))
     }
 
     fn frame_style(&self, style: &FrameStyle) -> Result<(), MutationError> {
@@ -573,13 +553,13 @@ impl<'d> Validator<'d> {
         self.fit("frame.fit", style.fit.as_ref())?;
         self.non_negative("frame.gap", style.gap)?;
         self.non_negative("frame.inset", style.inset)?;
-        self.text_style(&style.text, Unit::Relative)
+        self.text_style(&style.text, Unit::of_tier(DocKind::Frame))
     }
 
     fn label_style(&self, style: &LabelStyle) -> Result<(), MutationError> {
         self.unit_interval("label.t", style.t)?;
         self.canvas_scalar("label.offset", style.offset)?;
-        self.text_style(&style.text, Unit::Points)
+        self.text_style(&style.text, Unit::of_tier(DocKind::Label))
     }
 
     fn portal_end_style(&self, style: &PortalEndStyle) -> Result<(), MutationError> {
@@ -594,15 +574,28 @@ impl<'d> Validator<'d> {
     /// #237).
     fn defaults(&self, defaults: &DefaultsData) -> Result<(), MutationError> {
         self.node_style(&defaults.node)?;
-        self.text_style(&defaults.section, Unit::Points)?;
+        self.text_style(&defaults.section, Unit::of_tier(DocKind::Section))?;
         self.frame_style(&defaults.frame)?;
         self.fit("ring.fit", defaults.ring.fit.as_ref())?;
-        self.text_style(&defaults.ring.text, Unit::Relative)?;
+        self.text_style(&defaults.ring.text, Unit::of_tier(DocKind::Ring))?;
         self.flow(&defaults.connector)?;
         self.flow(&defaults.link)?;
         self.label_style(&defaults.label)?;
         self.portal_end_style(&defaults.portal_end)?;
-        self.text_style(&defaults.span, Unit::Points)
+        self.text_style(&defaults.span, Unit::of_tier(DocKind::Span))
+    }
+
+    /// A name an author chose, held to the rule a file's names are
+    /// ([`name_fault`]), so that an edit never makes a map `save` refuses.
+    fn name(&self, what: &'static str, name: &str) -> Result<(), MutationError> {
+        match name_fault(name) {
+            None => Ok(()),
+            Some(fault) => Err(MutationError::Name {
+                at: self.at(),
+                what,
+                fault,
+            }),
+        }
     }
 
     /// One element of an inserted subtree, under `parent` (its parent in
@@ -630,27 +623,20 @@ impl<'d> Validator<'d> {
                 self.bound("section.channel", check_channel(section.channel))?;
                 self.canvas("section.offset", section.offset)?;
                 self.extent("section.min_size", section.min_size)?;
-                self.text_style(&section.text, Unit::Points)
+                self.text_style(&section.text, Unit::of_tier(DocKind::Section))
             }
             DocElement::Span(span) => {
-                let unit = match parent {
-                    Some(DocKind::Ring) => {
-                        if span.style.size.is_some() {
-                            return Err(MutationError::RingSpanSize { at: self.at() });
-                        }
-                        Unit::Either
-                    }
-                    Some(_) => Unit::Points,
-                    None => Unit::Either,
-                };
-                self.text_style(&span.style, unit)?;
+                if span.style.size.is_some() && !sizes_its_own_text(DocKind::Span, parent) {
+                    return Err(MutationError::RingSpanSize { at: self.at() });
+                }
+                self.text_style(&span.style, Unit::of_place(DocKind::Span, parent))?;
                 self.link_target(span.link.as_ref())
             }
             DocElement::Frame(frame) => self.frame_style(&frame.style),
             DocElement::Ring(ring) => {
                 self.bound("ring.channel", check_channel(ring.channel))?;
                 self.fit("ring.fit", ring.style.fit.as_ref())?;
-                self.text_style(&ring.style.text, Unit::Relative)
+                self.text_style(&ring.style.text, Unit::of_tier(DocKind::Ring))
             }
             DocElement::Connector(connector) => self.path_data(&connector.path),
             DocElement::Link(link) => {
@@ -664,10 +650,22 @@ impl<'d> Validator<'d> {
                 }
                 self.path_data(&link.path)
             }
-            DocElement::CapStart(cap) | DocElement::CapEnd(cap) => self.text_style(&cap.text, Unit::Points),
+            DocElement::CapStart(cap) | DocElement::CapEnd(cap) => {
+                self.text_style(&cap.text, Unit::of_tier(DocKind::CapStart))
+            }
             DocElement::Label(label) => self.label_style(&label.style),
             DocElement::PortalEnd(end) => self.portal_end_style(&end.style),
-            DocElement::Map(_) | DocElement::Theme(_) | DocElement::Palette(_) => Ok(()),
+            DocElement::Theme(theme) => {
+                for variant in &theme.variants {
+                    self.name("theme variant", &variant.name)?;
+                }
+                for variable in &theme.variables {
+                    self.name("theme variable", variable)?;
+                }
+                Ok(())
+            }
+            DocElement::Palette(palette) => self.name("palette", &palette.name),
+            DocElement::Map(_) => Ok(()),
             DocElement::Defaults(defaults) => self.defaults(defaults),
         }
     }
@@ -873,16 +871,16 @@ fn placed_size(tree: &Tree<DocElement>, id: NodeId, element: &DocElement) -> Res
     let Some(size) = element.text_style().and_then(|style| style.size) else {
         return Ok(());
     };
-    let unit = match element.kind() {
-        DocKind::Span => {
-            let parent = tree.get(id).and_then(|n| n.parent());
-            if parent.and_then(|p| tree.get(p)).map(|n| n.get().kind()) == Some(DocKind::Ring) {
-                return Err(MutationError::PlacedRingSpanSize { element: id });
-            }
-            Unit::Points
-        }
-        kind => Unit::of(kind),
-    };
+    let kind = element.kind();
+    let parent = tree
+        .get(id)
+        .and_then(|n| n.parent())
+        .and_then(|p| tree.get(p))
+        .map(|n| n.get().kind());
+    if !sizes_its_own_text(kind, parent) {
+        return Err(MutationError::PlacedRingSpanSize { element: id });
+    }
+    let unit = Unit::of_place(kind, parent);
     if unit.admits(size) {
         Ok(())
     } else {

@@ -27,6 +27,15 @@ use crate::font::fonts::AppFont;
 /// writes this.
 pub const DEFAULT_OPACITY: f32 = 1.0;
 
+/// The smallest scale a fit mode `"fit"` allows when the file gives no
+/// bounds: the lower end of [`BUILT_IN`]'s fit. `"fit"` alone, in a
+/// file, means these bounds.
+pub const FIT_MIN: f32 = 0.5;
+
+/// The largest scale a fit mode `"fit"` allows when the file gives no
+/// bounds: the upper end of [`BUILT_IN`]'s fit.
+pub const FIT_MAX: f32 = 2.0;
+
 /// The color of connector text: `default_parent_child_edge`'s
 /// `#888888`, `src/application/document/defaults.rs`.
 const CONNECTOR_COLOR: Rgba = Rgba::opaque(0x88, 0x88, 0x88);
@@ -191,7 +200,10 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
             at: 0.0,
         },
         direction: Direction::Clockwise,
-        fit: FitMode::Fit { min: 0.5, max: 2.0 },
+        fit: FitMode::Fit {
+            min: FIT_MIN,
+            max: FIT_MAX,
+        },
         // New with rings; no counterpart today. Rings touch, and the
         // first sits on the outline.
         gap: 0.0,

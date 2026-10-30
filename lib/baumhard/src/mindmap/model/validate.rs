@@ -281,7 +281,7 @@ pub fn section_extent_violations(
 
 /// The half of [`section_aabb_violations`] about fitting inside the
 /// parent node. Not load-blocking: a section that hangs past its
-/// node's edge still renders, so `format/schema.md` assigns it to
+/// node's edge still renders, so `format/legacy-schema.md` assigns it to
 /// `maptool verify`.
 pub fn section_containment_violations(
     parent_size: Size,
@@ -876,7 +876,7 @@ fn text_run_violations(section_idx: usize, section: &MindSection) -> Vec<String>
 ///
 /// Deliberately **not** the AABB containment rules: a section that
 /// hangs past its node's edge renders fine and is
-/// `maptool verify`'s call (`format/schema.md`). What belongs here
+/// `maptool verify`'s call (`format/legacy-schema.md`). What belongs here
 /// is only what the renderer cannot survive — a non-finite or
 /// degenerate extent, a hostile border config, a bad run.
 pub fn section_numeric_violations(idx: usize, section: &MindSection, parent_size: Size) -> Vec<String> {

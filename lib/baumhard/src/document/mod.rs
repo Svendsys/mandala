@@ -23,8 +23,9 @@
 //! input it reads so the projection can track what depends on what.
 //!
 //! Every change a document can undergo is a [`mutation`](crate::document::mutation)
-//! (V1-B3); the writer that applies them, with history, is V1-B4.
-//! Nothing here reads or writes a file: the format is V1-B2.
+//! (V1-B3); the writer that applies them, with history, is V1-B4. A
+//! document is built by [`format::load`](crate::document::format::load) — the one place a
+//! file becomes a document — and written back by [`format::save`](crate::document::format::save).
 
 /// Every numeric bound the loader and the mutations enforce.
 pub mod bounds;
@@ -37,6 +38,7 @@ pub mod deps;
 /// [`DocKind`](element::DocKind), [`DocElement`](element::DocElement)
 /// and the per-kind data, and the engine instantiation.
 pub mod element;
+pub mod format;
 /// [`NodeIdent`](ids::NodeIdent), [`Document`](ids::Document) and its
 /// read API.
 pub mod ids;
@@ -46,8 +48,14 @@ pub mod inspect;
 /// The engine's `Interpolable` for the document: numbers, positions,
 /// sizes and literal colors blend; everything else snaps.
 pub mod interpolation;
+/// Hash maps keyed by what a file chose, with a key the file cannot
+/// know.
+pub mod keyed;
 /// The mutation vocabulary: every change a document can undergo.
 pub mod mutation;
+/// The rules that depend on where a value sits, shared by the format
+/// and the mutations (R14.16).
+pub mod place;
 /// Per-field style resolution with read recording.
 pub mod resolve;
 /// The shape rules: which kinds may hold which.

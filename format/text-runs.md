@@ -40,7 +40,7 @@ complete run:
 - `hyperlink` defaults to absent.
 
 The saver omits fields still sitting at their defaults, per the
-omission policy in [schema.md](./schema.md) ("a key written out at
+omission policy in [legacy-schema.md](./legacy-schema.md) ("a key written out at
 its own default value may be omitted when the map is saved") —
 reloading the terse form restores the same run.
 
