@@ -675,7 +675,11 @@ debug assertions on) at the repository root, **outside the workspace**:
 cargo-fuzz needs nightly, so `fuzz/rust-toolchain.toml` pins a dated
 nightly that applies inside `fuzz/` only. `./test.sh` never builds it;
 the gate stays on the stable toolchain the root `rust-toolchain.toml`
-pins. Its lockfile is committed.
+pins. Its lockfile is committed, and
+`test_the_fuzz_lockfile_locks_what_the_workspace_locks` holds every
+package it shares with the root `Cargo.lock` to a version and source
+the root one locks, so a fuzz run never holds other dependencies to the
+properties than the app builds with.
 
 **The targets are thin; the properties are baumhard's.** Each target
 hands its bytes to a property function in a baumhard tests tree and
@@ -714,7 +718,23 @@ What they hold, in short (each module's docs are the full list):
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and
   interpolation total and exact at its ends; the journal reverts and
-  replays exactly.
+  replays exactly. The raw target mutates the tree a fixed choice
+  sequence (`JSON_TREE`) builds, which a test holds to having what these
+  properties can fail on: multi-glyph box and path runs, filler, boxes
+  and fills of positive size, and overrides already materialized.
+
+**Where their tests live.** A property module is `pub`, in its
+surface's tests tree (`format_fuzz`, `flow_fuzz`, `glyph_layer_fuzz`,
+and the choice decoder `util::tests::choices`), because its functions
+are the reusable surface: the fuzz targets call them from outside the
+crate. The tests that hold those properties to account — sweeps, named
+seeds, findings and their controls — are not reused, and live in a
+`#[cfg(test)]` sibling of their module (`format_fuzz_tests`,
+`flow_fuzz_tests`, `glyph_layer_fuzz_tests`, `choices_tests`,
+`fuzz_seed_tests`). A `cfg(test)` tree carries no bench obligation
+(`lib/baumhard/CONVENTIONS.md` §B8), so this is a stated rule, not an
+exemption from the census: a fuzz property's test is a sibling, never a
+plain `#[test]` beside the `pub` property it holds.
 
 **Structure-aware means choices.** A structured target reads its bytes
 as a sequence of choices (`util::tests::choices::Choices`: four bytes
@@ -738,7 +758,10 @@ format's fixtures, `maps/*.mandala.json`, the `fuzz_findings`
 directories), never copied. `test_every_fuzz_seed_holds_its_targets_properties`
 replays every committed seed through its target's properties and holds
 the targets in `fuzz/fuzz_targets/`, their bin entries and its own table of
-targets to one another, both ways. The
+targets to one another, both ways.
+`test_every_fuzz_input_fits_its_targets_max_len` holds every input the
+script feeds a target to that target's `-max_len`, which libFuzzer
+otherwise truncates to without a word. The
 generated corpus (`fuzz/corpus/`) and crash artifacts are never
 committed.
 
