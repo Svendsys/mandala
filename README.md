@@ -13,34 +13,30 @@ connection paths — is laid out as positioned font glyphs.
 
 Every mark in these images is a font glyph. Glyphs are never rotated:
 curves are made by placing upright glyphs along a path, the way ASCII
-art makes them. Text in a frame is set like an inscription on a coin:
-one line arcs over the top and one runs under the bottom, each read left
-to right. Each image is drawn by the new glyph-run renderer in a
+art makes them. Each image is drawn by the new glyph-run renderer in a
 single draw call. They are rendered offscreen from the V1 work in
 progress ([#230](https://github.com/Svendsys/mandala/issues/230)); the
 app draws this way once V1 lands.
 
-![Ecclesiastes 3 as a mind map: "To every thing there is a season" at the center, with "and a time to every" above it and "purpose under the heaven:" below it inside a ring of ornaments, and six child nodes joined by glyph connectors](docs/images/demo-ecclesiastes.png)
+![Ecclesiastes 3 as a mind map: "To every thing there is a season" at the center, framed by "and a time to every purpose under the heaven", with six child nodes joined by glyph connectors](docs/images/demo-ecclesiastes.png)
 
-*Ecclesiastes 3:1–8 (King James Version) as a mind map: the center
-node's frame holds two lines of text inside a ring of ornaments, and
-each child sits in a frame of ornaments, joined by glyph connectors.*
+*Ecclesiastes 3:1–8 (King James Version) as a mind map: each node in a
+frame of text or ornaments, joined by glyph connectors.*
 
-![William Blake's Auguries of Innocence in two lines over and under a ring of ornaments, with Psalm 19:1 in two lines inside it](docs/images/demo-blake.png)
+![William Blake's Auguries of Innocence fitted once around an ellipse, with Psalm 19:1 on an inner ring](docs/images/demo-blake.png)
 
-*William Blake, "Auguries of Innocence", in two lines over and under
-an ellipse of ornaments, with Psalm 19:1 (King James Version) in two
-lines inside it.*
+*William Blake, "Auguries of Innocence", fitted exactly once around an
+ellipse, with Psalm 19:1 (King James Version) on an inner ring.*
 
 ![Emily Dickinson's "Hope" is the thing with feathers, the letters of "feathers" drifting up and fading](docs/images/demo-dickinson.png)
 
 *Emily Dickinson, "'Hope' is the thing with feathers": one frame of an
 animation, with each glyph offset, scaled and faded on its own.*
 
-![Two lines of text in a rounded rectangle and in an ellipse, joined by a connector, with emoji markers at full and half opacity](docs/images/demo-frames.png)
+![Text around a rounded rectangle and an ellipse, joined by a connector, with emoji markers at full and half opacity](docs/images/demo-frames.png)
 
-*Two lines of text in a rounded rectangle and in an ellipse, a
-connector at half opacity, and emoji at full and half opacity.*
+*Text around a rounded rectangle and an ellipse, a connector at half
+opacity, and emoji at full and half opacity.*
 
 ## What..?
 
