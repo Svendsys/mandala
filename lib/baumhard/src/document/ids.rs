@@ -169,10 +169,13 @@ pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32
 ///
 /// **Today it names none.** A verb, an edit and a presentation carry
 /// only an id and a name until V1-D1–D3 give them targets; those land
-/// here, and nowhere else. No other field of a map can name a node that
-/// is not in it: a node's `parent` and a link's `to` must name a node of
-/// the map, on load, on save and in every edit, so neither can name a
-/// deleted node, and both are covered by the highest node ident.
+/// here, and nowhere else. No other field of a saved map can name a
+/// node that is not in it. A node's `parent` and a link's `to` must name
+/// a node of the map on load and in
+/// [`check_savable`](crate::document::format::check_savable), so no
+/// saved file can hold one that does not. The writer (B4) removes the
+/// links into a removed node in the same request. Both are therefore
+/// covered by the highest node ident.
 pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item = u32> + '_ {
     // The targets V1-D1–D3 add are named here, as `definitions.verbs`
     // and `definitions.presentations` grow them.

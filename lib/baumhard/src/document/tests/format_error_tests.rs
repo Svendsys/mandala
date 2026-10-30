@@ -291,3 +291,42 @@ fn test_a_broken_reader_invariant_is_an_error_without_a_position_never_a_panic()
     assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
     assert_eq!(error.position, None);
 }
+
+#[test]
+fn test_an_unknown_key_is_named_whole_even_when_it_holds_a_backtick() {
+    // The reader quotes an unknown key between backticks; a key the file
+    // chose may hold one, so the kind takes the key from the path.
+    let error = rejection(&map_of(r#","fr`me":1"#));
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            r#"nodes[0]["fr`me"]"#,
+            &LoadErrorKind::UnknownKey {
+                key: "fr`me".to_string()
+            }
+        )
+    );
+    assert!(error.to_string().contains("fr`me"), "{error}");
+    // Inside a row, which a reader of its own reads.
+    let error = rejection(&map_of(r#","sections":[{"spans":[{"text":"a","x`y`":1}]}]"#));
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            r#"nodes[0].sections[0].spans[0]["x`y`"]"#,
+            &LoadErrorKind::UnknownKey {
+                key: "x`y`".to_string()
+            }
+        )
+    );
+    // Control: a plain key is named as it is, at a plain path.
+    let error = rejection(&map_of(r#","frame_":1"#));
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            "nodes[0].frame_",
+            &LoadErrorKind::UnknownKey {
+                key: "frame_".to_string()
+            }
+        )
+    );
+}

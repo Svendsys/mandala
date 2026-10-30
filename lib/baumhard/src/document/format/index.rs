@@ -367,6 +367,17 @@ fn without_position(error: &serde_json::Error) -> String {
     }
 }
 
+/// What the last step of `path` is: `None` when the path is empty,
+/// `Some(Some(key))` when it is a key, and `Some(None)` when it is an
+/// array position or a step the reader could not name.
+fn key_at_end(path: &serde_path_to_error::Path) -> Option<Option<String>> {
+    use serde_path_to_error::Segment;
+    path.iter().last().map(|segment| match segment {
+        Segment::Map { key } => Some(key.clone()),
+        _ => None,
+    })
+}
+
 /// The [`LoadError`] for a value that failed to parse, inside `extent`,
 /// a slice of `text`. When what failed was a row inside it, which is
 /// read by a reader of its own ([`rows`]), the row's fault says the rest
@@ -386,6 +397,9 @@ fn refusal(
 ) -> LoadError {
     use serde_json::error::Category;
     let (mut path, mut has_unknown_step) = render_parse_path(prefix, error.path());
+    // The key the innermost path ends in, whole: a key the file chose
+    // may hold a backtick, where the reader's quoted copy of it stops.
+    let mut last_key = key_at_end(error.path());
     let inner = error.into_inner();
     // Where the reader that stopped began, as an offset into `extent`:
     // its start, or the start of the row whose fault it is.
@@ -393,6 +407,9 @@ fn refusal(
         Some(fault) => {
             for step in &fault.steps {
                 has_unknown_step |= push_parse_path(&mut path, step);
+                if let Some(key) = key_at_end(step) {
+                    last_key = Some(key);
+                }
             }
             (fault.error, fault.base.0.checked_sub(extent.as_ptr() as usize))
         }
@@ -411,7 +428,8 @@ fn refusal(
         .map(|(extent_at, into)| extent_at + into);
     if start.is_none() {
         log::error!(
-            "document: a value's reader did not begin inside the text it was read from;              reporting the error without a position"
+            "document: a value's reader did not begin inside the text it was read from; \
+             reporting the error without a position"
         );
     }
     let position = start.map(|start| within(position_at(text, start), inner.line(), inner.column()));
@@ -439,10 +457,15 @@ fn refusal(
             .and_then(|rest| rest.split('`').next())
             .map(str::to_string)
     };
-    if let Some(key) = quoted("unknown field `") {
-        // The reader has already entered the key: the path ends in it.
+    if let Some(quoted_key) = quoted("unknown field `") {
+        // The reader has already entered the key: the path ends in it,
+        // and its last step is the key whole. The message's copy ends at
+        // the key's first backtick, so it is only the fallback.
+        let key = last_key.flatten().unwrap_or(quoted_key);
         return at(path, LoadErrorKind::UnknownKey { key });
     }
+    // A missing or duplicate field is one the schema names, and no
+    // schema key holds a backtick, so the message's copy is whole.
     if let Some(key) = quoted("missing field `") {
         return at(path, LoadErrorKind::MissingKey { key });
     }

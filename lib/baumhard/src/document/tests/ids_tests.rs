@@ -316,6 +316,14 @@ fn test_the_ident_counter_starts_above_every_ident_the_map_names() {
     assert_eq!(first_free_ident(3, [u32::MAX]), u32::MAX);
 }
 
+/// A placeholder for ruling R20's end-to-end test of Q3, and one that
+/// cannot fail today: [`idents_named_by`](crate::document::ids::idents_named_by)
+/// yields nothing until definitions have targets, so the hook and an
+/// empty list agree (TEST_CONVENTIONS §T13). The end-to-end test deletes
+/// the highest node, keeps a verb naming it, saves, reloads and adds a
+/// node, whose id must not be the deleted one; its control, the old rule
+/// that ignores named ids, turns it red. It arrives with V1-D3 (#252),
+/// which gives verbs targets, and is recorded there.
 #[test]
 fn test_a_loaded_map_starts_its_counter_through_the_one_hook() {
     use crate::document::ids::{first_free_ident, idents_named_by};

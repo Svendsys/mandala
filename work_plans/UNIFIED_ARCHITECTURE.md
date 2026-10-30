@@ -55,7 +55,7 @@ develops it.
 | D28 | **One open transaction, and who yields.** While an interactive transaction is open (text editor session, drag or resize, color picker, frame preview), any other `apply` or `begin` is refused and the user sees a short status message; a verb's `Edit` step in that state is skipped with a warning. An animated edit is not interactive: any new `apply` or `begin` first fast-forwards it to its end and commits it, then proceeds. | §9 |
 | D29 | **Untrusted input is fuzzed, permanently.** Maps are shared with strangers, so every untrusted-input boundary (the `.mandala.json` loader, map-borne edits, presentations and verbs, shaping of arbitrary text, IPC frames) has a coverage-guided fuzz target (`fuzz/`, cargo-fuzz, outside the workspace), run as a short smoke on PRs and nightly once V1 is on `main`. Every finding becomes a stable regression test in `./test.sh`. Infrastructure and the loader target: V1-B8 (#278). | §16, §20 |
 | D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
-| D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line and two edits to different keys of one node merge cleanly. The layout lives in the saver's writer alone. | §7.1 |
+| D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line, and edits to keys of one node that are not on adjacent lines merge cleanly. Two edits to neighboring keys, or an edit to a node's last key while another branch appends a key after it, are one git conflict, as for any line-based text. The layout lives in the saver's writer alone. | §7.1 |
 | D32 | **New ids start above every id the map names** (amends §5.2's id rule; owner, #236 Q3 option B, R20). The counter is still not saved. At load it starts one above the highest node id and above every node id a verb or presentation target names, so a verb or presentation can never be silently retargeted to a new node after a reload. The named ids come from one hook, `ids::idents_named_by`, which V1-D1 to V1-D3 (#250–#252) extend when definitions gain targets. | §5.2, §7.2 |
 
 ---
@@ -768,9 +768,12 @@ A two-node map, exactly as the saver writes it:
 }
 ```
 
-A changed key is one changed line in a diff. Two people editing
-different keys of one node merge cleanly. A moved subtree is a moved
-block of lines. `grep '"parent": 7,'` finds a node's children.
+A changed key is one changed line in a diff. Edits to keys of one
+node that are not on adjacent lines merge cleanly. Two edits to
+neighboring keys are one git conflict, as for any line-based text. So
+is an edit to a node's last key while another branch appends a key
+after it, because the append adds a `,` to that line. A moved subtree
+is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
 `format/schema.md` ends with a larger example, the fixture
 `tree.mandala.json`.
 
@@ -822,8 +825,10 @@ block of lines. `grep '"parent": 7,'` finds a node's children.
   - It names nothing today, because definitions have no targets until
     V1-D1 to V1-D3 (#250–#252), which extend it there and nowhere
     else.
-  - `parent` and `to` need no entry: they must name a node of the map
-    on load, in `check_savable` and in every edit.
+  - `parent` and `to` need no entry. They must name a node of the map
+    on load and in `check_savable`, so no saved file can hold one that
+    does not. The writer (B4) removes the links into a removed node in
+    the same request.
 - **Names.** Theme variants and variables, palettes, and the ids of
   edits, presentations and verbs must be non-empty (`EmptyName`). They
   may not hold a C0 or C1 control, DEL or a bidi control
