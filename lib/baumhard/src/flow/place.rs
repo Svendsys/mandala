@@ -32,6 +32,13 @@
 //! in — and the kept clusters are laid in visual order. An RTL run so
 //! keeps its beginning and loses its end, as an LTR one does.
 //!
+//! **A frame's text is two lines** (#291, ruling R27; [`lines`]). A ring
+//! whose fit mode is `Once`, `Spread` or `Fit` holds text, and is set over
+//! the top of its outline and along the bottom, each line reading left to
+//! right on the level part of its half, the steep sides clear; `start`
+//! and `direction` do not apply to it. What follows places everything
+//! else: a `Repeat` ring, and every connector.
+//!
 //! **Every stretch reads left to right or top to bottom** (the readable
 //! rule, #291, rulings R25, R25.1 and R26). Glyphs are never rotated, so
 //! text walked in its own order along a path that runs leftward would
@@ -61,6 +68,9 @@
 //!    neighbor read the same way, where it still reads forward. Its
 //!    spacing is solved within its part: `Spread` and `Fit` end where the
 //!    walk ended, `Once` and `Repeat` keep their spacing where it fits.
+//!    Text that ends short of the path keeps its last stretch to where
+//!    the path runs on that stretch's way ([`PathWalk::runs_on`]): past a
+//!    turn, its clusters would read backward.
 //!    Where the stretches cannot each keep to their parts, they are laid
 //!    on one from the next with one spacing (ruling R25). The gap never
 //!    goes below zero; where even no gap passes the end, the placement is
@@ -97,6 +107,12 @@ use crate::font::FontSystem;
 
 mod lines;
 pub(crate) use lines::frame_halves;
+
+/// The most steps [`PathWalk::runs_on`] probes past a text's end to find
+/// where the path stops running the last stretch's way: a path that long
+/// in line heights is followed no further, and the last stretch's part
+/// ends there.
+const MAX_RUN_ON_STEPS: usize = 1 << 16;
 
 /// The most glyphs one placement places (ruling R6, reading 9). A
 /// repeating flow on a path long enough to need more stops here and
@@ -519,8 +535,8 @@ impl PathWalk<'_> {
     }
 
     /// How long a lay ending at `end` counts for `Fit`, when `astray` of it
-    /// ran on into stretches read the other way ([`borrow_room`]
-    /// (Self::borrow_room)): as it is, when none did; otherwise past the
+    /// ran on into stretches read the other way
+    /// ([`borrow_room`](Self::borrow_room)): as it is, when none did; otherwise past the
     /// path's end by that much, so that `Fit`, which keeps every lay
     /// within the path, shrinks until no cluster reads backward — though
     /// there be room for them all elsewhere along the path (ruling
@@ -634,8 +650,8 @@ impl PathWalk<'_> {
     /// leaves the stretch that takes the word room for it with no gap
     /// ([`snap_to_words`](Self::snap_to_words)): its own part of the
     /// path, plus the slack a neighbor read its own way leaves — room
-    /// that, borrowed, it reads forward in ([`borrow_room`]
-    /// (Self::borrow_room)). When the two stretches are read the same way
+    /// that, borrowed, it reads forward in
+    /// ([`borrow_room`](Self::borrow_room)). When the two stretches are read the same way
     /// they share their parts of the path. A move that crowds the taker no
     /// more than it already was is allowed too. Lengths are laid from
     /// where each stretch begins.
@@ -910,12 +926,12 @@ impl PathWalk<'_> {
     /// right or top to bottom.
     ///
     /// Step 1, the fit mode's walk in `walked`, decided which clusters
-    /// are placed and which stretch each belongs to ([`stretches`]
-    /// (Self::stretches)), a torn word moved whole into one of its two
+    /// are placed and which stretch each belongs to
+    /// ([`stretches`](Self::stretches)), a torn word moved whole into one of its two
     /// stretches; that membership is frozen here. Each stretch is laid in
     /// its own part of the path, from where step 1 began it, borrowing
-    /// room from a neighbor read its way where it needs more ([`borrow_room`]
-    /// (Self::borrow_room)), its spacing solved there ([`Spacing`]):
+    /// room from a neighbor read its way where it needs more
+    /// ([`borrow_room`](Self::borrow_room)), its spacing solved there ([`Spacing`]):
     ///
     /// - [`Ends::Exactly`] (`Spread`, `Fit`): each stretch ends where its
     ///   part does, so the last ends where step 1 ended;
@@ -958,7 +974,10 @@ impl PathWalk<'_> {
         let walked_end = steps.last().map_or(0.0, |step| step.s + step.step);
         let (spacing, end) = match ends {
             Ends::Exactly => (Spacing::Fill, walked_end),
-            Ends::Within => (Spacing::Keep(gap), self.path.length()),
+            Ends::Within => (
+                Spacing::Keep(gap),
+                self.runs_on(steps, self.line_height, walked_end),
+            ),
         };
         let mut stretches = self.stretches(steps, self.line_height, end, whole_words);
         let mut trace = trace;
@@ -1110,10 +1129,57 @@ impl PathWalk<'_> {
         travels
     }
 
+    /// Where the last stretch's part of the path ends when the text ends
+    /// short of the path, at `walked_end` (#291): as far as the path runs
+    /// on the way that stretch is read, and no further. Past that, the
+    /// path turns — the bottom of a U-turn, the middle of an S — and a
+    /// cluster moved on into the turn
+    /// ([`snap_to_words`](Self::snap_to_words), [`borrow_room`](Self::borrow_room)) would be
+    /// laid where the path runs the other way and read backward. The path
+    /// beyond `walked_end` is stepped one line height at a time and
+    /// classified with the walk's own steps before it
+    /// ([`travels`](Self::travels)), so a short turn through vertical joins the
+    /// stretches beside it as it would in the walk. The path's end when
+    /// it runs the last stretch's way all along, or nothing was walked.
+    ///
+    /// Cost: one step per line height of path past `walked_end`, and one
+    /// classification of the walk's steps and those; one `Vec`.
+    fn runs_on(&self, steps: &[Stepped], h: f32, walked_end: f32) -> f32 {
+        let length = self.path.length();
+        let Some(last) = steps.last() else {
+            return length;
+        };
+        if h.is_nan() || h <= 0.0 || walked_end >= length {
+            return length;
+        }
+        let mut probe: Vec<Stepped> = steps.to_vec();
+        let mut s = walked_end;
+        while s < length && probe.len() < steps.len() + MAX_RUN_ON_STEPS {
+            let (step, dir) = self.step(s, h, h);
+            if step.is_nan() || step <= 0.0 {
+                break;
+            }
+            probe.push(Stepped {
+                s,
+                step,
+                dir,
+                ..*last
+            });
+            s += step;
+        }
+        let travels = self.travels(&probe, h);
+        let way = travels[steps.len() - 1];
+        travels[steps.len()..]
+            .iter()
+            .zip(&probe[steps.len()..])
+            .find(|(travel, _)| **travel != way)
+            .map_or(length, |(_, step)| step.s)
+    }
+
     /// Where step 1's `steps`, laid again in reading order with no gap,
     /// end, and how far phase 2 lets them go: the end of step 1's walk,
-    /// or the path's limit if that is further ([`readable`]
-    /// (Self::readable)). The first past the second is a placement phase
+    /// or the path's limit if that is further
+    /// ([`readable`](Self::readable)). The first past the second is a placement phase
     /// 2 must cut.
     ///
     /// Cost: one classification and one walk; nothing allocated beyond
@@ -1207,8 +1273,8 @@ impl PathWalk<'_> {
         fits > copy_units
     }
 
-    /// Lay `laying`'s clusters as `lay` says ([`lay_reading`]
-    /// (Self::lay_reading)): each cluster's glyphs move with its box, and
+    /// Lay `laying`'s clusters as `lay` says
+    /// ([`lay_reading`](Self::lay_reading)): each cluster's glyphs move with its box, and
     /// a cluster not kept is removed. The glyphs keep step 1's order.
     fn lay_readable(
         &self,
@@ -1309,7 +1375,7 @@ struct PathStretch {
     /// Its clusters: a range of step indices, in step 1's order.
     steps: Range<usize>,
     /// Where along the path it begins: where step 1 began its first
-    /// cluster, before [`snap_to_words`] moved any word across its
+    /// cluster, before [`PathWalk::snap_to_words`] moved any word across its
     /// boundary. Phase 2 starts it here — earlier only where it borrows
     /// room from the stretch before ([`PathWalk::borrow_room`]), later
     /// where the stretch before runs on past it.
@@ -1325,7 +1391,11 @@ impl PathStretch {
 }
 
 /// Place `run` around the closed `path` (a frame ring), from `start`
-/// in `direction`, as `fit` says (#239 §5, §6).
+/// in `direction`, as `fit` says (#239 §5, §6). A ring in `Once`,
+/// `Spread` or `Fit` is text, set in two lines over the top and along
+/// the bottom (#291, ruling R27), and ignores `start` and `direction`;
+/// a `Repeat` ring is walked whole from `start`, every stretch read
+/// forward.
 ///
 /// With `outward`, each cluster is pushed off the outline by half its
 /// extent along the outward normal, so the ring sits outside the

@@ -2230,6 +2230,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_readable_a_short_side_reads_top_to_bottom", |b| {
         b.iter(do_flow_readable_a_short_side_reads_top_to_bottom)
     });
+    c.bench_function("flow_readable_stops_where_the_path_turns", |b| {
+        b.iter(do_flow_readable_stops_where_the_path_turns)
+    });
     // a text frame in two lines (#291, ruling R27) //
     c.bench_function("flow_lines_balance_a_sentence", |b| {
         b.iter(do_flow_lines_balance_a_sentence)

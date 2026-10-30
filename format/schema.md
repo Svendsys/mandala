@@ -358,8 +358,8 @@ text-style `size` is a [fraction](#size-units).
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `visible` | boolean | no | unset | Whether a frame is drawn. |
-| `start` | [start point](#start-point) | no | unset | Where the text starts. |
-| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text goes around; every stretch still [reads forward](#readable-path-text). |
+| `start` | [start point](#start-point) | no | unset | Where a `repeat` ring starts; a ring in another mode ignores it. |
+| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way a `repeat` ring goes around; every stretch still [reads forward](#readable-path-text). A ring in another mode is [two lines](#readable-path-text) and ignores it. |
 | `fit` | [fit](#fit) | no | unset | |
 | `gap` | number `>= 0` | no | unset | |
 | `inset` | number `>= 0` | no | unset | |
@@ -520,8 +520,8 @@ key is unset when absent; the built-in values that then apply are
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `visible` | boolean | no | unset | Whether the frame is drawn. |
-| `start` | [start point](#start-point) | no | unset | Where the text starts on the outline. |
-| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text goes around; every stretch still [reads forward](#readable-path-text). |
+| `start` | [start point](#start-point) | no | unset | Where a `repeat` ring starts on the outline; a ring in another mode is [two lines](#readable-path-text) and ignores it. |
+| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way a `repeat` ring goes around; every stretch still [reads forward](#readable-path-text). A ring in another mode is [two lines](#readable-path-text) and ignores it. |
 | `fit` | [fit](#fit) | no | unset | What the rings do when text and outline differ in length. |
 | `gap` | number `>= 0` | no | unset | The space between rings, canvas units. |
 | `inset` | number `>= 0` | no | unset | The first ring's distance from the outline, canvas units. |
@@ -666,25 +666,47 @@ What a text does when it and its path differ in length (D10, §6.4).
 | Spelling | Meaning |
 |---|---|
 | `"repeat"` | The text repeated until the path is full. |
-| `"spread"` | The text once, spaced out to end where the path ends. |
-| `"once"` | The text once; the rest of the path gets nothing. |
-| `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. |
-| `"fit"` | The text scaled to fill the path exactly once, within the built-in bounds: `0.5` to `2.0` times the declared size. |
+| `"spread"` | The text once, spaced out to end where the path ends. On a frame's ring, each of its two lines spaced out over its span. |
+| `"once"` | The text once; the rest of the path gets nothing. On a frame's ring, each line centered on its span. |
+| `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. On a frame's ring, the filler fills each span on both sides of its line. |
+| `"fit"` | The text scaled to fill the path exactly once, within the built-in bounds: `0.5` to `2.0` times the declared size. On a frame's ring, the largest size at which each line fits its span; text too long even at `min` has its bottom line's end cut. |
 | `{ "fit": { "min": 0.5, "max": 2.0 } }` | The same, with bounds of your own: `0 < min <= max`. The built-in bounds are written as `"fit"`. |
 
 ### Readable path text
 
 Text along a path — a frame's ring, a connector, a link — is placed so
-that every stretch of it reads left to right or top to bottom (D33,
-§6.2). Glyphs are never rotated, so where the path runs leftward (the
-bottom of a clockwise frame) or upward (its left side), that stretch's
-glyphs are placed last to first. `start` and `direction` decide where
-the text begins and which stretch comes next; they never make a stretch
-read backward. There is nothing to set: it is how path text is placed.
+that it reads left to right or top to bottom (D33, §6.2). There is
+nothing to set: it is how path text is placed.
+
+**A frame's text is two lines.** A ring whose [fit](#fit) is `once`,
+`spread` or `fit` reads over the top of the outline and then along the
+bottom, each line left to right on the level part of its half — where
+the outline runs within 45° of level — and the steep sides stay clear.
+The text is parted at a word break, punctuation staying on its word:
+
+- at its first line break (`\n`, `\r\n`, or any other paragraph
+  separator), if it holds one; any further line break reads as a
+  space;
+- otherwise where the two lines best balance against their halves;
+- a text with no word break is one line, on top.
+
+Both lines share one size; the whitespace they part at is not drawn.
+`start` and `direction` do not apply: a frame's text always begins over
+the top. They are kept and saved, and a ring set to `repeat` uses them.
+
+**A pattern and a connector read stretch by stretch.** On a `repeat`
+ring and along a connector or a link, glyphs are never rotated, so
+where the path runs leftward (the bottom of a clockwise frame) or
+upward (its left side), that stretch's glyphs are placed last to
+first, and a word is never torn across two stretches. `start` and
+`direction` decide where a `repeat` ring begins and which stretch comes
+next; they never make a stretch read backward. A line break in such a
+text reads as a space.
 
 ### Start point
 
-Where a frame's text starts on the outline. Edges run clockwise: top
+Where a `repeat` ring starts on the outline (a ring in another mode is
+[two lines](#readable-path-text)). Edges run clockwise: top
 runs left to right, right runs top to bottom, bottom runs right to left,
 left runs bottom to top.
 

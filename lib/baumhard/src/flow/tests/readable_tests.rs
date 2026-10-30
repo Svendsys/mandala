@@ -48,11 +48,16 @@ fn start(edge: Edge, at: f32) -> StartPoint {
 /// An S-curved connector: rightward, back leftward through its middle,
 /// rightward again.
 fn s_curve() -> Curve {
+    s_curve_at(1.0)
+}
+
+/// That S-curve at `scale`.
+fn s_curve_at(scale: f32) -> Curve {
     Curve::Cubic(
         Vec2::ZERO,
-        Vec2::new(900.0, 0.0),
-        Vec2::new(-300.0, 150.0),
-        Vec2::new(600.0, 150.0),
+        Vec2::new(900.0, 0.0) * scale,
+        Vec2::new(-300.0, 150.0) * scale,
+        Vec2::new(600.0, 150.0) * scale,
     )
 }
 
@@ -310,11 +315,16 @@ fn u_turn(scale: f32) -> Curve {
 
 /// A hook: rightward, down, and back past its start.
 fn hook() -> Curve {
+    hook_at(1.0)
+}
+
+/// That hook at `scale`.
+fn hook_at(scale: f32) -> Curve {
     Curve::Cubic(
         Vec2::ZERO,
-        Vec2::new(400.0, 0.0),
-        Vec2::new(400.0, 250.0),
-        Vec2::new(-50.0, 250.0),
+        Vec2::new(400.0, 0.0) * scale,
+        Vec2::new(400.0, 250.0) * scale,
+        Vec2::new(-50.0, 250.0) * scale,
     )
 }
 
@@ -495,6 +505,8 @@ fn connectors() -> Vec<(&'static str, Curve)> {
         ("U-turn", u_turn(1.0)),
         ("small U-turn", u_turn(0.7)),
         ("hook", hook()),
+        ("small S-curve", s_curve_at(0.5)),
+        ("small hook", hook_at(0.5)),
     ]
 }
 
@@ -504,8 +516,8 @@ fn test_flow_readable_fit_keeps_a_connectors_text_whole() {
 }
 
 /// `Fit` along a connector keeps every glyph, never overlaps and reads
-/// forward, however its text is reversed (rulings R25.1, R26): over four
-/// connectors and four texts, an unclamped `Fit` places the whole text,
+/// forward, however its text is reversed (rulings R25.1, R26): over six
+/// connectors and five texts, an unclamped `Fit` places the whole text,
 /// untruncated, no two cluster boxes overlap, and every stretch reads
 /// left to right or top to bottom. Reversing a stretch changes how long
 /// its text is, and a word moved whole takes room, so a scale chosen for
@@ -516,7 +528,7 @@ pub fn do_flow_readable_fit_keeps_a_connectors_text_whole() {
     let fit = FitMode::Fit { min: 0.5, max: 2.0 };
     let mut reversed = 0;
     for (name, curve) in connectors() {
-        for text in [POEM, VERSE, ELLIPSE_LINE, BLAKE_INNER] {
+        for text in [POEM, VERSE, ELLIPSE_LINE, BLAKE_INNER, ECCLESIASTES] {
             let what = format!("{name}, {text:?}");
             let placed = along(text, &curve, &fit, 0.0);
             reversed += placed
@@ -727,6 +739,13 @@ pub fn do_flow_readable_keeps_a_flows_last_word_whole() {
     for (what, text, curve, word) in [
         ("S-curve", BLAKE_INNER, s_curve(), "handywork."),
         ("hook", ECCLESIASTES, hook(), "heaven:"),
+        ("U-turn at 0.6", ECCLESIASTES, u_turn(0.6), "heaven:"),
+        (
+            "hook at 0.96",
+            "the poem goes around the node exactly once. ",
+            hook_at(0.96),
+            "once.",
+        ),
     ] {
         let placed = along(text, &curve, &once, 0.0);
         let (torn, laid) = torn_and_laid(&placed, text, word);
@@ -743,15 +762,63 @@ fn test_flow_readable_parts_a_word_too_long_to_move() {
 
 /// A word longer than half of either stretch it straddles stays parted
 /// at the boundary (ruling R26's fallback): moving it whole would take
-/// more than half of a stretch. Each part reads forward. The word is 45
-/// letters, between short words, on a hook: checked to be torn by the
+/// more than half of a stretch. Each part reads forward. A word of 45
+/// letters between short words on a hook, and "purpose" beside the short
+/// vertical stretch of a small U-turn: each checked to be torn by the
 /// walk.
 pub fn do_flow_readable_parts_a_word_too_long_to_move() {
-    let text = "a b pneumonoultramicroscopicsilicovolcanoconiosis c d e f g h i j k l m n o p";
-    let word = "pneumonoultramicroscopicsilicovolcanoconiosis";
-    let placed = along(text, &hook(), &FitMode::Once { filler: None }, 0.0);
-    let (torn, laid) = torn_and_laid(&placed, text, word);
-    assert!(torn, "the fixture needs the word torn by the walk");
-    assert!(laid > 1, "the word was moved whole, past half a stretch");
-    assert_reads_forward("a long word", &placed);
+    let long = "a b pneumonoultramicroscopicsilicovolcanoconiosis c d e f g h i j k l m n o p";
+    let season = "To every thing there is a season, and a time to every purpose under the heaven:";
+    for (what, text, curve, word) in [
+        (
+            "a long word",
+            long,
+            hook(),
+            "pneumonoultramicroscopicsilicovolcanoconiosis",
+        ),
+        ("a short stretch", season, u_turn(0.7), "purpose"),
+    ] {
+        let placed = along(text, &curve, &FitMode::Once { filler: None }, 0.0);
+        let (torn, laid) = torn_and_laid(&placed, text, word);
+        assert!(torn, "{what}: the fixture needs {word:?} torn by the walk");
+        assert!(laid > 1, "{what}: {word:?} was moved whole, past half a stretch");
+        assert_reads_forward(what, &placed);
+    }
+}
+
+#[test]
+fn test_flow_readable_stops_where_the_path_turns() {
+    do_flow_readable_stops_where_the_path_turns();
+}
+
+/// Text that ends short of its connector keeps its last stretch to the
+/// part of the path that runs that stretch's way (#291): past the text's
+/// end an S-curve turns from leftward back to rightward, and a word moved
+/// whole into the last stretch, or a stretch reversed into more room than
+/// it took walked, may not run on into the turn, where its clusters,
+/// placed last to first, would read backward. `Once` on two S-curves, each
+/// text ending in the curve's leftward middle: every stretch reads
+/// forward, nothing overlaps, and the text is whole.
+pub fn do_flow_readable_stops_where_the_path_turns() {
+    let words = "wonderfully extraordinary circumstances overwhelmingly";
+    let season = "To every thing there is a season, and a time to every purpose under the heaven:";
+    for (what, text, curve) in [
+        ("S-curve at 0.8", words, s_curve_at(0.8)),
+        ("S-curve at 1.1", season, s_curve_at(1.1)),
+    ] {
+        let placed = along(text, &curve, &FitMode::Once { filler: None }, 0.0);
+        let (leftward, _) = assert_reads_forward(what, &placed);
+        assert!(
+            leftward > 0,
+            "{what}: the fixture needs text on the leftward middle"
+        );
+        let last = placed.trace.stretches.last().expect("stretches");
+        assert_eq!(
+            last.travel,
+            Travel::Leftward,
+            "{what}: the fixture needs the text to end leftward"
+        );
+        assert_no_overlap(what, &placed);
+        assert!(!placed.placed.truncated, "{what}: truncated");
+    }
 }
