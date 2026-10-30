@@ -29,7 +29,7 @@
 //! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
 //! caller's span and bytes of the caller's text.
 //!
-//! **Tabs** (rulings R24 and R24.1 on #278). A tab is drawn as
+//! **Tabs** (rulings R24, R24.1 and R24.2 on #278). A tab is drawn as
 //! cosmic-text draws it: a space widened to the next tab stop, eight of
 //! the face's spaces apart from the start of its line. A face whose
 //! space has no width cannot measure a stop — cosmic-text would give the
@@ -38,8 +38,16 @@
 //! before shaping**: a span whose face's space has no finite, positive
 //! advance has its tabs drawn as spaces (one byte for one, so its span
 //! bytes are unchanged), and every other span keeps its tab stops, on
-//! its own line or beside it. A laid-out width or position that is still
-//! not finite after that is reported (`warn!`), not repaired.
+//! its own line or beside it.
+//!
+//! That decision measures a span's primary face, and a tab cosmic-text
+//! shapes in a fallback face can still come back non-finite. So the
+//! laid-out widths and positions of text that holds a tab are checked
+//! after shaping, as a **last resort** (R24.2): when one is not finite,
+//! the text is laid out again with its tabs as spaces — on the failing
+//! lines only, in a box, so a line that came out finite keeps its stops;
+//! on the whole run, for a run — and the event is logged (`warn!`). No
+//! `NaN` from a tab reaches placement or the renderer.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -357,15 +365,20 @@ fn families_of<'s>(styles: impl Iterator<Item = &'s ResolvedText>, fs: &FontSyst
 }
 
 /// A buffer with no wrapping, no size limit and metrics no smaller than
-/// the shaper accepts, holding `rich`.
+/// the shaper accepts, holding `rich`: a box's lines when `align` is
+/// given, a run otherwise.
 ///
 /// Its tabs have already been decided per span ([`untabbed`]). When the
 /// text holds a tab, the laid-out widths and positions are checked, and
-/// one that is still not finite is reported, not repaired (R24.1): that
-/// would be a face [`space_measures`] passed whose tab stop still fails.
+/// when one is not finite — a face [`space_measures`] passed whose tab
+/// stop still fails, such as a fallback face — the text is laid out
+/// again with its tabs as spaces, byte for byte: in a box on the lines
+/// that failed alone, in a run throughout (R24.2). The event is logged.
 ///
-/// Cost: one shaping pass; one more pass over the laid-out glyphs when
-/// the text holds a tab.
+/// Cost: one shaping pass, and one pass over the laid-out glyphs when
+/// the text holds a tab; a second shaping pass, and one copy of each
+/// stretch that holds a tab on a failing line, only when that check
+/// fails.
 fn new_buffer(
     fs: &mut FontSystem,
     rich: Vec<(&str, Attrs<'_>)>,
@@ -376,12 +389,59 @@ fn new_buffer(
     let font_size = font_size.max(MIN_FONT_SIZE_PT);
     let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
     let metrics = Metrics::new(font_size, line_height);
-    let tabbed = rich.iter().any(|(text, _)| text.contains('\t'));
-    let buffer = filled_buffer(fs, rich, metrics, align);
-    if tabbed && !laid_out_finite(&buffer) {
-        log::warn!("flow: a tab stop laid out a width or position that is not finite");
+    if !rich.iter().any(|(text, _)| text.contains('\t')) {
+        return filled_buffer(fs, rich, metrics, align);
+    }
+    let buffer = filled_buffer(fs, rich.clone(), metrics, align);
+    let failing = non_finite_lines(&buffer);
+    if failing.is_empty() {
+        return buffer;
+    }
+    let whole = align.is_none();
+    log::warn!(
+        "flow: a tab stop laid out a width or position that is not finite; laying out {} with its tabs as spaces",
+        if whole { "the run" } else { "the failing lines" }
+    );
+    #[cfg(test)]
+    TABS_RELAID.with(|count| count.set(count.get() + 1));
+    // The line each stretch is on: a box's lines are split by the `\n`
+    // stretches `assemble` hands over.
+    let mut line = 0usize;
+    let spaced: Vec<Option<String>> = rich
+        .iter()
+        .map(|(text, _)| {
+            let on = line;
+            if *text == "\n" {
+                line += 1;
+            }
+            ((whole || failing.contains(&on)) && text.contains('\t')).then(|| text.replace('\t', " "))
+        })
+        .collect();
+    let relaid: Vec<(&str, Attrs<'_>)> = rich
+        .iter()
+        .zip(&spaced)
+        .map(|((text, attrs), spaced)| (spaced.as_deref().unwrap_or(*text), attrs.clone()))
+        .collect();
+    let buffer = filled_buffer(fs, relaid, metrics, align);
+    if !non_finite_lines(&buffer).is_empty() {
+        log::warn!(
+            "flow: a laid-out width or position is still not finite with every failing tab as a space"
+        );
     }
     buffer
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test hook (R24.2): while set on a thread, [`space_measures`]
+    /// passes every face, so a tab in a face that cannot measure its stop
+    /// reaches cosmic-text, as one in a fallback face would, and only the
+    /// last-resort check in [`new_buffer`] stands between its `NaN` and
+    /// placement.
+    pub(crate) static TRUST_EVERY_FACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test counter (R24.2): how many times [`new_buffer`] has laid text
+    /// out again with its tabs as spaces on this thread.
+    pub(crate) static TABS_RELAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
@@ -406,6 +466,10 @@ fn filled_buffer(
 ///
 /// Cost: one shaping of one character.
 fn space_measures(attrs: &Attrs<'_>, fs: &mut FontSystem) -> bool {
+    #[cfg(test)]
+    if TRUST_EVERY_FACE.with(std::cell::Cell::get) {
+        return true;
+    }
     let metrics = metrics_of(attrs);
     let size = metrics.font_size.max(MIN_FONT_SIZE_PT);
     let metrics = Metrics::new(size, size * LINE_HEIGHT_FACTOR);
@@ -476,16 +540,22 @@ fn with_untabbed<'s>(spans: &[FlowSpan<'s>], untabbed: &'s [Option<String>]) -> 
         .collect()
 }
 
-/// Whether every laid-out line's width, and every glyph's width and
-/// position on it, is finite.
-fn laid_out_finite(buffer: &Buffer) -> bool {
-    buffer.layout_runs().all(|run| {
-        run.line_w.is_finite()
-            && run
-                .glyphs
-                .iter()
-                .all(|glyph| glyph.w.is_finite() && glyph.x.is_finite())
-    })
+/// The buffer lines on which a laid-out width, or a glyph's width or
+/// position, is not finite.
+fn non_finite_lines(buffer: &Buffer) -> Vec<usize> {
+    let mut lines: Vec<usize> = buffer
+        .layout_runs()
+        .filter(|run| {
+            !run.line_w.is_finite()
+                || run
+                    .glyphs
+                    .iter()
+                    .any(|glyph| !glyph.w.is_finite() || !glyph.x.is_finite())
+        })
+        .map(|run| run.line_i)
+        .collect();
+    lines.dedup();
+    lines
 }
 
 /// The document's alignment as cosmic-text's.

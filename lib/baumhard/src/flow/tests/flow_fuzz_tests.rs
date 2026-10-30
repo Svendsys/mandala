@@ -308,3 +308,132 @@ fn test_a_measurable_tab_keeps_its_stop_beside_one_that_cannot_be_measured() {
         "the tab that cannot be measured is drawn finite: {line_1}"
     );
 }
+
+/// R24.2: a tab the up-front decision lets through — the case of a tab
+/// shaped in a fallback face, which the span's primary face cannot
+/// predict — is caught after shaping and laid out again as a space: on
+/// its own line in a box, so the line that came out finite keeps its tab
+/// stop, and throughout a run. No `NaN` reaches placement.
+///
+/// No bundled face shapes a tab non-finite in fallback alone, so the
+/// test drives the guard through a hook: `TRUST_EVERY_FACE` makes the
+/// up-front check pass SilhousTwo, whose space has no width, and
+/// cosmic-text lays its tab out as `0 / 0` for real. `TABS_RELAID`
+/// shows the guard, not the up-front check, did the repair.
+#[test]
+fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
+    use crate::flow::shape::{TABS_RELAID, TRUST_EVERY_FACE};
+    let plain = style(16.0);
+    let face = zero_width_space_style();
+    let first_on = |shaped: &crate::flow::ShapedBox, line: usize| {
+        shaped
+            .buffer
+            .layout_runs()
+            .find(|run| run.line_i == line)
+            .and_then(|run| run.glyphs.first().map(|glyph| glyph.w))
+    };
+    let all_finite = |shaped: &crate::flow::ShapedBox| {
+        shaped.buffer.layout_runs().all(|run| {
+            run.line_w.is_finite()
+                && run
+                    .glyphs
+                    .iter()
+                    .all(|glyph| glyph.w.is_finite() && glyph.x.is_finite())
+        })
+    };
+    let (box_alone, box_mixed, run, relaid) = with_fonts(|fs| {
+        let box_alone = shape_box(
+            &[FlowSpan {
+                text: "\tx",
+                style: &plain,
+                link: None,
+            }],
+            None,
+            Align::Left,
+            fs,
+        );
+        TRUST_EVERY_FACE.with(|trust| trust.set(true));
+        let before = TABS_RELAID.with(std::cell::Cell::get);
+        let box_mixed = shape_box(
+            &[
+                FlowSpan {
+                    text: "\tx\n",
+                    style: &plain,
+                    link: None,
+                },
+                FlowSpan {
+                    text: "\ty",
+                    style: &face,
+                    link: None,
+                },
+            ],
+            None,
+            Align::Left,
+            fs,
+        );
+        let run = shape_run(
+            &[
+                FlowSpan {
+                    text: "a\tb",
+                    style: &plain,
+                    link: None,
+                },
+                FlowSpan {
+                    text: "\tc",
+                    style: &face,
+                    link: None,
+                },
+            ],
+            1.0,
+            fs,
+        );
+        TRUST_EVERY_FACE.with(|trust| trust.set(false));
+        let relaid = TABS_RELAID.with(std::cell::Cell::get) - before;
+        (box_alone, box_mixed, run, relaid)
+    });
+    assert_eq!(
+        relaid, 2,
+        "precondition: the up-front check let both tabs through and the guard laid both flows out again"
+    );
+    assert!(all_finite(&box_mixed), "the box is laid out finite");
+    let line_0 = first_on(&box_alone, 0).expect("precondition: the box lays out its tab");
+    assert_eq!(
+        first_on(&box_mixed, 0),
+        Some(line_0),
+        "the line that came out finite keeps its tab stop"
+    );
+    let space = with_fonts(|fs| real_run(" ", &face, fs)).glyphs[0].advance;
+    assert_eq!(
+        first_on(&box_mixed, 1),
+        Some(space),
+        "the failing line's tab is drawn as the face's space"
+    );
+    assert!(
+        run.glyphs
+            .iter()
+            .all(|glyph| glyph.advance.is_finite() && glyph.x.is_finite()),
+        "the run is laid out finite: {:?}",
+        run.glyphs
+            .iter()
+            .map(|glyph| (glyph.advance, glyph.x))
+            .collect::<Vec<_>>()
+    );
+    if let Err(why) = check_run(
+        &[
+            FlowSpan {
+                text: "a\tb",
+                style: &plain,
+                link: None,
+            },
+            FlowSpan {
+                text: "\tc",
+                style: &face,
+                link: None,
+            },
+        ],
+        &run,
+        "the run",
+    ) {
+        panic!("the run holds every flow property: {why}");
+    }
+}
