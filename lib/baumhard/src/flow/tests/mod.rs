@@ -8,6 +8,7 @@
 pub mod fit_tests;
 pub mod outline_tests;
 pub mod place_tests;
+pub mod readable_tests;
 pub mod shape_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;

@@ -396,6 +396,106 @@ fn test_glyph_run_emit_scales_a_cluster_about_its_own_box() {
     }
 }
 
+/// **A cluster placed on a stretch read backward stays whole** (#291).
+/// Along a leftward line the readable rule lays the clusters of
+/// `"x\u{301}q\u{323}\u{302}z"` last to first, so the text reads left
+/// to right — the bases' pens move right in text order — while the
+/// placement keeps the text's glyph order. The renderer groups a
+/// cluster by `grapheme_start` and consecutive shaped glyphs
+/// (`continues_cluster`), so each mark must sit where it sits on a
+/// rightward line, which no stretch reverses, and a scale override
+/// must scale each cluster about its own box: tripled, a mark sits
+/// three times as far from its base's pen.
+#[test]
+fn test_glyph_run_emit_keeps_a_cluster_whole_on_a_reversed_stretch() {
+    const K: f32 = 3.0;
+    let text = "x\u{301}q\u{323}\u{302}z";
+    let style = style(SIZE, TEXT_COLOR);
+    let run = shaped(text);
+    let marks = run.glyphs.iter().filter(|g| !g.grapheme_start).count();
+    assert!(marks >= 2, "precondition: marks inside clusters, not {marks}");
+    let along = |from: Vec2, to: Vec2| {
+        let run = run.clone();
+        let fit = FitMode::Once { filler: None };
+        let (_, placed) = with_fonts(|fs| place_on_open(&run, &Curve::Line(from, to), &fit, 0.0, &style, fs));
+        GlyphRunData::new(
+            RunShape::Path {
+                run: Arc::new(run),
+                placed: Arc::new(placed),
+            },
+            Vec2::ZERO,
+            GlyphOverrides::none(),
+            1.0,
+            None,
+        )
+        .expect("no overrides")
+    };
+    let leftward = along(Vec2::new(700.0, 300.0), Vec2::new(100.0, 300.0));
+    let rightward = along(Vec2::new(100.0, 300.0), Vec2::new(700.0, 300.0));
+    let order: Vec<u32> = match leftward.shaped() {
+        RunShape::Path { placed, .. } => placed.glyphs.iter().map(|g| g.glyph).collect(),
+        RunShape::Box(_) => panic!("a path run"),
+    };
+    assert_eq!(
+        order,
+        (0..run.glyphs.len() as u32).collect::<Vec<_>>(),
+        "the placement keeps the text's glyph order"
+    );
+    // Each glyph's pen less its cluster's base's pen, in text order.
+    let from_base = |sprites: &[GlyphSprite]| {
+        let mut base = 0.0;
+        run.glyphs
+            .iter()
+            .zip(sprites)
+            .map(|(metrics, sprite)| {
+                if metrics.grapheme_start {
+                    base = pen_x(sprite);
+                }
+                pen_x(sprite) - base
+            })
+            .collect::<Vec<f32>>()
+    };
+    let (backward, _) = emit(&leftward, &identity_camera());
+    let (forward, _) = emit(&rightward, &identity_camera());
+    let bases: Vec<f32> = run
+        .glyphs
+        .iter()
+        .zip(&backward)
+        .filter(|(metrics, _)| metrics.grapheme_start)
+        .map(|(_, sprite)| pen_x(sprite))
+        .collect();
+    assert!(
+        bases.windows(2).all(|pair| pair[1] > pair[0]),
+        "the leftward line reads left to right: {bases:?}"
+    );
+    let (unscaled, plain) = (from_base(&backward), from_base(&forward));
+    for (i, (got, want)) in unscaled.iter().zip(&plain).enumerate() {
+        assert!(
+            (got - want).abs() <= 0.5,
+            "glyph {i} sits {got} from its base, where a rightward line puts it {want}"
+        );
+    }
+    assert!(
+        unscaled.iter().any(|d| d.abs() >= 2.0),
+        "precondition: a mark sits apart from its base's pen"
+    );
+    let scaled = with_overrides(
+        leftward,
+        &[RunOverrideOp::Scale {
+            range: 0..run.glyphs.len(),
+            value: K,
+        }],
+    );
+    let (big, _) = emit(&scaled, &identity_camera());
+    for (i, (got, was)) in from_base(&big).iter().zip(&unscaled).enumerate() {
+        assert!(
+            (got - K * was).abs() <= 0.5,
+            "glyph {i} keeps its place on its tripled base: {got} vs {}",
+            K * was
+        );
+    }
+}
+
 /// **A glyph an offset carries onto the surface is drawn, though its
 /// run's box is off it.** `"AB"` at x = −200 and −180, offset by
 /// (400, 0): both glyphs land near x = 200 on an 800-pixel surface. The

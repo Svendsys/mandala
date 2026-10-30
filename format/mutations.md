@@ -268,7 +268,9 @@ variant.
   `"Clear"` drops every override. `range` is `{"start": s, "end": e}`,
   half-open, and indexes the run's **placed glyphs** — the glyphs as
   drawn, so a `Repeat`ed run counts every copy and a combining mark
-  counts as a glyph. A range is clamped to the glyph count: one that
+  counts as a glyph. They are counted in text order: a stretch placed
+  last to first so it reads forward ([readable path
+  text](./schema.md#readable-path-text)) does not reorder them. A range is clamped to the glyph count: one that
   runs past the end writes up to it, and one that starts past the end,
   runs backward or is empty writes nothing. A `Once` frame's filler
   glyphs are skipped by every range, since they belong to no span. A

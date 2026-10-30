@@ -57,6 +57,7 @@ develops it.
 | D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
 | D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line, and edits to keys of one node that are not on adjacent lines merge cleanly. Two edits to neighboring keys, or an edit to a node's last key while another branch appends a key after it, are one git conflict, as for any line-based text. The layout lives in the saver's writer alone. | §7.1 |
 | D32 | **New ids start above every id the map names** (amends §5.2's id rule; owner, #236 Q3 option B, R20). The counter is still not saved. At load it starts one above the highest node id and above every node id a verb or presentation target names, so a verb or presentation can never be silently retargeted to a new node after a reload. The named ids come from one hook, `ids::idents_named_by`, which V1-D1 to V1-D3 (#250–#252) extend when definitions gain targets. | §5.2, §7.2 |
+| D33 | **Path text is readable** (owner, #291; rulings R25, R25.1). Every stretch of a path flow — frames and connectors alike — reads left to right or top to bottom: a leftward or upward stretch's glyphs are placed in reverse, so a loop reads like a seal. It is the only behavior, with no field and no option. The owner, on the README samples: "In the sample images, the words are always backwards at the bottom. It's impossible to read basically. Can we instead try to make the text always straight forward?" Asked whether to keep the old look as an option: "Readable always, no option (Recommended)". | §6.2, §6.4 |
 
 ---
 
@@ -610,6 +611,38 @@ line (cosmic-text gives each glyph's advance), then placed:
    normal by half its extent, so text sits on the outline rather
    than across it. Ring *k* is placed on the outline offset outward
    by `inset + Σ(thickness of rings < k) + k · gap`.
+4. **Every stretch reads left to right or top to bottom** (D33, #291).
+   Walked in text order, glyphs on a leftward stretch would read
+   backward and on an upward one bottom to top, since they are never
+   rotated. So placement is two phases (ruling R25):
+   - **The walk.** Steps 1–3 and the fit mode (§6.4) decide which
+     glyphs are placed and where each one's step starts. The path
+     splits into **stretches**, maximal runs of one direction of
+     travel: *rightward* where `cos θ > ε`, *leftward* where
+     `cos θ < −ε`, otherwise *downward* or *upward* by `sin θ` (`y`
+     grows downward), with `ε = 0.035`, about 2° from plumb. The
+     hysteresis: a run of near-vertical steps is a vertical stretch
+     only when it spans at least 3 line heights, or is the whole
+     placement. A shorter one — a curve turning through vertical, as a
+     circle or an ellipse does at its sides — makes no stretch of its
+     own; each of its steps joins the horizontal stretch whose way it
+     moves (the sign of `cos θ`), and a step with no horizontal motion
+     joins the one that reads it top to bottom (rightward going down,
+     leftward going up). A glyph belongs to the stretch its step is in.
+   - **The lay.** The same glyphs are laid forward along the path in
+     **reading order**, stretch after stretch in the order the path
+     visits them, each leftward and upward stretch's glyphs last to
+     first. Rightward and downward stretches keep their order. A
+     reversed stretch need not take the length it took walked (a wide
+     glyph moved onto a vertical part steps the line height, not its
+     advance), so one uniform spacing is solved for the whole
+     placement; §6.4 says how each mode ends.
+
+   On a loop this reads like a seal: the top left to right, the right
+   side top to bottom, the bottom left to right, the left side top to
+   bottom. A placement keeps the walk's glyph order, so a glyph's index
+   — what hit testing, the span mapping, run overrides and the caret
+   read — means what it meant; only positions move.
 
 ### §6.3 Outlines and corner radius (D11)
 
@@ -661,7 +694,28 @@ factor `s` gives length `s · L`.
 
 `start` (a point on the outline: a corner or a side plus a fraction)
 and `direction` (clockwise / counter-clockwise) are per frame;
-connectors start at their source end.
+connectors start at their source end. With readable placement (§6.2
+step 4) they keep their meaning: they decide where the text begins and
+which stretch comes next, while each stretch reads left to right or
+top to bottom whichever way the path runs through it.
+
+**The modes and the readable lay** (rulings R25, R25.1). The fit mode
+acts in the walk; the lay then keeps its end condition. `Spread` and
+`Fit` end where the walk ended, at the path's end. `Once` and `Repeat`
+keep their spacing unless the text as read would pass the path's end,
+and then take the spacing that ends it there. Spacing never goes below
+a zero gap. Where even no gap passes the path's end — the cases with
+no slack: a full `Repeat`, `Once` with a filler — the placement is cut
+at the last grapheme boundary that fits, as `fit` step 4 cuts: whole
+filler copies or repeat clusters from the end first, the text only if
+none is left (then last-read cluster first). This is the one case in
+which the placed glyphs differ from the walk's: at the end, by the cut
+clusters only. `Fit` measures `L` as the text will be read — the longer
+of the walk and the lay — when it chooses its scale, so it keeps the
+whole text and cuts only at `min` (step 4); when spreading the rest
+moves glyphs between stretches so that the text as read no longer
+fits, it shrinks the scale by the overrun and reshapes again, a bounded
+number of times.
 
 ### §6.5 What is shaped, and when
 

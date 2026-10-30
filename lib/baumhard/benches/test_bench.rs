@@ -30,6 +30,7 @@ use baumhard::engine::tests::walker_tests::*;
 use baumhard::flow::tests::fit_tests::*;
 use baumhard::flow::tests::outline_tests::*;
 use baumhard::flow::tests::place_tests::*;
+use baumhard::flow::tests::readable_tests::*;
 use baumhard::flow::tests::shape_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::color_tests::*;
@@ -2216,6 +2217,25 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_table_spacing_has_a_floor", |b| {
         b.iter(do_flow_table_spacing_has_a_floor)
+    });
+    // the readable rule (#291): every stretch reads forward //
+    c.bench_function("flow_readable_every_stretch_reads_forward", |b| {
+        b.iter(do_flow_readable_every_stretch_reads_forward)
+    });
+    c.bench_function("flow_readable_a_loop_reads_like_a_seal", |b| {
+        b.iter(do_flow_readable_a_loop_reads_like_a_seal)
+    });
+    c.bench_function("flow_readable_keeps_the_walks_glyphs_in_their_stretches", |b| {
+        b.iter(do_flow_readable_keeps_the_walks_glyphs_in_their_stretches)
+    });
+    c.bench_function("flow_readable_hysteresis_keeps_a_loop_to_two_stretches", |b| {
+        b.iter(do_flow_readable_hysteresis_keeps_a_loop_to_two_stretches)
+    });
+    c.bench_function("flow_readable_fit_keeps_the_poem_whole", |b| {
+        b.iter(do_flow_readable_fit_keeps_the_poem_whole)
+    });
+    c.bench_function("flow_readable_cuts_copies_rather_than_overlap", |b| {
+        b.iter(do_flow_readable_cuts_copies_rather_than_overlap)
     });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //

@@ -359,7 +359,7 @@ text-style `size` is a [fraction](#size-units).
 |---|---|---|---|---|
 | `visible` | boolean | no | unset | Whether a frame is drawn. |
 | `start` | [start point](#start-point) | no | unset | Where the text starts. |
-| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text runs. |
+| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text goes around; every stretch still [reads forward](#readable-path-text). |
 | `fit` | [fit](#fit) | no | unset | |
 | `gap` | number `>= 0` | no | unset | |
 | `inset` | number `>= 0` | no | unset | |
@@ -521,7 +521,7 @@ key is unset when absent; the built-in values that then apply are
 |---|---|---|---|---|
 | `visible` | boolean | no | unset | Whether the frame is drawn. |
 | `start` | [start point](#start-point) | no | unset | Where the text starts on the outline. |
-| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text runs. |
+| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text goes around; every stretch still [reads forward](#readable-path-text). |
 | `fit` | [fit](#fit) | no | unset | What the rings do when text and outline differ in length. |
 | `gap` | number `>= 0` | no | unset | The space between rings, canvas units. |
 | `inset` | number `>= 0` | no | unset | The first ring's distance from the outline, canvas units. |
@@ -671,6 +671,16 @@ What a text does when it and its path differ in length (D10, §6.4).
 | `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. |
 | `"fit"` | The text scaled to fill the path exactly once, within the built-in bounds: `0.5` to `2.0` times the declared size. |
 | `{ "fit": { "min": 0.5, "max": 2.0 } }` | The same, with bounds of your own: `0 < min <= max`. The built-in bounds are written as `"fit"`. |
+
+### Readable path text
+
+Text along a path — a frame's ring, a connector, a link — is placed so
+that every stretch of it reads left to right or top to bottom (D33,
+§6.2). Glyphs are never rotated, so where the path runs leftward (the
+bottom of a clockwise frame) or upward (its left side), that stretch's
+glyphs are placed last to first. `start` and `direction` decide where
+the text begins and which stretch comes next; they never make a stretch
+read backward. There is nothing to set: it is how path text is placed.
 
 ### Start point
 
