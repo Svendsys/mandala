@@ -220,8 +220,8 @@ fn test_flow_lines_balance_a_sentence() {
 pub fn do_flow_lines_balance_a_sentence() {
     for (what, shape) in [("ellipse", ellipse()), ("rounded rect", rounded())] {
         for fit in [
-            FitMode::Once { filler: None },
             FitMode::Fit { min: 0.5, max: 2.0 },
+            FitMode::Once { filler: None },
         ] {
             let what = format!("{what} {fit:?}");
             let placed = frame(VERSE, &shape, &fit);
