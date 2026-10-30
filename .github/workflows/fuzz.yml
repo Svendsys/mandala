@@ -1,0 +1,151 @@
+# Coverage-guided fuzzing of every untrusted-input boundary (design
+# D29, V1-B8 #278; TEST_CONVENTIONS §T14). Each job runs one target of
+# `fuzz/` through `scripts/fuzz.sh`, the command a contributor runs
+# locally, on the nightly `fuzz/rust-toolchain.toml` pins.
+#
+# Two budgets, one job definition:
+#
+# - **PR smoke.** A pull request that touches a fuzzed surface (the paths
+#   below) or the fuzzing itself runs every target briefly. The target
+#   budget is 60 seconds a target. **During V1 it is 300 seconds**: the
+#   nightly run below cannot run until V1 is on `main` (see its note),
+#   so the smoke is the only fuzzing the V1 branch gets. Drop
+#   `SMOKE_SECONDS` to 60 at the switch-over (V1-E5, #257).
+# - **Nightly.** A `schedule:` run gives every target 900 seconds,
+#   starting from the corpus the last nightly run saved, and saves what
+#   it finds back, minimized. GitHub runs scheduled workflows on the
+#   default branch only, and `main` is frozen for V1 (D16), so this
+#   trigger becomes live when V1 merges (#257). `workflow_dispatch` runs
+#   the same job by hand, with a budget of your choice.
+#
+# Neither is a required check, and neither is part of `./test.sh
+# --lint` (which never builds `fuzz/`). A finding fails its job: the
+# input is uploaded as an artifact, and the pull request owes a fix and
+# a regression test in baumhard before it merges (TEST_CONVENTIONS
+# §T14). A corpus is cached, never committed: only `fuzz/seeds/` is.
+
+name: fuzz
+
+on:
+  pull_request:
+    paths:
+      - "fuzz/**"
+      - "scripts/fuzz.sh"
+      - ".github/workflows/fuzz.yml"
+      # The surfaces: the loader, TextFlow, the glyph layers and the
+      # engine that applies their mutations, the fonts shaping reads,
+      # and the shared choice source and properties.
+      - "lib/baumhard/src/document/**"
+      - "lib/baumhard/src/flow/**"
+      - "lib/baumhard/src/gfx_structs/**"
+      - "lib/baumhard/src/engine/**"
+      - "lib/baumhard/src/font/**"
+      - "lib/baumhard/src/util/tests/choices.rs"
+      - "lib/baumhard/Cargo.toml"
+      - "Cargo.lock"
+  schedule:
+    # Nightly, at an off-peak minute.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        required: true
+        default: "900"
+
+env:
+  SMOKE_SECONDS: "300"
+  NIGHTLY_SECONDS: "900"
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # The budget, plus the build (about ten minutes cold) and the corpus
+    # minimization; a backstop against a hang the per-input timeout
+    # misses, not the guard.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - load_raw
+          - load_structured
+          - flow_raw
+          - flow_structured
+          - glyph_mutation_raw
+          - glyph_mutation_structured
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Choose the budget
+        id: budget
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCHED: ${{ github.event.inputs.seconds }}
+        run: |
+          case "$EVENT" in
+            pull_request) seconds="$SMOKE_SECONDS" ;;
+            schedule) seconds="$NIGHTLY_SECONDS" ;;
+            *) seconds="${DISPATCHED:-$NIGHTLY_SECONDS}" ;;
+          esac
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "Fuzzing ${{ matrix.target }} for $seconds seconds ($EVENT)."
+
+      # No toolchain action: `fuzz/rust-toolchain.toml` names the nightly,
+      # and a bare `rustup toolchain install` in that directory reads it.
+      - name: Install the pinned nightly
+        working-directory: fuzz
+        run: |
+          rustup toolchain install
+          rustup show
+
+      - name: Cache cargo-fuzz
+        id: cargo-fuzz
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-0.13.2-${{ runner.os }}
+
+      - name: Install cargo-fuzz
+        if: steps.cargo-fuzz.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Cache the fuzz build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+          key: ${{ matrix.target }}
+
+      # Every run starts from the newest corpus a nightly run saved for
+      # this target; a pull request reads it and never writes it.
+      - name: Restore the corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Fuzz
+        run: scripts/fuzz.sh "${{ matrix.target }}" "${{ steps.budget.outputs.seconds }}"
+
+      - name: Upload the finding
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-finding-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+
+      # Kept small: minimized to the inputs that still add coverage.
+      - name: Minimize the corpus
+        if: success() && github.event_name != 'pull_request'
+        working-directory: fuzz
+        run: cargo fuzz cmin "${{ matrix.target }}" "corpus/${{ matrix.target }}"
+
+      - name: Save the corpus
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}

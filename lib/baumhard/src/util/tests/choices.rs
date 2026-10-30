@@ -35,8 +35,9 @@ pub struct Choices<'a> {
 enum From<'a> {
     /// The fuzzer's input, read four bytes per choice.
     Bytes { bytes: &'a [u8], at: usize },
-    /// A xorshift generator (Marsaglia 2003), for the stable sweeps.
-    Seeded(u64),
+    /// A xorshift generator (Marsaglia 2003), for the stable sweeps,
+    /// and every choice it has made.
+    Seeded(u64, Vec<u32>),
 }
 
 impl<'a> Choices<'a> {
@@ -52,7 +53,7 @@ impl<'a> Choices<'a> {
     /// sweep that must be the same on every run.
     pub fn seeded(seed: u64) -> Choices<'static> {
         Choices {
-            from: From::Seeded(seed.max(1)),
+            from: From::Seeded(seed.max(1), Vec::new()),
         }
     }
 
@@ -63,7 +64,7 @@ impl<'a> Choices<'a> {
     pub fn exhausted(&self) -> bool {
         match &self.from {
             From::Bytes { bytes, at } => *at >= bytes.len(),
-            From::Seeded(_) => false,
+            From::Seeded(..) => false,
         }
     }
 
@@ -78,11 +79,13 @@ impl<'a> Choices<'a> {
                 *at = at.saturating_add(4);
                 u32::from_le_bytes(word)
             }
-            From::Seeded(state) => {
+            From::Seeded(state, drawn) => {
                 *state ^= *state << 13;
                 *state ^= *state >> 7;
                 *state ^= *state << 17;
-                (*state >> 32) as u32
+                let choice = (*state >> 32) as u32;
+                drawn.push(choice);
+                choice
             }
         }
     }
@@ -121,6 +124,19 @@ impl<'a> Choices<'a> {
     }
 }
 
+impl Choices<'_> {
+    /// The bytes that replay every choice a seeded source has made so
+    /// far, in order ([`encode`]): how a case a sweep reached becomes a
+    /// seed of a fuzz target. Empty for a byte source, whose bytes are
+    /// already that.
+    pub fn replay(&self) -> Vec<u8> {
+        match &self.from {
+            From::Seeded(_, drawn) => encode(drawn),
+            From::Bytes { .. } => Vec::new(),
+        }
+    }
+}
+
 /// The bytes a [`Choices`] reads back as exactly `choices`, in order:
 /// how a seed of a structure-aware target is written by hand.
 pub fn encode(choices: &[u32]) -> Vec<u8> {
@@ -154,4 +170,11 @@ fn test_a_seeded_source_is_deterministic_and_never_exhausted() {
     assert_ne!(draw(5), draw(6));
     assert!(!Choices::seeded(0).exhausted());
     assert_ne!(draw(0), vec![0; 8], "a zero seed does not stick at zero");
+    // What a seeded source drew replays from bytes, choice for choice.
+    let mut seeded = Choices::seeded(9);
+    let drawn: Vec<u32> = (0..5).map(|_| seeded.below(1000)).collect();
+    let bytes = seeded.replay();
+    let mut replayed = Choices::new(&bytes);
+    assert_eq!((0..5).map(|_| replayed.below(1000)).collect::<Vec<_>>(), drawn);
+    assert!(replayed.exhausted());
 }

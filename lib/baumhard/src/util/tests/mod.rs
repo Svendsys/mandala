@@ -5,6 +5,10 @@ pub mod arena_utils_tests;
 /// (TEST_CONVENTIONS §T14).
 pub mod choices;
 pub mod color_tests;
+/// The fuzz targets and their seeds, held to the properties on stable.
+/// Reads `fuzz/` off the filesystem, which wasm32 does not have.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod fuzz_seed_tests;
 pub mod geometry_tests;
 pub mod grapheme_chad_tests;
 pub mod ordered_vec2_tests;

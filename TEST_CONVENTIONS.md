@@ -661,3 +661,133 @@ doc gate that printed one line and exited 0 for a full review round.
 The same two rules apply to anything in `test.sh` or CI: name the
 input that turns it red, and make sure a red result changes the exit
 code.
+
+## §T14 Fuzzing
+
+Maps are opened from strangers, and the text, glyph mutations and
+(later) edits, presentations, verbs and IPC frames they carry are
+parsed by this code. "Hostile input degrades, it does not crash" is
+held by coverage-guided fuzzing of every untrusted-input boundary
+(design D29, V1-B8 #278), not by the cases someone thought of.
+
+**The crate.** `fuzz/` is a cargo-fuzz crate (libFuzzer, AddressSanitizer,
+debug assertions on) at the repository root, **outside the workspace**:
+cargo-fuzz needs nightly, so `fuzz/rust-toolchain.toml` pins a dated
+nightly that applies inside `fuzz/` only. `./test.sh` never builds it;
+the gate stays on the stable toolchain the root `rust-toolchain.toml`
+pins. Its lockfile is committed.
+
+**The targets are thin; the properties are baumhard's.** Each target
+hands its bytes to a property function in a baumhard tests tree and
+panics on the `Err` it returns, so the properties, the structure-aware
+decoders and every regression test compile and run on stable, in every
+`./test.sh`:
+
+| Target | Surface | Properties |
+|---|---|---|
+| `load_raw` | the `.mandala.json` loader, any bytes | `document::tests::format_fuzz::check_load_bytes` |
+| `load_structured` | the loader, maps built from choices | `document::tests::format_fuzz::check_structured` |
+| `flow_raw` | TextFlow (B5), any bytes as text | `flow::tests::flow_fuzz::check_flow_bytes` |
+| `flow_structured` | TextFlow, spans and geometry from choices | `flow::tests::flow_fuzz::check_flow_structured` |
+| `glyph_mutation_raw` | authored run and fill mutations (B6), any bytes as JSON | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_json` |
+| `glyph_mutation_structured` | the same, built from choices | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_structured` |
+
+What they hold, in short (each module's docs are the full list):
+
+- **The loader.** No panic. A refusal's message holds no raw control,
+  line separator or bidi character, its excerpt is at most 256 bytes,
+  its path resolves in the input and agrees with its node context, and
+  its line is inside its node. What loads passes `validate_shape`, holds
+  every number inside the bound `format/schema.md` gives it, is savable
+  by both `check_savable` and the full build (which agree, the refusal
+  included), and saves, loads and saves byte for byte, with no raw
+  control, line separator or bidi character in the text. The structured
+  target also holds the loader to a differential oracle and a reference
+  model of the flat list's structure (ported from the B2 review's
+  `chain_ref.py`), to the exact path and kind of an injected fault, and
+  to C.9.14 — the same refusal whatever the key order — for single-fault
+  inputs, where it holds.
+- **TextFlow.** No panic; every glyph names its span (or the filler) and
+  whole characters of its text; every metric, placed position and box
+  size is finite; no placement exceeds `MAX_PLACED_GLYPHS`.
+- **Glyph-layer mutations.** No panic; no non-finite box reaches an
+  ancestor; a run's overrides are empty or exactly as long as its
+  placed glyphs, whatever range is named; `same_state` is reflexive and
+  interpolation total and exact at its ends; the journal reverts and
+  replays exactly.
+
+**Structure-aware means choices.** A structured target reads its bytes
+as a sequence of choices (`util::tests::choices::Choices`: four bytes
+each, zero once exhausted) and builds a value that is valid wherever it
+chose to be, so the fuzzer works past the JSON syntax. The decoder is
+baumhard's, so a structured finding replays in `./test.sh` from its
+bytes, and the same generators run under a seeded source in the suite's
+own sweeps (`test_generated_maps_hold_every_loader_property`,
+`test_generated_flows_hold_every_flow_property`,
+`test_generated_glyph_mutations_hold_every_property`). A seed is written
+by hand with `choices::encode`, or taken from a sweep with
+`Choices::replay`.
+
+**Seeds.** `fuzz/seeds/<target>/` is the committed seed corpus: deep
+chains with a link on every node, wide fans, dense rows (empty
+sections, empty rings, portal links), one input per refusal the
+reference model names, the authored mutation spellings of
+`format/mutations.md` with hostile values, hostile strings. The run
+script adds each surface's fixtures and findings where they live (the
+format's fixtures, `maps/*.mandala.json`, the `fuzz_findings`
+directories), never copied. `test_every_fuzz_seed_holds_its_targets_properties`
+replays every committed seed through its target's properties and holds
+the targets in `fuzz/fuzz_targets/` to the table above, both ways. The
+generated corpus (`fuzz/corpus/`) and crash artifacts are never
+committed.
+
+**Running one locally.**
+
+```sh
+cargo install cargo-fuzz --version 0.13.2 --locked   # once
+scripts/fuzz.sh --list
+scripts/fuzz.sh load_structured 900                 # 15 minutes
+```
+
+The script builds on the pinned nightly (rustup installs it on first
+use), runs over the generated corpus, the seeds and the surface's own
+inputs, and bounds every input: `-timeout`, `-rss_limit_mb` and a
+`-max_len` per surface. It exits non-zero on a finding and leaves the
+input in `fuzz/artifacts/<target>/`. Running a fuzzer is not
+benchmarking — CLAUDE.md §6 still holds, and a run is never cited as a
+performance number.
+
+**A finding becomes a regression test, then a fix.**
+
+1. Minimize it: from `fuzz/`, `cargo fuzz tmin <target> <artifact>` —
+   or by hand, to the smallest input that still shows the symptom.
+2. Commit it beside its surface's other findings
+   (`lib/baumhard/src/document/tests/fuzz_findings/`, and the
+   `gfx_structs` one), named after the symptom, or inline it in the
+   test when it is a few characters.
+3. Write the stable test that replays it and pins the symptom, in the
+   surface's fuzz test module, and add the file to that module's list of
+   findings so the whole property set replays it too.
+4. Run its negative control (§T13.2): with the fix reverted the test is
+   red for the reason its message gives. The pull request says so.
+5. Fix it in the code that owns it. **Never weaken a check** — a
+   property, a bound, a loader refusal — to make a target pass.
+
+**CI.** `.github/workflows/fuzz.yml` runs every target as a matrix:
+on a pull request that touches a fuzzed surface or the fuzzing (a
+smoke: 60 seconds a target, 300 during V1, until the switch-over), and
+nightly for 900 seconds a target from the corpus the last nightly run
+saved, saving it back minimized. The nightly trigger is live only once
+V1 is on `main`. Neither is a required check, and a finding fails its
+job with the input uploaded; the pull request fixes it before merge.
+
+**The standing rule** (design §20 rule 10). From V1-B8 on, a sub-issue
+that adds or changes an untrusted-input surface ships its fuzz target in
+the same pull request, with the properties that apply and a seed
+corpus, its properties in a baumhard tests tree and a row in the table
+above. The surfaces named so far: the loader (V1-B8), TextFlow's shaping
+and placement of arbitrary strings (V1-B8), authored glyph-layer
+mutations (V1-B8, for B6), edits and presentations in a map (V1-D1,
+V1-D2), verbs, triggers and links in a map (V1-D3), IPC frames of
+protocol 2 (V1-E2), and the projection of any loaded document, which
+V1-B7 adds to the loader's targets.

@@ -60,17 +60,36 @@ pub const MAX_RUN_GLYPHS: u32 = 64;
 /// The most mutations one input applies.
 pub const MAX_MUTATIONS: u32 = 32;
 
-/// Every property of `bytes` read as JSON mutations — a list, or one —
-/// applied to the default tree: the glyph_mutation_raw target's whole
-/// body. Bytes that are not mutations are refused by the reader, which
-/// must not panic; that is all there is to check of them.
+/// The mutations `bytes` spell as JSON: a list, one mutation, or an
+/// object whose `mutations` is a list (the shape `format/mutations.md`'s
+/// examples take). `None` when they spell none of these.
+pub fn parse_mutations(bytes: &[u8]) -> Option<Vec<GfxMutation>> {
+    #[derive(serde::Deserialize)]
+    struct Listed {
+        mutations: Vec<GfxMutation>,
+    }
+    serde_json::from_slice::<Vec<GfxMutation>>(bytes)
+        .ok()
+        .or_else(|| {
+            serde_json::from_slice::<GfxMutation>(bytes)
+                .ok()
+                .map(|one| vec![one])
+        })
+        .or_else(|| {
+            serde_json::from_slice::<Listed>(bytes)
+                .ok()
+                .map(|listed| listed.mutations)
+        })
+}
+
+/// Every property of `bytes` read as JSON mutations
+/// ([`parse_mutations`]) applied to the default tree: the
+/// glyph_mutation_raw target's whole body. Bytes that are not mutations
+/// are refused by the reader, which must not panic; that is all there is
+/// to check of them.
 pub fn check_glyph_mutations_json(bytes: &[u8]) -> Result<(), String> {
-    let mutations = match serde_json::from_slice::<Vec<GfxMutation>>(bytes) {
-        Ok(list) => list,
-        Err(_) => match serde_json::from_slice::<GfxMutation>(bytes) {
-            Ok(one) => vec![one],
-            Err(_) => return Ok(()),
-        },
+    let Some(mutations) = parse_mutations(bytes) else {
+        return Ok(());
     };
     // Every mutation goes to every element, as a scope such as
     // `SelfAndDescendants` sends one list to elements of every kind.
@@ -89,16 +108,23 @@ pub fn check_glyph_mutations_structured(bytes: &[u8]) -> Result<(), String> {
 
 /// [`check_glyph_mutations_structured`] for choices from any source.
 pub fn check_glyph_mutations_generated(choices: &mut Choices<'_>) -> Result<(), String> {
-    let (mut tree, targets) = build_tree(choices);
+    let (mut tree, targets, assigned) = generate(choices);
+    apply_and_check(&mut tree, &targets, assigned)
+}
+
+/// The tree, its targets, and the mutations each target is sent, that
+/// `choices` describe.
+pub fn generate(choices: &mut Choices<'_>) -> (GfxTree, Vec<Target>, Vec<(usize, GfxMutation)>) {
+    let (tree, targets) = build_tree(choices);
     let count = choices.below(MAX_MUTATIONS);
     let assigned: Vec<(usize, GfxMutation)> = (0..count)
         .map(|_| (choices.index(targets.len()), mutation(choices)))
         .collect();
-    apply_and_check(&mut tree, &targets, assigned)
+    (tree, targets, assigned)
 }
 
 /// Where a mutation can be sent: a path of channels from the root.
-type Target = Vec<usize>;
+pub type Target = Vec<usize>;
 
 /// The tree the mutations meet, and the channel path of every element in
 /// it: under the root a box run, a path run, a fill and an area (which
