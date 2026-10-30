@@ -710,7 +710,13 @@ What they hold, in short (each module's docs are the full list):
   model of the flat list's structure (ported from the B2 review's
   `chain_ref.py`), to the exact path and kind of an injected fault, and
   to C.9.14 — the same refusal whatever the key order — for single-fault
-  inputs, where it holds.
+  inputs, where it holds. Its injected faults include every bounded
+  field a node can hold (`BOUNDED_FIELDS`), at its bound, just past it,
+  just inside it and at any `f32`, refused at its path exactly when the
+  value read is outside the bound. The second key order, and the
+  tampered-document check, run on the inputs a choice selects (one in
+  four each), so that the fuzzer gets through more inputs; the suite's
+  sweep requires each step to be both taken and skipped.
 - **TextFlow.** No panic; every glyph names its span (or the filler) and
   whole characters of its text; every metric, placed position and box
   size is finite; no placement exceeds `MAX_PLACED_GLYPHS`.
@@ -751,7 +757,8 @@ by hand with `choices::encode`, or taken from a sweep with
 **Seeds.** `fuzz/seeds/<target>/` is the committed seed corpus: deep
 chains with a link on every node, wide fans, dense rows (empty
 sections, empty rings, portal links), one input per refusal the
-reference model names, the authored mutation spellings of
+reference model names, one per bounded field written inside its bound
+(a choice from the value just past it), the authored mutation spellings of
 `format/mutations.md` with hostile values, hostile strings. The run
 script adds each surface's fixtures and findings where they live (the
 format's fixtures, `maps/*.mandala.json`, the `fuzz_findings`

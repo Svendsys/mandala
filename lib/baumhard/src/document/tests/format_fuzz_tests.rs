@@ -10,8 +10,9 @@ use crate::document::format::error::{LoadError, LoadErrorKind, NodeContext, Text
 use crate::document::format::{load, save};
 use crate::document::ids::{get, Document, IdentIndex};
 use crate::document::tests::format_fuzz::{
-    begun_nodes, bounds_hold, check_generated, check_load_bytes, check_refusal, excerpt_length, node_lines,
-    kind_name, oracle, path_resolves, reference, render, saved_text_is_clean, Fault, MapSpec, NodeSpec, Spelled,
+    begun_nodes, bounded, bounds_hold, check_generated, check_load_bytes, check_loaded, check_refusal,
+    excerpt_length, kind_name, node_lines, oracle, path_resolves, reference, render, saved_text_is_clean,
+    BoundedField, Fault, MapSpec, NodeSpec, Spelled, BOUNDED_FIELDS,
 };
 use crate::document::tests::format_support::fixture;
 use crate::document::values::{FitMode, FontSize};
@@ -187,13 +188,25 @@ fn test_a_c1_control_in_a_map_is_saved_escaped() {
 #[test]
 fn test_generated_maps_hold_every_loader_property() {
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut reordered, mut tampered, mut neither) = (0, 0, 0);
     for seed in 0..1000 {
         let mut choices = Choices::seeded(seed);
         match check_generated(&mut choices, 64) {
-            Ok(outcome) => *seen.entry(outcome).or_default() += 1,
+            Ok(generated) => {
+                *seen.entry(generated.outcome).or_default() += 1;
+                reordered += usize::from(generated.reordered);
+                tampered += usize::from(generated.tampered);
+                neither += usize::from(!generated.reordered && !generated.tampered);
+            }
             Err(why) => panic!("seed {seed}: {why}"),
         }
     }
+    // The second key order and the tampered document are a choice's to
+    // take: the sweep must have taken each, and skipped both.
+    assert!(
+        reordered > 0 && tampered > 0 && neither > 0,
+        "precondition: the sweep reordered {reordered}, tampered {tampered} and took neither step {neither} times"
+    );
     // The sweep proves something only if it reached every case: a valid
     // map of each origin, each injected fault, and each refusal the
     // reference model names.
@@ -550,7 +563,10 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
         ),
         (
             "connector on a child",
-            vec![spec(1, None, 0), with(spec(2, Some(1), 0), "connector", connector)],
+            vec![
+                spec(1, None, 0),
+                with(spec(2, Some(1), 0), "connector", connector),
+            ],
             None,
         ),
         (
@@ -581,6 +597,7 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
             &MapSpec {
                 nodes,
                 fault: Fault::Structure,
+                bounded: None,
             },
             0,
         );
@@ -592,5 +609,67 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
             expected.map(|(path, kind)| (path.to_string(), kind.to_string())),
             "{name}: the loader, on\n{text}"
         );
+    }
+}
+
+/// The map [`bounded`] writes one field into: a top-level node and a
+/// child of it, the field in the child, which can hold every field.
+fn bounded_map(choices: &mut Choices<'_>) -> (MapSpec, &'static BoundedField) {
+    let mut nodes = vec![spec(1, None, 0), spec(2, Some(1), 0)];
+    let (fault, field) = bounded(choices, &mut nodes, 1);
+    (
+        MapSpec {
+            nodes,
+            fault,
+            bounded: Some(field.name),
+        },
+        field,
+    )
+}
+
+/// Every bounded field of `format/schema.md`'s table, at its bound,
+/// just past it, just inside it and anywhere: the loader refuses a value
+/// past the bound at the field's path as `Bound`, and reads one inside
+/// it into a document that holds every property — the saver's float
+/// writer round-tripping it included. The sweep proves something only
+/// if it put every field both inside its bound and outside it.
+#[test]
+fn test_every_bounded_field_is_refused_past_its_bound_and_read_inside_it() {
+    let mut reached: BTreeMap<(&'static str, bool), usize> = BTreeMap::new();
+    for seed in 0..4000 {
+        let mut choices = Choices::seeded(seed);
+        let (map, field) = bounded_map(&mut choices);
+        let text = render(&map, 0);
+        let result = load(&text);
+        match (&map.fault, &result) {
+            (Fault::None, Ok(doc)) => {
+                if let Err(why) = check_loaded(doc) {
+                    panic!("seed {seed}, {}: {why}\n{text}", field.name);
+                }
+            }
+            (Fault::Content { path, kind, .. }, Err(error))
+                if error.path == *path && kind_name(&error.kind) == *kind =>
+            {
+                if let Err(why) = check_refusal(error, text.as_bytes()) {
+                    panic!("seed {seed}, {}: {why}\n{text}", field.name);
+                }
+            }
+            (fault, got) => panic!(
+                "seed {seed}, {}: expected {fault:?}, the loader answered {:?}\n{text}",
+                field.name,
+                got.as_ref().err()
+            ),
+        }
+        *reached.entry((field.name, map.fault == Fault::None)).or_default() += 1;
+    }
+    for field in &BOUNDED_FIELDS {
+        for holds in [true, false] {
+            assert!(
+                reached.contains_key(&(field.name, holds)),
+                "precondition: the sweep never put `{}` {} its bound",
+                field.name,
+                if holds { "inside" } else { "outside" }
+            );
+        }
     }
 }

@@ -39,7 +39,13 @@
 //!   accepts, refuses with the error the reference model expects, and a
 //!   single-fault input is refused with the same kind at the same path
 //!   whatever the order of its keys (C.9.14, which holds for one fault
-//!   only: with two, the first in text order wins).
+//!   only: with two, the first in text order wins; checked on the inputs
+//!   a choice selects). Every field of `format/schema.md`'s bounds table
+//!   a node can hold ([`BOUNDED_FIELDS`](crate::document::tests::format_fuzz::BOUNDED_FIELDS))
+//!   is written at its bound, just past it, just inside it or at any
+//!   `f32`, and refused at its path exactly when the value read is
+//!   outside; positions anywhere on the canvas feed the saver's float
+//!   writer.
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{
@@ -766,6 +772,8 @@ pub struct MapSpec {
     pub nodes: Vec<NodeSpec>,
     /// What was done to make it wrong.
     pub fault: Fault,
+    /// The [`bounded`] field written into it, if one was, by its name.
+    pub bounded: Option<&'static str>,
 }
 
 /// What was injected into a generated map.
@@ -1000,24 +1008,39 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
             nodes
         }
     };
-    let fault = match choices.below(4) {
+    let (fault, bounded) = match choices.below(4) {
         1 | 2 => {
             for _ in 0..1 + choices.below(2) {
                 corrupt(choices, &mut nodes);
             }
-            Fault::Structure
+            (Fault::Structure, None)
         }
         3 => inject(choices, &mut nodes),
-        _ => Fault::None,
+        _ => (Fault::None, None),
     };
-    MapSpec { nodes, fault }
+    MapSpec {
+        nodes,
+        fault,
+        bounded,
+    }
 }
 
-/// Random valid content for each node: sections, a frame of rings, a
-/// connector on a node with a parent, links to other nodes.
+/// Random valid content for each node: a position anywhere on the
+/// canvas, sections, a frame of rings, a connector on a node with a
+/// parent, links to other nodes.
 fn add_content(choices: &mut crate::util::tests::choices::Choices<'_>, nodes: &mut [NodeSpec]) {
     let ids: Vec<i64> = nodes.iter().map(|node| node.id).collect();
     for node in nodes.iter_mut() {
+        if choices.one_in(2) {
+            // Any coordinate the bound holds, so that the saver's
+            // shortest-form float writer meets every kind of `f32`.
+            let x = bounds::clamp_canvas_coord(choices.any_f32());
+            let y = bounds::clamp_canvas_coord(choices.any_f32());
+            node.content.push((
+                "position".to_string(),
+                format!("[{}, {}]", json_number(x), json_number(y)),
+            ));
+        }
         if choices.one_in(2) {
             let count = choices.below(4);
             node.content
@@ -1089,7 +1112,16 @@ fn corrupt(choices: &mut crate::util::tests::choices::Choices<'_>, nodes: &mut V
             nodes.remove(k);
         }
         5 => {
-            let k = any(choices);
+            // Made top-level: one time in two a node with a connector, if
+            // there is one, so that `ConnectorOnRoot` is not left to luck.
+            let connected: Vec<usize> = (0..len)
+                .filter(|&k| nodes[k].content.iter().any(|(key, _)| key == "connector"))
+                .collect();
+            let k = if !connected.is_empty() && choices.one_in(2) {
+                *choices.pick(&connected)
+            } else {
+                any(choices)
+            };
             nodes[k].parent = None;
         }
         6 => {
@@ -1122,16 +1154,27 @@ fn corrupt(choices: &mut crate::util::tests::choices::Choices<'_>, nodes: &mut V
 
 /// One fault inside one node, which the map's other content cannot
 /// mask: the map is otherwise as generated, and a generated map's
-/// structure is valid. The refusal's path and kind are known.
-fn inject(choices: &mut crate::util::tests::choices::Choices<'_>, nodes: &mut [NodeSpec]) -> Fault {
+/// structure is valid. The refusal's path and kind are known. One time
+/// in six it is a [`bounded`] field, named beside the fault, which may
+/// land inside its bound and be no fault at all.
+fn inject(
+    choices: &mut crate::util::tests::choices::Choices<'_>,
+    nodes: &mut [NodeSpec],
+) -> (Fault, Option<&'static str>) {
     if nodes.is_empty() {
-        return Fault::None;
+        return (Fault::None, None);
     }
     let k = choices.index(nodes.len());
+    let arm = choices.below(6);
+    if arm == 5 {
+        let (fault, field) = bounded(choices, nodes, k);
+        return (fault, Some(field.name));
+    }
     let node = &mut nodes[k];
     let at = |rest: &str| format!("nodes[{k}]{rest}");
-    match choices.below(5) {
+    let fault = match arm {
         1 => {
+            node.content.retain(|(key, _)| key != "position");
             node.content
                 .push(("position".to_string(), r#""left""#.to_string()));
             Fault::Content {
@@ -1164,6 +1207,7 @@ fn inject(choices: &mut crate::util::tests::choices::Choices<'_>, nodes: &mut [N
             }
         }
         4 => {
+            node.content.retain(|(key, _)| key != "opacity");
             node.content.push(("opacity".to_string(), "1.5".to_string()));
             Fault::Content {
                 node: k,
@@ -1180,7 +1224,554 @@ fn inject(choices: &mut crate::util::tests::choices::Choices<'_>, nodes: &mut [N
                 kind: "UnknownKey",
             }
         }
+    };
+    (fault, None)
+}
+
+// ── Bounded fields ────────────────────────────────────────────────
+
+/// What a [`BoundedField`] needs of the node it is written into.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Needs {
+    /// Nothing: a key of any node.
+    Nothing,
+    /// A parent: a key of the node's `connector`, which a top-level
+    /// node may not have.
+    Parent,
+    /// Another node: a key of a link the field adds, to another node.
+    Other,
+}
+
+/// The number a [`BoundedField`] holds, and the bound that judges it.
+#[derive(Clone, Copy, Debug)]
+pub enum Bounded {
+    /// A float: the two ends of its bound (whether either end is in it
+    /// is `holds`' to say) and whether a value read is inside it.
+    Float {
+        /// The low end and the high end.
+        ends: [f32; 2],
+        /// Whether the value read from the text is inside the bound.
+        holds: fn(f32) -> bool,
+    },
+    /// An integer: the two ends of its bound and whether a value is
+    /// inside it.
+    Integer {
+        /// The low end and the high end.
+        ends: [u32; 2],
+        /// Whether the value is inside the bound.
+        holds: fn(u32) -> bool,
+    },
+    /// One end of a window whose other end is fixed: a value that fails
+    /// `alone` is refused at the field's path, one that passes it but
+    /// not `holds` (the window inverted) at `window`, the window's path.
+    Window {
+        /// The low end and the high end.
+        ends: [f32; 2],
+        /// Whether the value read holds as an end on its own.
+        alone: fn(f32) -> bool,
+        /// Whether it holds beside the window's other end.
+        holds: fn(f32) -> bool,
+        /// The path of an inverted window, after `nodes[k]`.
+        window: &'static str,
+    },
+    /// A count of `item`s, written for `#` joined by commas: at most
+    /// `most` hold.
+    Count {
+        /// The most there may be.
+        most: u32,
+        /// One of them, as JSON text.
+        item: &'static str,
+    },
+}
+
+/// One field `format/schema.md`'s bounds table bounds, as the
+/// structured loader target writes it: where, and what judges it.
+#[derive(Clone, Copy, Debug)]
+pub struct BoundedField {
+    /// The field, as the bounds table names it.
+    pub name: &'static str,
+    /// What it needs of its node.
+    pub needs: Needs,
+    /// The node key it is written under; empty for a link the field
+    /// adds ([`Needs::Other`]).
+    pub key: &'static str,
+    /// The key's value — or, for a link, the link's keys after `to` —
+    /// with `#` standing for the number.
+    pub template: &'static str,
+    /// The refusal's path after `nodes[k]` — or, for a link, after
+    /// `nodes[k].links[j]`.
+    pub path: &'static str,
+    /// Its number and its bound.
+    pub value: Bounded,
+}
+
+fn unit(value: f32) -> bool {
+    bounds::check_unit_interval(value).is_ok()
+}
+
+fn canvas(value: f32) -> bool {
+    bounds::check_canvas_coord(value).is_ok()
+}
+
+fn extent(value: f32) -> bool {
+    bounds::check_extent(value).is_ok()
+}
+
+fn non_negative(value: f32) -> bool {
+    bounds::check_non_negative(value).is_ok()
+}
+
+fn points(value: f32) -> bool {
+    bounds::check_font_size_pt(value).is_ok()
+}
+
+fn fraction(value: f32) -> bool {
+    bounds::check_rel_size(value).is_ok()
+}
+
+fn zoom_low(value: f32) -> bool {
+    bounds::check_zoom_window(Some(value), None).is_ok()
+}
+
+fn zoom_high_alone(value: f32) -> bool {
+    bounds::check_zoom_window(None, Some(value)).is_ok()
+}
+
+fn zoom_high(value: f32) -> bool {
+    bounds::check_zoom_window(Some(0.5), Some(value)).is_ok()
+}
+
+fn fit_low(value: f32) -> bool {
+    bounds::check_fit(value, 4.0).is_ok()
+}
+
+fn fit_high(value: f32) -> bool {
+    bounds::check_fit(0.5, value).is_ok()
+}
+
+fn percent(value: u32) -> bool {
+    u8::try_from(value).is_ok_and(|value| bounds::check_percent(value).is_ok())
+}
+
+fn weight(value: u32) -> bool {
+    u16::try_from(value).is_ok_and(|value| bounds::check_weight(value).is_ok())
+}
+
+/// A float field's bound: its ends and its judge.
+const fn float(ends: [f32; 2], holds: fn(f32) -> bool) -> Bounded {
+    Bounded::Float { ends, holds }
+}
+
+const COORD: [f32; 2] = [-bounds::MAX_CANVAS_COORD, bounds::MAX_CANVAS_COORD];
+const EXTENT: [f32; 2] = [0.0, bounds::MAX_CANVAS_COORD];
+const UNIT: [f32; 2] = [0.0, 1.0];
+const NON_NEGATIVE: [f32; 2] = [0.0, f32::MAX];
+const POINTS: [f32; 2] = [bounds::MIN_FONT_SIZE_PT, bounds::MAX_FONT_SIZE_PT];
+const FRACTION: [f32; 2] = [0.0, 1.0];
+const ZOOM_LOW: [f32; 2] = [0.0, f32::MAX];
+const ZOOM_HIGH: [f32; 2] = [0.5, f32::MAX];
+const FIT_LOW: [f32; 2] = [0.0, 4.0];
+const FIT_HIGH: [f32; 2] = [0.5, f32::MAX];
+
+/// Every bounded field of a node, a section, a span, a frame and its
+/// rings, a connector and its label, a link and a portal end: each
+/// number of `format/schema.md`'s bounds table a node can hold (the
+/// ids, parents, channels and link targets are the structure's, which
+/// `corrupt` drives).
+pub static BOUNDED_FIELDS: [BoundedField; 31] = [
+    BoundedField {
+        name: "position x",
+        needs: Needs::Nothing,
+        key: "position",
+        template: "[#, 0.0]",
+        path: ".position[0]",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "position y",
+        needs: Needs::Nothing,
+        key: "position",
+        template: "[0.0, #]",
+        path: ".position[1]",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "min_size",
+        needs: Needs::Nothing,
+        key: "min_size",
+        template: "[#, 1.0]",
+        path: ".min_size[0]",
+        value: float(EXTENT, extent),
+    },
+    BoundedField {
+        name: "opacity",
+        needs: Needs::Nothing,
+        key: "opacity",
+        template: "#",
+        path: ".opacity",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "fill_fade",
+        needs: Needs::Nothing,
+        key: "fill_fade",
+        template: "#",
+        path: ".fill_fade",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "zoom min",
+        needs: Needs::Nothing,
+        key: "zoom",
+        template: r#"{"min": #}"#,
+        path: ".zoom.min",
+        value: float(ZOOM_LOW, zoom_low),
+    },
+    BoundedField {
+        name: "zoom max",
+        needs: Needs::Nothing,
+        key: "zoom",
+        template: r#"{"min": 0.5, "max": #}"#,
+        path: ".zoom.max",
+        value: Bounded::Window {
+            ends: ZOOM_HIGH,
+            alone: zoom_high_alone,
+            holds: zoom_high,
+            window: ".zoom",
+        },
+    },
+    BoundedField {
+        name: "size",
+        needs: Needs::Nothing,
+        key: "size",
+        template: "#",
+        path: ".size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "corner radius",
+        needs: Needs::Nothing,
+        key: "shape",
+        template: r#"{"rectangle": {"radius": #}}"#,
+        path: ".shape.rectangle.radius",
+        value: Bounded::Integer {
+            ends: [0, 100],
+            holds: percent,
+        },
+    },
+    BoundedField {
+        name: "weight",
+        needs: Needs::Nothing,
+        key: "weight",
+        template: "#",
+        path: ".weight",
+        value: Bounded::Integer {
+            ends: [100, 900],
+            holds: weight,
+        },
+    },
+    BoundedField {
+        name: "section offset",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"offset": [0.0, #]}]"#,
+        path: ".sections[0].offset[1]",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "section min_size",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"min_size": [1.0, #]}]"#,
+        path: ".sections[0].min_size[1]",
+        value: float(EXTENT, extent),
+    },
+    BoundedField {
+        name: "span size",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"spans": [{"text": "a", "size": #}]}]"#,
+        path: ".sections[0].spans[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "frame gap",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"gap": #}"#,
+        path: ".frame.gap",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "frame inset",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"inset": #}"#,
+        path: ".frame.inset",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "frame size",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"size": #}"#,
+        path: ".frame.size",
+        value: float(FRACTION, fraction),
+    },
+    BoundedField {
+        name: "frame start at",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"start": {"edge": "top", "at": #}}"#,
+        path: ".frame.start.at",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "frame fit min",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"fit": {"fit": {"min": #, "max": 4.0}}}"#,
+        path: ".frame.fit",
+        value: float(FIT_LOW, fit_low),
+    },
+    BoundedField {
+        name: "ring size",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"rings": [{"size": #}]}"#,
+        path: ".frame.rings[0].size",
+        value: float(FRACTION, fraction),
+    },
+    BoundedField {
+        name: "connector spacing",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"spacing": #}"#,
+        path: ".connector.spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "connector size",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"size": #}"#,
+        path: ".connector.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "control point",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"control_points": [[#, 0.0]]}"#,
+        path: ".connector.control_points[0][0]",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "control_points",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"control_points": [#]}"#,
+        path: ".connector.control_points",
+        value: Bounded::Count {
+            most: bounds::MAX_CONTROL_POINTS as u32,
+            item: "[0.0, 0.0]",
+        },
+    },
+    BoundedField {
+        name: "label t",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"label": {"t": #}}"#,
+        path: ".connector.label.t",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "label offset",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"label": {"offset": #}}"#,
+        path: ".connector.label.offset",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "connector zoom",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"zoom": {"min": #}}"#,
+        path: ".connector.zoom.min",
+        value: float(ZOOM_LOW, zoom_low),
+    },
+    BoundedField {
+        name: "connector fit max",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"fit": {"fit": {"min": 0.5, "max": #}}}"#,
+        path: ".connector.fit",
+        value: float(FIT_HIGH, fit_high),
+    },
+    BoundedField {
+        name: "link spacing",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "spacing": #"#,
+        path: ".spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "border_t",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "kind": "portal", "ends": [{"border_t": #}, {}]"#,
+        path: ".ends[0].border_t",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "portal end offset",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "kind": "portal", "ends": [{}, {"offset": #}]"#,
+        path: ".ends[1].offset",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "portal end size",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "kind": "portal", "ends": [{"size": #}, {}]"#,
+        path: ".ends[0].size",
+        value: float(POINTS, points),
+    },
+];
+
+/// `value` as a JSON number: its shortest form when finite; past the
+/// largest `f32` (`1e39`, which reads as an infinity) when not, since
+/// JSON has no infinity and no `NaN`.
+pub fn json_number(value: f32) -> String {
+    if value.is_finite() {
+        format!("{value:?}")
+    } else if value < 0.0 {
+        "-1e39".to_string()
+    } else {
+        "1e39".to_string()
     }
+}
+
+/// The `f32` the loader reads `number` as: the nearest `f64`, then the
+/// nearest `f32` to that.
+pub fn read_as_f32(number: &str) -> f32 {
+    number.parse::<f64>().map_or(f32::NAN, |value| value as f32)
+}
+
+/// A float for a field bounded by `ends`: one of its ends, the float
+/// just past it or just inside it, or any `f32` at all.
+fn float_near(choices: &mut crate::util::tests::choices::Choices<'_>, ends: [f32; 2]) -> f32 {
+    let low = choices.one_in(2);
+    let end = if low { ends[0] } else { ends[1] };
+    let (outward, inward) = if low {
+        (end.next_down(), end.next_up())
+    } else {
+        (end.next_up(), end.next_down())
+    };
+    match choices.below(4) {
+        0 => end,
+        1 => outward,
+        2 => inward,
+        _ => choices.any_f32(),
+    }
+}
+
+/// An integer for a field bounded by `ends`: one of its ends, the
+/// integer just past it or just inside it, or any up to twice the high
+/// end.
+fn integer_near(choices: &mut crate::util::tests::choices::Choices<'_>, ends: [u32; 2]) -> u32 {
+    let low = choices.one_in(2);
+    let end = if low { ends[0] } else { ends[1] };
+    let (outward, inward) = if low {
+        (end.wrapping_sub(1), end + 1)
+    } else {
+        (end + 1, end.saturating_sub(1))
+    };
+    match choices.below(4) {
+        0 => end,
+        1 if !(low && end == 0) => outward,
+        2 => inward,
+        _ => choices.below(2 * ends[1] + 2),
+    }
+}
+
+/// One field of [`BOUNDED_FIELDS`] that node `k` can hold, written into
+/// it at a value near its bound or anywhere, and the field:
+/// [`Fault::Content`] at the field's path when the value read is outside
+/// the bound, and [`Fault::None`] when it is inside (the map then loads,
+/// and its saved text must round-trip the value).
+pub fn bounded(
+    choices: &mut crate::util::tests::choices::Choices<'_>,
+    nodes: &mut [NodeSpec],
+    k: usize,
+) -> (Fault, &'static BoundedField) {
+    let own = nodes[k].id;
+    let others: Vec<i64> = nodes.iter().map(|node| node.id).filter(|id| *id != own).collect();
+    let has_parent = nodes[k].parent.is_some();
+    let fields: Vec<&BoundedField> = BOUNDED_FIELDS
+        .iter()
+        .filter(|field| match field.needs {
+            Needs::Nothing => true,
+            Needs::Parent => has_parent,
+            Needs::Other => !others.is_empty(),
+        })
+        .collect();
+    let field = *choices.pick(&fields);
+    let mut path = field.path;
+    let (filled, holds) = match field.value {
+        Bounded::Float { ends, holds } => {
+            let number = json_number(float_near(choices, ends));
+            let holds = holds(read_as_f32(&number));
+            (field.template.replace('#', &number), holds)
+        }
+        Bounded::Window {
+            ends,
+            alone,
+            holds,
+            window,
+        } => {
+            let number = json_number(float_near(choices, ends));
+            let read = read_as_f32(&number);
+            if alone(read) {
+                path = window;
+            }
+            (field.template.replace('#', &number), holds(read))
+        }
+        Bounded::Integer { ends, holds } => {
+            let value = integer_near(choices, ends);
+            (field.template.replace('#', &value.to_string()), holds(value))
+        }
+        Bounded::Count { most, item } => {
+            let count = integer_near(choices, [0, most]);
+            let items = vec![item; count as usize].join(", ");
+            (field.template.replace('#', &items), count <= most)
+        }
+    };
+    let node = &mut nodes[k];
+    let path = if field.needs == Needs::Other {
+        let to = *choices.pick(&others);
+        node.links.push(to);
+        node.link_tails.push(filled);
+        format!("nodes[{k}].links[{}]{path}", node.links.len() - 1)
+    } else {
+        node.content.retain(|(key, _)| key != field.key);
+        node.content.push((field.key.to_string(), filled));
+        format!("nodes[{k}]{path}")
+    };
+    let fault = if holds {
+        Fault::None
+    } else {
+        Fault::Content {
+            node: k,
+            path,
+            kind: "Bound",
+        }
+    };
+    (fault, field)
 }
 
 /// `spec` as the text of a map, its keys in the order `order` names: `0`
@@ -1393,27 +1984,45 @@ pub fn kind_name(kind: &LoadErrorKind) -> String {
 /// Every property of the map `bytes` choose (the load_structured
 /// target's whole body): those of [`check_load_bytes`] on its text; the
 /// loader's verdict against [`oracle`], and its refusal against
-/// [`reference()`] or the injected fault; the same refusal in a second key
-/// order (C.9.14, single fault); and, when it loads, `check_savable`
+/// [`reference()`] or the injected fault; and, on the inputs a choice
+/// selects (one in four for each), the same refusal in a second key
+/// order (C.9.14, single fault), and — when it loads — `check_savable`
 /// against the full build on the document with up to two values a
 /// buggy writer could leave, under this target's limits and a small
-/// element bound.
+/// element bound. Those two steps cost a load and two builds more, so
+/// that taking them on every input would leave the fuzzer a few
+/// thousand inputs a night to steer with; one choice each keeps an
+/// input replaying the steps it took.
 pub fn check_structured(bytes: &[u8]) -> Result<(), String> {
     let mut choices = crate::util::tests::choices::Choices::new(bytes);
     check_generated(&mut choices, MAX_GENERATED_ROWS).map(|_| ())
 }
 
+/// What [`check_generated`] found an input to be, and the steps it
+/// took on it, so that a sweep can show it reached every case and every
+/// step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Generated {
+    /// What the input was and how it ended: `"none: loaded"`,
+    /// `"structure: DuplicateId"`, `"content: Bound"`.
+    pub outcome: String,
+    /// Whether it was loaded again in another key order (C.9.14).
+    pub reordered: bool,
+    /// Whether it loaded and its document was tampered with and checked
+    /// again.
+    pub tampered: bool,
+}
+
 /// [`check_structured`] for a map drawn from `choices`, whatever their
-/// source: the fuzzer's bytes, or a seeded sweep in the suite. `Ok`
-/// says what the input was and how it ended (`"none: loaded"`,
-/// `"structure: DuplicateId"`, `"content: Bound"`), so that a sweep can
-/// show it reached every case.
+/// source: the fuzzer's bytes, or a seeded sweep in the suite.
 pub fn check_generated(
     choices: &mut crate::util::tests::choices::Choices<'_>,
     most: u32,
-) -> Result<String, String> {
+) -> Result<Generated, String> {
     let spec = generate(choices, most);
     let order = 1 + choices.below(u32::MAX - 1);
+    let reordered = choices.one_in(4);
+    let tamper = choices.one_in(4);
     let text = render(&spec, 0);
     let result = load(&text);
     let context = |why: String| format!("{why}\n{text}");
@@ -1467,33 +2076,42 @@ pub fn check_generated(
     // C.9.14: one fault, any key order, the same refusal. Every input
     // here has at most one fault the reader finds in text order; the
     // structural checks run in a fixed order whatever the text's.
-    let reordered = render(&spec, order);
-    let again = load(&reordered);
-    let verdict = |result: &Result<Document, LoadError>| {
-        result
-            .as_ref()
-            .err()
-            .map(|error| (error.path.clone(), kind_name(&error.kind)))
-    };
-    if verdict(&result) != verdict(&again) {
-        return Err(context(format!(
-            "reordering the keys changed the verdict from {:?} to {:?}:\n{reordered}",
-            verdict(&result),
-            verdict(&again)
-        )));
+    if reordered {
+        let text = render(&spec, order);
+        let again = load(&text);
+        let verdict = |result: &Result<Document, LoadError>| {
+            result
+                .as_ref()
+                .err()
+                .map(|error| (error.path.clone(), kind_name(&error.kind)))
+        };
+        if verdict(&result) != verdict(&again) {
+            return Err(context(format!(
+                "reordering the keys changed the verdict from {:?} to {:?}:\n{text}",
+                verdict(&result),
+                verdict(&again)
+            )));
+        }
     }
     let fault = match spec.fault {
         Fault::None => "none",
         Fault::Structure => "structure",
         Fault::Content { .. } => "content",
     };
-    match result {
+    let (outcome, tampered) = match result {
         Ok(doc) => {
-            tampered_documents_agree(choices, doc)?;
-            Ok(format!("{fault}: loaded"))
+            if tamper {
+                tampered_documents_agree(choices, doc)?;
+            }
+            (format!("{fault}: loaded"), tamper)
         }
-        Err(error) => Ok(format!("{fault}: {}", kind_name(&error.kind))),
-    }
+        Err(error) => (format!("{fault}: {}", kind_name(&error.kind)), false),
+    };
+    Ok(Generated {
+        outcome,
+        reordered,
+        tampered,
+    })
 }
 
 /// `doc` with up to two values a buggy writer could leave — a second

@@ -107,10 +107,11 @@ fn test_every_fuzz_seed_holds_its_targets_properties() {
 fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     let seeds = files(&repo_path("fuzz/seeds/load_structured"));
     let mut named = 0;
+    let mut bounded_seeds: BTreeSet<String> = BTreeSet::new();
     for (name, bytes) in &seeds {
         if let Some(outcome) = name.strip_prefix("outcome_") {
             let got = format_fuzz::check_generated(&mut Choices::new(bytes), MAX_GENERATED_ROWS).unwrap();
-            assert_eq!(got.replacen(": ", "_", 1), outcome, "{name}");
+            assert_eq!(got.outcome.replacen(": ", "_", 1), outcome, "{name}");
             named += 1;
             continue;
         }
@@ -138,6 +139,14 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                         .any(|(key, value)| key == "frame" && value.matches("{}").count() >= 3000)
             }
             "random_tree_1024" => nodes.len() == 1024,
+            // A bounded field written inside its bound: one choice from
+            // the value just past it.
+            n if n.starts_with("bounded_") => {
+                let field = n.trim_start_matches("bounded_").replace('_', " ");
+                let named_field = spec.bounded.map(|name| name.replace('_', " "));
+                bounded_seeds.insert(field.clone());
+                named_field.as_deref() == Some(field.as_str()) && spec.fault == format_fuzz::Fault::None
+            }
             other => panic!("{other}: a seed whose name says nothing it holds"),
         };
         assert!(holds, "{name} holds what it is named for");
@@ -145,6 +154,14 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     }
     assert_eq!(named, seeds.len());
     assert!(named >= 20, "precondition: the seeds are read ({named})");
+    let fields: BTreeSet<String> = format_fuzz::BOUNDED_FIELDS
+        .iter()
+        .map(|field| field.name.replace('_', " "))
+        .collect();
+    assert_eq!(
+        bounded_seeds, fields,
+        "a seed for every bounded field, and no other"
+    );
 }
 
 #[test]
@@ -260,11 +277,7 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
         1,
     );
     assert_ne!(moved, fuzz, "precondition: the control edits the text");
-    assert_eq!(
-        lock_drift(&root, &moved).len(),
-        1,
-        "a moved version is drift"
-    );
+    assert_eq!(lock_drift(&root, &moved).len(), 1, "a moved version is drift");
 }
 
 /// `scripts/fuzz.sh`'s `-max_len` for each target, from its
@@ -331,10 +344,7 @@ fn script_corpora(script: &str, target: &str) -> (Vec<String>, bool) {
 fn test_every_fuzz_input_fits_its_targets_max_len() {
     let script = std::fs::read_to_string(repo_path("scripts/fuzz.sh")).unwrap();
     let lengths = max_lens(&script);
-    let names: BTreeSet<String> = TARGETS
-        .iter()
-        .map(|(name, _, _)| name.to_string())
-        .collect();
+    let names: BTreeSet<String> = TARGETS.iter().map(|(name, _, _)| name.to_string()).collect();
     assert_eq!(
         lengths.keys().cloned().collect::<BTreeSet<String>>(),
         names,
