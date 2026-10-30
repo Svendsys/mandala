@@ -1491,13 +1491,15 @@ element.
   span's text (`GlyphMetrics`, `ShapedBox::glyph_spans`); a filler
   glyph names `FILLER_SPAN`. No paragraph separator but a box's `\n`
   is drawn or breaks a line.
-- **Tabs** (R24 on #278). A tab is a space widened to the next tab
-  stop, eight spaces apart from the start of its line, as cosmic-text
-  draws it. A face whose space has no width cannot measure a stop, and
-  cosmic-text then makes the tab and every glyph after it `NaN` wide or
-  placed; shaping finds that and shapes the flow again with each tab
-  as one space. Every advance, position and size a flow returns is
-  finite.
+- **Tabs** (R24, R24.1 on #278). A tab is a space widened to the next
+  tab stop, eight of the face's spaces apart from the start of its
+  line, as cosmic-text draws it. A face whose space has no width cannot
+  measure a stop (cosmic-text would make the tab and every glyph after
+  it on the line `NaN` wide or placed), so shaping decides **per span,
+  from that span's face, before shaping**: a span whose face's space
+  has no finite, positive advance draws its tabs as spaces, and every
+  other span keeps its tab stops, beside it or on another line. A
+  laid-out value still not finite after that is reported, not repaired.
 
 `lib/baumhard/src/flow/`. It caches nothing, builds no glyph tree and
 never takes the font lock: every shaping function takes the guard its

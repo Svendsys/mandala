@@ -29,13 +29,17 @@
 //! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
 //! caller's span and bytes of the caller's text.
 //!
-//! **Tabs** (ruling R24 on #278). A tab is drawn as cosmic-text draws
-//! it: a space widened to the next tab stop, eight spaces apart from the
-//! start of its line. A face whose space has no width cannot measure a
-//! stop, and cosmic-text then gives the tab, and every glyph after it on
-//! the line, a `NaN` advance and position; such a flow is shaped again
-//! with each tab as one space. Every advance, position, line width and
-//! box size shaping returns is therefore finite.
+//! **Tabs** (rulings R24 and R24.1 on #278). A tab is drawn as
+//! cosmic-text draws it: a space widened to the next tab stop, eight of
+//! the face's spaces apart from the start of its line. A face whose
+//! space has no width cannot measure a stop — cosmic-text would give the
+//! tab, and every glyph after it on its line, a `NaN` advance and
+//! position — so the decision is made **per span, from that span's face,
+//! before shaping**: a span whose face's space has no finite, positive
+//! advance has its tabs drawn as spaces (one byte for one, so its span
+//! bytes are unchanged), and every other span keeps its tab stops, on
+//! its own line or beside it. A laid-out width or position that is still
+//! not finite after that is reported (`warn!`), not repaired.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -355,20 +359,13 @@ fn families_of<'s>(styles: impl Iterator<Item = &'s ResolvedText>, fs: &FontSyst
 /// A buffer with no wrapping, no size limit and metrics no smaller than
 /// the shaper accepts, holding `rich`.
 ///
-/// **Tabs (ruling R24 on #278).** cosmic-text shapes a tab as a space
-/// and widens it to the next stop, `tab width × the space's advance`
-/// from the line's start. A face whose space has no advance makes that
-/// `0 / 0`: the tab's advance, and the position of every glyph after it
-/// on the line, come out `NaN`. So when the laid-out buffer holds a
-/// width or a position that is not finite and the text holds a tab, the
-/// flow is shaped again with each tab as a space — one byte for one, so
-/// the piece table and every glyph's span bytes stay valid. A tab keeps
-/// its stops wherever the face can measure them; where it cannot, it is
-/// one space wide.
+/// Its tabs have already been decided per span ([`untabbed`]). When the
+/// text holds a tab, the laid-out widths and positions are checked, and
+/// one that is still not finite is reported, not repaired (R24.1): that
+/// would be a face [`space_measures`] passed whose tab stop still fails.
 ///
-/// Cost: one pass over the laid-out glyphs when the text holds a tab;
-/// a second shaping only when that pass finds a value that is not
-/// finite. Text without a tab is shaped once and not checked.
+/// Cost: one shaping pass; one more pass over the laid-out glyphs when
+/// the text holds a tab.
 fn new_buffer(
     fs: &mut FontSystem,
     rich: Vec<(&str, Attrs<'_>)>,
@@ -379,20 +376,12 @@ fn new_buffer(
     let font_size = font_size.max(MIN_FONT_SIZE_PT);
     let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
     let metrics = Metrics::new(font_size, line_height);
-    if !rich.iter().any(|(text, _)| text.contains('\t')) {
-        return filled_buffer(fs, rich, metrics, align);
+    let tabbed = rich.iter().any(|(text, _)| text.contains('\t'));
+    let buffer = filled_buffer(fs, rich, metrics, align);
+    if tabbed && !laid_out_finite(&buffer) {
+        log::warn!("flow: a tab stop laid out a width or position that is not finite");
     }
-    let buffer = filled_buffer(fs, rich.clone(), metrics, align);
-    if laid_out_finite(&buffer) {
-        return buffer;
-    }
-    let spaced: Vec<String> = rich.iter().map(|(text, _)| text.replace('\t', " ")).collect();
-    let rich = spaced
-        .iter()
-        .zip(rich)
-        .map(|(text, (_, attrs))| (text.as_str(), attrs))
-        .collect();
-    filled_buffer(fs, rich, metrics, align)
+    buffer
 }
 
 /// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
@@ -409,6 +398,78 @@ fn filled_buffer(
     buffer.set_rich_text(rich, &defaults, SHAPING_ADVANCED, align.map(cosmic_align));
     buffer.shape_until_scroll(fs, false);
     buffer
+}
+
+/// Whether the face `attrs` select can measure a tab stop: its space,
+/// shaped alone, has a finite, positive advance (cosmic-text widens a tab
+/// to a multiple of it, so a zero advance is a `0 / 0` stop).
+///
+/// Cost: one shaping of one character.
+fn space_measures(attrs: &Attrs<'_>, fs: &mut FontSystem) -> bool {
+    let metrics = metrics_of(attrs);
+    let size = metrics.font_size.max(MIN_FONT_SIZE_PT);
+    let metrics = Metrics::new(size, size * LINE_HEIGHT_FACTOR);
+    let buffer = filled_buffer(fs, vec![(" ", attrs.clone())], metrics, None);
+    let mut glyphs = buffer.layout_runs().flat_map(|run| run.glyphs.iter());
+    glyphs
+        .next()
+        .is_some_and(|glyph| glyph.w.is_finite() && glyph.w > 0.0)
+}
+
+/// Each span's text with its tabs drawn as spaces when its face cannot
+/// measure a tab stop ([`space_measures`]), decided per span and before
+/// shaping (R24.1): `None` keeps the span's own text, tabs and all. The
+/// replacement is byte for byte, so a glyph's span bytes name the same
+/// characters of the caller's text. Empty when no span holds a tab.
+///
+/// Cost: nothing for text without a tab; otherwise one space shaped per
+/// distinct face, weight and slant among the spans that hold one, and
+/// one copy of each such span's text whose face fails.
+fn untabbed(
+    spans: &[FlowSpan<'_>],
+    families: &[Option<String>],
+    scale: f32,
+    fs: &mut FontSystem,
+) -> Vec<Option<String>> {
+    if !spans.iter().any(|span| span.text.contains('\t')) {
+        return Vec::new();
+    }
+    let mut measured: Vec<((Option<&str>, u16, bool), bool)> = Vec::new();
+    spans
+        .iter()
+        .enumerate()
+        .map(|(index, span)| {
+            if !span.text.contains('\t') {
+                return None;
+            }
+            let family = families.get(index).and_then(|family| family.as_deref());
+            let face = (family, span.style.weight.get(), span.style.italic);
+            let measures = match measured.iter().find(|(seen, _)| *seen == face) {
+                Some((_, measures)) => *measures,
+                None => {
+                    let measures = space_measures(&span_attrs(span, scale, family), fs);
+                    measured.push((face, measures));
+                    measures
+                }
+            };
+            (!measures).then(|| span.text.replace('\t', " "))
+        })
+        .collect()
+}
+
+/// `spans`, each span whose entry of `untabbed` is `Some` reading that
+/// text instead of its own.
+fn with_untabbed<'s>(spans: &[FlowSpan<'s>], untabbed: &'s [Option<String>]) -> Vec<FlowSpan<'s>> {
+    spans
+        .iter()
+        .enumerate()
+        .map(
+            |(index, span)| match untabbed.get(index).and_then(Option::as_deref) {
+                Some(text) => FlowSpan { text, ..*span },
+                None => *span,
+            },
+        )
+        .collect()
 }
 
 /// Whether every laid-out line's width, and every glyph's width and
@@ -562,7 +623,9 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
 pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemWriteGuard) -> ShapedRun {
     let fs: &mut FontSystem = fs;
     let families = families_of(spans.iter().map(|span| span.style), fs);
-    let assembly = assemble(spans, &families, scale, Breaks::None);
+    let untabbed = untabbed(spans, &families, scale, fs);
+    let spans = with_untabbed(spans, &untabbed);
+    let assembly = assemble(&spans, &families, scale, Breaks::None);
     run_from_assembly(assembly, fs)
 }
 
@@ -611,6 +674,23 @@ pub(crate) fn reshape(
         text.chars().filter(|&ch| !is_paragraph_separator(ch)).collect()
     });
     let filler_family = filler.and_then(|(_, style)| families_of(std::iter::once(style), fs).pop().flatten());
+    // The filler is a span of its own: its tabs keep their stops unless
+    // its face cannot measure one (R24.1).
+    let filler_text = match filler {
+        Some((text, style)) if filler_text.contains('\t') => {
+            let span = FlowSpan {
+                text,
+                style,
+                link: None,
+            };
+            if space_measures(&span_attrs(&span, factor, filler_family.as_deref()), fs) {
+                filler_text
+            } else {
+                filler_text.replace('\t', " ")
+            }
+        }
+        _ => filler_text,
+    };
 
     let mut rich: Vec<(&str, Attrs<'_>)> = Vec::with_capacity(run.pieces.len() + 2);
     let mut pieces = Vec::with_capacity(run.pieces.len() + 1);
@@ -728,6 +808,8 @@ pub fn shape_box(
 ) -> ShapedBox {
     let fs: &mut FontSystem = fs;
     let families = families_of(spans.iter().map(|span| span.style), fs);
+    let untabbed = untabbed(spans, &families, 1.0, fs);
+    let spans = &with_untabbed(spans, &untabbed);
     let assembly = assemble(spans, &families, 1.0, Breaks::Newline);
     // A line with nothing on it — the whole box, when the text is empty
     // — is as tall as the spans' line height.

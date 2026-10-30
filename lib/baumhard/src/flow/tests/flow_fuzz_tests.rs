@@ -150,9 +150,9 @@ fn zero_width_space_style() -> ResolvedText {
 /// The flow target's finding (ruling R24): a tab in a face whose space
 /// has no width came back from cosmic-text with a `NaN` advance — its
 /// tab stop is `0 / 0` — and every glyph after it on the line with a
-/// `NaN` position. Shaping now reshapes such a flow with each tab as a
-/// space, so every value it returns is finite; a face that can measure
-/// a stop keeps it.
+/// `NaN` position. Shaping now draws the tabs of a span in such a face
+/// as spaces (R24.1), so every value it returns is finite; a face that
+/// can measure a stop keeps it.
 #[test]
 fn test_a_tab_in_a_face_whose_space_has_no_width_shapes_finite() {
     let face = zero_width_space_style();
@@ -203,5 +203,108 @@ fn test_a_tab_in_a_face_whose_space_has_no_width_shapes_finite() {
         "the tab stop is kept: {} against {}",
         tab.glyphs[0].advance,
         space.glyphs[0].advance
+    );
+}
+
+/// R24.1: tabs are decided per span, from that span's face. A tab in a
+/// face that can measure its stop keeps it beside a tab in a face that
+/// cannot — on the same run, and on another line of the same box —
+/// exactly as wide as it is with no such tab in the flow. The review of
+/// #293 found R24's first fix replacing every tab of the flow.
+#[test]
+fn test_a_measurable_tab_keeps_its_stop_beside_one_that_cannot_be_measured() {
+    let plain = style(16.0);
+    let face = zero_width_space_style();
+    // The tab's advance in the plain face, the first glyph after `a`.
+    let tab_in = |run: &crate::flow::ShapedRun| run.glyphs[1].advance;
+    // The width of the box's first laid-out glyph on `line`.
+    let first_on = |shaped: &crate::flow::ShapedBox, line: usize| {
+        shaped
+            .buffer
+            .layout_runs()
+            .find(|run| run.line_i == line)
+            .and_then(|run| run.glyphs.first().map(|glyph| glyph.w))
+    };
+    let (alone, mixed, box_alone, box_mixed) = with_fonts(|fs| {
+        let alone = shape_run(
+            &[FlowSpan {
+                text: "a\tb",
+                style: &plain,
+                link: None,
+            }],
+            1.0,
+            fs,
+        );
+        let mixed = shape_run(
+            &[
+                FlowSpan {
+                    text: "a\tb",
+                    style: &plain,
+                    link: None,
+                },
+                FlowSpan {
+                    text: "\t",
+                    style: &face,
+                    link: None,
+                },
+            ],
+            1.0,
+            fs,
+        );
+        let box_alone = shape_box(
+            &[FlowSpan {
+                text: "\tx",
+                style: &plain,
+                link: None,
+            }],
+            None,
+            Align::Left,
+            fs,
+        );
+        let box_mixed = shape_box(
+            &[
+                FlowSpan {
+                    text: "\tx\n",
+                    style: &plain,
+                    link: None,
+                },
+                FlowSpan {
+                    text: "\ty",
+                    style: &face,
+                    link: None,
+                },
+            ],
+            None,
+            Align::Left,
+            fs,
+        );
+        (alone, mixed, box_alone, box_mixed)
+    });
+    let space = with_fonts(|fs| real_run(" ", &plain, fs)).glyphs[0].advance;
+    assert!(
+        tab_in(&alone) > 1.5 * space,
+        "precondition: alone, the tab reaches a stop wider than a space ({} against {space})",
+        tab_in(&alone)
+    );
+    assert_eq!(
+        tab_in(&mixed),
+        tab_in(&alone),
+        "on one run, the measurable tab keeps its stop"
+    );
+    assert!(mixed.glyphs[2..].iter().all(|glyph| glyph.advance.is_finite()));
+    let line_0 = first_on(&box_alone, 0).expect("precondition: the box lays out its tab");
+    assert!(
+        line_0 > 1.5 * space,
+        "precondition: alone, the box's tab reaches a stop"
+    );
+    assert_eq!(
+        first_on(&box_mixed, 0),
+        Some(line_0),
+        "on line 0 of a box, the measurable tab keeps its stop"
+    );
+    let line_1 = first_on(&box_mixed, 1).expect("the box lays out line 1");
+    assert!(
+        line_1.is_finite(),
+        "the tab that cannot be measured is drawn finite: {line_1}"
     );
 }
