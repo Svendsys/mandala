@@ -136,23 +136,18 @@ jobs:
       - name: Put cargo-fuzz on the path
         run: echo "$HOME/.cargo-fuzz/bin" >> "$GITHUB_PATH"
 
-      # One build cache for every target: their dependencies, baumhard
-      # among them, are built alike, so one entry saves it and all six
-      # restore it. The saving entry builds every target first, so the
-      # cache holds each one's binary too.
+      # One build cache for every target, saved by one entry and restored
+      # by all six. It holds the registry dependencies' build alone:
+      # rust-cache prunes the artifacts of path packages before it saves,
+      # and baumhard and mandala-fuzz are path packages here, so every job
+      # still compiles those two. (After a restore that matched its key in
+      # full, it does not save again.)
       - name: Cache the fuzz build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz -> target
           shared-key: fuzz
           save-if: ${{ matrix.target == 'load_raw' }}
-
-      - name: Build every target (the entry that saves the build cache)
-        if: matrix.target == 'load_raw'
-        working-directory: fuzz
-        env:
-          CARGO_INCREMENTAL: "0"
-        run: cargo fuzz build
 
       # Every run starts from the newest corpus a nightly run saved for
       # this target; a pull request reads it and never writes it.
