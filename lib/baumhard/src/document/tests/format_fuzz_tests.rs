@@ -11,7 +11,7 @@ use crate::document::format::{load, save};
 use crate::document::ids::{get, Document, IdentIndex};
 use crate::document::tests::format_fuzz::{
     begun_nodes, bounds_hold, check_generated, check_load_bytes, check_refusal, excerpt_length, node_lines,
-    oracle, path_resolves, reference, saved_text_is_clean, NodeSpec, Spelled,
+    kind_name, oracle, path_resolves, reference, render, saved_text_is_clean, Fault, MapSpec, NodeSpec, Spelled,
 };
 use crate::document::tests::format_support::fixture;
 use crate::document::values::{FitMode, FontSize};
@@ -472,15 +472,32 @@ fn spec(id: i64, parent: Option<i64>, channel: i64) -> NodeSpec {
     }
 }
 
+/// `node` with one more key, as JSON text.
+fn with(mut node: NodeSpec, key: &str, value: &str) -> NodeSpec {
+    node.content.push((key.to_string(), value.to_string()));
+    node
+}
+
+/// `node` with a line link to `to`.
+fn linking(mut node: NodeSpec, to: i64) -> NodeSpec {
+    node.links.push(to);
+    node.link_tails.push(String::new());
+    node
+}
+
 /// A named case of `chain_ref.py`: its name, its nodes, and the
 /// refusal both models expect (`None`: it loads).
 type NamedCase = (&'static str, Vec<NodeSpec>, Option<(&'static str, &'static str)>);
 
-/// `chain_ref.py`'s named cases, against both models: the oracle's
-/// verdict and the reference's refusal.
+/// `chain_ref.py`'s named cases, and the three this port adds to its
+/// model (a connector on a top-level node, a link to an absent id, a
+/// link to its own node), against both models and the loader: the
+/// oracle's verdict, the reference's refusal, and the loader's on the
+/// rendered text.
 #[test]
 fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
-    let cases: [NamedCase; 8] = [
+    let connector = r#"{"spans": [{"text": "c"}]}"#;
+    let cases: [NamedCase; 13] = [
         (
             "valid",
             vec![spec(1, None, 0), spec(2, Some(1), 0), spec(3, Some(1), 1)],
@@ -526,6 +543,31 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
             vec![spec(1, Some(2), 0), spec(2, Some(1), 0)],
             Some(("nodes[0].parent", "ParentNotEarlier")),
         ),
+        (
+            "connector on a top-level node",
+            vec![spec(1, None, 0), with(spec(2, None, 0), "connector", connector)],
+            Some(("nodes[1].connector", "ConnectorOnRoot")),
+        ),
+        (
+            "connector on a child",
+            vec![spec(1, None, 0), with(spec(2, Some(1), 0), "connector", connector)],
+            None,
+        ),
+        (
+            "dangling link",
+            vec![spec(1, None, 0), linking(spec(2, Some(1), 0), 7)],
+            Some(("nodes[1].links[0].to", "DanglingLink")),
+        ),
+        (
+            "self link",
+            vec![spec(1, None, 0), linking(spec(2, Some(1), 0), 2)],
+            Some(("nodes[1].links[0].to", "SelfLink")),
+        ),
+        (
+            "link forward and back",
+            vec![linking(spec(1, None, 0), 2), linking(spec(2, Some(1), 0), 1)],
+            None,
+        ),
     ];
     for (name, nodes, expected) in cases {
         assert_eq!(oracle(&nodes), expected.is_none(), "{name}: the oracle");
@@ -534,6 +576,21 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
             got,
             expected.map(|(path, kind)| (path.to_string(), kind)),
             "{name}: the reference"
+        );
+        let text = render(
+            &MapSpec {
+                nodes,
+                fault: Fault::Structure,
+            },
+            0,
+        );
+        let loaded = load(&text)
+            .err()
+            .map(|error| (error.path.clone(), kind_name(&error.kind)));
+        assert_eq!(
+            loaded,
+            expected.map(|(path, kind)| (path.to_string(), kind.to_string())),
+            "{name}: the loader, on\n{text}"
         );
     }
 }
