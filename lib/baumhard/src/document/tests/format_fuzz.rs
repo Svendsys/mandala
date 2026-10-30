@@ -814,7 +814,8 @@ fn rows(choices: &mut crate::util::tests::choices::Choices<'_>, most: u32) -> u3
 /// 2. a fan: one root and that many children;
 /// 3. one node holding rows of empty sections, of empty rings and of
 ///    portal links to a second node, as many as the next choices say;
-/// 4. a random tree of up to 1024 nodes.
+/// 4. a random tree as large as the next choices say (sized as `rows` sizes one, up
+///    to 1024 nodes).
 ///
 /// Then the fault: none, a structural corruption, or one content fault.
 pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u32) -> MapSpec {
@@ -870,7 +871,11 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
             vec![dense, plain(2, None)]
         }
         shape => {
-            let n = 1 + choices.index(if shape == 4 { most.min(1024) as usize } else { 24 });
+            let n = 1 + if shape == 4 {
+                rows(choices, most.min(1024)) as usize
+            } else {
+                choices.index(24)
+            };
             let mut nodes = random_tree(choices, n);
             add_content(choices, &mut nodes);
             nodes
