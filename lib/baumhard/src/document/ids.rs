@@ -150,12 +150,38 @@ impl std::error::Error for DocumentError {}
 pub(crate) type IdentIndex = KeyedMap<NodeIdent, NodeId>;
 
 /// The ident counter's start for a document whose highest node ident is
-/// `highest` (`0` for a map with no node): one past it. The design's id
-/// rule (§5.2) in one place, so that the loader and the test builder
-/// cannot start it differently. `highest <= MAX_NODE_IDENT < u32::MAX`,
-/// so this cannot wrap.
-pub(crate) fn first_free_ident(highest: u32) -> u32 {
-    highest.saturating_add(1)
+/// `highest` (`0` for a map with no node), and whose definitions name the
+/// node idents `named`: one past the highest of them all (Q3, ruling R20
+/// on #236). A node deleted while something still names it keeps its
+/// ident retired across a save and a reload: a new node never takes an
+/// ident a verb or a presentation still targets. The design's id rule
+/// (§5.2) in one place, so that the loader and the test builder cannot
+/// start it differently. O(the named idents); it saturates rather than
+/// wraps, and a counter past
+/// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT) issues
+/// no ident ([`Document::next_ident`]).
+pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32>) -> u32 {
+    named.into_iter().fold(highest, u32::max).saturating_add(1)
+}
+
+/// Every node ident `definitions` name: the hook through which a
+/// definition's targets reach the ident counter ([`first_free_ident`]).
+///
+/// **Today it names none.** A verb, an edit and a presentation carry
+/// only an id and a name until V1-D1–D3 give them targets; those land
+/// here, and nowhere else. No other field of a map can name a node that
+/// is not in it: a node's `parent` and a link's `to` must name a node of
+/// the map, on load, on save and in every edit, so neither can name a
+/// deleted node, and both are covered by the highest node ident.
+pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item = u32> + '_ {
+    // The targets V1-D1–D3 add are named here, as `definitions.verbs`
+    // and `definitions.presentations` grow them.
+    let Definitions {
+        edits: _,
+        presentations: _,
+        verbs: _,
+    } = definitions;
+    std::iter::empty()
 }
 
 /// A map: a `Tree<DocElement>` whose root is the
@@ -206,7 +232,7 @@ impl Document {
             }
             highest = highest.max(node.ident.0);
         }
-        let next_ident = first_free_ident(highest);
+        let next_ident = first_free_ident(highest, idents_named_by(&definitions));
         Ok(Document {
             tree,
             ident_index,
@@ -234,7 +260,7 @@ impl Document {
         Ok(Document {
             tree,
             ident_index,
-            next_ident: first_free_ident(highest),
+            next_ident: first_free_ident(highest, idents_named_by(&definitions)),
             definitions,
         })
     }

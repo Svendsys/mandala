@@ -292,3 +292,46 @@ pub fn do_document_refuses_more_than_an_index_addresses() {
         Err(DocumentError::Bound { what: "verbs", .. })
     ));
 }
+
+#[test]
+fn test_the_ident_counter_starts_above_every_ident_the_map_names() {
+    use crate::document::bounds::MAX_NODE_IDENT;
+    use crate::document::ids::first_free_ident;
+    // Q3 (ruling R20 on #236). The node with ident 5 was deleted while a
+    // definition still names it: after a save and a reload the highest
+    // node is 4, and the next node must still not be 5, or the target
+    // would silently retarget to it.
+    let highest_left = 4;
+    let deleted = 5;
+    let next = first_free_ident(highest_left, [deleted, 2]);
+    assert_eq!(next, 6);
+    assert_ne!(next, deleted, "a new node took an ident a definition names");
+    // Nothing named: one above the highest node.
+    assert_eq!(first_free_ident(highest_left, []), 5);
+    assert_eq!(first_free_ident(0, []), 1);
+    // A named ident below the highest changes nothing.
+    assert_eq!(first_free_ident(9, [3]), 10);
+    // At the bound the counter passes it, and no ident is issued.
+    assert_eq!(first_free_ident(MAX_NODE_IDENT, [3]), MAX_NODE_IDENT + 1);
+    assert_eq!(first_free_ident(3, [u32::MAX]), u32::MAX);
+}
+
+#[test]
+fn test_a_loaded_map_starts_its_counter_through_the_one_hook() {
+    use crate::document::ids::{first_free_ident, idents_named_by};
+    use crate::document::tests::format_text::{map_with, node_of};
+    // A map whose verbs and presentations name no node yet (their
+    // targets arrive with V1-D1–D3): the counter is one above the
+    // highest node, through the same hook that will count them.
+    let json = map_with(
+        r#","verbs":[{"id":"v","name":"V"}],"presentations":[{"id":"p","name":"P"}]"#,
+        &format!("{},{}", node_of(7, ""), node_of(3, "")),
+    );
+    let doc = crate::document::format::load(&json).expect("the map loads");
+    assert_eq!(idents_named_by(doc.definitions()).count(), 0);
+    assert_eq!(
+        doc.next_ident(),
+        Some(NodeIdent(first_free_ident(7, idents_named_by(doc.definitions()))))
+    );
+    assert_eq!(doc.next_ident(), Some(NodeIdent(8)));
+}

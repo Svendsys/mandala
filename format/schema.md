@@ -157,7 +157,11 @@ branches that each added a node.
 | IPC, the console, `mandalactl` | through the document's ident index |
 
 The counter that gives a new node its id is not saved; a loaded map
-starts it one above the highest node id in the list.
+starts it one above the highest node id in the list **and** above every
+node id a verb or a presentation names, so a node deleted while
+something still names it never has its id given to a new node after a
+reload. (Verbs and presentations carry no targets yet; a node's
+`parent` and a link's `to` always name a node in the list.)
 
 ## How a file is written
 
