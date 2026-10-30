@@ -213,8 +213,14 @@ impl<'de: 't, 't> Visitor<'de> for Nodes<'_, 't> {
         let found = self.0;
         let mut nodes = found.nodes.take().unwrap_or_default();
         loop {
-            found.node = Some(nodes.len());
-            match seq.next_element::<&'de RawValue>() {
+            // `node` names an element only once the reader is inside it:
+            // an error at a separator, after a trailing comma or at the
+            // end of a truncated list is between nodes, inside none.
+            found.node = None;
+            match seq.next_element_seed(Begun {
+                node: &mut found.node,
+                index: nodes.len(),
+            }) {
                 Ok(Some(node)) => nodes.push(node),
                 Ok(None) => break,
                 Err(error) => {
@@ -227,6 +233,27 @@ impl<'de: 't, 't> Visitor<'de> for Nodes<'_, 't> {
         found.at = None;
         found.nodes = Some(nodes);
         Ok(())
+    }
+}
+
+/// One element of `nodes`, read as an extent, which records that the
+/// reader is inside element `index` before it reads a byte of it. The
+/// list hands an element to its seed only once it has found a byte
+/// other than its closing `]` where the element goes — the element's
+/// first byte, well formed or not — so an error raised before this runs
+/// (a missing `,`, a trailing comma, the end of the text) is between
+/// nodes.
+struct Begun<'a> {
+    node: &'a mut Option<usize>,
+    index: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for Begun<'_> {
+    type Value = &'de RawValue;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<&'de RawValue, D::Error> {
+        *self.node = Some(self.index);
+        <&'de RawValue>::deserialize(deserializer)
     }
 }
 
@@ -301,7 +328,10 @@ pub(crate) fn index(text: &str) -> Result<MapIndex<'_>, LoadError> {
 /// A refusal inside `nodes[i]` — malformed text in the middle of a node
 /// — carries the node's context, as every error inside a node does
 /// (§7.2), with its index alone: a node whose text is not JSON has no id
-/// or text that can be read from it, and the position is exact.
+/// or text that can be read from it, and the position is exact. One
+/// between two nodes or after the last (a missing `,`, a trailing comma,
+/// a file cut off after a node) is inside none: its path is `nodes`, and
+/// it has no context, never one for a node that does not exist.
 fn index_refusal(found: &Found<'_>, error: &serde_json::Error) -> LoadError {
     use serde_json::error::Category;
     let position = reader_position(error.line(), error.column());

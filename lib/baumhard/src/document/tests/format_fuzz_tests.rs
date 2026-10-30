@@ -10,8 +10,8 @@ use crate::document::format::error::{LoadError, LoadErrorKind, NodeContext, Text
 use crate::document::format::{load, save};
 use crate::document::ids::{get, Document, IdentIndex};
 use crate::document::tests::format_fuzz::{
-    bounds_hold, check_generated, check_load_bytes, check_refusal, excerpt_length, node_lines, oracle,
-    path_resolves, reference, saved_text_is_clean, NodeSpec, Spelled,
+    begun_nodes, bounds_hold, check_generated, check_load_bytes, check_refusal, excerpt_length, node_lines,
+    oracle, path_resolves, reference, saved_text_is_clean, NodeSpec, Spelled,
 };
 use crate::document::tests::format_support::fixture;
 use crate::document::values::{FitMode, FontSize};
@@ -63,6 +63,78 @@ fn test_a_syntax_error_inside_a_node_carries_the_nodes_context() {
     let error = load(r#"{"format":1,"name" "m","nodes":[]}"#).unwrap_err();
     assert!(matches!(error.kind, LoadErrorKind::Syntax { .. }), "{error:?}");
     assert_eq!(error.node, None, "{error:?}");
+}
+
+/// The review of #293 found the second finding's fix one node too
+/// eager: an error between two nodes, or after the last one, was given
+/// the path and context of the node after it — `nodes[1]` of a list that
+/// holds one. A file cut off after a node is the likeliest corruption a
+/// map meets. Such an error is inside no node: its path is the list.
+#[test]
+fn test_an_error_between_nodes_or_after_the_last_is_inside_none() {
+    let head = r#"{"format":1,"name":"m","nodes":[{"id":1,"position":[0,0]}"#;
+    for (case, tail) in [
+        ("a missing comma", " x]}"),
+        ("a file cut off after a node", ""),
+        ("a trailing comma", ",]}"),
+        ("a file cut off after a comma", ","),
+    ] {
+        let text = format!("{head}{tail}");
+        let error = load(&text).unwrap_err();
+        assert!(
+            matches!(error.kind, LoadErrorKind::Syntax { .. }),
+            "{case}: {error:?}"
+        );
+        assert_eq!(
+            (error.path.as_str(), &error.node),
+            ("nodes", &None),
+            "{case}: {error:?}"
+        );
+        check_load_bytes(text.as_bytes()).unwrap_or_else(|why| panic!("{case}: {why}"));
+    }
+    // Control: a fault inside the second node's text is inside it, from
+    // its first byte on.
+    for tail in [r#",{"id":2,"position" 0}]}"#, ",x]}"] {
+        let error = load(&format!("{head}{tail}")).unwrap_err();
+        assert_eq!(error.path, "nodes[1]", "{tail}: {error:?}");
+        assert_eq!(error.node.map(|node| node.index), Some(1), "{tail}");
+    }
+}
+
+#[test]
+fn test_begun_nodes_counts_every_node_the_text_begins() {
+    assert_eq!(begun_nodes(r#"{"format":1,"nodes":[]}"#), Some(0));
+    assert_eq!(begun_nodes(r#"{"nodes":[{"id":1,"t":"]}"},{"id":2}]}"#), Some(2));
+    assert_eq!(
+        begun_nodes(r#"{"nodes":[{"id":1},{"id":2,"position" 0"#),
+        Some(2),
+        "a broken node is begun"
+    );
+    assert_eq!(
+        begun_nodes(r#"{"nodes":[{"id":1},"#),
+        Some(1),
+        "a comma begins nothing"
+    );
+    assert_eq!(
+        begun_nodes(r#"{"nodes":[{"id":1} x"#),
+        Some(1),
+        "a stray byte where a comma goes begins nothing"
+    );
+    assert_eq!(
+        begun_nodes(r#"{"nodes":[{"id":1},}"#),
+        Some(2),
+        "where an element goes, a byte that cannot begin a value still begins it"
+    );
+    assert_eq!(
+        begun_nodes(r#"{"name":"nodes","x":{"nodes":[1,2]}}"#),
+        None,
+        "only the top-level key counts"
+    );
+    assert_eq!(
+        begun_nodes(r#"{"nodes":[1,2,3]}"#),
+        Some(3),
+        "a key is compared as it decodes"
+    );
 }
 
 #[test]
@@ -283,6 +355,14 @@ fn test_the_refusal_property_finds_each_way_a_refusal_can_be_wrong() {
         let found = check_refusal(&error, bytes).expect_err(why);
         assert!(found.contains(why), "{why}: {found}");
     }
+    // A context for the node after the last, its path agreeing with it.
+    let count = node_lines(text).expect("the fixture's nodes read").len();
+    let past = refusal(&format!("nodes[{count}]"), context(count, None), None);
+    let found = check_refusal(&past, bytes).expect_err("a node past the last");
+    assert!(
+        found.contains(&format!("a text that begins {count} nodes")),
+        "{found}"
+    );
 }
 
 /// `doc` with `change` made to its first element `pick` accepts, as a

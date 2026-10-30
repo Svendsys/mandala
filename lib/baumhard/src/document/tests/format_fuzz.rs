@@ -171,6 +171,16 @@ pub fn check_refusal(error: &LoadError, bytes: &[u8]) -> Result<(), String> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Ok(());
     };
+    // A context names a node the text holds, however little of it there
+    // is before the error: never the one after the last.
+    if let (Some(node), Some(begun)) = (&error.node, begun_nodes(text)) {
+        if node.index >= begun {
+            return Err(format!(
+                "`{error}` names node {} of a text that begins {begun} nodes",
+                node.index
+            ));
+        }
+    }
     // A text serde_json cannot read as a value (a syntax error, a number
     // out of `f64`'s range, nesting past its limit) has no tree to
     // resolve a path in; the loader's own index is what reads it.
@@ -206,6 +216,115 @@ pub fn node_of_path(path: &str) -> Option<usize> {
     let rest = path.strip_prefix("nodes[")?;
     let end = rest.find(']')?;
     rest[..end].parse().ok()
+}
+
+/// How many elements of the top-level `nodes` list the text begins —
+/// each counted at the first byte where an element goes that is not the
+/// list's `]`, whether or not that byte or the rest is well formed, as
+/// the loader's reader counts them — read by a lexical scan that needs no more of the text
+/// to be JSON than the stretch it has read; `None` when no top-level
+/// `nodes` list begins. The second `nodes` key of a text that holds two
+/// is not read. What a syntax error's node context is held to, where no
+/// parser can read the text.
+///
+/// Cost: one pass over the text; a stack as deep as its nesting.
+pub fn begun_nodes(text: &str) -> Option<usize> {
+    /// One open object or array.
+    struct Open {
+        object: bool,
+        /// In an object: the next string is a key.
+        key_next: bool,
+        /// This is the top-level `nodes` list.
+        nodes: bool,
+    }
+    let bytes = text.as_bytes();
+    let mut stack: Vec<Open> = Vec::new();
+    let mut i = 0;
+    // The key just read at the top level, while its value is awaited.
+    let mut top_key: Option<String> = None;
+    let mut count: Option<usize> = None;
+    // Whether a value may begin here: after `[`, `,` in an array, or `:`.
+    let mut value_next = true;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if matches!(b, b' ' | b'\t' | b'\n' | b'\r') {
+            i += 1;
+            continue;
+        }
+        // Where an element goes, any byte but the list's close begins
+        // one, as the loader's reader reads a list: a malformed element
+        // is still that element.
+        if value_next && b != b']' && stack.last().is_some_and(|open| open.nodes) {
+            count = count.map(|n| n + 1);
+        }
+        match b {
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                i = (i + 1).min(bytes.len());
+                let in_key = stack.last().is_some_and(|open| open.object && open.key_next);
+                if in_key {
+                    if stack.len() == 1 {
+                        top_key = serde_json::from_str::<String>(&text[start..i]).ok();
+                    }
+                    if let Some(open) = stack.last_mut() {
+                        open.key_next = false;
+                    }
+                } else {
+                    value_next = false;
+                }
+            }
+            b'{' | b'[' => {
+                let opens_nodes = b == b'['
+                    && stack.len() == 1
+                    && value_next
+                    && count.is_none()
+                    && top_key.as_deref() == Some("nodes");
+                if opens_nodes {
+                    count = Some(0);
+                }
+                stack.push(Open {
+                    object: b == b'{',
+                    key_next: b == b'{',
+                    nodes: opens_nodes,
+                });
+                value_next = b == b'[';
+                i += 1;
+            }
+            b'}' | b']' => {
+                stack.pop();
+                value_next = false;
+                i += 1;
+            }
+            b':' => {
+                value_next = true;
+                i += 1;
+            }
+            b',' => {
+                match stack.last_mut() {
+                    Some(open) if open.object => open.key_next = true,
+                    _ => value_next = true,
+                }
+                if stack.len() == 1 {
+                    top_key = None;
+                }
+                i += 1;
+            }
+            _ => {
+                // A number, `true`, `false`, `null` or a stray byte, and
+                // the rest of its token.
+                value_next = false;
+                i += 1;
+                while i < bytes.len() && !b" \t\n\r,:[]{}\"".contains(&bytes[i]) {
+                    i += 1;
+                }
+            }
+        }
+    }
+    count
 }
 
 /// One step of a JSON path: a key or a position.
