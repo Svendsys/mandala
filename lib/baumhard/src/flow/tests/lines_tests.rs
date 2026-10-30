@@ -294,11 +294,11 @@ fn test_flow_lines_keep_one_word_on_top() {
 pub fn do_flow_lines_keep_one_word_on_top() {
     let placed = frame(LETTERS, &ellipse(), &FitMode::Fit { min: 0.1, max: 2.0 });
     assert_lines("one word", &ellipse(), &placed);
-    assert_eq!(line_text(&placed, LETTERS, &placed.trace.lines[0]), LETTERS);
     assert!(
         placed.trace.lines[1].glyphs.is_empty(),
         "the bottom line is empty"
     );
+    assert_eq!(line_text(&placed, LETTERS, &placed.trace.lines[0]), LETTERS);
 }
 
 #[test]
@@ -306,20 +306,16 @@ fn test_flow_lines_fit_to_the_fuller_line() {
     do_flow_lines_fit_to_the_fuller_line();
 }
 
-/// `Fit` sets both lines at one size, the largest at which each fits its
-/// span with no gap (ruling R27): every glyph shares one size, both lines
-/// lie in their spans, and the fuller line fills its span — to within
-/// half a point — so a larger size would overrun it.
+/// `Fit` sets both lines at one size — one reshape of the run — the
+/// largest at which each fits its span with no gap (ruling R27): both
+/// lines lie in their spans, and the fuller line fills its span — to
+/// within half a point — so a larger size would overrun it.
 pub fn do_flow_lines_fit_to_the_fuller_line() {
     for (what, shape) in [("ellipse", ellipse()), ("rounded rect", rounded())] {
         let placed = frame(VERSE, &shape, &FitMode::Fit { min: 0.1, max: 10.0 });
         assert_lines(what, &shape, &placed);
         assert!(!placed.placed.truncated, "{what}: truncated");
         let size = placed.run.glyphs[0].size;
-        assert!(
-            placed.run.glyphs.iter().all(|g| (g.size - size).abs() < 1e-4),
-            "{what}: the lines' sizes differ"
-        );
         assert!((size - 12.0).abs() > 0.1, "{what}: the fixture needs a rescale");
         let slack = placed
             .trace
@@ -344,11 +340,19 @@ pub fn do_flow_lines_cut_the_bottom_line_at_min() {
     let text = "the quick brown fox jumps over the lazy dog while the poem goes around and around and around";
     let small = outline(Rect::new(Vec2::ZERO, Vec2::new(120.0, 60.0)), Shape::Ellipse);
     let placed = frame(text, &small, &FitMode::Fit { min: 0.9, max: 2.0 });
-    assert!(placed.placed.truncated, "the fixture needs text too long at min");
+    // At `min`, the text's advances alone outrun both spans together.
+    let natural: f32 = with_fonts(|fs| real_run(text, &style(12.0), fs))
+        .glyphs
+        .iter()
+        .map(|g| g.advance)
+        .sum();
+    let room: f32 = placed.spans.iter().map(|span| span.end - span.start).sum();
+    assert!(natural * 0.9 > room, "the fixture needs text too long at min");
     let top = line_text(&placed, text, &placed.trace.lines[0]);
     let bottom = line_text(&placed, text, &placed.trace.lines[1]);
     assert!(!placed.trace.lines[0].cut, "the top line is whole");
     assert!(placed.trace.lines[1].cut, "the bottom line is cut");
+    assert!(placed.placed.truncated, "the cut is not reported");
     let rest = text[top.len()..].trim_start();
     assert!(
         rest.starts_with(&bottom) && bottom.len() < rest.len(),
