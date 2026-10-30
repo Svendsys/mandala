@@ -372,7 +372,7 @@ fn without_position(error: &serde_json::Error) -> String {
 /// array position or a step the reader could not name.
 fn key_at_end(path: &serde_path_to_error::Path) -> Option<Option<String>> {
     use serde_path_to_error::Segment;
-    path.iter().last().map(|segment| match segment {
+    path.iter().next_back().map(|segment| match segment {
         Segment::Map { key } => Some(key.clone()),
         _ => None,
     })
