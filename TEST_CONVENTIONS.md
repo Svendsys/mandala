@@ -711,9 +711,13 @@ What they hold, in short (each module's docs are the full list):
   `chain_ref.py`), to the exact path and kind of an injected fault, and
   to C.9.14 — the same refusal whatever the key order — for single-fault
   inputs, where it holds. Its injected faults include every bounded
-  field a node can hold (`BOUNDED_FIELDS`), at its bound, just past it,
-  just inside it and at any `f32`, refused at its path exactly when the
-  value read is outside the bound. The second key order, and the
+  field of a node, its sections, spans, frame, rings, connector, caps,
+  label, line links and portal ends, and of each style of the header's
+  `defaults` (`BOUNDED_FIELDS`), at its bound, just past it, just inside
+  it and at any `f32`, refused at its path exactly when the value read
+  is outside the bound. Only the header's counts (palettes, theme
+  variables and variants, verbs, edits, presentations) are left to
+  `load_raw`. The second key order, and the
   tampered-document check, run on the inputs a choice selects (one in
   four each), so that the fuzzer gets through more inputs; the suite's
   sweep requires each step to be both taken and skipped.

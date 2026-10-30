@@ -41,7 +41,8 @@
 //!   whatever the order of its keys (C.9.14, which holds for one fault
 //!   only: with two, the first in text order wins; checked on the inputs
 //!   a choice selects). Every field of `format/schema.md`'s bounds table
-//!   a node can hold ([`BOUNDED_FIELDS`](crate::document::tests::format_fuzz::BOUNDED_FIELDS))
+//!   a node or a style of the header's `defaults` can hold
+//!   ([`BOUNDED_FIELDS`](crate::document::tests::format_fuzz::BOUNDED_FIELDS))
 //!   is written at its bound, just past it, just inside it or at any
 //!   `f32`, and refused at its path exactly when the value read is
 //!   outside; positions anywhere on the canvas feed the saver's float
@@ -774,6 +775,8 @@ pub struct MapSpec {
     pub fault: Fault,
     /// The [`bounded`] field written into it, if one was, by its name.
     pub bounded: Option<&'static str>,
+    /// The header's `defaults`: each style and its JSON object.
+    pub defaults: Vec<(String, String)>,
 }
 
 /// What was injected into a generated map.
@@ -789,8 +792,8 @@ pub enum Fault {
     /// One fault the JSON reader or a row check finds inside node
     /// `node`, with the path and the kind it must be refused at.
     Content {
-        /// The node it is in.
-        node: usize,
+        /// The node it is in; `None` for a fault in the header.
+        node: Option<usize>,
         /// The path of the refusal.
         path: String,
         /// The kind's name (`LoadErrorKind`'s variant).
@@ -1008,6 +1011,7 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
             nodes
         }
     };
+    let mut defaults = Vec::new();
     let (fault, bounded) = match choices.below(4) {
         1 | 2 => {
             for _ in 0..1 + choices.below(2) {
@@ -1015,13 +1019,14 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
             }
             (Fault::Structure, None)
         }
-        3 => inject(choices, &mut nodes),
+        3 => inject(choices, &mut nodes, &mut defaults),
         _ => (Fault::None, None),
     };
     MapSpec {
         nodes,
         fault,
         bounded,
+        defaults,
     }
 }
 
@@ -1160,6 +1165,7 @@ fn corrupt(choices: &mut crate::util::tests::choices::Choices<'_>, nodes: &mut V
 fn inject(
     choices: &mut crate::util::tests::choices::Choices<'_>,
     nodes: &mut [NodeSpec],
+    defaults: &mut Vec<(String, String)>,
 ) -> (Fault, Option<&'static str>) {
     if nodes.is_empty() {
         return (Fault::None, None);
@@ -1167,7 +1173,7 @@ fn inject(
     let k = choices.index(nodes.len());
     let arm = choices.below(6);
     if arm == 5 {
-        let (fault, field) = bounded(choices, nodes, k);
+        let (fault, field) = bounded(choices, nodes, defaults, k);
         return (fault, Some(field.name));
     }
     let node = &mut nodes[k];
@@ -1178,7 +1184,7 @@ fn inject(
             node.content
                 .push(("position".to_string(), r#""left""#.to_string()));
             Fault::Content {
-                node: k,
+                node: Some(k),
                 path: at(".position"),
                 kind: "Invalid",
             }
@@ -1189,7 +1195,7 @@ fn inject(
             node.content
                 .push(("sections".to_string(), r#"[{"channel": 2}, {}]"#.to_string()));
             Fault::Content {
-                node: k,
+                node: Some(k),
                 path: at(".sections[1]"),
                 kind: "SiblingsOutOfOrder",
             }
@@ -1201,7 +1207,7 @@ fn inject(
                 r#"[{"spans": [{"text": "a"}, {"text": "b", "hue": 3}]}]"#.to_string(),
             ));
             Fault::Content {
-                node: k,
+                node: Some(k),
                 path: at(".sections[0].spans[1].hue"),
                 kind: "UnknownKey",
             }
@@ -1210,7 +1216,7 @@ fn inject(
             node.content.retain(|(key, _)| key != "opacity");
             node.content.push(("opacity".to_string(), "1.5".to_string()));
             Fault::Content {
-                node: k,
+                node: Some(k),
                 path: at(".opacity"),
                 kind: "Bound",
             }
@@ -1219,7 +1225,7 @@ fn inject(
             node.content
                 .push(("bogus".to_string(), "[1, {\"x\": null}]".to_string()));
             Fault::Content {
-                node: k,
+                node: Some(k),
                 path: at(".bogus"),
                 kind: "UnknownKey",
             }
@@ -1230,7 +1236,8 @@ fn inject(
 
 // ── Bounded fields ────────────────────────────────────────────────
 
-/// What a [`BoundedField`] needs of the node it is written into.
+/// What a [`BoundedField`] needs of the node it is written into, or
+/// that it is written into the header instead.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Needs {
     /// Nothing: a key of any node.
@@ -1240,6 +1247,9 @@ pub enum Needs {
     Parent,
     /// Another node: a key of a link the field adds, to another node.
     Other,
+    /// Nothing of a node: a key of one style of the header's
+    /// `defaults`, which every map can hold.
+    Defaults,
 }
 
 /// The number a [`BoundedField`] holds, and the bound that judges it.
@@ -1271,7 +1281,7 @@ pub enum Bounded {
         alone: fn(f32) -> bool,
         /// Whether it holds beside the window's other end.
         holds: fn(f32) -> bool,
-        /// The path of an inverted window, after `nodes[k]`.
+        /// The path of an inverted window, after the field's own prefix.
         window: &'static str,
     },
     /// A count of `item`s, written for `#` joined by commas: at most
@@ -1292,14 +1302,15 @@ pub struct BoundedField {
     pub name: &'static str,
     /// What it needs of its node.
     pub needs: Needs,
-    /// The node key it is written under; empty for a link the field
-    /// adds ([`Needs::Other`]).
+    /// The node key it is written under — or the style of `defaults`,
+    /// for [`Needs::Defaults`]; empty for a link the field adds
+    /// ([`Needs::Other`]).
     pub key: &'static str,
     /// The key's value — or, for a link, the link's keys after `to` —
     /// with `#` standing for the number.
     pub template: &'static str,
     /// The refusal's path after `nodes[k]` — or, for a link, after
-    /// `nodes[k].links[j]`.
+    /// `nodes[k].links[j]`; for a default, after `defaults`.
     pub path: &'static str,
     /// Its number and its bound.
     pub value: Bounded,
@@ -1372,13 +1383,28 @@ const ZOOM_LOW: [f32; 2] = [0.0, f32::MAX];
 const ZOOM_HIGH: [f32; 2] = [0.5, f32::MAX];
 const FIT_LOW: [f32; 2] = [0.0, 4.0];
 const FIT_HIGH: [f32; 2] = [0.5, f32::MAX];
+const PERCENT: Bounded = Bounded::Integer {
+    ends: [0, 100],
+    holds: percent,
+};
+const WEIGHT: Bounded = Bounded::Integer {
+    ends: [100, 900],
+    holds: weight,
+};
+const POINTS_COUNT: Bounded = Bounded::Count {
+    most: bounds::MAX_CONTROL_POINTS as u32,
+    item: "[0.0, 0.0]",
+};
 
 /// Every bounded field of a node, a section, a span, a frame and its
-/// rings, a connector and its label, a link and a portal end: each
-/// number of `format/schema.md`'s bounds table a node can hold (the
-/// ids, parents, channels and link targets are the structure's, which
-/// `corrupt` drives).
-pub static BOUNDED_FIELDS: [BoundedField; 31] = [
+/// rings, a connector, its caps and its label, a line link and a portal
+/// link's ends, and of each style of the header's `defaults`: each
+/// number of `format/schema.md`'s bounds table a map can hold below its
+/// header's counts (the ids, parents, channels and link targets are the
+/// structure's, which `corrupt` drives; the counts of palettes, theme
+/// variables and variants, verbs, edits and presentations are left to
+/// load_raw).
+pub static BOUNDED_FIELDS: [BoundedField; 81] = [
     BoundedField {
         name: "position x",
         needs: Needs::Nothing,
@@ -1396,11 +1422,19 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         value: float(COORD, canvas),
     },
     BoundedField {
-        name: "min_size",
+        name: "min_size x",
         needs: Needs::Nothing,
         key: "min_size",
         template: "[#, 1.0]",
         path: ".min_size[0]",
+        value: float(EXTENT, extent),
+    },
+    BoundedField {
+        name: "min_size y",
+        needs: Needs::Nothing,
+        key: "min_size",
+        template: "[1.0, #]",
+        path: ".min_size[1]",
         value: float(EXTENT, extent),
     },
     BoundedField {
@@ -1454,10 +1488,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         key: "shape",
         template: r#"{"rectangle": {"radius": #}}"#,
         path: ".shape.rectangle.radius",
-        value: Bounded::Integer {
-            ends: [0, 100],
-            holds: percent,
-        },
+        value: PERCENT,
     },
     BoundedField {
         name: "weight",
@@ -1465,13 +1496,18 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         key: "weight",
         template: "#",
         path: ".weight",
-        value: Bounded::Integer {
-            ends: [100, 900],
-            holds: weight,
-        },
+        value: WEIGHT,
     },
     BoundedField {
-        name: "section offset",
+        name: "section offset x",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"offset": [#, 0.0]}]"#,
+        path: ".sections[0].offset[0]",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "section offset y",
         needs: Needs::Nothing,
         key: "sections",
         template: r#"[{"offset": [0.0, #]}]"#,
@@ -1479,12 +1515,36 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         value: float(COORD, canvas),
     },
     BoundedField {
-        name: "section min_size",
+        name: "section min_size x",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"min_size": [#, 1.0]}]"#,
+        path: ".sections[0].min_size[0]",
+        value: float(EXTENT, extent),
+    },
+    BoundedField {
+        name: "section min_size y",
         needs: Needs::Nothing,
         key: "sections",
         template: r#"[{"min_size": [1.0, #]}]"#,
         path: ".sections[0].min_size[1]",
         value: float(EXTENT, extent),
+    },
+    BoundedField {
+        name: "section size",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"size": #}]"#,
+        path: ".sections[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "section weight",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"weight": #}]"#,
+        path: ".sections[0].weight",
+        value: WEIGHT,
     },
     BoundedField {
         name: "span size",
@@ -1493,6 +1553,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         template: r#"[{"spans": [{"text": "a", "size": #}]}]"#,
         path: ".sections[0].spans[0].size",
         value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "span weight",
+        needs: Needs::Nothing,
+        key: "sections",
+        template: r#"[{"spans": [{"text": "a", "weight": #}]}]"#,
+        path: ".sections[0].spans[0].weight",
+        value: WEIGHT,
     },
     BoundedField {
         name: "frame gap",
@@ -1519,6 +1587,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         value: float(FRACTION, fraction),
     },
     BoundedField {
+        name: "frame weight",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"weight": #}"#,
+        path: ".frame.weight",
+        value: WEIGHT,
+    },
+    BoundedField {
         name: "frame start at",
         needs: Needs::Nothing,
         key: "frame",
@@ -1543,6 +1619,22 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         value: float(FRACTION, fraction),
     },
     BoundedField {
+        name: "ring fit min",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"rings": [{"fit": {"fit": {"min": #, "max": 4.0}}}]}"#,
+        path: ".frame.rings[0].fit",
+        value: float(FIT_LOW, fit_low),
+    },
+    BoundedField {
+        name: "ring weight",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"rings": [{"weight": #}]}"#,
+        path: ".frame.rings[0].weight",
+        value: WEIGHT,
+    },
+    BoundedField {
         name: "connector spacing",
         needs: Needs::Parent,
         key: "connector",
@@ -1559,7 +1651,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         value: float(POINTS, points),
     },
     BoundedField {
-        name: "control point",
+        name: "connector control point x",
         needs: Needs::Parent,
         key: "connector",
         template: r#"{"control_points": [[#, 0.0]]}"#,
@@ -1567,15 +1659,60 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         value: float(COORD, canvas),
     },
     BoundedField {
-        name: "control_points",
+        name: "connector control_points",
         needs: Needs::Parent,
         key: "connector",
         template: r#"{"control_points": [#]}"#,
         path: ".connector.control_points",
-        value: Bounded::Count {
-            most: bounds::MAX_CONTROL_POINTS as u32,
-            item: "[0.0, 0.0]",
-        },
+        value: POINTS_COUNT,
+    },
+    BoundedField {
+        name: "connector zoom min",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"zoom": {"min": #}}"#,
+        path: ".connector.zoom.min",
+        value: float(ZOOM_LOW, zoom_low),
+    },
+    BoundedField {
+        name: "connector fit max",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"fit": {"fit": {"min": 0.5, "max": #}}}"#,
+        path: ".connector.fit",
+        value: float(FIT_HIGH, fit_high),
+    },
+    BoundedField {
+        name: "cap_start size",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_start": {"size": #}}"#,
+        path: ".connector.cap_start.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "cap_start weight",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_start": {"weight": #}}"#,
+        path: ".connector.cap_start.weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "cap_end size",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_end": {"size": #}}"#,
+        path: ".connector.cap_end.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "cap_end weight",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_end": {"weight": #}}"#,
+        path: ".connector.cap_end.weight",
+        value: WEIGHT,
     },
     BoundedField {
         name: "label t",
@@ -1594,20 +1731,20 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         value: float(COORD, canvas),
     },
     BoundedField {
-        name: "connector zoom",
+        name: "label size",
         needs: Needs::Parent,
         key: "connector",
-        template: r#"{"zoom": {"min": #}}"#,
-        path: ".connector.zoom.min",
-        value: float(ZOOM_LOW, zoom_low),
+        template: r#"{"label": {"size": #}}"#,
+        path: ".connector.label.size",
+        value: float(POINTS, points),
     },
     BoundedField {
-        name: "connector fit max",
+        name: "label weight",
         needs: Needs::Parent,
         key: "connector",
-        template: r#"{"fit": {"fit": {"min": 0.5, "max": #}}}"#,
-        path: ".connector.fit",
-        value: float(FIT_HIGH, fit_high),
+        template: r#"{"label": {"weight": #}}"#,
+        path: ".connector.label.weight",
+        value: WEIGHT,
     },
     BoundedField {
         name: "link spacing",
@@ -1616,6 +1753,46 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         template: r#", "spacing": #"#,
         path: ".spacing",
         value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "link size",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "size": #"#,
+        path: ".size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "link fit max",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "fit": {"fit": {"min": 0.5, "max": #}}"#,
+        path: ".fit",
+        value: float(FIT_HIGH, fit_high),
+    },
+    BoundedField {
+        name: "link zoom min",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "zoom": {"min": #}"#,
+        path: ".zoom.min",
+        value: float(ZOOM_LOW, zoom_low),
+    },
+    BoundedField {
+        name: "link control point y",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "control_points": [[0.0, #]]"#,
+        path: ".control_points[0][1]",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "link control_points",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "control_points": [#]"#,
+        path: ".control_points",
+        value: POINTS_COUNT,
     },
     BoundedField {
         name: "border_t",
@@ -1640,6 +1817,246 @@ pub static BOUNDED_FIELDS: [BoundedField; 31] = [
         template: r#", "kind": "portal", "ends": [{"size": #}, {}]"#,
         path: ".ends[0].size",
         value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults node fill_fade",
+        needs: Needs::Defaults,
+        key: "node",
+        template: r#"{"fill_fade": #}"#,
+        path: ".node.fill_fade",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "defaults node size",
+        needs: Needs::Defaults,
+        key: "node",
+        template: r#"{"size": #}"#,
+        path: ".node.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults node corner radius",
+        needs: Needs::Defaults,
+        key: "node",
+        template: r#"{"shape": {"rectangle": {"radius": #}}}"#,
+        path: ".node.shape.rectangle.radius",
+        value: PERCENT,
+    },
+    BoundedField {
+        name: "defaults node weight",
+        needs: Needs::Defaults,
+        key: "node",
+        template: r#"{"weight": #}"#,
+        path: ".node.weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "defaults section size",
+        needs: Needs::Defaults,
+        key: "section",
+        template: r#"{"size": #}"#,
+        path: ".section.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults section weight",
+        needs: Needs::Defaults,
+        key: "section",
+        template: r#"{"weight": #}"#,
+        path: ".section.weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "defaults frame start at",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"start": {"edge": "left", "at": #}}"#,
+        path: ".frame.start.at",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "defaults frame fit min",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"fit": {"fit": {"min": #, "max": 4.0}}}"#,
+        path: ".frame.fit",
+        value: float(FIT_LOW, fit_low),
+    },
+    BoundedField {
+        name: "defaults frame gap",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"gap": #}"#,
+        path: ".frame.gap",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "defaults frame inset",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"inset": #}"#,
+        path: ".frame.inset",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "defaults frame size",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"size": #}"#,
+        path: ".frame.size",
+        value: float(FRACTION, fraction),
+    },
+    BoundedField {
+        name: "defaults frame weight",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"weight": #}"#,
+        path: ".frame.weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "defaults ring fit max",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r#"{"fit": {"fit": {"min": 0.5, "max": #}}}"#,
+        path: ".ring.fit",
+        value: float(FIT_HIGH, fit_high),
+    },
+    BoundedField {
+        name: "defaults ring size",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r#"{"size": #}"#,
+        path: ".ring.size",
+        value: float(FRACTION, fraction),
+    },
+    BoundedField {
+        name: "defaults ring weight",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r#"{"weight": #}"#,
+        path: ".ring.weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "defaults connector fit min",
+        needs: Needs::Defaults,
+        key: "connector",
+        template: r#"{"fit": {"fit": {"min": #, "max": 4.0}}}"#,
+        path: ".connector.fit",
+        value: float(FIT_LOW, fit_low),
+    },
+    BoundedField {
+        name: "defaults connector spacing",
+        needs: Needs::Defaults,
+        key: "connector",
+        template: r#"{"spacing": #}"#,
+        path: ".connector.spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "defaults connector size",
+        needs: Needs::Defaults,
+        key: "connector",
+        template: r#"{"size": #}"#,
+        path: ".connector.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults link fit max",
+        needs: Needs::Defaults,
+        key: "link",
+        template: r#"{"fit": {"fit": {"min": 0.5, "max": #}}}"#,
+        path: ".link.fit",
+        value: float(FIT_HIGH, fit_high),
+    },
+    BoundedField {
+        name: "defaults link spacing",
+        needs: Needs::Defaults,
+        key: "link",
+        template: r#"{"spacing": #}"#,
+        path: ".link.spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "defaults link size",
+        needs: Needs::Defaults,
+        key: "link",
+        template: r#"{"size": #}"#,
+        path: ".link.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults label t",
+        needs: Needs::Defaults,
+        key: "label",
+        template: r#"{"t": #}"#,
+        path: ".label.t",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "defaults label offset",
+        needs: Needs::Defaults,
+        key: "label",
+        template: r#"{"offset": #}"#,
+        path: ".label.offset",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "defaults label size",
+        needs: Needs::Defaults,
+        key: "label",
+        template: r#"{"size": #}"#,
+        path: ".label.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults label weight",
+        needs: Needs::Defaults,
+        key: "label",
+        template: r#"{"weight": #}"#,
+        path: ".label.weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "defaults portal_end border_t",
+        needs: Needs::Defaults,
+        key: "portal_end",
+        template: r#"{"border_t": #}"#,
+        path: ".portal_end.border_t",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "defaults portal_end offset",
+        needs: Needs::Defaults,
+        key: "portal_end",
+        template: r#"{"offset": #}"#,
+        path: ".portal_end.offset",
+        value: float(COORD, canvas),
+    },
+    BoundedField {
+        name: "defaults portal_end size",
+        needs: Needs::Defaults,
+        key: "portal_end",
+        template: r#"{"size": #}"#,
+        path: ".portal_end.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults span size",
+        needs: Needs::Defaults,
+        key: "span",
+        template: r#"{"size": #}"#,
+        path: ".span.size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "defaults span weight",
+        needs: Needs::Defaults,
+        key: "span",
+        template: r#"{"weight": #}"#,
+        path: ".span.weight",
+        value: WEIGHT,
     },
 ];
 
@@ -1699,14 +2116,16 @@ fn integer_near(choices: &mut crate::util::tests::choices::Choices<'_>, ends: [u
     }
 }
 
-/// One field of [`BOUNDED_FIELDS`] that node `k` can hold, written into
-/// it at a value near its bound or anywhere, and the field:
+/// One field of [`BOUNDED_FIELDS`] that node `k` can hold — or a
+/// default, written into `defaults` as a style and its JSON object —
+/// written at a value near its bound or anywhere, and the field:
 /// [`Fault::Content`] at the field's path when the value read is outside
 /// the bound, and [`Fault::None`] when it is inside (the map then loads,
 /// and its saved text must round-trip the value).
 pub fn bounded(
     choices: &mut crate::util::tests::choices::Choices<'_>,
     nodes: &mut [NodeSpec],
+    defaults: &mut Vec<(String, String)>,
     k: usize,
 ) -> (Fault, &'static BoundedField) {
     let own = nodes[k].id;
@@ -1718,6 +2137,7 @@ pub fn bounded(
             Needs::Nothing => true,
             Needs::Parent => has_parent,
             Needs::Other => !others.is_empty(),
+            Needs::Defaults => true,
         })
         .collect();
     let field = *choices.pick(&fields);
@@ -1752,21 +2172,32 @@ pub fn bounded(
         }
     };
     let node = &mut nodes[k];
-    let path = if field.needs == Needs::Other {
-        let to = *choices.pick(&others);
-        node.links.push(to);
-        node.link_tails.push(filled);
-        format!("nodes[{k}].links[{}]{path}", node.links.len() - 1)
-    } else {
-        node.content.retain(|(key, _)| key != field.key);
-        node.content.push((field.key.to_string(), filled));
-        format!("nodes[{k}]{path}")
+    let (path, at) = match field.needs {
+        Needs::Other => {
+            let to = *choices.pick(&others);
+            node.links.push(to);
+            node.link_tails.push(filled);
+            (
+                format!("nodes[{k}].links[{}]{path}", node.links.len() - 1),
+                Some(k),
+            )
+        }
+        Needs::Defaults => {
+            defaults.retain(|(key, _)| key != field.key);
+            defaults.push((field.key.to_string(), filled));
+            (format!("defaults{path}"), None)
+        }
+        Needs::Nothing | Needs::Parent => {
+            node.content.retain(|(key, _)| key != field.key);
+            node.content.push((field.key.to_string(), filled));
+            (format!("nodes[{k}]{path}"), Some(k))
+        }
     };
     let fault = if holds {
         Fault::None
     } else {
         Fault::Content {
-            node: k,
+            node: at,
             path,
             kind: "Bound",
         }
@@ -1817,11 +2248,16 @@ pub fn render(spec: &MapSpec, order: u32) -> String {
             format!("{{{}}}", keys.join(", "))
         })
         .collect();
-    let mut top = vec![
-        r#""format": 1"#.to_string(),
-        r#""name": "generated""#.to_string(),
-        format!("\"nodes\": [\n{}\n]", nodes.join(",\n")),
-    ];
+    let mut top = vec![r#""format": 1"#.to_string(), r#""name": "generated""#.to_string()];
+    if !spec.defaults.is_empty() {
+        let styles: Vec<String> = spec
+            .defaults
+            .iter()
+            .map(|(style, value)| format!(r#""{style}": {value}"#))
+            .collect();
+        top.push(format!(r#""defaults": {{{}}}"#, styles.join(", ")));
+    }
+    top.push(format!("\"nodes\": [\n{}\n]", nodes.join(",\n")));
     permute(&mut top, order, usize::MAX);
     format!("{{{}}}\n", top.join(",\n"))
 }

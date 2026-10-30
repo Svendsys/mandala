@@ -598,6 +598,7 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
                 nodes,
                 fault: Fault::Structure,
                 bounded: None,
+                defaults: Vec::new(),
             },
             0,
         );
@@ -616,18 +617,22 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
 /// child of it, the field in the child, which can hold every field.
 fn bounded_map(choices: &mut Choices<'_>) -> (MapSpec, &'static BoundedField) {
     let mut nodes = vec![spec(1, None, 0), spec(2, Some(1), 0)];
-    let (fault, field) = bounded(choices, &mut nodes, 1);
+    let mut defaults = Vec::new();
+    let (fault, field) = bounded(choices, &mut nodes, &mut defaults, 1);
     (
         MapSpec {
             nodes,
             fault,
             bounded: Some(field.name),
+            defaults,
         },
         field,
     )
 }
 
-/// Every bounded field of `format/schema.md`'s table, at its bound,
+/// Every bounded field of `format/schema.md`'s table below the header's
+/// counts — of a node and what it holds, and of each style of the
+/// header's `defaults` — at its bound,
 /// just past it, just inside it and anywhere: the loader refuses a value
 /// past the bound at the field's path as `Bound`, and reads one inside
 /// it into a document that holds every property — the saver's float
