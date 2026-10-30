@@ -826,6 +826,7 @@ pub fn error_name(error: &TreeError) -> &'static str {
         TreeError::Unsplittable(_) => "Unsplittable",
         TreeError::Unmergeable(_) => "Unmergeable",
         TreeError::TargetRemovedEarlier(_) => "TargetRemovedEarlier",
+        TreeError::OutOfOrder => "OutOfOrder",
     }
 }
 

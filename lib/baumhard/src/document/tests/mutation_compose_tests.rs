@@ -19,7 +19,6 @@ use crate::document::mutation::compose::{
     reparent, set_link_kind, split_section, style_range, tops_counting,
 };
 use crate::document::mutation::error::MutationError;
-use crate::document::mutation::membership::Membership;
 use crate::document::mutation::ops::TextOp;
 use crate::document::mutation::step::DocStep;
 use crate::document::mutation::validate::validate_applied;
@@ -27,6 +26,7 @@ use crate::document::shape::validate_shape;
 use crate::document::tests::test_support::{example, DocumentBuilder, Example};
 use crate::document::values::{LinkKind, LinkTarget};
 use crate::engine::journal::{Journal, JournalBuilder};
+use crate::engine::membership::Membership;
 use crate::engine::tree::{Tree, TreeError};
 use glam::Vec2;
 use indextree::NodeId;

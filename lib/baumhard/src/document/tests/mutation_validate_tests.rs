@@ -1116,7 +1116,6 @@ pub fn do_document_validate_walks_a_deep_mutator() {
 /// A chain of `DEEP` nodes, each with its connector, as an insert's
 /// subtree: built from the bottom up, so building it recurses on
 /// nothing.
-#[cfg(test)]
 fn deep_subtree() -> Subtree<DocElement> {
     let mut chain = Subtree {
         root: DocElement::Node(node_data(0)),
@@ -1131,28 +1130,17 @@ fn deep_subtree() -> Subtree<DocElement> {
     chain
 }
 
-/// Drop `value` on a thread with room for a recursive drop.
-/// `Subtree`'s derived `Drop` recurses on its depth, which is the
-/// engine's to make iterative (V1-A5, #282); this test is about the
-/// validator's walk, so it keeps the drop off the thread under test.
-#[cfg(test)]
-fn drop_deep<T: Send + 'static>(value: T) {
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(move || drop(value))
-        .unwrap()
-        .join()
-        .unwrap();
+#[test]
+fn test_document_validate_walks_a_deep_insert() {
+    do_document_validate_walks_a_deep_insert();
 }
 
 /// An inserted subtree `DEEP` levels deep is validated on a default
 /// test thread: `walk_subtree` iterates (§20 rule 11, R14.4). A refusal
 /// at the bottom — the fallback font on the deepest node — is found and
-/// named by its full path in the subtree. A plain test: what it builds
-/// can only be dropped off the thread under test (`drop_deep`), which a
-/// bench body could not do.
-#[test]
-fn test_document_validate_walks_a_deep_insert() {
+/// named by its full path in the subtree. What it builds is dropped
+/// here too: `Subtree`'s drop iterates (V1-A5, #282).
+pub fn do_document_validate_walks_a_deep_insert() {
     let (doc, _) = document();
     let insert = |subtree| {
         command(
@@ -1165,7 +1153,7 @@ fn test_document_validate_walks_a_deep_insert() {
     };
     let fine = insert(deep_subtree());
     assert_eq!(validate(&fine, &doc), Ok(()));
-    drop_deep(fine);
+    drop(fine);
 
     let mut bad = deep_subtree();
     let mut bottom = &mut bad;
@@ -1184,7 +1172,6 @@ fn test_document_validate_walks_a_deep_insert() {
         }
         other => panic!("expected the bottom's font refused, got {other:?}"),
     }
-    drop_deep(bad);
 }
 
 #[test]

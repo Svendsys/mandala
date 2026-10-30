@@ -36,9 +36,6 @@ pub mod error;
 /// [`DocInherited`](inherited::DocInherited) and
 /// [`inherited_seed`](inherited::inherited_seed).
 pub mod inherited;
-/// Whether many elements are in the tree, at no per-element depth
-/// cost.
-pub(crate) mod membership;
 /// [`DocMutation`](ops::DocMutation) and its ops.
 pub mod ops;
 /// [`DocStep`](step::DocStep) and [`DocWalk`](step::DocWalk).

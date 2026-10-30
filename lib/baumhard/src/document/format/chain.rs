@@ -254,7 +254,7 @@ impl Builder {
             if target == link.owner {
                 return Err(fail(self, LoadErrorKind::SelfLink));
             }
-            let updated = self.tree.update_known(link.link, |element| {
+            let updated = self.tree.update(link.link, |element| {
                 if let crate::document::element::DocElement::Link(data) = element {
                     data.to = target;
                 }

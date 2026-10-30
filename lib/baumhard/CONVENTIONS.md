@@ -134,6 +134,58 @@ it with respect.
   `Journal::discard` — never free a node a journal may put back, and
   never write a second structural path (hand-written topology code)
   beside the commands.
+- **Depth costs nothing extra** (design D30, §20 rule 11, V1-A5 #282).
+  A tree's depth has no bound — a map is as deep as memory allows — so
+  no code walks it by recursing once per level, and no code spends work
+  per element that grows with the depth.
+  - **Walk with a heap stack.** The walker's descent is a stack of
+    `Frame`s, the inherited states beside it a second stack;
+    `Subtree`'s `Drop`, `Clone`, `PartialEq` and `Debug` are written by
+    hand for the same reason, since derived ones recurse. A new walk
+    proves itself on a 100,000-deep chain, natively and in the wasm32
+    node probe (`engine::tests::deep_tests`,
+    `document::tests::deep_tests`).
+  - **Carry state down; never climb per element.** Inherited state is
+    handed from parent to child as the walk descends. Whether an element
+    is in the tree is O(1) ([`Tree::contains`](src/engine/tree.rs)
+    reads the tree's set of detached nodes, which the engine writes
+    where a subtree leaves or re-enters the tree); a question that needs
+    the climb itself — which selected element is nested in another —
+    goes through a memo that climbs each ancestor once over all of them
+    (`engine::membership::Membership`). The engine calls indextree's
+    climb, `ancestors`, in one function, `tree::climb`, and inserts an
+    existing node in one, `siblings::checked_attach`; test builds count
+    both. Its hand-written climbs are the memoized ones
+    (`Membership::contains`, a journal's `Presence::top` and `resolve`)
+    and the walker's `state_above`, which climbs once per anchored
+    walk. `test_the_engine_climbs_only_where_it_may` refuses, anywhere
+    else in the engine's shipped code, a call of `ancestors`, a checked
+    insert, and a parent read in the spellings of a climb it
+    recognizes — inside a `loop` or a `while`; inside a closure handed
+    to an iterator that feeds it its own last result (`successors`,
+    `from_fn`, `repeat_with`, `scan`, the folds, `reduce`); or inside a
+    `for` body or any closure that reassigns a cursor the read names.
+    It is a heuristic over
+    spellings, not a proof: a climb by recursion is caught by the deep
+    tests' stack instead, and one hidden behind a helper called in a
+    loop by neither.
+  - **Insert new nodes by value.** indextree's `*_value` inserts climb
+    nothing; inserting an *existing* node climbs to the root to check
+    for a cycle. A node the engine creates goes in by value
+    (`siblings::insert_value_at`, `append_value_sorted`).
+  - **Same-row moves through one function.** A node moved within the
+    row it is in — a settle, an `update`, a journal restoring its place
+    — goes back through `siblings::reattach_in_row` and nothing else:
+    under its own parent it cannot close a cycle, so ruling R16 (#282)
+    holds that insert to O(1). indextree 4.9 has no insert of an
+    existing node without the climb; until the engine's own arena tree
+    replaces it (V1-A6, #290), that call
+    site is the one O(depth) left on the path, and
+    `test_same_row_rearrangement_is_linear_in_depth` (ignored until
+    then) is the test that goes green with the swap. A node moved to
+    **another** parent (`StructOp::Move`, a journal restoring a
+    re-parent) keeps its O(depth) cycle check: the price of refusing a
+    cycle, paid once per node moved, never per node visited.
 - **Iterate with `NodeId::children(tree.arena())` and `descendants(tree.arena())`.**
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if
@@ -404,34 +456,43 @@ rationale.
   **The list below is not a list of permissions.** It is the shapes
   a body *cannot* take the split in, enumerated so that a body which
   could is never left off the surface by argument. Four exist, and
-  they are what a census of the tree finds: 42 plain non-wrapper
-  `#[test]` fns live in the `pub mod tests;` trees, and 31 of them
-  are one of these.
+  every plain non-wrapper `#[test]` fn in the `pub mod tests;` trees
+  is one of them or is named as unconverted. **The census is code,
+  not a count in this file:** `PLAIN_TESTS` in
+  `lib/baumhard/src/util/bench_surface.rs` lists every such test with
+  its shape, and `test_every_plain_test_is_in_the_census` holds it to
+  the trees in both directions. A new plain test is classified in the
+  commit that writes it, and a converted or deleted one leaves the
+  census with it. This paragraph once carried the counts ("42 plain
+  … 31 of them"); they had drifted to 61 by the time anyone recounted,
+  which is why the numbers now live where a test reads them.
 
   1. **The body cannot compile into the library.** `syn` is a
      dev-dependency, so a `pub` body in a `pub mod tests;` tree
      cannot call it — the tree is part of the library. The whole
      `shape_tests::log_routing` module is `cfg(test)`-gated for
-     that reason and its 18 tests are plain by construction; the
-     gate does not even see them. Eighteen.
+     that reason and its tests are plain by construction; the gate
+     does not even see them. The same holds for a body that reads a
+     `cfg(test)` step counter, as `engine::tests::deep_tests`'
+     counted-climb tests do.
   2. **The body drives a panic.** Criterion iterates what it is
      given, so a `#[should_panic]` test keeps its body inline —
-     nine of these, among them `fonts_tests`'s re-entrancy
-     regression. `metric_cache_tests`'s twin is the tenth: it
-     catches its own panic under `catch_unwind` instead of
-     declaring it, but like its sibling it holds the `FONT_SYSTEM`
-     write guard across a deliberate re-entrant acquire, so an
-     iteration measures the refusal and never reaches the code.
-     Ten.
+     `fonts_tests`'s re-entrancy regression and
+     `region_params_tests`' prime guards among them.
+     `metric_cache_tests`'s twin catches its own panic under
+     `catch_unwind` instead of declaring it, but like its sibling it
+     holds the `FONT_SYSTEM` write guard across a deliberate
+     re-entrant acquire, so an iteration measures the refusal and
+     never reaches the code.
   3. **The enumeration is the runtime, not the primitive.**
      `test_color_to_float_round_trips_through_new_f32` sweeps 16.7
      million byte quads; the number would be the loop.
      `test_clone_deep_chain_does_not_exhaust_the_stack` builds a
      50,000-node chain inside a thread spawned with a 256 KiB
-     stack, where the stack size is the assertion. Two.
+     stack, where the stack size is the assertion.
   4. **The subject is the repository, not a value a function
      returned.** `test_above_test_modules_knows_every_shape_in_this_tree`
-     reads several hundred files per call. One.
+     reads several hundred files per call.
 
   **Reading a file is not by itself a reason.**
   `do_production_code_returns_code_without_prose` and
@@ -440,20 +501,20 @@ rationale.
   not the disk. Their entries say so, so the number is read as I/O
   rather than mistaken for a classifier's.
 
-  **The other 11 are not opt-outs; they are unconverted.** Nothing
-  about them forbids the split — they are ordinary unit tests over
-  pure functions, written beside the convention rather than under
-  it: the seven `test_factor_*` in `region_params_tests`, the three
-  camera-invariance tests in `camera_tests`, and
-  `test_clone_preserves_depth_first_pre_order` in
-  `arena_utils_tests`. Converting them is a §B8 two-file change
-  each, and a judgment about what earns a criterion row rather than
-  unfinished #44 work — #44's subject was the 173 `do_*()` bodies
-  with no entry, and that set is closed. Naming them here is what keeps
-  the four classes above from quietly growing a fifth that means
-  "the author did not think it was worth it". A test that reaches
-  for the opt-out and is none of the four is in this bucket, and
-  should say so rather than write down a new reason.
+  **The unconverted are not opt-outs.** Nothing about them forbids
+  the split — they are ordinary unit tests over pure functions,
+  written beside the convention rather than under it: the
+  `test_factor_*` in `region_params_tests`, the camera-invariance
+  tests in `camera_tests`, `test_clone_preserves_depth_first_pre_order`
+  in `arena_utils_tests` and the rest the census marks `Unconverted`.
+  Converting one is a §B8 two-file change, and a judgment about what
+  earns a criterion row rather than unfinished #44 work — #44's
+  subject was the 173 `do_*()` bodies with no entry, and that set is
+  closed. Naming them is what keeps the four classes above from
+  quietly growing a fifth that means "the author did not think it was
+  worth it". A test that reaches for the opt-out and is none of the
+  four is in this bucket, and should say so rather than write down a
+  new reason.
 - **Renaming or deleting a `do_*()` is a two-file change.**
   `benches/test_bench.rs` imports them by path. The bench file is
   not compiled under `cfg(test)`, so `cargo test` will not tell you it

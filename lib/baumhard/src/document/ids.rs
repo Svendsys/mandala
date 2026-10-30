@@ -319,7 +319,8 @@ impl Document {
 
     /// How many [`Node`](DocKind::Node) elements are above `id`: `0`
     /// for a root node and for everything outside the nodes, `1` for a
-    /// root node's children, and so on. O(depth).
+    /// root node's children, and so on. O(depth): a one-off question —
+    /// no walk asks it once per element (§20 rule 11).
     pub fn depth(&self, id: NodeId) -> usize {
         depth(&self.tree, id)
     }
@@ -442,7 +443,7 @@ pub fn depth(tree: &Tree<DocElement>, id: NodeId) -> usize {
     if tree.get(id).is_none() {
         return 0;
     }
-    id.ancestors(tree.arena())
+    crate::engine::tree::climb(tree.arena(), id)
         .skip(1)
         .filter(|&a| tree.arena()[a].get().kind() == DocKind::Node)
         .count()
@@ -451,8 +452,7 @@ pub fn depth(tree: &Tree<DocElement>, id: NodeId) -> usize {
 /// [`Document::owning_node`] over a tree. O(depth within the node).
 pub fn owning_node(tree: &Tree<DocElement>, id: NodeId) -> Option<NodeId> {
     tree.get(id)?;
-    id.ancestors(tree.arena())
-        .find(|&a| tree.arena()[a].get().kind() == DocKind::Node)
+    crate::engine::tree::climb(tree.arena(), id).find(|&a| tree.arena()[a].get().kind() == DocKind::Node)
 }
 
 /// The theme element of `tree` and its data: the map's first child.

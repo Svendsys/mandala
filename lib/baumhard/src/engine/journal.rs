@@ -172,6 +172,12 @@ struct Recorded<E> {
 /// check can detect that afterwards: [`Journal::revert`] refuses stale
 /// ids only.
 ///
+/// **Builders run strictly one after another** — each closed before the
+/// next one's first call — or the undo history ends at the interleave:
+/// a builder that finds the tree moved since its own last call cuts its
+/// journal from every earlier one, which then refuses to restore
+/// ([`TreeError::OutOfOrder`]).
+///
 /// A builder is all or nothing: when a journaled call on it fails, the
 /// call reverts everything the builder recorded — the tree returns to
 /// where it stood when the builder was created, and every node the
@@ -195,6 +201,11 @@ pub struct JournalBuilder<E: TreeElement> {
     /// changed, each with its previous sibling as of the builder's
     /// creation. Consulted, and cleared, when the element is recorded.
     displaced: FxHashMap<NodeId, Option<NodeId>>,
+    /// The tree's [version](Tree::version) when this builder's first
+    /// call began, and the fresh one its calls hold the tree at; `None`
+    /// before any call. What the closed journal checks its restores
+    /// against.
+    versions: Option<(u64, u64)>,
 }
 
 /// Not derived: `derive(Default)` would demand `E: Default`.
@@ -212,6 +223,7 @@ impl<E: TreeElement> JournalBuilder<E> {
             recorded: Vec::new(),
             index: FxHashMap::default(),
             displaced: FxHashMap::default(),
+            versions: None,
         }
     }
 
@@ -225,6 +237,48 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// engine's tests. No allocation.
     pub(in crate::engine) fn recorded_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.recorded.iter().map(|recorded| recorded.node)
+    }
+
+    /// Note that a journaled call on this builder is about to change
+    /// `tree`. Every journaled entry point calls this first. O(1).
+    ///
+    /// - On the builder's first call: keep the tree's version as the one
+    ///   its journal starts from, and move the tree to a fresh working
+    ///   version.
+    /// - On a later call, with the tree still at that working version:
+    ///   nothing changed it between the builder's calls, so nothing
+    ///   moves.
+    /// - On a later call with the tree anywhere else: something changed
+    ///   it behind the builder — an unjournaled structural edit, or
+    ///   another builder's call. Putting the tree back at the working
+    ///   version would erase that change from the history, and an
+    ///   earlier journal the change was to have ended would match again.
+    ///   So the builder's journal is cut from every earlier one: its
+    ///   start becomes a fresh version no tree holds, and the tree moves
+    ///   to a fresh working version of its own, which a builder
+    ///   interleaved with this one then finds moved in turn. Its journal
+    ///   still restores itself; nothing recorded before it does again.
+    pub(in crate::engine) fn begin(&mut self, tree: &mut Tree<E>) {
+        fn fresh<E: TreeElement>(tree: &mut Tree<E>) -> u64 {
+            let version = tree.next_version;
+            tree.next_version += 1;
+            version
+        }
+        let working = match self.versions {
+            None => {
+                let working = fresh(tree);
+                self.versions = Some((tree.version.get(), working));
+                working
+            }
+            Some((_, working)) if tree.version.get() == working => working,
+            Some(_) => {
+                let cut = fresh(tree);
+                let working = fresh(tree);
+                self.versions = Some((cut, working));
+                working
+            }
+        };
+        tree.version.set(working);
     }
 
     /// Record `node` before its first apply within this builder: a
@@ -257,18 +311,28 @@ impl<E: TreeElement> JournalBuilder<E> {
         });
     }
 
-    /// Record `node`, which a structural command has just created and
-    /// is about to attach: as it was created, with no start position —
-    /// it was not in the tree when the builder was created — and as
-    /// moved, since it is about to enter the tree. The nodes below it
-    /// are not recorded: they stand where it was created with them.
+    /// Record `node`, which a structural command has just created — and
+    /// may already have put in place, since a new node goes in through
+    /// an insert that climbs nothing: as it was created, with no start
+    /// position — it was not in the tree when the builder was created —
+    /// and as moved, since it enters the tree. The nodes below it are
+    /// not recorded: they stand where it was created with them.
     ///
     /// Cost: one clone of the element and one `Vec` / hash-map slot.
     pub(in crate::engine) fn record_created(&mut self, arena: &Arena<E>, node: NodeId) {
-        self.record(arena, node);
-        if let Some(&i) = self.index.get(&node) {
-            self.recorded[i].moved = true;
-        }
+        let MapEntry::Vacant(slot) = self.index.entry(node) else {
+            return;
+        };
+        let Some(current) = arena.get(node) else {
+            return;
+        };
+        slot.insert(self.recorded.len());
+        self.recorded.push(Recorded {
+            node,
+            before: current.get().clone(),
+            at: None,
+            moved: true,
+        });
     }
 
     /// Note that the engine is about to detach `node` — to move it
@@ -326,14 +390,29 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// did not move. An entry whose node is no longer in `tree`'s arena
     /// cannot be read; it is dropped with an error logged.
     ///
+    /// A journal that closes [empty](Journal::is_empty) has a single
+    /// arrangement. When the tree is still where the builder's last call
+    /// left it, closing puts `tree`'s version stamp back where the
+    /// builder's first call found it — the one change `close` makes,
+    /// through a `Cell` — and the journal holds that stamp on both
+    /// sides: discarded, it leaves nothing a restore of an earlier
+    /// journal would refuse as [out of order](TreeError::OutOfOrder).
+    /// When something changed the tree since (an unjournaled structural
+    /// edit, another builder's call), the stamp stays where that change
+    /// put it, and the journal holds that one: winding it back would
+    /// erase the change from the history.
+    ///
     /// Cost: one clone of each recorded element and an O(entries) scan;
     /// only when an element moved, O(entries) flags and hash maps over
     /// the moved elements alone; only when a node entered, left or
     /// changed parent, the [touches](Journal::touched) of every node of
-    /// each subtree that entered or left, at O(depth) each at worst.
+    /// each subtree that entered or left, with each node above an entry
+    /// climbed through once per side — never once per entry.
     #[must_use = "a journal owns detached subtrees: discard it, do not drop it"]
     pub fn close(self, tree: &Tree<E>) -> Journal<E> {
         let arena = &tree.arena;
+        let current = tree.version.get();
+        let (before_version, after_version) = self.versions.unwrap_or((current, current));
         let mut read: Vec<(Recorded<E>, E, Option<At>)> = Vec::with_capacity(self.recorded.len());
         for recorded in self.recorded {
             let Some(current) = arena.get(recorded.node) else {
@@ -398,6 +477,23 @@ impl<E: TreeElement> JournalBuilder<E> {
             .collect();
         let to_before = arrangement_order(&entries, Positions::before);
         let to_after = arrangement_order(&entries, Positions::after);
+        // An empty journal has one arrangement: the tree goes back to the
+        // stamp it started from, which both sides then hold — unless
+        // something moved the tree since the builder's last call, whose
+        // stamp then stays, on the tree and on both sides.
+        let empty = match &touched {
+            None => entries.is_empty(),
+            Some(touched) => touched.is_empty(),
+        };
+        let (before_version, after_version) = if !empty {
+            (before_version, after_version)
+        } else if tree.version.get() == after_version {
+            tree.version.set(before_version);
+            (before_version, before_version)
+        } else {
+            let current = tree.version.get();
+            (current, current)
+        };
         Journal {
             entries,
             index,
@@ -408,6 +504,8 @@ impl<E: TreeElement> JournalBuilder<E> {
             detached_before,
             detached_after,
             side: Cell::new(Side::After),
+            before_version,
+            after_version,
         }
     }
 
@@ -538,7 +636,8 @@ fn out_of_place<E>(read: &[(Recorded<E>, E, Option<At>)]) -> Vec<bool> {
 ///
 /// Cost: an O(entries) scan; when something entered, left or changed
 /// parent, hash maps over the recorded nodes and the nodes looked at,
-/// an O(depth) climb per entry, each subtree that entered or left
+/// each node above an entry climbed through once per arrangement (the
+/// memoized [`Presence`] climbs), each subtree that entered or left
 /// walked once, and the rows of the before arrangement rebuilt only
 /// where a moved node stood in them.
 fn structural_touches<E>(
@@ -583,7 +682,10 @@ fn structural_touches<E>(
         before_parent,
         before: FxHashMap::default(),
         after: FxHashMap::default(),
+        entered: FxHashMap::default(),
+        left: FxHashMap::default(),
         chain: Vec::new(),
+        top_chain: Vec::new(),
     };
     // The touch of a node in the tree at both ends: what its own entry
     // says, or none when it has no entry.
@@ -739,9 +841,17 @@ struct Presence<'a, E> {
     before_parent: FxHashMap<NodeId, Option<NodeId>>,
     before: FxHashMap<NodeId, bool>,
     after: FxHashMap<NodeId, bool>,
+    /// [`Self::top_entered`] of every node a question has climbed
+    /// through.
+    entered: FxHashMap<NodeId, Option<NodeId>>,
+    /// [`Self::top_left`] of every node a question has climbed through.
+    left: FxHashMap<NodeId, Option<NodeId>>,
     /// Scratch for [`resolve`]'s chain, kept so a close allocates it
     /// once.
     chain: Vec<NodeId>,
+    /// Scratch for [`Self::top`]'s chain, apart from `chain` because
+    /// `top` asks `before` and `after` while it holds its own.
+    top_chain: Vec<NodeId>,
 }
 
 impl<E> Presence<'_, E> {
@@ -787,44 +897,86 @@ impl<E> Presence<'_, E> {
     /// is in the tree after the journal: the highest node on its chain
     /// of parents after — `node` included — that was not in the tree
     /// before. `None` when `node` and every node above it were.
-    /// O(depth).
+    /// Amortized O(1) over a close: see [`Self::top`].
     fn top_entered(&mut self, node: NodeId) -> Option<NodeId> {
-        let mut top = None;
-        let mut cursor = Some(node);
-        let mut steps = 0;
-        while let Some(id) = cursor {
-            if !self.before(id) {
-                top = Some(id);
-            }
-            steps += 1;
-            if steps > self.arena.len() {
-                break;
-            }
-            cursor = self.arena.get(id).and_then(|n| n.parent());
-        }
-        top
+        self.top(node, Side::After)
     }
 
     /// The top of the subtree that left the tree with `node`, which was
     /// in the tree before the journal: the highest node on its chain of
     /// parents before — `node` included — that is not in the tree after.
-    /// `None` when `node` and every node above it still are. O(depth).
+    /// `None` when `node` and every node above it still are. Amortized
+    /// O(1) over a close: see [`Self::top`].
     fn top_left(&mut self, node: NodeId) -> Option<NodeId> {
-        let mut top = None;
+        self.top(node, Side::Before)
+    }
+
+    /// [`Self::top_entered`] (`side` [`Side::After`]: the chain of
+    /// parents after, nodes not in the tree before) or
+    /// [`Self::top_left`] (`side` [`Side::Before`]: the chain before,
+    /// nodes not in the tree after), memoized for every node on the
+    /// chain: a node's answer is its parent's when that has one, and
+    /// otherwise the node itself if it is out on the other side. The
+    /// climb stops at the first node already answered, so over a whole
+    /// close each node is climbed through once per side, however many
+    /// entries sit below it — never once per entry (§20 rule 11). A
+    /// chain longer than the arena is a cycle no real arrangement has,
+    /// and is cut there.
+    fn top(&mut self, node: NodeId, side: Side) -> Option<NodeId> {
+        let mut chain = std::mem::take(&mut self.top_chain);
+        chain.clear();
         let mut cursor = Some(node);
-        let mut steps = 0;
+        let mut above = None;
         while let Some(id) = cursor {
-            if !self.after(id) {
-                top = Some(id);
-            }
-            steps += 1;
-            if steps > self.arena.len() {
+            let memo = match side {
+                Side::After => &self.entered,
+                Side::Before => &self.left,
+            };
+            if let Some(&known) = memo.get(&id) {
+                above = known;
                 break;
             }
-            cursor = self.parent_before(id);
+            if chain.len() > self.arena.len() {
+                error!("engine: a journal's recorded parents form a cycle at node {id}");
+                break;
+            }
+            chain.push(id);
+            #[cfg(test)]
+            tests_support::count_presence_step();
+            cursor = match side {
+                Side::After => self.arena.get(id).and_then(|n| n.parent()),
+                Side::Before => self.parent_before(id),
+            };
         }
-        top
+        for &id in chain.iter().rev() {
+            if above.is_none() {
+                let out = match side {
+                    Side::After => !self.before(id),
+                    Side::Before => !self.after(id),
+                };
+                if out {
+                    above = Some(id);
+                }
+            }
+            match side {
+                Side::After => self.entered.insert(id, above),
+                Side::Before => self.left.insert(id, above),
+            };
+        }
+        self.top_chain = chain;
+        above_of(
+            match side {
+                Side::After => &self.entered,
+                Side::Before => &self.left,
+            },
+            node,
+        )
     }
+}
+
+/// A memoized top's answer for `node`. O(1).
+fn above_of(memo: &FxHashMap<NodeId, Option<NodeId>>, node: NodeId) -> Option<NodeId> {
+    memo.get(&node).copied().flatten()
 }
 
 /// Whether the chain of `parent_of` from `node` reaches `root`, with
@@ -1015,6 +1167,11 @@ pub struct Journal<E: TreeElement> {
     /// The arrangement last written, which decides what
     /// [`Self::discard`] frees.
     side: Cell<Side>,
+    /// The tree's [version](Tree::version) in the arrangement before the
+    /// journal, and in the one after it: a restore is accepted only from
+    /// one of the two ([`TreeError::OutOfOrder`]).
+    before_version: u64,
+    after_version: u64,
 }
 
 impl<E: TreeElement> Journal<E> {
@@ -1105,18 +1262,36 @@ impl<E: TreeElement> Journal<E> {
     /// tree as the journal left it — after the journaled calls, or after
     /// a [`replay`](Self::replay).
     ///
+    /// Journals restore in their history's order: undo newest first,
+    /// redo oldest first. A journal recorded after this one and still
+    /// applied, or one recorded before it and still undone, has changed
+    /// the tree from either arrangement this journal knows, and its
+    /// touches no longer say which nodes it puts in or out of the tree.
+    /// So that order is checked, in every build and in O(1) (the tree's
+    /// version stamp), before anything is written. A structural change
+    /// made without a journal ends the history the same way: every
+    /// journal recorded before it is refused afterwards.
+    ///
     /// Writes recorded values only: no mutation is applied and nothing
     /// is inherited or compared, and nothing is freed. Errors (nothing
-    /// is written): [`TreeError::StaleNode`] for a node the journal
-    /// names that is no longer in the arena, [`TreeError::NotAChild`]
-    /// for a moved node under neither of its recorded parents, or a
-    /// recorded sibling no longer under its recorded parent.
+    /// is written), checked in this order: [`TreeError::StaleNode`] for
+    /// a node the journal names that is no longer in the arena,
+    /// [`TreeError::NotAChild`] for a moved node under neither of its
+    /// recorded parents, or a recorded sibling no longer under its
+    /// recorded parent; then [`TreeError::OutOfOrder`] for a tree in
+    /// neither of the journal's arrangements.
     ///
     /// Invalidates the tree's cache. Cost: one clone per entry; for
-    /// moved elements a detach and an O(depth) re-attach each.
+    /// moved elements a detach and a re-attach each: a same-row one for
+    /// an element that keeps its parent (O(1) once the engine's own
+    /// arena tree replaces indextree, V1-A6 #290), and an O(depth) one —
+    /// the cycle check of a
+    /// re-parent — for an element that changes parent, enters or leaves.
     pub fn revert(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
         self.validate(tree)?;
+        self.in_order(tree)?;
         self.side.set(Side::Before);
+        tree.version.set(self.before_version);
         if self.entries.is_empty() {
             return Ok(());
         }
@@ -1124,6 +1299,7 @@ impl<E: TreeElement> Journal<E> {
             write(&mut tree.arena, entry.node, entry.before.clone());
         }
         self.arrange(&mut tree.arena, &self.to_before, Positions::before);
+        self.mark(tree, Side::Before);
         tree.cache.invalidate();
         Ok(())
     }
@@ -1137,7 +1313,9 @@ impl<E: TreeElement> Journal<E> {
     /// The same guarantees, errors and cost as [`Self::revert`].
     pub fn replay(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
         self.validate(tree)?;
+        self.in_order(tree)?;
         self.side.set(Side::After);
+        tree.version.set(self.after_version);
         if self.entries.is_empty() {
             return Ok(());
         }
@@ -1145,6 +1323,7 @@ impl<E: TreeElement> Journal<E> {
             write(&mut tree.arena, entry.node, entry.after.clone());
         }
         self.arrange(&mut tree.arena, &self.to_after, Positions::after);
+        self.mark(tree, Side::After);
         tree.cache.invalidate();
         Ok(())
     }
@@ -1177,12 +1356,60 @@ impl<E: TreeElement> Journal<E> {
         for &node in held {
             let detached = tree.arena.get(node).is_some_and(|n| n.parent().is_none());
             if detached && node != tree.root {
+                for member in node.descendants(&tree.arena) {
+                    tree.detached.remove(&member);
+                }
                 node.remove_subtree(&mut tree.arena);
                 freed = true;
             }
         }
         if freed {
             tree.cache.invalidate();
+        }
+    }
+
+    /// Mark in `tree`'s set of detached nodes which nodes are out of the
+    /// tree in the arrangement `side`, now written: a node the touches
+    /// name [`Touch::Inserted`] is in after the journal and out before
+    /// it, a [`Touch::Removed`] one the other way round, and no other
+    /// node changes whether it is in the tree. The touches name every
+    /// element of each subtree that entered or left, so the set stays
+    /// exact, and [`Tree::contains`] O(1).
+    ///
+    /// Cost: one hash write per element that entered or left — the
+    /// touches every consumer of the change walks anyway; nothing for a
+    /// journal with no structural change.
+    fn mark(&self, tree: &mut Tree<E>, side: Side) {
+        let Some(touched) = &self.touched else {
+            return;
+        };
+        for &(node, touch) in touched {
+            let out = match (touch, side) {
+                (Touch::Inserted, Side::Before) | (Touch::Removed, Side::After) => true,
+                (Touch::Inserted, Side::After) | (Touch::Removed, Side::Before) => false,
+                (Touch::Field | Touch::Moved, _) => continue,
+            };
+            if out {
+                tree.detached.insert(node);
+            } else {
+                tree.detached.remove(&node);
+            }
+        }
+    }
+
+    /// Whether `tree` is in one of this journal's two arrangements, by
+    /// its [version](Tree::version): the one the journal started from
+    /// or the one it left. Any other version means a journal recorded
+    /// after this one is still applied, or one before it still undone —
+    /// a restore out of the history's order, which would write
+    /// positions against an arrangement the journal never saw and mark
+    /// nodes in or out of the tree wrongly. O(1), in every build.
+    fn in_order(&self, tree: &Tree<E>) -> Result<(), TreeError> {
+        let version = tree.version.get();
+        if version == self.before_version || version == self.after_version {
+            Ok(())
+        } else {
+            Err(TreeError::OutOfOrder)
         }
     }
 
@@ -1246,13 +1473,30 @@ impl<E: TreeElement> Journal<E> {
     /// after its recorded previous sibling, in `order` — the order that
     /// has each previous sibling in place first. Unmoved nodes never
     /// leave their rows. Nothing to do when nothing moved.
+    ///
+    /// An entry under the same parent in both arrangements only changes
+    /// its place in its row, and goes back through
+    /// [`siblings::reattach_in_row`]; one that changes parent, enters or
+    /// leaves the tree is a re-parent ([`siblings::attach_at`]).
     fn arrange(&self, arena: &mut Arena<E>, order: &[usize], pick: fn(&Positions) -> Option<At>) {
         for &i in &self.out {
             self.entries[i].node.detach(arena);
         }
         for &i in order {
             let entry = &self.entries[i];
-            if let Some(at) = entry.position.as_ref().and_then(pick) {
+            let Some(position) = entry.position.as_ref() else {
+                continue;
+            };
+            let Some(at) = pick(position) else {
+                continue;
+            };
+            let same_row = matches!(
+                (position.before, position.after),
+                (Some(before), Some(after)) if before.parent == after.parent
+            );
+            if same_row {
+                siblings::reattach_in_row(arena, at.parent, entry.node, at.prev);
+            } else {
                 siblings::attach_at(arena, at.parent, entry.node, at.prev);
             }
         }
@@ -1277,13 +1521,19 @@ impl<E: Interpolable> Journal<E> {
     ///
     /// The same errors as [`Self::revert`], checked before anything is
     /// written. Invalidates the tree's cache. Cost: one
-    /// `interpolate` per entry; for moved elements a detach and an
-    /// O(depth) re-attach each.
+    /// `interpolate` per entry; for moved elements the
+    /// detach and re-attach [`Self::revert`] describes.
     pub fn write_interpolated(&self, tree: &mut Tree<E>, t: f32, snap: Snap) -> Result<(), TreeError> {
         self.validate(tree)?;
+        self.in_order(tree)?;
         let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
         let after = snap.takes_after(t);
         self.side.set(if after { Side::After } else { Side::Before });
+        tree.version.set(if after {
+            self.after_version
+        } else {
+            self.before_version
+        });
         if self.entries.is_empty() {
             return Ok(());
         }
@@ -1296,8 +1546,10 @@ impl<E: Interpolable> Journal<E> {
         }
         if after {
             self.arrange(&mut tree.arena, &self.to_after, Positions::after);
+            self.mark(tree, Side::After);
         } else {
             self.arrange(&mut tree.arena, &self.to_before, Positions::before);
+            self.mark(tree, Side::Before);
         }
         tree.cache.invalidate();
         Ok(())
@@ -1316,8 +1568,9 @@ fn write<E>(arena: &mut Arena<E>, node: NodeId, value: E) {
 /// noting the move in `journal` when there is one. The one way the
 /// engine moves an element among its siblings outside a batch.
 ///
-/// Cost: a detach and an O(depth) re-attach, plus O(1) bookkeeping
-/// with a journal.
+/// Cost: a detach and a same-row re-attach
+/// ([`siblings::reattach_in_row`]), plus O(1) bookkeeping with a
+/// journal.
 pub(in crate::engine) fn move_among_siblings<E: TreeElement>(
     arena: &mut Arena<E>,
     parent: NodeId,
@@ -1332,5 +1585,26 @@ pub(in crate::engine) fn move_among_siblings<E: TreeElement>(
     if let Some(journal) = journal {
         journal.note_attach(arena, parent, prev);
     }
-    siblings::attach_at(arena, parent, node, prev);
+    siblings::reattach_in_row(arena, parent, node, prev);
+}
+
+/// What the tests read of a journal's close: how many steps the climbs
+/// of [`Presence`] have taken on this thread. Compiled for tests only.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        static PRESENCE_STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more node climbed through.
+    pub(super) fn count_presence_step() {
+        PRESENCE_STEPS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The nodes every close on this thread has climbed through so far.
+    pub(crate) fn presence_steps() -> usize {
+        PRESENCE_STEPS.with(Cell::get)
+    }
 }

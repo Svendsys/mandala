@@ -39,10 +39,43 @@ pub(crate) fn insert_sorted<T, K: Ord>(
     key_of: impl Fn(&T) -> K,
 ) -> Result<NodeId, TreeError> {
     let prev = slot(arena, parent, &key_of(&value), at, &key_of)?;
-    Ok(match prev {
+    Ok(insert_value_at(arena, parent, value, prev))
+}
+
+/// Insert a new node holding `value` under `parent`, right after `prev`
+/// (`None`: at the front), and return its id. The slot is the caller's,
+/// found by [`slot`] or [`last_slot`] in a sorted row; `prev`, when
+/// given, must be a live child of `parent`.
+///
+/// Cost: O(1) — the node is new, so indextree's value inserts check no
+/// ancestry, however deep `parent` sits.
+pub(crate) fn insert_value_at<T>(
+    arena: &mut Arena<T>,
+    parent: NodeId,
+    value: T,
+    prev: Option<NodeId>,
+) -> NodeId {
+    match prev {
         Some(prev) => prev.insert_after_value(value, arena),
         None => parent.prepend_value(value, arena),
-    })
+    }
+}
+
+/// Insert a new node holding `value` under `parent` at the end of the
+/// run of its key ([`Placement::Last`]) and return its id — how a
+/// detached subtree is built row by row. `parent` must be in `arena`.
+///
+/// Cost: a scan from the end of the row, O(1) for children appended in
+/// ascending key order, and an O(1) value insert.
+pub(crate) fn append_value_sorted<T, K: Ord>(
+    arena: &mut Arena<T>,
+    parent: NodeId,
+    value: T,
+    key_of: impl Fn(&T) -> K,
+) -> NodeId {
+    let last = arena.get(parent).and_then(|node| node.last_child());
+    let prev = last_slot_for(arena, last, &key_of(&value), &key_of);
+    insert_value_at(arena, parent, value, prev)
 }
 
 /// Where a node keyed `key` goes among `parent`'s children, at the
@@ -223,18 +256,76 @@ fn last_slot_for<T, K: Ord>(
     None
 }
 
+/// Re-attach `node`, which the caller has just detached from
+/// `parent`'s row, into **that same row**, right after `prev` (`None`:
+/// at the front) — a re-arrangement among siblings, never a change of
+/// parent. The walker's settle, [`Tree::update`](crate::engine::tree::Tree::update)
+/// and a [journal](crate::engine::journal::Journal) restoring an element
+/// to the row it never left all re-arrange through here, and nothing
+/// else does: the one place their insert is made.
+///
+/// A node put back under the parent it came from cannot close a cycle,
+/// so the cycle check a checked insert makes — a climb from the insert
+/// point to the root — has nothing to find here. Ruling R16 on #282:
+/// this re-arrangement must cost O(1), which indextree 4.9 offers no
+/// insert for (every insert of an existing node climbs); the engine's
+/// own arena tree, V1-A6 (#290), will. Until it lands, [`link_in_row`]
+/// is the single call site that will change, and
+/// `test_same_row_rearrangement_is_linear_in_depth` the test that holds
+/// it to O(1).
+///
+/// Debug builds check that `node` is detached and that `prev` is a
+/// child of `parent` — that the parent is unchanged.
+///
+/// Cost today: the O(depth of `parent`) indextree insert check.
+pub(crate) fn reattach_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
+    debug_assert!(
+        arena.get(node).is_some_and(|n| n.parent().is_none()),
+        "engine invariant: a node re-attached in its row was detached from it first"
+    );
+    debug_assert!(
+        prev.is_none_or(|prev| arena.get(prev).and_then(|n| n.parent()) == Some(parent)),
+        "engine invariant: a re-attach in a row stays under the same parent"
+    );
+    link_in_row(arena, parent, node, prev);
+}
+
+/// The insert behind [`reattach_in_row`], and the only one: swapping
+/// in an insert without the cycle check — V1-A6 (#290) — is a change
+/// to this function alone (ruling R16 on #282).
+fn link_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
+    #[cfg(test)]
+    tests_support::count_row_link(arena, prev.unwrap_or(parent));
+    checked_attach(arena, parent, node, prev);
+}
+
 /// Attach the detached `node` under `parent`, right after `prev`, or
 /// as the first child when `prev` is `None`. Places exactly where it
 /// is told — keys are not read — so the caller owns the
-/// sorted-children invariant: the walker, [`Tree::update`](crate::engine::tree::Tree::update)
-/// and the structural commands pass a slot found by [`slot`],
-/// [`last_slot`] or [`reposition_slot`], and a
-/// [journal](crate::engine::journal::Journal) passes a position it recorded
-/// from a sorted row. `parent` may itself be detached: the node then
-/// joins that detached subtree.
+/// sorted-children invariant: the structural commands pass a slot found
+/// by [`slot`], and a [journal](crate::engine::journal::Journal) passes
+/// a position it recorded from a sorted row. `parent` may itself be
+/// detached: the node then joins that detached subtree.
 ///
-/// Cost: an O(depth) indextree insert check.
+/// For a node that changes parent — a move, or a node entering the
+/// tree. A node re-arranged within its own row goes through
+/// [`reattach_in_row`]; a node created for the insert goes in through
+/// indextree's value inserts, which need no check ([`insert_sorted`]).
+///
+/// Cost: the O(depth) indextree insert check — the cycle check a real
+/// re-parent pays once per node moved.
 pub(crate) fn attach_at<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
+    #[cfg(test)]
+    tests_support::count_checked_attach();
+    checked_attach(arena, parent, node, prev);
+}
+
+/// indextree's checked insert of the detached `node` under `parent`
+/// after `prev`, behind both [`attach_at`] and [`link_in_row`] — the
+/// engine's only inserts of an existing node.
+/// `test_the_engine_climbs_only_where_it_may` (over `util::source_scan`) holds every
+/// other engine file to these two.
+fn checked_attach<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
     match prev {
         Some(anchor) => attach_after(arena, anchor, node),
         None => attach_first(arena, parent, node),
@@ -286,4 +377,44 @@ pub(crate) fn check_sorted<T, K: Ord>(
         }
     }
     Ok(())
+}
+
+/// What the tests read of [`link_in_row`]: how many steps its inserts
+/// have taken on this thread. Compiled for tests only.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use indextree::{Arena, NodeId};
+    use std::cell::Cell;
+
+    thread_local! {
+        static ROW_LINK_STEPS: Cell<usize> = const { Cell::new(0) };
+        static CHECKED_ATTACHES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more node put in place by [`attach_at`](super::attach_at) —
+    /// an insert that climbs to the root to check for a cycle.
+    pub(super) fn count_checked_attach() {
+        CHECKED_ATTACHES.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// How many nodes [`attach_at`](super::attach_at) has put in place on
+    /// this thread so far: each one a climb to the root.
+    pub(crate) fn checked_attaches() -> usize {
+        CHECKED_ATTACHES.with(Cell::get)
+    }
+
+    /// Count the steps of one same-row insert next to `anchor`: the
+    /// checked insert's cycle check visits `anchor` and every ancestor
+    /// of it. When an insert without the check is swapped into
+    /// `link_in_row` (V1-A6, #290), this counts one per insert instead
+    /// — counted inside that insert, never by editing this model alone.
+    pub(super) fn count_row_link<T>(arena: &Arena<T>, anchor: NodeId) {
+        let steps = anchor.ancestors(arena).count();
+        ROW_LINK_STEPS.with(|cell| cell.set(cell.get() + steps));
+    }
+
+    /// The steps every same-row insert on this thread has taken so far.
+    pub(crate) fn row_link_steps() -> usize {
+        ROW_LINK_STEPS.with(Cell::get)
+    }
 }

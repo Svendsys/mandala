@@ -35,7 +35,6 @@ use crate::document::element::{
 };
 use crate::document::ids::{owning_node, Document, NodeIdent};
 use crate::document::mutation::error::{MutationError, MutatorPath, StructureRule};
-use crate::document::mutation::membership::Membership;
 use crate::document::mutation::ops::{
     DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LinkOp, MapOp, NodeOp, PaletteOp, PathOp,
     PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
@@ -48,6 +47,7 @@ use crate::document::values::{
 };
 use crate::engine::journal::{Journal, Touch};
 use crate::engine::key::BranchKey;
+use crate::engine::membership::Membership;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Tree;

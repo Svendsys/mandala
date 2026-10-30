@@ -1357,9 +1357,10 @@ pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
     out
 }
 
-/// Every checked indextree insert in the body of the engine's
-/// `siblings::insert_sorted` — the one path every new tree node and
-/// mutator-tree node goes through — as `(repo-relative file, 1-based
+/// Every checked indextree insert in the bodies of the engine's
+/// `siblings::insert_sorted` and `siblings::insert_value_at` — the
+/// path every new tree node and mutator-tree node goes through, and
+/// the insert it places a new node with — as `(repo-relative file, 1-based
 /// line, the line's text)`, plus the count of the value-inserting
 /// calls the body makes, so a caller can tell an empty finding from a
 /// scan that read nothing.
@@ -1386,10 +1387,13 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
     let mut value_inserts = 0;
     let mut in_body = false;
     for (number, line) in source.lines().enumerate() {
-        if line.starts_with("pub(crate) fn insert_sorted") {
+        if line.starts_with("pub(crate) fn insert_sorted")
+            || line.starts_with("pub(crate) fn insert_value_at")
+        {
             in_body = true;
         } else if in_body && line == "}" {
-            break;
+            in_body = false;
+            continue;
         }
         if !in_body {
             continue;
@@ -1415,6 +1419,544 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
         }
     }
     (found, value_inserts)
+}
+
+/// The climbs to the root and the inserts of existing nodes in the
+/// engine's shipped code (`lib/baumhard/src/engine/`, its `tests`
+/// tree excepted) that are **not** in one of the functions allowed to
+/// make them, as `(repo-relative file, 1-based line, the line's text)`,
+/// plus, for each allowed function, how many such calls it makes — so
+/// a caller can tell an empty finding from a scan that read nothing,
+/// and an allowance nothing uses any more from one still needed.
+///
+/// Two kinds of call are found:
+///
+/// - **indextree's own climbs**, by line: `ancestors`, and its insert
+///   of an existing node (`checked_*`, and `append` / `prepend` /
+///   `insert_after` / `insert_before` / `reparent`, which wrap them),
+///   which climbs to check for a cycle.
+/// - **a hand-written climb**, by syntax: a parent read — a `parent`
+///   method, or a function or method whose name starts `parent_` —
+///   in one of the three spellings of walking up a chain of parents
+///   whatever the cursor is called: inside a `loop` or a `while` (its
+///   condition included); inside a closure handed to an iterator that
+///   feeds it its own last result (`successors`, `from_fn`,
+///   `repeat_with`, `scan`, the folds, `reduce`); or inside a `for`
+///   body or any closure that assigns a variable the read itself
+///   names, directly or through a `*` deref (`cur = p` beside
+///   `arena[cur].parent()`). A parent read in any other `for` or
+///   closure is not one: it reads one parent per item it is given.
+///
+/// It is a heuristic over spellings, not a proof. A climb by
+/// recursion is not read here — the deep tests' 100,000-level chains
+/// overflow the stack on one — and neither is one hidden behind a
+/// helper that reads one parent per call and is called in a loop.
+///
+/// The engine keeps each in a few places: `tree::climb` (counted in
+/// test builds), and `siblings`' `attach_after` / `attach_first`
+/// behind `checked_attach` (counted) for indextree's; and for
+/// hand-written ones the memoized climbs — `Membership::contains`
+/// (counted), the journal's `Presence::top` (counted) and its
+/// `resolve` — and the walker's `state_above`, the one-off climb an
+/// anchored walk makes to its anchor's parent; in the document, the
+/// three named in `ALLOWED_PARENT_LOOPS`. The scan reads the engine and
+/// the document model built on it, its format modules included. So a
+/// climb planted once per element anywhere else shows here, and one
+/// planted through those functions shows in their step counts (§20
+/// rule 11, V1-A5 #282).
+pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
+    /// The trees read: the engine, and the document model built on it
+    /// (its format modules included), which walk trees of any depth.
+    const SCANNED: &[&str] = &["lib/baumhard/src/engine", "lib/baumhard/src/document"];
+    const ALLOWED: &[(&str, &str)] = &[
+        ("engine/tree.rs", "climb"),
+        ("engine/siblings.rs", "attach_after"),
+        ("engine/siblings.rs", "attach_first"),
+    ];
+    const ALLOWED_PARENT_LOOPS: &[(&str, &str)] = &[
+        ("engine/membership.rs", "contains"),
+        ("engine/journal.rs", "top"),
+        ("engine/journal.rs", "resolve"),
+        ("engine/walker.rs", "state_above"),
+        // The document's three: B3's memoized climb over a selection,
+        // which climbs each ancestor once however many nodes are given
+        // (and counts it); the inherited-state fold up to the nearest
+        // node, which the shape rules bound at five elements; and a
+        // resolution's palette-binding search, a one-off per resolution,
+        // O(distance to the binding) (ruling R16.3 on #282).
+        ("document/mutation/compose.rs", "tops_climbing"),
+        ("document/mutation/inherited.rs", "state_of"),
+        ("document/resolve.rs", "find_binding"),
+    ];
+    const CALLS: &[&str] = &[
+        ".ancestors(",
+        ".checked_insert_after(",
+        ".checked_insert_before(",
+        ".checked_prepend(",
+        ".checked_append(",
+        ".checked_reparent(",
+        ".append(",
+        ".prepend(",
+        ".insert_after(",
+        ".insert_before(",
+        ".reparent(",
+    ];
+    let mut files = Vec::new();
+    for root in SCANNED {
+        collect_recursively(&repo_path(root), ".rs", &mut files);
+    }
+    files.sort();
+    let mut found = Vec::new();
+    let mut allowed: BTreeMap<(String, String), usize> = ALLOWED
+        .iter()
+        .chain(ALLOWED_PARENT_LOOPS)
+        .map(|&(file, function)| ((file.to_string(), function.to_string()), 0))
+        .collect();
+    for file in files {
+        if file.components().any(|c| c.as_os_str() == "tests") {
+            continue;
+        }
+        let rel = relative_to_repo(&file);
+        let name = rel.strip_prefix("lib/baumhard/src/").unwrap_or(&rel).to_string();
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let source = production_source(&file, &text);
+        let lines: Vec<&str> = source.lines().collect();
+        let mut current_fn = String::new();
+        for (number, line) in lines.iter().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            if let Some(at) = code.find("fn ") {
+                let after = &code[at + 3..];
+                let ident: String = after
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !ident.is_empty() {
+                    current_fn = ident;
+                }
+            }
+            // A Vec's `append` is not indextree's: only a call handed
+            // an arena is.
+            let calls = CALLS
+                .iter()
+                .any(|call| code.contains(call) && (*call != ".append(" || code.contains("arena")));
+            if !calls {
+                continue;
+            }
+            if ALLOWED.contains(&(name.as_str(), current_fn.as_str())) {
+                *allowed.entry((name.clone(), current_fn.clone())).or_default() += 1;
+            } else {
+                found.push((relative_to_repo(&file), number + 1, code.trim().to_string()));
+            }
+        }
+        for (function, line) in parent_reads_in_loops(&file, &source) {
+            if ALLOWED_PARENT_LOOPS.contains(&(name.as_str(), function.as_str())) {
+                *allowed.entry((name.clone(), function)).or_default() += 1;
+            } else {
+                let code = lines.get(line - 1).map_or("", |l| l.trim());
+                found.push((relative_to_repo(&file), line, code.to_string()));
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    EngineDepthCosts { found, allowed }
+}
+
+/// What [`engine_depth_cost_calls`] found.
+pub(crate) struct EngineDepthCosts {
+    /// Each call outside the allowed functions: `(repo-relative file,
+    /// 1-based line, the line's text)`, one per line.
+    pub(crate) found: Vec<(String, usize, String)>,
+    /// Each allowed `(file name, function)`, with how many calls the
+    /// scan read in it; zero means the allowance is unused.
+    pub(crate) allowed: BTreeMap<(String, String), usize>,
+}
+
+/// Every parent read of `source` — a `parent` method, or a function or
+/// method named `parent_*` — that climbs by [`engine_depth_cost_calls`]'
+/// spellings: inside a `loop` or a `while`; inside a closure handed to
+/// an iterator constructor or adapter that feeds the closure its own
+/// last result (`FEEDBACK`); or inside a `for` body or any
+/// closure that assigns a plain variable — or through a `*` deref —
+/// that the read names (in its receiver or its arguments). As `(the
+/// enclosing function's name, 1-based line)`. A closure counts where it
+/// is written. Panics when `source` does not parse, naming `file`.
+fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
+    use std::collections::BTreeSet;
+    use syn::visit::{self, Visit};
+
+    /// The iterator constructors and adapters whose closure is handed
+    /// its own last result, or keeps state from call to call by its
+    /// nature: a parent read there is a climb.
+    const FEEDBACK: &[&str] = &[
+        "successors",
+        "from_fn",
+        "repeat_with",
+        "scan",
+        "fold",
+        "rfold",
+        "try_fold",
+        "try_rfold",
+        "reduce",
+        "try_reduce",
+    ];
+
+    struct Finder {
+        function: String,
+        loops: usize,
+        /// For each enclosing `for` body and closure, the plain
+        /// variables it assigns.
+        cursors: Vec<BTreeSet<String>>,
+        found: Vec<(String, usize)>,
+    }
+
+    /// The plain variables `expr` assigns anywhere inside it, directly
+    /// (`at = p`) or through a deref (`*at = p`).
+    fn assigned(expr: &syn::Expr) -> BTreeSet<String> {
+        struct Assigned(BTreeSet<String>);
+        impl<'ast> Visit<'ast> for Assigned {
+            fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+                let mut left = &*assign.left;
+                while let syn::Expr::Unary(syn::ExprUnary {
+                    op: syn::UnOp::Deref(_),
+                    expr,
+                    ..
+                }) = left
+                {
+                    left = expr;
+                }
+                if let syn::Expr::Path(path) = left {
+                    if let Some(ident) = path.path.get_ident() {
+                        self.0.insert(ident.to_string());
+                    }
+                }
+                visit::visit_expr_assign(self, assign);
+            }
+        }
+        let mut found = Assigned(BTreeSet::new());
+        found.visit_expr(expr);
+        found.0
+    }
+
+    /// The plain variables `exprs` name.
+    fn named<'a>(exprs: impl IntoIterator<Item = &'a syn::Expr>) -> BTreeSet<String> {
+        struct Named(BTreeSet<String>);
+        impl<'ast> Visit<'ast> for Named {
+            fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+                if let Some(ident) = path.path.get_ident() {
+                    self.0.insert(ident.to_string());
+                }
+                visit::visit_expr_path(self, path);
+            }
+        }
+        let mut found = Named(BTreeSet::new());
+        for expr in exprs {
+            found.visit_expr(expr);
+        }
+        found.0
+    }
+
+    impl Finder {
+        /// A call or method named `name` reading `operands` (receiver
+        /// and arguments): recorded when it is a parent read that climbs.
+        fn read<'a>(&mut self, name: &syn::Ident, operands: impl IntoIterator<Item = &'a syn::Expr>) {
+            let text = name.to_string();
+            if text != "parent" && !text.starts_with("parent_") {
+                return;
+            }
+            let climbs = self.loops > 0 || {
+                let names = named(operands);
+                self.cursors.iter().any(|assigned| !assigned.is_disjoint(&names))
+            };
+            if climbs {
+                self.found.push((self.function.clone(), name.span().start().line));
+            }
+        }
+
+        fn in_function(&mut self, name: &syn::Ident, body: impl FnOnce(&mut Self)) {
+            let function = std::mem::replace(&mut self.function, name.to_string());
+            let loops = std::mem::take(&mut self.loops);
+            let cursors = std::mem::take(&mut self.cursors);
+            body(self);
+            self.function = function;
+            self.loops = loops;
+            self.cursors = cursors;
+        }
+
+        /// Visit `args` as a loop body: they hold a closure the callee
+        /// feeds its own results.
+        fn feedback<'ast>(&mut self, args: impl IntoIterator<Item = &'ast syn::Expr>) {
+            self.loops += 1;
+            for arg in args {
+                self.visit_expr(arg);
+            }
+            self.loops -= 1;
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Finder {
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            self.in_function(&item.sig.ident, |me| visit::visit_item_fn(me, item));
+        }
+
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            self.in_function(&item.sig.ident, |me| visit::visit_impl_item_fn(me, item));
+        }
+
+        fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+            self.in_function(&item.sig.ident, |me| visit::visit_trait_item_fn(me, item));
+        }
+
+        fn visit_expr_loop(&mut self, expr: &'ast syn::ExprLoop) {
+            self.loops += 1;
+            visit::visit_expr_loop(self, expr);
+            self.loops -= 1;
+        }
+
+        fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+            self.loops += 1;
+            visit::visit_expr_while(self, expr);
+            self.loops -= 1;
+        }
+
+        fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
+            self.visit_expr(&expr.expr);
+            let body = syn::Expr::Block(syn::ExprBlock {
+                attrs: Vec::new(),
+                label: None,
+                block: expr.body.clone(),
+            });
+            self.cursors.push(assigned(&body));
+            self.visit_block(&expr.body);
+            self.cursors.pop();
+        }
+
+        fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+            self.cursors.push(assigned(&closure.body));
+            visit::visit_expr_closure(self, closure);
+            self.cursors.pop();
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            self.read(&call.method, std::iter::once(&*call.receiver).chain(&call.args));
+            if FEEDBACK.contains(&call.method.to_string().as_str()) {
+                self.visit_expr(&call.receiver);
+                self.feedback(&call.args);
+            } else {
+                visit::visit_expr_method_call(self, call);
+            }
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            let mut feeds_back = false;
+            if let syn::Expr::Path(path) = &*call.func {
+                if let Some(last) = path.path.segments.last() {
+                    self.read(&last.ident, &call.args);
+                    feeds_back = FEEDBACK.contains(&last.ident.to_string().as_str());
+                }
+            }
+            if feeds_back {
+                self.feedback(&call.args);
+            } else {
+                visit::visit_expr_call(self, call);
+            }
+        }
+    }
+
+    let parsed =
+        syn::parse_file(source).unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
+    let mut finder = Finder {
+        function: String::new(),
+        loops: 0,
+        cursors: Vec::new(),
+        found: Vec::new(),
+    };
+    finder.visit_file(&parsed);
+    finder.found
+}
+
+/// Every write to a field named `root` in the workspace's shipped code
+/// — `lib/`, `src/` and `crates/`, minus `tests/` directories, benches,
+/// test-gated modules and test-gated items — outside
+/// `lib/baumhard/src/engine/tree.rs`, as `(repo-relative file, 1-based
+/// line, the line's text)`, plus how many `root` fields the scan read
+/// at all, reads included, so a caller can tell an empty finding from
+/// a scan that read nothing.
+///
+/// A write is any spelling that can change it:
+/// - an assignment to `<expr>.root`, plain or compound;
+/// - a `&mut <expr>.root` — how `std::mem::replace`, `swap` and `take`,
+///   or any function that writes through a reference, reach it — or a
+///   `&raw mut <expr>.root`;
+/// - a struct pattern that binds a `root` field, of whatever type it
+///   names: `let Tree { root, .. } = tree;` matched through a `&mut`
+///   binds a `&mut NodeId`, which `*root = n` then writes, and the
+///   type may be spelled through an alias (`GfxTree`,
+///   `DocMutatorTree`) or a renamed import, which a scan of syntax
+///   cannot resolve. No shipped pattern binds a `root` field today, so
+///   none needs exempting;
+/// - an `addr_of_mut!` whose arguments name `root`: syn does not parse
+///   a macro's arguments, so its tokens are read instead.
+///
+/// The raw-pointer spellings (`&raw mut`, `addr_of_mut!`) can write
+/// only in `unsafe` code, and the workspace has none; but no
+/// `forbid(unsafe_code)` holds that — it is a convention
+/// (lib/baumhard/CONVENTIONS.md) — so the scan reads them too.
+/// `Tree::root` is a public field, kept public for its reads; writing
+/// it would move the tree's root without the engine knowing, and the
+/// set behind `Tree::contains` and every journal with it would then
+/// describe another tree. The scan cannot see types, so it refuses a
+/// write to any field of that name: none exists outside the engine
+/// today, and one that is not a `Tree`'s can be renamed or allowed by
+/// name with its reason.
+///
+/// Cost: one read and one `syn` parse of every `.rs` file in those
+/// roots.
+pub(crate) fn root_field_writes() -> (Vec<(String, usize, String)>, usize) {
+    use syn::visit::{self, Visit};
+
+    struct Writes {
+        lines: Vec<usize>,
+        fields: usize,
+    }
+
+    fn is_root_field(expr: &syn::Expr) -> Option<usize> {
+        match expr {
+            syn::Expr::Field(field) => match &field.member {
+                syn::Member::Named(name) if name == "root" => Some(name.span().start().line),
+                _ => None,
+            },
+            syn::Expr::Paren(inner) => is_root_field(&inner.expr),
+            _ => None,
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Writes {
+        fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
+            if matches!(&field.member, syn::Member::Named(name) if name == "root") {
+                self.fields += 1;
+            }
+            visit::visit_expr_field(self, field);
+        }
+
+        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+            if let Some(line) = is_root_field(&assign.left) {
+                self.lines.push(line);
+            }
+            visit::visit_expr_assign(self, assign);
+        }
+
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            let compound = matches!(
+                binary.op,
+                syn::BinOp::AddAssign(_)
+                    | syn::BinOp::SubAssign(_)
+                    | syn::BinOp::MulAssign(_)
+                    | syn::BinOp::DivAssign(_)
+                    | syn::BinOp::RemAssign(_)
+                    | syn::BinOp::BitXorAssign(_)
+                    | syn::BinOp::BitAndAssign(_)
+                    | syn::BinOp::BitOrAssign(_)
+                    | syn::BinOp::ShlAssign(_)
+                    | syn::BinOp::ShrAssign(_)
+            );
+            if compound {
+                if let Some(line) = is_root_field(&binary.left) {
+                    self.lines.push(line);
+                }
+            }
+            visit::visit_expr_binary(self, binary);
+        }
+
+        fn visit_expr_raw_addr(&mut self, raw: &'ast syn::ExprRawAddr) {
+            if matches!(raw.mutability, syn::PointerMutability::Mut(_)) {
+                if let Some(line) = is_root_field(&raw.expr) {
+                    self.lines.push(line);
+                }
+            }
+            visit::visit_expr_raw_addr(self, raw);
+        }
+
+        fn visit_pat_struct(&mut self, pattern: &'ast syn::PatStruct) {
+            for field in &pattern.fields {
+                if let syn::Member::Named(name) = &field.member {
+                    if name == "root" {
+                        self.lines.push(name.span().start().line);
+                    }
+                }
+            }
+            visit::visit_pat_struct(self, pattern);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            let addr_of_mut = mac
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "addr_of_mut");
+            let names_root = || {
+                let mut stack = vec![mac.tokens.clone()];
+                while let Some(tokens) = stack.pop() {
+                    for token in tokens {
+                        match token {
+                            proc_macro2::TokenTree::Ident(ident) if ident == "root" => return true,
+                            proc_macro2::TokenTree::Group(group) => stack.push(group.stream()),
+                            _ => {}
+                        }
+                    }
+                }
+                false
+            };
+            if addr_of_mut && names_root() {
+                self.lines.push(mac.path.segments[0].ident.span().start().line);
+            }
+            visit::visit_macro(self, mac);
+        }
+
+        fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+            if reference.mutability.is_some() {
+                if let Some(line) = is_root_field(&reference.expr) {
+                    self.lines.push(line);
+                }
+            }
+            visit::visit_expr_reference(self, reference);
+        }
+    }
+
+    let sources = workspace_rust_sources();
+    let test_only = test_gated_module_files(&sources);
+    let mut found = Vec::new();
+    let mut fields = 0;
+    for file in sources {
+        let rel = relative_to_repo(&file);
+        let test_path = rel.split('/').any(|part| part == "tests" || part == "benches");
+        if test_path || test_only.contains(&file) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let source = production_source(&file, &text);
+        let parsed =
+            syn::parse_file(&source).unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
+        let mut writes = Writes {
+            lines: Vec::new(),
+            fields: 0,
+        };
+        writes.visit_file(&parsed);
+        fields += writes.fields;
+        if rel == "lib/baumhard/src/engine/tree.rs" {
+            continue;
+        }
+        let lines: Vec<&str> = source.lines().collect();
+        for line in writes.lines {
+            let code = lines.get(line - 1).map_or("", |l| l.trim());
+            found.push((rel.clone(), line, code.to_string()));
+        }
+    }
+    found.sort();
+    found.dedup();
+    (found, fields)
 }
 
 #[cfg(test)]
@@ -1743,5 +2285,88 @@ mod tests {
                  looking there — a stale citation in it would pass in silence"
             );
         }
+    }
+
+    /// The climb spellings `parent_reads_in_loops` recognizes, and the
+    /// `for` it does not: one parent read per item of what a `for` is
+    /// given climbs nothing.
+    #[test]
+    fn test_parent_reads_in_loops_reads_the_climb_spellings() {
+        let found = |body: &str| {
+            let source = format!("fn f() {{ {body} }}");
+            parent_reads_in_loops(Path::new("probe.rs"), &source).len()
+        };
+        assert_eq!(found("while let Some(n) = at { at = arena[n].parent(); }"), 1);
+        assert_eq!(
+            found("loop { match arena[at].parent() { Some(p) => at = p, None => break } }"),
+            1
+        );
+        assert_eq!(
+            found("let _ = std::iter::successors(Some(t), |&n| arena[n].parent()).count();"),
+            1
+        );
+        assert_eq!(
+            found("let _ = std::iter::from_fn(|| { at = arena[at].parent()?; Some(at) });"),
+            1
+        );
+        assert_eq!(
+            found("let _ = ids.iter().scan(t, |at, _| { *at = arena[*at].parent()?; Some(*at) });"),
+            1
+        );
+        assert_eq!(
+            found("for _ in 0..n { match arena[cur].parent() { Some(p) => cur = p, None => break } }"),
+            1
+        );
+        assert_eq!(found("while let Some(n) = at { at = parent_of(n); }"), 1);
+        assert_eq!(found("let _ = (0..n).try_fold(t, |c, _| arena[c].parent());"), 1);
+        assert_eq!(
+            found("let _ = (0..n).fold(t, |c, _| arena[c].parent().unwrap_or(c));"),
+            1
+        );
+        assert_eq!(
+            found("let _ = std::iter::repeat(()).map_while(|_| { let p = arena[h].parent()?; h = p; Some(()) }).count();"),
+            1
+        );
+        assert_eq!(
+            found("ids.iter().for_each(|_| { if let Some(p) = arena[at].parent() { at = p; } });"),
+            1
+        );
+        assert_eq!(
+            found("for id in ids { if let Some(p) = arena[id].parent() { out.push(p); } }"),
+            0
+        );
+        assert_eq!(
+            found("for id in ids { let p = arena[id].parent(); last = p; }"),
+            0
+        );
+        assert_eq!(found("let p = arena[n].parent();"), 0);
+        assert_eq!(
+            found("let _ = ids.iter().map(|&n| arena[n].parent()).count();"),
+            0
+        );
+    }
+
+    /// **Only `engine/tree.rs` writes a `root` field** in the workspace's
+    /// shipped code ([`root_field_writes`]). `Tree::root` stays a public
+    /// field for its reads, so this is what keeps a tree's root where
+    /// the engine put it — and with it `Tree::contains` and every
+    /// journal — until the field can be made private.
+    #[test]
+    fn test_only_the_engine_tree_writes_a_root_field() {
+        let (found, fields) = root_field_writes();
+        assert!(
+            fields > 0,
+            "precondition: the scan reads the workspace's `root` fields, {fields} of them"
+        );
+        assert!(
+            found.is_empty(),
+            "a write to a `root` field outside lib/baumhard/src/engine/tree.rs — `Tree::root` \
+             is written only by the engine:\n{}",
+            found
+                .iter()
+                .map(|(file, line, code)| format!("  {file}:{line}   {code}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 }

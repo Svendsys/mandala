@@ -685,7 +685,7 @@ pub fn test_default_terminator_resumes_whatever_the_insertion_order() {
 }
 
 /// The order after-mutations are added in does not matter to
-/// `default_terminator`. Added as [ch 2, ch 0, ch 1], they are stored sorted,
+/// the walker's loop terminator. Added as [ch 2, ch 0, ch 1], they are stored sorted,
 /// and when the failing target is ch 0 the terminator finds the ch-0
 /// after-mutation. Born as the regression for P1-08, when the terminator
 /// scanned after-mutations in the order they were added and broke on the
