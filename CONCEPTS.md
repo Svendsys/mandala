@@ -1472,8 +1472,12 @@ element.
   path, θ the direction of the chord the step spans: side by side along
   a horizontal stretch, a line apart along a vertical one, blended on a
   curve and turning smoothly through a sharp corner — the way ASCII art
-  makes one. Around an outline each cluster is pushed outward by half
-  its extent, so text sits on the outline rather than across it.
+  makes one. That is the box step, which `Repeat` rings and connectors
+  take. A frame's text line takes the level step instead (ruling R28,
+  `PathWalk::level_len`): it moves `w` horizontally, so letters keep
+  their shaped spacing where the outline curves. Around an outline each
+  cluster is pushed outward by half its extent (straight up or down on a
+  level step), so text sits on the outline rather than across it.
 - **Readable path text** (D33, #291). Path text reads left to right or
   top to bottom.
   - **A frame's text is two lines** (ruling R27; `flow/place/lines.rs`).

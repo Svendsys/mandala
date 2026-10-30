@@ -57,7 +57,7 @@ develops it.
 | D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
 | D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line, and edits to keys of one node that are not on adjacent lines merge cleanly. Two edits to neighboring keys, or an edit to a node's last key while another branch appends a key after it, are one git conflict, as for any line-based text. The layout lives in the saver's writer alone. | §7.1 |
 | D32 | **New ids start above every id the map names** (amends §5.2's id rule; owner, #236 Q3 option B, R20). The counter is still not saved. At load it starts one above the highest node id and above every node id a verb or presentation target names, so a verb or presentation can never be silently retargeted to a new node after a reload. The named ids come from one hook, `ids::idents_named_by`, which V1-D1 to V1-D3 (#250–#252) extend when definitions gain targets. | §5.2, §7.2 |
-| D33 | **Path text is readable** (owner, #291; rulings R25, R25.1, R26, R27). Every path flow reads left to right or top to bottom. The owner, on the README samples: "In the sample images, the words are always backwards at the bottom. It's impossible to read basically. Can we instead try to make the text always straight forward?" Asked whether to keep the old look as an option: "Readable always, no option (Recommended)". **A frame's text is two lines** (R27): a ring in `once`, `spread` or `fit` sets its text over the top and along the bottom, each line on the level part of its half of the outline, reading left to right, the steep sides clear — the owner: "Couldn't it be formatted smarter like, defining lines for each halve, rather than one line that must be fitted to both", approving "Sides clear, auto split (Recommended)". **A pattern and a connector read stretch by stretch** (R25, R25.1, R26): on a `repeat` ring and on every connector, a leftward or upward stretch's glyphs are placed in reverse, so a loop reads like a seal, and a word is never torn across two stretches. It is the only behavior, with no field and no option. | §6.2, §6.4 |
+| D33 | **Path text is readable** (owner, #291; rulings R25, R25.1, R26, R27, R28). Every path flow reads left to right or top to bottom. The owner, on the README samples: "In the sample images, the words are always backwards at the bottom. It's impossible to read basically. Can we instead try to make the text always straight forward?" Asked whether to keep the old look as an option: "Readable always, no option (Recommended)". **A frame's text is two lines** (R27): a ring in `once`, `spread` or `fit` sets its text over the top and along the bottom, each line on the level part of its half of the outline, reading left to right, the steep sides clear — the owner: "Couldn't it be formatted smarter like, defining lines for each halve, rather than one line that must be fitted to both", approving "Sides clear, auto split (Recommended)". **A frame's line is spaced as it was shaped** (R28): each glyph's step is its advance measured horizontally, not an upright box's extent along the slope. **A pattern and a connector read stretch by stretch** (R25, R25.1, R26): on a `repeat` ring and on every connector, a leftward or upward stretch's glyphs are placed in reverse, so a loop reads like a seal, and a word is never torn across two stretches. It is the only behavior, with no field and no option. | §6.2, §6.4 |
 
 ---
 
@@ -601,15 +601,29 @@ line (cosmic-text gives each glyph's advance), then placed:
 
 1. Walk the path by arc length from the flow's start point in its
    direction.
-2. Each glyph occupies a step whose length depends on the direction
-   of travel θ at that point:
-   `step = |cos θ| · advance + |sin θ| · line_height`.
-   Along a horizontal stretch glyphs sit side by side; along a
-   vertical stretch they stack one line apart; on a curve the two
-   blend — the way ASCII art builds a curve.
+2. Each glyph occupies a step. There are two rules, one per kind of
+   flow (ruling R28):
+   - **The box step** — a `repeat` ring and every connector (step 4):
+     its length depends on the direction of travel θ at that point,
+     `step = |cos θ| · advance + |sin θ| · line_height`.
+     Along a horizontal stretch glyphs sit side by side; along a
+     vertical stretch they stack one line apart; on a curve the two
+     blend — the way ASCII art builds a curve.
+   - **The level step** — a frame's text line (step 5): the step runs
+     the path until it has moved the glyph's advance horizontally, so
+     from one pen to the next is the advance plus the line's gap,
+     measured along x, as the text was shaped: `step = advance / cos θ`
+     on a straight stretch. The box step would space letters out
+     wherever the outline curves — by 70% at a 16° slope, the line
+     height being twice an advance or more. A line lies where
+     `|cos θ| ≥ cos 45°` (step 5), so the level step is at most `√2`
+     advances along the path, and neighbors sit side by side, offset
+     only vertically: their boxes, and so their ink, cannot overlap.
 3. The glyph's center sits on the path, offset along the outward
    normal by half its extent, so text sits on the outline rather
-   than across it. Ring *k* is placed on the outline offset outward
+   than across it — on a level step straight up or down, as far as
+   clears the outline along the normal, so the offset keeps the
+   spacing. Ring *k* is placed on the outline offset outward
    by `inset + Σ(thickness of rings < k) + k · gap`.
 4. **Every stretch reads left to right or top to bottom** (D33, #291).
    This step places a `repeat` ring and every connector; a frame's
@@ -690,10 +704,16 @@ line (cosmic-text gives each glyph's advance), then placed:
      advances over its span — is least. A text with no word break is
      one line, on top. The whitespace at the parting and at each line's
      ends is not placed.
-   - **The lines.** Each line is laid by steps 2–3 along its half's
-     span, reading left to right, centered on the span's arc-length
-     midpoint — as much of the span before it as after — and both share
-     one size. §6.4 says how each mode sizes and spaces them. A
+   - **The lines.** Each line is laid by steps 2–3, with the level
+     step, along its half's span, reading left to right, centered on
+     the span's arc-length midpoint — as much of the span before it as
+     after — and both share one size. Every measure of a line is a level
+     one: the parting balances advances against each span's width, and
+     `fit`'s scale, `spread`'s gap and `once`'s centering are taken
+     with level steps. The owner's coordinator, on the renders with the
+     box step: "It looks uneven and will be the first thing the owner
+     notices" (ruling R28). §6.4 says how each mode sizes and spaces
+     them. A
      placement lists the top line's glyphs, then the bottom's, in text
      order.
 
