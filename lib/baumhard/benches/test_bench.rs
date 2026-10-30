@@ -2282,6 +2282,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("an_unjournaled_structural_change_ends_the_history", |b| {
         b.iter(do_an_unjournaled_structural_change_ends_the_history)
     });
+    c.bench_function("an_edit_between_one_builders_calls_ends_the_history", |b| {
+        b.iter(do_an_edit_between_one_builders_calls_ends_the_history)
+    });
+    c.bench_function("interleaved_builders_end_the_history", |b| {
+        b.iter(do_interleaved_builders_end_the_history)
+    });
+    c.bench_function("an_empty_builder_closed_after_another_keeps_its_change", |b| {
+        b.iter(do_an_empty_builder_closed_after_another_keeps_its_change)
+    });
     c.bench_function("engine_journaled_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_journaled_walk_wide_and_deep_tree)
     });

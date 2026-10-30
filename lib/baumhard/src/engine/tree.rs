@@ -195,9 +195,11 @@ pub struct Tree<E: TreeElement> {
     /// back would leave [`Tree::contains`] and every journal describing
     /// another tree. The compiler cannot hold that while the field is
     /// public, so the source scan `test_only_the_engine_tree_writes_a_root_field`
-    /// refuses any write to a `root` field — an assignment, or a
-    /// `&mut` borrow such as `std::mem::replace` takes — anywhere in
-    /// the workspace's shipped code outside this file.
+    /// refuses any write to a `root` field — an assignment, a `&mut`
+    /// borrow such as `std::mem::replace` takes, a `&raw mut` or an
+    /// `addr_of_mut!`, or a struct pattern that binds the field —
+    /// anywhere in the workspace's shipped code outside this file.
+    /// Making the field private belongs with the arena rework (#288).
     pub root: NodeId,
     /// Draw order hint relative to sibling trees in a scene. Higher =
     /// drawn on top.
@@ -251,7 +253,11 @@ pub struct Tree<E: TreeElement> {
     /// even one whose nodes the change never reached. **Any unjournaled
     /// structural edit therefore ends the undo history of the whole
     /// tree**; a tree that keeps history makes every structural edit
-    /// through a journaled call. Changes that leave every node's parent
+    /// through a journaled call. That holds between two calls of one
+    /// builder too: a builder that finds the tree moved since its last
+    /// call — by such an edit, or by another builder's call — does not
+    /// move it back, and its journal is cut from every earlier one
+    /// (`JournalBuilder::begin`). Changes that leave every node's parent
     /// and membership as they were — an unjournaled [`Tree::update`],
     /// re-key moves included, or a walk without structural commands —
     /// do not move it.
@@ -809,9 +815,12 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
 /// anchored walk makes from its anchor. `test_the_engine_climbs_only_where_it_may`
 /// (over `util::source_scan`) holds every other engine file to not
 /// calling `ancestors`, and to not reading a parent in the spellings
-/// of a climb it recognizes: inside a `loop` or a `while`, inside a
-/// closure handed to `successors`, `from_fn` or `scan`, or inside a
-/// `for` whose body reassigns the cursor the read names. That is a
+/// of a climb it recognizes: inside a `loop` or a `while`; inside a
+/// closure handed to an iterator that feeds it its own last result
+/// (`successors`, `from_fn`, `repeat_with`, `scan`, the folds,
+/// `reduce`); or inside a `for` body or any closure that reassigns a
+/// cursor the read names (`h = p` beside `arena[h].parent()`, as a
+/// `map_while` or `for_each` over a captured cursor does). That is a
 /// heuristic over spellings: a climb by recursion is caught instead by
 /// the deep tests, whose chains overflow the stack on one, and a climb
 /// hidden behind a helper called in a loop is caught by neither. Test

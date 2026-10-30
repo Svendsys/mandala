@@ -234,17 +234,41 @@ impl<E: TreeElement> JournalBuilder<E> {
     }
 
     /// Note that a journaled call on this builder is about to change
-    /// `tree`: on the builder's first call, keep the tree's version as
-    /// the one its journal starts from and move the tree to a fresh
-    /// version; on a later call, hold the tree at that version. Every
-    /// journaled entry point calls this first. O(1).
+    /// `tree`. Every journaled entry point calls this first. O(1).
+    ///
+    /// - On the builder's first call: keep the tree's version as the one
+    ///   its journal starts from, and move the tree to a fresh working
+    ///   version.
+    /// - On a later call, with the tree still at that working version:
+    ///   nothing changed it between the builder's calls, so nothing
+    ///   moves.
+    /// - On a later call with the tree anywhere else: something changed
+    ///   it behind the builder — an unjournaled structural edit, or
+    ///   another builder's call. Putting the tree back at the working
+    ///   version would erase that change from the history, and an
+    ///   earlier journal the change was to have ended would match again.
+    ///   So the builder's journal is cut from every earlier one: its
+    ///   start becomes a fresh version no tree holds, and the tree moves
+    ///   to a fresh working version of its own, which a builder
+    ///   interleaved with this one then finds moved in turn. Its journal
+    ///   still restores itself; nothing recorded before it does again.
     pub(in crate::engine) fn begin(&mut self, tree: &mut Tree<E>) {
+        fn fresh<E: TreeElement>(tree: &mut Tree<E>) -> u64 {
+            let version = tree.next_version;
+            tree.next_version += 1;
+            version
+        }
         let working = match self.versions {
-            Some((_, working)) => working,
             None => {
-                let working = tree.next_version;
-                tree.next_version += 1;
+                let working = fresh(tree);
                 self.versions = Some((tree.version.get(), working));
+                working
+            }
+            Some((_, working)) if tree.version.get() == working => working,
+            Some(_) => {
+                let cut = fresh(tree);
+                let working = fresh(tree);
+                self.versions = Some((cut, working));
                 working
             }
         };
@@ -361,12 +385,16 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// cannot be read; it is dropped with an error logged.
     ///
     /// A journal that closes [empty](Journal::is_empty) has a single
-    /// arrangement, so closing it puts `tree`'s version stamp back
-    /// where the builder's first call found it — the one change `close`
-    /// makes, through a `Cell` — and the journal holds that stamp on
-    /// both sides. Discarded, it leaves
-    /// nothing a restore of an earlier journal would refuse as
-    /// [out of order](TreeError::OutOfOrder).
+    /// arrangement. When the tree is still where the builder's last call
+    /// left it, closing puts `tree`'s version stamp back where the
+    /// builder's first call found it — the one change `close` makes,
+    /// through a `Cell` — and the journal holds that stamp on both
+    /// sides: discarded, it leaves nothing a restore of an earlier
+    /// journal would refuse as [out of order](TreeError::OutOfOrder).
+    /// When something changed the tree since (an unjournaled structural
+    /// edit, another builder's call), the stamp stays where that change
+    /// put it, and the journal holds that one: winding it back would
+    /// erase the change from the history.
     ///
     /// Cost: one clone of each recorded element and an O(entries) scan;
     /// only when an element moved, O(entries) flags and hash maps over
@@ -444,16 +472,21 @@ impl<E: TreeElement> JournalBuilder<E> {
         let to_before = arrangement_order(&entries, Positions::before);
         let to_after = arrangement_order(&entries, Positions::after);
         // An empty journal has one arrangement: the tree goes back to the
-        // stamp it started from, which both sides then hold.
+        // stamp it started from, which both sides then hold — unless
+        // something moved the tree since the builder's last call, whose
+        // stamp then stays, on the tree and on both sides.
         let empty = match &touched {
             None => entries.is_empty(),
             Some(touched) => touched.is_empty(),
         };
-        let after_version = if empty {
+        let (before_version, after_version) = if !empty {
+            (before_version, after_version)
+        } else if tree.version.get() == after_version {
             tree.version.set(before_version);
-            before_version
+            (before_version, before_version)
         } else {
-            after_version
+            let current = tree.version.get();
+            (current, current)
         };
         Journal {
             entries,

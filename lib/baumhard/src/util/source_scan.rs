@@ -1440,11 +1440,12 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
 ///   in one of the three spellings of walking up a chain of parents
 ///   whatever the cursor is called: inside a `loop` or a `while` (its
 ///   condition included); inside a closure handed to an iterator that
-///   feeds a value back into itself (`successors`, `from_fn`, `scan`);
-///   or inside a `for` whose body assigns a variable the read itself
-///   names (`cur = p` beside `arena[cur].parent()`). A parent read in
-///   any other `for` is not one: that `for` walks what it is given,
-///   once per item.
+///   feeds it its own last result (`successors`, `from_fn`,
+///   `repeat_with`, `scan`, the folds, `reduce`); or inside a `for`
+///   body or any closure that assigns a variable the read itself
+///   names, directly or through a `*` deref (`cur = p` beside
+///   `arena[cur].parent()`). A parent read in any other `for` or
+///   closure is not one: it reads one parent per item it is given.
 ///
 /// It is a heuristic over spellings, not a proof. A climb by
 /// recursion is not read here — the deep tests' 100,000-level chains
@@ -1561,35 +1562,58 @@ pub(crate) struct EngineDepthCosts {
 
 /// Every parent read of `source` — a `parent` method, or a function or
 /// method named `parent_*` — that climbs by [`engine_depth_cost_calls`]'
-/// three spellings: inside a `loop` or a `while`; inside a closure
-/// handed to `successors`, `from_fn` or `scan`; or inside a `for` whose
-/// body assigns a plain variable the read names (in its receiver or its
-/// arguments). As `(the enclosing function's name, 1-based line)`. A
-/// closure counts where it is written. Panics when `source` does not
-/// parse, naming `file`.
+/// spellings: inside a `loop` or a `while`; inside a closure handed to
+/// an iterator constructor or adapter that feeds the closure its own
+/// last result (`FEEDBACK`); or inside a `for` body or any
+/// closure that assigns a plain variable — or through a `*` deref —
+/// that the read names (in its receiver or its arguments). As `(the
+/// enclosing function's name, 1-based line)`. A closure counts where it
+/// is written. Panics when `source` does not parse, naming `file`.
 fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
     use std::collections::BTreeSet;
     use syn::visit::{self, Visit};
 
     /// The iterator constructors and adapters whose closure is handed
-    /// its own last result: a parent read there is a climb.
-    const FEEDBACK: &[&str] = &["successors", "from_fn", "scan"];
+    /// its own last result, or keeps state from call to call by its
+    /// nature: a parent read there is a climb.
+    const FEEDBACK: &[&str] = &[
+        "successors",
+        "from_fn",
+        "repeat_with",
+        "scan",
+        "fold",
+        "rfold",
+        "try_fold",
+        "try_rfold",
+        "reduce",
+        "try_reduce",
+    ];
 
     struct Finder {
         function: String,
         loops: usize,
-        /// For each enclosing `for`, the plain variables its body
-        /// assigns.
+        /// For each enclosing `for` body and closure, the plain
+        /// variables it assigns.
         cursors: Vec<BTreeSet<String>>,
         found: Vec<(String, usize)>,
     }
 
-    /// The plain variables `block` assigns anywhere inside it.
-    fn assigned(block: &syn::Block) -> BTreeSet<String> {
+    /// The plain variables `expr` assigns anywhere inside it, directly
+    /// (`at = p`) or through a deref (`*at = p`).
+    fn assigned(expr: &syn::Expr) -> BTreeSet<String> {
         struct Assigned(BTreeSet<String>);
         impl<'ast> Visit<'ast> for Assigned {
             fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
-                if let syn::Expr::Path(path) = &*assign.left {
+                let mut left = &*assign.left;
+                while let syn::Expr::Unary(syn::ExprUnary {
+                    op: syn::UnOp::Deref(_),
+                    expr,
+                    ..
+                }) = left
+                {
+                    left = expr;
+                }
+                if let syn::Expr::Path(path) = left {
                     if let Some(ident) = path.path.get_ident() {
                         self.0.insert(ident.to_string());
                     }
@@ -1598,7 +1622,7 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
             }
         }
         let mut found = Assigned(BTreeSet::new());
-        found.visit_block(block);
+        found.visit_expr(expr);
         found.0
     }
 
@@ -1685,8 +1709,19 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
 
         fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
             self.visit_expr(&expr.expr);
-            self.cursors.push(assigned(&expr.body));
+            let body = syn::Expr::Block(syn::ExprBlock {
+                attrs: Vec::new(),
+                label: None,
+                block: expr.body.clone(),
+            });
+            self.cursors.push(assigned(&body));
             self.visit_block(&expr.body);
+            self.cursors.pop();
+        }
+
+        fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+            self.cursors.push(assigned(&closure.body));
+            visit::visit_expr_closure(self, closure);
             self.cursors.pop();
         }
 
@@ -1736,9 +1771,25 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
 /// at all, reads included, so a caller can tell an empty finding from
 /// a scan that read nothing.
 ///
-/// A write is an assignment to `<expr>.root` (plain or compound) or a
-/// `&mut <expr>.root` — which is how `std::mem::replace`, `swap` and
-/// `take`, or any function that writes through a reference, reach it.
+/// A write is any spelling that can change it:
+/// - an assignment to `<expr>.root`, plain or compound;
+/// - a `&mut <expr>.root` — how `std::mem::replace`, `swap` and `take`,
+///   or any function that writes through a reference, reach it — or a
+///   `&raw mut <expr>.root`;
+/// - a struct pattern that binds a `root` field, of whatever type it
+///   names: `let Tree { root, .. } = tree;` matched through a `&mut`
+///   binds a `&mut NodeId`, which `*root = n` then writes, and the
+///   type may be spelled through an alias (`GfxTree`,
+///   `DocMutatorTree`) or a renamed import, which a scan of syntax
+///   cannot resolve. No shipped pattern binds a `root` field today, so
+///   none needs exempting;
+/// - an `addr_of_mut!` whose arguments name `root`: syn does not parse
+///   a macro's arguments, so its tokens are read instead.
+///
+/// The raw-pointer spellings (`&raw mut`, `addr_of_mut!`) can write
+/// only in `unsafe` code, and the workspace has none; but no
+/// `forbid(unsafe_code)` holds that — it is a convention
+/// (lib/baumhard/CONVENTIONS.md) — so the scan reads them too.
 /// `Tree::root` is a public field, kept public for its reads; writing
 /// it would move the tree's root without the engine knowing, and the
 /// set behind `Tree::contains` and every journal with it would then
@@ -1803,6 +1854,51 @@ pub(crate) fn root_field_writes() -> (Vec<(String, usize, String)>, usize) {
                 }
             }
             visit::visit_expr_binary(self, binary);
+        }
+
+        fn visit_expr_raw_addr(&mut self, raw: &'ast syn::ExprRawAddr) {
+            if matches!(raw.mutability, syn::PointerMutability::Mut(_)) {
+                if let Some(line) = is_root_field(&raw.expr) {
+                    self.lines.push(line);
+                }
+            }
+            visit::visit_expr_raw_addr(self, raw);
+        }
+
+        fn visit_pat_struct(&mut self, pattern: &'ast syn::PatStruct) {
+            for field in &pattern.fields {
+                if let syn::Member::Named(name) = &field.member {
+                    if name == "root" {
+                        self.lines.push(name.span().start().line);
+                    }
+                }
+            }
+            visit::visit_pat_struct(self, pattern);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            let addr_of_mut = mac
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "addr_of_mut");
+            let names_root = || {
+                let mut stack = vec![mac.tokens.clone()];
+                while let Some(tokens) = stack.pop() {
+                    for token in tokens {
+                        match token {
+                            proc_macro2::TokenTree::Ident(ident) if ident == "root" => return true,
+                            proc_macro2::TokenTree::Group(group) => stack.push(group.stream()),
+                            _ => {}
+                        }
+                    }
+                }
+                false
+            };
+            if addr_of_mut && names_root() {
+                self.lines.push(mac.path.segments[0].ident.span().start().line);
+            }
+            visit::visit_macro(self, mac);
         }
 
         fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
@@ -2209,6 +2305,19 @@ mod tests {
             1
         );
         assert_eq!(found("while let Some(n) = at { at = parent_of(n); }"), 1);
+        assert_eq!(found("let _ = (0..n).try_fold(t, |c, _| arena[c].parent());"), 1);
+        assert_eq!(
+            found("let _ = (0..n).fold(t, |c, _| arena[c].parent().unwrap_or(c));"),
+            1
+        );
+        assert_eq!(
+            found("let _ = std::iter::repeat(()).map_while(|_| { let p = arena[h].parent()?; h = p; Some(()) }).count();"),
+            1
+        );
+        assert_eq!(
+            found("ids.iter().for_each(|_| { if let Some(p) = arena[at].parent() { at = p; } });"),
+            1
+        );
         assert_eq!(
             found("for id in ids { if let Some(p) = arena[id].parent() { out.push(p); } }"),
             0

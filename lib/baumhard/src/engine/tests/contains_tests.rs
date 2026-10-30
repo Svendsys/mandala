@@ -245,6 +245,138 @@ fn test_an_unjournaled_structural_change_ends_the_history() {
     do_an_unjournaled_structural_change_ends_the_history();
 }
 
+/// A one-node `Insert` under whatever node it is anchored at.
+fn insert_one() -> MutatorTree<TestElement, TestMutation> {
+    MutatorTree::new_with(Mutator::new_structure(
+        StructOp::Insert {
+            subtree: Subtree::leaf(TestElement::new(0, 5)),
+            at: Placement::Last,
+        },
+        BranchKey::new(TestKind::Plain, 0),
+    ))
+}
+
+/// A change made between two calls of one builder ends the history
+/// before it too (review round 4 on #286). The builder's later call
+/// must not put the tree back at the stamp its first call left: that
+/// would erase the change, and the journal the change ended would
+/// match again. Each case starts from J0, which inserted S under P; X
+/// ends up under S, so a revert of J0 that were accepted would detach
+/// S with X under it and leave X marked in the tree.
+///
+/// - **One builder, an unjournaled edit between its calls**, this body (the
+///   reviewer's probe): B updates Q; `insert_child(S, X)`; B updates Q
+///   again. B's own journal reverts and replays; J0 is refused.
+/// - **Two builders, interleaved**: A updates Q; B inserts X under S,
+///   journaled; A updates Q again. Neither A's revert nor B's brings J0
+///   back.
+/// - **An empty builder closed after another's change**: A's one call
+///   changes nothing; B inserts X under S and closes; A closes empty.
+///   Closing A must not wind the tree back to where A started, under
+///   B's change. (This one is conservative: once B is undone too, J0
+///   stays refused, since A and B interleaved.)
+pub fn do_an_edit_between_one_builders_calls_ends_the_history() {
+    let (mut tree, j0, [_, q, s]) = with_s_inserted_under_p();
+    let mut b = JournalBuilder::new();
+    tree.update_journaled(q, &mut b, |e| e.value += 1).unwrap();
+    let x = tree
+        .insert_child(s, TestElement::new(0, 4), Placement::Last)
+        .unwrap();
+    tree.update_journaled(q, &mut b, |e| e.value += 1).unwrap();
+    let jb = b.close(&tree);
+    jb.revert(&mut tree).unwrap();
+    assert_eq!(
+        j0.revert(&mut tree),
+        Err(TreeError::OutOfOrder),
+        "J0 under the edit between B's calls"
+    );
+    assert!(tree.contains(s) && tree.contains(x), "nothing changed");
+    assert_eq!(tree.arena()[x].parent(), Some(s), "X is still under S");
+    jb.replay(&mut tree).unwrap();
+    jb.revert(&mut tree).unwrap();
+    jb.discard(&mut tree);
+    j0.discard(&mut tree);
+}
+
+/// The second case of [`do_an_edit_between_one_builders_calls_ends_the_history`]:
+/// two builders, interleaved.
+pub fn do_interleaved_builders_end_the_history() {
+    let (mut tree, j0, [_, q, s]) = with_s_inserted_under_p();
+    let mut a = JournalBuilder::new();
+    let mut b = JournalBuilder::new();
+    tree.update_journaled(q, &mut a, |e| e.value += 1).unwrap();
+    insert_one()
+        .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![s]), |_, _| 0, &mut b)
+        .unwrap();
+    let x = tree.arena()[s].first_child().expect("X is under S");
+    tree.update_journaled(q, &mut a, |e| e.value += 1).unwrap();
+    let ja = a.close(&tree);
+    let jb = b.close(&tree);
+    ja.revert(&mut tree).unwrap();
+    assert_eq!(
+        j0.revert(&mut tree),
+        Err(TreeError::OutOfOrder),
+        "J0 after A, under B"
+    );
+    assert_eq!(
+        jb.revert(&mut tree),
+        Err(TreeError::OutOfOrder),
+        "B under A's later call"
+    );
+    assert!(tree.contains(s) && tree.contains(x), "nothing changed");
+    assert_eq!(tree.arena()[x].parent(), Some(s), "X is still under S");
+    ja.discard(&mut tree);
+    jb.discard(&mut tree);
+    j0.discard(&mut tree);
+}
+
+/// The third case of [`do_an_edit_between_one_builders_calls_ends_the_history`]:
+/// an empty builder closed after another's change.
+pub fn do_an_empty_builder_closed_after_another_keeps_its_change() {
+    let (mut tree, j0, [_, q, s]) = with_s_inserted_under_p();
+    let mut a = JournalBuilder::new();
+    let mut b = JournalBuilder::new();
+    tree.update_journaled(q, &mut a, |e| e.value += 0).unwrap();
+    insert_one()
+        .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![s]), |_, _| 0, &mut b)
+        .unwrap();
+    let x = tree.arena()[s].first_child().expect("X is under S");
+    let jb = b.close(&tree);
+    let ja = a.close(&tree);
+    assert!(ja.is_empty(), "precondition: A closed empty");
+    ja.discard(&mut tree);
+    assert_eq!(
+        j0.revert(&mut tree),
+        Err(TreeError::OutOfOrder),
+        "J0 under B, past the empty A"
+    );
+    assert!(tree.contains(s) && tree.contains(x), "nothing changed");
+    jb.revert(&mut tree).unwrap();
+    assert!(!tree.contains(x), "B undone");
+    assert_eq!(
+        j0.revert(&mut tree),
+        Err(TreeError::OutOfOrder),
+        "conservative: A and B interleaved"
+    );
+    jb.discard(&mut tree);
+    j0.discard(&mut tree);
+}
+
+#[test]
+fn test_an_edit_between_one_builders_calls_ends_the_history() {
+    do_an_edit_between_one_builders_calls_ends_the_history();
+}
+
+#[test]
+fn test_interleaved_builders_end_the_history() {
+    do_interleaved_builders_end_the_history();
+}
+
+#[test]
+fn test_an_empty_builder_closed_after_another_keeps_its_change() {
+    do_an_empty_builder_closed_after_another_keeps_its_change();
+}
+
 /// The seeded sweeps, and the helpers only they use. `cfg(test)`
 /// because the enumeration is their runtime, not the primitive
 /// (lib/baumhard/CONVENTIONS.md §B8, the third shape): plain
