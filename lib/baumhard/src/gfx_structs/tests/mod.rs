@@ -17,6 +17,11 @@ pub mod camera_tests;
 pub mod delta_tests;
 pub mod element_tests;
 pub mod fill_tests;
+/// The fuzz properties of authored glyph-layer mutations, which the
+/// `fuzz/` targets call (TEST_CONVENTIONS §T14).
+pub mod glyph_layer_fuzz;
+#[cfg(test)]
+mod glyph_layer_fuzz_tests;
 pub mod glyph_layer_tests;
 pub mod journal_tests;
 pub mod map_children_tests;

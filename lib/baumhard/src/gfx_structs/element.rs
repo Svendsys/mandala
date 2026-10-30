@@ -838,14 +838,17 @@ impl TreeElement for GfxElement {
     /// - a `GlyphRun`: its [`bounds`](GlyphRunData::bounds);
     /// - a `Fill`: its rectangle.
     ///
-    /// A run's or a fill's box must be finite, corner to corner: an
-    /// authored origin or rectangle can be any number a map spells, and
-    /// a box at infinity would stretch every ancestor's subtree box to
-    /// it. A model or a `Void` has no box of its own.
+    /// Every box must be finite, corner to corner: an authored origin,
+    /// rectangle or move (`RunOrigin`, `FillRect`, an area's `MoveTo`)
+    /// can be any number a map spells — `1e39` reads as infinity — and a
+    /// box at infinity would stretch every ancestor's subtree box to it.
+    /// An area's box was left unchecked until the glyph_mutation_raw
+    /// fuzz target moved one there (#278). A model or a `Void` has no box
+    /// of its own.
     fn spatial_bounds(&self) -> Option<(Vec2, Vec2)> {
         let (top_left, size) = match self {
             GfxElement::GlyphArea { glyph_area, .. } => {
-                (glyph_area.position.to_vec2(), glyph_area.render_bounds.to_vec2())
+                finite_box((glyph_area.position.to_vec2(), glyph_area.render_bounds.to_vec2()))?
             }
             GfxElement::GlyphRun { run, .. } => finite_box(run.bounds())?,
             GfxElement::Fill { fill, .. } => finite_box((fill.rect.origin, fill.rect.size))?,
