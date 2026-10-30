@@ -19,7 +19,7 @@ use std::sync::Arc;
 use baumhard::document::resolve::ResolvedText;
 use baumhard::document::values::{FitMode, FontSize, Rgba, Weight, ZoomWindow};
 use baumhard::flow::{
-    place_on_open, shape_box, shape_run, Curve, FlowSpan, PlacedGlyph, PlacedRun, ShapedRun,
+    place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, PlacedGlyph, PlacedRun, ShapedRun,
 };
 use baumhard::font::fonts::{self, acquire_font_system_write, AppFont, FontSystemWriteGuard};
 use baumhard::font::LayoutGlyph;
@@ -30,7 +30,9 @@ use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, Ru
 use baumhard::mindmap::custom_mutation::apply_mutations_to_element;
 use glam::Vec2;
 
+use super::atlas::{Page, Slot};
 use super::emit::{emit_run, EmitCounts, GlyphSprite, MAX_RASTER_FONT_PX};
+use super::instance;
 
 /// The face every run here is shaped in: compiled into the binary, so
 /// the glyphs do not depend on the machine's fonts.
@@ -58,7 +60,11 @@ fn with_fonts<R>(f: impl FnOnce(&mut FontSystemWriteGuard) -> R) -> R {
 }
 
 fn shaped(text: &str) -> ShapedRun {
-    let style = style(SIZE, TEXT_COLOR);
+    shaped_at(text, SIZE)
+}
+
+fn shaped_at(text: &str, size: f32) -> ShapedRun {
+    let style = style(size, TEXT_COLOR);
     with_fonts(|fs| {
         shape_run(
             &[FlowSpan {
@@ -247,12 +253,16 @@ fn test_glyph_run_emit_applies_the_camera_and_the_tree_offset_at_render_time() {
 /// offsets.** A combining acute on `x` is positioned by the shaper
 /// relative to its base; drawn at a placed position, it must land
 /// `font size × x_offset` right and `font size × y_offset` up of that
-/// pen, as cosmic-text's `LayoutGlyph::physical` puts it. At the
-/// camera's largest zoom the offset is whole pixels, so dropping it
-/// moves the pen, not only the key's subpixel bin.
+/// pen, as cosmic-text's `LayoutGlyph::physical` puts it. At 100 pt
+/// and the camera's largest zoom both offsets are whole pixels — the
+/// vertical one more than three, so a `y_offset` dropped or added with
+/// the wrong sign moves the pen past the one-pixel tolerance the
+/// truncation needs — and dropping either moves the pen, not only the
+/// key's subpixel bin.
 #[test]
 fn test_glyph_run_emit_keeps_each_glyphs_shaper_offsets() {
-    let run = shaped("x\u{301}");
+    const MARK_SIZE: f32 = 100.0;
+    let run = shaped_at("x\u{301}", MARK_SIZE);
     let layout: Vec<LayoutGlyph> = run.layout_glyphs().cloned().collect();
     let Some(mark) = layout.iter().position(|g| g.x_offset != 0.0 || g.y_offset != 0.0) else {
         panic!("precondition: the shaper positioned the mark with an offset: {layout:?}")
@@ -260,8 +270,13 @@ fn test_glyph_run_emit_keeps_each_glyphs_shaper_offsets() {
     let laid = layout[mark].clone();
     let zoom = Camera2D::MAX_ZOOM;
     assert!(
-        (laid.x_offset * SIZE * zoom).abs() >= 1.0,
+        (laid.x_offset * MARK_SIZE * zoom).abs() >= 1.0,
         "precondition: the mark's x offset is at least a pixel at zoom {zoom}: {laid:?}"
+    );
+    assert!(
+        (laid.y_offset * MARK_SIZE * zoom).abs() >= 3.0,
+        "precondition: the mark's y offset is at least three pixels at zoom {zoom}, past the \
+         one-pixel tolerance below: {laid:?}"
     );
     let run = path_run(run, vec![at(mark as u32, 100.0, 100.0)], Vec2::ZERO);
     let baseline = baseline_of(&run);
@@ -294,6 +309,171 @@ fn test_glyph_run_emit_keeps_each_glyphs_shaper_offsets() {
     assert_ne!(
         sprites[0].pen.0, 400,
         "control: the mark does not sit on the bare pen"
+    );
+}
+
+/// The pen of a sprite on the surface, its subpixel bin included.
+fn pen_x(sprite: &GlyphSprite) -> f32 {
+    sprite.pen.0 as f32 + sprite.key.x_bin.as_float()
+}
+
+/// **A scale override scales a grapheme cluster about its own box, so a
+/// combining mark stays on its base.** `"x\u{301}"` placed by the real
+/// `place_at_point` (a path run) and shaped as a box: scaled ×3, the
+/// mark's pen sits three times as far from the base's pen as it does
+/// unscaled — where the cluster scaled whole puts it. Scaling each
+/// glyph about its own advance box would leave a zero-advance mark at
+/// twice the distance, a third of the way into the tripled base.
+#[test]
+fn test_glyph_run_emit_scales_a_cluster_about_its_own_box() {
+    const K: f32 = 3.0;
+    let run = shaped("x\u{301}");
+    assert_eq!(run.glyphs.len(), 2, "precondition: a base and a mark glyph");
+    assert!(
+        run.glyphs[0].grapheme_start && !run.glyphs[1].grapheme_start,
+        "precondition: the two glyphs are one grapheme cluster"
+    );
+    let placed = place_at_point(&run, Vec2::new(400.0, 300.0));
+    let path = GlyphRunData::new(
+        RunShape::Path {
+            run: Arc::new(run),
+            placed: Arc::new(placed),
+        },
+        Vec2::ZERO,
+        GlyphOverrides::none(),
+        1.0,
+        None,
+    )
+    .expect("no overrides");
+
+    let style = style(SIZE, TEXT_COLOR);
+    let boxed = with_fonts(|fs| {
+        shape_box(
+            &[FlowSpan {
+                text: "x\u{301}",
+                style: &style,
+                link: None,
+            }],
+            None,
+            baumhard::document::values::Align::Left,
+            fs,
+        )
+    });
+    assert_eq!(
+        boxed.glyph_spans[0], boxed.glyph_spans[1],
+        "precondition: the box's two glyphs share one span byte range"
+    );
+    let boxed = GlyphRunData::new(
+        RunShape::Box(Arc::new(boxed)),
+        Vec2::new(380.0, 280.0),
+        GlyphOverrides::none(),
+        1.0,
+        None,
+    )
+    .expect("no overrides");
+
+    for (what, run) in [("path", path), ("box", boxed)] {
+        let (plain, _) = emit(&run, &identity_camera());
+        let unscaled = pen_x(&plain[1]) - pen_x(&plain[0]);
+        assert!(
+            unscaled.abs() >= 2.0,
+            "{what}: precondition: the mark sits apart from its base's pen ({unscaled})"
+        );
+        let scaled = with_overrides(
+            run,
+            &[RunOverrideOp::Scale {
+                range: 0..2,
+                value: K,
+            }],
+        );
+        let (big, _) = emit(&scaled, &identity_camera());
+        let delta = pen_x(&big[1]) - pen_x(&big[0]);
+        assert!(
+            (delta - K * unscaled).abs() <= 0.5,
+            "{what}: the mark keeps its place on the tripled base: {delta} vs {} (unscaled {unscaled})",
+            K * unscaled
+        );
+    }
+}
+
+/// **A glyph an offset carries onto the surface is drawn, though its
+/// run's box is off it.** `"AB"` at x = −200 and −180, offset by
+/// (400, 0): both glyphs land near x = 200 on an 800-pixel surface. The
+/// run's box — its hit-test box, which overrides do not move — is off
+/// screen, so a run culled by it would draw nothing. The control is the
+/// same run without the offset, which draws nothing.
+#[test]
+fn test_glyph_run_emit_draws_glyphs_an_offset_carries_on_screen() {
+    let base = path_run(
+        shaped("AB"),
+        vec![at(0, -200.0, 100.0), at(1, -180.0, 100.0)],
+        Vec2::ZERO,
+    );
+    let (sprites, counts) = emit(&base, &identity_camera());
+    assert!(
+        sprites.is_empty() && !counts.drawn,
+        "control: without the offset the run is off screen"
+    );
+    let moved = with_overrides(
+        base,
+        &[RunOverrideOp::Offset {
+            range: 0..2,
+            value: Vec2::new(400.0, 0.0),
+        }],
+    );
+    let (sprites, counts) = emit(&moved, &identity_camera());
+    assert_eq!(counts.sprites, 2, "both offset glyphs are drawn: {counts:?}");
+    assert_eq!(
+        (sprites[0].pen.0, sprites[1].pen.0),
+        (200, 220),
+        "where the offset put them"
+    );
+}
+
+/// **A color glyph takes the run's opacity and nothing else; a mask
+/// glyph takes its color, alpha and all.** One sprite — an override
+/// color of alpha 0 and opacity 0.5 folded in — drawn from each page:
+/// from the mask page it is the color with alpha 0; from the color page
+/// (an emoji) the color does not reach it and its alpha is the run's
+/// opacity, 0.5.
+#[test]
+fn test_glyph_run_instance_gives_a_color_glyph_the_opacity_alone() {
+    let sprite = GlyphSprite {
+        key: shaped("A")
+            .layout_glyphs()
+            .next()
+            .expect("a glyph")
+            .physical((0.0, 0.0), 1.0)
+            .cache_key,
+        pen: (10, 20),
+        color: [255, 0, 0, 0],
+        opacity: 0.5,
+    };
+    let slot = |page| Slot {
+        page,
+        uv: (3, 4),
+        size: (5, 6),
+        left: 1,
+        top: 2,
+    };
+    let mask = instance(&sprite, slot(Page::Mask));
+    assert_eq!(
+        mask.color,
+        [1.0, 0.0, 0.0, 0.0],
+        "a mask glyph takes its color's alpha"
+    );
+    assert_eq!(mask.page, 1.0);
+    let color = instance(&sprite, slot(Page::Color));
+    assert_eq!(
+        color.color,
+        [1.0, 1.0, 1.0, 0.5],
+        "an emoji keeps its colors, and its alpha is the run's opacity"
+    );
+    assert_eq!(color.page, 0.0);
+    assert_eq!(
+        (color.pos, color.size, color.uv),
+        ([11.0, 18.0], [5.0, 6.0], [3.0, 4.0]),
+        "the bitmap placed by its bearing from the pen"
     );
 }
 

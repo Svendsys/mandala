@@ -288,7 +288,7 @@ fn test_a_glyph_run_of_500_glyphs_on_a_circle_draws_from_one_shaped_run_in_one_d
 /// second ring outside it, `Fit` around the ellipse with a few glyphs
 /// recolored and scaled by overrides — plus a connector between them at
 /// half opacity, `Repeat` along a cubic, and two point markers inside
-/// the ellipse, one at half opacity. Seven runs, every glyph of them in
+/// the ellipse, one at half opacity. Six runs, every glyph of them in
 /// one draw call.
 ///
 /// Asserted: every run is drawn; every placed glyph is either an
@@ -456,6 +456,10 @@ fn grid(text: &str, style: &ResolvedText, corner: Vec2, columns: usize, step: f3
 /// the frame is still drawn, the glyphs that found room are drawn, and
 /// the rest are counted as refused — never a panic, never a skipped
 /// frame (CODE_CONVENTIONS §9).
+///
+/// Last, a capital scaled ×8 has a bitmap taller than the frozen page:
+/// it can never be placed, so it is remembered as drawing nothing, like
+/// the space beside it, and the next frame rasterizes neither.
 #[test]
 fn test_the_glyph_atlas_grows_evicts_and_refuses_without_failing_a_frame() {
     let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
@@ -524,4 +528,103 @@ fn test_the_glyph_atlas_grows_evicts_and_refuses_without_failing_a_frame() {
         "every glyph is drawn or refused, and the frame is drawn: {crowded:?}"
     );
     assert_eq!(crowded.draws, 1, "{crowded:?}");
+
+    let huge = with_overrides(
+        grid("W ", &big, corner, 7, 22.0),
+        &[RunOverrideOp::Scale {
+            range: 0..1,
+            value: 8.0,
+        }],
+    );
+    show(init, vec![huge]);
+    draw(init, &camera);
+    let oversized = init.renderer.glyph_run_counts();
+    assert_eq!(
+        (
+            oversized.instances,
+            oversized.atlas.oversized - crowded.atlas.oversized
+        ),
+        (0, 1),
+        "the ×8 capital is larger than any page and is not drawn: {oversized:?}"
+    );
+    draw(init, &camera);
+    let again = init.renderer.glyph_run_counts();
+    assert_eq!(
+        again.atlas.rasterized, oversized.atlas.rasterized,
+        "the oversized capital and the space are remembered, not rasterized again: {again:?}"
+    );
+}
+
+/// `run` with `ops` applied through the glyph mutation path.
+fn with_overrides(run: GlyphRunData, ops: &[RunOverrideOp]) -> GlyphRunData {
+    let mut element = GfxElement::new_run(run, 0, 1);
+    let mutations: Vec<GfxMutation> = ops.iter().cloned().map(GfxMutation::RunOverrides).collect();
+    apply_mutations_to_element(&mutations, &mut element);
+    element.glyph_run().cloned().expect("still a run")
+}
+
+/// **Under a continuous zoom the atlas evicts the sizes left behind
+/// instead of growing toward the device's limit.** Every frame of a zoom
+/// from 1.00 to 3.00 in steps of 0.01 — 201 frames — asks for the 26
+/// capitals (and a space) at a new size, thousands of distinct keys in
+/// all. The page
+/// grows only while one frame's own capitals do not fit (at most twice:
+/// 26 capitals at the largest size fit a 1024² page), and the rest of
+/// the time the keys of earlier sizes are evicted to make room. The
+/// control is the grow-before-evict order, which evicts nothing and
+/// grows the page toward the device's limit.
+#[test]
+fn test_a_continuous_zoom_evicts_old_sizes_instead_of_growing_the_atlas() {
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    let big = style(AppFont::GalatiaSIL, 24.0, Rgba::opaque(255, 255, 255));
+    // Small and dense, so the frames are cheap to read back and every
+    // glyph stays on screen at every zoom.
+    show(
+        init,
+        vec![grid(
+            "ABCDEFGHIJKLM NOPQRSTUVWXYZ",
+            &big,
+            FAR - Vec2::new(30.0, 20.0),
+            7,
+            8.0,
+        )],
+    );
+    let mut camera = Camera2D::new(256, 256);
+    camera.position = FAR;
+    for step in 0..=200 {
+        camera.zoom = 1.0 + step as f32 * 0.01;
+        draw(init, &camera);
+        let frame = init.renderer.glyph_run_counts();
+        assert_eq!(
+            (frame.instances, frame.skipped),
+            (26, 1),
+            "precondition: every capital is drawn, and the space has nothing to draw, at zoom {}: {frame:?}",
+            camera.zoom
+        );
+    }
+    let end = init.renderer.glyph_run_counts();
+    assert!(
+        end.atlas.rasterized > 26 * 100,
+        "precondition: the zoom asked for thousands of keys: {end:?}"
+    );
+    assert!(
+        end.atlas.growths <= 2,
+        "the page grew only for one frame's working set: {end:?}"
+    );
+    assert!(
+        end.atlas.evicted > 1_000,
+        "old sizes made room for new ones: {end:?}"
+    );
+    assert_eq!(end.atlas.refused, 0, "and every glyph found room: {end:?}");
+    assert!(
+        end.atlas.forgotten > 10,
+        "the spaces of sizes left behind are forgotten with them: {end:?}"
+    );
+    assert!(
+        end.atlas_entries < 26 * 40,
+        "the atlas holds a page of recent sizes, not every size seen: {end:?}"
+    );
 }

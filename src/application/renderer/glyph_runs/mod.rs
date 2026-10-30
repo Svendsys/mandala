@@ -403,9 +403,27 @@ impl GlyphRunPass {
 }
 
 /// The instance that draws `sprite` from `slot`: the bitmap's rectangle
-/// placed by its bearing from the pen, and the color decoded to linear.
+/// placed by its bearing from the pen, and its color.
+///
+/// A mask glyph takes the sprite's color, decoded to linear, alpha and
+/// all. A color glyph (an emoji) keeps its own colors, so its text color
+/// and any override color do not reach it — their alpha included — and
+/// its alpha is the run's opacity alone. Decided here because it is the
+/// slot, not the sprite, that knows which page a glyph is on.
 pub(crate) fn instance(sprite: &GlyphSprite, slot: atlas::Slot) -> GlyphInstance {
     let [r, g, b, a] = sprite.color;
+    let (color, page) = match slot.page {
+        Page::Color => ([1.0, 1.0, 1.0, sprite.opacity], 0.0),
+        Page::Mask => (
+            [
+                srgb_to_linear(r),
+                srgb_to_linear(g),
+                srgb_to_linear(b),
+                f32::from(a) / 255.0,
+            ],
+            1.0,
+        ),
+    };
     GlyphInstance {
         pos: [
             (sprite.pen.0 + slot.left) as f32,
@@ -413,16 +431,8 @@ pub(crate) fn instance(sprite: &GlyphSprite, slot: atlas::Slot) -> GlyphInstance
         ],
         size: [slot.size.0 as f32, slot.size.1 as f32],
         uv: [slot.uv.0 as f32, slot.uv.1 as f32],
-        color: [
-            srgb_to_linear(r),
-            srgb_to_linear(g),
-            srgb_to_linear(b),
-            f32::from(a) / 255.0,
-        ],
-        page: match slot.page {
-            Page::Color => 0.0,
-            Page::Mask => 1.0,
-        },
+        color,
+        page,
     }
 }
 

@@ -22,13 +22,28 @@
 //! [`INITIAL_SIDE`] and doubles up to the device's
 //! `max_texture_dimension_2d`.
 //!
-//! **Lifetime of an entry.** An entry is made the first time a frame
-//! asks for its key and kept until the page it lives on is full at its
-//! largest size; then every entry of that page the current frame has
-//! not drawn is evicted at once and the allocation is retried. An entry
-//! the current frame drew is never evicted under it. A glyph with
-//! nothing to draw (a space) is remembered as such, so it is
-//! rasterized once, not once a frame.
+//! **Lifetime of an entry: evict before growing.** An entry is made the
+//! first time a frame asks for its key. When a bitmap does not fit its
+//! page, every entry of that page the current frame has not drawn is
+//! evicted; the page grows only when every bitmap on it is the current
+//! frame's — that is, when the frame's own glyphs do not fit. An entry
+//! the current frame drew is never evicted under it. This is glyphon's
+//! order (`InnerAtlas::try_allocate` evicts before `prepare` grows),
+//! though glyphon evicts least recently used first, one at a time; this
+//! atlas evicts everything stale at once (`GlyphAtlas::evict_for`
+//! says why). It
+//! keeps a page near the size of one frame's working set: under a
+//! continuous zoom, where every frame asks for keys at a new size, the
+//! glyphs of the sizes left behind make room for the new ones instead
+//! of growing the page to the device's limit.
+//!
+//! **Remembered without a bitmap.** A glyph with nothing to draw (a
+//! space), and one whose bitmap is larger than the largest page, are
+//! remembered as such, so neither is rasterized again every frame.
+//! Such entries are forgotten on any eviction pass the current frame
+//! did not use them in, so they cannot accumulate across sizes. A
+//! glyph refused for want of room *now* is not remembered: a later
+//! frame, with other glyphs evictable, may have room for it.
 //!
 //! **Growth re-rasterizes.** etagere keeps every allocation where it
 //! was when a page grows, so a grown page is filled by rasterizing its
@@ -112,6 +127,10 @@ struct AtlasPage {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     packer: BucketedAtlasAllocator,
+    /// Bitmaps written to the current texture's predecessors and to it,
+    /// counted by the write itself ([`AtlasPage::upload`]), so a count
+    /// read from here cannot move without a write.
+    written: u64,
 }
 
 impl AtlasPage {
@@ -123,6 +142,7 @@ impl AtlasPage {
             texture,
             view,
             packer: BucketedAtlasAllocator::new(size2(side as i32, side as i32)),
+            written: 0,
         }
     }
 
@@ -148,8 +168,10 @@ impl AtlasPage {
         (texture, view)
     }
 
-    /// Copy `data`, a `size` bitmap in this page's format, to `uv`.
-    fn upload(&self, queue: &wgpu::Queue, uv: (u32, u32), size: (u32, u32), data: &[u8]) {
+    /// Copy `data`, a `size` bitmap in this page's format, to `uv`, and
+    /// count the write.
+    fn upload(&mut self, queue: &wgpu::Queue, uv: (u32, u32), size: (u32, u32), data: &[u8]) {
+        self.written += 1;
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -189,11 +211,30 @@ pub(crate) struct AtlasCounts {
     /// Times a page doubled.
     pub(crate) growths: u64,
     /// Bitmaps written again into a grown page: every entry it held.
+    /// Read back from the page's own write count, so only a write moves
+    /// it.
     pub(crate) reuploaded: u64,
-    /// Entries evicted from a full page.
+    /// Bitmaps evicted from a full page to make room.
     pub(crate) evicted: u64,
-    /// Glyphs refused: a page full at its largest even after eviction.
+    /// Entries without a bitmap forgotten by an eviction pass.
+    pub(crate) forgotten: u64,
+    /// Glyphs refused for want of room this frame: a page at its
+    /// largest holding only the frame's own glyphs. Not remembered.
     pub(crate) refused: u64,
+    /// Glyphs whose bitmap is larger than the largest page: remembered
+    /// as drawing nothing.
+    pub(crate) oversized: u64,
+}
+
+/// What [`GlyphAtlas::place`] made of a key.
+enum Placed {
+    /// A bitmap, on a page.
+    Bitmap(Slot, AllocId),
+    /// Nothing to draw, now or ever: no bitmap, an empty one, content
+    /// this atlas does not hold, or a bitmap larger than any page.
+    Nothing,
+    /// No room this frame.
+    NoRoom,
 }
 
 /// The atlas: two pages, the entries on them, and the bind group the
@@ -211,6 +252,9 @@ pub(crate) struct GlyphAtlas {
     /// refused nothing, so a page full for good warns once.
     refusal_logged: bool,
     refused_this_frame: bool,
+    /// Whether an oversized glyph has been logged. Each is remembered,
+    /// so the warning is once for the atlas's life.
+    oversized_logged: bool,
     counts: AtlasCounts,
 }
 
@@ -265,6 +309,7 @@ impl GlyphAtlas {
             bind_group,
             refusal_logged: false,
             refused_this_frame: false,
+            oversized_logged: false,
             counts: AtlasCounts::default(),
         }
     }
@@ -336,14 +381,16 @@ impl GlyphAtlas {
 
     /// Where `key`'s bitmap is, rasterizing and uploading it the first
     /// time it is asked for. `None` when the glyph draws nothing (no
-    /// bitmap, an empty one, or content this atlas does not hold) or
-    /// cannot be placed (a page full at its largest even after
-    /// eviction, warned once per episode).
+    /// bitmap, an empty one, content this atlas does not hold, or a
+    /// bitmap larger than any page — each remembered) or cannot be
+    /// placed this frame (its page holds only this frame's glyphs at its
+    /// largest size; warned once per episode, not remembered).
     ///
     /// Cost: one hash lookup on a hit. On a miss, one rasterization
     /// under the font guard the caller holds and one texture write; a
-    /// page that must grow re-rasterizes and re-uploads every entry on
-    /// it, and one that must evict walks the entries once.
+    /// page that must make room sorts its entries the frame has not
+    /// used once and evicts the oldest until the bitmap fits, and one
+    /// that must grow re-rasterizes and re-uploads every entry on it.
     pub(crate) fn slot(
         &mut self,
         device: &wgpu::Device,
@@ -358,12 +405,12 @@ impl GlyphAtlas {
             return entry.placed.map(|(slot, _)| slot);
         }
         self.counts.rasterized += 1;
-        let placed = self.place(device, queue, font_system, swash, key);
-        if placed.is_none() && self.refused_this_frame {
-            // A refusal is not remembered as "draws nothing": the next
-            // frame, with other glyphs evictable, may have room.
-            return None;
-        }
+        let placed = match self.place(device, queue, font_system, swash, key) {
+            Placed::Bitmap(slot, id) => Some((slot, id)),
+            Placed::Nothing => None,
+            // Not remembered: a later frame may have room for it.
+            Placed::NoRoom => return None,
+        };
         self.entries.insert(
             key,
             Entry {
@@ -374,9 +421,8 @@ impl GlyphAtlas {
         placed.map(|(slot, _)| slot)
     }
 
-    /// Rasterize `key` and find it room. `None` for a glyph with
-    /// nothing to draw, or — with `refused_this_frame` set — for one
-    /// there is no room for.
+    /// Rasterize `key` and find it room: evict what the frame has not
+    /// used, and grow only when that is not enough.
     fn place(
         &mut self,
         device: &wgpu::Device,
@@ -384,12 +430,16 @@ impl GlyphAtlas {
         font_system: &mut FontSystem,
         swash: &mut SwashCache,
         key: CacheKey,
-    ) -> Option<(Slot, AllocId)> {
-        let image = swash.get_image_uncached(font_system, key)?;
-        let page = Page::of(image.content)?;
+    ) -> Placed {
+        let Some(image) = swash.get_image_uncached(font_system, key) else {
+            return Placed::Nothing;
+        };
+        let Some(page) = Page::of(image.content) else {
+            return Placed::Nothing;
+        };
         let size = (image.placement.width, image.placement.height);
         if size.0 == 0 || size.1 == 0 {
-            return None;
+            return Placed::Nothing;
         }
         // A bitmap whose bytes do not match its size would be read past
         // its end by the texture write.
@@ -402,22 +452,36 @@ impl GlyphAtlas {
                 size.0,
                 size.1
             );
-            return None;
+            return Placed::Nothing;
         }
         // A bitmap larger than the largest page can never be placed;
-        // growing and evicting for it would only empty the atlas.
-        let fits_at_all = size.0 <= self.max_side && size.1 <= self.max_side;
+        // evicting and growing for it would only empty the atlas.
+        if size.0 > self.max_side || size.1 > self.max_side {
+            self.counts.oversized += 1;
+            if !self.oversized_logged {
+                self.oversized_logged = true;
+                log::warn!(
+                    "renderer: glyph_runs: a {}×{} glyph is larger than the largest atlas page, {2}×{2}; \
+                     it is not drawn",
+                    size.0,
+                    size.1,
+                    self.max_side
+                );
+            }
+            return Placed::Nothing;
+        }
         let (id, uv) = loop {
-            if fits_at_all {
-                if let Some(allocation) = allocate(self.page(page), size) {
-                    break allocation;
-                }
-                if self.grow(device, queue, font_system, swash, page) || self.evict_unused(page) {
-                    continue;
-                }
+            if let Some(allocation) = allocate(self.page(page), size) {
+                break allocation;
+            }
+            if let Some(allocation) = self.evict_for(page, size) {
+                break allocation;
+            }
+            if self.grow(device, queue, font_system, swash, page) {
+                continue;
             }
             self.refuse(page);
-            return None;
+            return Placed::NoRoom;
         };
         let slot = Slot {
             page,
@@ -428,7 +492,7 @@ impl GlyphAtlas {
         };
         self.page(page).upload(queue, slot.uv, size, &image.data);
         self.counts.uploaded += 1;
-        Some((slot, id))
+        Placed::Bitmap(slot, id)
     }
 
     /// Count a glyph there is no room for, and warn once per episode
@@ -465,27 +529,24 @@ impl GlyphAtlas {
         page: Page,
     ) -> bool {
         let max_side = self.max_side;
-        let grown = {
-            let target = self.page(page);
-            if target.side >= max_side {
-                return false;
-            }
-            let side = (target.side * 2).min(max_side);
-            target.packer.grow(size2(side as i32, side as i32));
-            let (texture, view) = AtlasPage::texture(device, page, side);
-            target.texture = texture;
-            target.view = view;
-            target.side = side;
-            side
+        let target = match page {
+            Page::Color => &mut self.color,
+            Page::Mask => &mut self.mask,
         };
+        if target.side >= max_side {
+            return false;
+        }
+        let side = (target.side * 2).min(max_side);
+        target.packer.grow(size2(side as i32, side as i32));
+        let (texture, view) = AtlasPage::texture(device, page, side);
+        target.texture = texture;
+        target.view = view;
+        target.side = side;
         self.counts.growths += 1;
-        log::debug!("renderer: glyph_runs: {page:?} atlas grew to {grown}×{grown}");
+        log::debug!("renderer: glyph_runs: {page:?} atlas grew to {side}×{side}");
         // Every entry on this page is still at its texel; the new
         // texture is empty, so each is rasterized and written again.
-        let target = match page {
-            Page::Color => &self.color,
-            Page::Mask => &self.mask,
-        };
+        let written_before = target.written;
         for (key, entry) in &self.entries {
             let Some((slot, _)) = entry.placed else {
                 continue;
@@ -498,35 +559,64 @@ impl GlyphAtlas {
                     == u64::from(slot.size.0) * u64::from(slot.size.1) * u64::from(page.bytes_per_texel())
                 {
                     target.upload(queue, slot.uv, slot.size, &image.data);
-                    self.counts.reuploaded += 1;
                 }
             }
         }
+        self.counts.reuploaded += target.written - written_before;
         self.bind_group = Self::bind(device, &self.layout, &self.color, &self.mask, &self.sampler);
         true
     }
 
-    /// Evict every entry of `page` the current frame has not asked for.
-    /// `false` when there is none, so the caller stops retrying.
-    fn evict_unused(&mut self, page: Page) -> bool {
+    /// Make room for a `size` bitmap on `page` by evicting every bitmap
+    /// of the page the current frame has not drawn, and return the
+    /// allocation if it now fits. `None` when there was nothing to evict
+    /// or the room freed is not enough: every bitmap left is the frame's
+    /// own, and the page must grow.
+    ///
+    /// All of them at once rather than one at a time: etagere's
+    /// bucketed packer frees a column only when every item in it is
+    /// gone, so evicting a few old glyphs at a time leaves the page
+    /// fragmented — partly free columns no new glyph fits — where
+    /// clearing everything stale hands the frame's new glyphs whole
+    /// columns. A page fills only when the view moved on (a zoom, a new
+    /// region), and what it held is what that view no longer shows.
+    ///
+    /// The same pass forgets every bitmap-less entry the frame has not
+    /// used, so remembered spaces and oversized glyphs do not pile up
+    /// across sizes.
+    ///
+    /// Cost: one walk of the entries, one deallocation per eviction and
+    /// one allocation attempt. Only when a page is full.
+    fn evict_for(&mut self, page: Page, size: (u32, u32)) -> Option<(AllocId, (u32, u32))> {
         let frame = self.frame;
-        let mut freed = Vec::new();
-        self.entries.retain(|_, entry| match entry.placed {
-            Some((slot, id)) if slot.page == page && entry.last_used < frame => {
-                freed.push(id);
-                false
+        let target = match page {
+            Page::Color => &mut self.color,
+            Page::Mask => &mut self.mask,
+        };
+        let (mut evicted, mut forgotten) = (0, 0);
+        self.entries.retain(|_, entry| {
+            if entry.last_used >= frame {
+                return true;
             }
-            _ => true,
+            match entry.placed {
+                None => {
+                    forgotten += 1;
+                    false
+                }
+                Some((slot, id)) if slot.page == page => {
+                    target.packer.deallocate(id);
+                    evicted += 1;
+                    false
+                }
+                Some(_) => true,
+            }
         });
-        if freed.is_empty() {
-            return false;
+        self.counts.evicted += evicted;
+        self.counts.forgotten += forgotten;
+        if evicted == 0 {
+            return None;
         }
-        self.counts.evicted += freed.len() as u64;
-        let target = self.page(page);
-        for id in freed {
-            target.packer.deallocate(id);
-        }
-        true
+        allocate(target, size)
     }
 }
 

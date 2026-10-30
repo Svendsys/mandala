@@ -29,9 +29,20 @@
 //! layout order for a box) and are empty or exactly as long as the
 //! run's glyph count (`GlyphRunData::new` checks it). An offset moves
 //! the glyph in canvas units; a scale multiplies its font size about
-//! the center of its box, so a glyph grows in place rather than away
-//! from its baseline's left end; a color replaces its own.
-//! **Opacity** multiplies the alpha of every glyph.
+//! the center of its **grapheme cluster's** box, so a glyph grows in
+//! place rather than away from its baseline's left end, and a
+//! combining mark scaled with its base stays on it; a color replaces a
+//! mask glyph's own.
+//! **Opacity** multiplies the alpha of every glyph. A color glyph (an
+//! emoji) keeps its own colors: neither its text color nor an override
+//! color reaches it, their alpha included, and only the run's opacity
+//! does ([`GlyphSprite::opacity`]).
+//!
+//! **Culling.** A run without overrides is culled whole by its box
+//! (`GlyphRunData::bounds`). That box is the run's hit-test box, which
+//! overrides do not move, so a run *with* overrides is culled glyph by
+//! glyph instead — an offset can carry a glyph onto the surface from a
+//! box that is off it.
 //!
 //! **Zoom is applied here, at render time**: the glyph is rasterized at
 //! `font size × scale × pixels per unit`, and nothing about the run
@@ -46,6 +57,7 @@
 //! rasterized size would pass [`MAX_RASTER_FONT_PX`] is skipped.
 
 use baumhard::document::values::Rgba;
+use baumhard::flow::{GlyphMetrics, PlacedGlyph};
 use baumhard::font::{Color, LayoutGlyph, COLOR_WHITE};
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
@@ -76,9 +88,12 @@ pub(crate) struct GlyphSprite {
     /// fractional part into the key's bins. The rasterized bitmap's own
     /// placement (left and top bearing) is applied from here.
     pub(crate) pen: (i32, i32),
-    /// sRGB color, opacity folded into alpha. A color glyph (an emoji)
-    /// keeps its own colors and takes only the alpha.
+    /// sRGB color for a mask glyph, the run's opacity folded into its
+    /// alpha.
     pub(crate) color: [u8; 4],
+    /// The run's opacity, `0..=1`: the only alpha a color glyph (an
+    /// emoji) takes, since it keeps its own colors.
+    pub(crate) opacity: f32,
 }
 
 /// What [`emit_run`] did with one run, for the frame's counts.
@@ -117,16 +132,23 @@ pub(crate) fn emit_run<'a>(
         return counts;
     }
     let opacity = opacity.min(1.0);
-    let (top_left, size) = run.bounds();
-    let top_left = top_left + offset;
     let window = run.zoom().map_or(ZoomVisibility::unbounded(), |w| {
         ZoomVisibility::from_pair(w.min, w.max)
     });
-    if !camera.visibility(top_left, size, window).is_visible() {
+    let overrides = run.overrides();
+    // The run's box is its hit-test box, which overrides do not move:
+    // with overrides, only the zoom window is decided here and each
+    // glyph is culled where its overrides put it.
+    let visible = if overrides.is_empty() {
+        let (top_left, size) = run.bounds();
+        camera.visibility(top_left + offset, size, window).is_visible()
+    } else {
+        window.contains(camera.zoom)
+    };
+    if !visible {
         return counts;
     }
     counts.drawn = true;
-    let overrides = run.overrides();
     let style = GlyphStyle {
         camera,
         opacity,
@@ -140,6 +162,10 @@ pub(crate) fn emit_run<'a>(
             layout.clear();
             layout.extend(shaped.layout_glyphs());
             let baseline = shaped.baseline();
+            let half_line = shaped.line_height * 0.5;
+            // The center of the cluster the current glyph belongs to,
+            // set at each cluster's first glyph.
+            let mut center = Vec2::ZERO;
             for (index, glyph) in placed.glyphs.iter().enumerate() {
                 let (Some(laid), Some(metrics)) = (
                     layout.get(glyph.glyph as usize),
@@ -148,11 +174,19 @@ pub(crate) fn emit_run<'a>(
                     counts.skipped += 1;
                     continue;
                 };
-                let corner = origin + glyph.pos;
+                if !continues_cluster(&shaped.glyphs, &placed.glyphs, index) {
+                    let (left, advance) = cluster_extent(&shaped.glyphs, &placed.glyphs, index);
+                    // Placement put each glyph of a cluster at the
+                    // cluster's corner plus its pen's distance from the
+                    // cluster's leftmost pen, so the corner is that
+                    // distance back from this glyph.
+                    let corner = origin + glyph.pos - Vec2::new(metrics.x - left, 0.0);
+                    center = corner + Vec2::new(advance * 0.5, half_line);
+                }
                 let at = GlyphAt {
                     laid,
-                    pen: corner + Vec2::new(0.0, baseline),
-                    center: corner + Vec2::new(metrics.advance, shaped.line_height) * 0.5,
+                    pen: origin + glyph.pos + Vec2::new(0.0, baseline),
+                    center,
                     index,
                 };
                 style.emit(at, &mut counts, sink);
@@ -161,10 +195,29 @@ pub(crate) fn emit_run<'a>(
         RunShape::Box(shaped) => {
             let mut index = 0;
             for line in shaped.buffer.layout_runs() {
-                for laid in line.glyphs {
+                // `index` at this line's first glyph: the line's glyph
+                // `k` is drawn glyph `first + k`.
+                let first = index;
+                let cluster_of = |k: usize| shaped.glyph_spans.get(first + k);
+                let mut center = Vec2::ZERO;
+                for (k, laid) in line.glyphs.iter().enumerate() {
+                    if k == 0 || cluster_of(k) != cluster_of(k - 1) {
+                        // A cluster is the glyphs sharing one span byte
+                        // range; its box spans their hitboxes.
+                        let mut end = k + 1;
+                        while end < line.glyphs.len() && cluster_of(end) == cluster_of(k) {
+                            end += 1;
+                        }
+                        let members = &line.glyphs[k..end];
+                        let left = members.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+                        let right = members
+                            .iter()
+                            .map(|g| g.x + g.w)
+                            .fold(f32::NEG_INFINITY, f32::max);
+                        center =
+                            origin + Vec2::new((left + right) * 0.5, line.line_top + line.line_height * 0.5);
+                    }
                     let pen = origin + Vec2::new(laid.x, line.line_y + laid.y);
-                    let center =
-                        origin + Vec2::new(laid.x + laid.w * 0.5, line.line_top + line.line_height * 0.5);
                     style.emit(
                         GlyphAt {
                             laid,
@@ -183,9 +236,40 @@ pub(crate) fn emit_run<'a>(
     counts
 }
 
+/// Whether placed glyph `index` continues the grapheme cluster of the
+/// placed glyph before it, as placement grouped them: its shaped glyph
+/// does not begin a cluster and directly follows the previous one's.
+fn continues_cluster(glyphs: &[GlyphMetrics], placed: &[PlacedGlyph], index: usize) -> bool {
+    let Some(before) = index.checked_sub(1).and_then(|i| placed.get(i)) else {
+        return false;
+    };
+    let Some(this) = placed.get(index) else {
+        return false;
+    };
+    glyphs.get(this.glyph as usize).is_some_and(|m| !m.grapheme_start) && before.glyph + 1 == this.glyph
+}
+
+/// The cluster that begins at placed glyph `start`: its leftmost pen
+/// position in the shaped line and its summed advance, the box
+/// placement gave it. O(glyphs in the cluster).
+fn cluster_extent(glyphs: &[GlyphMetrics], placed: &[PlacedGlyph], start: usize) -> (f32, f32) {
+    let mut left = f32::INFINITY;
+    let mut advance = 0.0;
+    let mut index = start;
+    while index < placed.len() && (index == start || continues_cluster(glyphs, placed, index)) {
+        if let Some(metrics) = glyphs.get(placed[index].glyph as usize) {
+            left = left.min(metrics.x);
+            advance += metrics.advance;
+        }
+        index += 1;
+    }
+    (left, advance)
+}
+
 /// One drawn glyph before its overrides: the laid-out glyph, its pen
-/// on the canvas, the center of its box (what a scale override scales
-/// about) and its index among the run's drawn glyphs.
+/// on the canvas, the center of its grapheme cluster's box (what a
+/// scale override scales about) and its index among the run's drawn
+/// glyphs.
 struct GlyphAt<'g> {
     laid: &'g LayoutGlyph,
     pen: Vec2,
@@ -221,8 +305,9 @@ impl GlyphStyle<'_> {
             counts.skipped += 1;
             return;
         }
-        // Scaling about the box's center: the pen moves away from the
-        // center by the same factor the glyph grows by.
+        // Scaling about the cluster box's center: the pen moves away
+        // from it by the same factor the glyph grows by, so every glyph
+        // of a cluster scaled alike keeps its place in the cluster.
         let pen = at.center + (at.pen - at.center) * scale + offset;
         // The shaper's offsets, in units of the font size, `y`
         // subtracted: `LayoutGlyph::physical`'s arithmetic.
@@ -252,6 +337,7 @@ impl GlyphStyle<'_> {
             key,
             pen: (x, y),
             color: [color[0], color[1], color[2], alpha],
+            opacity: self.opacity,
         });
         counts.sprites += 1;
     }
