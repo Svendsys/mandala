@@ -24,26 +24,32 @@
 //!
 //! **Lifetime of an entry: evict before growing.** An entry is made the
 //! first time a frame asks for its key. When a bitmap does not fit its
-//! page, every entry of that page the current frame has not drawn is
-//! evicted; the page grows only when every bitmap on it is the current
-//! frame's — that is, when the frame's own glyphs do not fit. An entry
-//! the current frame drew is never evicted under it. This is glyphon's
-//! order (`InnerAtlas::try_allocate` evicts before `prepare` grows),
-//! though glyphon evicts least recently used first, one at a time; this
-//! atlas evicts everything stale at once (`GlyphAtlas::evict_for`
-//! says why). It
-//! keeps a page near the size of one frame's working set: under a
-//! continuous zoom, where every frame asks for keys at a new size, the
-//! glyphs of the sizes left behind make room for the new ones instead
-//! of growing the page to the device's limit.
+//! page, every entry of that page **stale for two frames** — drawn
+//! neither by the current frame nor by the one before it
+//! ([`PROTECTED_FRAMES`]) — is evicted; the page grows only when that
+//! frees too little, which is when the last two frames' own glyphs do
+//! not fit together. This is glyphon's order
+//! (`InnerAtlas::try_allocate` evicts before `prepare` grows), though
+//! glyphon evicts least recently used first, one at a time; this atlas
+//! evicts everything stale at once (`GlyphAtlas::evict_for` says why).
+//!
+//! **Why two frames, not one.** "Not drawn by the current frame" is
+//! everything the frame has not reached *yet*: a miss early in a frame
+//! would evict the glyphs its later runs are about to ask for, and a
+//! steady view would be rasterized again, whole, every few frames.
+//! Protecting the previous frame too keeps a view that is drawn every
+//! frame resident, keeps both of two alternating views (the window and
+//! a capture at another scale) once the page has grown to hold both,
+//! and still lets a continuous zoom drop the sizes it has left behind:
+//! the page holds about two frames of sizes, not every size seen.
 //!
 //! **Remembered without a bitmap.** A glyph with nothing to draw (a
 //! space), and one whose bitmap is larger than the largest page, are
 //! remembered as such, so neither is rasterized again every frame.
-//! Such entries are forgotten on any eviction pass the current frame
-//! did not use them in, so they cannot accumulate across sizes. A
-//! glyph refused for want of room *now* is not remembered: a later
-//! frame, with other glyphs evictable, may have room for it.
+//! Such entries are forgotten by any eviction pass once they are stale
+//! for two frames, so they cannot accumulate across sizes. A glyph
+//! refused for want of room *now* is not remembered: a later frame,
+//! with other glyphs evictable, may have room for it.
 //!
 //! **Growth re-rasterizes.** etagere keeps every allocation where it
 //! was when a page grows, so a grown page is filled by rasterizing its
@@ -59,6 +65,11 @@ use rustc_hash::FxHashMap;
 
 /// The side, in texels, a page starts at: glyphon's own starting size.
 const INITIAL_SIDE: u32 = 256;
+
+/// How many of the most recent frames' entries an eviction never
+/// touches: the current frame's and the one before it. See the module
+/// docs, "Why two frames, not one".
+const PROTECTED_FRAMES: u64 = 2;
 
 /// Which page a glyph lives on.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -216,10 +227,11 @@ pub(crate) struct AtlasCounts {
     pub(crate) reuploaded: u64,
     /// Bitmaps evicted from a full page to make room.
     pub(crate) evicted: u64,
-    /// Entries without a bitmap forgotten by an eviction pass.
+    /// Entries without a bitmap forgotten by an eviction pass: read from
+    /// the map's own length, so only a removal moves it.
     pub(crate) forgotten: u64,
     /// Glyphs refused for want of room this frame: a page at its
-    /// largest holding only the frame's own glyphs. Not remembered.
+    /// largest holding only the last two frames' glyphs. Not remembered.
     pub(crate) refused: u64,
     /// Glyphs whose bitmap is larger than the largest page: remembered
     /// as drawing nothing.
@@ -383,13 +395,13 @@ impl GlyphAtlas {
     /// time it is asked for. `None` when the glyph draws nothing (no
     /// bitmap, an empty one, content this atlas does not hold, or a
     /// bitmap larger than any page — each remembered) or cannot be
-    /// placed this frame (its page holds only this frame's glyphs at its
+    /// placed this frame (its page holds only the last two frames' glyphs at its
     /// largest size; warned once per episode, not remembered).
     ///
     /// Cost: one hash lookup on a hit. On a miss, one rasterization
     /// under the font guard the caller holds and one texture write; a
-    /// page that must make room sorts its entries the frame has not
-    /// used once and evicts the oldest until the bitmap fits, and one
+    /// page that must make room walks the entries once, evicting every
+    /// one stale for two frames, and tries the allocation again; one
     /// that must grow re-rasterizes and re-uploads every entry on it.
     pub(crate) fn slot(
         &mut self,
@@ -504,7 +516,7 @@ impl GlyphAtlas {
             self.refusal_logged = true;
             log::warn!(
                 "renderer: glyph_runs: a glyph does not fit the {page:?} atlas, at most {0}×{0} with \
-                 every glyph this frame draws kept; it is not drawn",
+                 the last two frames' glyphs kept; it is not drawn",
                 self.max_side
             );
         }
@@ -568,10 +580,11 @@ impl GlyphAtlas {
     }
 
     /// Make room for a `size` bitmap on `page` by evicting every bitmap
-    /// of the page the current frame has not drawn, and return the
+    /// of the page stale for two frames — drawn by neither this frame
+    /// nor the one before ([`PROTECTED_FRAMES`]) — and return the
     /// allocation if it now fits. `None` when there was nothing to evict
-    /// or the room freed is not enough: every bitmap left is the frame's
-    /// own, and the page must grow.
+    /// or the room freed is not enough: every bitmap left belongs to the
+    /// last two frames, and the page must grow.
     ///
     /// All of them at once rather than one at a time: etagere's
     /// bucketed packer frees a column only when every item in it is
@@ -581,8 +594,8 @@ impl GlyphAtlas {
     /// columns. A page fills only when the view moved on (a zoom, a new
     /// region), and what it held is what that view no longer shows.
     ///
-    /// The same pass forgets every bitmap-less entry the frame has not
-    /// used, so remembered spaces and oversized glyphs do not pile up
+    /// The same pass forgets every bitmap-less entry stale for two
+    /// frames, so remembered spaces and oversized glyphs do not pile up
     /// across sizes.
     ///
     /// Cost: one walk of the entries, one deallocation per eviction and
@@ -593,16 +606,14 @@ impl GlyphAtlas {
             Page::Color => &mut self.color,
             Page::Mask => &mut self.mask,
         };
-        let (mut evicted, mut forgotten) = (0, 0);
+        let held = self.entries.len();
+        let mut evicted = 0;
         self.entries.retain(|_, entry| {
-            if entry.last_used >= frame {
+            if entry.last_used + PROTECTED_FRAMES > frame {
                 return true;
             }
             match entry.placed {
-                None => {
-                    forgotten += 1;
-                    false
-                }
+                None => false,
                 Some((slot, id)) if slot.page == page => {
                     target.packer.deallocate(id);
                     evicted += 1;
@@ -611,8 +622,11 @@ impl GlyphAtlas {
                 Some(_) => true,
             }
         });
+        // Counted from what left the map, so the count cannot move
+        // without the removal: every entry gone that was not a bitmap
+        // evicted was a bitmap-less one forgotten.
         self.counts.evicted += evicted;
-        self.counts.forgotten += forgotten;
+        self.counts.forgotten += (held - self.entries.len()) as u64 - evicted;
         if evicted == 0 {
             return None;
         }

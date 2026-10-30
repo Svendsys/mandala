@@ -1252,19 +1252,26 @@ bins, up to four keys per glyph, each rasterized once).
   skips that glyph.
 - **The atlas.** Two pages, as glyphon has (`R8Unorm` masks,
   `Rgba8UnormSrgb` color), packed by etagere, starting at 256². When a
-  bitmap does not fit, every entry of its page the current frame has
-  not drawn is evicted first, and the page doubles (to the device
-  limit) only when the frame's own glyphs do not fit — glyphon's order,
-  evict before grow, though glyphon evicts least recently used one at a
-  time and this atlas everything stale at once, because etagere frees a
-  column only when all of it is free. So under a continuous zoom, where
-  every frame asks for every glyph at a new size, a page stays near one
-  frame's working set (201 frames from zoom 1 to 3: one growth). A grown
-  page is filled by rasterizing its entries again, as glyphon's is. A
-  glyph that still does not fit is left out of that frame, warned of
-  once, and asked for again next frame; the frame is drawn. A glyph
-  with no bitmap, and one larger than the largest page, are remembered
-  as drawing nothing, and forgotten with the stale entries.
+  bitmap does not fit, every entry of its page **stale for two frames**
+  (drawn by neither the current frame nor the one before) is evicted
+  first, and the page doubles (to the device limit) only when that
+  frees too little — glyphon's order, evict before grow, though glyphon
+  evicts least recently used one at a time and this atlas everything
+  stale at once, because etagere frees a column only when all of it is
+  free. Two frames, not one: "not drawn by this frame" includes what
+  the frame has not reached yet, so a one-frame threshold evicted the
+  rest of a steady view on an early miss and rasterized it again every
+  few frames, and evicted each of two alternating views (the window and
+  a capture at another scale) every frame. With two, a steady view and
+  two alternating views stay resident (pinned by tests), and a
+  continuous zoom still drops the sizes it left behind, the page
+  holding about two frames of sizes (201 frames from zoom 1 to 3: two
+  growths). A grown page is filled by rasterizing its entries again, as
+  glyphon's is. A glyph that still does not fit is left out of that
+  frame, warned of once, and asked for again next frame; the frame is
+  drawn. A glyph with no bitmap, and one larger than the largest page,
+  are remembered as drawing nothing, and forgotten with the stale
+  entries.
 - **Shared with glyphon:** the `FontSystem` (under the guard the frame
   already holds), cosmic-text's `SwashCache`, the render pass, the
   surface format and the camera. **Not shared:** the atlas, because

@@ -450,9 +450,10 @@ fn grid(text: &str, style: &ResolvedText, corner: Vec2, columns: usize, step: f3
 /// Twenty-six capitals at the camera's largest zoom do not fit the
 /// atlas's first page: drawing them grows it, growing writes the
 /// capitals the page already held into the larger texture, and the next
-/// frame finds every one of them again. With growth then frozen at that size, twenty-six
-/// lowercase letters in their place evict the capitals, which the frame
-/// no longer draws, and fit. Both alphabets at once do not fit at all:
+/// frame finds every one of them again. With growth then frozen at that
+/// size, and one empty frame between so the capitals are stale for two
+/// frames, twenty-six lowercase letters in their place evict the
+/// capitals and fit. Both alphabets at once do not fit at all:
 /// the frame is still drawn, the glyphs that found room are drawn, and
 /// the rest are counted as refused — never a panic, never a skipped
 /// frame (CODE_CONVENTIONS §9).
@@ -502,12 +503,16 @@ fn test_the_glyph_atlas_grows_evicts_and_refuses_without_failing_a_frame() {
     );
 
     init.renderer.freeze_glyph_atlas_growth();
+    // A frame that draws no capitals: the next is the second without
+    // them, so they are stale for two frames and may be evicted.
+    show(init, vec![]);
+    draw(init, &camera);
     show(init, vec![lower.clone()]);
     draw(init, &camera);
     let swapped = init.renderer.glyph_run_counts();
     assert!(
         swapped.atlas.evicted > 0,
-        "the full page made room by evicting capitals this frame does not draw: {swapped:?}"
+        "the full page made room by evicting capitals two frames stale: {swapped:?}"
     );
     assert_eq!(
         (swapped.instances, swapped.atlas.refused),
@@ -568,11 +573,11 @@ fn with_overrides(run: GlyphRunData, ops: &[RunOverrideOp]) -> GlyphRunData {
 /// from 1.00 to 3.00 in steps of 0.01 — 201 frames — asks for the 26
 /// capitals (and a space) at a new size, thousands of distinct keys in
 /// all. The page
-/// grows only while one frame's own capitals do not fit (at most twice:
-/// 26 capitals at the largest size fit a 1024² page), and the rest of
-/// the time the keys of earlier sizes are evicted to make room. The
-/// control is the grow-before-evict order, which evicts nothing and
-/// grows the page toward the device's limit.
+/// grows only while the last two frames' capitals do not fit together
+/// (at most twice: two frames of them at the largest sizes fit a 1024²
+/// page), and the rest of the time the keys of sizes two frames old are
+/// evicted to make room. The control is the grow-before-evict order,
+/// which evicts nothing and grows the page toward the device's limit.
 #[test]
 fn test_a_continuous_zoom_evicts_old_sizes_instead_of_growing_the_atlas() {
     let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
@@ -612,7 +617,7 @@ fn test_a_continuous_zoom_evicts_old_sizes_instead_of_growing_the_atlas() {
     );
     assert!(
         end.atlas.growths <= 2,
-        "the page grew only for one frame's working set: {end:?}"
+        "the page grew only for two frames' working set: {end:?}"
     );
     assert!(
         end.atlas.evicted > 1_000,
@@ -623,8 +628,117 @@ fn test_a_continuous_zoom_evicts_old_sizes_instead_of_growing_the_atlas() {
         end.atlas.forgotten > 10,
         "the spaces of sizes left behind are forgotten with them: {end:?}"
     );
+    // The map holds what the page held at the last eviction pass plus the
+    // keys of the frames since; never every size seen (201 × 27 keys).
     assert!(
         end.atlas_entries < 26 * 40,
         "the atlas holds a page of recent sizes, not every size seen: {end:?}"
+    );
+}
+
+/// Both alphabets at `points`, 52 glyphs on a grid filling the harness
+/// surface around [`FAR`]: a steady view.
+fn alphabets(points: f32) -> Vec<GlyphRunData> {
+    let face = style(AppFont::GalatiaSIL, points, Rgba::opaque(255, 255, 255));
+    let corner = FAR - Vec2::new(380.0, 270.0);
+    vec![
+        grid("ABCDEFGHIJKLMNOPQRSTUVWXYZ", &face, corner, 13, 58.0),
+        grid(
+            "abcdefghijklmnopqrstuvwxyz",
+            &face,
+            corner + Vec2::new(0.0, 150.0),
+            13,
+            58.0,
+        ),
+    ]
+}
+
+/// **A steady view stays resident while new keys come and go.** Every
+/// frame draws the same 52 letters at 72 pt, after a 3-glyph run at a
+/// size no earlier frame used — the shape of a pan or scroll bringing a
+/// little new text in, drawn first so that its misses come before the
+/// view's hits. The new keys fill the page and force eviction
+/// (precondition), and after the first frame no frame rasterizes more
+/// than its 3 new keys: the view, drawn by the frame before, is never
+/// evicted. Evicting everything the current frame has not drawn *yet*
+/// would throw the view out with the old runs and rasterize all 55
+/// glyphs again every few frames.
+#[test]
+fn test_a_steady_view_is_not_evicted_by_the_new_keys_beside_it() {
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    let view = alphabets(72.0);
+    let camera = camera_on(FAR, 1.0);
+    let mut worst = 0;
+    let mut before = 0;
+    for frame in 0..60 {
+        let fresh = style(
+            AppFont::GalatiaSIL,
+            40.0 + frame as f32,
+            Rgba::opaque(240, 200, 120),
+        );
+        let mut runs = vec![grid("XYZ", &fresh, FAR - Vec2::new(380.0, 40.0), 3, 70.0)];
+        runs.extend(view.iter().cloned());
+        show(init, runs);
+        draw(init, &camera);
+        let counts = init.renderer.glyph_run_counts();
+        assert_eq!(
+            counts.instances, 55,
+            "precondition: frame {frame} draws all 55 glyphs: {counts:?}"
+        );
+        let rasterized = counts.atlas.rasterized - before;
+        before = counts.atlas.rasterized;
+        if frame > 0 {
+            worst = worst.max(rasterized);
+        }
+    }
+    let end = init.renderer.glyph_run_counts();
+    assert!(
+        end.atlas.evicted > 0,
+        "precondition: the new keys filled the page and forced eviction: {end:?}"
+    );
+    assert!(
+        worst <= 3,
+        "after the first frame, no frame rasterizes more than its 3 new keys; the worst rasterized \
+         {worst}: {end:?}"
+    );
+}
+
+/// **Two views drawn alternately both stay resident.** The window and a
+/// capture at another scale ask for the same text at two sizes, frame
+/// after frame. Here the 52 letters alternate between 72 pt and 80 pt:
+/// once each has been drawn and the page has grown to hold both, no
+/// frame rasterizes anything, because each view was drawn the frame
+/// before last at the latest. Evicting what the current frame has not
+/// drawn would evict the other view every frame and rasterize all 52
+/// letters each time.
+#[test]
+fn test_two_alternating_views_settle_with_nothing_rasterized() {
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    let views = [alphabets(72.0), alphabets(80.0)];
+    let camera = camera_on(FAR, 1.0);
+    let mut per_frame = Vec::new();
+    let mut before = 0;
+    for frame in 0..12 {
+        show(init, views[frame % 2].clone());
+        draw(init, &camera);
+        let counts = init.renderer.glyph_run_counts();
+        assert_eq!(counts.instances, 52, "precondition: frame {frame}: {counts:?}");
+        per_frame.push(counts.atlas.rasterized - before);
+        before = counts.atlas.rasterized;
+    }
+    assert_eq!(
+        &per_frame[..2],
+        &[52, 52],
+        "precondition: each view is rasterized once, when first drawn"
+    );
+    assert!(
+        per_frame[2..].iter().all(|&n| n == 0),
+        "after both views were drawn, no frame rasterizes anything: {per_frame:?}"
     );
 }

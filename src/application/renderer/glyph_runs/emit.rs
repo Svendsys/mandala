@@ -203,7 +203,10 @@ pub(crate) fn emit_run<'a>(
                 for (k, laid) in line.glyphs.iter().enumerate() {
                     if k == 0 || cluster_of(k) != cluster_of(k - 1) {
                         // A cluster is the glyphs sharing one span byte
-                        // range; its box spans their hitboxes.
+                        // range; its box spans their hitboxes. A mark
+                        // styled in a span of its own is therefore its
+                        // own cluster here, where a path run keeps it
+                        // with its base (`grapheme_start`).
                         let mut end = k + 1;
                         while end < line.glyphs.len() && cluster_of(end) == cluster_of(k) {
                             end += 1;
