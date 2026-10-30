@@ -22,6 +22,9 @@ use crate::flow::{outline, Curve, Outline, PlacedRun, Rect, ShapedRun};
 /// A line of verse, long enough to go around every fixture here.
 const VERSE: &str = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower";
 
+/// Letters with no word break: one word, too long for a boundary to move.
+const LETTERS: &str = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
+
 /// Plain words: the prototype matrix's other text.
 const POEM: &str = "the poem goes around the node exactly once";
 
@@ -47,9 +50,9 @@ fn start(edge: Edge, at: f32) -> StartPoint {
 fn s_curve() -> Curve {
     Curve::Cubic(
         Vec2::ZERO,
-        Vec2::new(800.0, 0.0),
-        Vec2::new(-200.0, 400.0),
-        Vec2::new(600.0, 400.0),
+        Vec2::new(900.0, 0.0),
+        Vec2::new(-300.0, 150.0),
+        Vec2::new(600.0, 150.0),
     )
 }
 
@@ -71,8 +74,21 @@ fn around(
     fit: &FitMode,
     outward: bool,
 ) -> Placed {
+    around_at(text, 12.0, outline, from, direction, fit, outward)
+}
+
+/// `text` at `points` around `outline` from `from` in `direction`.
+fn around_at(
+    text: &str,
+    points: f32,
+    outline: &Outline,
+    from: StartPoint,
+    direction: Direction,
+    fit: &FitMode,
+    outward: bool,
+) -> Placed {
     let mut trace = Trace::default();
-    let flow = style(12.0);
+    let flow = style(points);
     let (run, rescaled, placed, spacing) = with_fonts(|fs| {
         let run = real_run(text, &flow, fs);
         let (rescaled, placed) = place_on_closed_traced(
@@ -183,10 +199,15 @@ fn stretch_of(trace: &Trace, index: usize) -> usize {
         .expect("every walked glyph is in a stretch")
 }
 
-/// Every stretch reads forward: in text order, a leftward stretch's
-/// cluster centers move right and a vertical stretch's move down. Says
-/// how many consecutive pairs each kind held, for the caller's
-/// preconditions.
+/// Every stretch reads forward — "left to right or top to bottom"
+/// (#291): in text order, each cluster's center lies right of the one
+/// before it, or below it. Text moving left without moving down, or up
+/// without moving right, reads backward. A stretch keeps to its own way
+/// along its own part of the path; where it runs on into a neighbor read
+/// the same way (`PathWalk::borrow_room`), it reads that neighbor's
+/// way, which is forward too — so the test holds the reading direction,
+/// not one axis per stretch. Says how many consecutive pairs leftward
+/// and vertical stretches held, for the caller's preconditions.
 fn assert_reads_forward(what: &str, placed: &Placed) -> (usize, usize) {
     let (mut leftward, mut vertical) = (0, 0);
     let clusters = boxes(&placed.run, &placed.placed);
@@ -197,18 +218,11 @@ fn assert_reads_forward(what: &str, placed: &Placed) -> (usize, usize) {
             .collect();
         for pair in inside.windows(2) {
             let (a, b) = (pair[0].center(), pair[1].center());
-            match stretch.travel {
-                Travel::Leftward => assert!(
-                    b.x > a.x,
-                    "{what}: leftward stretch {k} reads right to left: {a} then {b}"
-                ),
-                Travel::Downward | Travel::Upward => assert!(
-                    b.y > a.y,
-                    "{what}: {:?} stretch {k} reads bottom to top: {a} then {b}",
-                    stretch.travel
-                ),
-                Travel::Rightward => {}
-            }
+            assert!(
+                b.x > a.x || b.y > a.y,
+                "{what}: {:?} stretch {k} reads backward: {a} then {b}",
+                stretch.travel
+            );
         }
         let pairs = inside.len().saturating_sub(1);
         match stretch.travel {
@@ -323,29 +337,36 @@ fn test_flow_readable_a_loop_reads_like_a_seal() {
     do_flow_readable_a_loop_reads_like_a_seal();
 }
 
-/// A rounded rectangle read from the middle of its top side is a seal:
-/// clockwise, the top runs rightward, the right side down, the bottom
-/// leftward and the left side up — the last two placed reversed — and
-/// back along the top; counter-clockwise, the same sides mirrored. With
+/// A loop read from the middle of its top side is a seal: clockwise,
+/// the top runs rightward, the right side down, the bottom leftward and
+/// the left side up — the last two placed reversed — and back along the
+/// top; counter-clockwise, the same sides mirrored. So reads a rounded
+/// rectangle, and so, with ε = cos 45° classing each step by its
+/// dominant direction, do a circle and an ellipse (ruling R26). With
 /// `do_flow_readable_every_stretch_reads_forward`, every side reads left
 /// to right or top to bottom.
 pub fn do_flow_readable_a_loop_reads_like_a_seal() {
     use Travel::{Downward, Leftward, Rightward, Upward};
-    let rect = rounded(300.0, 160.0, 25);
     let fit = FitMode::Fit { min: 0.5, max: 2.0 };
-    for (direction, expected) in [
-        (
-            Direction::Clockwise,
-            [Rightward, Downward, Leftward, Upward, Rightward],
-        ),
-        (
-            Direction::CounterClockwise,
-            [Leftward, Downward, Rightward, Upward, Leftward],
-        ),
+    for (what, outline) in [
+        ("rounded rect", rounded(300.0, 160.0, 25)),
+        ("circle", ellipse(300.0, 300.0)),
+        ("ellipse", ellipse(300.0, 160.0)),
     ] {
-        let placed = around(VERSE, &rect, start(Edge::Top, 0.5), direction, &fit, true);
-        let travels: Vec<Travel> = placed.trace.stretches.iter().map(|s| s.travel).collect();
-        assert_eq!(travels, expected, "{direction:?}");
+        for (direction, expected) in [
+            (
+                Direction::Clockwise,
+                [Rightward, Downward, Leftward, Upward, Rightward],
+            ),
+            (
+                Direction::CounterClockwise,
+                [Leftward, Downward, Rightward, Upward, Leftward],
+            ),
+        ] {
+            let placed = around(VERSE, &outline, start(Edge::Top, 0.5), direction, &fit, true);
+            let travels: Vec<Travel> = placed.trace.stretches.iter().map(|s| s.travel).collect();
+            assert_eq!(travels, expected, "{what} {direction:?}");
+        }
     }
 }
 
@@ -394,64 +415,35 @@ pub fn do_flow_readable_keeps_the_walks_glyphs_in_their_stretches() {
 }
 
 #[test]
-fn test_flow_readable_hysteresis_keeps_a_loop_to_two_stretches() {
-    do_flow_readable_hysteresis_keeps_a_loop_to_two_stretches();
+fn test_flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches() {
+    do_flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches();
 }
 
-/// A loop with no straight vertical side — a circle, and an ellipse a
-/// hundred times wider than tall — reads as two stretches: its sides
-/// turn through vertical too briefly to be stretches of their own and
-/// join the top and the bottom (#291 §1 step 2, the hysteresis). Each
-/// is started at its rightmost point, so the seam splits no stretch.
-///
-/// The circle turns slowly enough that several of its steps land within
-/// ε of plumb: without the hysteresis each side is a vertical stretch.
-/// The flat ellipse turns through 180° at each tip within about one
-/// step, so no step there is within ε of plumb; what it holds is that a
-/// step turned well toward vertical (`|cos θ| < 0.6`) at a tip still
-/// makes no stretch of its own.
-pub fn do_flow_readable_hysteresis_keeps_a_loop_to_two_stretches() {
-    let right = start(Edge::Right, 0.5);
-    let steepest = |placed: &Placed| {
-        placed
-            .trace
-            .chords
-            .iter()
-            .map(|dir| dir.x.abs())
-            .fold(f32::INFINITY, f32::min)
-    };
-    let circle = around(
+/// An ellipse a hundred times wider than tall reads as two stretches,
+/// its top and its bottom: each tip turns through vertical within about
+/// a step, too briefly to be a stretch of its own (#291 §1 step 2, the
+/// hysteresis). Started at its rightmost point, so the seam splits no
+/// stretch. The fixture is checked to take a step at a tip within ε of
+/// plumb, which without the hysteresis would be a vertical stretch of a
+/// cluster or two.
+pub fn do_flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches() {
+    let flat = around(
         VERSE,
-        &ellipse(600.0, 600.0),
-        right,
+        &ellipse(4000.0, 40.0),
+        start(Edge::Right, 0.5),
         Direction::Clockwise,
         &FitMode::Repeat,
         true,
     );
-    let plumb = circle
+    let plumb = flat
         .trace
         .chords
         .iter()
         .filter(|dir| dir.x.abs() <= VERTICAL_EPSILON)
         .count();
-    assert!(plumb >= 2, "circle: the fixture needs steps within ε of plumb");
-    let flat = around(
-        VERSE,
-        &ellipse(4000.0, 40.0),
-        right,
-        Direction::Clockwise,
-        &FitMode::Repeat,
-        true,
-    );
-    assert!(
-        steepest(&flat) < 0.6,
-        "100:1 ellipse: the fixture needs a step turned toward vertical at a tip, not {}",
-        steepest(&flat)
-    );
-    for (what, placed) in [("circle", circle), ("100:1 ellipse", flat)] {
-        let travels: Vec<Travel> = placed.trace.stretches.iter().map(|s| s.travel).collect();
-        assert_eq!(travels.len(), 2, "{what}: {travels:?}");
-    }
+    assert!(plumb > 0, "the fixture needs a step within ε of plumb at a tip");
+    let travels: Vec<Travel> = flat.trace.stretches.iter().map(|s| s.travel).collect();
+    assert_eq!(travels, [Travel::Leftward, Travel::Rightward]);
 }
 
 /// The prototype matrix of ruling R25.1: four outlines, four start
@@ -474,7 +466,7 @@ fn matrix() -> Vec<(String, Outline, StartPoint, Direction)> {
         for from in starts {
             for direction in [Direction::Clockwise, Direction::CounterClockwise] {
                 let what = format!("{name} from {:?} {} {direction:?}", from.edge, from.at);
-                out.push((what, outline.clone(), from, direction));
+                out.push((what, *outline, from, direction));
             }
         }
     }
@@ -533,23 +525,25 @@ pub fn do_flow_readable_cuts_copies_rather_than_overlap() {
     let filler = FitMode::Once {
         filler: Some("~:~".to_owned()),
     };
-    for (what, from, direction, fit, copy) in [
+    for (what, text, from, direction, fit, copy) in [
         (
             "Repeat",
-            start(Edge::Bottom, 0.2),
-            Direction::Clockwise,
+            VERSE,
+            start(Edge::Top, 0.0),
+            Direction::CounterClockwise,
             FitMode::Repeat,
             1,
         ),
         (
             "Once with a filler",
+            POEM,
             start(Edge::Top, 0.5),
             Direction::CounterClockwise,
             filler,
             3,
         ),
     ] {
-        let placed = around(POEM, &rect, from, direction, &fit, true);
+        let placed = around(text, &rect, from, direction, &fit, true);
         assert_no_overlap(what, &placed);
         let cut = assert_keeps_the_walk(what, &placed);
         assert!(cut > 0, "{what}: the fixture needs a placement with no slack");
@@ -566,18 +560,22 @@ fn test_flow_readable_a_short_side_reads_top_to_bottom() {
     do_flow_readable_a_short_side_reads_top_to_bottom();
 }
 
-/// A straight side too short to be a stretch of its own — 40 points, under
-/// three line heights of 14.4 — joins the stretch that reads it top to
-/// bottom (#291 §1 step 2): its steps have no horizontal motion at all,
-/// so going down it joins the rightward stretch (placed as walked) and
-/// going up the leftward one (placed reversed). On a 300 × 50 rectangle
-/// each way round, consecutive clusters on either side, in one stretch,
-/// move down in text order. Glyph centers sit on the outline.
+/// A straight side too short to be a stretch of its own — 28.8 points,
+/// under three line heights of 14.4 — joins the stretch that reads it
+/// top to bottom (#291 §1 step 2): its steps have no horizontal motion at
+/// all, so going down it joins the rightward stretch (placed as walked)
+/// and going up the leftward one (placed reversed). On a 300 × 32
+/// rectangle walked clockwise — down its right side, up its left —
+/// consecutive clusters on either side, in one stretch, move down in
+/// text order. The text has no word break, so no word is moved across a
+/// boundary (ruling R26) to part the clusters on a side. Glyph centers
+/// sit on the outline.
 pub fn do_flow_readable_a_short_side_reads_top_to_bottom() {
-    let rect = rounded(300.0, 50.0, 20);
-    for direction in [Direction::Clockwise, Direction::CounterClockwise] {
+    let rect = rounded(300.0, 32.0, 10);
+    {
+        let direction = Direction::Clockwise;
         let placed = around(
-            VERSE,
+            LETTERS,
             &rect,
             start(Edge::Top, 0.5),
             direction,
@@ -594,7 +592,7 @@ pub fn do_flow_readable_a_short_side_reads_top_to_bottom() {
         );
         let on_side = |c: &ClusterBox| {
             let p = c.center();
-            (p.x.abs() < 1e-3 || (p.x - 300.0).abs() < 1e-3) && p.y > 5.0 && p.y < 45.0
+            (p.x.abs() < 1e-3 || (p.x - 300.0).abs() < 1e-3) && p.y > 1.6 && p.y < 30.4
         };
         let clusters = boxes(&placed.run, &placed.placed);
         let mut pairs = [0, 0];
@@ -616,4 +614,160 @@ pub fn do_flow_readable_a_short_side_reads_top_to_bottom() {
             "{direction:?}: the fixture needs clusters stacked on both sides, not {pairs:?}"
         );
     }
+}
+
+/// The placed glyphs (indices into the placement) whose cluster starts
+/// inside `word`, the first occurrence of it in `text`.
+fn word_glyphs(placed: &Placed, text: &str, word: &str) -> Vec<usize> {
+    let start = text.find(word).expect("the word is in the text");
+    let bytes = start..start + word.len();
+    (0..placed.placed.glyphs.len())
+        .filter(|&i| {
+            bytes.contains(
+                &placed.run.glyphs[placed.placed.glyphs[i].glyph as usize]
+                    .bytes
+                    .start,
+            )
+        })
+        .collect()
+}
+
+/// How many of `stretches` the glyphs `glyphs` fall in.
+fn stretches_holding(stretches: &[std::ops::Range<usize>], glyphs: &[usize]) -> usize {
+    stretches
+        .iter()
+        .filter(|range| glyphs.iter().any(|g| range.contains(g)))
+        .count()
+}
+
+/// Whether the walk tore `word` — its glyphs fell in two stretches
+/// before any boundary moved — and how many stretches hold it as laid.
+fn torn_and_laid(placed: &Placed, text: &str, word: &str) -> (bool, usize) {
+    let glyphs = word_glyphs(placed, text, word);
+    assert!(!glyphs.is_empty(), "{word:?}: the fixture needs the word placed");
+    let laid: Vec<std::ops::Range<usize>> = placed.trace.stretches.iter().map(|s| s.glyphs.clone()).collect();
+    (
+        stretches_holding(&placed.trace.walked_stretches, &glyphs) > 1,
+        stretches_holding(&laid, &glyphs),
+    )
+}
+
+/// The README's frames scene: an ellipse of 230 × 190 at 20 pt.
+const ELLIPSE_LINE: &str = "and an ellipse, every glyph upright, never rotated · ";
+
+/// The README's Blake scene: its outer ring, 1360 × 720 at 30 pt, and
+/// its inner, 860 × 380 at 30 pt.
+const BLAKE_OUTER: &str = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower, \
+                           Hold Infinity in the palm of your hand, And Eternity in an hour. ";
+const BLAKE_INNER: &str = "The heavens declare the glory of God; and the firmament sheweth his handywork. ";
+
+/// The README's Ecclesiastes scene: the frame around its center node.
+const ECCLESIASTES: &str = "and a time to every purpose under the heaven: ";
+
+#[test]
+fn test_flow_readable_keeps_a_torn_word_whole() {
+    do_flow_readable_keeps_a_torn_word_whole();
+}
+
+/// A word the walk tears across a stretch boundary is laid whole in one
+/// stretch (ruling R26): "glyph" across the right side and the bottom of
+/// an ellipse, "Flower" across the right side and the bottom of a wider
+/// one — the README's frames and Blake scenes, as drawn. Torn, a word
+/// next to a reversed stretch would have its head at one end of the
+/// stretch and its tail at the other. Each fixture is checked to tear
+/// its word in the walk; the placement must still read forward.
+pub fn do_flow_readable_keeps_a_torn_word_whole() {
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let top_left = start(Edge::Top, 0.0);
+    for (what, text, points, outline, word) in [
+        (
+            "frames ellipse",
+            ELLIPSE_LINE,
+            20.0,
+            ellipse(230.0, 190.0),
+            "glyph",
+        ),
+        (
+            "Blake outer ring",
+            BLAKE_OUTER,
+            30.0,
+            ellipse(1360.0, 720.0),
+            "Flower",
+        ),
+    ] {
+        let placed = around_at(text, points, &outline, top_left, Direction::Clockwise, &fit, true);
+        let (torn, laid) = torn_and_laid(&placed, text, word);
+        assert!(torn, "{what}: the fixture needs {word:?} torn by the walk");
+        assert_eq!(laid, 1, "{what}: {word:?} is not whole in one stretch");
+        assert_reads_forward(what, &placed);
+        assert!(!placed.placed.truncated, "{what}: truncated");
+    }
+}
+
+#[test]
+fn test_flow_readable_keeps_a_flows_last_word_whole() {
+    do_flow_readable_keeps_a_flows_last_word_whole();
+}
+
+/// A flow's last word and the punctuation on it — "handywork.",
+/// "heaven:" — torn by the boundary beside the path's start, where the
+/// text ends, is laid whole, punctuation and all (ruling R26): no word
+/// break parts a word from its punctuation, and the stretch that ends at
+/// the start may give up all but its trailing space. Torn, the word's
+/// head would end the left side, read top to bottom, and its tail sit
+/// alone above it at the start. The README's Blake inner ring and the
+/// frame around Ecclesiastes' center node, as drawn; each is checked to
+/// tear its word in the walk.
+pub fn do_flow_readable_keeps_a_flows_last_word_whole() {
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let top_left = start(Edge::Top, 0.0);
+    for (what, text, points, outline, word) in [
+        (
+            "Blake inner ring",
+            BLAKE_INNER,
+            30.0,
+            ellipse(860.0, 380.0),
+            "handywork.",
+        ),
+        (
+            "Ecclesiastes",
+            ECCLESIASTES,
+            38.0,
+            ellipse(560.0, 230.0),
+            "heaven:",
+        ),
+    ] {
+        let placed = around_at(text, points, &outline, top_left, Direction::Clockwise, &fit, true);
+        let (torn, laid) = torn_and_laid(&placed, text, word);
+        assert!(torn, "{what}: the fixture needs {word:?} torn by the walk");
+        assert_eq!(laid, 1, "{what}: {word:?} is not whole in one stretch");
+        assert_reads_forward(what, &placed);
+    }
+}
+
+#[test]
+fn test_flow_readable_parts_a_word_too_long_to_move() {
+    do_flow_readable_parts_a_word_too_long_to_move();
+}
+
+/// A word longer than half of either stretch it straddles stays parted
+/// at the boundary (ruling R26's fallback): moving it whole would take
+/// more than half of a stretch. Each part reads forward. The word is 45
+/// letters, between short words, on a rounded rectangle: checked to be
+/// torn by the walk at a boundary between two inner stretches.
+pub fn do_flow_readable_parts_a_word_too_long_to_move() {
+    let text = "a b pneumonoultramicroscopicsilicovolcanoconiosis c d e f g h i j k l m n o p";
+    let word = "pneumonoultramicroscopicsilicovolcanoconiosis";
+    let placed = around(
+        text,
+        &rounded(300.0, 160.0, 25),
+        start(Edge::Top, 0.5),
+        Direction::Clockwise,
+        &FitMode::Fit { min: 0.5, max: 2.0 },
+        true,
+    );
+    let (torn, laid) = torn_and_laid(&placed, text, word);
+    assert!(torn, "the fixture needs the word torn by the walk");
+    assert!(laid > 1, "the word was moved whole, past half a stretch");
+    assert_reads_forward("a long word", &placed);
 }

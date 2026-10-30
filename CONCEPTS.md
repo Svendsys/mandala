@@ -1476,14 +1476,16 @@ element.
   its extent, so text sits on the outline rather than across it.
 - **Readable path text** (D33, #291). Every stretch reads left to right
   or top to bottom: the walk (the fit mode) decides which clusters are
-  placed and which stretch — rightward, leftward, downward, upward —
-  each lies in, then the same clusters are laid in reading order, each
-  leftward and upward stretch's last to first, with one spacing solved
-  so the mode's end condition still holds. A curve turning through
-  vertical makes no stretch of its own (a hysteresis), so a circle
-  reads as a top and a bottom. A placement keeps the text's glyph
-  order; only positions move. The one exception: with no slack and a
-  zero gap, the end is cut — filler copies or repeat clusters first.
+  placed and which stretch — rightward, leftward, downward, upward, by
+  each step's dominant direction — each lies in, a word a boundary would
+  tear moved whole to one side; then the same clusters are laid in
+  reading order, each leftward and upward stretch's last to first, each
+  stretch in its own part of the path, borrowing room only from a
+  neighbor read its way. A tight turn through vertical makes no stretch
+  of its own (a hysteresis); a loop reads like a seal. A placement keeps
+  the text's glyph order; only positions move. The one exception: with
+  no slack and a zero gap, the end is cut — filler copies or repeat
+  clusters first.
 - **Outlines** (`outline`, `offset`, `ring_offset`): a node's
   rectangle shaped as a rounded rectangle (radius a percentage of half
   the shorter side) or the inscribed ellipse; ring *k* runs around the

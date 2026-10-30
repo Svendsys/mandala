@@ -2228,8 +2228,18 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_readable_keeps_the_walks_glyphs_in_their_stretches", |b| {
         b.iter(do_flow_readable_keeps_the_walks_glyphs_in_their_stretches)
     });
-    c.bench_function("flow_readable_hysteresis_keeps_a_loop_to_two_stretches", |b| {
-        b.iter(do_flow_readable_hysteresis_keeps_a_loop_to_two_stretches)
+    c.bench_function(
+        "flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches",
+        |b| b.iter(do_flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches),
+    );
+    c.bench_function("flow_readable_keeps_a_torn_word_whole", |b| {
+        b.iter(do_flow_readable_keeps_a_torn_word_whole)
+    });
+    c.bench_function("flow_readable_keeps_a_flows_last_word_whole", |b| {
+        b.iter(do_flow_readable_keeps_a_flows_last_word_whole)
+    });
+    c.bench_function("flow_readable_parts_a_word_too_long_to_move", |b| {
+        b.iter(do_flow_readable_parts_a_word_too_long_to_move)
     });
     c.bench_function("flow_readable_fit_keeps_the_poem_whole", |b| {
         b.iter(do_flow_readable_fit_keeps_the_poem_whole)

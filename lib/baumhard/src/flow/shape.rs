@@ -95,6 +95,15 @@ pub struct GlyphMetrics {
     /// cut that keeps whole graphemes keeps whole runs of glyphs from
     /// one `true` to the next (ruling R6, reading 1).
     pub grapheme_start: bool,
+    /// Whether the text may be parted between this glyph and the one
+    /// before it in visual order without tearing a word (#291, ruling
+    /// R26): a Unicode word boundary (UAX #29) with whitespace on one
+    /// side or a word on both (as between two ideographs), so "Sand,"
+    /// and "well-known" stay whole. `true` at a line's first glyph and
+    /// where the two glyphs are not neighbors in the text (a bidi
+    /// reorder); `false` inside a grapheme cluster. Placement keeps a
+    /// word in one stretch with it.
+    pub word_break: bool,
 }
 
 /// A flow shaped as one line, for placement along a path or at a point.
@@ -418,17 +427,20 @@ const UNKNOWN_FACE_EXTENT: (f32, f32) = (0.8, 0.2);
 
 /// The per-glyph facts of a shaped buffer: span and bytes through the
 /// piece table, advance, the face's ascent and descent at the glyph's
-/// size, and where each grapheme cluster begins.
+/// size, where each grapheme cluster begins, and where the text may be
+/// parted between words ([`word_breaks`]).
 ///
-/// Cost: one grapheme walk per line (to learn its cluster starts), one
-/// binary search per glyph into the piece table and one into the line's
-/// cluster starts, and one font lookup per change of face.
+/// Cost: one grapheme walk and one word-boundary walk per line (to learn
+/// its cluster starts and word breaks), one binary search per glyph into
+/// the piece table and one into the line's cluster starts, one more per
+/// cluster into its word breaks, and one font lookup per change of face.
 fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<GlyphMetrics> {
     let mut out = Vec::new();
     // The last glyph whose face was looked up, and that face's ascent
     // and descent per unit of size: consecutive glyphs mostly share one.
     let mut face: Option<(&LayoutGlyph, f32, f32)> = None;
     let mut starts: Vec<usize> = Vec::new();
+    let mut breaks: Vec<usize> = Vec::new();
     let mut current_line = usize::MAX;
     let mut previous_cluster: Option<(usize, usize)> = None;
     for run in buffer.layout_runs() {
@@ -436,6 +448,7 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
             current_line = run.line_i;
             starts.clear();
             starts.extend(grapheme_chad::grapheme_byte_starts(run.text));
+            word_breaks(run.text, &mut breaks);
             previous_cluster = None;
         }
         for glyph in visual(run.glyphs, run.rtl) {
@@ -462,6 +475,17 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
             let cluster = starts.partition_point(|&s| s <= glyph.start);
             let key = (run.line_i, cluster);
             let grapheme_start = previous_cluster != Some(key);
+            // This glyph's grapheme is `cluster - 1`. Between it and the
+            // previous glyph's, the text parts where the later of the two
+            // starts (a ligature before it may cover several graphemes).
+            let word_break = grapheme_start
+                && match previous_cluster {
+                    Some((_, before)) if before < cluster => {
+                        breaks.binary_search(&starts[cluster - 1]).is_ok()
+                    }
+                    Some((_, before)) => breaks.binary_search(&starts[before - 1]).is_ok(),
+                    None => true,
+                };
             previous_cluster = Some(key);
             out.push(GlyphMetrics {
                 span,
@@ -472,10 +496,34 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
                 ascent: ascent * glyph.font_size,
                 descent: descent * glyph.font_size,
                 grapheme_start,
+                word_break,
             });
         }
     }
     out
+}
+
+/// The byte offsets in `text` where it may be parted without tearing a
+/// word, into `out` (cleared), ascending: each Unicode word boundary
+/// (UAX #29) with whitespace on either side, or a word — a segment
+/// holding a letter or digit — on both. A boundary beside punctuation
+/// is not one, so "Sand," and "well-known" stay whole.
+///
+/// Cost: one word-boundary walk of `text`; no allocation beyond `out`.
+fn word_breaks(text: &str, out: &mut Vec<usize>) {
+    use unicode_segmentation::UnicodeSegmentation;
+    out.clear();
+    let blank = |segment: &str| segment.chars().all(char::is_whitespace);
+    let word = |segment: &str| segment.chars().any(char::is_alphanumeric);
+    let mut before: Option<&str> = None;
+    for (offset, segment) in text.split_word_bound_indices() {
+        if let Some(before) = before {
+            if blank(before) || blank(segment) || (word(before) && word(segment)) {
+                out.push(offset);
+            }
+        }
+        before = Some(segment);
+    }
 }
 
 /// Shape `spans` as one line, every span's size times `scale`.

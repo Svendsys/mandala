@@ -33,33 +33,41 @@
 //! keeps its beginning and loses its end, as an LTR one does.
 //!
 //! **Every stretch reads left to right or top to bottom** (the readable
-//! rule, #291, rulings R25 and R25.1). Glyphs are never rotated, so text
-//! walked in its own order along a path that runs leftward would read
-//! backward, and along one that runs upward bottom to top. Placement is
-//! therefore two phases:
+//! rule, #291, rulings R25, R25.1 and R26). Glyphs are never rotated, so
+//! text walked in its own order along a path that runs leftward would
+//! read backward, and along one that runs upward bottom to top.
+//! Placement is therefore two phases:
 //!
 //! 1. **The walk** — the fit mode, as above — decides which clusters are
 //!    placed and where along the path each one's step starts. The path
 //!    splits into **stretches**, each a maximal run of steps of one
-//!    [`Travel`]: rightward (`cos θ > ε`), leftward (`cos θ < −ε`), or
-//!    downward or upward (`y` grows downward). A run of near-vertical
-//!    steps is a stretch of its own only when it is clearly entered
-//!    ([`VERTICAL_MIN_LINES`], [`VERTICAL_EPSILON`]); a curve turning
-//!    through vertical joins the stretches on either side, split where it
-//!    passes plumb. A cluster belongs to the stretch its step is in.
+//!    [`Travel`], classed by its dominant direction: rightward
+//!    (`cos θ > ε`), leftward (`cos θ < −ε`), or downward or upward (`y`
+//!    grows downward), with ε = cos 45° ([`VERTICAL_EPSILON`]). A run of
+//!    steep steps is a stretch of its own only when it is clearly entered
+//!    ([`VERTICAL_MIN_LINES`]); a turn through vertical shorter than that
+//!    joins the stretches on either side, split where it passes plumb.
+//!    A cluster belongs to the stretch its step is in — but a word a
+//!    boundary would tear is moved whole into one of the two stretches
+//!    (ruling R26): torn next to a reversed stretch, its head and its
+//!    tail would land at the two ends of it.
 //! 2. **The lay** lays the same clusters forward along the path in
 //!    **reading order**: stretch after stretch, each leftward and upward
 //!    stretch's clusters last to first, so that stretch reads left to
-//!    right, or top to bottom. Reversed, a stretch's clusters need not
-//!    take the length they took walked — a wide glyph moved onto a
-//!    vertical part steps the line height, not its advance — so one
-//!    uniform spacing is solved for the whole placement: `Spread` and
-//!    `Fit` end where the walk ended, `Once` and `Repeat` keep their
-//!    spacing unless that would pass the path's end. The gap never goes
-//!    below zero; where even no gap passes the end, the placement is cut
-//!    — whole filler copies or repeat clusters first, the text last —
-//!    and `Fit` measures text as read when it chooses its scale, so it
-//!    cuts only at `min`.
+//!    right, or top to bottom. Each stretch keeps to the part of the path
+//!    it held in the walk; one that needs more room — reversed, a wide
+//!    glyph moved onto a vertical part steps the line height, not its
+//!    advance, and a moved word takes room too — borrows it from a
+//!    neighbor read the same way, where it still reads forward. Its
+//!    spacing is solved within its part: `Spread` and `Fit` end where the
+//!    walk ended, `Once` and `Repeat` keep their spacing where it fits.
+//!    Where the stretches cannot each keep to their parts, they are laid
+//!    on one from the next with one spacing (ruling R25). The gap never
+//!    goes below zero; where even no gap passes the end, the placement is
+//!    cut — whole filler copies or repeat clusters first, the text last —
+//!    and `Fit` measures text as read, every word whole and no stretch
+//!    running on into one read the other way, when it chooses its scale,
+//!    so it cuts only at `min`.
 //!
 //! On a loop this reads like a seal: the top left to right, the right
 //! side top to bottom, the bottom left to right, the left side top to
@@ -107,22 +115,23 @@ const FIT_ROUNDS: usize = 16;
 /// The chord rounds that resolve a step after its seed (ruling R9.2).
 const CHORD_ROUNDS: usize = 2;
 
-/// ε of the readable rule (#291): a step whose direction θ has
-/// `|cos θ| ≤ ε` is near vertical — within about 2° of plumb, as a
-/// node's straight side is exactly. Any more horizontal motion makes it
-/// rightward or leftward, so a connector that leans is read left to
-/// right, along its lean.
-pub(crate) const VERTICAL_EPSILON: f32 = 0.035;
+/// ε of the readable rule (#291, ruling R26): a step whose direction θ
+/// has `|cos θ| ≤ ε` is steep — at least 45° from level — and so is read
+/// as vertical; any shallower step is rightward or leftward. Each step
+/// is classed by its dominant direction, so the steep sides of a circle
+/// or an ellipse read top to bottom like a rectangle's, and a connector
+/// steeper than 45° reads top to bottom too. (A smaller ε, 2° at first,
+/// left a curve's steep ends in its horizontal stretches, where text read
+/// bottom to top.)
+pub(crate) const VERTICAL_EPSILON: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// The hysteresis of the readable rule (#291), in line heights: a run of
-/// near-vertical steps is a vertical stretch of its own only when it
-/// spans at least this much of the path (or is the whole placement).
-/// A shorter one — a curve turning through vertical, as every circle and
-/// ellipse does at its sides — stays with the horizontal stretches
-/// around it, so the turn makes no stretch of a glyph or two. On a
-/// circle the near-vertical band is `2·R·asin ε ≈ 0.07·R` long, so a
-/// loop needs a radius of some thirty line heights before its sides read
-/// as columns; a straight side three lines long already does.
+/// steep steps is a vertical stretch of its own only when it spans at
+/// least this much of the path (or is the whole placement). A shorter
+/// one — a tight turn through vertical, the tip of a flat ellipse, a
+/// small rounded corner between two level sides — stays with the
+/// horizontal stretches around it, so the turn makes no stretch of a
+/// glyph or two; a side three lines long reads as a column.
 pub(crate) const VERTICAL_MIN_LINES: f32 = 3.0;
 
 /// One glyph placed: which glyph of the run, and where its box's
@@ -179,6 +188,9 @@ struct Cluster {
     /// Where it starts in reading order: the span and span byte of its
     /// first character.
     reading: (usize, usize),
+    /// Whether the text may be parted before it without tearing a word
+    /// ([`GlyphMetrics::word_break`] of its first glyph).
+    word_break: bool,
 }
 
 /// The clusters of `glyphs[range]`, in visual order: a cluster begins
@@ -203,6 +215,7 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
                 advance: glyph.advance,
                 left: glyph.x,
                 reading,
+                word_break: glyph.word_break,
             }),
         }
     }
@@ -227,6 +240,8 @@ struct Stepped {
     corner: Vec2,
     /// Where it starts in reading order ([`Cluster::reading`]).
     reading: (usize, usize),
+    /// [`Cluster::word_break`].
+    word_break: bool,
 }
 
 /// A placement being built: the glyphs, and the step each cluster took.
@@ -283,7 +298,11 @@ pub(crate) struct Trace {
     pub(crate) walked: Vec<PlacedGlyph>,
     /// The direction each laid cluster's step was taken in, in order.
     pub(crate) chords: Vec<Vec2>,
+    /// The stretches as laid, every boundary moved to a word break.
     pub(crate) stretches: Vec<TracedStretch>,
+    /// Each stretch's glyphs as the walk classified them, before any
+    /// boundary was moved to a word break: where words were torn.
+    pub(crate) walked_stretches: Vec<Range<usize>>,
 }
 
 /// One stretch of a [`Trace`].
@@ -416,7 +435,8 @@ impl PathWalk<'_> {
                     .sum::<f32>()
             })
             .collect();
-        self.measure_readable(&widths, self.line_height * size_factor(largest, scale))
+        let breaks: Vec<bool> = clusters.iter().map(|cluster| cluster.word_break).collect();
+        self.measure_readable(&widths, &breaks, self.line_height * size_factor(largest, scale))
     }
 
     /// Where the last of these cluster widths' steps ends when they are
@@ -428,10 +448,10 @@ impl PathWalk<'_> {
     ///
     /// Cost: two walks; two `Vec`s of one entry per cluster, and a third
     /// for the reading order when a stretch is reversed.
-    fn measure_readable(&self, widths: &[f32], h: f32) -> f32 {
+    fn measure_readable(&self, widths: &[f32], breaks: &[bool], h: f32) -> f32 {
         let mut steps = Vec::with_capacity(widths.len());
         let mut s = 0.0_f32;
-        for &width in widths {
+        for (&width, &word_break) in widths.iter().zip(breaks) {
             let (step, dir) = self.step(s, width, h);
             steps.push(Stepped {
                 first: 0,
@@ -442,20 +462,353 @@ impl PathWalk<'_> {
                 advance: width,
                 corner: Vec2::ZERO,
                 reading: (0, 0),
+                word_break,
             });
             s += step;
         }
         let walked = steps.last().map_or(0.0, |step| step.s + step.step);
-        let stretches = stretches_of(&self.travels(&steps, h));
-        if !stretches.iter().any(is_reversed) {
+        let mut stretches = self.stretches(&steps, h, walked, true);
+        let astray = self.borrow_room(&mut stretches, |index| widths[index], |_| true, walked, h);
+        if !stretches.iter().any(PathStretch::is_reversed) {
             return walked;
         }
-        let read = self.measure_widths(
-            reading_order(&stretches).into_iter().map(|index| widths[index]),
-            h,
+        let read = self.lay_reading(
+            &stretches,
+            |index| widths[index],
+            |_| true,
+            Spacing::Zero,
             0.0,
+            walked,
+            h,
+            |_, _, _, _| {},
         );
-        walked.max(read)
+        self.crowded(walked.max(read), astray)
+    }
+
+    /// How long a lay ending at `end` counts for `Fit`, when `astray` of it
+    /// ran on into stretches read the other way ([`borrow_room`]
+    /// (Self::borrow_room)): as it is, when none did; otherwise past the
+    /// path's end by that much, so that `Fit`, which keeps every lay
+    /// within the path, shrinks until no cluster reads backward — though
+    /// there be room for them all elsewhere along the path (ruling
+    /// R25.1).
+    fn crowded(&self, end: f32, astray: f32) -> f32 {
+        if astray > SOLVE_TOLERANCE {
+            end.max(self.path.length()) + astray
+        } else {
+            end
+        }
+    }
+
+    /// The stretches of a placement (#291): each maximal run of steps
+    /// with one [`Travel`] ([`travels`](Self::travels)), every boundary
+    /// then moved to a word break ([`snap_to_words`](Self::snap_to_words)).
+    /// `end` is where the last stretch's part of the path ends. `force`
+    /// moves every torn word whether its taker finds room or not: `Fit`'s
+    /// estimates, so it shrinks until the words have room.
+    ///
+    /// Cost: O(steps); one entry per stretch.
+    fn stretches(&self, steps: &[Stepped], h: f32, end: f32, force: bool) -> Vec<PathStretch> {
+        let mut stretches: Vec<PathStretch> = Vec::new();
+        for (index, travel) in self.travels(steps, h).into_iter().enumerate() {
+            match stretches.last_mut() {
+                Some(last) if last.travel == travel => last.steps.end = index + 1,
+                _ => stretches.push(PathStretch {
+                    travel,
+                    steps: index..index + 1,
+                    from: steps[index].s,
+                }),
+            }
+        }
+        self.snap_to_words(&mut stretches, steps, h, end, force);
+        stretches
+    }
+
+    /// Move each boundary between two stretches to a word break, so a word
+    /// lies wholly in one stretch (ruling R26). A word torn by a boundary
+    /// is torn far apart when one of the two stretches is placed reversed:
+    /// that one begins or ends its text at its other end, so the word's
+    /// head would sit at one end of the stretch and its tail at the other.
+    ///
+    /// A boundary inside a word moves to the word's start or its end —
+    /// whichever takes fewer clusters across, the end on a tie — and the
+    /// clusters it passes join the other stretch. A word's punctuation
+    /// travels with it: only a word break parts the text ([`GlyphMetrics::
+    /// word_break`]), and "heaven:" has none before its colon. The stretch
+    /// that grows may then not fit its part of the path, and the boundary's
+    /// place on the path does not move with it ([`PathStretch::from`]): a
+    /// stretch started where the moved word started would reach into its
+    /// neighbor's part of the path and, read the other way, read backward
+    /// there. It takes the room from a neighbor read its own way instead
+    /// ([`PathWalk::borrow_room`]).
+    ///
+    /// A boundary moves at most that one word, and never past the middle of
+    /// either stretch: a move takes at most half of a stretch's clusters.
+    /// The first and the last stretch are the exception — the ones beside
+    /// the path's start, where the text begins and ends — which may give up
+    /// all but one cluster, so a flow's last word and its punctuation
+    /// ("handywork.", "heaven:") are never left with their tail alone at
+    /// the path's start while a space after them stays. A word too long to
+    /// move so stays parted at the boundary: the walk's split, each part
+    /// still reading forward. So does a word whose taker would find no
+    /// room for it but by running on into a stretch read the other way
+    /// ([`finds_room`](Self::finds_room)): parted, each part reads
+    /// forward; crowded in, the overflow would not. Boundaries are moved
+    /// in order, each against its neighbors as already moved.
+    ///
+    /// Cost: O(steps): each boundary looks no further than its word.
+    fn snap_to_words(&self, stretches: &mut [PathStretch], steps: &[Stepped], h: f32, end: f32, force: bool) {
+        let last = stretches.len().saturating_sub(1);
+        for k in 1..stretches.len() {
+            let (before, after) = (stretches[k - 1].steps.clone(), stretches[k].steps.clone());
+            let at = after.start;
+            if at >= after.end || steps[at].word_break {
+                continue;
+            }
+            // The straddling word's start, in `before`, and its end, in
+            // `after` (or the end of the placement).
+            let back = (before.start..at).rev().find(|&i| steps[i].word_break);
+            let forward = (at + 1..after.end)
+                .find(|&i| steps[i].word_break)
+                .unwrap_or(after.end);
+            let room = |range: &Range<usize>, edge: bool| {
+                if edge {
+                    range.len().saturating_sub(1)
+                } else {
+                    range.len() / 2
+                }
+            };
+            let back = back.filter(|&start| at - start <= room(&before, k - 1 == 0));
+            let forward = Some(forward).filter(|&end| end - at <= room(&after, k == last));
+            let moves: [Option<usize>; 2] = match (back, forward) {
+                (Some(start), Some(end)) if at - start < end - at => [Some(start), Some(end)],
+                (back, forward) => [forward, back],
+            };
+            // The first move, in that order, whose taker still finds room.
+            let moved = moves
+                .into_iter()
+                .flatten()
+                .find(|&moved| force || self.finds_room(stretches, k, moved, steps, h, end));
+            let Some(moved) = moved else {
+                continue;
+            };
+            stretches[k - 1].steps.end = moved;
+            stretches[k].steps.start = moved;
+        }
+    }
+
+    /// Whether moving the boundary before stretch `k` to step `moved`
+    /// leaves the stretch that takes the word room for it with no gap
+    /// ([`snap_to_words`](Self::snap_to_words)): its own part of the
+    /// path, plus the slack a neighbor read its own way leaves — room
+    /// that, borrowed, it reads forward in ([`borrow_room`]
+    /// (Self::borrow_room)). When the two stretches are read the same way
+    /// they share their parts of the path. A move that crowds the taker no
+    /// more than it already was is allowed too. Lengths are laid from
+    /// where each stretch begins.
+    ///
+    /// Cost: one walk of each of the two stretches and of their outer
+    /// neighbors, with no gap.
+    #[allow(clippy::too_many_arguments)] // The boundary, the move, and the walk's parts.
+    fn finds_room(
+        &self,
+        stretches: &[PathStretch],
+        k: usize,
+        moved: usize,
+        steps: &[Stepped],
+        h: f32,
+        end: f32,
+    ) -> bool {
+        // How far `range` reaches laid from `s` with no gap.
+        let reach = |range: Range<usize>, mut s: f32| {
+            let from = s;
+            for index in range {
+                s += self.step(s, steps[index].advance, h).0;
+            }
+            s - from
+        };
+        let region_end = |i: usize| stretches.get(i + 1).map_or(end, |next| next.from);
+        let way = |i: usize| stretches[i].travel.is_backward();
+        // The slack stretch `i` leaves in its own part of the path.
+        let slack = |i: usize| {
+            let stretch = &stretches[i];
+            (region_end(i) - stretch.from - reach(stretch.steps.clone(), stretch.from)).max(0.0)
+        };
+        let (a, b) = (k - 1, k);
+        // The slack of stretch `i`'s neighbor on the far side, if it is
+        // read the way `i` is.
+        let beside = |i: Option<usize>, of: usize| match i {
+            Some(i) if i < stretches.len() && way(i) == way(of) => slack(i),
+            _ => 0.0,
+        };
+        let (room_before, room_after) = (beside(a.checked_sub(1), a), beside(Some(b + 1), b));
+        let (before, after) = (stretches[a].steps.start..moved, moved..stretches[b].steps.end);
+        if way(a) == way(b) {
+            let needs = reach(before, stretches[a].from) + reach(after, stretches[b].from);
+            return needs <= region_end(b) - stretches[a].from + room_before + room_after;
+        }
+        let (taker, range, room) = if moved < stretches[b].steps.start {
+            (b, after, room_after)
+        } else {
+            (a, before, room_before)
+        };
+        let from = stretches[taker].from;
+        let needs = reach(range, from);
+        needs <= region_end(taker) - from + room || needs <= reach(stretches[taker].steps.clone(), from)
+    }
+
+    /// Give each stretch room for its clusters (ruling R26): where a
+    /// stretch, laid with no gap from where it begins
+    /// ([`PathStretch::from`]), would not end before the next begins,
+    /// it takes the room it lacks from a neighbor **read the same way** —
+    /// both reversed, or neither — since its clusters, run on into that
+    /// neighbor's part of the path, read forward there too: first from
+    /// the slack the stretch before leaves, if that one is read the same
+    /// way, then by moving the next stretch's beginning on. A stretch read
+    /// the other way from both its neighbors runs on into the next. What
+    /// the last stretch lacks runs past `end`, and phase 2 lays the
+    /// placement on one gap instead ([`Spacing::Uniform`]). Returns how
+    /// much, all told, ran on into a stretch read the other way: clusters
+    /// that, laid there, read backward. `Fit` shrinks until that is none.
+    ///
+    /// Cost: one walk of each stretch with no gap; no allocation.
+    fn borrow_room(
+        &self,
+        stretches: &mut [PathStretch],
+        width: impl Fn(usize) -> f32,
+        kept: impl Fn(usize) -> bool,
+        end: f32,
+        h: f32,
+    ) -> f32 {
+        let mut astray = 0.0_f32;
+        // Where a stretch's clusters end, laid from `s` with no gap.
+        let length = |stretch: &PathStretch, mut s: f32| {
+            let mut last = s;
+            for index in stretch.steps.clone().filter(|&index| kept(index)) {
+                last = s + self.step(s, width(index), h).0;
+                s = last;
+            }
+            last
+        };
+        for k in 0..stretches.len() {
+            let next = stretches.get(k + 1).map_or(end, |next| next.from);
+            let lacks = length(&stretches[k], stretches[k].from) - next;
+            if lacks.is_nan() || lacks <= 0.0 {
+                continue;
+            }
+            let backward = stretches[k].travel.is_backward();
+            let mut lacks = lacks;
+            if k > 0 && stretches[k - 1].travel.is_backward() == backward {
+                let before = &stretches[k - 1];
+                let slack = stretches[k].from - length(before, before.from);
+                let taken = lacks.min(slack.max(0.0));
+                stretches[k].from -= taken;
+                lacks -= taken;
+            }
+            if let Some(next) = stretches.get_mut(k + 1) {
+                next.from += lacks.max(0.0);
+                if next.travel.is_backward() != backward {
+                    astray += lacks.max(0.0);
+                }
+            }
+        }
+        astray
+    }
+
+    /// Lay `stretches` in reading order (#291 phase 2, rulings R25,
+    /// R26): stretch after stretch, a backward stretch's clusters last to
+    /// first, each stretch from where it began in step 1
+    /// ([`PathStretch::from`]) — or later, if the one before runs on past
+    /// that — so it stays in its own part of the path. `spacing` says the
+    /// gap between steps inside each stretch ([`Spacing`]); between two
+    /// stretches the gap is step 1's, `walk_gap`. Clusters not `kept` are
+    /// skipped; `width` gives each cluster's box width; `visit` sees each
+    /// one laid: its index, where its step starts, the step and its
+    /// direction. `end` is where the last stretch is to end. Returns where
+    /// the last step ends (where the first stretch begins, when none is
+    /// laid).
+    ///
+    /// Cost: one step per laid cluster, and per stretch at most
+    /// `2 · SOLVE_ROUNDS` measures of it when its spacing is solved; no
+    /// allocation.
+    #[allow(clippy::too_many_arguments)] // A walk's parts, and what it reports.
+    fn lay_reading(
+        &self,
+        stretches: &[PathStretch],
+        width: impl Fn(usize) -> f32,
+        kept: impl Fn(usize) -> bool,
+        spacing: Spacing,
+        walk_gap: f32,
+        end: f32,
+        h: f32,
+        mut visit: impl FnMut(usize, f32, f32, Vec2),
+    ) -> f32 {
+        let order = |stretch: &PathStretch| {
+            let (forward, backward) = if stretch.travel.is_backward() {
+                (0..0, stretch.steps.clone())
+            } else {
+                (stretch.steps.clone(), 0..0)
+            };
+            forward.chain(backward.rev()).filter(|&index| kept(index))
+        };
+        // Where a stretch's last step ends, laid from `s` with `gap`.
+        let length = |stretch: &PathStretch, mut s: f32, gap: f32| {
+            let mut last = s;
+            for index in order(stretch) {
+                last = s + self.step(s, width(index), h).0;
+                s = last + gap;
+            }
+            last
+        };
+        let (junction, anchored) = match spacing {
+            Spacing::Zero => (0.0, true),
+            Spacing::Uniform(gap) => (gap, false),
+            Spacing::Keep(_) | Spacing::Fill => (walk_gap, true),
+        };
+        let mut cursor = stretches.first().map_or(0.0, |stretch| stretch.from);
+        let mut last = cursor;
+        for (k, stretch) in stretches.iter().enumerate() {
+            if order(stretch).next().is_none() {
+                continue;
+            }
+            let start = if anchored {
+                cursor.max(stretch.from)
+            } else {
+                cursor
+            };
+            let target = stretches.get(k + 1).map_or(end, |next| next.from - junction);
+            let fits = |gap: f32| length(stretch, start, gap) <= target;
+            let gap = match spacing {
+                Spacing::Zero => 0.0,
+                Spacing::Uniform(gap) => gap,
+                Spacing::Keep(gap) if fits(gap) => gap,
+                Spacing::Keep(gap) if fits(0.0) => {
+                    solve_gap(|g| length(stretch, start, g) - target, target, gap)
+                }
+                Spacing::Fill if fits(0.0) => {
+                    let guess = (target - length(stretch, start, 0.0)) / stretch.steps.len().max(2) as f32;
+                    solve_gap(|g| length(stretch, start, g) - target, target, guess)
+                }
+                _ => 0.0,
+            };
+            let mut s = start;
+            // `Fill` ends a stretch at its part's end: one cluster, which no
+            // gap can move, is laid there whole.
+            let mut clusters = order(stretch);
+            if let (Spacing::Fill, Some(only), None) = (spacing, clusters.next(), clusters.next()) {
+                for _ in 0..CHORD_ROUNDS {
+                    s = (target - self.step(s, width(only), h).0).max(start);
+                }
+            }
+            for index in order(stretch) {
+                let (step, dir) = self.step(s, width(index), h);
+                visit(index, s, step, dir);
+                last = s + step;
+                s = last + gap;
+            }
+            cursor = last + junction;
+        }
+        last
     }
 
     /// Where the last of these cluster widths' steps ends, walked from 0
@@ -505,6 +858,7 @@ impl PathWalk<'_> {
                 advance: cluster.advance,
                 corner,
                 reading: cluster.reading,
+                word_break: cluster.word_break,
             });
             for index in cluster.glyphs.clone() {
                 out.glyphs.push(PlacedGlyph {
@@ -517,44 +871,45 @@ impl PathWalk<'_> {
         Laid::Fits(s)
     }
 
-    /// The readable rule (#291, ruling R25), phase 2: lay the clusters
-    /// step 1 laid in **reading order** — every leftward and upward
-    /// stretch's clusters reversed — so every stretch reads left to right
-    /// or top to bottom.
+    /// The readable rule (#291, rulings R25, R25.1, R26), phase 2: lay
+    /// the clusters step 1 laid in **reading order** — every leftward and
+    /// upward stretch's clusters reversed — so every stretch reads left to
+    /// right or top to bottom.
     ///
     /// Step 1, the fit mode's walk in `walked`, decided which clusters
-    /// are placed and which stretch each belongs to ([`travels`]
-    /// (Self::travels)); that membership is frozen here. The clusters
-    /// are then laid forward along the whole path from where step 1
-    /// began, stretch after stretch, each taking the step its new place
-    /// asks. A reversed stretch need not take the length it took forward
-    /// — a wide glyph moved from a vertical part, where it stepped the
-    /// line height, onto a level one steps its advance — so one uniform
-    /// spacing is solved for the whole placement:
+    /// are placed and which stretch each belongs to ([`stretches`]
+    /// (Self::stretches)), a torn word moved whole into one of its two
+    /// stretches; that membership is frozen here. Each stretch is laid in
+    /// its own part of the path, from where step 1 began it, borrowing
+    /// room from a neighbor read its way where it needs more ([`borrow_room`]
+    /// (Self::borrow_room)), its spacing solved there ([`Spacing`]):
     ///
-    /// - [`Ends::Exactly`] (`Spread`, `Fit`): the readable walk ends
-    ///   where step 1 ended;
-    /// - [`Ends::Within`] (`Once`, `Repeat`): the walk keeps step 1's
-    ///   spacing unless that would pass the path's end, and then takes
-    ///   the spacing that ends it there.
+    /// - [`Ends::Exactly`] (`Spread`, `Fit`): each stretch ends where its
+    ///   part does, so the last ends where step 1 ended;
+    /// - [`Ends::Within`] (`Once`, `Repeat`): each keeps step 1's spacing
+    ///   where that fits its part, and takes less where not.
     ///
-    /// Spacing never goes below a zero gap: glyphs never overlap. Where
-    /// even a zero gap passes the path's end, the placement is cut, the
-    /// way `Fit` cuts text too long at `min` (§6.4 step 4): whole filler
-    /// copies, or repeat clusters, from the end first, and only then the
-    /// text, its last-read cluster first (ruling R9.4). That is the one
-    /// case in which the readable glyphs are not step 1's: they are
-    /// step 1's less the clusters cut at the end.
+    /// Where the stretches cannot each keep to their parts even with no
+    /// gap, they are laid on one from the next with one spacing, solved
+    /// for the whole placement as above ([`Spacing::Uniform`], ruling
+    /// R25). Spacing never goes below a zero gap: glyphs never overlap.
+    /// Where even a zero gap passes the path's end, the placement is cut,
+    /// the way `Fit` cuts text too long at `min` (§6.4 step 4): whole
+    /// filler copies, or repeat clusters, from the end first, and only
+    /// then the text, its last-read cluster first (ruling R9.4). That is
+    /// the one case in which the readable glyphs are not step 1's: they
+    /// are step 1's less the clusters cut at the end.
     ///
     /// `laying.glyphs` keeps step 1's order — the text's — so a glyph's
     /// index means what it meant; only positions move (and a cut removes
     /// clusters).
     ///
-    /// Cost: O(clusters) to classify and once per readable walk; the
-    /// spacing solve takes at most `2 · SOLVE_ROUNDS` walks, a cut a
-    /// logarithmic number more. A few `Vec`s of one entry per cluster;
-    /// nothing at all when no stretch is placed reversed.
-    fn readable(&self, walked: Walked, mut trace: Option<&mut Trace>) -> (Option<ShapedRun>, PlacedRun) {
+    /// Cost: O(clusters) to classify, snap and borrow, and once per lay;
+    /// each stretch's spacing solve and the pooled one take at most
+    /// `2 · SOLVE_ROUNDS` lays of what they solve, a cut a logarithmic
+    /// number more. A few `Vec`s of one entry per cluster or stretch;
+    /// nothing beyond the classification when no stretch is reversed.
+    fn readable(&self, walked: Walked, trace: Option<&mut Trace>) -> (Option<ShapedRun>, PlacedRun) {
         let Walked {
             run,
             laying,
@@ -564,18 +919,34 @@ impl PathWalk<'_> {
             text,
             copy,
             slack,
+            whole_words,
         } = walked;
         let steps = &laying.steps;
-        let stretches = stretches_of(&self.travels(steps, self.line_height));
-        if let Some(trace) = trace.as_deref_mut() {
+        let walked_end = steps.last().map_or(0.0, |step| step.s + step.step);
+        let (spacing, end) = match ends {
+            Ends::Exactly => (Spacing::Fill, walked_end),
+            Ends::Within => (Spacing::Keep(gap), self.path.length()),
+        };
+        let mut stretches = self.stretches(steps, self.line_height, end, whole_words);
+        if let Some(trace) = trace {
+            let mut walked_stretches: Vec<Range<usize>> = Vec::new();
+            let travels = self.travels(steps, self.line_height);
+            for (index, step) in steps.iter().enumerate() {
+                match walked_stretches.last_mut() {
+                    Some(range) if travels[index] == travels[index - 1] => range.end = step.end,
+                    _ => walked_stretches.push(step.first..step.end),
+                }
+            }
+            trace.walked_stretches = walked_stretches;
             trace.walked = laying.glyphs.clone();
             trace.chords = steps.iter().map(|step| step.dir).collect();
             trace.stretches = stretches
                 .iter()
-                .map(|(travel, range)| {
-                    let (head, tail) = (steps[range.start], steps[range.end - 1]);
+                .filter(|stretch| !stretch.steps.is_empty())
+                .map(|stretch| {
+                    let (head, tail) = (steps[stretch.steps.start], steps[stretch.steps.end - 1]);
                     TracedStretch {
-                        travel: *travel,
+                        travel: stretch.travel,
                         glyphs: head.first..tail.end,
                         from: head.s,
                         to: tail.s + tail.step,
@@ -583,63 +954,74 @@ impl PathWalk<'_> {
                 })
                 .collect();
         }
-        if !stretches.iter().any(is_reversed) {
+        if !stretches.iter().any(PathStretch::is_reversed) {
             let placed = PlacedRun {
                 glyphs: laying.glyphs,
                 truncated,
             };
             return (run, placed);
         }
-        let order = reading_order(&stretches);
-        let start = steps[0].s;
-        let walked_end = steps[steps.len() - 1].s + steps[steps.len() - 1].step;
         let limit = (self.limit + slack).max(walked_end);
+        self.borrow_room(
+            &mut stretches,
+            |index| steps[index].advance,
+            |_| true,
+            end,
+            self.line_height,
+        );
         let mut kept = vec![true; steps.len()];
-        // Where the last kept cluster's step ends, laid in reading order
-        // from `start` with `gap` between steps.
-        let measure = |gap: f32, kept: &[bool]| {
-            let (mut s, mut end) = (start, start);
-            for &index in order.iter().filter(|&&index| kept[index]) {
-                end = s + self.step(s, steps[index].advance, self.line_height).0;
-                s = end + gap;
-            }
-            end
+        let width = |index: usize| steps[index].advance;
+        let h = self.line_height;
+        // Where the kept clusters end, laid with `spacing`.
+        let measure = |spacing: Spacing, kept: &[bool]| {
+            let keep = |index: usize| kept[index];
+            self.lay_reading(&stretches, width, keep, spacing, gap, end, h, |_, _, _, _| {})
         };
-        let gap = match ends {
-            Ends::Exactly if measure(0.0, &kept) <= walked_end => {
-                solve_gap(|gap| measure(gap, &kept) - walked_end, walked_end, gap)
+        let spacing = if measure(spacing, &kept) <= limit {
+            spacing
+        } else {
+            // Some stretch cannot keep its own part of the path: lay them
+            // on one from the next with one gap, so the slack of every
+            // stretch serves any (ruling R25).
+            let pooled = |gap: f32| measure(Spacing::Uniform(gap), &kept);
+            let gap = match ends {
+                Ends::Exactly if pooled(0.0) <= walked_end => {
+                    solve_gap(|g| pooled(g) - walked_end, walked_end, gap)
+                }
+                Ends::Within if pooled(gap) <= limit => gap,
+                Ends::Within if pooled(0.0) <= end => solve_gap(|g| pooled(g) - end, end, gap),
+                _ => 0.0,
+            };
+            if pooled(gap) > limit {
+                let shortest = |kept: &[bool]| measure(Spacing::Uniform(0.0), kept);
+                truncated |= self.cut(steps, text, copy, &mut kept, &shortest, limit);
             }
-            Ends::Within if measure(gap, &kept) <= limit => gap,
-            Ends::Within if measure(0.0, &kept) <= self.path.length() => solve_gap(
-                |gap| measure(gap, &kept) - self.path.length(),
-                self.path.length(),
-                gap,
-            ),
-            _ => 0.0,
+            Spacing::Uniform(gap)
         };
-        if measure(gap, &kept) > limit {
-            truncated |= self.cut(steps, text, copy, &mut kept, &measure, limit);
-        }
-        self.lay_readable(laying, &order, &kept, start, gap, run, truncated)
+        let lay = Lay {
+            stretches: &stretches,
+            kept: &kept,
+            spacing,
+            walk_gap: gap,
+            end,
+        };
+        self.lay_readable(laying, &lay, run, truncated)
     }
 
     /// Each step's [`Travel`] (#291 step 2).
     ///
     /// A step is rightward when `cos θ > ε`, leftward when `cos θ < −ε`
-    /// ([`VERTICAL_EPSILON`]); otherwise it is near vertical. A run of
-    /// near-vertical steps is a vertical stretch — downward or upward by
-    /// where it ends against where it starts — only when it is clearly
-    /// entered: it spans [`VERTICAL_MIN_LINES`] line heights, or it is
-    /// every step there is. A shorter run is the hysteresis's case, a
-    /// curve turning through vertical: it makes no stretch of its own,
-    /// and each of its steps joins the horizontal stretch whose way it
-    /// moves (`cos θ > 0` rightward, `< 0` leftward), so the boundary
-    /// between the stretches before and after it sits where the turn
-    /// passes plumb. A step with no horizontal motion at all joins the
-    /// stretch that reads it top to bottom: rightward going down,
-    /// leftward going up. So a rightward stretch never moves left and a
-    /// leftward one never right, and on a loop with no straight side the
-    /// sides join the top and the bottom.
+    /// ([`VERTICAL_EPSILON`], cos 45°); otherwise it is steep. A run of
+    /// steep steps is a vertical stretch — downward or upward by where it
+    /// ends against where it starts — only when it is clearly entered: it
+    /// spans [`VERTICAL_MIN_LINES`] line heights, or it is every step
+    /// there is. A shorter run is the hysteresis's case, a tight turn
+    /// through vertical: it makes no stretch of its own, and each of its
+    /// steps joins the horizontal stretch whose way it moves (`cos θ > 0`
+    /// rightward, `< 0` leftward), so the boundary between the stretches
+    /// before and after it sits where the turn passes plumb. A step with
+    /// no horizontal motion at all joins the stretch that reads it top to
+    /// bottom: rightward going down, leftward going up.
     ///
     /// Cost: O(steps); one allocation.
     fn travels(&self, steps: &[Stepped], line_height: f32) -> Vec<Travel> {
@@ -693,14 +1075,29 @@ impl PathWalk<'_> {
     fn readable_extent(&self, steps: &[Stepped], slack: f32) -> (f32, f32) {
         let walked_end = steps.last().map_or(0.0, |step| step.s + step.step);
         let limit = (self.limit + slack).max(walked_end);
-        let stretches = stretches_of(&self.travels(steps, self.line_height));
-        if !stretches.iter().any(is_reversed) {
+        let mut stretches = self.stretches(steps, self.line_height, walked_end, true);
+        if !stretches.iter().any(PathStretch::is_reversed) {
             return (walked_end, limit);
         }
-        let widths = reading_order(&stretches)
-            .into_iter()
-            .map(|index| steps[index].advance);
-        (self.measure_widths(widths, self.line_height, 0.0), limit)
+        let astray = self.borrow_room(
+            &mut stretches,
+            |index| steps[index].advance,
+            |_| true,
+            walked_end,
+            self.line_height,
+        );
+        let width = |index: usize| steps[index].advance;
+        let read = self.lay_reading(
+            &stretches,
+            width,
+            |_| true,
+            Spacing::Zero,
+            0.0,
+            walked_end,
+            self.line_height,
+            |_, _, _, _| {},
+        );
+        (self.crowded(read, astray), limit)
     }
 
     /// Cut the readable placement until, at a zero gap, it ends within
@@ -708,7 +1105,8 @@ impl PathWalk<'_> {
     /// clusters after the first `text` — filler copies, or repeat
     /// clusters — from the end first, then the text's clusters, last
     /// read first (ruling R9.4). Marks the dropped clusters in `kept` and
-    /// says whether text was cut. `measure` is the readable walk.
+    /// says whether text was cut. `measure` is the readable lay with no
+    /// gap, the shortest it can be.
     ///
     /// Cost: a binary search over the units, one readable walk and one
     /// pass over `kept` per probe: O(clusters · log clusters).
@@ -719,7 +1117,7 @@ impl PathWalk<'_> {
         text: usize,
         copy: usize,
         kept: &mut [bool],
-        measure: &dyn Fn(f32, &[bool]) -> f32,
+        measure: &dyn Fn(&[bool]) -> f32,
         limit: f32,
     ) -> bool {
         let text = text.min(steps.len());
@@ -753,7 +1151,7 @@ impl PathWalk<'_> {
         while fits - over > 1 {
             let middle = over + (fits - over) / 2;
             keep_all_but(units[middle - 1], kept);
-            if measure(0.0, kept) <= limit {
+            if measure(kept) <= limit {
                 fits = middle;
             } else {
                 over = middle;
@@ -763,32 +1161,37 @@ impl PathWalk<'_> {
         fits > copy_units
     }
 
-    /// Lay `laying`'s clusters in `order`, skipping those not `kept`,
-    /// from `start` with `gap` between steps: each cluster's glyphs move
-    /// with its box, and a cluster not kept is removed. The glyphs keep
-    /// step 1's order.
-    #[allow(clippy::too_many_arguments)] // The readable walk's parts.
+    /// Lay `laying`'s clusters as `lay` says ([`lay_reading`]
+    /// (Self::lay_reading)): each cluster's glyphs move with its box, and
+    /// a cluster not kept is removed. The glyphs keep step 1's order.
     fn lay_readable(
         &self,
         mut laying: Laying,
-        order: &[usize],
-        kept: &[bool],
-        start: f32,
-        gap: f32,
+        lay: &Lay<'_>,
         run: Option<ShapedRun>,
         truncated: bool,
     ) -> (Option<ShapedRun>, PlacedRun) {
         let h = self.line_height;
-        let mut s = start;
-        for &index in order.iter().filter(|&&index| kept[index]) {
-            let step = laying.steps[index];
-            let (length, dir) = self.step(s, step.advance, h);
-            let moved = self.corner(s, length, dir, step.advance, h) - step.corner;
-            for glyph in &mut laying.glyphs[step.first..step.end] {
-                glyph.pos += moved;
-            }
-            s += length + gap;
-        }
+        let steps = &laying.steps;
+        let glyphs = &mut laying.glyphs;
+        let width = |index: usize| steps[index].advance;
+        self.lay_reading(
+            lay.stretches,
+            width,
+            |index| lay.kept[index],
+            lay.spacing,
+            lay.walk_gap,
+            lay.end,
+            h,
+            |index, s, length, dir| {
+                let step = steps[index];
+                let moved = self.corner(s, length, dir, step.advance, h) - step.corner;
+                for glyph in &mut glyphs[step.first..step.end] {
+                    glyph.pos += moved;
+                }
+            },
+        );
+        let kept = lay.kept;
         let glyphs = if kept.iter().all(|&keep| keep) {
             laying.glyphs
         } else {
@@ -853,43 +1256,26 @@ impl PathWalk<'_> {
     }
 }
 
-/// The stretches of a placement (#291): each maximal run of steps with
-/// one [`Travel`], as a range of step indices.
-///
-/// Cost: O(steps); one entry per stretch.
-fn stretches_of(travels: &[Travel]) -> Vec<(Travel, Range<usize>)> {
-    let mut stretches: Vec<(Travel, Range<usize>)> = Vec::new();
-    for (index, &travel) in travels.iter().enumerate() {
-        match stretches.last_mut() {
-            Some((last, range)) if *last == travel => range.end = index + 1,
-            _ => stretches.push((travel, index..index + 1)),
-        }
+/// One stretch of a placement as phase 2 lays it (#291).
+#[derive(Clone, Debug)]
+struct PathStretch {
+    travel: Travel,
+    /// Its clusters: a range of step indices, in step 1's order.
+    steps: Range<usize>,
+    /// Where along the path it begins: where step 1 began its first
+    /// cluster, before [`snap_to_words`] moved any word across its
+    /// boundary. Phase 2 starts it here — earlier only where it borrows
+    /// room from the stretch before ([`PathWalk::borrow_room`]), later
+    /// where the stretch before runs on past it.
+    from: f32,
+}
+
+impl PathStretch {
+    /// Whether it is laid reversed and that changes anything: a backward
+    /// stretch of more than one cluster.
+    fn is_reversed(&self) -> bool {
+        self.travel.is_backward() && self.steps.len() > 1
     }
-    stretches
-}
-
-/// Whether a stretch is laid reversed and that changes anything: a
-/// backward stretch of more than one cluster.
-fn is_reversed((travel, range): &(Travel, Range<usize>)) -> bool {
-    travel.is_backward() && range.len() > 1
-}
-
-/// The step indices in reading order (#291): stretch after stretch, a
-/// backward stretch's steps last to first.
-///
-/// Cost: O(steps); one allocation.
-fn reading_order(stretches: &[(Travel, Range<usize>)]) -> Vec<usize> {
-    stretches
-        .iter()
-        .flat_map(|(travel, range)| {
-            let (forward, backward) = if travel.is_backward() {
-                (0..0, range.clone())
-            } else {
-                (range.clone(), 0..0)
-            };
-            forward.chain(backward.rev())
-        })
-        .collect()
 }
 
 /// Place `run` around the closed `path` (a frame ring), from `start`
@@ -1063,6 +1449,36 @@ enum Ends {
     Within,
 }
 
+/// How phase 2 of the readable rule spaces a stretch's clusters
+/// ([`PathWalk::lay_reading`]). Whatever it asks, a gap is never below
+/// zero: a stretch that does not fit its part of the path even with no
+/// gap takes no gap and runs on into the next one's.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Spacing {
+    /// No gap anywhere: the shortest the placement can be laid.
+    Zero,
+    /// This gap (step 1's), less where the stretch would not fit its part
+    /// of the path with it: `Once` and `Repeat`.
+    Keep(f32),
+    /// The gap that ends each stretch exactly where its part of the path
+    /// ends: `Spread` and `Fit`, whose step 1 was solved to fill the path.
+    Fill,
+    /// This gap everywhere, every stretch laid on from the one before
+    /// rather than from where it began: the pooled lay (ruling R25), for
+    /// a placement whose stretches cannot each keep their own part of
+    /// the path.
+    Uniform(f32),
+}
+
+/// Phase 2's lay of one placement, as [`PathWalk::lay_reading`] takes it.
+struct Lay<'a> {
+    stretches: &'a [PathStretch],
+    kept: &'a [bool],
+    spacing: Spacing,
+    walk_gap: f32,
+    end: f32,
+}
+
 /// Step 1 of the readable rule, a fit mode's walk: what phase 2
 /// ([`PathWalk::readable`]) lays again in reading order.
 struct Walked {
@@ -1083,6 +1499,11 @@ struct Walked {
     /// How far past the path's end the walk may go: `Fit`'s allowance
     /// for the float noise of its reshape (ruling R9.3), else 0.
     slack: f32,
+    /// Whether every word a stretch boundary tears is moved whole, room
+    /// or not ([`PathWalk::snap_to_words`]): `Fit` above `min`, whose
+    /// scale was chosen so they all have room. Otherwise a word moves
+    /// only where its taker finds room.
+    whole_words: bool,
 }
 
 /// The body both placements share, over a walked path: step 1 of the
@@ -1138,6 +1559,7 @@ fn once_text(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> (Walked, Option<
         text,
         copy: 1,
         slack: 0.0,
+        whole_words: false,
     };
     (walked, next)
 }
@@ -1206,6 +1628,7 @@ fn once<'p>(
         text: text.len(),
         copy: copy.len(),
         slack: 0.0,
+        whole_words: false,
     }
 }
 
@@ -1249,6 +1672,7 @@ fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> Walked {
         text,
         copy: 1,
         slack: 0.0,
+        whole_words: false,
     }
 }
 
@@ -1273,7 +1697,13 @@ fn spread(run: &ShapedRun, walk: &PathWalk<'_>, overrun_slack: f32) -> Walked {
             limit: walk.limit + overrun_slack,
             ..*walk
         };
-        return once_text(run, &walk, 0.0).0;
+        // Placed whole, the text fills the path with no spacing: the
+        // readable lay must end where it ends, too.
+        let mut walked = once_text(run, &walk, 0.0).0;
+        if !walked.truncated {
+            walked.ends = Ends::Exactly;
+        }
+        return walked;
     }
     let guess = (length - natural) / (clusters.len() - 1) as f32;
     let gap = solve_gap(|gap| walk.measure(&clusters, 1.0, gap) - length, length, guess);
@@ -1379,6 +1809,7 @@ fn fit_to<'p>(
     };
     let mut scale = fitting_scale(&walk, &run.glyphs, &clusters, length, start, low);
     let mut rounds = 0;
+    let mut previous: Option<(f32, f32)> = None;
     loop {
         let rescaled = (scale != 1.0).then(|| reshape(run, scale, None, fs));
         let placed_run = rescaled.as_ref().unwrap_or(run);
@@ -1386,9 +1817,17 @@ fn fit_to<'p>(
         let placed_walk = walk_for(placed_run);
         let walked = Walked {
             slack,
+            whole_words: scale > low,
             ..spread(placed_run, &placed_walk, slack)
         };
         let (read, limit) = placed_walk.readable_extent(&walked.laying.steps, slack);
+        // A walk that had to cut the text overran, however its kept
+        // clusters read.
+        let read = if walked.truncated {
+            read.max(limit * (1.0 + 1e-3))
+        } else {
+            read
+        };
         rounds += 1;
         if read <= limit || scale <= low || rounds >= FIT_ROUNDS {
             return Walked {
@@ -1398,8 +1837,20 @@ fn fit_to<'p>(
         }
         // The spacing spread put in moved clusters between stretches, and
         // read in that order the text no longer fits even with no gap:
-        // shrink by what it overruns, as `fitting_scale` does.
-        scale = (scale * (limit / read) * (1.0 - 1e-3)).max(low);
+        // shrink by what it overruns, as `fitting_scale` does — and once
+        // two rounds have measured how the overrun falls with the scale,
+        // by the secant through them, a little past it, since the overrun
+        // can fall more slowly than the scale.
+        let proportional = scale * (limit / read) * (1.0 - 1e-3);
+        let next = match previous {
+            Some((before, was)) if was > read && before > scale => {
+                let rate = (was - read) / (before - scale);
+                (scale - 1.25 * (read - limit) / rate).min(proportional)
+            }
+            _ => proportional,
+        };
+        previous = Some((scale, read));
+        scale = next.max(low);
     }
 }
 
