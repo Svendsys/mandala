@@ -37,8 +37,8 @@
 //! byte-identically: keys in schema order, name-keyed objects in
 //! ascending byte order, nodes in the tree's pre-order, numbers in
 //! serde_json's shortest form of the stored `f32`. The layout — the
-//! header pretty-printed, then one node per line — is decided in one
-//! place, `writer.rs`.
+//! header pretty-printed, then each node as a block with one line per
+//! key — is decided in one place, `writer.rs`.
 //!
 //! **One spelling per value, in the whole file.** The value spellings
 //! (a color, a weight, a fit mode, a start point) are the types in
@@ -648,7 +648,8 @@ impl std::io::Write for Counter {
 }
 
 /// Write a document as a `.mandala.json`: deterministic, the header
-/// two-space indented, then one node per line, ending in a newline.
+/// two-space indented, then each node as a block with one line per key,
+/// ending in a newline.
 ///
 /// Nothing derived is written, and nothing is dropped: what the file
 /// cannot spell is a [`SaveError`] (see [`check_savable`]), never a
@@ -667,7 +668,7 @@ pub fn save(doc: &Document) -> Result<String, SaveError> {
     })
 }
 
-/// [`save`], streamed to `out`: the header, then each node's line as the
+/// [`save`], streamed to `out`: the header, then each node's block as the
 /// walk reaches it, so a large map is never held as one text. Nothing is
 /// written unless [`check_savable`] passes first. A failure of `out` is
 /// [`SaveErrorKind::Io`] at the path of the node being written (empty

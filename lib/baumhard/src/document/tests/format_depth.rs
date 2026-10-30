@@ -22,7 +22,10 @@ pub const CHAIN_DEPTH: u32 = 100_000;
 /// The leaf's content: the deepest a node's own JSON nests (design
 /// B.7), a portal link whose second end has a label whose span links
 /// out, nine levels below the node.
-const LEAF: &str = r#", "sections": [{"spans": [{"text": "the leaf"}]}], "links": [{"to": 1, "kind": "portal", "ends": [{}, {"label": {"spans": [{"text": "nine levels down", "link": {"url": "https://example.org/deep"}}]}}]}]"#;
+const LEAF: [&str; 2] = [
+    r#""sections": [{"spans": [{"text": "the leaf"}]}]"#,
+    r#""links": [{"to": 1, "kind": "portal", "ends": [{}, {"label": {"spans": [{"text": "nine levels down", "link": {"url": "https://example.org/deep"}}]}}]}]"#,
+];
 
 /// The text of a chain `depth` nodes deep, exactly as the saver writes
 /// it: node 1 at the top, node `k` under node `k - 1`, the leaf last.
@@ -32,15 +35,19 @@ pub fn chain_text(depth: u32) -> String {
         if id > 1 {
             text.push_str(",\n");
         }
-        text.push_str(&format!("    {{\"id\": {id}, "));
+        // A block per node, a line per key (design B.9, ruling R20).
+        text.push_str(&format!("    {{\n      \"id\": {id},\n"));
         if id > 1 {
-            text.push_str(&format!("\"parent\": {}, ", id - 1));
+            text.push_str(&format!("      \"parent\": {},\n", id - 1));
         }
-        text.push_str("\"position\": [0.0, 0.0]");
+        text.push_str("      \"position\": [0.0, 0.0]");
         if id == depth {
-            text.push_str(LEAF);
+            for key in LEAF {
+                text.push_str(",\n      ");
+                text.push_str(key);
+            }
         }
-        text.push('}');
+        text.push_str("\n    }");
     }
     text.push_str("\n  ]\n}\n");
     text

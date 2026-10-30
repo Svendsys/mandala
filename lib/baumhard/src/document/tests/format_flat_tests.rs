@@ -313,44 +313,47 @@ fn test_a_node_that_does_not_read_is_still_named_by_its_id() {
 #[test]
 fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     let tree = fixture("tree");
-    // The nodes start on line 47; node 3 is on line 50.
+    // The nodes start on line 47; node 3's block opens on line 70, its
+    // `id` on 71 and its `parent` on 72.
+    let lines: Vec<&str> = tree.lines().collect();
     let line_of = |id: u32| {
-        1 + tree
-            .lines()
-            .position(|line| line.starts_with(&format!("    {{\"id\": {id},")))
+        1 + lines
+            .windows(2)
+            .position(|pair| pair[0] == "    {" && pair[1].starts_with(&format!("      \"id\": {id},")))
             .unwrap()
     };
-    assert_eq!((line_of(1), line_of(3)), (47, 50));
-    // A reader's error, an unknown key in node 3's line: its line, and
-    // the column of the key.
+    assert_eq!((line_of(1), line_of(3)), (47, 70));
+    // A reader's error, an unknown key on a line of its own in node 3's
+    // block: its line, and the column of the key.
     let bad = tree.replace(
-        r#"{"id": 3, "parent": 1, "#,
-        r#"{"id": 3, "parent": 1, "bogus": 0, "#,
+        "      \"id\": 3,\n      \"parent\": 1,\n",
+        "      \"id\": 3,\n      \"parent\": 1,\n      \"bogus\": 0,\n",
     );
     let error = rejection(&bad);
     assert_eq!(error.path, "nodes[3].bogus");
     let position = error.position.expect("a reader's error has a place");
-    assert_eq!(position.line, 50);
-    let key_at = bad.lines().nth(49).unwrap().find("\"bogus\"").unwrap() as u32 + 1;
+    assert_eq!(position.line, 73);
+    let key_at = bad.lines().nth(72).unwrap().find("\"bogus\"").unwrap() as u32 + 1;
     // The reader stops at the key's closing quote, the seventh byte of
     // `"bogus"`: the column in the whole line, not in the node's extent,
-    // which starts four bytes in.
+    // which starts four bytes into the block's first line.
     assert_eq!(position.column, key_at + 6, "the column of the key's end");
     assert!(
-        error.to_string().ends_with(r#"(node 3 "the earth", line 50)"#),
+        error.to_string().ends_with(r#"(node 3 "the earth", line 73)"#),
         "{error}"
     );
-    // Control: the same error in the first node reports line 47.
-    let bad = tree.replace(r#"{"id": 1, "#, r#"{"id": 1, "bogus": 0, "#);
-    assert_eq!(rejection(&bad).position.map(|p| p.line), Some(47));
-    // An error found after the node was read: the line of its node.
+    // Control: the same error in the first node reports its line, 49.
+    let bad = tree.replace("      \"id\": 1,\n", "      \"id\": 1,\n      \"bogus\": 0,\n");
+    assert_eq!(rejection(&bad).position.map(|p| p.line), Some(49));
+    // An error found after the node was read: the line where its block
+    // opens, at the `{`.
     let bad = tree.replace(
         r#""text": "the earth"}"#,
         r#""text": "the earth", "color": "var(nope)"}"#,
     );
     let error = rejection(&bad);
     assert_eq!(error.path, "nodes[3].sections[0].spans[0].color");
-    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((50, 5)));
+    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((70, 5)));
     // In a top-level value: the start of the value.
     let bad = tree.replace(r##""fill": "#2a1b3d""##, r#""fill": "var(nope)""#);
     let error = rejection(&bad);
@@ -486,8 +489,9 @@ fn test_every_proper_prefix_of_a_map_is_refused() {
 
 #[test]
 fn test_a_node_has_the_same_line_in_a_saved_map_as_its_error_says() {
-    // The saver writes one node per line, so the line an error names for
-    // a node is where `sed -n Np` finds it in a saved map.
+    // The saver writes each node as a block, so the line an error names
+    // for a node is where `sed -n Np` finds its opening `{` in a saved
+    // map, its `id` on the next line.
     let doc = load(fixture("tree")).unwrap();
     let text = written(&doc);
     let (three, _) = node(&doc, 3);
@@ -497,9 +501,7 @@ fn test_a_node_has_the_same_line_in_a_saved_map_as_its_error_says() {
         r#""text": "the earth", "color": "var(nope)"}"#,
     );
     let line = rejection(&bad).position.unwrap().line as usize;
-    assert!(text
-        .lines()
-        .nth(line - 1)
-        .unwrap()
-        .starts_with(r#"    {"id": 3,"#));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[line - 1], "    {");
+    assert_eq!(lines[line], "      \"id\": 3,");
 }

@@ -142,10 +142,55 @@
     }
   ],
   "nodes": [
-    {"id": 1, "position": [0.0, 0.0], "min_size": [320.0, 200.0], "shape": {"rectangle": {"radius": 25}}, "fill": "var(bg)", "fill_fade": 6.5, "palette": "rainbow", "zoom": {"min": 0.25, "max": 8.0}, "folded": true, "opacity": 0.75, "on": {"click": "reveal", "hover": "glow"}, "font": "Public Pixel", "size": 28.0, "color": "palette(text)", "weight": "bold", "italic": false, "sections": [{"offset": [8.0, 8.0], "min_size": [200.0, 60.0], "align": "center", "font": "Novem", "size": 20.0, "color": "#ffcc00", "weight": 300, "italic": true, "spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}, {"text": " God created", "font": "Novem", "color": "var(accent)", "italic": true}, {"text": " the heaven", "link": {"url": "https://example.com/a?b=c&d=e"}}, {"text": " and the earth", "link": {"verb": "glow"}}]}, {"channel": 1, "align": "right", "spans": [{"text": "second section\nwith a line break"}]}, {"channel": 2, "align": "left"}], "frame": {"visible": true, "start": "top-left", "direction": "clockwise", "fit": "fit", "gap": 2.0, "inset": 4.0, "font": "Public Pixel", "size": 0.05, "color": "palette(frame)", "weight": "normal", "italic": false, "rings": [{"spans": [{"text": "And the earth was without form, and void; ", "color": "#00ff00", "weight": "bold"}]}, {"channel": 1, "fit": "spread", "font": "Novem", "size": 0.04, "color": "var(accent)", "weight": "bold", "italic": true, "spans": [{"text": "darkness "}]}]}, "links": [{"to": 3, "kind": "line", "fit": "repeat", "spacing": 1.5, "size": 14.0, "color": "palette(frame)", "content": "~", "anchors": ["right", "left"], "control_points": [[40.0, -20.0], [80.0, 20.0]], "visible": false, "zoom": {"min": 1.0}, "spans": [{"text": "~"}], "cap_start": {"font": "Novem", "size": 16.0, "color": "#ff0000", "weight": "bold", "italic": true, "spans": [{"text": "<"}]}, "cap_end": {"spans": [{"text": ">"}]}, "label": {"t": 0.25, "offset": -6.0, "font": "Public Pixel", "size": 13.0, "color": "var(fg)", "weight": 600, "italic": false, "spans": [{"text": "see also"}]}}, {"to": 5, "kind": "portal", "ends": [{"border_t": 0.25, "offset": 3.0, "color": "#aa88cc", "size": 40.0, "content": "◆", "spans": [{"text": "A"}], "label": {"spans": [{"text": "out"}]}}, {"border_t": 0.75, "spans": [{"text": "B"}]}]}]},
-    {"id": 2, "parent": 1, "position": [320.0, 40.0], "shape": "ellipse", "hidden": true, "sections": [{"spans": [{"text": "the heaven and the earth"}]}], "connector": {"fit": "once", "spacing": 0.0, "size": 12.0, "color": "#888888", "content": "·", "anchors": ["bottom", "top"], "control_points": [[10.0, 10.0]], "visible": false, "zoom": {"max": 4.0}, "spans": [{"text": "─"}], "cap_start": {"spans": [{"text": "("}]}, "cap_end": {"spans": [{"text": ")"}]}, "label": {"t": 0.5, "spans": [{"text": "child of"}]}}},
-    {"id": 4, "parent": 2, "channel": 3, "position": [0.0, 160.0], "sections": [{"spans": [{"text": "deep"}]}]},
-    {"id": 3, "parent": 1, "position": [320.0, 240.0], "sections": [{"spans": [{"text": "and the earth was without form"}]}]},
-    {"id": 5, "channel": 2, "position": [900.0, 0.0], "palette": "mono", "sections": [{"spans": [{"text": "elsewhere"}]}]}
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "min_size": [320.0, 200.0],
+      "shape": {"rectangle": {"radius": 25}},
+      "fill": "var(bg)",
+      "fill_fade": 6.5,
+      "palette": "rainbow",
+      "zoom": {"min": 0.25, "max": 8.0},
+      "folded": true,
+      "opacity": 0.75,
+      "on": {"click": "reveal", "hover": "glow"},
+      "font": "Public Pixel",
+      "size": 28.0,
+      "color": "palette(text)",
+      "weight": "bold",
+      "italic": false,
+      "sections": [{"offset": [8.0, 8.0], "min_size": [200.0, 60.0], "align": "center", "font": "Novem", "size": 20.0, "color": "#ffcc00", "weight": 300, "italic": true, "spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}, {"text": " God created", "font": "Novem", "color": "var(accent)", "italic": true}, {"text": " the heaven", "link": {"url": "https://example.com/a?b=c&d=e"}}, {"text": " and the earth", "link": {"verb": "glow"}}]}, {"channel": 1, "align": "right", "spans": [{"text": "second section\nwith a line break"}]}, {"channel": 2, "align": "left"}],
+      "frame": {"visible": true, "start": "top-left", "direction": "clockwise", "fit": "fit", "gap": 2.0, "inset": 4.0, "font": "Public Pixel", "size": 0.05, "color": "palette(frame)", "weight": "normal", "italic": false, "rings": [{"spans": [{"text": "And the earth was without form, and void; ", "color": "#00ff00", "weight": "bold"}]}, {"channel": 1, "fit": "spread", "font": "Novem", "size": 0.04, "color": "var(accent)", "weight": "bold", "italic": true, "spans": [{"text": "darkness "}]}]},
+      "links": [{"to": 3, "kind": "line", "fit": "repeat", "spacing": 1.5, "size": 14.0, "color": "palette(frame)", "content": "~", "anchors": ["right", "left"], "control_points": [[40.0, -20.0], [80.0, 20.0]], "visible": false, "zoom": {"min": 1.0}, "spans": [{"text": "~"}], "cap_start": {"font": "Novem", "size": 16.0, "color": "#ff0000", "weight": "bold", "italic": true, "spans": [{"text": "<"}]}, "cap_end": {"spans": [{"text": ">"}]}, "label": {"t": 0.25, "offset": -6.0, "font": "Public Pixel", "size": 13.0, "color": "var(fg)", "weight": 600, "italic": false, "spans": [{"text": "see also"}]}}, {"to": 5, "kind": "portal", "ends": [{"border_t": 0.25, "offset": 3.0, "color": "#aa88cc", "size": 40.0, "content": "◆", "spans": [{"text": "A"}], "label": {"spans": [{"text": "out"}]}}, {"border_t": 0.75, "spans": [{"text": "B"}]}]}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [320.0, 40.0],
+      "shape": "ellipse",
+      "hidden": true,
+      "sections": [{"spans": [{"text": "the heaven and the earth"}]}],
+      "connector": {"fit": "once", "spacing": 0.0, "size": 12.0, "color": "#888888", "content": "·", "anchors": ["bottom", "top"], "control_points": [[10.0, 10.0]], "visible": false, "zoom": {"max": 4.0}, "spans": [{"text": "─"}], "cap_start": {"spans": [{"text": "("}]}, "cap_end": {"spans": [{"text": ")"}]}, "label": {"t": 0.5, "spans": [{"text": "child of"}]}}
+    },
+    {
+      "id": 4,
+      "parent": 2,
+      "channel": 3,
+      "position": [0.0, 160.0],
+      "sections": [{"spans": [{"text": "deep"}]}]
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "position": [320.0, 240.0],
+      "sections": [{"spans": [{"text": "and the earth was without form"}]}]
+    },
+    {
+      "id": 5,
+      "channel": 2,
+      "position": [900.0, 0.0],
+      "palette": "mono",
+      "sections": [{"spans": [{"text": "elsewhere"}]}]
+    }
   ]
 }

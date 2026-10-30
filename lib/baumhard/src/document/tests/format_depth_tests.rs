@@ -87,13 +87,13 @@ fn linked_chain_text(depth: u32) -> String {
         if id > 1 {
             text.push_str(",\n");
         }
-        text.push_str(&format!("    {{\"id\": {id}, "));
+        text.push_str(&format!("    {{\n      \"id\": {id},\n"));
         if id > 1 {
-            text.push_str(&format!("\"parent\": {}, ", id - 1));
+            text.push_str(&format!("      \"parent\": {},\n", id - 1));
         }
         let to = if id == 1 { depth } else { 1 };
         text.push_str(&format!(
-            "\"position\": [0.0, 0.0], \"links\": [{{\"to\": {to}, \"kind\": \"line\"}}]}}"
+            "      \"position\": [0.0, 0.0],\n      \"links\": [{{\"to\": {to}, \"kind\": \"line\"}}]\n    }}"
         ));
     }
     text.push_str("\n  ]\n}\n");

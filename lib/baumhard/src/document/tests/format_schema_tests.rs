@@ -193,16 +193,17 @@ fn test_the_schema_examples_errors_are_what_the_loader_says() {
     let path = format_doc_path("schema.md");
     let doc_text = std::fs::read_to_string(&path).unwrap();
     let example = fixture("tree");
+    // A node's block, from its `    {` to its `    }`, without the `,`
+    // after it.
     let line = |id: u32| {
-        example
-            .lines()
-            .find(|line| line.starts_with(&format!("    {{\"id\": {id},")))
-            .unwrap_or_else(|| panic!("node {id} has a line"))
-            .trim_end_matches(',')
-            .to_string()
+        let start = example
+            .find(&format!("    {{\n      \"id\": {id},"))
+            .unwrap_or_else(|| panic!("node {id} has a block"));
+        let end = example[start..].find("\n    }").expect("the block closes") + "\n    }".len();
+        example[start..start + end].to_string()
     };
     let with_lines = |order: &[u32], edit: &dyn Fn(u32, String) -> String| {
-        let head = example.split("    {\"id\": 1,").next().unwrap();
+        let head = example.split("    {\n      \"id\": 1,").next().unwrap();
         let nodes: Vec<String> = order.iter().map(|id| edit(*id, line(*id))).collect();
         format!("{head}{}\n  ]\n}}\n", nodes.join(",\n"))
     };
@@ -222,9 +223,9 @@ fn test_the_schema_examples_errors_are_what_the_loader_says() {
         with_lines(&[1, 2, 3, 4, 6, 5], &same),
     ];
     let expected = [
-        r#"nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)"#,
-        r#"nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)"#,
-        r#"nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 52)"#,
+        r#"nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 77)"#,
+        r#"nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)"#,
+        r#"nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 83)"#,
     ];
     for (text, message) in cases.iter().zip(expected) {
         let error = load(text).expect_err("the edit makes the example invalid");

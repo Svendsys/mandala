@@ -5,15 +5,19 @@
 //! then each node's, in list order, and this module decides where the
 //! whitespace goes.
 //!
-//! **The layout.** The header — every top-level key but `nodes` — is
-//! serde_json's two-space pretty printing. Then `"nodes": [`, one line
-//! per node in pre-order, each four spaces and the node object in
-//! compact form with `", "` between members and elements and `": "`
-//! after each key, a `,` ending every line but the last; then `  ]` and
-//! `}`. With no nodes, `nodes` is left out. LF line endings, one
-//! trailing newline, no byte-order mark.
+//! **The layout** (Q2, ruling R20 on #236). The header — every
+//! top-level key but `nodes` — is serde_json's two-space pretty
+//! printing. Then `"nodes": [` and the nodes in pre-order, each a block:
+//! `    {` alone on a line; one line per key the node has, in schema
+//! order, six spaces and `"key": value`, with `,` ending every key's
+//! line but the node's last; then `    }`, with `,` after every node but
+//! the last. A key's value is in compact form, with `", "` between
+//! members and elements, `": "` after each key and no space inside a
+//! bracket. Then `  ]` and `}`. With no nodes, `nodes` is left out. LF
+//! line endings, one trailing newline, no byte-order mark.
 //!
-//! **One node, one line, in every editor.** A newline inside a string
+//! **One key, one line, in every editor.** A value never spans two
+//! lines. A newline inside a string
 //! is `\n` in JSON, and on top of serde_json's escaping this writes
 //! U+0085, U+2028 and U+2029 — where some editors and diff viewers break
 //! a line — and the bidi controls as `\uXXXX`
@@ -84,11 +88,26 @@ impl<F: Formatter> Formatter for Escaping<F> {
     }
 }
 
-/// serde_json's compact form with a space after each `,` and `:`: the
-/// layout of a node's line.
-struct Spaced;
+/// A node's block: the node object's own keys one per line, six
+/// spaces in, and every value inside them in serde_json's compact form
+/// with a space after each `,` and `:`.
+struct NodeBlock {
+    /// How many objects and arrays are open: 1 inside the node's own
+    /// object.
+    depth: usize,
+}
 
-impl Formatter for Spaced {
+impl Formatter for NodeBlock {
+    fn begin_array<W: ?Sized + Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.depth += 1;
+        writer.write_all(b"[")
+    }
+
+    fn end_array<W: ?Sized + Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.depth = self.depth.saturating_sub(1);
+        writer.write_all(b"]")
+    }
+
     fn begin_array_value<W: ?Sized + Write>(&mut self, writer: &mut W, first: bool) -> io::Result<()> {
         if first {
             Ok(())
@@ -97,11 +116,28 @@ impl Formatter for Spaced {
         }
     }
 
-    fn begin_object_key<W: ?Sized + Write>(&mut self, writer: &mut W, first: bool) -> io::Result<()> {
-        if first {
-            Ok(())
+    fn begin_object<W: ?Sized + Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.depth += 1;
+        writer.write_all(b"{")
+    }
+
+    fn end_object<W: ?Sized + Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.depth = self.depth.saturating_sub(1);
+        if self.depth == 0 {
+            // The node's own closing brace, on its own line.
+            writer.write_all(b"\n    }")
         } else {
-            writer.write_all(b", ")
+            writer.write_all(b"}")
+        }
+    }
+
+    fn begin_object_key<W: ?Sized + Write>(&mut self, writer: &mut W, first: bool) -> io::Result<()> {
+        match (self.depth, first) {
+            // One of the node's own keys: a line of its own.
+            (1, true) => writer.write_all(b"\n      "),
+            (1, false) => writer.write_all(b",\n      "),
+            (_, true) => Ok(()),
+            (_, false) => writer.write_all(b", "),
         }
     }
 
@@ -136,14 +172,14 @@ pub(super) fn header<W: Write>(out: &mut W, header: &MapHeaderDto, has_nodes: bo
     out.write_all(b",\n  \"nodes\": [\n")
 }
 
-/// Write one node's line: the `,` and newline that end the line before
-/// it unless it is the first, the indent, and the node.
+/// Write one node's block: the `,` and newline that end the block before
+/// it unless it is the first, the indent, and the node, a key per line.
 pub(super) fn node<W: Write>(out: &mut W, first: bool, node: &NodeDto) -> io::Result<()> {
     if !first {
         out.write_all(b",\n")?;
     }
     out.write_all(b"    ")?;
-    write_with(out, Spaced, node)
+    write_with(out, NodeBlock { depth: 0 }, node)
 }
 
 /// Close the node list and the file, if the map has nodes; the header

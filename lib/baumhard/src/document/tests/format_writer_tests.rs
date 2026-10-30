@@ -9,8 +9,8 @@ use crate::document::tests::format_support::{fixture, same_document, written, FI
 use serde_json::Value;
 use std::io::{self, Write};
 
-/// The node lines of a saved `text`: everything between `"nodes": [`
-/// and its `]`.
+/// The node list of a saved `text`, as lines: everything between
+/// `"nodes": [` and its `]`.
 fn node_lines(text: &str) -> Vec<&str> {
     let Some(start) = text.find("\n  \"nodes\": [\n") else {
         return Vec::new();
@@ -20,9 +20,24 @@ fn node_lines(text: &str) -> Vec<&str> {
     body[..end].split('\n').collect()
 }
 
+/// The node blocks of a saved `text`: each node's lines, from its
+/// `    {` to its `    }` (with the `,` that follows it but the last).
+fn node_blocks(text: &str) -> Vec<Vec<&str>> {
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+    for line in node_lines(text) {
+        if line == "    {" {
+            blocks.push(Vec::new());
+        }
+        if let Some(block) = blocks.last_mut() {
+            block.push(line);
+        }
+    }
+    blocks
+}
+
 #[test]
-fn test_a_saved_map_is_a_pretty_header_then_one_node_per_line() {
-    let mut lines = 0;
+fn test_a_saved_map_is_a_pretty_header_then_a_block_per_node_and_a_line_per_key() {
+    let mut keys = 0;
     for (name, text) in FIXTURES {
         assert!(!text.contains('\r'), "{name}: LF only");
         assert!(
@@ -30,31 +45,62 @@ fn test_a_saved_map_is_a_pretty_header_then_one_node_per_line() {
             "{name}: one trailing newline"
         );
         let doc = load(text).unwrap();
-        // Each node is one line, four spaces in, that is a JSON object
-        // on its own, ending in `,` but the last.
-        let nodes = node_lines(text);
+        let blocks = node_blocks(text);
         let count = doc
             .tree()
             .descendants()
             .filter(|id| doc.get(*id).is_some_and(|element| element.as_node().is_some()))
             .count();
-        assert_eq!(nodes.len(), count, "{name}: a line per node");
-        for (n, line) in nodes.iter().enumerate() {
-            let last = n + 1 == nodes.len();
-            assert_eq!(line.ends_with(','), !last, "{name}: {line}");
-            let object = line
-                .strip_prefix("    ")
-                .expect("four spaces in")
-                .trim_end_matches(',');
-            let value: Value = serde_json::from_str(object).unwrap_or_else(|e| panic!("{name}: {e}: {line}"));
-            assert!(value.is_object(), "{name}: {line}");
-            assert!(object.starts_with("{\"id\": "), "{name}: {line}");
-            lines += 1;
+        assert_eq!(blocks.len(), count, "{name}: a block per node");
+        // Every line of the list belongs to a block.
+        assert_eq!(
+            blocks.iter().map(Vec::len).sum::<usize>(),
+            node_lines(text).len(),
+            "{name}: a line outside a node's block"
+        );
+        for (n, block) in blocks.iter().enumerate() {
+            let last_node = n + 1 == blocks.len();
+            // `    {`, a line per key, then `    }` with a `,` but the last.
+            assert_eq!(block[0], "    {", "{name}");
+            let close = block[block.len() - 1];
+            assert_eq!(close, if last_node { "    }" } else { "    }," }, "{name}");
+            let key_lines = &block[1..block.len() - 1];
+            assert!(!key_lines.is_empty(), "{name}: a node with no key");
+            for (k, line) in key_lines.iter().enumerate() {
+                let last_key = k + 1 == key_lines.len();
+                assert_eq!(line.ends_with(','), !last_key, "{name}: {line}");
+                // Each key line, without its comma, is one JSON member:
+                // a value never spans two lines.
+                let member = line
+                    .strip_prefix("      ")
+                    .expect("six spaces in")
+                    .strip_suffix(',')
+                    .unwrap_or_else(|| line.trim_start());
+                assert!(!member.starts_with(' '), "{name}: {line}");
+                let value: Value = serde_json::from_str(&format!("{{{member}}}"))
+                    .unwrap_or_else(|e| panic!("{name}: {e}: {line}"));
+                assert_eq!(
+                    value.as_object().map(|object| object.len()),
+                    Some(1),
+                    "{name}: {line}"
+                );
+                keys += 1;
+            }
+            assert!(
+                key_lines[0].starts_with("      \"id\": "),
+                "{name}: {}",
+                key_lines[0]
+            );
+            // The block, without the `,` after it, is one JSON object.
+            let joined = block.join("\n");
+            let object = joined.strip_suffix(',').unwrap_or(&joined);
+            let value: Value = serde_json::from_str(object).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(value.is_object(), "{name}");
         }
         // The header is serde_json's own two-space pretty form of the
         // header, which this test asks for without the writer.
         let header = serde_json::to_string_pretty(&header_of(&doc).unwrap()).unwrap();
-        let expected_head = match nodes.is_empty() {
+        let expected_head = match blocks.is_empty() {
             true => format!("{header}\n"),
             false => format!("{},\n  \"nodes\": [\n", header.strip_suffix("\n}").unwrap()),
         };
@@ -63,7 +109,7 @@ fn test_a_saved_map_is_a_pretty_header_then_one_node_per_line() {
             "{name}: the header is not the pretty form:\n{text}"
         );
     }
-    assert!(lines > 15, "precondition: {lines} node lines");
+    assert!(keys > 40, "precondition: {keys} key lines");
 }
 
 #[test]
@@ -90,8 +136,9 @@ fn test_line_separators_and_bidi_controls_are_escaped_and_read_back() {
             "{escape} in the name and the span"
         );
     }
-    // So the node is still one line, in any editor's count of lines.
-    assert_eq!(node_lines(&text).len(), 1);
+    // So each key is still one line, in any editor's count of lines:
+    // the node's block is `{`, its three keys, `}`.
+    assert_eq!(node_lines(&text).len(), 5);
     // The escaped and the raw spelling are one document.
     same_document(&doc, &load(&text).unwrap()).unwrap();
     // Control: text with none of them is written as it is, right-to-left
@@ -135,8 +182,8 @@ fn test_save_to_streams_the_same_text_and_names_the_node_it_could_not_write() {
     assert_eq!(streamed, save(&doc).unwrap().into_bytes());
     assert_eq!(streamed, text.as_bytes());
 
-    // A writer that fails ten bytes into node 3's line, the fourth.
-    let line = text.find("    {\"id\": 3,").unwrap();
+    // A writer that fails ten bytes into node 3's block, the fourth.
+    let line = text.find("    {\n      \"id\": 3,").unwrap();
     let mut full = Full {
         room: line + 10,
         taken: Vec::new(),

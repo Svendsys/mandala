@@ -175,22 +175,25 @@ reload. (Verbs and presentations carry no targets yet; a node's
   (`24.0`, `0.06`, `1e-7`), integers as integers. An unchanged map saves
   byte-identically.
 - **The layout.** The top-level values other than `nodes` are written
-  with two-space indentation. Then `"nodes": [`, one line per node, each
-  four spaces and the node object on that one line, with `", "` between
-  members and elements and `": "` after each key, and a `,` ending every
-  node's line but the last; then `  ]` and `}`. A map with no nodes
-  leaves `nodes` out. LF line endings, exactly one trailing newline, no
-  byte-order mark. A node never spans two lines, so a changed node is
-  one changed line in a diff, a moved subtree is a moved block of lines,
-  `grep '{"id": 7,'` finds a node and `grep '"parent": 7,'` its
-  children.
+  with two-space indentation. Then `"nodes": [` and each node as a
+  block: `    {` alone on a line; then one line per key the node has, in
+  the order of [the node table](#node), each six spaces and
+  `"key": value`, with a `,` ending every key's line but the node's last;
+  then `    }`, with a `,` after every node but the last. A key's value
+  is in compact form, with `", "` between members and elements, `": "`
+  after each key and no space inside a bracket or brace. Then `  ]` and
+  `}`. A map with no nodes leaves `nodes` out. LF line endings, exactly
+  one trailing newline, no byte-order mark. A key's value never spans
+  two lines, so a changed key is one changed line in a diff, a moved
+  subtree is a moved block of lines, `grep '"id": 7,'` finds a node and
+  `grep '"parent": 7,'` its children.
 - **Escapes.** Strings are escaped as serde_json escapes them (`"`, `\`,
   and the characters below U+0020), and on top of that U+0085, U+2028
   and U+2029 — where some editors and diff viewers break a line — and
   the bidi controls U+202A–U+202E and U+2066–U+2069 — which can make a
   line display in an order other than its bytes — are written as
   `\uXXXX`. All other text is written as raw UTF-8.
-- **Streaming.** `save_to` writes the header, then each node's line as
+- **Streaming.** `save_to` writes the header, then each node's block as
   its walk reaches it, to any `io::Write`, so a large map is never held
   as one text; `save` is `save_to` into a string. A failing writer is a
   `SaveError` with the kind `Io`, at the node being written.
@@ -754,7 +757,7 @@ A load returns a `LoadError`: a `path`, the `node` it is in, a
 `position` in the text, and a `kind`. Rendered, it reads
 
 ```text
-nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)
+nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)
 ```
 
 - **The `path`** writes keys after a dot and array positions in
@@ -784,7 +787,7 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
   bytes): exact for an error the JSON reader found (a syntax error, a
   wrong type, an unknown or missing key); the start of the node for one
   found after the node was read (a bound, a reference, the chain), which
-  with one node per line is the node's line; the start of the value for
+  is the line of the node's opening `{`; the start of the value for
   one in a top-level value; absent for an error about the whole text.
   It is the only place an error names: a message the reader wrote does
   not carry the reader's own `at line L column C`, which counts inside
@@ -887,32 +890,69 @@ node 5 was made after node 3 but sits under node 2.
     }
   ],
   "nodes": [
-    {"id": 1, "position": [0.0, 0.0], "shape": {"rectangle": {"radius": 25}}, "palette": "rainbow", "on": {"click": "reveal-days"}, "sections": [{"spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}]}, {"channel": 1, "offset": [0.0, 40.0], "spans": [{"text": "Genesis 1:1"}]}], "frame": {"fit": "fit", "rings": [{"spans": [{"text": "And the earth was without form, and void; "}]}]}, "links": [{"to": 6, "kind": "portal"}]},
-    {"id": 2, "parent": 1, "position": [320.0, -80.0], "sections": [{"spans": [{"text": "the heaven"}]}], "links": [{"to": 4, "kind": "line", "control_points": [[400.0, 0.0]]}]},
-    {"id": 5, "parent": 2, "position": [640.0, -120.0], "sections": [{"spans": [{"text": "the firmament", "link": {"verb": "reveal-days"}}]}]},
-    {"id": 3, "parent": 1, "position": [320.0, 80.0], "sections": [{"spans": [{"text": "the earth"}]}], "connector": {"spans": [{"text": "·"}]}},
-    {"id": 4, "parent": 1, "channel": 1, "position": [320.0, 240.0], "sections": [{"spans": [{"text": "darkness upon the face of the deep"}]}]},
-    {"id": 6, "position": [0.0, 600.0], "sections": [{"spans": [{"text": "Day one"}]}]}
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "shape": {"rectangle": {"radius": 25}},
+      "palette": "rainbow",
+      "on": {"click": "reveal-days"},
+      "sections": [{"spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}]}, {"channel": 1, "offset": [0.0, 40.0], "spans": [{"text": "Genesis 1:1"}]}],
+      "frame": {"fit": "fit", "rings": [{"spans": [{"text": "And the earth was without form, and void; "}]}]},
+      "links": [{"to": 6, "kind": "portal"}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [320.0, -80.0],
+      "sections": [{"spans": [{"text": "the heaven"}]}],
+      "links": [{"to": 4, "kind": "line", "control_points": [[400.0, 0.0]]}]
+    },
+    {
+      "id": 5,
+      "parent": 2,
+      "position": [640.0, -120.0],
+      "sections": [{"spans": [{"text": "the firmament", "link": {"verb": "reveal-days"}}]}]
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "position": [320.0, 80.0],
+      "sections": [{"spans": [{"text": "the earth"}]}],
+      "connector": {"spans": [{"text": "·"}]}
+    },
+    {
+      "id": 4,
+      "parent": 1,
+      "channel": 1,
+      "position": [320.0, 240.0],
+      "sections": [{"spans": [{"text": "darkness upon the face of the deep"}]}]
+    },
+    {
+      "id": 6,
+      "position": [0.0, 600.0],
+      "sections": [{"spans": [{"text": "Day one"}]}]
+    }
   ]
 }
 ```
 
-How it reads, line by line (the nodes start on line 47):
+How it reads, node by node (the nodes start on line 47; each line is
+where the node's block opens):
 
 | Line | Node | Parent | The chain before it | Accepted because |
 |---|---|---|---|---|
 | 47 | 1 | none | empty | a top-level node may always start |
-| 48 | 2 | 1 | 1 | 1 is the node before it |
-| 49 | 5 | 2 | 1, 2 | 2 is the node before it |
-| 50 | 3 | 1 | 1, 2, 5 | 1 is on the chain, which closes 5 and 2; its previous sibling, 2, has channel 0, as 3 does |
-| 51 | 4 | 1 | 1, 3 | 1 is on the chain, which closes 3; channel 1 is not below 3's channel 0 |
-| 52 | 6 | none | 1, 4 | a top-level node, which closes 4 and 1; the previous one, 1, has channel 0, as 6 does |
+| 57 | 2 | 1 | 1 | 1 is the node before it |
+| 64 | 5 | 2 | 1, 2 | 2 is the node before it |
+| 70 | 3 | 1 | 1, 2, 5 | 1 is on the chain, which closes 5 and 2; its previous sibling, 2, has channel 0, as 3 does |
+| 77 | 4 | 1 | 1, 3 | 1 is on the chain, which closes 3; channel 1 is not below 3's channel 0 |
+| 84 | 6 | none | 1, 4 | a top-level node, which closes 4 and 1; the previous one, 1, has channel 0, as 6 does |
 
 Edits that make it invalid, and what the loader says:
 
-- Move node 3's line below node 4's:
-  `nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 51)`
+- Move node 3's block below node 4's:
+  `nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 77)`
 - Give node 5 `"parent": 3`:
-  `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 49)`
-- Move node 5's line to the end of the list:
-  `nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 52)`
+  `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)`
+- Move node 5's block to the end of the list:
+  `nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 83)`

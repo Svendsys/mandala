@@ -46,7 +46,7 @@ fn test_the_saver_writes_keys_in_the_order_the_schema_lists_them() {
         "nodes",
     ];
     assert_eq!(key_positions(text, 2, &top).len(), top.len());
-    // A node is one line, its keys in schema order: the first node, a
+    // A node is one block, its keys in schema order: the first node, a
     // top-level one, then a nested one for `parent` and `channel`.
     let in_line = |line: &str, keys: &[&str]| {
         let mut at = 0;
@@ -59,9 +59,11 @@ fn test_the_saver_writes_keys_in_the_order_the_schema_lists_them() {
         }
     };
     let line = |id: u32| {
-        text.lines()
-            .find(|line| line.starts_with(&format!("    {{\"id\": {id},")))
-            .unwrap_or_else(|| panic!("node {id} has a line of its own"))
+        let start = text
+            .find(&format!("    {{\n      \"id\": {id},"))
+            .unwrap_or_else(|| panic!("node {id} has a block of its own"));
+        let end = text[start..].find("\n    }").expect("the block closes");
+        &text[start..start + end]
     };
     in_line(
         line(1),
@@ -87,7 +89,9 @@ fn test_the_saver_writes_keys_in_the_order_the_schema_lists_them() {
             "links",
         ],
     );
-    assert!(line(4).starts_with(r#"    {"id": 4, "parent": 2, "channel": 3, "position": "#));
+    assert!(line(4).starts_with(
+        "    {\n      \"id\": 4,\n      \"parent\": 2,\n      \"channel\": 3,\n      \"position\": "
+    ));
     assert!(line(2).contains(r#""sections": "#) && line(2).contains(r#""connector": "#));
     in_line(
         line(2),

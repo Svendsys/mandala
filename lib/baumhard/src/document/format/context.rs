@@ -38,7 +38,7 @@ pub const EXCERPT_BYTES: usize = 256;
 /// editors and diff viewers break a line at, and the bidi embedding,
 /// override and isolate controls U+202A–U+202E and U+2066–U+2069, which
 /// can make a line display in an order other than its bytes. With them
-/// escaped, a node's line is one physical line in every editor and a
+/// escaped, a key's line is one physical line in every editor and a
 /// diff of it cannot be visually reordered.
 pub(crate) fn saver_escapes(c: char) -> bool {
     matches!(c, '\u{85}' | '\u{2028}' | '\u{2029}') || is_bidi_control(c)
