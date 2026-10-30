@@ -36,8 +36,10 @@
 //! whose fit mode is `Once`, `Spread` or `Fit` holds text, and is set over
 //! the top of its outline and along the bottom, each line reading left to
 //! right on the level part of its half, the steep sides clear; `start`
-//! and `direction` do not apply to it. What follows places everything
-//! else: a `Repeat` ring, and every connector.
+//! and `direction` do not apply to it. A line's clusters are spaced by
+//! their advances measured horizontally (ruling R28), not by the box
+//! extent above. What follows places everything else: a `Repeat` ring,
+//! and every connector.
 //!
 //! **Every stretch reads left to right or top to bottom** (the readable
 //! rule, #291, rulings R25, R25.1 and R26). Glyphs are never rotated, so
@@ -113,6 +115,9 @@ pub(crate) use lines::frame_halves;
 /// in line heights is followed no further, and the last stretch's part
 /// ends there.
 const MAX_RUN_ON_STEPS: usize = 1 << 16;
+
+/// The rounds of Newton's method [`PathWalk::level_len`] takes.
+const LEVEL_ROUNDS: usize = 4;
 
 /// The most glyphs one placement places (ruling R6, reading 9). A
 /// repeating flow on a path long enough to need more stops here and
@@ -392,6 +397,11 @@ struct PathWalk<'p> {
     outward: bool,
     /// How far along the path a step may end: `P` plus [`end_slack`].
     limit: f32,
+    /// Whether steps are **level** (a text frame's line, ruling R28): a
+    /// cluster's step, and a gap, run the path until it has moved that
+    /// far horizontally, rather than by its box's extent along the chord
+    /// ([`step`](Self::step)).
+    level: bool,
 }
 
 impl PathWalk<'_> {
@@ -423,6 +433,10 @@ impl PathWalk<'_> {
     /// move continuously as the run moves along, which is what lets
     /// `Spread`'s and `Fit`'s end conditions be solved on a sharp outline.
     fn step(&self, s: f32, w: f32, h: f32) -> (f32, Vec2) {
+        if self.level {
+            let step = self.level_len(s, w);
+            return (step, self.chord(s, step));
+        }
         let mut step = extent(self.path.at(s).1, w, h);
         for _ in 0..CHORD_ROUNDS {
             step = extent(self.chord(s, step), w, h);
@@ -430,9 +444,57 @@ impl PathWalk<'_> {
         (step, self.chord(s, step))
     }
 
+    /// How far along the path from `s` it moves `d` horizontally, on a
+    /// level walk (ruling R28): `L` with `x(s + L) − x(s) = d`. A text
+    /// frame's line lies where the path runs left to right within 45° of
+    /// level (`cos θ ≥ √½`), so `L` is at most `√2 · d` there, and `x` is
+    /// increasing; it is solved by Newton's method on `x`, its slope
+    /// held at no less than a tenth so a step run past the span stays
+    /// bounded. Never negative.
+    ///
+    /// Cost: [`LEVEL_ROUNDS`] path lookups.
+    fn level_len(&self, s: f32, d: f32) -> f32 {
+        if d.is_nan() || d <= 0.0 {
+            return 0.0;
+        }
+        let (from, tangent) = self.path.at(s);
+        let mut len = d / tangent.x.abs().max(0.1);
+        for _ in 0..LEVEL_ROUNDS {
+            let (at, tangent) = self.path.at(s + len);
+            let miss = at.x - from.x - d;
+            len = (len - miss / tangent.x.max(0.1)).max(0.0);
+        }
+        len
+    }
+
+    /// Where along the path a gap of `gap` after a step ending at `end`
+    /// ends: `gap` further on, or, on a level walk, where the path has
+    /// moved `gap` horizontally (ruling R28).
+    fn after_gap(&self, end: f32, gap: f32) -> f32 {
+        if self.level {
+            end + self.level_len(end, gap)
+        } else {
+            end + gap
+        }
+    }
+
     /// The top-left corner of a `w × h` cluster box whose step `step`,
     /// taken in direction `dir`, starts at `s` (#239 §5 steps 3 and 4).
     fn corner(&self, s: f32, step: f32, dir: Vec2, w: f32, h: f32) -> Vec2 {
+        if self.level {
+            // Its left edge where its step starts, its center on the path
+            // halfway across, and pushed off the outline straight up or
+            // down — never sideways, which would undo the level spacing —
+            // as far as clears the outline along its normal.
+            let left = self.path.at(s).0.x;
+            let (mut center, _) = self.path.at(s + self.level_len(s, w * 0.5));
+            if self.outward {
+                let normal = self.path.outward(dir);
+                let rise = extent(normal, w * 0.5, h * 0.5) / normal.y.abs().max(0.1);
+                center.y += rise * normal.y.signum();
+            }
+            return Vec2::new(left, center.y - h * 0.5);
+        }
         let (mut center, _) = self.path.at(s + step * 0.5);
         if self.outward {
             let normal = self.path.outward(dir);
@@ -915,7 +977,7 @@ impl PathWalk<'_> {
                     pos: corner + Vec2::new(glyphs[index].x - cluster.left, 0.0),
                 });
             }
-            s = end + gap;
+            s = self.after_gap(end, gap);
         }
         Laid::Fits(s)
     }
@@ -1646,6 +1708,7 @@ fn place(
         line_height: run.line_height,
         outward,
         limit: path.length() + end_slack(path.length()),
+        level: false,
     };
     let walked = match fit {
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),

@@ -48,6 +48,8 @@ struct Frame {
     trace: Trace,
     /// The halves' spans, as the placement found them.
     spans: [std::ops::Range<f32>; 2],
+    /// Each span's width: how far it runs horizontally.
+    widths: [f32; 2],
 }
 
 /// `text` at 12 pt as a text frame on `outline`, glyph centers on it.
@@ -74,12 +76,18 @@ fn frame(text: &str, outline: &Outline, fit: &FitMode) -> Frame {
         let spacing = table_spacing(&run, fit, &flow);
         (run, rescaled, placed, spacing)
     });
-    let spans = frame_halves(outline, spacing).map(|(_, span)| span);
+    let halves = frame_halves(outline, spacing);
+    let widths = [0, 1].map(|k| {
+        let (path, span) = &halves[k];
+        path.at(span.end).0.x - path.at(span.start).0.x
+    });
+    let spans = halves.map(|(_, span)| span);
     Frame {
         run: rescaled.unwrap_or(run),
         placed,
         trace,
         spans,
+        widths,
     }
 }
 
@@ -215,8 +223,8 @@ fn test_flow_lines_balance_a_sentence() {
 /// reading left to right on the level-dominant part of the outline, the
 /// steep sides clear (ruling R27). The lines are parted where they best
 /// balance: of every word break, the one whose larger fill ratio — a
-/// line's advances over its span — is least, worked here from the text's
-/// words.
+/// line's advances over its span's width — is least, worked here from the
+/// text's words.
 pub fn do_flow_lines_balance_a_sentence() {
     for (what, shape) in [("ellipse", ellipse()), ("rounded rect", rounded())] {
         for fit in [
@@ -239,7 +247,7 @@ pub fn do_flow_lines_balance_a_sentence() {
                 let run = with_fonts(|fs| real_run(text, &style(12.0), fs));
                 run.glyphs.iter().map(|g| g.advance).sum::<f32>()
             };
-            let spans = placed.spans.clone().map(|span| span.end - span.start);
+            let spans = placed.widths;
             let worst = |top: &str, bottom: &str| (width(top) / spans[0]).max(width(bottom) / spans[1]);
             let chosen = worst(&top, &bottom);
             for (at, _) in VERSE.match_indices(' ') {
@@ -560,6 +568,105 @@ pub fn do_flow_lines_spread_sweeps_a_sharp_rect() {
                     line.half,
                     line.to
                 );
+            }
+        }
+    }
+}
+
+/// Each cluster of a line, in text order: its box's left edge (its pen
+/// position less its glyphs' pen offsets), its top, and its advance.
+fn line_boxes(frame: &Frame, line: &TracedLine) -> Vec<(f32, f32, f32)> {
+    let glyphs = &frame.placed.glyphs[line.glyphs.clone()];
+    let metrics = |k: usize| &frame.run.glyphs[glyphs[k].glyph as usize];
+    let mut boxes = Vec::new();
+    let mut i = 0;
+    while i < glyphs.len() {
+        let mut end = i + 1;
+        while end < glyphs.len() && !metrics(end).grapheme_start {
+            end += 1;
+        }
+        let left = (i..end).map(|k| metrics(k).x).fold(f32::INFINITY, f32::min);
+        let width: f32 = (i..end).map(|k| metrics(k).advance).sum();
+        let corner = glyphs[i].pos - Vec2::new(metrics(i).x - left, 0.0);
+        boxes.push((corner.x, corner.y, width));
+        i = end;
+    }
+    boxes
+}
+
+#[test]
+fn test_flow_lines_space_glyphs_level() {
+    do_flow_lines_space_glyphs_level();
+}
+
+/// A text frame's line is spaced as it was shaped (ruling R28): from one
+/// cluster's pen to the next is its advance, plus the line's gap,
+/// measured horizontally — at the line's sloped ends as in its level
+/// middle — rather than the extent of an upright box along the slope,
+/// which spaces letters out where the outline curves. `Once` (no gap)
+/// and `Spread` (one gap, its value read from the first pair) on an
+/// ellipse, within half a point; the `Spread` line is checked to reach
+/// slopes steeper than 30°.
+pub fn do_flow_lines_space_glyphs_level() {
+    let shape = ellipse();
+    for fit in [FitMode::Once { filler: None }, FitMode::Spread] {
+        let placed = frame(VERSE, &shape, &fit);
+        let mut steepest = 1.0_f32;
+        for line in &placed.trace.lines {
+            let boxes = line_boxes(&placed, line);
+            let gap = match fit {
+                FitMode::Spread => boxes[1].0 - boxes[0].0 - boxes[0].2,
+                _ => 0.0,
+            };
+            for pair in boxes.windows(2) {
+                let ((x, _, w), (next, _, _)) = (pair[0], pair[1]);
+                assert!(
+                    (next - x - (w + gap)).abs() <= 0.5,
+                    "{fit:?}: line {}: pen to pen {} where the advance and gap are {}",
+                    line.half,
+                    next - x,
+                    w + gap
+                );
+            }
+            for c in line_centers(&placed, line) {
+                steepest = steepest.min(level(&shape, c));
+            }
+        }
+        if matches!(fit, FitMode::Spread) {
+            assert!(
+                steepest < (30.0_f32).to_radians().cos(),
+                "the fixture needs the line on a slope, not {steepest}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_flow_lines_never_overlap_on_the_steepest_slope() {
+    do_flow_lines_never_overlap_on_the_steepest_slope();
+}
+
+/// Level spacing never lets two clusters overlap (ruling R28): each
+/// cluster's box — its advance wide and a line high, which holds its
+/// ink — lies clear of the next, the two side by side and offset only
+/// vertically, even where the line reaches its span's ends at 45°. Lines
+/// spread over their spans on an ellipse and a rounded rectangle, and
+/// fitted with no gap, where each fills its span.
+pub fn do_flow_lines_never_overlap_on_the_steepest_slope() {
+    for (what, shape) in [("ellipse", ellipse()), ("rounded rect", rounded())] {
+        for fit in [FitMode::Spread, FitMode::Fit { min: 0.1, max: 10.0 }] {
+            let placed = frame(VERSE, &shape, &fit);
+            let h = placed.run.line_height;
+            for line in &placed.trace.lines {
+                for pair in line_boxes(&placed, line).windows(2) {
+                    let ((x, y, w), (next_x, next_y, _)) = (pair[0], pair[1]);
+                    let apart = next_x >= x + w - 1e-3 || (next_y - y).abs() >= h - 1e-3;
+                    assert!(
+                        apart,
+                        "{what} {fit:?}: line {}: boxes at ({x}, {y}) and ({next_x}, {next_y}) overlap",
+                        line.half
+                    );
+                }
             }
         }
     }

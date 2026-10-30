@@ -22,6 +22,18 @@
 //! one line, on top. Each line is centered on its span and reads left to
 //! right; both share one size.
 //!
+//! **A line is spaced as it was shaped** (ruling R28): its walk is
+//! [level](PathWalk::level_len) — from one cluster's pen to the next is
+//! the cluster's advance, plus the line's gap, measured horizontally —
+//! where a pattern's or a connector's walk steps an upright box's extent
+//! along the slope, `|cos θ|·w + |sin θ|·h`, which spaces letters out
+//! wherever the outline curves. Within a span the outline runs within 45°
+//! of level, so a level step is at most `√2` times the advance along the
+//! path, and two neighbors sit side by side, offset only vertically:
+//! they cannot overlap. Every measure of a line is a level one — the
+//! parting (against each span's width), `Fit`'s scale, `Spread`'s gap and
+//! `Once`'s centering.
+//!
 //! - `Fit`: the largest scale in `[min, max]` at which each line fits
 //!   its span with no gap. A line too long even at `min` is cut at its
 //!   end, at a grapheme boundary (§6.4 step 4).
@@ -111,8 +123,8 @@ fn part(clusters: &[Cluster], spans: [f32; 2]) -> [Range<usize>; 2] {
     let width = |range: &Range<usize>| before[range.end] - before[range.start];
     let ratio = |width: f32, span: f32| if span > 0.0 { width / span } else { f32::INFINITY };
     let mut best: Option<(f32, [Range<usize>; 2])> = None;
-    for at in 1..n {
-        if !clusters[at].word_break {
+    for (at, cluster) in clusters.iter().enumerate().skip(1) {
+        if !cluster.word_break {
             continue;
         }
         let (top, bottom) = (trim(0..at), trim(at..n));
@@ -145,6 +157,7 @@ impl Lines<'_> {
             line_height: self.run.line_height,
             outward: self.outward,
             limit: span.end + end_slack(span.end),
+            level: true,
         }
     }
 
@@ -155,7 +168,7 @@ impl Lines<'_> {
         let mut end = s;
         for cluster in &self.clusters[self.lines[k].clone()] {
             end = at + walk.step(at, cluster.advance, self.run.line_height).0;
-            at = end + gap;
+            at = walk.after_gap(end, gap);
         }
         end
     }
@@ -321,7 +334,12 @@ pub(super) fn place_lines(
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let halves = frame_halves(outline, table_spacing(run, fit, flow));
-    let spans = [0, 1].map(|k| halves[k].1.end - halves[k].1.start);
+    // A level line fits its span when its advances fit the span's width
+    // (ruling R28): the parting balances against that.
+    let spans = [0, 1].map(|k| {
+        let (path, span) = &halves[k];
+        path.at(span.end).0.x - path.at(span.start).0.x
+    });
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let lines = part(&clusters, spans);
     let shaped = clusters.len();
