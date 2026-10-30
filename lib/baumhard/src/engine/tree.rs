@@ -50,32 +50,9 @@ use crate::engine::siblings;
 use crate::engine::walker::{run_walk, walk_anchor};
 use indextree::{Arena, Children, Descendants, Node, NodeId};
 use log::error;
+use rustc_hash::FxHashSet;
+use std::cell::Cell;
 use std::fmt;
-
-/// A count of the ancestor steps [`Tree::contains`] takes, so a test can
-/// show that a path which must not walk a node's ancestors does not.
-/// Counted per thread and only in a test build; in any other build
-/// [`ancestor_steps::step`] is an empty function.
-pub(crate) mod ancestor_steps {
-    #[cfg(test)]
-    thread_local! {
-        static STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-
-    /// Count one ancestor step.
-    #[inline]
-    pub(crate) fn step() {
-        #[cfg(test)]
-        STEPS.with(|steps| steps.set(steps.get() + 1));
-    }
-
-    /// The steps this thread has counted since the last call, and
-    /// restart the count.
-    #[cfg(test)]
-    pub(crate) fn take() -> u64 {
-        STEPS.with(|steps| steps.replace(0))
-    }
-}
 
 /// Where [`Tree::insert_child`] / [`MutatorTree::insert_child`] puts a
 /// new child **within the run of siblings whose key equals its own**.
@@ -151,6 +128,20 @@ pub enum TreeError {
     /// A structural command named a node that an earlier command of the
     /// same walk removed — the node itself, or a node of its subtree.
     TargetRemovedEarlier(NodeId),
+    /// [`Journal::revert`](crate::engine::journal::Journal::revert),
+    /// [`replay`](crate::engine::journal::Journal::replay) or
+    /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)
+    /// on a tree that is in neither of the journal's arrangements: a
+    /// journal recorded after it is still applied, or one recorded
+    /// before it is still undone, or the tree's structure has been
+    /// changed without a journal since — [`Tree::insert_child`],
+    /// [`Tree::remove_subtree`], or an unjournaled walk that ran a
+    /// structural command — which ends the undo history of every
+    /// journal recorded before the change. Undo is newest first and
+    /// redo oldest first; out of that order a restore would put the
+    /// tree, and the set behind [`Tree::contains`], in a state no
+    /// history had.
+    OutOfOrder,
 }
 
 impl fmt::Display for TreeError {
@@ -176,6 +167,9 @@ impl fmt::Display for TreeError {
             TreeError::TargetRemovedEarlier(id) => {
                 write!(f, "node {id} was removed earlier in the same walk")
             }
+            TreeError::OutOfOrder => f.write_str(
+                "the tree is in neither of the journal's arrangements: undo newest first, redo oldest first",
+            ),
         }
     }
 }
@@ -196,7 +190,16 @@ pub struct Tree<E: TreeElement> {
     /// [`Tree::remove_subtree`] or a walk, which keep the
     /// sorted-children invariant.
     pub(in crate::engine) arena: Arena<E>,
-    /// Arena id of the tree root.
+    /// Arena id of the tree root. Public for reading; **writes are
+    /// reserved to `engine/tree.rs`**. A root moved behind the engine's
+    /// back would leave [`Tree::contains`] and every journal describing
+    /// another tree. The compiler cannot hold that while the field is
+    /// public, so the source scan `test_only_the_engine_tree_writes_a_root_field`
+    /// refuses any write to a `root` field — an assignment, a `&mut`
+    /// borrow such as `std::mem::replace` takes, a `&raw mut` or an
+    /// `addr_of_mut!`, or a struct pattern that binds the field —
+    /// anywhere in the workspace's shipped code outside this file.
+    /// Making the field private belongs with the arena rework (#288).
     pub root: NodeId,
     /// Draw order hint relative to sibling trees in a scene. Higher =
     /// drawn on top.
@@ -206,6 +209,68 @@ pub struct Tree<E: TreeElement> {
     /// methods may write it. Every way of changing the tree — the
     /// methods here and a walk — marks it stale.
     pub(crate) cache: E::Cache,
+    /// Every node in the arena that is **not** in the tree: each element
+    /// of every subtree a structural command detached and a journal
+    /// still owns. What makes [`Tree::contains`] O(1). Kept exact by the
+    /// engine alone — the arena is private to it — at the three places
+    /// a subtree leaves or re-enters the tree: a command that detaches
+    /// one (`StructOp::Remove`, `StructOp::Merge`), a journal restoring
+    /// an arrangement ([`Journal::revert`](crate::engine::journal::Journal::revert),
+    /// [`replay`](crate::engine::journal::Journal::replay),
+    /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)),
+    /// which marks exactly the nodes its
+    /// [touches](crate::engine::journal::Journal::touched) name as
+    /// inserted or removed, and [`Journal::discard`](crate::engine::journal::Journal::discard),
+    /// which frees them. Every other move keeps a node in the tree.
+    ///
+    /// Exact only while journals are restored in their order — undo
+    /// newest first, redo oldest first — since a journal's touches
+    /// describe the change from its own arrangements. Out of order, a
+    /// node would be marked back in by a journal whose subtree another
+    /// journal has since detached, and every refusal that trusts
+    /// [`Tree::contains`] would then accept it. So the order is checked
+    /// on every restore, in every build: see [`Tree::version`].
+    pub(in crate::engine) detached: FxHashSet<NodeId>,
+    /// Which arrangement the tree is in, as far as journals go: a stamp
+    /// a journaled call moves to a fresh value, and a journal's restore
+    /// moves to the stamp of the side it writes. A journal remembers the
+    /// stamps it started and ended at, and
+    /// [`Journal::revert`](crate::engine::journal::Journal::revert),
+    /// [`replay`](crate::engine::journal::Journal::replay) and
+    /// [`write_interpolated`](crate::engine::journal::Journal::write_interpolated)
+    /// refuse ([`TreeError::OutOfOrder`]) a tree at any other stamp —
+    /// one a later journal changed and that change was not undone. O(1).
+    ///
+    /// **An unjournaled structural change moves the stamp too**, to a
+    /// fresh value no journal holds: [`Tree::insert_child`],
+    /// [`Tree::remove_subtree`], and an unjournaled walk that ran a
+    /// [structural command](crate::engine::structure)
+    /// ([`MutatorTree::apply_to`], [`MutatorTree::apply_at`],
+    /// [`walk_tree_from`](crate::engine::walker::walk_tree_from)),
+    /// which journals into a builder of its own. A journal's touches
+    /// cannot describe a tree changed behind them, so after such a
+    /// change every journal recorded before it refuses to restore —
+    /// even one whose nodes the change never reached. **Any unjournaled
+    /// structural edit therefore ends the undo history of the whole
+    /// tree**; a tree that keeps history makes every structural edit
+    /// through a journaled call. That holds between two calls of one
+    /// builder too: a builder that finds the tree moved since its last
+    /// call — by such an edit, or by another builder's call — does not
+    /// move it back, and its journal is cut from every earlier one
+    /// (`JournalBuilder::begin`). Changes that leave every node's parent
+    /// and membership as they were — an unjournaled [`Tree::update`],
+    /// re-key moves included, or a walk without structural commands —
+    /// do not move it.
+    ///
+    /// A journal that closes empty records no change, so it has no
+    /// arrangement of its own: closing it puts the tree back at the stamp
+    /// it started from, and both its stamps are that one. Without that, a
+    /// dropped empty journal would leave the tree at a stamp no journal
+    /// it can still restore holds. `close` reads the tree shared, hence
+    /// the `Cell`.
+    pub(in crate::engine) version: Cell<u64>,
+    /// The next fresh [`Self::version`].
+    pub(in crate::engine) next_version: u64,
 }
 
 impl<E: TreeElement> Tree<E> {
@@ -225,6 +290,9 @@ impl<E: TreeElement> Tree<E> {
             root,
             layer: 0,
             cache: E::Cache::default(),
+            detached: FxHashSet::default(),
+            version: Cell::new(0),
+            next_version: 1,
         }
     }
 
@@ -250,14 +318,20 @@ impl<E: TreeElement> Tree<E> {
     /// removed node and a reused slot under an old stamp answer `false`,
     /// and so does a node of a subtree a structural command detached —
     /// still allocated, so a journal can put it back, but not part of
-    /// the tree until it does. O(depth of `id`); no allocation.
+    /// the tree until it does.
+    ///
+    /// O(1): an arena look-up and a look-up in the tree's set of
+    /// detached nodes, never a climb to the root — so it can be asked
+    /// once per element of a walk, a selection or a request at no cost
+    /// that grows with depth (§20 rule 11). The set is written where a
+    /// subtree leaves or re-enters the tree: per element of that
+    /// subtree, which every consumer of the change walks anyway through
+    /// [`Journal::touched`](crate::engine::journal::Journal::touched).
+    ///
+    /// Exact while journals are restored in their order, which every
+    /// restore checks ([`TreeError::OutOfOrder`]).
     pub fn contains(&self, id: NodeId) -> bool {
-        self.arena.get(id).is_some()
-            && id
-                .ancestors(&self.arena)
-                .inspect(|_| ancestor_steps::step())
-                .last()
-                == Some(self.root)
+        self.arena.get(id).is_some() && !self.detached.contains(&id)
     }
 
     /// Pre-order iterator over every descendant of [`Self::root`]
@@ -289,12 +363,23 @@ impl<E: TreeElement> Tree<E> {
     /// parent, [`TreeError::PlacementCrossesKey`] for a placement
     /// sibling with a different key.
     ///
-    /// Invalidates the tree's cache. Cost: one arena slot plus a scan
-    /// of the siblings between the end of the row and the insertion
-    /// point — O(1) for children inserted in ascending key order with
-    /// [`Placement::Last`]. The new node is fresh, so no ancestor walk.
+    /// Invalidates the tree's cache. Cost: an O(1) check that `parent`
+    /// is in the tree, one arena slot and a scan of the siblings between
+    /// the end of the row and the insertion point — O(1) for children
+    /// inserted in ascending key order with [`Placement::Last`]. The new
+    /// node is fresh, so no ancestor walk.
+    ///
+    /// Not journaled, so it ends the undo history of the tree: every
+    /// journal recorded before it refuses to restore afterwards
+    /// ([`TreeError::OutOfOrder`]), whatever part of the tree it
+    /// touched. A tree that keeps history changes its structure only
+    /// through journaled calls.
     pub fn insert_child(&mut self, parent: NodeId, element: E, at: Placement) -> Result<NodeId, TreeError> {
+        if !self.contains(parent) {
+            return Err(TreeError::StaleNode(parent));
+        }
         let id = siblings::insert_sorted(&mut self.arena, parent, element, at, E::key)?;
+        self.changed_without_journal();
         self.cache.invalidate();
         Ok(id)
     }
@@ -310,16 +395,31 @@ impl<E: TreeElement> Tree<E> {
     /// siblings that remain are still in order.
     ///
     /// Invalidates the tree's cache. Cost: O(subtree size).
+    ///
+    /// Not journaled, so it ends the undo history of the tree: every
+    /// journal recorded before it refuses to restore afterwards
+    /// ([`TreeError::OutOfOrder`]), whatever part of the tree it
+    /// touched. A tree that keeps history changes its structure only
+    /// through journaled calls.
     pub fn remove_subtree(&mut self, node: NodeId) -> Result<(), TreeError> {
-        if self.arena.get(node).is_none() {
+        if !self.contains(node) {
             return Err(TreeError::StaleNode(node));
         }
         if node == self.root {
             return Err(TreeError::RemoveRoot);
         }
         node.remove_subtree(&mut self.arena);
+        self.changed_without_journal();
         self.cache.invalidate();
         Ok(())
+    }
+
+    /// Note a structural change no journal records: move the tree to a
+    /// fresh [version](Self::version), so every journal recorded before
+    /// it refuses to restore over it. O(1).
+    fn changed_without_journal(&mut self) {
+        self.version.set(self.next_version);
+        self.next_version += 1;
     }
 
     /// Change the element at `id` with `f` — the one way to mutate an
@@ -339,9 +439,12 @@ impl<E: TreeElement> Tree<E> {
     /// [`Self::update_journaled`].
     ///
     /// Invalidates the tree's cache. Cost: `f`, two O(1) key reads and
-    /// an O(depth) check that `id` is in the tree; only when the key
-    /// changed, a scan of the siblings the element moves past plus an
-    /// O(depth) re-attach.
+    /// an O(1) check that `id` is in the tree ([`Self::contains`]) — so
+    /// a caller updating many elements pays nothing per element that
+    /// grows with depth; only when the key changed, a scan of the
+    /// siblings the element moves past plus a same-row re-attach
+    /// (O(1) once the engine's own arena tree replaces indextree, V1-A6
+    /// #290; O(depth) until then).
     pub fn update<R>(&mut self, id: NodeId, f: impl FnOnce(&mut E) -> R) -> Result<R, TreeError> {
         self.update_in(id, None, f)
     }
@@ -372,40 +475,6 @@ impl<E: TreeElement> Tree<E> {
         result
     }
 
-    /// [`Self::update`] for a caller that **knows** `id` is in the tree
-    /// because it put it there: only the arena slot is checked, so a
-    /// node of a detached subtree is not refused. O(1) where
-    /// [`Self::update`]'s membership check is O(depth of `id`) — the
-    /// difference between a linear and a quadratic load for a document
-    /// builder that writes into a node at every depth.
-    ///
-    /// Errors: [`TreeError::StaleNode`] for an `id` with no live arena
-    /// slot; `f` is then not called. Not journaled.
-    ///
-    /// Invalidates the tree's cache. Cost: `f` and two O(1) key reads;
-    /// only when the key changed, [`Self::update`]'s move.
-    pub(crate) fn update_known<R>(
-        &mut self,
-        id: NodeId,
-        f: impl FnOnce(&mut E) -> R,
-    ) -> Result<R, TreeError> {
-        let Some(node) = self.arena.get_mut(id).filter(|node| !node.is_removed()) else {
-            return Err(TreeError::StaleNode(id));
-        };
-        let element = node.get_mut();
-        let before = element.key();
-        let out = f(element);
-        let rekeyed = element.key() != before;
-        let parent = node.parent();
-        if let (true, Some(parent)) = (rekeyed, parent) {
-            if let Some(prev) = siblings::reposition_slot(&self.arena, id, E::key) {
-                move_among_siblings(&mut self.arena, parent, id, prev, None);
-            }
-        }
-        self.cache.invalidate();
-        Ok(out)
-    }
-
     /// The body of [`Self::update`] and [`Self::update_journaled`].
     fn update_in<R>(
         &mut self,
@@ -417,6 +486,7 @@ impl<E: TreeElement> Tree<E> {
             return Err(TreeError::StaleNode(id));
         }
         if let Some(journal) = journal.as_deref_mut() {
+            journal.begin(self);
             journal.record(&self.arena, id);
         }
         let Some(node) = self.arena.get_mut(id) else {
@@ -461,7 +531,9 @@ pub struct MutatorTree<E: TreeElement, M: Mutation<E>> {
     /// [`MutatorTree::arena`], add to it through
     /// [`MutatorTree::insert_child`].
     pub(in crate::engine) arena: Arena<Mutator<E, M>>,
-    /// Arena id of the mutator root. Every walk starts here.
+    /// Arena id of the mutator root. Every walk starts here. Public
+    /// for reading; like [`Tree::root`], written only in this file,
+    /// which `test_only_the_engine_tree_writes_a_root_field` holds.
     pub root: NodeId,
     /// Whether any node is a [`Mutator::Structure`]. Kept by the two
     /// ways a mutator tree gains a node, [`Self::new_with`] and
@@ -584,6 +656,13 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// A tree that must see the error is changed through
     /// [`Self::apply_at`].
     ///
+    /// Not journaled: a walk that ran a structural command ends the
+    /// undo history of `tree` — every journal recorded before it then
+    /// refuses to restore ([`TreeError::OutOfOrder`]), whatever part of
+    /// the tree the walk reached. A walk without
+    /// structural commands does not. A tree that keeps history is
+    /// changed through [`Self::apply_at_journaled`].
+    ///
     /// Invalidates `tree`'s cache once more when the walk ends, on top
     /// of the one each applied mutator node performs, so a walk that
     /// applied nothing still leaves no stale memo behind.
@@ -644,27 +723,32 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// since a tree changed without history cannot put them back.
     ///
     /// Invalidates `tree`'s cache. Cost, with `g` given nodes, `k`
-    /// resolved anchors and `d` the depth they sit at:
-    /// - validating is O(g × d) — one walk up to the root per distinct
-    ///   given node;
+    /// resolved anchors and `u` the elements on the resolved anchors'
+    /// paths up to the root — the union of those paths, each element
+    /// counted once however many anchors sit below it:
+    /// - validating is O(g) — [`Tree::contains`] is O(1);
     /// - resolving is O(g) for [`Anchors::Nodes`] and
     ///   [`Anchors::ParentOf`]; [`Anchors::SiblingsOf`] scans the row of
     ///   each distinct parent of the given nodes once, which is what it
     ///   resolves to;
-    /// - a single anchor needs nothing more; for `k > 1`, one path
-    ///   `Vec` of length `d` per anchor, O(k × d) to drop nested
-    ///   anchors, and an O(k log k × d) sort — siblings of different
-    ///   keys order by key in O(1), and a row is scanned once, the
-    ///   first time two anchors part on equal keys in it;
+    /// - a single anchor needs nothing more; for `k > 1`, an
+    ///   O(u log u) order over that union, which also drops nested
+    ///   anchors — siblings of different keys order by key in O(1), and
+    ///   a row is scanned once, the first time two anchors part on equal
+    ///   keys in it;
     /// - then one seed and one walk per kept anchor, O(matching pairs
-    ///   below it). Nothing is proportional to the rest of the tree;
+    ///   below it). Nothing is proportional to the rest of the tree,
+    ///   and nothing to the depth once per anchor;
     /// - for a mutator tree with structural commands, what
     ///   [`Self::apply_at_journaled`] costs on top, plus each command's
     ///   own cost ([`StructOp`](crate::engine::structure::StructOp)).
     ///
     /// Not journaled: for a tree that needs no history (a glyph layer
-    /// that is rebuilt). A tree that keeps history is changed through
-    /// [`Self::apply_at_journaled`].
+    /// that is rebuilt). A call that ran a structural command ends the
+    /// undo history of `tree` — every journal recorded before it then
+    /// refuses to restore ([`TreeError::OutOfOrder`]), whatever part of
+    /// the tree the call reached. A tree that
+    /// keeps history is changed through [`Self::apply_at_journaled`].
     pub fn apply_at<F>(&self, tree: &mut Tree<E>, anchors: &Anchors, seed_for: F) -> Result<(), TreeError>
     where
         F: Fn(&Tree<E>, NodeId) -> E::Inherited,
@@ -713,5 +797,60 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
             journal.unwind(tree);
         }
         result
+    }
+}
+
+/// `id` and every node above it, up to the top of whatever it hangs
+/// in: indextree's `ancestors`, which the engine calls **only here**.
+/// A climb is O(depth), so it belongs only where its cost is paid once
+/// per node a user acts on — the cycle check of a re-parent
+/// ([`StructOp::Move`](crate::engine::structure::StructOp::Move)) and
+/// the refusal that names where a detached node hangs — never once per
+/// element a walk visits (§20 rule 11).
+///
+/// The engine's other climbs are hand-written, and as few: the memoized
+/// ones, which climb through each node once over all their questions
+/// (`Membership::contains`, and a journal's `Presence::top` and
+/// `resolve`), and the walker's `state_above`, the one climb an
+/// anchored walk makes from its anchor. `test_the_engine_climbs_only_where_it_may`
+/// (over `util::source_scan`) holds every other engine file to not
+/// calling `ancestors`, and to not reading a parent in the spellings
+/// of a climb it recognizes: inside a `loop` or a `while`; inside a
+/// closure handed to an iterator that feeds it its own last result
+/// (`successors`, `from_fn`, `repeat_with`, `scan`, the folds,
+/// `reduce`); or inside a `for` body or any closure that reassigns a
+/// cursor the read names (`h = p` beside `arena[h].parent()`, as a
+/// `map_while` or `for_each` over a captured cursor does). That is a
+/// heuristic over spellings: a climb by recursion is caught instead by
+/// the deep tests, whose chains overflow the stack on one, and a climb
+/// hidden behind a helper called in a loop is caught by neither. Test
+/// builds count this function's steps, so a climb planted per element
+/// through it shows in a step count. No allocation.
+pub(crate) fn climb<E>(arena: &Arena<E>, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    id.ancestors(arena).inspect(|_| {
+        #[cfg(test)]
+        tests_support::count_climb_step();
+    })
+}
+
+/// What the tests read of [`climb`]: how many nodes every climb has
+/// gone through on this thread. Compiled for tests only.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CLIMB_STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more node climbed through.
+    pub(super) fn count_climb_step() {
+        CLIMB_STEPS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The nodes every engine climb on this thread has gone through so
+    /// far.
+    pub(crate) fn climb_steps() -> usize {
+        CLIMB_STEPS.with(Cell::get)
     }
 }

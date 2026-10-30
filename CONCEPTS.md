@@ -191,8 +191,16 @@ every node they insert or move within the run of its key.
 is `update` recorded in a [journal](#journals--journalbuilder-journal-touch).
 `contains(id)` says whether a node is in the tree — under the root —
 rather than merely in the arena, which also holds the subtrees a
-structural command detached and a journal still owns; `update` refuses
-those.
+structural command detached and a journal still owns; `update`,
+`insert_child` and `remove_subtree` refuse those. It is O(1): the
+tree keeps the set of its detached nodes, which only the engine writes
+— where a subtree leaves or re-enters the tree, per element of it —
+so a caller can ask it, or update, once per element at no cost that
+grows with depth (§20 rule 11). `root` is a public field for its
+reads, but only `engine/tree.rs` writes it: a root moved behind the
+engine's back would leave `contains` and every journal describing
+another tree, and `test_only_the_engine_tree_writes_a_root_field`
+refuses a write to a `root` field anywhere else in shipped code.
 
 Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
 `indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,
@@ -243,8 +251,11 @@ an anchor inside another anchor's subtree is dropped, so a subtree
 mutation reaches each element once; the rest are walked in tree order.
 Every anchor's seed is taken before any anchor is walked, and a stale
 anchor refuses the whole call with nothing applied. The resolution
-costs work in the anchors and their rows, never in the rest of the
-tree. `apply_to(&mut target, &seed)` is `apply_at` anchored at the
+costs work in the anchors, their rows and the paths above them, never
+in the rest of the tree: checking and ordering climb each element
+above an anchor once over all of them, through a memo, so a selection
+of every element of a deep chain costs the chain once, not once per
+element (§20 rule 11). `apply_to(&mut target, &seed)` is `apply_at` anchored at the
 root. `apply_at_journaled(&mut target, &anchors, seed_for, &mut
 journal)` is `apply_at` recorded in a
 [journal](#journals--journalbuilder-journal-touch), for a tree that
@@ -258,9 +269,10 @@ inherits rather than stores. The walker carries `E::Inherited` down
 every walk: the seed is the state of the walk root's parent, a mutation
 receives its target's *parent's* state, and each element hands its
 children `inherit(parent's state)` computed after its own mutations
-in the same walk. The state lives on the walker's call stack — never
-on an element, never in a tree, no allocation per visited node. The
-glyph trees inherit nothing (`Inherited = ()`, seed `&()`).
+in the same walk. The state lives on a heap stack beside the walk's
+frames — never on an element, never in a tree, never re-derived by
+climbing to the root, no allocation per visited node. The glyph trees
+inherit nothing (`Inherited = ()`, seed `&()`).
 
 ### `Applicable<T>`
 
@@ -973,31 +985,55 @@ inside the matched tree.
 
 ### Tree walker — `walk_tree_from`
 
-The recursive dispatch engine (a set of functions, not a type) that walks a
-`MutatorTree` against a `Tree` and applies matched mutations.
+The dispatch engine that walks a `MutatorTree` against a `Tree` and
+applies matched mutations — iteratively, so a tree of any depth walks
+in a bounded call stack.
 
 Every mutation that a mutator tree delivers goes through the
 walker. The walker aligns children by key (or by position, depending
 on instruction): both rows are sorted by key, so it walks the two
 sibling lists in step — the lower key advances, equal keys walk — with
-no `Vec` and no sort. It recurses, and dispatches each payload to
+no `Vec` and no sort. It dispatches each payload to
 `Mutation::apply_to` with the target's parent's
 [inherited state](#mutatortreee-m). A target whose key a mutation
 changed is recorded and moved to its sorted place when the walk is
 over, so no walk sees a half-sorted row. Cost is `O(sum of matching
 pairs)` — pruned branches are free.
 
+**Depth costs no call stack** (design D30, §20 rule 11: a map's depth
+has no bound). The walk does not recurse: each step of the descent —
+a (target, mutator) pair, a row merged by key or zipped by position, a
+`RepeatWhile` level and its terminator — is a `Frame` on a heap stack,
+and the inherited states the frames hand down sit on a second one. A
+frame that reaches a child pushes itself back with its cursors
+advanced and the child on top, so the child's whole subtree runs
+before the row moves on: the visit, apply and journal order is the
+depth-first order a recursive walk has. The stacks are reused across a
+walk's anchors and grow only to the depth reached.
+
 `lib/baumhard/src/engine/walker.rs`, generic over the element type
 and the payload — no `dyn`, no `Any`, no runtime type checks.
-Key functions: `walk_tree_from` (the pair entry), `align_child_walks`
-and `merge_rows` (the key-based pairing), `process_instruction_node`
-(the loop/spatial/map dispatch), `default_terminator` (the
-continuation that resumes key alignment after a `RepeatWhile` exits),
-and `Walk` (what a walk keeps beside the two trees: the children whose
-key it changed, and the journal a journaled walk records into). Every
-apply goes through one function, `apply_recorded`, which is where a
-journaled walk records its before-images. Branchless enough that
-matching-pair cost dominates.
+Key items: `walk_tree_from` (the pair entry), `Frame` (one step of
+the descent: `Pair`, `Merge` — the key-based pairing — `Zip`
+(`MapChildren`), `Repeat` and `RepeatChildren` (a `RepeatWhile` level)
+and `Terminator` (the continuation that resumes key alignment after a
+`RepeatWhile` exits)), `Driver` (the step of each frame;
+`align_child_walks` starts a key merge), and `Walk` (what a walk keeps
+beside the two trees: the children whose key it changed, the journal a
+journaled walk records into, and its two stacks). Every apply goes
+through one function, `apply_recorded`, which is where a journaled
+walk records its before-images. Branchless enough that matching-pair
+cost dominates.
+
+A re-keyed child is put back into the row it never left through one
+function, `siblings::reattach_in_row`; a child alone in its row is not
+moved at all. Putting a node back under its own parent cannot close a
+cycle, so ruling R16 (#282) requires that insert to cost O(1);
+indextree 4.9 offers none for an existing node (every such insert
+climbs to the root to check for a cycle), so until the engine's own
+arena tree replaces it (V1-A6, #290) the one call site in `siblings`
+is where the O(depth) remains, held by the ignored
+`test_same_row_rearrangement_is_linear_in_depth`.
 
 ### Journals — `JournalBuilder`, `Journal`, `Touch`
 
@@ -1051,6 +1087,36 @@ removed while applied, what it inserted while reverted — and
 `Journal::discard` frees them when the journal leaves the history;
 nothing else frees them, and a revert never does.
 
+A restore also writes, per element that enters or leaves the tree,
+the tree's set of detached nodes behind the O(1) `Tree::contains`,
+from the touches it computed at close. Those touches describe the
+change between the journal's own two arrangements, so journals
+restore in their history's order — undo newest first, redo oldest
+first — and every restore checks it, in every build, in O(1): the tree
+carries a version stamp that a journaled call moves to a fresh value
+and a restore moves to the stamp of the side it writes, and a journal
+whose two stamps the tree is at neither of refuses with
+`TreeError::OutOfOrder` before writing anything. A journal that closes
+empty has one arrangement, so closing it puts the tree back at the
+stamp it started from, and dropping it never strands the history. A
+structural change made without a journal — `Tree::insert_child`,
+`Tree::remove_subtree`, or an unjournaled walk that ran a structural
+command — moves the tree to a fresh stamp no journal holds, so it
+ends the undo history of the whole tree: every journal recorded before
+it is refused afterwards, even one whose nodes it never reached. A
+tree that keeps history makes every structural edit through a
+journaled call. Changes that keep every node's parent and membership —
+an unjournaled `update`, re-key moves included, or a walk without
+structural commands — leave the stamp alone.
+
+Depth costs a journal nothing per entry (§20 rule 11): `close` asks,
+for each entry, the top of the subtree that entered or left with it,
+and those climbs are memoized, so each element above an entry is
+climbed through once over the whole close; a restore puts an element
+that keeps its parent back through `siblings::reattach_in_row` (the
+same-row insert above), and only one that changes parent pays the
+O(depth) cycle check of a re-parent.
+
 `lib/baumhard/src/engine/journal.rs`.
 
 ### Structural commands — `StructOp`, `Subtree`
@@ -1080,7 +1146,26 @@ the journal, the walk's field changes included. A removed subtree is
 same `NodeId`s and every id held elsewhere stays valid. A walk without
 a journal journals into one of its own when it has a command, and
 discards it after, which frees what it removed. Structure is never
-authored as JSON: the variant is skipped by serde.
+authored as JSON: the variant is skipped by serde, and `Subtree` is
+not serializable at all.
+
+Depth costs the commands nothing per node (§20 rule 11). Every node a
+command creates — an inserted subtree, the second part of a split —
+goes in through indextree's value inserts, which climb nothing. A
+command knows its target is in the tree because the walk reached it
+there; whether an earlier command of the same walk removed it is the
+O(1) `Tree::contains`, which reads the tree's set of detached nodes —
+written per element where a subtree leaves or re-enters the tree (a
+`Remove` or `Merge`, a journal's revert, replay or interpolated write,
+from its touches) and cleared by `discard`. The one climb a command
+owes is a `Move` to another parent, which checks for a cycle: O(depth),
+once per node the user moves — the price of refusing a cycle, not a
+cost per visited node (ruling R16 on #282). A `Move` within its own row
+owes none, since under its own parent it cannot close a cycle; it goes
+through `siblings::reattach_in_row`, whose indextree insert still
+climbs until V1-A6 (#290) replaces indextree (above). A `Subtree` is as deep as its builder made it, so its
+`Drop`, `Clone`, `PartialEq` and `Debug` are written by hand and
+iterate.
 
 `lib/baumhard/src/engine/structure.rs`.
 
@@ -2437,7 +2522,13 @@ children at consecutive channels with the same template" (the
 flower-petal pattern, etc.).
 
 `build(ast, context)` in `lib/baumhard/src/engine/builder/build.rs`
-walks the AST recursively, expands `Repeat` to N children with
+walks the AST recursively — over the mutator AST alone, never a
+target tree, and an AST read from JSON nests no deeper than
+`serde_json`'s default recursion limit lets it: 127 nested objects
+and arrays, three per AST level, so 42 levels, pinned by
+`test_builder_ast_from_json_nests_no_deeper_than_serde_json_allows`.
+A mutator spelled some other way — flat, as D30 spells nodes — would
+need a bound of its own (R15 Q4) before it lands — expands `Repeat` to N children with
 incrementing channels, resolves `Runtime("<label>")` holes and
 per-iteration `Template`s via the `BuildContext`, and returns a
 fully-inflated `MutatorTree` — or a `BuildError` for a shape no

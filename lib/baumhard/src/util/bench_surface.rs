@@ -261,6 +261,461 @@ pub(crate) fn duplicate_bench_ids(entries: &[BenchEntry]) -> Vec<String> {
         .collect()
 }
 
+/// Every plain `#[test]` fn in the baumhard tests trees — the
+/// `#[test]` fns that are not a thin wrapper around a `do_*()` body —
+/// as `(function name, repo-relative file)`, sorted. The census §B8's
+/// opt-out paragraph is about, read from the source.
+///
+/// The trees are [`benchmark_reusable_bodies`]' files: under a
+/// `tests/` directory of `lib/baumhard/src`, not reached through a
+/// `#[cfg(test)] mod` declaration. Inside them every inline `mod` is
+/// read, `cfg(test)`-gated ones included, since a gated module of a
+/// tests tree (`shape_tests::log_routing`) is one of the shapes the
+/// census counts. A wrapper is a fn whose body is one call of a
+/// function named `do_*`, as a statement or as the tail; anything
+/// more is plain.
+///
+/// Cost: what [`benchmark_reusable_bodies`] costs, one parse per
+/// tests-tree file.
+pub(crate) fn plain_tests_in_tests_trees() -> Vec<(String, String)> {
+    let sources = workspace_rust_sources();
+    let test_only = test_gated_module_files(&sources);
+    let mut out = Vec::new();
+    for file in sources {
+        let rel = relative_to_repo(&file);
+        if !(rel.starts_with("lib/baumhard/src/") && rel.contains("/tests/")) || test_only.contains(&file) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let parsed =
+            syn::parse_file(&text).unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
+        collect_plain_tests(&parsed.items, &rel, &mut out);
+    }
+    out.sort();
+    out
+}
+
+fn collect_plain_tests(items: &[Item], rel: &str, out: &mut Vec<(String, String)>) {
+    for item in items {
+        match item {
+            Item::Fn(fun) => {
+                let is_test = fun.attrs.iter().any(|attr| attr.path().is_ident("test"));
+                if is_test && !is_do_wrapper(&fun.block) {
+                    out.push((fun.sig.ident.to_string(), rel.to_string()));
+                }
+            }
+            Item::Mod(module) => {
+                if let Some((_, inner)) = &module.content {
+                    collect_plain_tests(inner, rel, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whether `block` is exactly one call of a function named `do_*`.
+fn is_do_wrapper(block: &syn::Block) -> bool {
+    let [statement] = block.stmts.as_slice() else {
+        return false;
+    };
+    let syn::Stmt::Expr(syn::Expr::Call(call), _) = statement else {
+        return false;
+    };
+    let syn::Expr::Path(callee) = &*call.func else {
+        return false;
+    };
+    callee
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident.to_string().starts_with("do_"))
+}
+
+/// Why a plain `#[test]` fn in a tests tree is not a `do_*()` /
+/// `test_*()` pair: the four shapes §B8 names that cannot take the
+/// split, and the bucket of tests that could and have not been
+/// converted. A fifth reason is not a variant; a test that reaches for
+/// the opt-out and is none of the four is `Unconverted`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PlainShape {
+    /// The body cannot compile into the library: it calls a
+    /// dev-dependency (`syn`) or reads a `cfg(test)` counter.
+    CannotCompileIntoTheLibrary,
+    /// The body drives a panic, declared or caught.
+    DrivesAPanic,
+    /// The enumeration is the runtime, not the primitive.
+    EnumerationIsTheRuntime,
+    /// The subject is the repository, not a value a function returned.
+    SubjectIsTheRepository,
+    /// Could take the split and has not: an ordinary unit test written
+    /// beside the convention.
+    Unconverted,
+}
+
+/// §B8's census of the plain `#[test]` fns in the tests trees: every
+/// one, by `(file below lib/baumhard/src/, name)`, with its
+/// [`PlainShape`]. `test_every_plain_test_is_in_the_census` holds it
+/// to [`plain_tests_in_tests_trees`] in both directions, so a plain
+/// test is classified in the commit that writes it, and a census entry
+/// outlives neither its test nor its conversion.
+pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
+    use PlainShape::*;
+    &[
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_from_style_string_log_routing_is_pinned",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_accepts_the_modeled_shape",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_block_initializer",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_block_tail",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_cfg_stripped_arm",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_cfg_stripped_macro",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_computed_level",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_condition_wrapped_around_the_match",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_different_scrutinee",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_flag_wrapped_around_the_match",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_missing_reporting_arm",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_a_reporting_silent_arm",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_an_added_log_call",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_check_rejects_swapped_macros",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_selection_accepts_one_unattributed_inherent_impl",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_selection_rejects_a_second_candidate",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_selection_rejects_a_trait_impl",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_log_routing_selection_rejects_an_attributed_impl",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "util/tests/rust_source_tests.rs",
+            "test_a_crates_package_tests_directory_is_cargos_and_a_src_tests_module_is_not",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "engine/tests/deep_tests.rs",
+            "test_engine_deep_anchors_climb_each_element_once",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "engine/tests/deep_tests.rs",
+            "test_engine_deep_commands_and_updates_climb_nothing",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "engine/tests/deep_tests.rs",
+            "test_engine_deep_journal_close_climbs_each_element_once",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "engine/tests/deep_tests.rs",
+            "test_engine_deep_settle_leaves_only_children_in_place",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "engine/tests/deep_tests.rs",
+            "test_same_row_rearrangement_is_linear_in_depth",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "font/tests/fonts_tests.rs",
+            "test_acquire_font_system_write_panics_on_timeout",
+            DrivesAPanic,
+        ),
+        (
+            "font/tests/metric_cache_tests.rs",
+            "test_glyph_advance_miss_under_held_guard_panics_not_hangs",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_indexer_tests.rs",
+            "test_region_indexer_insert_oob_panics",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_indexer_tests.rs",
+            "test_region_indexer_query_oob_panics",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_adapt_prime_both",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_adapt_prime_x",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_adapt_prime_y",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_adapt_prime_y_above_the_sieve_ceiling",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_prime_x",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_prime_x_above_the_sieve_ceiling",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_prime_y",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/shape_tests.rs",
+            "test_shape_section_rejects_a_duplicated_heading",
+            DrivesAPanic,
+        ),
+        (
+            "flow/tests/shape_tests.rs",
+            "test_flow_rel_size_reaching_shaping_is_a_caller_error",
+            DrivesAPanic,
+        ),
+        (
+            "flow/tests/shape_tests.rs",
+            "test_flow_shaping_needs_fonts_init_before_the_guard",
+            DrivesAPanic,
+        ),
+        (
+            "util/tests/grapheme_chad_tests.rs",
+            "test_replace_substring_says_so_when_it_refuses",
+            DrivesAPanic,
+        ),
+        (
+            "util/tests/color_tests.rs",
+            "test_color_to_float_round_trips_through_new_f32",
+            EnumerationIsTheRuntime,
+        ),
+        (
+            "util/tests/arena_utils_tests.rs",
+            "test_clone_deep_chain_does_not_exhaust_the_stack",
+            EnumerationIsTheRuntime,
+        ),
+        (
+            "flow/tests/fit_tests.rs",
+            "test_flow_repeat_reports_the_glyph_ceiling",
+            EnumerationIsTheRuntime,
+        ),
+        (
+            "engine/tests/contains_tests.rs",
+            "test_contains_matches_a_climb_through_the_journal_lifecycle",
+            EnumerationIsTheRuntime,
+        ),
+        (
+            "engine/tests/contains_tests.rs",
+            "test_restores_out_of_order_are_refused_and_contains_stays_exact",
+            EnumerationIsTheRuntime,
+        ),
+        (
+            "util/tests/rust_source_tests.rs",
+            "test_above_test_modules_knows_every_shape_in_this_tree",
+            SubjectIsTheRepository,
+        ),
+        (
+            "engine/tests/deep_tests.rs",
+            "test_the_engine_climbs_only_where_it_may",
+            SubjectIsTheRepository,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_factor_closest_divisor",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_factor_dimension_1_and_2",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_factor_exact_divisor",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_factor_power_of_two",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_factor_square_of_prime",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_factor_target_exceeds_dimension",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/region_params_tests.rs",
+            "test_factor_zero_inputs",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/camera_tests.rs",
+            "test_pan_leaves_zoom_and_viewport_size_untouched",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/camera_tests.rs",
+            "test_set_position_leaves_zoom_and_viewport_size_untouched",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/camera_tests.rs",
+            "test_set_viewport_size_leaves_zoom_and_position_untouched",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/camera_tests.rs",
+            "test_visibility_serializes_as_its_wire_words",
+            Unconverted,
+        ),
+        (
+            "util/tests/arena_utils_tests.rs",
+            "test_clone_preserves_depth_first_pre_order",
+            Unconverted,
+        ),
+        (
+            "mindmap/scene_dump/tests/scene_dump_tests.rs",
+            "test_scene_dump_serializes_flat",
+            Unconverted,
+        ),
+        (
+            "mindmap/scene_dump/tests/scene_dump_tests.rs",
+            "test_scene_rect_overlap_and_union",
+            Unconverted,
+        ),
+        (
+            "gfx_structs/tests/run_tests.rs",
+            "test_a_fill_set_at_a_run_trips_the_debug_assert",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/run_tests.rs",
+            "test_a_fill_set_at_an_area_trips_the_debug_assert",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/run_tests.rs",
+            "test_a_run_set_at_a_fill_trips_the_debug_assert",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/run_tests.rs",
+            "test_a_run_set_at_a_model_trips_the_debug_assert",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/run_tests.rs",
+            "test_a_run_set_at_a_void_trips_the_debug_assert",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/run_tests.rs",
+            "test_a_run_set_at_an_area_trips_the_debug_assert",
+            DrivesAPanic,
+        ),
+        (
+            "gfx_structs/tests/run_tests.rs",
+            "test_projection_only_mutations_at_the_wrong_element_change_nothing_in_release",
+            Unconverted,
+        ),
+        (
+            "document/tests/ids_tests.rs",
+            "test_a_loaded_map_starts_its_counter_through_the_one_hook",
+            Unconverted,
+        ),
+        (
+            "document/tests/ids_tests.rs",
+            "test_the_ident_counter_starts_above_every_ident_the_map_names",
+            Unconverted,
+        ),
+        (
+            "document/tests/mutation_validate_tests.rs",
+            "test_document_validate_holds_an_inserted_name_to_the_files_rule",
+            Unconverted,
+        ),
+    ]
+};
+
 fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
@@ -269,6 +724,78 @@ fn is_ident_byte(byte: u8) -> bool {
 mod tests {
     use super::*;
     use crate::util::test_temp::TempDir;
+
+    /// **Every plain `#[test]` fn in a tests tree is in §B8's census**
+    /// ([`PLAIN_TESTS`]), and every census entry is a plain test that
+    /// exists — both directions, so the census cannot drift from the
+    /// tree the way the counts it replaced did. A failure names each
+    /// test to classify (one row per test, with the [`PlainShape`] its
+    /// body has; a body that could take the split is better converted
+    /// than listed) and each entry to delete.
+    #[test]
+    fn test_every_plain_test_is_in_the_census() {
+        let found: std::collections::BTreeSet<(String, String)> = plain_tests_in_tests_trees()
+            .into_iter()
+            .map(|(name, file)| {
+                let file = file
+                    .strip_prefix("lib/baumhard/src/")
+                    .unwrap_or_else(|| panic!("{file} is under lib/baumhard/src/"))
+                    .to_string();
+                (file, name)
+            })
+            .collect();
+        let census: std::collections::BTreeSet<(String, String)> = PLAIN_TESTS
+            .iter()
+            .map(|&(file, name, _)| (file.to_string(), name.to_string()))
+            .collect();
+        assert_eq!(census.len(), PLAIN_TESTS.len(), "the census lists a test twice");
+        for shape in [
+            PlainShape::CannotCompileIntoTheLibrary,
+            PlainShape::DrivesAPanic,
+            PlainShape::EnumerationIsTheRuntime,
+            PlainShape::SubjectIsTheRepository,
+            PlainShape::Unconverted,
+        ] {
+            assert!(
+                PLAIN_TESTS
+                    .iter()
+                    .any(|&(file, name, s)| s == shape
+                        && found.contains(&(file.to_string(), name.to_string()))),
+                "precondition: the scan finds a plain test of each shape, {shape:?} included"
+            );
+        }
+        let unclassified: Vec<String> = found
+            .difference(&census)
+            .map(|(file, name)| format!("  (\"{file}\", \"{name}\", <PlainShape>),"))
+            .collect();
+        let stale: Vec<String> = census
+            .difference(&found)
+            .map(|(file, name)| format!("  {file}::{name}"))
+            .collect();
+        assert!(
+            unclassified.is_empty() && stale.is_empty(),
+            "§B8's census (`PLAIN_TESTS`) and the tests trees disagree.\n\
+             Plain tests with no census row:\n{}\n\
+             Census rows with no plain test (deleted, renamed or converted):\n{}",
+            unclassified.join("\n"),
+            stale.join("\n")
+        );
+    }
+
+    /// A wrapper is exactly one call of a `do_*` function; anything
+    /// more is a plain test.
+    #[test]
+    fn test_only_a_lone_do_call_is_a_wrapper() {
+        let block = |source: &str| syn::parse_str::<syn::Block>(source).expect("parses");
+        assert!(is_do_wrapper(&block("{ do_x(); }")));
+        assert!(is_do_wrapper(&block("{ do_x() }")));
+        assert!(is_do_wrapper(&block("{ crate::a::do_x(1, 2); }")));
+        assert!(!is_do_wrapper(&block("{ x(); }")));
+        assert!(!is_do_wrapper(&block("{ do_x(); do_y(); }")));
+        assert!(!is_do_wrapper(&block("{ let _ = do_x(); }")));
+        assert!(!is_do_wrapper(&block("{ assert!(do_x()); }")));
+        assert!(!is_do_wrapper(&block("{}")));
+    }
 
     /// The tests-tree prefixes the scan must show work from. Same
     /// posture as `source_scan`'s citation witnesses: "nothing is

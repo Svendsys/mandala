@@ -20,7 +20,6 @@ use crate::document::ids::NodeIdent;
 use crate::document::tests::format_depth::{
     deep_chain_survives_every_walk, planted_recursive_count, CHAIN_DEPTH,
 };
-use crate::engine::tree::ancestor_steps;
 
 /// Set in the child process of the control: run a recursive walk over
 /// the chain instead.
@@ -100,26 +99,43 @@ fn linked_chain_text(depth: u32) -> String {
     text
 }
 
+/// Every ancestor step the engine's counted climbs have taken on this
+/// thread: `tree::climb` — the one call of indextree's `ancestors`, which
+/// `Document::depth` and `owning_node` go through too — and the memoized
+/// climbs of `Membership` and of a journal's close. Test builds only.
+fn climb_steps() -> usize {
+    crate::engine::tree::tests_support::climb_steps()
+        + crate::engine::membership::tests_support::climbed_steps()
+        + crate::engine::journal::tests_support::presence_steps()
+}
+
 /// R17.1: a link's `to` is written without walking its node's
 /// ancestors, so a link costs the same at any depth and a deep map full
 /// of links loads, checks and saves in time linear in its size. Counted
-/// in ancestor steps rather than timed: [`ancestor_steps`] counts every
-/// step [`Tree::contains`](crate::engine::tree::Tree::contains) takes,
-/// and a membership check per link would take one per level above it.
+/// in ancestor steps rather than timed: [`climb_steps`] reads the
+/// engine's counted climbs, and a climb per link would take one step
+/// per level above it. [`Tree::contains`](crate::engine::tree::Tree::contains)
+/// and [`Tree::update`](crate::engine::tree::Tree::update), which link
+/// resolution calls, climb nothing at all (V1-A5 #282); a hand-written
+/// climb in the format code is refused by
+/// `test_the_engine_climbs_only_where_it_may`, whose scan reads
+/// `document/` too.
 #[test]
 fn test_a_link_at_every_depth_resolves_without_walking_its_ancestors() {
     let text = linked_chain_text(LINKED_DEPTH);
-    ancestor_steps::take();
+    let before = climb_steps();
     let doc = load(&text).expect("the linked chain loads");
-    assert_eq!(ancestor_steps::take(), 0, "load walked a node's ancestors");
+    assert_eq!(climb_steps() - before, 0, "load walked a node's ancestors");
+    let before = climb_steps();
     check_savable(&doc).expect("the linked chain is savable");
     assert_eq!(
-        ancestor_steps::take(),
+        climb_steps() - before,
         0,
         "check_savable walked a node's ancestors"
     );
+    let before = climb_steps();
     let saved = save(&doc).expect("the linked chain saves");
-    assert_eq!(ancestor_steps::take(), 0, "save walked a node's ancestors");
+    assert_eq!(climb_steps() - before, 0, "save walked a node's ancestors");
     assert_eq!(saved, text, "the linked chain saves as it was read");
 
     // Every link was resolved, to the node it names: node 1's to the

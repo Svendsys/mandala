@@ -81,6 +81,21 @@ impl TestElement {
     }
 }
 
+thread_local! {
+    /// How many times [`TestElement::inherit`] has run on this thread.
+    static INHERITS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// How many times [`TestElement`]'s
+/// [`inherit`](TreeElement::inherit) has run on this thread so far:
+/// the steps a walk spends on inherited state. A walk that carries the
+/// state down pays one per element it descends through; one that
+/// re-derived it by folding down from the root would pay the depth per
+/// element (§20 rule 11), which this count shows without a clock.
+pub fn inherit_calls() -> usize {
+    INHERITS.with(Cell::get)
+}
+
 /// The derived state of a `TestElement` tree: how many times the
 /// walker has invalidated it. A counter rather than a flag so a test
 /// can tell one invalidation from several.
@@ -142,6 +157,7 @@ impl TreeElement for TestElement {
     }
 
     fn inherit(&self, parent: &i64) -> i64 {
+        INHERITS.with(|count| count.set(count.get() + 1));
         parent + self.value
     }
 

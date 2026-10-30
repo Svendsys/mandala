@@ -7,6 +7,7 @@
 //! mostly from `test_support::example`.
 
 pub mod bounds_tests;
+pub mod deep_tests;
 pub mod deps_tests;
 pub mod element_tests;
 /// R13's deep chain, shared with the wasm32 probe.

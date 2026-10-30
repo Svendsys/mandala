@@ -2,6 +2,7 @@
 
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::document::tests::bounds_tests::*;
+use baumhard::document::tests::deep_tests::*;
 use baumhard::document::tests::deps_tests::*;
 use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::format_tests::*;
@@ -17,6 +18,8 @@ use baumhard::document::tests::shape_tests::*;
 use baumhard::document::tests::structure_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
+use baumhard::engine::tests::contains_tests::*;
+use baumhard::engine::tests::deep_tests::*;
 use baumhard::engine::tests::inherited_tests::*;
 use baumhard::engine::tests::interpolate_tests::*;
 use baumhard::engine::tests::journal_tests::*;
@@ -1890,6 +1893,27 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_validate_walks_a_deep_mutator", |b| {
         b.iter(do_document_validate_walks_a_deep_mutator)
     });
+    c.bench_function("document_validate_walks_a_deep_insert", |b| {
+        b.iter(do_document_validate_walks_a_deep_insert)
+    });
+    c.bench_function("document_deep_chain_full_walk", |b| {
+        b.iter(do_document_deep_chain_full_walk)
+    });
+    c.bench_function("document_deep_chain_repeat_while_to_the_leaf", |b| {
+        b.iter(do_document_deep_chain_repeat_while_to_the_leaf)
+    });
+    c.bench_function("document_deep_chain_journaled_edit_at_the_leaf", |b| {
+        b.iter(do_document_deep_chain_journaled_edit_at_the_leaf)
+    });
+    c.bench_function("document_deep_chain_moves_whole", |b| {
+        b.iter(do_document_deep_chain_moves_whole)
+    });
+    c.bench_function("document_deep_subtree_validates_and_inserts", |b| {
+        b.iter(do_document_deep_subtree_validates_and_inserts)
+    });
+    c.bench_function("document_deep_chain_resolves_at_the_leaf", |b| {
+        b.iter(do_document_deep_chain_resolves_at_the_leaf)
+    });
     c.bench_function("document_compose_normalizes_in_log_steps", |b| {
         b.iter(do_document_compose_normalizes_in_log_steps)
     });
@@ -2228,6 +2252,55 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
     c.bench_function("engine_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_walk_wide_and_deep_tree)
+    });
+    c.bench_function("engine_deep_chain_full_walk", |b| {
+        b.iter(do_engine_deep_chain_full_walk)
+    });
+    c.bench_function("engine_deep_chain_repeat_while_to_the_leaf", |b| {
+        b.iter(do_engine_deep_chain_repeat_while_to_the_leaf)
+    });
+    c.bench_function("engine_deep_chain_anchored_walks", |b| {
+        b.iter(do_engine_deep_chain_anchored_walks)
+    });
+    c.bench_function("engine_deep_chain_journaled_edit_at_the_leaf", |b| {
+        b.iter(do_engine_deep_chain_journaled_edit_at_the_leaf)
+    });
+    c.bench_function("engine_deep_chain_moves_whole", |b| {
+        b.iter(do_engine_deep_chain_moves_whole)
+    });
+    c.bench_function("engine_deep_subtree_inserts_and_is_a_value", |b| {
+        b.iter(do_engine_deep_subtree_inserts_and_is_a_value)
+    });
+    c.bench_function("engine_deep_walks_inherit_once_per_level", |b| {
+        b.iter(do_engine_deep_walks_inherit_once_per_level)
+    });
+    c.bench_function("engine_contains_follows_removal_revert_replay_and_discard", |b| {
+        b.iter(do_engine_contains_follows_removal_revert_replay_and_discard)
+    });
+    c.bench_function("engine_subtree_impls_match_the_derived_ones", |b| {
+        b.iter(do_engine_subtree_impls_match_the_derived_ones)
+    });
+    c.bench_function(
+        "builder_ast_from_json_nests_no_deeper_than_serde_json_allows",
+        |b| b.iter(do_builder_ast_from_json_nests_no_deeper_than_serde_json_allows),
+    );
+    c.bench_function("a_journal_is_not_reverted_under_a_later_one", |b| {
+        b.iter(do_a_journal_is_not_reverted_under_a_later_one)
+    });
+    c.bench_function("an_empty_journal_leaves_the_history_restorable", |b| {
+        b.iter(do_an_empty_journal_leaves_the_history_restorable)
+    });
+    c.bench_function("an_unjournaled_structural_change_ends_the_history", |b| {
+        b.iter(do_an_unjournaled_structural_change_ends_the_history)
+    });
+    c.bench_function("an_edit_between_one_builders_calls_ends_the_history", |b| {
+        b.iter(do_an_edit_between_one_builders_calls_ends_the_history)
+    });
+    c.bench_function("interleaved_builders_end_the_history", |b| {
+        b.iter(do_interleaved_builders_end_the_history)
+    });
+    c.bench_function("an_empty_builder_closed_after_another_keeps_its_change", |b| {
+        b.iter(do_an_empty_builder_closed_after_another_keeps_its_change)
     });
     c.bench_function("engine_journaled_walk_wide_and_deep_tree", |b| {
         b.iter(do_engine_journaled_walk_wide_and_deep_tree)

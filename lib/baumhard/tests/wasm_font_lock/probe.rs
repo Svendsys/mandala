@@ -218,6 +218,36 @@ pub extern "C" fn deep_mutator_validates() -> u32 {
     1
 }
 
+/// The engine's and the document's walks over a chain 100,000 levels
+/// deep (design §20 rule 11, V1-A5 #282): each export runs one native
+/// test body, which panics on any failure. In a debug build on wasm32's
+/// default stack, a walk that recursed once per level would trap here.
+macro_rules! deep_scenario {
+    ($name:ident, $body:path) => {
+        #[no_mangle]
+        pub extern "C" fn $name() -> u32 {
+            install_hook();
+            $body();
+            1
+        }
+    };
+}
+
+deep_scenario!(deep_engine_deep_chain_full_walk, baumhard::engine::tests::deep_tests::do_engine_deep_chain_full_walk);
+deep_scenario!(deep_engine_deep_chain_repeat_while_to_the_leaf, baumhard::engine::tests::deep_tests::do_engine_deep_chain_repeat_while_to_the_leaf);
+deep_scenario!(deep_engine_deep_chain_anchored_walks, baumhard::engine::tests::deep_tests::do_engine_deep_chain_anchored_walks);
+deep_scenario!(deep_engine_deep_chain_journaled_edit_at_the_leaf, baumhard::engine::tests::deep_tests::do_engine_deep_chain_journaled_edit_at_the_leaf);
+deep_scenario!(deep_engine_deep_chain_moves_whole, baumhard::engine::tests::deep_tests::do_engine_deep_chain_moves_whole);
+deep_scenario!(deep_engine_deep_subtree_inserts_and_is_a_value, baumhard::engine::tests::deep_tests::do_engine_deep_subtree_inserts_and_is_a_value);
+deep_scenario!(deep_engine_deep_walks_inherit_once_per_level, baumhard::engine::tests::deep_tests::do_engine_deep_walks_inherit_once_per_level);
+deep_scenario!(deep_document_deep_chain_full_walk, baumhard::document::tests::deep_tests::do_document_deep_chain_full_walk);
+deep_scenario!(deep_document_deep_chain_repeat_while_to_the_leaf, baumhard::document::tests::deep_tests::do_document_deep_chain_repeat_while_to_the_leaf);
+deep_scenario!(deep_document_deep_chain_journaled_edit_at_the_leaf, baumhard::document::tests::deep_tests::do_document_deep_chain_journaled_edit_at_the_leaf);
+deep_scenario!(deep_document_deep_chain_moves_whole, baumhard::document::tests::deep_tests::do_document_deep_chain_moves_whole);
+deep_scenario!(deep_document_deep_subtree_validates_and_inserts, baumhard::document::tests::deep_tests::do_document_deep_subtree_validates_and_inserts);
+deep_scenario!(deep_document_deep_chain_resolves_at_the_leaf, baumhard::document::tests::deep_tests::do_document_deep_chain_resolves_at_the_leaf);
+deep_scenario!(deep_document_validate_walks_a_deep_insert, baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_insert);
+
 /// R13's acceptance on wasm32's default stack, in a debug build: a map
 /// 100,000 nodes deep through `load`, `validate_subtree`,
 /// `check_savable` and `save`, and back

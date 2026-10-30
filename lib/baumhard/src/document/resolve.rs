@@ -78,6 +78,17 @@
 //! Resolvers work from the tree, not the `Document`, so a mutation's
 //! inherited-state seed can call them with the tree it is applying to.
 //! They cache nothing: caching is the projection's.
+//!
+//! # One-off questions
+//!
+//! Each resolver answers for one element, and the palette tier finds
+//! its binding by climbing from the owning node to the nearest node
+//! with a palette — O(distance to that binding), the whole depth of the
+//! node when no node above it binds one. That is the cost of one
+//! question, not of a walk: a pass that resolves every node of a map
+//! carries the binding down the walk instead of asking per node, or it
+//! is quadratic in depth (design §20 rule 11; ruling R16 on #282 notes
+//! this for V1-B7 and V1-C2).
 
 use crate::document::defaults::{BuiltInPath, BUILT_IN};
 use crate::document::element::{
@@ -325,7 +336,10 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
     /// `depth(node) − depth(binding)` of that palette, clamped to the
     /// last. Reports the owning node's depth, the `palette` field of
     /// every node it looks at on the way up, and, when it finds a
-    /// binding, the binding's depth and its palette. O(depth).
+    /// binding, the binding's depth and its palette. O(distance to the
+    /// binding): the climb stops at the nearest node with a palette, or
+    /// runs to the top of the nodes when none has one. A one-off per
+    /// resolution (see the module docs).
     fn binding(&mut self) -> Option<&'t PaletteGroup> {
         if let Some(found) = self.binding {
             return found;
@@ -592,8 +606,10 @@ impl Partial {
 /// See the module docs for the chain. An `owner` not in the tree
 /// resolves to `BUILT_IN`'s section text and reads nothing.
 ///
-/// Cost: O(depth) at most — the owner chain is at most four elements,
-/// and only the palette tier walks up the nodes. No allocation.
+/// Cost: the owner chain, at most four elements, plus — only when the
+/// palette tier is reached — the climb to the nearest binding, O(its
+/// distance; the depth when there is none). A one-off question: see the
+/// module docs. No allocation.
 pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadRecorder) -> ResolvedText {
     let Some(owner_element) = element(tree, owner) else {
         return BUILT_IN.section;
@@ -771,8 +787,9 @@ fn path_built_in(kind: DocKind) -> BuiltInPath {
 /// palette tier (the fill, from the group's `fill`), `Defaults.node`,
 /// `BUILT_IN`. A `node` that is not a node has no own tier.
 ///
-/// Cost: O(depth) when the palette tier is reached, else O(1). No
-/// allocation.
+/// Cost: when the palette tier is reached, the climb to the nearest
+/// binding, O(its distance; the depth when there is none); else O(1).
+/// A one-off question: see the module docs. No allocation.
 pub fn resolve_node(tree: &Tree<DocElement>, node: NodeId, rec: &mut impl ReadRecorder) -> ResolvedNode {
     let owning = element(tree, node)
         .filter(|e| e.kind() == DocKind::Node)
