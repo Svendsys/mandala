@@ -1728,6 +1728,128 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
     finder.found
 }
 
+/// Every write to a field named `root` in the workspace's shipped code
+/// — `lib/`, `src/` and `crates/`, minus `tests/` directories, benches,
+/// test-gated modules and test-gated items — outside
+/// `lib/baumhard/src/engine/tree.rs`, as `(repo-relative file, 1-based
+/// line, the line's text)`, plus how many `root` fields the scan read
+/// at all, reads included, so a caller can tell an empty finding from
+/// a scan that read nothing.
+///
+/// A write is an assignment to `<expr>.root` (plain or compound) or a
+/// `&mut <expr>.root` — which is how `std::mem::replace`, `swap` and
+/// `take`, or any function that writes through a reference, reach it.
+/// `Tree::root` is a public field, kept public for its reads; writing
+/// it would move the tree's root without the engine knowing, and the
+/// set behind `Tree::contains` and every journal with it would then
+/// describe another tree. The scan cannot see types, so it refuses a
+/// write to any field of that name: none exists outside the engine
+/// today, and one that is not a `Tree`'s can be renamed or allowed by
+/// name with its reason.
+///
+/// Cost: one read and one `syn` parse of every `.rs` file in those
+/// roots.
+pub(crate) fn root_field_writes() -> (Vec<(String, usize, String)>, usize) {
+    use syn::visit::{self, Visit};
+
+    struct Writes {
+        lines: Vec<usize>,
+        fields: usize,
+    }
+
+    fn is_root_field(expr: &syn::Expr) -> Option<usize> {
+        match expr {
+            syn::Expr::Field(field) => match &field.member {
+                syn::Member::Named(name) if name == "root" => Some(name.span().start().line),
+                _ => None,
+            },
+            syn::Expr::Paren(inner) => is_root_field(&inner.expr),
+            _ => None,
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Writes {
+        fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
+            if matches!(&field.member, syn::Member::Named(name) if name == "root") {
+                self.fields += 1;
+            }
+            visit::visit_expr_field(self, field);
+        }
+
+        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+            if let Some(line) = is_root_field(&assign.left) {
+                self.lines.push(line);
+            }
+            visit::visit_expr_assign(self, assign);
+        }
+
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            let compound = matches!(
+                binary.op,
+                syn::BinOp::AddAssign(_)
+                    | syn::BinOp::SubAssign(_)
+                    | syn::BinOp::MulAssign(_)
+                    | syn::BinOp::DivAssign(_)
+                    | syn::BinOp::RemAssign(_)
+                    | syn::BinOp::BitXorAssign(_)
+                    | syn::BinOp::BitAndAssign(_)
+                    | syn::BinOp::BitOrAssign(_)
+                    | syn::BinOp::ShlAssign(_)
+                    | syn::BinOp::ShrAssign(_)
+            );
+            if compound {
+                if let Some(line) = is_root_field(&binary.left) {
+                    self.lines.push(line);
+                }
+            }
+            visit::visit_expr_binary(self, binary);
+        }
+
+        fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+            if reference.mutability.is_some() {
+                if let Some(line) = is_root_field(&reference.expr) {
+                    self.lines.push(line);
+                }
+            }
+            visit::visit_expr_reference(self, reference);
+        }
+    }
+
+    let sources = workspace_rust_sources();
+    let test_only = test_gated_module_files(&sources);
+    let mut found = Vec::new();
+    let mut fields = 0;
+    for file in sources {
+        let rel = relative_to_repo(&file);
+        let test_path = rel.split('/').any(|part| part == "tests" || part == "benches");
+        if test_path || test_only.contains(&file) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let source = production_source(&file, &text);
+        let parsed =
+            syn::parse_file(&source).unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
+        let mut writes = Writes {
+            lines: Vec::new(),
+            fields: 0,
+        };
+        writes.visit_file(&parsed);
+        fields += writes.fields;
+        if rel == "lib/baumhard/src/engine/tree.rs" {
+            continue;
+        }
+        let lines: Vec<&str> = source.lines().collect();
+        for line in writes.lines {
+            let code = lines.get(line - 1).map_or("", |l| l.trim());
+            found.push((rel.clone(), line, code.to_string()));
+        }
+    }
+    found.sort();
+    found.dedup();
+    (found, fields)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2099,6 +2221,30 @@ mod tests {
         assert_eq!(
             found("let _ = ids.iter().map(|&n| arena[n].parent()).count();"),
             0
+        );
+    }
+
+    /// **Only `engine/tree.rs` writes a `root` field** in the workspace's
+    /// shipped code ([`root_field_writes`]). `Tree::root` stays a public
+    /// field for its reads, so this is what keeps a tree's root where
+    /// the engine put it — and with it `Tree::contains` and every
+    /// journal — until the field can be made private.
+    #[test]
+    fn test_only_the_engine_tree_writes_a_root_field() {
+        let (found, fields) = root_field_writes();
+        assert!(
+            fields > 0,
+            "precondition: the scan reads the workspace's `root` fields, {fields} of them"
+        );
+        assert!(
+            found.is_empty(),
+            "a write to a `root` field outside lib/baumhard/src/engine/tree.rs — `Tree::root` \
+             is written only by the engine:\n{}",
+            found
+                .iter()
+                .map(|(file, line, code)| format!("  {file}:{line}   {code}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 }

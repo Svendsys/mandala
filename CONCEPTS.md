@@ -196,7 +196,11 @@ structural command detached and a journal still owns; `update`,
 tree keeps the set of its detached nodes, which only the engine writes
 — where a subtree leaves or re-enters the tree, per element of it —
 so a caller can ask it, or update, once per element at no cost that
-grows with depth (§20 rule 11).
+grows with depth (§20 rule 11). `root` is a public field for its
+reads, but only `engine/tree.rs` writes it: a root moved behind the
+engine's back would leave `contains` and every journal describing
+another tree, and `test_only_the_engine_tree_writes_a_root_field`
+refuses a write to a `root` field anywhere else in shipped code.
 
 Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
 `indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,

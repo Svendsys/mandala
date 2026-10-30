@@ -190,7 +190,14 @@ pub struct Tree<E: TreeElement> {
     /// [`Tree::remove_subtree`] or a walk, which keep the
     /// sorted-children invariant.
     pub(in crate::engine) arena: Arena<E>,
-    /// Arena id of the tree root.
+    /// Arena id of the tree root. Public for reading; **writes are
+    /// reserved to `engine/tree.rs`**. A root moved behind the engine's
+    /// back would leave [`Tree::contains`] and every journal describing
+    /// another tree. The compiler cannot hold that while the field is
+    /// public, so the source scan `test_only_the_engine_tree_writes_a_root_field`
+    /// refuses any write to a `root` field — an assignment, or a
+    /// `&mut` borrow such as `std::mem::replace` takes — anywhere in
+    /// the workspace's shipped code outside this file.
     pub root: NodeId,
     /// Draw order hint relative to sibling trees in a scene. Higher =
     /// drawn on top.
@@ -518,7 +525,9 @@ pub struct MutatorTree<E: TreeElement, M: Mutation<E>> {
     /// [`MutatorTree::arena`], add to it through
     /// [`MutatorTree::insert_child`].
     pub(in crate::engine) arena: Arena<Mutator<E, M>>,
-    /// Arena id of the mutator root. Every walk starts here.
+    /// Arena id of the mutator root. Every walk starts here. Public
+    /// for reading; like [`Tree::root`], written only in this file,
+    /// which `test_only_the_engine_tree_writes_a_root_field` holds.
     pub root: NodeId,
     /// Whether any node is a [`Mutator::Structure`]. Kept by the two
     /// ways a mutator tree gains a node, [`Self::new_with`] and
