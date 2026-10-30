@@ -25,9 +25,11 @@
 //! list of problems, no recovery. Which error is "first" is fixed by
 //! the order the loader reads in: the whole text (its size, its
 //! byte-order mark, its encoding), then JSON syntax anywhere in it, then
-//! `format`, then the other top-level keys in schema order, then the
-//! nodes in list order, and the links last, because a link may name a
-//! node that appears after it. Within a node, an error the JSON reader
+//! `format`, then the other top-level values (each read in schema
+//! order, then checked: the counts, the theme, the palettes, the
+//! definitions, the defaults last), then the nodes in list order, and
+//! the links last, because a link may name a node that appears after
+//! it. Within a node, an error the JSON reader
 //! finds anywhere in it (a wrong type, an unknown or missing key) comes
 //! first, in text order, since the node is read whole before anything
 //! is checked; then its structure (`id`, `parent`, `channel`); then its

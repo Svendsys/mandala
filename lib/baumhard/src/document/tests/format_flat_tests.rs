@@ -444,6 +444,34 @@ fn test_which_of_several_errors_is_reported_is_fixed() {
     assert!(error.position.is_some());
 }
 
+#[test]
+fn test_the_header_is_read_whole_then_checked_with_the_defaults_last() {
+    // Every top-level value is read before any is checked: a value the
+    // JSON reader refuses (verbs that are not an array) beats the
+    // theme's content, which comes before it in the file.
+    let json = r#"{"format":1,"name":"t","theme":{"active":"nope","variants":{"a":{}}},"verbs":5}"#;
+    let error = rejection(json);
+    assert_eq!(error.path, "verbs");
+    assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
+    // Control: with the verbs read, the theme's error is the one.
+    let json = r#"{"format":1,"name":"t","theme":{"active":"nope","variants":{"a":{}}},"verbs":[]}"#;
+    assert!(rejection(json).path.starts_with("theme"), "{:?}", rejection(json));
+
+    // Then the content is checked, the definitions before the defaults,
+    // whatever order the schema's table and the file list them in.
+    let json = r#"{"format":1,"name":"t","defaults":{"span":{"color":"var(nope)"}},"verbs":[{"id":"v","name":"a"},{"id":"v","name":"b"}]}"#;
+    assert_eq!(
+        at(&rejection(json)),
+        (
+            "verbs[1].id",
+            &LoadErrorKind::DuplicateDefinition { id: "v".to_string() }
+        )
+    );
+    // Control: with the verbs unique, the defaults' error is the one.
+    let json = r#"{"format":1,"name":"t","defaults":{"span":{"color":"var(nope)"}},"verbs":[{"id":"v","name":"a"},{"id":"w","name":"b"}]}"#;
+    assert_eq!(rejection(json).path, "defaults.span.color");
+}
+
 // ---- the text ---------------------------------------------------------
 
 #[test]

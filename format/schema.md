@@ -798,8 +798,11 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
   rewrite the line its error is shown on.
 - **Which error is first** is fixed: the size, the byte-order mark and
   the encoding; then JSON syntax anywhere in the text; then `format`;
-  then the other top-level keys in the order of the table above; then
-  the nodes in list order; then the links, in list order. Within a
+  then the other top-level values, each first read in the order of the
+  table above (a wrong type, an unknown or a missing key) and only then
+  checked: the counts an index addresses, the theme, the palettes, the
+  edits, presentations and verbs, and the defaults last; then the nodes
+  in list order; then the links, in list order. Within a
   node, an error the JSON reader finds — a wrong type, an unknown or a
   missing key, anywhere in the node — comes first, in the order of the
   text, since the node is read whole before anything is checked; then
