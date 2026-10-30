@@ -100,16 +100,23 @@ jobs:
           rustup toolchain install
           rustup show
 
+      # Installed into a root of its own, not ~/.cargo/bin: the build
+      # cache below cleans ~/.cargo/bin of every binary it did not
+      # restore before this cache's post step saves it, which left the
+      # first validation run with nothing to save.
       - name: Cache cargo-fuzz
         id: cargo-fuzz
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
-          path: ~/.cargo/bin/cargo-fuzz
+          path: ~/.cargo-fuzz
           key: cargo-fuzz-0.13.2-${{ runner.os }}
 
       - name: Install cargo-fuzz
         if: steps.cargo-fuzz.outputs.cache-hit != 'true'
-        run: cargo install cargo-fuzz --version 0.13.2 --locked
+        run: cargo install cargo-fuzz --version 0.13.2 --locked --root ~/.cargo-fuzz
+
+      - name: Put cargo-fuzz on the path
+        run: echo "$HOME/.cargo-fuzz/bin" >> "$GITHUB_PATH"
 
       - name: Cache the fuzz build
         uses: Swatinem/rust-cache@v2
@@ -120,7 +127,7 @@ jobs:
       # Every run starts from the newest corpus a nightly run saved for
       # this target; a pull request reads it and never writes it.
       - name: Restore the corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -131,7 +138,7 @@ jobs:
 
       - name: Upload the finding
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-finding-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}
@@ -145,7 +152,7 @@ jobs:
 
       - name: Save the corpus
         if: success() && github.event_name != 'pull_request'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
