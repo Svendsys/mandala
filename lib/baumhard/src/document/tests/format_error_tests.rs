@@ -272,3 +272,22 @@ fn test_an_error_inside_a_row_inside_a_row_names_its_full_path_and_its_exact_pla
     let rendered = error.to_string();
     assert!(!rendered.contains("at line"), "{rendered}");
 }
+
+#[test]
+fn test_a_broken_reader_invariant_is_an_error_without_a_position_never_a_panic() {
+    // `parse_extent` is handed an extent that is not a slice of the text:
+    // a defect of the loader, never a property of the input. A load
+    // never panics (CODE_CONVENTIONS §9): the error is returned, at its
+    // path, with no position rather than a wrong one.
+    use crate::document::format::dto::NodeDto;
+    use crate::document::format::error::Seg;
+    use crate::document::format::index::parse_extent;
+    use serde_json::value::RawValue;
+    let text = r#"{"id":1,"position":[0,0]}"#;
+    let foreign = RawValue::from_string(r#"{"id":"x","position":[0,0]}"#.to_string()).unwrap();
+    let error = parse_extent::<NodeDto>(text, &foreign, &[Seg::Key("nodes"), Seg::Index(0)])
+        .expect_err("the foreign node does not read");
+    assert_eq!(error.path, "nodes[0].id");
+    assert!(matches!(error.kind, LoadErrorKind::Invalid { .. }), "{error:?}");
+    assert_eq!(error.position, None);
+}

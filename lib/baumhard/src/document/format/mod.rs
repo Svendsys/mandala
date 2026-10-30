@@ -58,7 +58,7 @@ pub mod context;
 pub(crate) mod dto;
 pub mod error;
 mod from_dto;
-mod index;
+pub(crate) mod index;
 mod load_map;
 mod load_node;
 pub(crate) mod load_style;

@@ -402,14 +402,19 @@ fn refusal(
     // `parse_extent`'s contract (the index borrowed it from `text`), and
     // the row by `take_fault`, which takes a fault only from inside the
     // extent. An offset outside would be a defect in the loader, never a
-    // property of the input, and saturating it would put the error at
-    // the wrong place in silence, so it is asserted.
+    // property of the input. Saturating it would put the error at the
+    // wrong place in silence, and a load never panics (CODE_CONVENTIONS
+    // §9), so the error is returned without a position and the broken
+    // invariant is logged.
     let start = offset_in(text, extent)
         .zip(into_extent)
-        .map(|(extent_at, into)| extent_at + into)
-        .expect("a value's reader begins inside the text it was read from");
-    let base = position_at(text, start);
-    let position = Some(within(base, inner.line(), inner.column()));
+        .map(|(extent_at, into)| extent_at + into);
+    if start.is_none() {
+        log::error!(
+            "document: a value's reader did not begin inside the text it was read from;              reporting the error without a position"
+        );
+    }
+    let position = start.map(|start| within(position_at(text, start), inner.line(), inner.column()));
     let message = without_position(&inner);
     let at = |path: String, kind| LoadError {
         position,
