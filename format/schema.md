@@ -665,7 +665,7 @@ What a text does when it and its path differ in length (D10, §6.4).
 
 | Spelling | Meaning |
 |---|---|
-| `"repeat"` | The text repeated until the path is full. |
+| `"repeat"` | The text repeated until the path is full. Around a frame, as many whole repetitions as fit, evenly spaced, so the ring closes without a seam; along a connector, the last repetition is cut. |
 | `"spread"` | The text once, spaced out to end where the path ends. On a frame's ring, each of its two lines spaced out over its span. |
 | `"once"` | The text once; the rest of the path gets nothing. On a frame's ring, each line centered on its span. |
 | `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. On a frame's ring, the filler fills each span on both sides of its line. |

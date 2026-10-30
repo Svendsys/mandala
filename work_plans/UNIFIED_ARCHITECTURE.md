@@ -737,7 +737,7 @@ When a flow's text is shorter or longer than its path:
 | Mode | Behavior | Frames | Connectors |
 |---|---|---|---|
 | `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing. On a frame: two lines, each centered on its span, the filler on both sides of each | ✓ | ✓ |
-| `repeat` | Text repeated until the path is full; the last repetition is cut at a grapheme boundary | ✓ | ✓ (default — a `─` pattern) |
+| `repeat` | Text repeated until the path is full. Along a connector the last repetition is cut at a grapheme boundary; around a frame the ring holds a whole number of repetitions, evenly spaced, and closes without a seam (ruling R29) | ✓ | ✓ (default — a `─` pattern) |
 | `spread` | Text placed once with extra spacing distributed so it ends exactly at the path's end. On a frame: each line spread over its whole span | ✓ | ✓ |
 | `fit { min, max }` | Font size **and** spacing are scaled so the text fills the path exactly once (algorithm below). On a frame: one size for both lines, the largest at which each fits its span | ✓ (default) | ✓ |
 
@@ -776,6 +776,22 @@ readable placement (§6.2 step 4) they keep their meaning on a `repeat`
 ring: they decide where the pattern begins and which stretch comes
 next, while each stretch reads left to right or top to bottom
 whichever way the path runs through it.
+
+**A ring closes without a seam** (ruling R29). Cut at its last
+repetition, a `repeat` ring around a closed outline left a stray part of
+a pattern, or a gap, where it closed (the README's "a time to plant"
+ring read `❦❦❦❦❦❦❦❦❦❦ ❦`). Around a closed outline `repeat` places as many
+whole repetitions as fit, and spreads the slack evenly as spacing: every
+two consecutive clusters, as they are read, are one gap apart, the seam
+from the last back round to the first included. The gap is solved for
+the ring as it is read (§6.2 step 4), since reversing a stretch changes
+which cluster straddles a corner and so the stretch's length; laid on
+one gap, a stretch drifts against the part of the outline the walk gave
+it, so a stretch's clusters that drift past a corner are regrouped into
+the neighbor whose way the outline runs there — a ring's clusters are
+copies of one pattern — and the ring is laid again, a bounded number of
+rounds. A ring too short for one whole repetition is cut as a connector
+is. Along an open path `repeat` is unchanged.
 
 **A frame's lines** (ruling R27; §6.2 step 5). The modes act on the
 two lines, each against its own span, with no gap below zero between

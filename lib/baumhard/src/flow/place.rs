@@ -116,6 +116,24 @@ pub(crate) use lines::frame_halves;
 /// ends there.
 const MAX_RUN_ON_STEPS: usize = 1 << 16;
 
+/// The most rounds [`PathWalk::even_out`] regroups a closed ring's
+/// stretches in.
+const EVEN_ROUNDS: usize = 4;
+
+/// The step the walk's box rule (#239 §5 step 2, ruling R9.2) takes for
+/// a `w × h` cluster from `s` along `path`, and its direction: the test
+/// seam for that rule at a sharp corner, which only a closed outline has.
+pub(crate) fn box_step(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, Vec2) {
+    let walk = PathWalk {
+        path,
+        line_height: h,
+        outward: false,
+        limit: path.length(),
+        level: false,
+    };
+    walk.step(s, w, h)
+}
+
 /// The rounds of Newton's method [`PathWalk::level_len`] takes.
 const LEVEL_ROUNDS: usize = 4;
 
@@ -1031,6 +1049,7 @@ impl PathWalk<'_> {
             copy,
             slack,
             whole_words,
+            even,
         } = walked;
         let steps = &laying.steps;
         let walked_end = steps.last().map_or(0.0, |step| step.s + step.step);
@@ -1055,19 +1074,7 @@ impl PathWalk<'_> {
             trace.walked_stretches = walked_stretches;
             trace.walked = laying.glyphs.clone();
             trace.chords = steps.iter().map(|step| step.dir).collect();
-            trace.stretches = stretches
-                .iter()
-                .filter(|stretch| !stretch.steps.is_empty())
-                .map(|stretch| {
-                    let (head, tail) = (steps[stretch.steps.start], steps[stretch.steps.end - 1]);
-                    TracedStretch {
-                        travel: stretch.travel,
-                        glyphs: head.first..tail.end,
-                        from: head.s,
-                        to: tail.s + tail.step,
-                    }
-                })
-                .collect();
+            trace.stretches = traced_stretches(&stretches, steps);
         }
         if !stretches.iter().any(PathStretch::is_reversed) {
             if let Some(trace) = trace {
@@ -1087,6 +1094,15 @@ impl PathWalk<'_> {
             end,
             self.line_height,
         );
+        let even_gap = if even {
+            let gap = self.even_out(&mut stretches, steps);
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.stretches = traced_stretches(&stretches, steps);
+            }
+            Some(gap)
+        } else {
+            None
+        };
         let mut kept = vec![true; steps.len()];
         let width = |index: usize| steps[index].advance;
         let h = self.line_height;
@@ -1095,7 +1111,9 @@ impl PathWalk<'_> {
             let keep = |index: usize| kept[index];
             self.lay_reading(&stretches, width, keep, spacing, gap, end, h, |_, _, _, _| {})
         };
-        let spacing = if measure(spacing, &kept) <= limit {
+        let spacing = if let Some(g) = even_gap {
+            Spacing::Uniform(g)
+        } else if measure(spacing, &kept) <= limit {
             spacing
         } else {
             // Some stretch cannot keep its own part of the path: lay them
@@ -1133,6 +1151,115 @@ impl PathWalk<'_> {
             trace.laid = laid;
         }
         self.lay_readable(laying, &lay, run, truncated)
+    }
+
+    /// A closed ring's one gap, read as it is laid (ruling R29): the gap
+    /// that, between every two clusters in reading order and at the seam
+    /// back to the first, lays the ring exactly once round — and the
+    /// stretches regrouped so that every cluster lies where the path runs
+    /// its own stretch's way. Reversing a stretch changes which cluster
+    /// straddles a corner, and so the stretch's length; laid on one gap,
+    /// the stretches drift against the parts step 1 gave them, and a
+    /// cluster that drifts past a corner would be read the other way. So
+    /// the ring is laid, each laid cluster classified where it lies
+    /// ([`travels`](Self::travels)), and each boundary moved past the
+    /// clusters that lie on its neighbor's side — a ring's clusters are
+    /// copies of one pattern, so which ones a stretch holds matters only
+    /// in number — and laid again, until none has drifted, a bounded
+    /// number of rounds.
+    ///
+    /// Cost: per round, a solve of at most `2 · SOLVE_ROUNDS` lays, one
+    /// lay more, a sort and a classification; [`EVEN_ROUNDS`] rounds.
+    fn even_out(&self, stretches: &mut [PathStretch], steps: &[Stepped]) -> f32 {
+        let length = self.path.length();
+        let h = self.line_height;
+        let width = |index: usize| steps[index].advance;
+        // The gap that closes the ring as `stretches` group it.
+        let close = |stretches: &[PathStretch]| {
+            let seam = |g: f32| {
+                self.lay_reading(
+                    stretches,
+                    width,
+                    |_| true,
+                    Spacing::Uniform(g),
+                    0.0,
+                    length,
+                    h,
+                    |_, _, _, _| {},
+                ) + g
+                    - length
+            };
+            let guess = (-seam(0.0) / steps.len().max(1) as f32).max(0.0);
+            solve_gap(seam, length, guess)
+        };
+        let mut gap = close(stretches);
+        for _ in 0..EVEN_ROUNDS {
+            // Each cluster as laid, in path order, and its travel there.
+            let mut laid: Vec<(usize, Stepped)> = Vec::with_capacity(steps.len());
+            self.lay_reading(
+                stretches,
+                width,
+                |_| true,
+                Spacing::Uniform(gap),
+                0.0,
+                length,
+                h,
+                |index, s, step, dir| {
+                    laid.push((
+                        index,
+                        Stepped {
+                            s,
+                            step,
+                            dir,
+                            ..steps[index]
+                        },
+                    ));
+                },
+            );
+            laid.sort_by(|a, b| a.1.s.total_cmp(&b.1.s));
+            let probe: Vec<Stepped> = laid.iter().map(|(_, step)| *step).collect();
+            let mut travel = vec![Travel::Rightward; steps.len()];
+            for ((index, _), lies) in laid.iter().zip(self.travels(&probe, h)) {
+                travel[*index] = lies;
+            }
+            let mut moved = false;
+            for k in 1..stretches.len() {
+                let (way_before, way) = (stretches[k - 1].travel, stretches[k].travel);
+                // Stretch k's clusters in path order, and k − 1's.
+                let path_order = |stretch: &PathStretch| -> Vec<usize> {
+                    if stretch.travel.is_backward() {
+                        stretch.steps.clone().rev().collect()
+                    } else {
+                        stretch.steps.clone().collect()
+                    }
+                };
+                let ahead = path_order(&stretches[k]);
+                let behind = path_order(&stretches[k - 1]);
+                let lead = ahead
+                    .iter()
+                    .take_while(|&&index| travel[index] == way_before)
+                    .count();
+                let trail = behind
+                    .iter()
+                    .rev()
+                    .take_while(|&&index| travel[index] == way)
+                    .count();
+                if lead > 0 && lead < ahead.len() {
+                    stretches[k - 1].steps.end += lead;
+                    stretches[k].steps.start += lead;
+                    moved = true;
+                } else if trail > 0 && trail < behind.len() {
+                    stretches[k - 1].steps.end -= trail;
+                    stretches[k].steps.start -= trail;
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+            gap = close(stretches);
+        }
+        gap
     }
 
     /// Each step's [`Travel`] (#291 step 2).
@@ -1430,6 +1557,24 @@ impl PathWalk<'_> {
     }
 }
 
+/// The stretches as a [`Trace`] reports them: each non-empty one's
+/// travel, glyphs, and the part of the path step 1 gave it.
+fn traced_stretches(stretches: &[PathStretch], steps: &[Stepped]) -> Vec<TracedStretch> {
+    stretches
+        .iter()
+        .filter(|stretch| !stretch.steps.is_empty())
+        .map(|stretch| {
+            let (head, tail) = (steps[stretch.steps.start], steps[stretch.steps.end - 1]);
+            TracedStretch {
+                travel: stretch.travel,
+                glyphs: head.first..tail.end,
+                from: head.s,
+                to: tail.s + tail.step,
+            }
+        })
+        .collect()
+}
+
 /// One stretch of a placement as phase 2 lays it (#291).
 #[derive(Clone, Debug)]
 struct PathStretch {
@@ -1513,7 +1658,7 @@ pub(crate) fn place_on_closed_traced(
     }
     let spacing = table_spacing(run, fit, flow);
     let arc = ArcPath::closed(path, start, direction, spacing);
-    place(run, &arc, fit, 0.0, outward, flow, fs, trace)
+    place(run, &arc, true, fit, 0.0, outward, flow, fs, trace)
 }
 
 /// Place `run` along the open `curve` (a connector or a line link),
@@ -1558,7 +1703,7 @@ pub(crate) fn place_on_open_traced(
     } else {
         0.0
     };
-    place(run, &arc, fit, spacing, false, flow, fs, trace)
+    place(run, &arc, false, fit, spacing, false, flow, fs, trace)
 }
 
 /// Place `run` as one line centered on `center`: a portal marker.
@@ -1685,6 +1830,10 @@ struct Walked {
     /// scale was chosen so they all have room. Otherwise a word moves
     /// only where its taker finds room.
     whole_words: bool,
+    /// Whether the placement is a closed ring of whole copies, its
+    /// spacing to be even all the way round, the seam's included (ruling
+    /// R29): phase 2 solves one gap for the reading-order lay itself.
+    even: bool,
 }
 
 /// The body both placements share, over a walked path: step 1 of the
@@ -1696,6 +1845,7 @@ struct Walked {
 fn place(
     run: &ShapedRun,
     path: &ArcPath,
+    closed: bool,
     fit: &FitMode,
     spacing: f32,
     outward: bool,
@@ -1712,7 +1862,7 @@ fn place(
     };
     let walked = match fit {
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
-        FitMode::Repeat => repeat(run, &walk(run), spacing),
+        FitMode::Repeat => repeat(run, &walk(run), spacing, closed),
         FitMode::Spread => spread(run, &walk(run), 0.0),
         FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs, &walk),
     };
@@ -1742,6 +1892,7 @@ fn once_text(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> (Walked, Option<
         copy: 1,
         slack: 0.0,
         whole_words: false,
+        even: false,
     };
     (walked, next)
 }
@@ -1811,13 +1962,24 @@ fn once<'p>(
         copy: copy.len(),
         slack: 0.0,
         whole_words: false,
+        even: false,
     }
 }
 
-/// `Repeat`: the text again and again until the path is full, the last
-/// copy cut to the longest reading-order prefix that fits. Every copy
+/// `Repeat`: the text again and again until the path is full. Every copy
 /// reuses the run's glyph indices.
-fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> Walked {
+///
+/// Along an open path the last copy is cut to the longest reading-order
+/// prefix that fits. Around a `closed` one (ruling R29) the ring holds a
+/// whole number of copies — as many as fit with `gap` — and the slack is
+/// spread evenly as extra spacing between every two clusters, the seam
+/// from the last cluster back round to the first included, so the ring
+/// closes without a stray part-copy or a gap where it began. A ring too
+/// short for even one copy is cut as an open path's is.
+///
+/// Cost: one lay per copy; around a closed path, a solve of the spacing
+/// of at most `2 · SOLVE_ROUNDS` measures of the copies and one lay more.
+fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32, closed: bool) -> Walked {
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let mut glyphs = Laying::default();
     let mut s = 0.0_f32;
@@ -1844,18 +2006,73 @@ fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> Walked {
             }
         }
     };
+    let closing = if closed && copies > 0 && !truncated {
+        close_ring(run, &clusters, walk, copies, gap)
+    } else {
+        None
+    };
+    // A closed ring's walk ends where its spacing was solved to; phase 2
+    // solves its spacing again as the ring is read (`Walked::even`).
+    let even = closing.is_some();
+    let (glyphs, truncated, gap, ends) = match closing {
+        Some((glyphs, gap)) => (glyphs, false, gap, Ends::Exactly),
+        None => (glyphs, truncated, gap, Ends::Within),
+    };
     let text = clusters.len().min(glyphs.steps.len());
     Walked {
         run: None,
         laying: glyphs,
         truncated,
         gap,
-        ends: Ends::Within,
+        ends,
         text,
         copy: 1,
         slack: 0.0,
         whole_words: false,
+        even,
     }
+}
+
+/// A closed ring of `copies` whole copies of `clusters` (ruling R29):
+/// the gap, at least `gap`, that ends the last copy's last step that same
+/// gap short of the path's end, where the first copy began — so every
+/// two consecutive clusters, the seam's included, are one gap apart — and
+/// the copies laid with it. `None` when the copies would pass
+/// [`MAX_PLACED_GLYPHS`] or do not lay within the path.
+///
+/// Cost: a solve of at most `2 · SOLVE_ROUNDS` measures of the copies,
+/// and one lay of them.
+fn close_ring(
+    run: &ShapedRun,
+    clusters: &[Cluster],
+    walk: &PathWalk<'_>,
+    copies: usize,
+    gap: f32,
+) -> Option<(Laying, f32)> {
+    let length = walk.path.length();
+    let widths = || (0..copies).flat_map(|_| clusters.iter().map(|cluster| cluster.advance));
+    // How far the copies, `extra` past `gap` apart, leave the seam short
+    // of `gap + extra`: zero when the seam is one gap like the others.
+    let miss = |extra: f32| {
+        let g = gap + extra;
+        walk.measure_widths(widths(), walk.line_height, g) + g - length
+    };
+    let extra = if miss(0.0) >= 0.0 {
+        0.0
+    } else {
+        let guess = -miss(0.0) / (copies * clusters.len()) as f32;
+        solve_gap(miss, length, guess)
+    };
+    let g = gap + extra;
+    let mut laying = Laying::default();
+    let mut s = 0.0_f32;
+    for _ in 0..copies {
+        match walk.lay(&run.glyphs, clusters, s, g, &mut laying) {
+            Laid::Fits(next) => s = next,
+            _ => return None,
+        }
+    }
+    Some((laying, g))
 }
 
 /// `Spread`: the text once, with the equal extra spacing between
@@ -2000,6 +2217,7 @@ fn fit_to<'p>(
         let walked = Walked {
             slack,
             whole_words: scale > low,
+            even: false,
             ..spread(placed_run, &placed_walk, slack)
         };
         let (read, limit) = placed_walk.readable_extent(&walked.laying.steps, slack);

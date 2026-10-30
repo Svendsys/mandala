@@ -473,15 +473,16 @@ fn test_flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches() {
 /// An ellipse a hundred times wider than tall reads as two stretches,
 /// its top and its bottom: each tip turns through vertical within about
 /// a step, too briefly to be a stretch of its own (#291 §1 step 2, the
-/// hysteresis). Started at its rightmost point, so the seam splits no
-/// stretch. The fixture is checked to take a step at a tip within ε of
-/// plumb, which without the hysteresis would be a vertical stretch of a
+/// hysteresis). Started on its right tip, just above its rightmost
+/// point, so the seam splits no stretch, and where the ring's even
+/// spacing (ruling R29) puts a step at a tip within ε of plumb — checked
+/// here — which without the hysteresis would be a vertical stretch of a
 /// cluster or two.
 pub fn do_flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches() {
     let flat = around(
         VERSE,
         &ellipse(4000.0, 40.0),
-        start(Edge::Right, 0.5),
+        start(Edge::Right, 0.45),
         Direction::Clockwise,
         &FitMode::Repeat,
         true,
@@ -554,28 +555,21 @@ fn test_flow_readable_cuts_copies_rather_than_overlap() {
     do_flow_readable_cuts_copies_rather_than_overlap();
 }
 
-/// With no slack — a `Repeat` ring fills its loop, or a connector's
-/// `Once` filler its curve, with no gap, and the text read in order is
-/// longer than the text walked — the spacing stays at zero and the
-/// placement is cut rather than overlapped (ruling R25): a suffix of
-/// step 1's glyphs, whole repeat clusters or whole filler copies (`·•·`
-/// is three), and the run is not truncated, since no text was cut. No
-/// two cluster boxes overlap; uncut, the pill would wrap past its start
-/// by some 2.6 pt. The pill runs counter-clockwise from its top-left.
+/// With no slack — a connector's `Repeat` or `Once` filler fills its
+/// curve with no gap, and the text read in order is longer than the text
+/// walked — the spacing stays at zero and the placement is cut rather
+/// than overlapped (ruling R25): a suffix of step 1's glyphs, whole
+/// repeat clusters or whole filler copies (`·•·` is three), and the run
+/// is not truncated, since no text was cut. No two cluster boxes
+/// overlap. (A closed ring is never cut: it holds whole copies, evenly
+/// spaced, ruling R29.)
 pub fn do_flow_readable_cuts_copies_rather_than_overlap() {
-    let pill = around(
-        VERSE,
-        &rounded(300.0, 160.0, 100),
-        start(Edge::Top, 0.0),
-        Direction::CounterClockwise,
-        &FitMode::Repeat,
-        true,
-    );
+    let pattern = along(VERSE, &u_turn(1.1), &FitMode::Repeat, 0.0);
     let filler = FitMode::Once {
         filler: Some("·•·".to_owned()),
     };
     let curve = along(POEM, &u_turn(0.5), &filler, 0.0);
-    for (what, placed, copy) in [("Repeat ring", pill, 1), ("Once with a filler", curve, 3)] {
+    for (what, placed, copy) in [("Repeat", pattern, 1), ("Once with a filler", curve, 3)] {
         assert_no_overlap(what, &placed);
         let cut = assert_keeps_the_walk(what, &placed);
         assert!(cut > 0, "{what}: the fixture needs a placement with no slack");
@@ -820,5 +814,62 @@ pub fn do_flow_readable_stops_where_the_path_turns() {
         );
         assert_no_overlap(what, &placed);
         assert!(!placed.placed.truncated, "{what}: truncated");
+    }
+}
+
+#[test]
+fn test_flow_readable_a_repeat_ring_closes_evenly() {
+    do_flow_readable_a_repeat_ring_closes_evenly();
+}
+
+/// A `Repeat` ring around a closed outline holds a whole number of
+/// copies and closes without a seam (ruling R29): the gap between every
+/// two consecutive clusters along the path — the seam from the last back
+/// round to the first included — is the same, within half a point, and
+/// the clusters placed are whole copies of the pattern. Five outlines,
+/// six ornaments, each way round; the ornaments are the README scenes'.
+pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
+    let outlines = [
+        ("rounded rect", rounded(300.0, 160.0, 25)),
+        ("sharp rect", rounded(260.0, 140.0, 0)),
+        ("pill", rounded(400.0, 120.0, 100)),
+        ("circle", rounded(300.0, 300.0, 100)),
+        ("ellipse", ellipse(300.0, 200.0)),
+    ];
+    let top = start(Edge::Top, 0.0);
+    for (name, shape) in &outlines {
+        for pattern in ["✦ ", "❦ ", "· ", "+ ", "~ ", "·:·"] {
+            for direction in [Direction::Clockwise, Direction::CounterClockwise] {
+                let what = format!("{name} {pattern:?} {direction:?}");
+                let placed = around(pattern, shape, top, direction, &FitMode::Repeat, false);
+                assert!(!placed.placed.truncated, "{what}: truncated");
+                let per_copy = placed.run.glyphs.iter().filter(|g| g.grapheme_start).count();
+                let mut laid = placed.trace.laid.clone();
+                assert_eq!(laid.len() % per_copy, 0, "{what}: a part-copy");
+                laid.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let mut gaps: Vec<f32> = laid
+                    .windows(2)
+                    .map(|pair| pair[1].0 - (pair[0].0 + pair[0].1))
+                    .collect();
+                let (first, last) = (laid[0], laid[laid.len() - 1]);
+                gaps.push(placed.path.length() + first.0 - (last.0 + last.1));
+                let (least, most) = gaps
+                    .iter()
+                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &g| {
+                        (a.min(g), b.max(g))
+                    });
+                if std::env::var("R29_LIST").is_ok() {
+                    if most - least > 0.5 {
+                        eprintln!("R29FAIL {what}: {least}..{most}");
+                    }
+                    continue;
+                }
+                assert!(
+                    most - least <= 0.5,
+                    "{what}: gaps from {least} to {most}, the seam {}",
+                    gaps[gaps.len() - 1]
+                );
+            }
+        }
     }
 }

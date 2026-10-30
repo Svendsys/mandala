@@ -1513,7 +1513,9 @@ element.
   whose points are evaluated on the curve itself.
 - **Fit modes** say what happens when text and path differ in length:
   `Once` (with an optional filler, appended to the run in the flow's
-  style), `Repeat` (reusing the run's glyph indices), `Spread` and
+  style), `Repeat` (reusing the run's glyph indices; around a closed
+  outline, whole copies evenly spaced so the ring closes without a seam,
+  ruling R29), `Spread` and
   `Fit` (rescaling the run), the last two solved so the last cluster
   ends at the path's end — on a frame, each line at its span's end. Text too long is cut to the longest prefix,
   in reading order, that fits — a right-to-left run keeps its
