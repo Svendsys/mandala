@@ -52,7 +52,7 @@ use crate::util::tests::choices::Choices;
 /// The most characters a structured span holds: enough for a cut, a
 /// repeat and a fit to have something to do, few enough that one input
 /// shapes in milliseconds.
-pub const MAX_SPAN_CHARS: u32 = 96;
+pub const MAX_SPAN_CHARS: u32 = 64;
 
 /// Characters a structured span draws from besides any code point:
 /// combining marks, ZWJ sequences, variation selectors, regional
@@ -261,7 +261,9 @@ fn style(choices: &mut Choices<'_>, faces: &[AppFont]) -> ResolvedText {
 fn text(choices: &mut Choices<'_>) -> String {
     (0..choices.below(MAX_SPAN_CHARS))
         .map(|_| {
-            if choices.one_in(3) {
+            // Any code point, rarely: one no face holds sends shaping
+            // through every face in search of a fallback, which is slow.
+            if choices.one_in(8) {
                 char::from_u32(choices.below(0x11_0000)).unwrap_or('\u{FFFD}')
             } else {
                 *choices.pick(&INTERESTING)

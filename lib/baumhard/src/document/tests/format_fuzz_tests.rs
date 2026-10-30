@@ -11,18 +11,18 @@ use crate::document::format::{load, save};
 use crate::document::ids::{get, Document, IdentIndex};
 use crate::document::tests::format_fuzz::{
     bounds_hold, check_generated, check_load_bytes, check_refusal, excerpt_length, node_lines, oracle,
-    path_resolves, reference, saved_text_is_clean, NodeSpec,
+    path_resolves, reference, saved_text_is_clean, NodeSpec, Spelled,
 };
 use crate::document::tests::format_support::fixture;
 use crate::document::values::{FitMode, FontSize};
 use crate::util::tests::choices::Choices;
-use serde_json::json;
+
 use std::collections::BTreeMap;
 
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 2] = [
+const FINDINGS: [(&str, &[u8]); 3] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -30,6 +30,13 @@ const FINDINGS: [(&str, &[u8]); 2] = [
     (
         "syntax_error_in_a_node_has_no_node_context",
         include_bytes!("fuzz_findings/syntax_error_in_a_node_has_no_node_context.mandala.json"),
+    ),
+    // A harness finding, not a loader one: the refusal names a place in
+    // the first of two `sections` keys, and the path property followed
+    // only the last.
+    (
+        "a_fault_inside_the_first_of_two_keys",
+        include_bytes!("fuzz_findings/a_fault_inside_the_first_of_two_keys.mandala.json"),
     ),
 ];
 
@@ -169,14 +176,20 @@ fn test_the_saved_text_property_refuses_every_character_that_may_not_stand_raw()
 
 #[test]
 fn test_the_path_property_resolves_exactly_what_the_input_holds() {
-    let value = json!({
-        "nodes": [{"id": 1}, {"id": 2, "sections": [{"spans": []}]}],
-        "palettes": {"a.b": [{"fill": 1}], "\u{202e}": []},
-    });
+    // The text holds `sections` twice in node 2, the first longer: the
+    // reader meets a fault in the first before it meets the second key,
+    // and its path must resolve (the first load_raw run's harness
+    // finding; a `serde_json::Value` keeps the last alone).
+    let text = r#"{
+        "nodes": [{"id": 1}, {"id": 2, "sections": [{}, 0], "sections": [{"spans": []}]}],
+        "palettes": {"a.b": [{"fill": 1}], "\u202e": []}
+    }"#;
+    let value: Spelled = serde_json::from_str(text).unwrap();
     for path in [
         "",
         "nodes",
         "nodes[1].sections[0].spans",
+        "nodes[1].sections[1]",
         r#"palettes["a.b"][0].fill"#,
         "palettes[\"\\u202e\"]",
     ] {
@@ -184,7 +197,7 @@ fn test_the_path_property_resolves_exactly_what_the_input_holds() {
     }
     for path in [
         "nodes[2]",
-        "nodes[1].sections[1]",
+        "nodes[1].sections[2]",
         "nodes.id",
         "palettes.a.b",
         r#"palettes["a.c"]"#,

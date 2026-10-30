@@ -53,7 +53,6 @@ use crate::document::format::{
 use crate::document::ids::Document;
 use crate::document::tests::format_support::same_document;
 use crate::document::values::{FitMode, FontSize, Shape, ZoomWindow};
-use serde_json::Value;
 
 /// Every property of a load of `bytes`, whatever they are: the
 /// load_raw target's whole body.
@@ -175,11 +174,9 @@ pub fn check_refusal(error: &LoadError, bytes: &[u8]) -> Result<(), String> {
     // A text serde_json cannot read as a value (a syntax error, a number
     // out of `f64`'s range, nesting past its limit) has no tree to
     // resolve a path in; the loader's own index is what reads it.
-    let Ok(value) = serde_json::from_str::<Value>(text) else {
+    let Ok(value) = serde_json::from_str::<Spelled>(text) else {
         return Ok(());
     };
-    // A duplicate key's path names the object both are in, which a
-    // `Value` holds once: it resolves either way.
     if !path_resolves(&value, &error.path) {
         return Err(format!("the path of `{error}` does not resolve in the input"));
     }
@@ -263,23 +260,104 @@ pub fn parse_path(path: &str) -> Option<Vec<Step>> {
 
 /// Whether `path` names a value `value` holds; the empty path names the
 /// whole of it.
-pub fn path_resolves(value: &Value, path: &str) -> bool {
+///
+/// A key written twice in one object is followed into both: a refusal
+/// may name a place inside the first, which the reader met before it met
+/// the second (a `serde_json::Value` would hold the last alone, and the
+/// first finding of the load_raw target was this harness saying such a
+/// path did not resolve).
+pub fn path_resolves(value: &Spelled, path: &str) -> bool {
     let Some(steps) = parse_path(path) else {
         return false;
     };
-    let mut at = value;
-    for step in steps {
-        let next = match (&step, at) {
-            (Step::Key(key), Value::Object(map)) => map.get(key),
-            (Step::Index(index), Value::Array(items)) => items.get(*index),
-            _ => None,
-        };
-        match next {
-            Some(inner) => at = inner,
-            None => return false,
+    let mut frontier = vec![value];
+    for step in &steps {
+        let mut next = Vec::new();
+        for at in frontier {
+            match (step, at) {
+                (Step::Key(key), Spelled::Object(members)) => next.extend(
+                    members
+                        .iter()
+                        .filter(|(member, _)| member == key)
+                        .map(|(_, inner)| inner),
+                ),
+                (Step::Index(index), Spelled::Array(items)) => next.extend(items.get(*index)),
+                _ => {}
+            }
         }
+        if next.is_empty() {
+            return false;
+        }
+        frontier = next;
     }
     true
+}
+
+/// A JSON value as its text spells it: an object keeps every member in
+/// order, a key written twice included, and a scalar is only that. What
+/// [`path_resolves`] walks.
+#[derive(Debug)]
+pub enum Spelled {
+    /// An object's members, in text order.
+    Object(Vec<(String, Spelled)>),
+    /// An array's items.
+    Array(Vec<Spelled>),
+    /// A string, number, boolean or `null`.
+    Scalar,
+}
+
+impl<'de> serde::Deserialize<'de> for Spelled {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Reader;
+        impl<'de> serde::de::Visitor<'de> for Reader {
+            type Value = Spelled;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON value")
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<Spelled, E> {
+                Ok(Spelled::Scalar)
+            }
+
+            fn visit_i64<E>(self, _: i64) -> Result<Spelled, E> {
+                Ok(Spelled::Scalar)
+            }
+
+            fn visit_u64<E>(self, _: u64) -> Result<Spelled, E> {
+                Ok(Spelled::Scalar)
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<Spelled, E> {
+                Ok(Spelled::Scalar)
+            }
+
+            fn visit_str<E>(self, _: &str) -> Result<Spelled, E> {
+                Ok(Spelled::Scalar)
+            }
+
+            fn visit_unit<E>(self) -> Result<Spelled, E> {
+                Ok(Spelled::Scalar)
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Spelled, A::Error> {
+                let mut items = Vec::new();
+                while let Some(item) = seq.next_element()? {
+                    items.push(item);
+                }
+                Ok(Spelled::Array(items))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Spelled, A::Error> {
+                let mut members = Vec::new();
+                while let Some(member) = map.next_entry::<String, Spelled>()? {
+                    members.push(member);
+                }
+                Ok(Spelled::Object(members))
+            }
+        }
+        deserializer.deserialize_any(Reader)
+    }
 }
 
 /// The first and last line of each node of `text`, in list order, or
@@ -703,12 +781,23 @@ fn plain(id: i64, parent: Option<i64>) -> NodeSpec {
     }
 }
 
+/// How many rows a dense shape has: up to 64, or — one time in eight,
+/// so that most inputs stay fast — up to `most`. Encoded as two choices,
+/// `7` then the count, for a large one.
+fn rows(choices: &mut crate::util::tests::choices::Choices<'_>, most: u32) -> u32 {
+    if choices.one_in(8) {
+        choices.below(most)
+    } else {
+        choices.below(most.min(64))
+    }
+}
+
 /// The map `choices` describe, no row of it longer than `most`. The
 /// first choice is its shape:
 ///
 /// 0. a random tree of up to 24 nodes, with random content and links;
-/// 1. a chain as deep as the next choice says, every node but the root
-///    linking somewhere (the root, its parent, the bottom);
+/// 1. a chain as deep as the next choices say ([`rows`]), every node
+///    but the root linking somewhere (the root, its parent, the bottom);
 /// 2. a fan: one root and that many children;
 /// 3. one node holding rows of empty sections, of empty rings and of
 ///    portal links to a second node, as many as the next choices say;
@@ -718,7 +807,7 @@ fn plain(id: i64, parent: Option<i64>) -> NodeSpec {
 pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u32) -> MapSpec {
     let mut nodes = match choices.below(5) {
         1 => {
-            let depth = 1 + choices.below(most) as i64;
+            let depth = 1 + rows(choices, most) as i64;
             let target = choices.below(3);
             (1..=depth)
                 .map(|id| {
@@ -737,7 +826,7 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
                 .collect()
         }
         2 => {
-            let width = 1 + choices.below(most) as i64;
+            let width = 1 + rows(choices, most) as i64;
             let mut channel = 0;
             let mut out = vec![plain(1, None)];
             for id in 2..=width {
@@ -752,9 +841,9 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
         3 => {
             let mut dense = plain(1, None);
             let empty = |count: u32| vec!["{}"; count as usize].join(", ");
-            let sections = choices.below(most);
-            let rings = choices.below(most);
-            let portals = choices.below(most);
+            let sections = rows(choices, most);
+            let rings = rows(choices, most);
+            let portals = rows(choices, most);
             dense
                 .content
                 .push(("sections".to_string(), format!("[{}]", empty(sections))));
