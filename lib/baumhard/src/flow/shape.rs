@@ -416,6 +416,10 @@ fn space_measures(attrs: &Attrs<'_>, fs: &mut FontSystem) -> bool {
         .is_some_and(|glyph| glyph.w.is_finite() && glyph.w > 0.0)
 }
 
+/// A face as [`untabbed`] tells faces apart: its family (`None` for the
+/// default), weight and slant.
+type Face<'a> = (Option<&'a str>, u16, bool);
+
 /// Each span's text with its tabs drawn as spaces when its face cannot
 /// measure a tab stop ([`space_measures`]), decided per span and before
 /// shaping (R24.1): `None` keeps the span's own text, tabs and all. The
@@ -434,7 +438,7 @@ fn untabbed(
     if !spans.iter().any(|span| span.text.contains('\t')) {
         return Vec::new();
     }
-    let mut measured: Vec<((Option<&str>, u16, bool), bool)> = Vec::new();
+    let mut measured: Vec<(Face<'_>, bool)> = Vec::new();
     spans
         .iter()
         .enumerate()
