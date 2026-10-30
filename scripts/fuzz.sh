@@ -62,8 +62,10 @@ if ! [[ "$SECONDS_BUDGET" =~ ^[0-9]+$ ]] || [ "$SECONDS_BUDGET" -eq 0 ]; then
 fi
 
 # The longest input each surface is fed. The raw loader's must hold the
-# largest committed seed (a deep chain with a link on every node);
-# a structured input is choices, four bytes each.
+# largest committed seed (a deep chain with a link on every node); a
+# structured input is choices, four bytes each. Every input this script
+# feeds a target fits its ceiling, which
+# `test_every_fuzz_input_fits_its_targets_max_len` holds.
 case "$TARGET" in
   load_raw) MAX_LEN=65536 ;;
   load_structured) MAX_LEN=65536 ;;

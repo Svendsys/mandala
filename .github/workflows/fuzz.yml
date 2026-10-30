@@ -28,21 +28,21 @@ name: fuzz
 
 on:
   pull_request:
+    # Everything a target's build reads: all of baumhard's source (a
+    # surface's code calls into modules no narrower list keeps up with),
+    # its build script (the fonts shaping reads), the manifests and
+    # lockfiles that pick its dependencies, the fuzzing itself, and the
+    # repository's maps, which the loader targets read as seeds.
     paths:
+      - "lib/baumhard/src/**"
+      - "lib/baumhard/build.rs"
+      - "lib/baumhard/Cargo.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "fuzz/**"
       - "scripts/fuzz.sh"
       - ".github/workflows/fuzz.yml"
-      # The surfaces: the loader, TextFlow, the glyph layers and the
-      # engine that applies their mutations, the fonts shaping reads,
-      # and the shared choice source and properties.
-      - "lib/baumhard/src/document/**"
-      - "lib/baumhard/src/flow/**"
-      - "lib/baumhard/src/gfx_structs/**"
-      - "lib/baumhard/src/engine/**"
-      - "lib/baumhard/src/font/**"
-      - "lib/baumhard/src/util/tests/choices.rs"
-      - "lib/baumhard/Cargo.toml"
-      - "Cargo.lock"
+      - "maps/*.mandala.json"
   schedule:
     # Nightly, at an off-peak minute.
     - cron: "17 3 * * *"
@@ -56,6 +56,16 @@ on:
 env:
   SMOKE_SECONDS: "300"
   NIGHTLY_SECONDS: "900"
+
+# The jobs read the repository and write only caches and artifacts.
+permissions:
+  contents: read
+
+# A new push to a pull request cancels that pull request's runs still
+# going; a nightly or dispatched run is never cancelled.
+concurrency:
+  group: fuzz-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fuzz:
@@ -80,17 +90,25 @@ jobs:
 
       - name: Choose the budget
         id: budget
+        # Every value reaches the shell through `env:`, never spliced
+        # into the script: a dispatched budget is free text, and is
+        # refused unless it is a positive whole number.
         env:
           EVENT: ${{ github.event_name }}
           DISPATCHED: ${{ github.event.inputs.seconds }}
+          TARGET: ${{ matrix.target }}
         run: |
           case "$EVENT" in
             pull_request) seconds="$SMOKE_SECONDS" ;;
             schedule) seconds="$NIGHTLY_SECONDS" ;;
             *) seconds="${DISPATCHED:-$NIGHTLY_SECONDS}" ;;
           esac
+          if ! [[ "$seconds" =~ ^[1-9][0-9]*$ ]]; then
+            echo "The budget must be a positive whole number of seconds." >&2
+            exit 1
+          fi
           echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
-          echo "Fuzzing ${{ matrix.target }} for $seconds seconds ($EVENT)."
+          echo "Fuzzing $TARGET for $seconds seconds ($EVENT)."
 
       # No toolchain action: `fuzz/rust-toolchain.toml` names the nightly,
       # and a bare `rustup toolchain install` in that directory reads it.
@@ -118,11 +136,23 @@ jobs:
       - name: Put cargo-fuzz on the path
         run: echo "$HOME/.cargo-fuzz/bin" >> "$GITHUB_PATH"
 
+      # One build cache for every target: their dependencies, baumhard
+      # among them, are built alike, so one entry saves it and all six
+      # restore it. The saving entry builds every target first, so the
+      # cache holds each one's binary too.
       - name: Cache the fuzz build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz -> target
-          key: ${{ matrix.target }}
+          shared-key: fuzz
+          save-if: ${{ matrix.target == 'load_raw' }}
+
+      - name: Build every target (the entry that saves the build cache)
+        if: matrix.target == 'load_raw'
+        working-directory: fuzz
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: cargo fuzz build
 
       # Every run starts from the newest corpus a nightly run saved for
       # this target; a pull request reads it and never writes it.
@@ -134,7 +164,10 @@ jobs:
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Fuzz
-        run: scripts/fuzz.sh "${{ matrix.target }}" "${{ steps.budget.outputs.seconds }}"
+        env:
+          TARGET: ${{ matrix.target }}
+          BUDGET: ${{ steps.budget.outputs.seconds }}
+        run: scripts/fuzz.sh "$TARGET" "$BUDGET"
 
       - name: Upload the finding
         if: failure()
@@ -148,7 +181,9 @@ jobs:
       - name: Minimize the corpus
         if: success() && github.event_name != 'pull_request'
         working-directory: fuzz
-        run: cargo fuzz cmin "${{ matrix.target }}" "corpus/${{ matrix.target }}"
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz cmin "$TARGET" "corpus/$TARGET"
 
       - name: Save the corpus
         if: success() && github.event_name != 'pull_request'
