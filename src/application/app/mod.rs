@@ -1364,4 +1364,7 @@ mod gpu_harness;
 mod tests_gpu;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_demo_maps;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_glyph_runs;
