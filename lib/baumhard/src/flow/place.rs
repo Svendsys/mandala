@@ -672,7 +672,12 @@ fn solve_gap(walk: &PathWalk<'_>, clusters: &[Cluster], length: f32, guess: f32)
     let mut probe = guess.max(f32::EPSILON);
     for _ in 0..SOLVE_ROUNDS {
         let probe_miss = miss(probe);
-        if probe_miss >= 0.0 {
+        // A miss that is not a number overshoots: the walk ran past every
+        // `f32` (a gap that large on a path near the largest one), so it
+        // is no fitting low side. Taken as one, the doubling ran on to an
+        // infinite gap and placed every cluster after the first at `NaN`
+        // (a CI smoke finding of #293).
+        if probe_miss.is_nan() || probe_miss >= 0.0 {
             high = Some((probe, probe_miss));
             break;
         }

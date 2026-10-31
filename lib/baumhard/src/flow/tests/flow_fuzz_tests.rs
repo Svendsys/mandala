@@ -10,7 +10,9 @@ use glam::Vec2;
 use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::document::values::{FontSize, Rgba, Weight};
-use crate::flow::tests::flow_fuzz::{check_box, check_flow_bytes, check_flow_generated, check_run};
+use crate::flow::tests::flow_fuzz::{
+    check_box, check_flow_bytes, check_flow_generated, check_flow_structured, check_placement, check_run,
+};
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{shape_box, shape_run, FlowSpan, PlacedGlyph, PlacedRun, FILLER_SPAN};
 use crate::font::fonts::AppFont;
@@ -309,22 +311,28 @@ fn test_a_measurable_tab_keeps_its_stop_beside_one_that_cannot_be_measured() {
     );
 }
 
-/// R24.2: a tab the up-front decision lets through — the case of a tab
-/// shaped in a fallback face, which the span's primary face cannot
-/// predict — is caught after shaping and laid out again as a space: on
-/// its own line in a box, so the line that came out finite keeps its tab
-/// stop, and throughout a run. No `NaN` reaches placement.
+/// R24.2: a tab the up-front decision lets through — a tab shaped in a
+/// fallback face, which the span's primary face cannot predict — whose
+/// layout is not finite is caught after shaping and laid out again as a
+/// space: on its own line in a box, so the line that came out finite
+/// keeps its tab stop, and throughout a run. No `NaN` reaches placement.
 ///
-/// No bundled face shapes a tab non-finite in fallback alone, so the
-/// test drives the guard through a hook: `TRUST_EVERY_FACE` makes the
-/// up-front check pass SilhousTwo, whose space has no width, and
-/// cosmic-text lays its tab out as `0 / 0` for real. `TABS_RELAID`
-/// shows the guard, not the up-front check, did the repair.
+/// The test drives the check through a hook, `TABS_NOT_FINITE_IN`, which
+/// makes it count every tab laid out in one face (Novem, whose tab stops
+/// are finite) as not finite, so the guard runs the same way on every
+/// machine. (Its first version relied on cosmic-text laying SilhousTwo's
+/// tab out as `0 / 0` once the up-front check was told to pass it; that
+/// held on one machine and not on CI's runner, so the test went red there
+/// with the guard never reached.) `TABS_RELAID` shows that the guard, not
+/// the up-front check, did the work.
 #[test]
 fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
-    use crate::flow::shape::{TABS_RELAID, TRUST_EVERY_FACE};
+    use crate::flow::shape::{failing_lines, TABS_NOT_FINITE_IN, TABS_RELAID};
     let plain = style(16.0);
-    let face = zero_width_space_style();
+    let other = ResolvedText {
+        font: AppFont::Novem,
+        ..style(16.0)
+    };
     let first_on = |shaped: &crate::flow::ShapedBox, line: usize| {
         shaped
             .buffer
@@ -332,29 +340,8 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
             .find(|run| run.line_i == line)
             .and_then(|run| run.glyphs.first().map(|glyph| glyph.w))
     };
-    let all_finite = |shaped: &crate::flow::ShapedBox| {
-        shaped.buffer.layout_runs().all(|run| {
-            run.line_w.is_finite()
-                && run
-                    .glyphs
-                    .iter()
-                    .all(|glyph| glyph.w.is_finite() && glyph.x.is_finite())
-        })
-    };
-    let (box_alone, box_mixed, run, relaid) = with_fonts(|fs| {
-        let box_alone = shape_box(
-            &[FlowSpan {
-                text: "\tx",
-                style: &plain,
-                link: None,
-            }],
-            None,
-            Align::Left,
-            fs,
-        );
-        TRUST_EVERY_FACE.with(|trust| trust.set(true));
-        let before = TABS_RELAID.with(std::cell::Cell::get);
-        let box_mixed = shape_box(
+    let mixed_box = |fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+        shape_box(
             &[
                 FlowSpan {
                     text: "\tx\n",
@@ -363,15 +350,17 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
                 },
                 FlowSpan {
                     text: "\ty",
-                    style: &face,
+                    style: &other,
                     link: None,
                 },
             ],
             None,
             Align::Left,
             fs,
-        );
-        let run = shape_run(
+        )
+    };
+    let mixed_run = |fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+        shape_run(
             &[
                 FlowSpan {
                     text: "a\tb",
@@ -380,44 +369,96 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
                 },
                 FlowSpan {
                     text: "\tc",
-                    style: &face,
+                    style: &other,
                     link: None,
                 },
             ],
             1.0,
             fs,
+        )
+    };
+    let (unhooked_box, unhooked_run, hooked_box, hooked_run, relaid, still_failing) = with_fonts(|fs| {
+        let unhooked_box = mixed_box(fs);
+        let unhooked_run = mixed_run(fs);
+        TABS_NOT_FINITE_IN.with(|face| face.set(Some(AppFont::Novem)));
+        let before = TABS_RELAID.with(std::cell::Cell::get);
+        let hooked_box = mixed_box(fs);
+        let hooked_run = mixed_run(fs);
+        // Read back through the hook while it is set: what the check sees.
+        let still_failing = (
+            failing_lines(&hooked_box.buffer),
+            failing_lines(&hooked_run.buffer),
         );
-        TRUST_EVERY_FACE.with(|trust| trust.set(false));
+        TABS_NOT_FINITE_IN.with(|face| face.set(None));
         let relaid = TABS_RELAID.with(std::cell::Cell::get) - before;
-        (box_alone, box_mixed, run, relaid)
+        (
+            unhooked_box,
+            unhooked_run,
+            hooked_box,
+            hooked_run,
+            relaid,
+            still_failing,
+        )
     });
-    assert_eq!(
-        relaid, 2,
-        "precondition: the up-front check let both tabs through and the guard laid both flows out again"
-    );
-    assert!(all_finite(&box_mixed), "the box is laid out finite");
-    let line_0 = first_on(&box_alone, 0).expect("precondition: the box lays out its tab");
-    assert_eq!(
-        first_on(&box_mixed, 0),
-        Some(line_0),
-        "the line that came out finite keeps its tab stop"
-    );
-    let space = with_fonts(|fs| real_run(" ", &face, fs)).glyphs[0].advance;
-    assert_eq!(
-        first_on(&box_mixed, 1),
-        Some(space),
-        "the failing line's tab is drawn as the face's space"
+    let (plain_space, other_space) = with_fonts(|fs| {
+        (
+            real_run(" ", &plain, fs).glyphs[0].advance,
+            real_run(" ", &other, fs).glyphs[0].advance,
+        )
+    });
+    // Preconditions: both faces measure their stops, so the up-front check
+    // passes both tabs, and without the hook each is a stop wider than a
+    // space; with it, the guard laid both flows out again.
+    let unhooked_1 = first_on(&unhooked_box, 1).expect("precondition: the box lays out line 1");
+    assert!(
+        unhooked_1 > 1.5 * other_space && other_space > 0.0,
+        "precondition: Novem's tab reaches a stop ({unhooked_1} against a space of {other_space})"
     );
     assert!(
-        run.glyphs
-            .iter()
-            .all(|glyph| glyph.advance.is_finite() && glyph.x.is_finite()),
-        "the run is laid out finite: {:?}",
-        run.glyphs
-            .iter()
-            .map(|glyph| (glyph.advance, glyph.x))
-            .collect::<Vec<_>>()
+        unhooked_run.glyphs[1].advance > 1.5 * plain_space,
+        "precondition: the run's first tab reaches a stop"
     );
+    assert_eq!(relaid, 2, "precondition: the guard laid both flows out again");
+    // The check finds nothing left to fail.
+    assert_eq!(
+        still_failing,
+        (Vec::new(), Vec::new()),
+        "after the guard, no line of the box or the run still fails the check"
+    );
+    // A box: the failing line's tab is a space; the other keeps its stop.
+    assert_eq!(
+        first_on(&hooked_box, 0),
+        first_on(&unhooked_box, 0),
+        "the line that came out finite keeps its tab stop"
+    );
+    assert_eq!(
+        first_on(&hooked_box, 1),
+        Some(other_space),
+        "the failing line's tab is drawn as its face's space"
+    );
+    // A run: laid out again whole, every tab a space.
+    assert_eq!(
+        hooked_run.glyphs[1].advance, plain_space,
+        "the run is laid out again whole: its first tab is a space too"
+    );
+    if let Err(why) = check_box(
+        &[
+            FlowSpan {
+                text: "\tx\n",
+                style: &plain,
+                link: None,
+            },
+            FlowSpan {
+                text: "\ty",
+                style: &other,
+                link: None,
+            },
+        ],
+        &hooked_box,
+        None,
+    ) {
+        panic!("the box holds every flow property: {why}");
+    }
     if let Err(why) = check_run(
         &[
             FlowSpan {
@@ -427,13 +468,62 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
             },
             FlowSpan {
                 text: "\tc",
-                style: &face,
+                style: &other,
                 link: None,
             },
         ],
-        &run,
+        &hooked_run,
         "the run",
     ) {
         panic!("the run holds every flow property: {why}");
+    }
+}
+
+/// The flow_structured smoke's finding on #293 (CI run 41146219501): a
+/// `Spread` — and a `Fit` whose window holds the scale at 1, which
+/// spreads too — around an outline whose perimeter is near the largest
+/// `f32` placed every cluster after the first at `NaN`. The gap that
+/// fills such a path walks past every `f32` when the solver doubles its
+/// guess; `solve_gap` took that `NaN` miss for a fitting low side, kept
+/// doubling to an infinite gap, and the walk answered `NaN` from there.
+/// A miss that is not a number now overshoots. The input as the fuzzer
+/// found it is replayed beside the case it comes down to.
+#[test]
+fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finite() {
+    use crate::document::values::{Direction, Edge, FitMode, StartPoint};
+    use crate::flow::{place_on_closed, Outline, Rect};
+    let found = include_bytes!("fuzz_findings/spread_gap_past_the_largest_f32");
+    if let Err(why) = check_flow_structured(found) {
+        panic!("the fuzzer's input: {why}");
+    }
+    let plain = style(16.0);
+    // The outline the input drew: a rounded rectangle 1.78e38 on a side,
+    // its perimeter 2.8e38, finite.
+    let path = Outline::RoundedRect {
+        rect: Rect::new(Vec2::splat(-8.908107e37), Vec2::splat(1.7816215e38)),
+        radius: 8.908107e37,
+    };
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.518,
+    };
+    for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
+        for direction in [Direction::Clockwise, Direction::CounterClockwise] {
+            let placed = with_fonts(|fs| {
+                let run = real_run("abc", &plain, fs);
+                let (replaced, placed) =
+                    place_on_closed(&run, &path, start, direction, &fit, false, &plain, fs);
+                (replaced.unwrap_or(run), placed)
+            });
+            let (run, placed) = placed;
+            assert!(
+                placed.glyphs.len() == 3,
+                "precondition: {fit:?} {direction:?} places all three glyphs ({})",
+                placed.glyphs.len()
+            );
+            if let Err(why) = check_placement(&run, &placed, "around the outline") {
+                panic!("{fit:?} {direction:?}: {why}");
+            }
+        }
     }
 }

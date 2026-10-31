@@ -433,15 +433,36 @@ fn new_buffer(
 
 #[cfg(test)]
 thread_local! {
-    /// Test hook (R24.2): while set on a thread, [`space_measures`]
-    /// passes every face, so a tab in a face that cannot measure its stop
-    /// reaches cosmic-text, as one in a fallback face would, and only the
-    /// last-resort check in [`new_buffer`] stands between its `NaN` and
-    /// placement.
-    pub(crate) static TRUST_EVERY_FACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test hook (R24.2): while it names a face on a thread, the
+    /// last-resort check ([`non_finite_lines`]) counts every tab glyph
+    /// laid out in that face as a width that is not finite — what a
+    /// fallback face's `0 / 0` tab stop is. So the check, and the second
+    /// layout it leads to, are driven the same way on every machine,
+    /// whatever its font set makes of a real face's tab.
+    pub(crate) static TABS_NOT_FINITE_IN: std::cell::Cell<Option<AppFont>> =
+        const { std::cell::Cell::new(None) };
     /// Test counter (R24.2): how many times [`new_buffer`] has laid text
     /// out again with its tabs as spaces on this thread.
     pub(crate) static TABS_RELAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The lines of `buffer` the last-resort check finds failing: what a test
+/// of the check reads back.
+#[cfg(test)]
+pub(crate) fn failing_lines(buffer: &Buffer) -> Vec<usize> {
+    non_finite_lines(buffer)
+}
+
+/// Whether the test hook [`TABS_NOT_FINITE_IN`] counts `glyph`, laid out
+/// on a line of text `line`, as not finite: a tab in the face it names.
+#[cfg(test)]
+fn hooked_tab(line: &str, glyph: &LayoutGlyph) -> bool {
+    TABS_NOT_FINITE_IN.with(std::cell::Cell::get).is_some_and(|font| {
+        line.get(glyph.start..glyph.end) == Some("\t")
+            && crate::font::fonts::COMPILED_FONT_ID_MAP
+                .get(&font)
+                .is_some_and(|ids| ids.contains(&glyph.font_id))
+    })
 }
 
 /// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
@@ -466,10 +487,6 @@ fn filled_buffer(
 ///
 /// Cost: one shaping of one character.
 fn space_measures(attrs: &Attrs<'_>, fs: &mut FontSystem) -> bool {
-    #[cfg(test)]
-    if TRUST_EVERY_FACE.with(std::cell::Cell::get) {
-        return true;
-    }
     let metrics = metrics_of(attrs);
     let size = metrics.font_size.max(MIN_FONT_SIZE_PT);
     let metrics = Metrics::new(size, size * LINE_HEIGHT_FACTOR);
@@ -547,10 +564,13 @@ fn non_finite_lines(buffer: &Buffer) -> Vec<usize> {
         .layout_runs()
         .filter(|run| {
             !run.line_w.is_finite()
-                || run
-                    .glyphs
-                    .iter()
-                    .any(|glyph| !glyph.w.is_finite() || !glyph.x.is_finite())
+                || run.glyphs.iter().any(|glyph| {
+                    #[cfg(test)]
+                    if hooked_tab(run.text, glyph) {
+                        return true;
+                    }
+                    !glyph.w.is_finite() || !glyph.x.is_finite()
+                })
         })
         .map(|run| run.line_i)
         .collect();
