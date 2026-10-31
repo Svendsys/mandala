@@ -1396,15 +1396,15 @@ const POINTS_COUNT: Bounded = Bounded::Count {
     item: "[0.0, 0.0]",
 };
 
-/// Every bounded field of a node, a section, a span, a frame and its
-/// rings, a connector, its caps and its label, a line link and a portal
-/// link's ends, and of each style of the header's `defaults`: each
+/// Every bounded field of a node, a section, a span (under each kind of
+/// parent, whose unit it reads), a frame and its rings, a connector, its
+/// caps and its label, a line link and a portal link's ends, and of each style of the header's `defaults`: each
 /// number of `format/schema.md`'s bounds table a map can hold below its
 /// header's counts (the ids, parents, channels and link targets are the
 /// structure's, which `corrupt` drives; the counts of palettes, theme
 /// variables and variants, verbs, edits and presentations are left to
 /// load_raw).
-pub static BOUNDED_FIELDS: [BoundedField; 81] = [
+pub static BOUNDED_FIELDS: [BoundedField; 93] = [
     BoundedField {
         name: "position x",
         needs: Needs::Nothing,
@@ -1747,6 +1747,70 @@ pub static BOUNDED_FIELDS: [BoundedField; 81] = [
         value: WEIGHT,
     },
     BoundedField {
+        name: "connector span size",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"spans": [{"text": "a", "size": #}]}"#,
+        path: ".connector.spans[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "connector span weight",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"spans": [{"text": "a", "weight": #}]}"#,
+        path: ".connector.spans[0].weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "cap_start span size",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_start": {"spans": [{"text": "a", "size": #}]}}"#,
+        path: ".connector.cap_start.spans[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "cap_start span weight",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_start": {"spans": [{"text": "a", "weight": #}]}}"#,
+        path: ".connector.cap_start.spans[0].weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "cap_end span size",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_end": {"spans": [{"text": "a", "size": #}]}}"#,
+        path: ".connector.cap_end.spans[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "cap_end span weight",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"cap_end": {"spans": [{"text": "a", "weight": #}]}}"#,
+        path: ".connector.cap_end.spans[0].weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "label span size",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"label": {"spans": [{"text": "a", "size": #}]}}"#,
+        path: ".connector.label.spans[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "label span weight",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r#"{"label": {"spans": [{"text": "a", "weight": #}]}}"#,
+        path: ".connector.label.spans[0].weight",
+        value: WEIGHT,
+    },
+    BoundedField {
         name: "link spacing",
         needs: Needs::Other,
         key: "",
@@ -1817,6 +1881,38 @@ pub static BOUNDED_FIELDS: [BoundedField; 81] = [
         template: r#", "kind": "portal", "ends": [{"size": #}, {}]"#,
         path: ".ends[0].size",
         value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "link span size",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "spans": [{"text": "a", "size": #}]"#,
+        path: ".spans[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "link span weight",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "spans": [{"text": "a", "weight": #}]"#,
+        path: ".spans[0].weight",
+        value: WEIGHT,
+    },
+    BoundedField {
+        name: "portal end span size",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "kind": "portal", "ends": [{"spans": [{"text": "a", "size": #}]}, {}]"#,
+        path: ".ends[0].spans[0].size",
+        value: float(POINTS, points),
+    },
+    BoundedField {
+        name: "portal end span weight",
+        needs: Needs::Other,
+        key: "",
+        template: r#", "kind": "portal", "ends": [{"spans": [{"text": "a", "weight": #}]}, {}]"#,
+        path: ".ends[0].spans[0].weight",
+        value: WEIGHT,
     },
     BoundedField {
         name: "defaults node fill_fade",

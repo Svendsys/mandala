@@ -761,8 +761,9 @@ by hand with `choices::encode`, or taken from a sweep with
 **Seeds.** `fuzz/seeds/<target>/` is the committed seed corpus: deep
 chains with a link on every node, wide fans, dense rows (empty
 sections, empty rings, portal links), one input per refusal the
-reference model names, one per bounded field written inside its bound
-(a choice from the value just past it), the authored mutation spellings of
+reference model names, two per bounded field — one inside its bound
+(a choice from the value just past it) and one past it, so a dropped
+check fails on the seed itself — the authored mutation spellings of
 `format/mutations.md` with hostile values, hostile strings. The run
 script adds each surface's fixtures and findings where they live (the
 format's fixtures, `maps/*.mandala.json`, the `fuzz_findings`
@@ -797,8 +798,8 @@ performance number.
 1. Minimize it: from `fuzz/`, `cargo fuzz tmin <target> <artifact>` —
    or by hand, to the smallest input that still shows the symptom.
 2. Commit it beside its surface's other findings
-   (`lib/baumhard/src/document/tests/fuzz_findings/`, and the
-   `gfx_structs` one), named after the symptom, or inline it in the
+   (`lib/baumhard/src/document/tests/fuzz_findings/`, and the `flow`
+   and `gfx_structs` ones), named after the symptom, or inline it in the
    test when it is a few characters.
 3. Write the stable test that replays it and pins the symptom, in the
    surface's fuzz test module, and add the file to that module's list of

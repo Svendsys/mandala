@@ -108,6 +108,7 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     let seeds = files(&repo_path("fuzz/seeds/load_structured"));
     let mut named = 0;
     let mut bounded_seeds: BTreeSet<String> = BTreeSet::new();
+    let mut past_seeds: BTreeSet<String> = BTreeSet::new();
     for (name, bytes) in &seeds {
         if let Some(outcome) = name.strip_prefix("outcome_") {
             let got = format_fuzz::check_generated(&mut Choices::new(bytes), MAX_GENERATED_ROWS).unwrap();
@@ -139,6 +140,15 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                         .any(|(key, value)| key == "frame" && value.matches("{}").count() >= 3000)
             }
             "random_tree_1024" => nodes.len() == 1024,
+            // A bounded field written past its bound, refused as `Bound`
+            // at its path, so a dropped check fails on the seed itself.
+            n if n.starts_with("bounded_") && n.ends_with("_past") => {
+                let field = n["bounded_".len()..n.len() - "_past".len()].replace('_', " ");
+                let named_field = spec.bounded.map(|name| name.replace('_', " "));
+                past_seeds.insert(field.clone());
+                named_field.as_deref() == Some(field.as_str())
+                    && matches!(spec.fault, format_fuzz::Fault::Content { kind: "Bound", .. })
+            }
             // A bounded field written inside its bound: one choice from
             // the value just past it.
             n if n.starts_with("bounded_") => {
@@ -161,6 +171,10 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     assert_eq!(
         bounded_seeds, fields,
         "a seed for every bounded field, and no other"
+    );
+    assert_eq!(
+        past_seeds, fields,
+        "a past-bound seed for every bounded field, and no other"
     );
 }
 
