@@ -16,6 +16,3 @@ pub mod place_tests;
 pub mod shape_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;
-/// TEMPORARY CI-only font probe (review of #293); reverted before merge.
-#[cfg(test)]
-mod zz_ci_font_probe;
