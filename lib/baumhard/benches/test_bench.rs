@@ -1288,6 +1288,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("measure_glyph_ink_bounds_latin_has_positive_advance", |b| {
         b.iter(do_measure_glyph_ink_bounds_latin_has_positive_advance)
     });
+    c.bench_function("outline_bounds_follows_the_curve", |b| {
+        b.iter(do_outline_bounds_follows_the_curve)
+    });
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
         b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
     });
@@ -2029,6 +2032,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_fit_fills_a_line_exactly", |b| {
         b.iter(do_flow_fit_fills_a_line_exactly)
     });
+    c.bench_function("flow_fit_fills_a_steep_line_with_an_ornament", |b| {
+        b.iter(do_flow_fit_fills_a_steep_line_with_an_ornament)
+    });
     c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
         b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
     });
@@ -2130,6 +2136,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_shape_run_marks_letters", |b| {
         b.iter(do_flow_shape_run_marks_letters)
+    });
+    c.bench_function("flow_shape_run_measures_an_ornaments_ink", |b| {
+        b.iter(do_flow_shape_run_measures_an_ornaments_ink)
     });
     c.bench_function("flow_shape_run_of_nothing", |b| {
         b.iter(do_flow_shape_run_of_nothing)
@@ -2238,6 +2247,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_readable_a_repeat_ring_closes_evenly", |b| {
         b.iter(do_flow_readable_a_repeat_ring_closes_evenly)
+    });
+    c.bench_function("flow_readable_an_ornament_ring_is_evenly_inked", |b| {
+        b.iter(do_flow_readable_an_ornament_ring_is_evenly_inked)
     });
     // a text frame in two lines (#291, ruling R27) //
     c.bench_function("flow_lines_balance_a_sentence", |b| {

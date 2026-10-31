@@ -25,6 +25,22 @@
 //! box at its pen position from the shaped line, so a mark never leaves
 //! its base. The next cluster starts a step (plus any spacing) later.
 //!
+//! **An ornament steps by its ink** (#291, ruling R31). A flow with no
+//! letter or digit — `✦ · `, `·:·`, `~` — has nothing to read in a line
+//! height, and a line-high box would part its glyphs further wherever
+//! the path runs steep than where it runs level. Its glyphs are boxed by
+//! their ink instead ([`GlyphMetrics::ink`]): a glyph's step is its ink
+//! box's extent along the chord plus its side bearings, `advance − ink
+//! width`, which do not turn with the path, and its ink box is centered
+//! on the path its left bearing into the step (pushed outward on a
+//! closed path by the support of the ellipse its ink box bounds). A
+//! space has no ink and steps its advance. Each glyph after the first is
+//! then set where its ink box is as far from the last one's as a line
+//! would set them, which is where its step put it where the path runs
+//! straight, and not where it turns: round a corner, and across a
+//! ring's seam. So two glyphs' inks are as far apart wherever the path
+//! runs — as far as the font sets them on a line, plus the spacing.
+//!
 //! **Cuts keep the start of the text as it is read** (ruling R9.4). When
 //! text is longer than its path, what is kept is the longest prefix in
 //! reading order — the order of the text, which for right-to-left and
@@ -93,6 +109,7 @@
 //! `Once` with a filler, which appends the filler; both return the run
 //! their placement refers to (ruling R6).
 
+use std::cmp::Ordering;
 use std::ops::Range;
 
 use glam::Vec2;
@@ -102,7 +119,7 @@ use crate::document::values::{Direction, FitMode, StartPoint};
 use crate::flow::curve::Curve;
 use crate::flow::outline::Outline;
 use crate::flow::path::ArcPath;
-use crate::flow::shape::{reshape, GlyphMetrics, ShapedRun, FILLER_SPAN};
+use crate::flow::shape::{reshape, GlyphMetrics, Ink, ShapedRun, FILLER_SPAN};
 use crate::flow::span::{point_size, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{clamp_font_metric, FontSystemWriteGuard, MIN_FONT_SIZE_PT};
 use crate::font::FontSystem;
@@ -131,9 +148,30 @@ pub(crate) fn box_step(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, Vec2) {
         limit: path.length(),
         level: false,
         ornament: false,
+        baseline: 0.0,
     };
     walk.step(s, w, h)
 }
+
+/// The rounds of bisection [`PathWalk::ink_distance_at`] takes to set an
+/// ornament's glyph its distance from the last: a bracket some points
+/// long closes to a few millionths of a point.
+const INK_ROUNDS: usize = 24;
+
+/// The most strides [`PathWalk::ink_distance_at`] takes past where it
+/// first tries to set a glyph, looking for where its ink is far enough
+/// from the last: a path that bends back on itself further than that is
+/// not followed, and the glyph is set where the last stride ended.
+const INK_STRIDES: usize = 64;
+
+/// The rounds [`PathWalk::ink_gap_at`] takes to bring the gap between two
+/// inks to what is owed, each solving the distance between their centers
+/// that leaves the gap the last round's left.
+const INK_TURNS: usize = 4;
+
+/// How near the gap the box rule leaves between two inks must be to the
+/// gap owed for [`PathWalk::ink_gap_at`] to keep it, in points.
+const INK_TOLERANCE: f32 = 1e-3;
 
 /// The rounds of Newton's method [`PathWalk::level_len`] takes.
 const LEVEL_ROUNDS: usize = 4;
@@ -188,6 +226,8 @@ pub struct PlacedGlyph {
     /// The glyph is drawn upright in it, its baseline
     /// [`ShapedRun::baseline`] below this corner. Glyphs of one grapheme
     /// cluster share the cluster's box, each at its pen position in it.
+    /// (An ornament's box is placed by its ink, ruling R31: the box is
+    /// where that puts it, not centered on the path.)
     pub pos: Vec2,
 }
 
@@ -242,6 +282,39 @@ struct Cluster {
     /// Whether it is the space laid for a line break
     /// ([`GlyphMetrics::line_break`]).
     line_break: bool,
+    /// Its glyphs' ink as one box, in its box's coordinates: `x` from
+    /// its left edge, `y` from the baseline ([`cluster_ink`]). `None`
+    /// where no glyph has any measured (text; a space).
+    ink: Option<Ink>,
+}
+
+/// The ink of `cluster`'s glyphs as one box, in the cluster's box
+/// coordinates — `x` from its left edge, `y` from the baseline — with
+/// each glyph `factor(glyph)` times the size it was shaped at: its ink
+/// scaled by that about its pen, and its pen's distance into the box
+/// too, as a reshape would set it. `None` where no glyph has ink
+/// ([`GlyphMetrics::ink`]).
+///
+/// Cost: O(the cluster's glyphs).
+fn cluster_ink(
+    glyphs: &[GlyphMetrics],
+    cluster: &Cluster,
+    factor: impl Fn(&GlyphMetrics) -> f32,
+) -> Option<Ink> {
+    glyphs[cluster.glyphs.clone()]
+        .iter()
+        .filter_map(|glyph| {
+            let f = factor(glyph);
+            let pen = Vec2::new((glyph.x - cluster.left) * f, 0.0);
+            glyph.ink.map(|ink| Ink {
+                min: pen + ink.min * f,
+                max: pen + ink.max * f,
+            })
+        })
+        .reduce(|a, b| Ink {
+            min: a.min.min(b.min),
+            max: a.max.max(b.max),
+        })
 }
 
 /// The clusters of `glyphs[range]`, in visual order: a cluster begins
@@ -271,10 +344,45 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
                 blank: glyph.blank,
                 letter: glyph.letter,
                 line_break: glyph.line_break,
+                ink: None,
             }),
         }
     }
+    for cluster in &mut clusters {
+        cluster.ink = cluster_ink(glyphs, cluster, |_| 1.0);
+    }
     clusters
+}
+
+/// How far, and which way, the center of an ellipse of semi-axes `half`
+/// lies from where it touches, from outside, a line whose outward normal
+/// is `normal` (a unit vector): the ellipse's support point along
+/// `normal`. On an axis it is the semi-axis, as a box's half-extent would
+/// be; between, it turns with the normal, never further out along an
+/// axis than the box — so a center pushed by it off a convex outline
+/// traces a convex path round a sharp corner, where a box's own reach
+/// would swing it out past its side and back.
+fn support(normal: Vec2, half: Vec2) -> Vec2 {
+    let stretched = normal * half * half;
+    let reach = (normal * half).length();
+    if reach > 0.0 {
+        stretched / reach
+    } else {
+        Vec2::ZERO
+    }
+}
+
+/// What a cluster takes up of the path: what its step, and where it is
+/// set, are measured from.
+#[derive(Copy, Clone, Debug)]
+enum Body {
+    /// Its `w × h` box: its advance by the line height (#239 §5, ruling
+    /// R9.2).
+    Boxed { w: f32, h: f32 },
+    /// An ornament's glyph, by its ink (ruling R31): its advance, and its
+    /// ink box in its box's coordinates. A space's ink is a point at its
+    /// middle on the baseline.
+    Inked { advance: f32, ink: Ink },
 }
 
 /// One cluster as the walk laid it: what the readable rule (#291)
@@ -301,11 +409,22 @@ struct Stepped {
     letter: bool,
 }
 
-/// A placement being built: the glyphs, and the step each cluster took.
+/// A placement being built: the glyphs, the step each cluster took, and
+/// what an ornament's walk remembers of the ink it set last.
 #[derive(Default)]
 struct Laying {
     glyphs: Vec<PlacedGlyph>,
     steps: Vec<Stepped>,
+    trail: Trail,
+}
+
+/// How much of a [`Laying`] has been laid, to
+/// [`truncate`](Laying::truncate) back to.
+#[derive(Copy, Clone)]
+struct Mark {
+    glyphs: usize,
+    steps: usize,
+    trail: Trail,
 }
 
 impl Laying {
@@ -313,18 +432,52 @@ impl Laying {
         Laying {
             glyphs: Vec::with_capacity(glyphs),
             steps: Vec::new(),
+            trail: Trail::default(),
         }
     }
 
     /// How much has been laid, to [`truncate`](Self::truncate) back to.
-    fn mark(&self) -> (usize, usize) {
-        (self.glyphs.len(), self.steps.len())
+    fn mark(&self) -> Mark {
+        Mark {
+            glyphs: self.glyphs.len(),
+            steps: self.steps.len(),
+            trail: self.trail,
+        }
     }
 
-    fn truncate(&mut self, (glyphs, steps): (usize, usize)) {
-        self.glyphs.truncate(glyphs);
-        self.steps.truncate(steps);
+    fn truncate(&mut self, mark: Mark) {
+        self.glyphs.truncate(mark.glyphs);
+        self.steps.truncate(mark.steps);
+        self.trail = mark.trail;
     }
+}
+
+/// What an ornament's walk remembers of the ink it set last (ruling R31):
+/// where the next glyph's ink must keep from.
+#[derive(Copy, Clone, Debug, Default)]
+struct Trail {
+    /// The last glyph's ink on the canvas — its center, and half its
+    /// size — and where along the path its center was set. `None` before
+    /// the first.
+    last: Option<(Vec2, Vec2, f32)>,
+    /// How far the next glyph's ink is owed from it, but for the next
+    /// glyph's own left bearing: as far as a line would set them — its
+    /// right bearing, every space's advance and every gap between steps
+    /// since.
+    owed: f32,
+}
+
+/// Where a cluster was walked to ([`PathWalk::advance`]).
+#[derive(Copy, Clone, Debug)]
+struct Taken {
+    /// Where its step starts along the path, and the step's length.
+    s: f32,
+    step: f32,
+    /// The direction the step was taken in: its chord.
+    dir: Vec2,
+    /// For an ornament's cluster, where along the path its ink's center
+    /// is set.
+    center: Option<f32>,
 }
 
 /// Which way a stretch of the path runs, by the direction θ of its steps
@@ -429,10 +582,14 @@ struct PathWalk<'p> {
     /// ([`step`](Self::step)).
     level: bool,
     /// Whether the flow is an ornament, with no letter or digit
-    /// ([`GlyphMetrics::letter`]): its spaces are then boxes as tall as
-    /// they are wide ([`height`](Self::height)), so a ring's rhythm holds
-    /// where the outline turns steep (ruling R29).
+    /// ([`GlyphMetrics::letter`]): its glyphs then step by their ink, and
+    /// its spaces by their advance ([`body`](Self::body), ruling R31), so
+    /// a ring's rhythm holds where the outline turns steep. Not on a
+    /// level walk, whose steps are horizontal advances already.
     ornament: bool,
+    /// Where the run's baseline sits below a box's top
+    /// ([`ShapedRun::baseline`]): where an ornament's ink is in its box.
+    baseline: f32,
 }
 
 impl PathWalk<'_> {
@@ -475,19 +632,230 @@ impl PathWalk<'_> {
         (step, self.chord(s, step))
     }
 
-    /// The height of `cluster`'s box, of a flow whose line height is `h`:
-    /// `h`, but for a space of an ornament, which is its advance (at most
-    /// `h`). A space has no ink to keep apart; boxed a line high it would
-    /// step a whole line wherever the path runs steep, and a glyph-and-
-    /// space ornament would open a gap at every turn of a ring (ruling
-    /// R29). In text a space keeps its line height, which is what parts
-    /// two words stacked on a steep side.
-    fn height(&self, cluster: &Cluster, h: f32) -> f32 {
-        if self.ornament && cluster.blank {
-            cluster.advance.min(h)
-        } else {
-            h
+    /// What a cluster of advance `advance`, ink `ink` (in its box's
+    /// coordinates) and whitespace or not (`blank`) takes up of the path,
+    /// on a walk whose line height is `h`: its `advance × h` box, but for
+    /// an ornament's glyph off a level walk, which is its ink (ruling
+    /// R31) — a space's a point, so it steps its advance. A space has no
+    /// ink to keep apart; boxed a line high it would step a whole line
+    /// wherever the path runs steep, and a glyph-and-space ornament would
+    /// open a gap at every turn of a ring. In text a space keeps its line
+    /// height, which is what parts two words stacked on a steep side. An
+    /// ornament's glyph with no outline to measure is inked as its box.
+    fn body(&self, advance: f32, ink: Option<Ink>, blank: bool, h: f32) -> Body {
+        if !self.ornament || self.level {
+            return Body::Boxed { w: advance, h };
         }
+        if blank {
+            let middle = Vec2::new(advance * 0.5, 0.0);
+            return Body::Inked {
+                advance,
+                ink: Ink {
+                    min: middle,
+                    max: middle,
+                },
+            };
+        }
+        // A glyph with no outline to measure is inked as its box.
+        let ink = ink.unwrap_or(Ink {
+            min: Vec2::new(0.0, -self.baseline),
+            max: Vec2::new(advance, h - self.baseline),
+        });
+        Body::Inked { advance, ink }
+    }
+
+    /// [`body`](Self::body) for `cluster` as shaped.
+    fn body_of(&self, cluster: &Cluster) -> Body {
+        self.body(cluster.advance, cluster.ink, cluster.blank, self.line_height)
+    }
+
+    /// The step `body` takes from `s`, and the direction it is taken in:
+    /// a box's by the box rule ([`step`](Self::step)); an ink box's by
+    /// the same rule on the ink box, plus its side bearings — the advance
+    /// less the ink's width, which do not turn with the path (ruling
+    /// R31). On a level line that is the advance, as shaped. Never
+    /// negative.
+    fn take(&self, s: f32, body: Body) -> (f32, Vec2) {
+        let (advance, ink) = match body {
+            Body::Boxed { w, h } => return self.step(s, w, h),
+            Body::Inked { advance, ink } => (advance, ink),
+        };
+        let size = ink.max - ink.min;
+        let bearings = advance - size.x;
+        let along = |dir: Vec2| {
+            let step = extent(dir, size.x, size.y) + bearings;
+            if step > 0.0 {
+                step
+            } else {
+                0.0
+            }
+        };
+        let mut step = along(self.path.at(s).1);
+        for _ in 0..CHORD_ROUNDS {
+            step = along(self.chord(s, step));
+        }
+        (step, self.chord(s, step))
+    }
+
+    /// The center on the canvas of the ink of a glyph whose ink is `ink`
+    /// (in its box's coordinates) set at `c` along the path (ruling R31):
+    /// on the path there — pushed outward on a closed path by the
+    /// [`support`] of the ellipse its ink box bounds, along the normal of
+    /// the chord across its own reach, so the ink, not its box, clears a
+    /// side of the outline, and the push turns with the chord through a
+    /// sharp corner rather than jumping.
+    fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {
+        let size = ink.max - ink.min;
+        let (mut center, tangent) = self.path.at(c);
+        if self.outward {
+            let reach = 0.5 * size.length();
+            let dir = if reach > 0.0 {
+                self.chord(c - reach, 2.0 * reach)
+            } else {
+                tangent
+            };
+            center += support(self.path.outward(dir), size * 0.5);
+        }
+        center
+    }
+
+    /// Walk a cluster of `body` from `s`, `trail` remembering an
+    /// ornament's last ink (ruling R31). A box steps by the box rule from
+    /// `s` ([`take`](Self::take)). An ornament's space steps its advance,
+    /// which it adds to what the next ink is owed. An ornament's glyph is
+    /// set its left bearing plus half its ink's extent along the chord
+    /// into its step, where a line would set it — unless a glyph came
+    /// before, whose ink it is then set as far from as owed
+    /// ([`ink_gap_at`](Self::ink_gap_at)), its step moved with it. Either
+    /// way, what the next ink is owed starts again at its right bearing.
+    ///
+    /// Where the path is straight the two agree; where it turns — the
+    /// ink pushed outward round a tight corner, two inks either side of a
+    /// sharp one — only the second keeps the inks as far apart as a line
+    /// sets them.
+    fn advance(&self, s: f32, body: Body, trail: &mut Trail) -> Taken {
+        let (step, dir) = self.take(s, body);
+        let (advance, ink) = match body {
+            Body::Boxed { .. } => {
+                *trail = Trail::default();
+                return Taken {
+                    s,
+                    step,
+                    dir,
+                    center: None,
+                };
+            }
+            Body::Inked { advance, ink } => (advance, ink),
+        };
+        let size = ink.max - ink.min;
+        let lead = ink.min.x;
+        let natural = s + lead + extent(dir, size.x, size.y) * 0.5;
+        if size == Vec2::ZERO {
+            // A space: nothing to keep apart, its advance owed.
+            trail.owed += advance;
+            return Taken {
+                s,
+                step,
+                dir,
+                center: Some(natural),
+            };
+        }
+        let owed = trail.owed + lead;
+        let center = match trail.last {
+            Some((last, half, from)) if owed > INK_TOLERANCE => {
+                self.ink_gap_at((last, half), from, natural, owed, ink)
+            }
+            _ => natural,
+        };
+        trail.last = Some((self.ink_at(center, ink), size * 0.5, center));
+        trail.owed = advance - ink.max.x;
+        Taken {
+            s: s + (center - natural),
+            step,
+            dir,
+            center: Some(center),
+        }
+    }
+
+    /// Where along the path to set the center of a glyph whose ink is
+    /// `ink` so that its ink box is `owed` from `last`'s — the center and
+    /// half size of the ink of the glyph before, set at `from` — the
+    /// distance between the two boxes (ruling R31). `natural`, the box
+    /// rule's center, where that is within [`INK_TOLERANCE`]; otherwise
+    /// [`INK_TURNS`] rounds, each solving for the distance between the
+    /// two centers that leaves the gap the last round's centers left, so
+    /// the gap converges on `owed`.
+    ///
+    /// The centers' distance, unlike the boxes' gap, never stands still
+    /// as the glyph moves on — the gap does wherever one box slides past
+    /// the other's corner, round a sharp turn — since the distance from a
+    /// point on a convex path grows as the other moves away, until it is
+    /// half way round. So each round's point, and the glyph, moves
+    /// continuously with the glyphs before it, as a ring's spacing solve
+    /// needs ([`close_ring`]).
+    ///
+    /// Cost: [`INK_TURNS`] solves ([`ink_distance_at`](Self::ink_distance_at)),
+    /// each a path lookup or two where the path runs straight.
+    fn ink_gap_at(&self, (last, half): (Vec2, Vec2), from: f32, natural: f32, owed: f32, ink: Ink) -> f32 {
+        let reach = half + (ink.max - ink.min) * 0.5;
+        let gap_at = |center: f32| {
+            let between = (self.ink_at(center, ink) - last).abs();
+            (between.length(), (between - reach).max(Vec2::ZERO).length())
+        };
+        if (gap_at(natural).1 - owed).abs() <= INK_TOLERANCE {
+            return natural;
+        }
+        let mut center = natural;
+        for _ in 0..INK_TURNS {
+            let (distance, gap) = gap_at(center);
+            center = self.ink_distance_at(last, owed + distance - gap, from, center, ink);
+        }
+        center
+    }
+
+    /// Where along the path past `from` to set the center of a glyph
+    /// whose ink is `ink` so that it is `apart` from `last`: `guess`,
+    /// where that is within [`INK_TOLERANCE`]; otherwise by bisection,
+    /// between `from` and `guess` where `guess` is too far, and between
+    /// it and a stride on where it is too near ([`ink_gap_at`]).
+    ///
+    /// [`ink_gap_at`]: Self::ink_gap_at
+    fn ink_distance_at(&self, last: Vec2, apart: f32, from: f32, guess: f32, ink: Ink) -> f32 {
+        let miss = |c: f32| self.ink_at(c, ink).distance(last) - apart;
+        let at_guess = miss(guess);
+        if at_guess.abs() <= INK_TOLERANCE {
+            return guess;
+        }
+        let (mut low, mut high) = if at_guess > 0.0 {
+            (from, guess)
+        } else {
+            let stride = apart.max((ink.max - ink.min).max_element());
+            let mut low = guess;
+            let mut high = guess + stride;
+            let mut strides = 1;
+            // A miss that is not a number is not far enough: stride on.
+            while !matches!(
+                miss(high).partial_cmp(&0.0),
+                Some(Ordering::Greater | Ordering::Equal)
+            ) {
+                if strides == INK_STRIDES {
+                    return high;
+                }
+                low = high;
+                high += stride;
+                strides += 1;
+            }
+            (low, high)
+        };
+        for _ in 0..INK_ROUNDS {
+            let middle = 0.5 * (low + high);
+            if miss(middle) < 0.0 {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        high
     }
 
     /// How far along the path from `s` it moves `d` horizontally, on a
@@ -550,33 +918,46 @@ impl PathWalk<'_> {
     }
 
     /// Where the last cluster's step ends when every one of `clusters`
-    /// is walked from 0 with `gap` between steps, at `scale` times its
-    /// size, cutting nothing: the natural length `L` at `gap = 0`.
-    /// Advances and line heights are linear in size (cosmic-text's
-    /// default hinting is off), so `L(scale)` needs no reshape.
-    fn measure(&self, clusters: &[Cluster], scale: f32, gap: f32) -> f32 {
-        self.measure_clusters(clusters.iter(), scale, gap)
+    /// is walked from 0 with `gap` between steps, cutting nothing: the
+    /// natural length `L` at `gap = 0`.
+    fn measure(&self, clusters: &[Cluster], gap: f32) -> f32 {
+        self.measure_clusters(clusters.iter(), gap)
     }
 
     /// Where the last of `clusters`' steps ends, walked from 0 with `gap`
-    /// between steps at `scale` times their size, each box as tall as
-    /// [`height`](Self::height) says: the arithmetic of
-    /// [`lay`](Self::lay), without placing anything.
-    fn measure_clusters<'c>(&self, clusters: impl Iterator<Item = &'c Cluster>, scale: f32, gap: f32) -> f32 {
-        let h = self.line_height * scale;
-        let mut s = 0.0_f32;
-        let mut end = 0.0_f32;
-        for cluster in clusters {
-            let w = cluster.advance * scale;
-            let ch = if self.ornament && cluster.blank {
-                w.min(h)
-            } else {
-                h
-            };
-            end = s + self.step(s, w, ch).0;
+    /// between steps, each taking up what [`body_of`](Self::body_of)
+    /// says: the arithmetic of [`lay`](Self::lay), without placing
+    /// anything.
+    fn measure_clusters<'c>(&self, clusters: impl Iterator<Item = &'c Cluster>, gap: f32) -> f32 {
+        self.walk_bodies(
+            clusters.map(|cluster| self.body_of(cluster)),
+            0.0,
+            gap,
+            Trail::default(),
+        )
+        .0
+    }
+
+    /// Where the last of `bodies`' steps ends, walked from `from` with
+    /// `gap` between steps and `trail` remembering an ornament's last ink
+    /// ([`advance`](Self::advance)), and what it remembers after them;
+    /// `from` when there are none. The arithmetic of [`lay`](Self::lay).
+    fn walk_bodies(
+        &self,
+        bodies: impl Iterator<Item = Body>,
+        from: f32,
+        gap: f32,
+        mut trail: Trail,
+    ) -> (f32, Trail) {
+        let mut s = from;
+        let mut end = from;
+        for body in bodies {
+            let taken = self.advance(s, body, &mut trail);
+            end = taken.s + taken.step;
             s = end + gap;
+            trail.owed += gap;
         }
-        end
+        (end, trail)
     }
 
     /// `L(scale)` as a reshape at `scale` will lay `clusters` out
@@ -590,9 +971,13 @@ impl PathWalk<'_> {
     ///
     /// `L` is the length the clusters take **as they are read** (#291,
     /// [`measure_readable`](Self::measure_readable)), so the scale `Fit`
-    /// settles on fits the placement the readable rule makes of it.
+    /// settles on fits the placement the readable rule makes of it — but
+    /// for an ornament, which is placed as walked (ruling R29), each
+    /// glyph by its ink scaled the same way ([`cluster_ink`], ruling
+    /// R31).
     ///
-    /// Cost: O(glyphs); a few `Vec`s of one entry per cluster.
+    /// Cost: O(glyphs); a few `Vec`s of one entry per cluster, none for
+    /// an ornament.
     fn measure_at_scale(
         &self,
         glyphs: &[GlyphMetrics],
@@ -600,17 +985,23 @@ impl PathWalk<'_> {
         scale: f32,
         largest: f32,
     ) -> f32 {
-        let widths: Vec<f32> = clusters
-            .iter()
-            .map(|cluster| {
-                glyphs[cluster.glyphs.clone()]
-                    .iter()
-                    .map(|glyph| glyph.advance * size_factor(glyph.size, scale))
-                    .sum::<f32>()
-            })
-            .collect();
+        let width = |cluster: &Cluster| {
+            glyphs[cluster.glyphs.clone()]
+                .iter()
+                .map(|glyph| glyph.advance * size_factor(glyph.size, scale))
+                .sum::<f32>()
+        };
+        let h = self.line_height * size_factor(largest, scale);
+        if self.ornament && !self.level {
+            let bodies = clusters.iter().map(|cluster| {
+                let ink = cluster_ink(glyphs, cluster, |glyph| size_factor(glyph.size, scale));
+                self.body(width(cluster), ink, cluster.blank, h)
+            });
+            return self.walk_bodies(bodies, 0.0, 0.0, Trail::default()).0;
+        }
+        let widths: Vec<f32> = clusters.iter().map(width).collect();
         let breaks: Vec<bool> = clusters.iter().map(|cluster| cluster.word_break).collect();
-        self.measure_readable(&widths, &breaks, self.line_height * size_factor(largest, scale))
+        self.measure_readable(&widths, &breaks, h)
     }
 
     /// Where the last of these cluster widths' steps ends when they are
@@ -998,25 +1389,39 @@ impl PathWalk<'_> {
         gap: f32,
         out: &mut Laying,
     ) -> Laid {
-        let h = self.line_height;
         for cluster in clusters {
-            let ch = self.height(cluster, h);
-            let (step, dir) = self.step(s, cluster.advance, ch);
+            let body = self.body_of(cluster);
+            let mut trail = out.trail;
+            let Taken {
+                s: start,
+                step,
+                dir,
+                center,
+            } = self.advance(s, body, &mut trail);
             // The same arithmetic, in the same order, as `measure`: a
             // solved spacing that measures within the path must lay
             // within it, to the last bit.
-            let end = s + step;
+            let end = start + step;
             if end > self.limit {
                 return Laid::Overran;
             }
             if out.glyphs.len() + cluster.glyphs.len() > MAX_PLACED_GLYPHS {
                 return Laid::Capped;
             }
-            let corner = self.corner(s, step, dir, cluster.advance, ch);
+            let corner = match (body, center) {
+                (Body::Inked { ink, .. }, Some(center)) => {
+                    self.ink_at(center, ink) - (ink.min + ink.max) * 0.5 - Vec2::new(0.0, self.baseline)
+                }
+                (Body::Inked { advance, .. }, None) => {
+                    self.corner(start, step, dir, advance, self.line_height)
+                }
+                (Body::Boxed { w, h }, _) => self.corner(start, step, dir, w, h),
+            };
+            out.trail = trail;
             out.steps.push(Stepped {
                 first: out.glyphs.len(),
                 end: out.glyphs.len() + cluster.glyphs.len(),
-                s,
+                s: start,
                 step,
                 dir,
                 advance: cluster.advance,
@@ -1032,6 +1437,7 @@ impl PathWalk<'_> {
                 });
             }
             s = self.after_gap(end, gap);
+            out.trail.owed += gap;
         }
         Laid::Fits(s)
     }
@@ -1900,6 +2306,7 @@ fn place(
         limit: path.length() + end_slack(path.length()),
         level: false,
         ornament: !run.glyphs.iter().any(|glyph| glyph.letter),
+        baseline: run.baseline(),
     };
     let walked = match fit {
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
@@ -2074,15 +2481,19 @@ fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32, closed: bool) -> Walke
     }
 }
 
-/// A closed ring of `copies` whole copies of `clusters` (ruling R29):
-/// the gap, at least `gap`, that ends the last copy's last step that same
-/// gap short of the path's end, where the first copy began — so every
-/// two consecutive clusters, the seam's included, are one gap apart — and
-/// the copies laid with it. `None` when the copies would pass
-/// [`MAX_PLACED_GLYPHS`] or do not lay within the path.
+/// A closed ring of whole copies of `clusters` (ruling R29): the most
+/// copies, at most `copies`, whose seam — from the last copy's last
+/// cluster back round to the first's first — can be as wide as every
+/// other gap with `gap` or more between steps, and the copies laid with
+/// the gap, at least `gap`, that makes it so. The seam is measured as the
+/// gaps are: between steps along the path, or, for an ornament, between
+/// inks (ruling R31) — the last glyph's ink box as far from the first's
+/// as a line would set them, the gaps between steps included. `None`
+/// when the copies would pass [`MAX_PLACED_GLYPHS`] or do not lay within
+/// the path.
 ///
 /// Cost: a solve of at most `2 · SOLVE_ROUNDS` measures of the copies,
-/// and one lay of them.
+/// a measure more per copy dropped, and one lay of them.
 fn close_ring(
     run: &ShapedRun,
     clusters: &[Cluster],
@@ -2091,24 +2502,70 @@ fn close_ring(
     gap: f32,
 ) -> Option<(Laying, f32)> {
     let length = walk.path.length();
-    let copied = || (0..copies).flat_map(|_| clusters.iter());
-    // How far the copies, `extra` past `gap` apart, leave the seam short
-    // of `gap + extra`: zero when the seam is one gap like the others.
-    let miss = |extra: f32| {
-        let g = gap + extra;
-        walk.measure_clusters(copied(), 1.0, g) + g - length
+    let bodies = |count: usize| {
+        (0..count)
+            .flat_map(|_| clusters.iter())
+            .map(|cluster| walk.body_of(cluster))
     };
-    let extra = if miss(0.0) >= 0.0 {
+    // The first copy's clusters up to its first glyph with ink, when the
+    // ring's seam is measured between inks.
+    let first_ink = clusters
+        .iter()
+        .position(|cluster| matches!(walk.body_of(cluster), Body::Inked { ink, .. } if ink.min != ink.max));
+    // How far the seam, the copies `extra` past `gap` apart, falls short
+    // of the other gaps: zero when it is one like them, positive when it
+    // is narrower. It narrows continuously as the copies spread, the
+    // last glyph nearing the first.
+    let miss = |count: usize, extra: f32| {
+        let g = gap + extra;
+        let (end, trail) = walk.walk_bodies(bodies(count), 0.0, g, Trail::default());
+        let Some(k) = first_ink else {
+            return end + g - length;
+        };
+        let head = || clusters[..k].iter().map(|cluster| walk.body_of(cluster));
+        let first = walk.body_of(&clusters[k]);
+        let (_, start) = walk.walk_bodies(head().chain(std::iter::once(first)), 0.0, g, Trail::default());
+        // What the first glyph is owed from the last: what is owed after
+        // the copies, every space before the first glyph, and its bearing.
+        let (_, owing) = walk.walk_bodies(head(), end + g, g, trail);
+        let (Some((last, last_half, last_c)), Some((first_at, first_half, first_c)), Body::Inked { ink, .. }) =
+            (trail.last, start.last, first)
+        else {
+            return end + g - length;
+        };
+        let owed = owing.owed + ink.min.x;
+        // Past the first glyph, round the ring again, the seam is as
+        // narrow as it gets, and narrower the further on.
+        let ahead = first_c + length - last_c;
+        if ahead <= 0.0 {
+            return owed - ahead;
+        }
+        let between = (first_at - last).abs() - last_half - first_half;
+        owed - between.max(Vec2::ZERO).length()
+    };
+    let mut copies = copies;
+    while copies > 1 && miss(copies, 0.0) > SOLVE_TOLERANCE {
+        copies -= 1;
+    }
+    let extra = if miss(copies, 0.0) >= 0.0 {
         0.0
     } else {
-        let guess = -miss(0.0) / (copies * clusters.len()) as f32;
-        solve_gap(miss, length, guess)
+        let guess = -miss(copies, 0.0) / (copies * clusters.len()) as f32;
+        solve_gap(|extra| miss(copies, extra), length, guess)
     };
     let g = gap + extra;
+    // The seam was measured; the path's end is not where the ring ends.
+    // An ornament's last space, or its last glyph where the ring's inks
+    // were set further on than its steps, may step past it, its ink then
+    // where the path begins again, as far from the first as owed.
+    let unbounded = PathWalk {
+        limit: f32::INFINITY,
+        ..*walk
+    };
     let mut laying = Laying::default();
     let mut s = 0.0_f32;
     for _ in 0..copies {
-        match walk.lay(&run.glyphs, clusters, s, g, &mut laying) {
+        match unbounded.lay(&run.glyphs, clusters, s, g, &mut laying) {
             Laid::Fits(next) => s = next,
             _ => return None,
         }
@@ -2131,7 +2588,7 @@ fn spread(run: &ShapedRun, walk: &PathWalk<'_>, overrun_slack: f32) -> Walked {
     if clusters.len() <= 1 {
         return once_text(run, walk, 0.0).0;
     }
-    let natural = walk.measure(&clusters, 1.0, 0.0);
+    let natural = walk.measure(&clusters, 0.0);
     if natural.is_nan() || natural >= length {
         let walk = PathWalk {
             limit: walk.limit + overrun_slack,
@@ -2146,7 +2603,7 @@ fn spread(run: &ShapedRun, walk: &PathWalk<'_>, overrun_slack: f32) -> Walked {
         return walked;
     }
     let guess = (length - natural) / (clusters.len() - 1) as f32;
-    let gap = solve_gap(|gap| walk.measure(&clusters, 1.0, gap) - length, length, guess);
+    let gap = solve_gap(|gap| walk.measure(&clusters, gap) - length, length, guess);
     let mut walked = once_text(run, walk, gap).0;
     walked.ends = Ends::Exactly;
     walked
@@ -2167,7 +2624,7 @@ fn solve_gap(miss: impl Fn(f32) -> f32, length: f32, guess: f32) -> f32 {
     let mut probe = guess.max(f32::EPSILON);
     for _ in 0..SOLVE_ROUNDS {
         let probe_miss = miss(probe);
-        if probe_miss >= 0.0 {
+        if probe_miss.is_nan() || probe_miss >= 0.0 {
             high = Some((probe, probe_miss));
             break;
         }
@@ -2236,7 +2693,7 @@ fn fit_to<'p>(
     let walk = walk_for(run);
     let length = path.length();
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
-    let natural = walk.measure(&clusters, 1.0, 0.0);
+    let natural = walk.measure(&clusters, 0.0);
     if clusters.is_empty() || natural.is_nan() || natural <= 0.0 {
         return once_text(run, &walk, 0.0).0;
     }

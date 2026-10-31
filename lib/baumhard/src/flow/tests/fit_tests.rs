@@ -87,6 +87,39 @@ pub fn do_flow_fit_fills_a_line_exactly() {
 }
 
 #[test]
+fn test_flow_fit_fills_a_steep_line_with_an_ornament() {
+    do_flow_fit_fills_a_steep_line_with_an_ornament();
+}
+
+/// An ornament steps by its ink (ruling R31), and `Fit` predicts its
+/// length so: down a vertical line each glyph steps its ink's height
+/// plus its side bearings, each space its advance, so `L` is their sum
+/// and `Fit` rescales by `P / L` — not by the line-high boxes' sum, which
+/// would leave it smaller with the rest spread as gaps — the last ink
+/// ending its right bearing short of the line's end.
+pub fn do_flow_fit_fills_a_steep_line_with_an_ornament() {
+    let text = "✦ · ✦ · ✦";
+    let probe = with_fonts(|fs| real_run(text, &style(12.0), fs));
+    let step = |glyph: &crate::flow::GlyphMetrics| match glyph.ink {
+        Some(ink) => (ink.max.y - ink.min.y) + glyph.advance - (ink.max.x - ink.min.x),
+        None => glyph.advance,
+    };
+    let natural: f32 = probe.glyphs.iter().map(step).sum();
+    let length = natural * 1.37;
+    let down = Curve::Line(Vec2::ZERO, Vec2::new(0.0, length));
+    let (run, rescaled, placed) = shaped_on_line(text, down, &FitMode::Fit { min: 0.5, max: 2.0 });
+    let rescaled = rescaled.expect("an unclamped fit rescales");
+    close(rescaled.line_height / run.line_height, 1.37, 2e-3, "scale");
+    assert!(!placed.truncated);
+    assert_eq!(placed.glyphs.len(), run.glyphs.len());
+    let last = placed.glyphs[placed.glyphs.len() - 1];
+    let glyph = &rescaled.glyphs[last.glyph as usize];
+    let ink = glyph.ink.expect("the last star has ink");
+    let bottom = last.pos.y + rescaled.baseline() + ink.max.y;
+    close(bottom + glyph.advance - ink.max.x, length, 0.5, "end");
+}
+
+#[test]
 fn test_flow_fit_clamped_at_max_spreads_the_rest() {
     do_flow_fit_clamped_at_max_spreads_the_rest();
 }

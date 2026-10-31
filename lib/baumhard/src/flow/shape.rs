@@ -39,9 +39,10 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{
-    clamp_font_metric, face_family_name_for_pin, AppFont, FontSystemWriteGuard, MIN_FONT_SIZE_PT,
+    clamp_font_metric, face_family_name_for_pin, glyph_outline_ink, AppFont, FontSystemWriteGuard,
+    MIN_FONT_SIZE_PT,
 };
-use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Wrap, SHAPING_ADVANCED};
+use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, SwashCache, Wrap, SHAPING_ADVANCED};
 use crate::util::grapheme_chad;
 
 /// The span index a filler glyph reports: it belongs to no span of the
@@ -120,6 +121,27 @@ pub struct GlyphMetrics {
     /// such glyph — an ornament, `✦ ·` or `─` — has no reading direction,
     /// and placement does not reverse any part of it (#291, ruling R29).
     pub letter: bool,
+    /// Where the glyph's ink lies, measured from its outline (#291,
+    /// ruling R31): what placement steps an ornament's glyphs by, so a
+    /// ring's gaps are the gaps a reader sees. Measured only in a run
+    /// that is an ornament — no glyph a [`letter`](Self::letter) — since
+    /// text keeps its line-height boxes (ruling R9.2); `None` there, and
+    /// for a glyph with no outline (a space, a bitmap-only emoji).
+    pub ink: Option<Ink>,
+}
+
+/// A glyph's ink: the bounding box of its outline, relative to its pen
+/// on the baseline, in points at the size it was shaped at, `y` pointing
+/// down — where a renderer drawing the glyph at that pen puts its ink,
+/// the shaper's offsets included
+/// ([`glyph_outline_ink`]).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Ink {
+    /// The box's top-left corner: its left edge, and how far above the
+    /// baseline the ink reaches (negative above it).
+    pub min: Vec2,
+    /// The box's bottom-right corner.
+    pub max: Vec2,
 }
 
 /// A flow shaped as one line, for placement along a path or at a point.
@@ -563,10 +585,30 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
                 blank,
                 line_break,
                 letter,
+                ink: None,
             });
         }
     }
+    if !out.iter().any(|glyph| glyph.letter) {
+        measure_ink(buffer, &mut out, fs);
+    }
     out
+}
+
+/// Every glyph's [`GlyphMetrics::ink`], into `glyphs` (which lists the
+/// buffer's glyphs in [`ShapedRun::layout_glyphs`]'s order), but a
+/// space's, which has none to keep apart.
+///
+/// Cost: one outline scale per glyph that is not a space, and one
+/// scaler context for the run.
+fn measure_ink(buffer: &Buffer, glyphs: &mut [GlyphMetrics], fs: &mut FontSystem) {
+    let mut cache = SwashCache::new();
+    let laid = buffer.layout_runs().flat_map(|run| visual(run.glyphs, run.rtl));
+    for (metrics, laid) in glyphs.iter_mut().zip(laid) {
+        if !metrics.blank {
+            metrics.ink = glyph_outline_ink(fs, &mut cache, laid).map(|(min, max)| Ink { min, max });
+        }
+    }
 }
 
 /// The byte offsets in `text` where it may be parted without tearing a

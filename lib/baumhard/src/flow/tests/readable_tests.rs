@@ -823,16 +823,17 @@ fn test_flow_readable_a_repeat_ring_closes_evenly() {
 }
 
 /// A `Repeat` ring around a closed outline holds a whole number of
-/// copies and closes without a seam (ruling R29): the gap between every
-/// two consecutive clusters along the path — the seam from the last back
-/// round to the first included — is the same, within half a point, and
-/// the clusters placed are whole copies of the pattern. An ornament (no
-/// letter or digit) is placed as walked, so a glyph-and-space ornament
-/// alternates all the way round, never two spaces or two glyphs side by
-/// side, and its spaces step no more than √2 times their advance where
-/// the ring turns steep; a text pattern is read stretch by stretch, its
-/// gap solved as it is read. Five outlines, the README scenes' six
-/// ornaments and two text patterns, each way round.
+/// copies and closes without a seam (ruling R29): the clusters placed are
+/// whole copies of the pattern, and, for a text pattern, the gap between
+/// every two consecutive clusters along the path — the seam from the last
+/// back round to the first included — is the same, within half a point,
+/// its gap solved as it is read. An ornament (no letter or digit) is
+/// spaced by its ink instead (ruling R31; its gaps are
+/// `do_flow_readable_an_ornament_ring_is_evenly_inked`'s) and placed as
+/// walked, so a glyph-and-space ornament alternates all the way round,
+/// never two spaces or two glyphs side by side, and its spaces step their
+/// advance, however steep the ring turns. Five outlines, the README
+/// scenes' six ornaments and two text patterns, each way round.
 pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
     let outlines = [
         ("rounded rect", rounded(300.0, 160.0, 25)),
@@ -858,29 +859,18 @@ pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
                     .collect();
                 let (first, last) = (laid[0], laid[laid.len() - 1]);
                 gaps.push(placed.path.length() + first.0 - (last.0 + last.1));
-                let (least, most) = gaps
-                    .iter()
-                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &g| {
-                        (a.min(g), b.max(g))
-                    });
-                if std::env::var("R29_LIST").is_ok() {
-                    if most - least > 0.5 {
-                        eprintln!("R29FAIL {what}: {least}..{most}");
-                    }
-                    continue;
-                }
+                let (least, most) = spread_of(gaps.iter().copied());
+                let ornament = !placed.run.glyphs.iter().any(|g| g.letter);
                 assert!(
-                    most - least <= 0.5,
+                    ornament || most - least <= 0.5,
                     "{what}: gaps from {least} to {most}, the seam {}",
                     gaps[gaps.len() - 1]
                 );
                 // A glyph-and-space ornament alternates all the way round,
                 // the seam and every turn of the outline included: no two
                 // spaces meet (a gap) and no two glyphs (a stray).
-                // An ornament's space is a box as wide as it is tall: on
-                // the steep turns of a ring it steps no more than √2 times
-                // its advance, not a whole line.
-                let ornament = !placed.run.glyphs.iter().any(|g| g.letter);
+                // An ornament's space has no ink, and steps its advance on
+                // the steep turns of a ring too, not a whole line.
                 if ornament {
                     let blanks: Vec<(bool, f32)> = boxes(&placed.run, &placed.placed)
                         .iter()
@@ -892,20 +882,30 @@ pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
                         .collect();
                     for ((blank, advance), (_, step)) in blanks.iter().zip(&placed.trace.laid) {
                         assert!(
-                            !blank || *step <= advance * std::f32::consts::SQRT_2 + 1e-3,
+                            !blank || (*step - advance).abs() <= 1e-3,
                             "{what}: a space steps {step}, its advance {advance}"
                         );
                     }
                 }
                 if per_copy == 2 {
+                    // Where each cluster sits: an ornament's glyph by its
+                    // ink and a space by the middle of its advance on the
+                    // baseline, which is what is set on the path (ruling
+                    // R31); text by its box.
+                    let baseline = Vec2::new(0.0, placed.run.baseline());
                     let mut along: Vec<(f32, bool)> = boxes(&placed.run, &placed.placed)
                         .iter()
                         .map(|cluster| {
-                            let glyph = placed.placed.glyphs[cluster.glyphs.start].glyph as usize;
-                            (
-                                arc_position(&placed.path, cluster.center()),
-                                placed.run.glyphs[glyph].blank,
-                            )
+                            let glyph =
+                                &placed.run.glyphs[placed.placed.glyphs[cluster.glyphs.start].glyph as usize];
+                            let at = match (ornament, glyph.ink) {
+                                (true, Some(ink)) => cluster.corner + baseline + (ink.min + ink.max) * 0.5,
+                                (true, None) => {
+                                    cluster.corner + baseline + Vec2::new(cluster.size.x * 0.5, 0.0)
+                                }
+                                (false, _) => cluster.center(),
+                            };
+                            (arc_position(&placed.path, at), glyph.blank)
                         })
                         .collect();
                     along.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -913,6 +913,124 @@ pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
                     for (k, (here, there)) in along.iter().zip(next).enumerate() {
                         assert_ne!(here.1, there.1, "{what}: clusters {k} and the next are alike");
                     }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_flow_readable_an_ornament_ring_is_evenly_inked() {
+    do_flow_readable_an_ornament_ring_is_evenly_inked();
+}
+
+/// The ink of placed glyph `k` on the canvas, as its `(min, max)`
+/// corners: its ink box from shaping, at its pen.
+fn ink_box(run: &ShapedRun, placed: &PlacedRun, k: usize) -> Option<(Vec2, Vec2)> {
+    let glyph = placed.glyphs[k];
+    let pen = glyph.pos + Vec2::new(0.0, run.baseline());
+    run.glyphs[glyph.glyph as usize]
+        .ink
+        .map(|ink| (pen + ink.min, pen + ink.max))
+}
+
+/// The distance between two boxes, 0 where they meet.
+fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
+    let dx = (b.0.x - a.1.x).max(a.0.x - b.1.x).max(0.0);
+    let dy = (b.0.y - a.1.y).max(a.0.y - b.1.y).max(0.0);
+    (dx * dx + dy * dy).sqrt()
+}
+
+/// The spread of `gaps`, `(least, most)`.
+fn spread_of(gaps: impl IntoIterator<Item = f32>) -> (f32, f32) {
+    gaps.into_iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), g| {
+            (a.min(g), b.max(g))
+        })
+}
+
+/// An ornament ring's inks are as far apart all the way round as a
+/// reader sees them (ruling R31), the seam from the last back round to
+/// the first included, where the outline runs level and where it runs
+/// steep, round a sharp corner and a tight one, on the outline and
+/// pushed outward:
+///
+/// - every two consecutive glyphs' ink boxes are between `1/1.5` and
+///   `1.5` times as far apart as any other two of the same two glyphs
+///   of the pattern (a star and the dot after it; the dot and the star
+///   after that);
+/// - and, on an outline with no sharp corner, each copy's ink — its
+///   glyphs' ink boxes as one — is between `1/1.5` and `1.5` times as
+///   far from the next as any other copy is. (Round a sharp corner a
+///   copy is an L, and the box round it is not its ink.)
+///
+/// Stepped by line-high boxes, a ring's glyphs part further on its steep
+/// sides than on its level ones by the line height less the ink's.
+pub fn do_flow_readable_an_ornament_ring_is_evenly_inked() {
+    let outlines = [
+        ("rounded rect", rounded(300.0, 160.0, 25), true),
+        ("sharp rect", rounded(260.0, 140.0, 0), false),
+        ("pill", rounded(400.0, 120.0, 100), true),
+        ("circle", rounded(300.0, 300.0, 100), true),
+        ("ellipse", ellipse(300.0, 200.0), true),
+    ];
+    let top = start(Edge::Top, 0.0);
+    for (name, shape, smooth) in &outlines {
+        for pattern in ["✦ ", "❦ ", "· ", "+ ", "~ ", "·:·", "✦ · "] {
+            for direction in [Direction::Clockwise, Direction::CounterClockwise] {
+                for outward in [false, true] {
+                    let what = format!("{name} {pattern:?} {direction:?} outward {outward}");
+                    let placed = around(pattern, shape, top, direction, &FitMode::Repeat, outward);
+                    let (run, laid) = (&placed.run, &placed.placed);
+                    for glyph in &run.glyphs {
+                        assert_eq!(
+                            glyph.ink.is_some(),
+                            !glyph.blank,
+                            "{what}: the fixture's ink {glyph:?}"
+                        );
+                    }
+                    let unit = run.glyphs.iter().filter(|glyph| glyph.ink.is_some()).count();
+                    let inked: Vec<(u32, (Vec2, Vec2))> = (0..laid.glyphs.len())
+                        .filter_map(|k| ink_box(run, laid, k).map(|ink| (laid.glyphs[k].glyph, ink)))
+                        .collect();
+                    assert_eq!(inked.len() % unit, 0, "{what}: a part-copy");
+                    assert!(inked.len() / unit >= 8, "{what}: {} copies", inked.len() / unit);
+                    // Consecutive glyphs, by which two of the pattern they are.
+                    let mut pairs: Vec<((u32, u32), f32)> = Vec::new();
+                    for k in 0..inked.len() {
+                        let (here, next) = (inked[k], inked[(k + 1) % inked.len()]);
+                        pairs.push(((here.0, next.0), box_gap(here.1, next.1)));
+                    }
+                    let mut kinds: Vec<(u32, u32)> = pairs.iter().map(|pair| pair.0).collect();
+                    kinds.sort_unstable();
+                    kinds.dedup();
+                    for kind in kinds {
+                        let gaps = pairs.iter().filter(|pair| pair.0 == kind).map(|pair| pair.1);
+                        let (least, most) = spread_of(gaps);
+                        assert!(
+                            least > 0.0 && most <= 1.5 * least,
+                            "{what}: glyphs {kind:?} from {least} to {most} apart"
+                        );
+                    }
+                    if !smooth {
+                        continue;
+                    }
+                    let copies: Vec<(Vec2, Vec2)> = inked
+                        .chunks(unit)
+                        .map(|copy| {
+                            copy.iter()
+                                .fold(copy[0].1, |(min, max), &(_, (a, b))| (min.min(a), max.max(b)))
+                        })
+                        .collect();
+                    let mut gaps: Vec<f32> =
+                        copies.windows(2).map(|pair| box_gap(pair[0], pair[1])).collect();
+                    gaps.push(box_gap(copies[copies.len() - 1], copies[0]));
+                    let seam = gaps[gaps.len() - 1];
+                    let (least, most) = spread_of(gaps.iter().copied());
+                    assert!(
+                        least > 0.0 && most <= 1.5 * least,
+                        "{what}: copies from {least} to {most} apart, the seam {seam}"
+                    );
                 }
             }
         }

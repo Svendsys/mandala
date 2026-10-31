@@ -159,6 +159,7 @@ impl Lines<'_> {
             limit: span.end + end_slack(span.end),
             level: true,
             ornament: false,
+            baseline: self.run.baseline(),
         }
     }
 

@@ -1500,7 +1500,11 @@ element.
     borrowing room only from a neighbor read its way. A tight turn
     through vertical makes no stretch of its own (a hysteresis); a loop
     reads like a seal. An ornament, with no letter or digit, has no
-    reading direction and is placed as walked. The one exception to
+    reading direction and is placed as walked, each glyph stepped by
+    its ink, not a line-high box, and set as far from the last glyph's
+    ink as a line would set them, so a ring's gaps are even where its
+    outline runs steep and round its corners (ruling R31). The one
+    exception to
     keeping the walk's glyphs:
     with no slack and a zero gap, the end is cut — filler copies or
     repeat clusters first.
@@ -1517,7 +1521,7 @@ element.
   `Once` (with an optional filler, appended to the run in the flow's
   style), `Repeat` (reusing the run's glyph indices; around a closed
   outline, whole copies evenly spaced so the ring closes without a seam,
-  ruling R29), `Spread` and
+  rulings R29 and R31), `Spread` and
   `Fit` (rescaling the run), the last two solved so the last cluster
   ends at the path's end — on a frame, each line at its span's end. Text too long is cut to the longest prefix,
   in reading order, that fits — a right-to-left run keeps its

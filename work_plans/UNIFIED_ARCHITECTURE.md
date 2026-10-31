@@ -608,7 +608,8 @@ line (cosmic-text gives each glyph's advance), then placed:
      `step = |cos θ| · advance + |sin θ| · line_height`.
      Along a horizontal stretch glyphs sit side by side; along a
      vertical stretch they stack one line apart; on a curve the two
-     blend — the way ASCII art builds a curve.
+     blend — the way ASCII art builds a curve. An ornament steps by
+     its ink instead (ruling R31, §6.4).
    - **The level step** — a frame's text line (step 5): the step runs
      the path until it has moved the glyph's advance horizontally, so
      from one pen to the next is the advance plus the line's gap,
@@ -738,7 +739,7 @@ When a flow's text is shorter or longer than its path:
 | Mode | Behavior | Frames | Connectors |
 |---|---|---|---|
 | `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing. On a frame: two lines, each centered on its span, the filler on both sides of each | ✓ | ✓ |
-| `repeat` | Text repeated until the path is full. Along a connector the last repetition is cut at a grapheme boundary; around a frame the ring holds a whole number of repetitions, evenly spaced, and closes without a seam (ruling R29) | ✓ | ✓ (default — a `─` pattern) |
+| `repeat` | Text repeated until the path is full. Along a connector the last repetition is cut at a grapheme boundary; around a frame the ring holds a whole number of repetitions, evenly spaced, and closes without a seam (rulings R29, R31) | ✓ | ✓ (default — a `─` pattern) |
 | `spread` | Text placed once with extra spacing distributed so it ends exactly at the path's end. On a frame: each line spread over its whole span | ✓ | ✓ |
 | `fit { min, max }` | Font size **and** spacing are scaled so the text fills the path exactly once (algorithm below). On a frame: one size for both lines, the largest at which each fits its span | ✓ (default) | ✓ |
 
@@ -791,19 +792,56 @@ one gap, a stretch drifts against the part of the outline the walk gave
 it, so a stretch's clusters that drift past a corner are regrouped into
 the neighbor whose way the outline runs there — a ring's clusters are
 copies of one pattern — and the ring is laid again, a bounded number of
-rounds. A ring too short for one whole repetition is cut as a connector
+rounds. An ornament is spaced by its ink, the seam too (ruling R31,
+below). A ring too short for one whole repetition is cut as a connector
 is. Along an open path `repeat` is unchanged.
 
 An ornament — a flow with no letter or digit, such as `✦ ·` or `─` —
 has no reading direction, so no part of it is reversed (§6.2 step 4):
 it is placed as walked. Reversed, a glyph-and-space ornament would meet
 itself space against space, or glyph against glyph, wherever the
-reading turned. An ornament's space is a box as wide as it is tall
-(step 2's `line_height` is its advance), so where a ring turns steep it
-steps its width, not a whole line: a space has no ink to keep apart,
-and boxed a line high it opened a gap at every turn of a ring. In text
-a space keeps its line height, which is what parts two words stacked
-on a steep side.
+reading turned.
+
+**An ornament steps by its ink** (ruling R31). Stepped by line-high
+boxes, an ornament's glyphs parted further on a ring's steep sides than
+on its level ones — by the line height less the ink's — and its gaps
+ran from 6 to 36 px around one ring of the README's scenes. Shaping
+measures each ornament glyph's ink from its outline (unhinted, exact to
+the curve: `GlyphMetrics::ink`); text keeps its boxes (step 2). Then:
+
+- A glyph's step is its ink box's extent along the chord (step 2's rule,
+  with the ink's width and height for `advance` and `line_height`) plus
+  its side bearings, `advance − ink width`, which do not turn with the
+  path. A space has no ink, and steps its advance: on a steep side too,
+  not a whole line.
+- A glyph's ink is centered on the path its left bearing plus half its
+  extent into its step, where a line would set it; on a closed path it
+  is pushed outward by the support of the ellipse its ink box bounds,
+  along the normal of the chord across its own reach — on a side the
+  box's half-extent, as text's; round a turn it turns with the normal,
+  so the ink's center traces a convex path round a sharp corner, where
+  the box's corner reach would swing it out past the side and back.
+- Each glyph after the first is then set where its ink is as far from
+  the last glyph's as a line would set them — the last's right bearing,
+  every space's advance and every gap between steps since, and its own
+  left bearing — measured as the distance between the two ink boxes.
+  Where the path runs straight that is where the step put it; where it
+  turns — a tight corner pushed outward, two inks either side of a
+  sharp one — the step alone would not keep it. The distance is found
+  by the distance between the centers, which grows continuously as the
+  glyph moves on around a convex outline where the boxes' own gap
+  stands still as one slides past the other's corner: a few rounds,
+  each solving the centers' distance that leaves the gap the last
+  round left, so the glyph moves continuously with the glyphs before
+  it, as the ring's spacing solve needs.
+- A ring's seam is that same gap: the copies are spread until the last
+  glyph's ink is as far from the first's as owed. The last space, or a
+  glyph whose ink was set further on than its steps, may step past the
+  path's end; its ink is then where the path begins again.
+
+Every two consecutive inks are so as far apart, measured box to box,
+wherever the ring runs: as far as the font sets them on a line, plus
+the spacing. `Fit` predicts an ornament's length the same way.
 
 **A frame's lines** (ruling R27; §6.2 step 5). The modes act on the
 two lines, each against its own span, with no gap below zero between

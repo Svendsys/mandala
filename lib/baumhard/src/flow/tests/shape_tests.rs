@@ -258,6 +258,82 @@ pub fn do_flow_shape_run_marks_letters() {
 }
 
 #[test]
+fn test_flow_shape_run_measures_an_ornaments_ink() {
+    do_flow_shape_run_measures_an_ornaments_ink();
+}
+
+/// An ornament's glyphs carry their ink, measured from the outline at
+/// shaping (ruling R31): where the rasterizer draws them, to its pixel,
+/// relative to the pen on the baseline — a star's and a middle dot's
+/// inside their advances and above the baseline, the dot's clear of it
+/// by a tenth of the size — and a space none. Text
+/// (any glyph a letter) carries none: it is stepped by its line-height
+/// boxes.
+pub fn do_flow_shape_run_measures_an_ornaments_ink() {
+    with_fonts(|fs| {
+        let run = real_run("✦ ·", &style(40.0), fs);
+        let laid: Vec<_> = run.layout_glyphs().cloned().collect();
+        assert_eq!(laid.len(), 3, "{:?}", run.glyphs);
+        assert!(
+            run.glyphs[1].ink.is_none(),
+            "a space has no ink: {:?}",
+            run.glyphs[1]
+        );
+        let mut cache = crate::font::SwashCache::new();
+        for k in [0, 2] {
+            let (glyph, laid) = (&run.glyphs[k], &laid[k]);
+            let ink = glyph
+                .ink
+                .unwrap_or_else(|| panic!("glyph {k} has no ink: {glyph:?}"));
+            let (key, _, _) = cosmic_text::CacheKey::new(
+                laid.font_id,
+                laid.glyph_id,
+                laid.font_size,
+                (0.0, 0.0),
+                laid.font_weight,
+                laid.cache_key_flags | cosmic_text::CacheKeyFlags::DISABLE_HINTING,
+            );
+            let fs: &mut crate::font::FontSystem = fs;
+            let image = cache
+                .get_image_uncached(fs, key)
+                .unwrap_or_else(|| panic!("glyph {k} does not rasterize"));
+            let placement = image.placement;
+            let offset = Vec2::new(laid.font_size * laid.x_offset, -laid.font_size * laid.y_offset);
+            let drawn_min = Vec2::new(placement.left as f32, -placement.top as f32) + offset;
+            let drawn_max = drawn_min + Vec2::new(placement.width as f32, placement.height as f32);
+            // The rasterizer covers every pixel the ink touches: its box is
+            // the ink's, rounded out to whole pixels.
+            for (axis, (measured, drawn)) in [(ink.min, drawn_min), (ink.max, drawn_max)]
+                .into_iter()
+                .flat_map(|(m, d)| [(m.x, d.x), (m.y, d.y)])
+                .enumerate()
+            {
+                assert!(
+                    (measured - drawn).abs() <= 1.0,
+                    "glyph {k} bound {axis}: measured {measured}, drawn {drawn}: {ink:?}"
+                );
+            }
+            assert!(
+                ink.min.x > 0.0 && ink.max.x < glyph.advance,
+                "glyph {k} inside its advance: {ink:?}"
+            );
+            assert!(ink.min.y < 0.0, "glyph {k} reaches above the baseline: {ink:?}");
+        }
+        let dot = run.glyphs[2].ink.unwrap_or_else(|| panic!("no dot ink"));
+        assert!(
+            dot.max.y < -0.1 * 40.0,
+            "a middle dot sits above the baseline: {dot:?}"
+        );
+        let text = real_run("a·", &style(40.0), fs);
+        assert!(
+            text.glyphs.iter().all(|glyph| glyph.ink.is_none()),
+            "{:?}",
+            text.glyphs
+        );
+    });
+}
+
+#[test]
 fn test_flow_shape_run_of_nothing() {
     do_flow_shape_run_of_nothing();
 }
