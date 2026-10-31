@@ -154,6 +154,7 @@ impl Lines<'_> {
         let (path, span) = &self.halves[k];
         PathWalk {
             path,
+            memo: None,
             line_height: self.run.line_height,
             outward: self.outward,
             limit: span.end + end_slack(span.end),

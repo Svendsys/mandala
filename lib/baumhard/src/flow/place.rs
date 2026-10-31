@@ -109,10 +109,12 @@
 //! `Once` with a filler, which appends the filler; both return the run
 //! their placement refers to (ruling R6).
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::ops::Range;
 
 use glam::Vec2;
+use rustc_hash::FxHashMap;
 
 use crate::document::resolve::{ResolvedRing, ResolvedText};
 use crate::document::values::{Direction, FitMode, LineSpan, Rgba, StartPoint};
@@ -144,6 +146,7 @@ const EVEN_ROUNDS: usize = 4;
 pub(crate) fn box_step(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, Vec2) {
     let walk = PathWalk {
         path,
+        memo: None,
         line_height: h,
         outward: false,
         limit: path.length(),
@@ -623,9 +626,76 @@ enum Laid {
     Capped,
 }
 
+/// [`PathWalk::chord`] from `at`, the point and direction of travel at
+/// `s` on `path`, already looked up: one lookup, of `p(s + len)`.
+fn chord_from(path: &ArcPath, (from, tangent): (Vec2, Vec2), s: f32, len: f32) -> Vec2 {
+    let (to, _) = path.at(s + len);
+    (to - from).try_normalize().unwrap_or(tangent)
+}
+
+thread_local! {
+    /// Test counter (#294): the steps [`PathWalk::step_afresh`] has taken
+    /// on this thread — the walks' work, a step looked up in a
+    /// [`StepMemo`] not counted.
+    #[cfg(test)]
+    pub(crate) static STEPS_TAKEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294): the glyphs [`place`] has placed on this
+    /// thread, what the work above is weighed against.
+    #[cfg(test)]
+    pub(crate) static GLYPHS_PLACED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The extent a `w × h` box spans along unit direction `dir`.
 fn extent(dir: Vec2, w: f32, h: f32) -> f32 {
     dir.x.abs() * w + dir.y.abs() * h
+}
+
+/// The steps one placement's walks have taken (#294): each [`PathWalk::step`]
+/// answer, by where it was taken, the cluster's width and the line
+/// height, all bit for bit. The walk lays a placement, and its readable
+/// pass lays the same clusters again from the same places — measuring a
+/// stretch before laying it, and the reading order before laying that —
+/// so a step it has taken is looked up, not taken again. A step is a
+/// function of those three numbers and the path alone, so the answer is
+/// the one it would compute, to the bit.
+///
+/// Holds the steps of one line height: a walk at another, as `Fit` lays
+/// at each scale it tries, starts it afresh, so it never holds more than
+/// the walks at one scale took. Only the walks of one placement
+/// ([`place`]) share one, all with the same path and none level, the
+/// two things besides those three numbers a step depends on.
+#[derive(Default)]
+struct StepMemo {
+    /// The line height's bits, and each step by its start's and its
+    /// width's.
+    taken: RefCell<(u32, Steps)>,
+}
+
+/// [`StepMemo`]'s steps: `(s, w)`, as bits, to the step and its
+/// direction.
+type Steps = FxHashMap<(u32, u32), (f32, Vec2)>;
+
+impl StepMemo {
+    /// The step taken from `s` by a cluster `w` wide at line height `h`,
+    /// if one has been.
+    fn get(&self, s: f32, w: f32, h: f32) -> Option<(f32, Vec2)> {
+        let taken = self.taken.borrow();
+        if taken.0 != h.to_bits() {
+            return None;
+        }
+        taken.1.get(&(s.to_bits(), w.to_bits())).copied()
+    }
+
+    /// Remember the step `step` taken from `s` by a cluster `w` wide at
+    /// line height `h`.
+    fn put(&self, s: f32, w: f32, h: f32, step: (f32, Vec2)) {
+        let mut taken = self.taken.borrow_mut();
+        if taken.0 != h.to_bits() {
+            taken.0 = h.to_bits();
+            taken.1.clear();
+        }
+        taken.1.insert((s.to_bits(), w.to_bits()), step);
+    }
 }
 
 /// The walk: a path, the run's line height and whether glyphs are
@@ -633,6 +703,9 @@ fn extent(dir: Vec2, w: f32, h: f32) -> f32 {
 #[derive(Copy, Clone)]
 struct PathWalk<'p> {
     path: &'p ArcPath,
+    /// The steps this placement's walks have taken ([`StepMemo`]), when
+    /// it keeps them.
+    memo: Option<&'p StepMemo>,
     /// `h`: every cluster's box height and vertical extent.
     line_height: f32,
     outward: bool,
@@ -663,9 +736,7 @@ impl PathWalk<'_> {
     /// The direction of the chord from `p(s)` to `p(s + len)`, or the
     /// direction of travel at `s` where the chord has no length.
     fn chord(&self, s: f32, len: f32) -> Vec2 {
-        let (from, tangent) = self.path.at(s);
-        let (to, _) = self.path.at(s + len);
-        (to - from).try_normalize().unwrap_or(tangent)
+        chord_from(self.path, self.path.at(s), s, len)
     }
 
     /// The step a `w × h` cluster takes from `s`, and the direction θ it
@@ -687,16 +758,37 @@ impl PathWalk<'_> {
     /// 3.1 pt.) So a cluster's position, and the end of a run of steps,
     /// move continuously as the run moves along, which is what lets
     /// `Spread`'s and `Fit`'s end conditions be solved on a sharp outline.
+    ///
+    /// The point at `s` is looked up once and every chord taken from it,
+    /// and a step this placement's walks have taken already is read from
+    /// its [`StepMemo`]: off a level walk, [`CHORD_ROUNDS`] `+ 2` path
+    /// lookups for a step taken afresh, none for one taken before.
     fn step(&self, s: f32, w: f32, h: f32) -> (f32, Vec2) {
+        if let Some(step) = self.memo.and_then(|memo| memo.get(s, w, h)) {
+            return step;
+        }
+        let step = self.step_afresh(s, w, h);
+        if let Some(memo) = self.memo {
+            memo.put(s, w, h, step);
+        }
+        step
+    }
+
+    /// [`step`](Self::step), taken.
+    fn step_afresh(&self, s: f32, w: f32, h: f32) -> (f32, Vec2) {
+        #[cfg(test)]
+        STEPS_TAKEN.with(|count| count.set(count.get() + 1));
         if self.level {
             let step = self.level_len(s, w);
             return (step, self.chord(s, step));
         }
-        let mut step = extent(self.path.at(s).1, w, h);
+        let (from, tangent) = self.path.at(s);
+        let chord = |len: f32| chord_from(self.path, (from, tangent), s, len);
+        let mut step = extent(tangent, w, h);
         for _ in 0..CHORD_ROUNDS {
-            step = extent(self.chord(s, step), w, h);
+            step = extent(chord(step), w, h);
         }
-        (step, self.chord(s, step))
+        (step, chord(step))
     }
 
     /// What a cluster of advance `advance`, ink `ink` (in its box's
@@ -757,11 +849,13 @@ impl PathWalk<'_> {
                 0.0
             }
         };
-        let mut step = along(self.path.at(s).1);
+        let (from, tangent) = self.path.at(s);
+        let chord = |len: f32| chord_from(self.path, (from, tangent), s, len);
+        let mut step = along(tangent);
         for _ in 0..CHORD_ROUNDS {
-            step = along(self.chord(s, step));
+            step = along(chord(step));
         }
-        (step, self.chord(s, step))
+        (step, chord(step))
     }
 
     /// The center on the canvas of the ink of a glyph whose ink is `ink`
@@ -2425,8 +2519,10 @@ fn place(
     fs: &mut FontSystem,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
+    let memo = StepMemo::default();
     let walk = |run: &ShapedRun| PathWalk {
         path,
+        memo: Some(&memo),
         line_height: run.line_height,
         outward,
         limit: path.length() + end_slack(path.length()),
@@ -2441,7 +2537,10 @@ fn place(
         FitMode::Spread => spread(run, &walk(run), 0.0),
         FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs, &walk),
     };
-    walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace)
+    let placed = walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace);
+    #[cfg(test)]
+    GLYPHS_PLACED.with(|count| count.set(count.get() + placed.1.glyphs.len()));
+    placed
 }
 
 /// Every cluster once from the start, `gap` apart, cut to the longest

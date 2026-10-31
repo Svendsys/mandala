@@ -610,6 +610,7 @@ impl Layout<'_> {
                 out.want = [0.5 * JUNCTION_WORD_GAPS * word; 2];
                 let walk = PathWalk {
                     path: &self.halves.paths[one.half],
+                    memo: None,
                     line_height: 0.0,
                     outward: self.outward,
                     limit: f32::INFINITY,
@@ -1079,6 +1080,7 @@ fn letters_of(clusters: &[Cluster]) -> Option<(Vec2, f32)> {
 fn line_walk<'p>(path: &'p ArcPath, run: &ShapedRun, outward: bool) -> PathWalk<'p> {
     PathWalk {
         path,
+        memo: None,
         line_height: run.line_height,
         outward,
         limit: f32::INFINITY,

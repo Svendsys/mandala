@@ -605,3 +605,57 @@ pub fn do_flow_path_measures_past_the_root_of_the_largest_f32() {
         "an outline",
     );
 }
+
+/// A path looked up forward a little at a time — as a walk looks it up —
+/// is answered from where the last lookup fell, not by a search of its
+/// stretches and its table (#294): fewer than one search in a hundred
+/// lookups. Every answer is the one a path that has not been walked
+/// gives, bit for bit, a search's. Control: with no cursor, every lookup
+/// searches. (No `do_*` twin: it reads test counters.)
+#[test]
+fn test_flow_path_walks_forward_without_searching() {
+    use crate::flow::path::{PATH_LOOKUPS, PATH_SEARCHES};
+    let curve = Curve::Cubic(
+        Vec2::new(0.0, 0.0),
+        Vec2::new(300.0, -400.0),
+        Vec2::new(500.0, 500.0),
+        Vec2::new(900.0, 0.0),
+    );
+    let rounded = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(400.0, 220.0)),
+        Shape::Rectangle {
+            radius: Percent::new(40),
+        },
+    );
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.0,
+    };
+    let open = || ArcPath::open(&curve, 1.0);
+    let closed = || ArcPath::closed(&rounded, start, Direction::Clockwise, 1.0);
+    let paths: [(&str, &dyn Fn() -> ArcPath); 2] = [("a cubic", &open), ("a rounded rectangle", &closed)];
+    for (what, fresh) in paths {
+        let path = fresh();
+        let steps = 4000;
+        let at = |k: usize| path.length() * k as f32 / steps as f32;
+        for counter in [&PATH_LOOKUPS, &PATH_SEARCHES] {
+            counter.with(|count| count.set(0));
+        }
+        let walked: Vec<(Vec2, Vec2)> = (0..=steps).map(|k| path.at(at(k))).collect();
+        let [lookups, searches] =
+            [&PATH_LOOKUPS, &PATH_SEARCHES].map(|counter| counter.with(std::cell::Cell::get));
+        assert!(
+            searches * 100 < lookups,
+            "{what}: {searches} searches in {lookups} lookups"
+        );
+        for (k, got) in walked.iter().enumerate() {
+            let want = fresh().at(at(k));
+            assert!(
+                got.0.to_array().map(f32::to_bits) == want.0.to_array().map(f32::to_bits)
+                    && got.1.to_array().map(f32::to_bits) == want.1.to_array().map(f32::to_bits),
+                "{what} at {}: {got:?}, a search finds {want:?}",
+                at(k)
+            );
+        }
+    }
+}

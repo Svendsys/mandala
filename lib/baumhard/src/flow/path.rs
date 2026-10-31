@@ -17,6 +17,7 @@
 //! table's (second-order) error.
 
 use glam::Vec2;
+use std::cell::Cell;
 
 use crate::document::values::{Direction, Edge, StartPoint};
 use crate::flow::curve::Curve;
@@ -79,7 +80,34 @@ enum Stretch {
         param: Param,
         params: Vec<f32>,
         distances: Vec<f32>,
+        /// The sample the last lookup fell after ([`at_or_below`]).
+        cursor: Cell<usize>,
     },
+}
+
+/// The last index of `sorted` (ascending) whose value is at or below
+/// `s`, or 0 when none is: `partition_point(|d| d <= s) − 1`, saturating.
+/// `cursor`, the index the last lookup found, is tried first, and the
+/// one after it: a walk goes forward a sample at a time, so each lookup
+/// of a walk is found there, and only a jump searches — the same index
+/// either way, so a lookup answers what a search would.
+///
+/// Cost: O(1) at the cursor or the next index; else a binary search.
+fn at_or_below(sorted: &[f32], s: f32, cursor: &Cell<usize>) -> usize {
+    let holds = |i: usize| sorted[i] <= s;
+    let is_last = |i: usize| i < sorted.len() && holds(i) && (i + 1 == sorted.len() || !holds(i + 1));
+    let hint = cursor.get();
+    let found = if is_last(hint) {
+        hint
+    } else if is_last(hint + 1) {
+        hint + 1
+    } else {
+        #[cfg(test)]
+        PATH_SEARCHES.with(|count| count.set(count.get() + 1));
+        sorted.partition_point(|&d| d <= s).saturating_sub(1)
+    };
+    cursor.set(found);
+    found
 }
 
 impl Stretch {
@@ -133,9 +161,10 @@ impl Stretch {
                 param,
                 params,
                 distances,
+                cursor,
             } => {
                 let last = distances.len().saturating_sub(2);
-                let i = distances.partition_point(|&d| d <= s).saturating_sub(1).min(last);
+                let i = at_or_below(distances, s, cursor).min(last);
                 let (d0, d1) = (distances[i], distances[i + 1]);
                 let (t0, t1) = (params[i], params[i + 1]);
                 let frac = if d1 > d0 {
@@ -154,6 +183,17 @@ impl Stretch {
     }
 }
 
+thread_local! {
+    /// Test counter (#294): the points [`ArcPath::at`] has looked up on
+    /// this thread.
+    #[cfg(test)]
+    pub(crate) static PATH_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294): the binary searches [`at_or_below`] has made
+    /// on this thread, a lookup its cursor did not answer.
+    #[cfg(test)]
+    pub(crate) static PATH_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A path walked by arc length.
 #[derive(Clone, Debug)]
 pub(crate) struct ArcPath {
@@ -170,6 +210,8 @@ pub(crate) struct ArcPath {
     /// How many samples were built into arc-length tables for this
     /// path, kept or dropped as not walkable.
     table_samples: usize,
+    /// The stretch the last lookup fell in ([`at_or_below`]).
+    cursor: Cell<usize>,
 }
 
 impl ArcPath {
@@ -187,6 +229,7 @@ impl ArcPath {
             origin: if origin.is_finite() { origin } else { Vec2::ZERO },
             winding,
             table_samples: 0,
+            cursor: Cell::new(0),
         };
         for stretch in stretches {
             if let Stretch::Table { params, .. } = &stretch {
@@ -364,6 +407,8 @@ impl ArcPath {
     ///
     /// Cost: two binary searches (the stretch, then a table's sample).
     pub(crate) fn at(&self, s: f32) -> (Vec2, Vec2) {
+        #[cfg(test)]
+        PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
         if self.stretches.is_empty() {
             return (self.origin, Vec2::X);
         }
@@ -372,7 +417,7 @@ impl ArcPath {
         } else {
             s.clamp(0.0, self.length)
         };
-        let index = self.starts.partition_point(|&start| start <= s).saturating_sub(1);
+        let index = at_or_below(&self.starts, s, &self.cursor);
         self.stretches[index].at(s - self.starts[index])
     }
 
@@ -510,5 +555,6 @@ fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<S
         param,
         params,
         distances,
+        cursor: Cell::new(0),
     })
 }

@@ -771,6 +771,52 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
     }
 }
 
+/// The flow_structured smoke's finding on #294 (CI run 41234757416, a
+/// libFuzzer timeout): a `Repeat` of twenty glyphs along a quadratic
+/// whose control point is `1e30` off its ends. The path is about `1e30`
+/// long, so the walk lays copies to the `MAX_PLACED_GLYPHS` cap, a
+/// million glyphs — which any `Repeat` as long as the canvas reaches
+/// too. The cost was in how often each was walked: the readable pass laid
+/// the placement again to measure each stretch and the reading order
+/// before laying them, five walks more in all, and every step looked up
+/// the point it starts from three times over. Now a placement's walks
+/// share the steps they take (`StepMemo`), and a
+/// step looks its start up once.
+///
+/// So the work is bounded by what is placed: at most two steps taken
+/// afresh per placed glyph — the walk, and the reading-order lay of what
+/// it reverses — and ten path lookups, four a step and the glyphs'
+/// corners. Precondition: the input lays the cap. Control: with every
+/// walk stepping afresh, or a step's start looked up per chord, the
+/// counts pass their bounds.
+#[test]
+fn test_a_repeat_along_a_curve_as_long_as_an_f32_walks_each_glyph_twice_at_most() {
+    use crate::flow::path::PATH_LOOKUPS;
+    use crate::flow::place::{GLYPHS_PLACED, STEPS_TAKEN};
+    use crate::flow::MAX_PLACED_GLYPHS;
+    let found = include_bytes!("fuzz_findings/repeat_along_a_curve_past_the_root_of_the_largest_f32");
+    for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
+        counter.with(|count| count.set(0));
+    }
+    if let Err(why) = check_flow_structured(found) {
+        panic!("the fuzzer's input: {why}");
+    }
+    let [steps, placed, lookups] =
+        [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS].map(|counter| counter.with(std::cell::Cell::get));
+    assert!(
+        placed + 20 > MAX_PLACED_GLYPHS,
+        "precondition: the input lays the cap ({placed} glyphs)"
+    );
+    assert!(
+        steps <= 2 * placed,
+        "{steps} steps taken for {placed} glyphs placed"
+    );
+    assert!(
+        lookups <= 10 * placed,
+        "{lookups} path lookups for {placed} glyphs placed"
+    );
+}
+
 /// The finding above along an open line, where `solve_gap` still lays
 /// a `Spread` (a frame round a closed outline is laid along its halves
 /// now, #291): along a line as long as an `f32` goes, a `Spread` — and a

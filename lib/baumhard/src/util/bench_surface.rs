@@ -369,6 +369,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             CannotCompileIntoTheLibrary,
         ),
         (
+            "flow/tests/outline_tests.rs",
+            "test_flow_path_walks_forward_without_searching",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "gfx_structs/tests/shape_tests.rs",
             "test_log_routing_check_accepts_the_modeled_shape",
             CannotCompileIntoTheLibrary,
