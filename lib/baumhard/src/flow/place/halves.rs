@@ -46,19 +46,28 @@
 //! outline steps as its box; a line of one letter sits centered on its
 //! part.
 //!
-//! **Each junction is a visible break** (ruling R33.1). At the whole
-//! span the two lines' nearest end inks at a junction are at least two
-//! word gaps apart, of the mean of the lines that have one (a line of
-//! one word has none: the span stretches its letter gaps alone), and
-//! with `sides` one whole copy of the ornament fits between them. Each
-//! line keeps its own clearance from each junction, grown round by
-//! round among the lines whose drawing back parts the ends there
-//! ([`Layout::lay_clear`]), and kept at every span.
+//! **Each junction is a visible break** (rulings R33.1, R35.1). At every
+//! span the two lines' end inks at a junction are at least two word
+//! gaps apart, box to box, of the mean of the lines that have one (a
+//! line of one word has none: the span stretches its letter gaps
+//! alone), and with `sides` one whole copy of the ornament fits between
+//! them; two end inks whose outward normals turn more than 135° apart
+//! are lines stacked across a thin outline, and need only not touch.
+//! Each line keeps its own clearance from each junction, grown round by
+//! round among the lines whose drawing back parts the ends there, at
+//! whole and then on at the span laid ([`Layout::lay_clear`]).
 //!
-//! **No line is laid tighter than its font.** Where a half less its
-//! clearance cannot hold its line at its font's gap, the last resorts
+//! **No line is laid tighter than its font, and no two inks touch**
+//! (rulings R34, R35.2). Where the halves do not hold the frame so — a
+//! line its half less the clearance cannot hold at its font's gap, a
+//! junction left short of a break, two inks touching — the last resorts
 //! follow: a `Fit` frame is shrunk, within its bounds; a line held even
-//! so by nothing is cut at its end, the placement reporting it.
+//! so by nothing is cut at its end, the placement reporting it; and
+//! what is left unheld even so is reported in the trace
+//! ([`Unheld`](super::Unheld)), never silent. Every last resort is
+//! bounded in work (ruling R35.3): a shrink's probe looks first whether
+//! its lines fit at all, and a frame's tracking takes at most
+//! [`TRACK_BUDGET`] glyph steps.
 //!
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most
@@ -68,6 +77,7 @@
 //! The ornament is shaped into the run as a line of its own, the way a
 //! `Once` filler is.
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::ops::Range;
 
@@ -127,6 +137,11 @@ const MIN_GROWTH: f32 = 0.25;
 /// halved before it is taken anyway.
 const BACKTRACKS: usize = 6;
 
+/// How many times a shrink's probe halves such a round (ruling R35.3):
+/// a probe asks only whether its size can be held, and a round that
+/// presses a line after one halving says, near enough, that it cannot.
+const PROBE_BACKTRACKS: usize = 1;
+
 /// The most rounds of bisection a natural line is centered on its apex
 /// in, and how near equal its two arcs either side must come, in
 /// points.
@@ -146,6 +161,31 @@ const JOIN_FLOOR: f32 = 4.0 * INK_TOLERANCE;
 /// The rounds of bisection a `Fit` frame is shrunk in, when its halves
 /// cannot hold its lines at the size R27 gave it.
 const SHRINK_ROUNDS: usize = 12;
+
+/// How much of the clearance of the largest size a shrink has found
+/// held a probe at a larger size starts from (ruling R35.3): a clearance
+/// grows with the word gap, so with the size — or stays, where a wide
+/// space of no size of its own sets it — and the probe's rounds grow it
+/// the rest of the way, from below.
+const SEED_SHARE: f32 = 0.9;
+
+/// The most glyph steps a frame's tracking may take in all, each glyph
+/// a [`track`] lays counting one (ruling R35.3): the bound on its last
+/// resorts' work. A frame that reaches it keeps the best it has laid —
+/// the largest size its shrink found clean, the cuts made so far — and
+/// its trace reports what is left unheld. No frame of a map or a test
+/// comes near it; the fuzzers' findings do.
+pub(crate) const TRACK_BUDGET: usize = 1 << 21;
+
+/// How far apart the outward normals of two lines' end inks at a
+/// junction must turn, as a cosine, for the two to be lines stacked
+/// across a thin outline rather than lines meeting there (ruling R35.1):
+/// 135°.
+const STACKED: f32 = -std::f32::consts::FRAC_1_SQRT_2;
+
+/// How far apart two inks must be not to touch, in points: past
+/// [`INK_TOLERANCE`], what the pairwise rule sets inks apart to.
+const TOUCH: f32 = INK_TOLERANCE;
 
 /// The most times a frame's lines are cut and the clearance found
 /// again: a cut line, stretched over its half at whole, has wider word
@@ -222,6 +262,20 @@ fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
     (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length()
 }
 
+/// How far apart two boxes, `(min, max)` each, are: their distance
+/// ([`box_gap`]) where they are apart, and where they overlap how deep,
+/// as a negative — the overlap along the axis it is least on, how far
+/// one must move to clear the other — so that two inks drawn apart out
+/// of an overlap measure the progress (ruling R35.2).
+fn separation(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
+    let apart = (b.0 - a.1).max(a.0 - b.1);
+    if apart.x > 0.0 || apart.y > 0.0 {
+        apart.max(Vec2::ZERO).length()
+    } else {
+        apart.x.max(apart.y)
+    }
+}
+
 /// The center of a box, `(min, max)`.
 fn middle(b: (Vec2, Vec2)) -> Vec2 {
     0.5 * (b.0 + b.1)
@@ -261,7 +315,20 @@ fn uninked(mut run: ShapedRun) -> ShapedRun {
     run
 }
 
+thread_local! {
+    /// Test counter (#294): the lines [`track`] has laid on this thread,
+    /// what a frame's work is counted in.
+    #[cfg(test)]
+    pub(crate) static TRACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294): the times a frame's text has been built at a
+    /// size on this thread — shaped, inked and its lines prepared —
+    /// whether or not its clearance was then grown.
+    #[cfg(test)]
+    pub(crate) static BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// One line laid with one tracking gap ([`track`]).
+#[derive(Clone)]
 struct Tracked {
     /// Its glyphs, in text order.
     glyphs: Vec<PlacedGlyph>,
@@ -270,6 +337,8 @@ struct Tracked {
     short: f32,
     /// Its first and last ink boxes.
     ends: Option<((Vec2, Vec2), (Vec2, Vec2))>,
+    /// Each inked cluster's ink box, in text order.
+    boxes: Vec<InkBox>,
 }
 
 /// `clusters` laid along `walk`'s path over the part `[sa, sb]` with
@@ -289,7 +358,10 @@ fn track(
     (sa, sb): (f32, f32),
     g: f32,
 ) -> Tracked {
+    #[cfg(test)]
+    TRACKS.with(|count| count.set(count.get() + 1));
     let mut out = Vec::new();
+    let mut boxes = Vec::new();
     let mut last: Option<(Vec2, Vec2, f32)> = None;
     let mut first_box: Option<(Vec2, Vec2)> = None;
     let mut owed = 0.5 * g;
@@ -329,6 +401,7 @@ fn track(
         }
         let half = size * 0.5;
         first_box.get_or_insert((at - half, at + half));
+        boxes.push((at - half, at + half));
         last = Some((at, half, center));
         owed = g;
         s = s + (center - natural) + step;
@@ -341,6 +414,7 @@ fn track(
         glyphs: out,
         short,
         ends,
+        boxes,
     }
 }
 
@@ -367,6 +441,7 @@ struct Prepared {
 }
 
 /// One line along its half ([`Layout::lay`]).
+#[derive(Clone)]
 struct Line {
     /// The half it takes.
     half: usize,
@@ -394,9 +469,46 @@ struct Line {
 struct Layout<'a> {
     halves: &'a Halves,
     outward: bool,
+    /// The glyph steps this frame's tracking has taken
+    /// ([`TRACK_BUDGET`]).
+    spent: Cell<usize>,
+}
+
+/// The lines [`Layout::lay`] has laid in one clearance search, by line,
+/// part of its half it may cover, and span, all bit for bit: a round
+/// that grows one line's clearance lays the other where it lay.
+type LayMemo = FxHashMap<(usize, u32, u32, u32), Line>;
+
+impl<'a> Layout<'a> {
+    fn new(halves: &'a Halves, outward: bool) -> Self {
+        Layout {
+            halves,
+            outward,
+            spent: Cell::new(0),
+        }
+    }
 }
 
 impl Layout<'_> {
+    /// [`track`], counted against the frame's [`TRACK_BUDGET`].
+    fn track(
+        &self,
+        walk: &PathWalk<'_>,
+        glyphs: &[GlyphMetrics],
+        clusters: &[Cluster],
+        part: (f32, f32),
+        g: f32,
+    ) -> Tracked {
+        self.spent
+            .set(self.spent.get().saturating_add(clusters.len().max(1)));
+        track(walk, glyphs, clusters, part, g)
+    }
+
+    /// Whether the frame's tracking has taken its [`TRACK_BUDGET`].
+    fn spent_all(&self) -> bool {
+        self.spent.get() >= TRACK_BUDGET
+    }
+
     /// The walk a line on half `k` is tracked along.
     fn walk<'s>(&'s self, k: usize, run: &ShapedRun) -> PathWalk<'s> {
         line_walk(&self.halves.paths[k], run, self.outward)
@@ -405,7 +517,9 @@ impl Layout<'_> {
     /// How long `clusters` are at gap `g` from their first ink center at
     /// `from` to their last, by arc length along half `k`.
     fn reach(&self, k: usize, run: &ShapedRun, clusters: &[Cluster], from: f32, g: f32) -> f32 {
-        -track(&self.walk(k, run), &run.glyphs, clusters, (from, from), g).short
+        -self
+            .track(&self.walk(k, run), &run.glyphs, clusters, (from, from), g)
+            .short
     }
 
     /// The line of `run` (inked) over `range` on half `k`, ready to lay:
@@ -517,49 +631,100 @@ impl Layout<'_> {
     /// whole half less its `clear` (top-left, bottom-right), by arc length at
     /// each end (ruling R33), and laid at the gap that centers its end
     /// inks on its part's ends.
-    fn lay(&self, run: &ShapedRun, lines: &[Prepared], clear: Clear, span: f32) -> Vec<Line> {
+    ///
+    /// A line laid before in this search with the same part and span
+    /// is read from `memo`: the line it would lay, to the bit.
+    fn lay(
+        &self,
+        run: &ShapedRun,
+        lines: &[Prepared],
+        clear: Clear,
+        span: f32,
+        memo: &mut LayMemo,
+    ) -> Vec<Line> {
         lines
             .iter()
-            .map(|p| {
-                let walk = self.walk(p.half, run);
-                let (lo, hi) = self.room(p.half, clear[p.half]);
-                let (na, nb) = self.slid(run, p, (lo, hi));
-                // `lo ≤ na` and `nb ≤ hi` after the slide, so each end
-                // moves only outward as the span grows.
-                let sa = na + (lo - na) * span;
-                let sb = nb + (hi - nb) * span;
-                // A line of one letter has no gap to track: it sits at
-                // its font's gap, centered on its part.
-                let letters = p.clusters.iter().filter(|c| !c.blank).count();
-                let (gap, tracked) = if letters < 2 {
-                    let mid = 0.5 * (sa + sb);
-                    let gap = p.natural_gap;
-                    (gap, track(&walk, &run.glyphs, &p.clusters, (mid, mid), gap))
-                } else {
-                    let short = |g: f32| track(&walk, &run.glyphs, &p.clusters, (sa, sb), g).short;
-                    let gap = solve_tracking(short);
-                    (gap, track(&walk, &run.glyphs, &p.clusters, (sa, sb), gap))
-                };
-                Line {
-                    half: p.half,
-                    tracked,
-                    gap,
-                    word: (p.space > 0.0).then_some(p.space + 2.0 * gap),
-                    part: (sa, sb),
-                    size: p.size,
-                    pressed: letters >= 2 && gap < p.natural_gap - GAP_TOLERANCE,
-                    tracks: letters >= 2,
+            .enumerate()
+            .map(|(i, p)| {
+                let room = self.room(p.half, clear[p.half]);
+                let key = (i, room.0.to_bits(), room.1.to_bits(), span.to_bits());
+                if let Some(line) = memo.get(&key) {
+                    return line.clone();
                 }
+                let line = self.lay_one(run, p, room, span);
+                memo.insert(key, line.clone());
+                line
             })
             .collect()
     }
 
+    /// [`lay`](Self::lay)'s line `p` over `(lo, hi)`.
+    fn lay_one(&self, run: &ShapedRun, p: &Prepared, (lo, hi): (f32, f32), span: f32) -> Line {
+        let walk = self.walk(p.half, run);
+        let (na, nb) = self.slid(run, p, (lo, hi));
+        // `lo ≤ na` and `nb ≤ hi` after the slide, so each end
+        // moves only outward as the span grows.
+        let sa = na + (lo - na) * span;
+        let sb = nb + (hi - nb) * span;
+        // A line of one letter has no gap to track: it sits at
+        // its font's gap, centered on its part.
+        let letters = p.clusters.iter().filter(|c| !c.blank).count();
+        let (gap, tracked) = if letters < 2 {
+            let mid = 0.5 * (sa + sb);
+            let gap = p.natural_gap;
+            (gap, self.track(&walk, &run.glyphs, &p.clusters, (mid, mid), gap))
+        } else {
+            let short = |g: f32| self.track(&walk, &run.glyphs, &p.clusters, (sa, sb), g).short;
+            let gap = solve_tracking(short);
+            let tracked = self.track(&walk, &run.glyphs, &p.clusters, (sa, sb), gap);
+            if gap < p.natural_gap - GAP_TOLERANCE {
+                // A part its line fits at its font's gap is not one that
+                // presses it, where the slide that set it fell short of
+                // its end round a bend (ruling R35.2): it is laid at the
+                // font's gap from its start.
+                let natural = self.track(&walk, &run.glyphs, &p.clusters, (sa, sb), p.natural_gap);
+                if natural.short >= -SLIDE_TOLERANCE {
+                    (p.natural_gap, natural)
+                } else {
+                    (gap, tracked)
+                }
+            } else {
+                (gap, tracked)
+            }
+        };
+        Line {
+            half: p.half,
+            tracked,
+            gap,
+            word: (p.space > 0.0).then_some(p.space + 2.0 * gap),
+            part: (sa, sb),
+            size: p.size,
+            pressed: letters >= 2 && gap < p.natural_gap - GAP_TOLERANCE,
+            tracks: letters >= 2,
+        }
+    }
+
+    /// The outward normal of the outline where line `l`'s end ink at
+    /// junction `j` (top-left 0, bottom-right 1) is set.
+    fn normal(&self, l: &Line, j: usize) -> Vec2 {
+        let path = &self.halves.paths[l.half];
+        let s = if j == 0 {
+            l.part.0
+        } else {
+            l.part.1 - l.tracked.short
+        };
+        path.outward(path.at(s).1)
+    }
+
     /// How far apart the lines' end inks are at each junction (top-left,
-    /// bottom-right), how far apart they must be — two of the lines' mean
+    /// bottom-right), box to box, how far apart they must be — two of the lines' mean
     /// word gap (ruling R33.1), over the lines that have one: a line of
     /// one word has no word gap to count, the span stretching its letter
     /// gaps alone; with no word gap on any line, two of a line's letter
-    /// gaps stand for one — and, for each line, how much drawing its
+    /// gaps stand for one; and for two end inks whose outward normals
+    /// turn more than 135° apart, lines stacked across a thin outline
+    /// rather than lines meeting, only not to touch (ruling R35.1) — and,
+    /// for each line, how much drawing its
     /// end back at that junction parts the two: the cosine between the
     /// way its end moves as its clearance grows and the way away from the
     /// other end. A single line is measured against the junction point
@@ -592,6 +757,7 @@ impl Layout<'_> {
         };
         let mut out = Junctions {
             apart: [f32::INFINITY; 2],
+            depth: [f32::INFINITY; 2],
             want: [0.0; 2],
             helps: [[0.0; 2]; 2],
         };
@@ -600,7 +766,11 @@ impl Layout<'_> {
                 out.want = [JUNCTION_WORD_GAPS * word; 2];
                 if let (Some((a1, b1)), Some((a2, b2))) = (one.tracked.ends, two.tracked.ends) {
                     for (j, (e1, e2)) in [(a1, a2), (b1, b2)].into_iter().enumerate() {
+                        if self.normal(one, j).dot(self.normal(two, j)) < STACKED {
+                            out.want[j] = TOUCH;
+                        }
                         out.apart[j] = box_gap(e1, e2);
+                        out.depth[j] = separation(e1, e2);
                         out.helps[one.half][j] = helps(one, j, e1, e2);
                         out.helps[two.half][j] = helps(two, j, e2, e1);
                     }
@@ -628,6 +798,7 @@ impl Layout<'_> {
                 if let Some((a, b)) = one.tracked.ends {
                     for (j, (e, p)) in [(a, points[0]), (b, points[1])].into_iter().enumerate() {
                         out.apart[j] = box_gap(e, (p, p));
+                        out.depth[j] = separation(e, (p, p));
                         out.helps[one.half][j] = helps(one, j, e, (p, p));
                     }
                 }
@@ -643,6 +814,11 @@ impl Layout<'_> {
 /// them by drawing back.
 struct Junctions {
     apart: [f32; 2],
+    /// [`apart`](Self::apart) where the inks are apart, and how deep
+    /// they overlap, as a negative, where they do ([`separation`]): what
+    /// a round's progress is measured in, so that two inks drawn out of
+    /// an overlap show it (ruling R35.2).
+    depth: [f32; 2],
     want: [f32; 2],
     /// `[half][junction]`.
     helps: [[f32; 2]; 2],
@@ -920,8 +1096,30 @@ impl Layout<'_> {
     }
 
     /// The lines laid at `span`, each line's clearance from each
-    /// junction found at the whole span (ruling R33.1) and kept at every
-    /// span, so the ends move monotonically with it.
+    /// junction grown from `seed` at the whole span (ruling R33.1) and
+    /// then, below whole, grown on at `span` until each junction is a
+    /// break there too (ruling R35.1): so a line at a narrower span lies
+    /// within where it lies at whole. Returns the lines, their clearance,
+    /// and whether each junction (top-left, bottom-right) is a break.
+    fn lay_clear(
+        &self,
+        run: &ShapedRun,
+        lines: &[Prepared],
+        side: Option<(&ShapedRun, &Range<usize>)>,
+        span: f32,
+        seed: Clear,
+        backtracks: usize,
+    ) -> Cleared {
+        let mut memo = LayMemo::default();
+        let whole = self.grow(run, lines, side, 1.0, seed, backtracks, &mut memo);
+        if span >= 1.0 {
+            return whole;
+        }
+        self.grow(run, lines, side, span, whole.clear, backtracks, &mut memo)
+    }
+
+    /// The lines laid at `span` with each line's clearance grown from
+    /// `clear` until each junction is a break ([`met`](Self::met)).
     ///
     /// A junction's clearance grows, round by round, while it is not a
     /// break ([`met`](Self::met)). Each round shares what is missing —
@@ -936,30 +1134,51 @@ impl Layout<'_> {
     /// most), so the rounds close on the least clearance from below
     /// rather than overshoot. A junction stops growing when no line's
     /// drawing back parts its ends, or a round leaves them no further
-    /// apart.
-    fn lay_clear(
+    /// apart — below whole, a round that moved them: a natural line's end
+    /// does not move at all until the clearance reaches it.
+    fn grow(
         &self,
         run: &ShapedRun,
         lines: &[Prepared],
         side: Option<(&ShapedRun, &Range<usize>)>,
         span: f32,
-    ) -> (Vec<Line>, Clear) {
-        let mut clear: Clear = [[0.0; 2]; 2];
-        let mut laid = self.lay(run, lines, clear, 1.0);
+        mut clear: Clear,
+        backtracks: usize,
+        memo: &mut LayMemo,
+    ) -> Cleared {
+        let mut laid = self.lay(run, lines, clear, span, memo);
+        // Each junction's measure before the round that grew it, if the
+        // last round did: a junction is judged by what its own growth did.
         let mut before = [f32::NEG_INFINITY; 2];
+        let mut parts_before: Vec<(f32, f32)> = Vec::new();
         let mut stuck = [false; 2];
+        let mut met_now: Option<[bool; 2]> = None;
         for _ in 0..CLEAR_ROUNDS {
+            if self.spent_all() {
+                break;
+            }
             let mut grow: Clear = [[0.0; 2]; 2];
             let mut grown = false;
-            let mut measured_apart = [f32::NEG_INFINITY; 2];
+            let mut measured_depth = [f32::NEG_INFINITY; 2];
+            let mut met_here = [false; 2];
+            let parts: Vec<(f32, f32)> = laid.iter().map(|l| l.part).collect();
+            // Below whole, a round that moved no end proves nothing.
+            let moved = span >= 1.0
+                || parts.len() != parts_before.len()
+                || parts
+                    .iter()
+                    .zip(&parts_before)
+                    .any(|(a, b)| (a.0 - b.0).abs() > PROGRESS || (a.1 - b.1).abs() > PROGRESS);
             for j in 0..2 {
                 let (met, measured) = self.met(&laid, side, j);
-                measured_apart[j] = measured.apart[j];
+                met_here[j] = met;
+                measured_depth[j] = measured.depth[j];
                 if met || stuck[j] {
                     continue;
                 }
                 let apart = measured.apart[j];
-                if apart.is_finite() && before[j].is_finite() && apart <= before[j] + PROGRESS {
+                let depth = measured.depth[j];
+                if moved && depth.is_finite() && before[j].is_finite() && depth <= before[j] + PROGRESS {
                     stuck[j] = true;
                     continue;
                 }
@@ -1003,34 +1222,86 @@ impl Layout<'_> {
                 }
                 grown = true;
             }
-            before = measured_apart;
+            for j in 0..2 {
+                before[j] = if grow[0][j] > 0.0 || grow[1][j] > 0.0 {
+                    measured_depth[j]
+                } else {
+                    f32::NEG_INFINITY
+                };
+            }
+            parts_before = parts;
+            met_now = Some(met_here);
             if !grown {
                 break;
             }
             let pressed: Vec<bool> = laid.iter().map(|l| l.pressed).collect();
             let mut scale = 1.0;
-            for _ in 0..=BACKTRACKS {
+            for _ in 0..=backtracks {
                 let mut next = clear;
                 for k in 0..2 {
                     for j in 0..2 {
                         next[k][j] += grow[k][j] * scale;
                     }
                 }
-                let tried = self.lay(run, lines, next, 1.0);
+                let tried = self.lay(run, lines, next, span, memo);
                 let presses = tried.iter().zip(&pressed).any(|(l, was)| l.pressed && !was);
-                if !presses || scale < 0.5_f32.powi(BACKTRACKS as i32) * 1.5 {
+                if !presses || scale < 0.5_f32.powi(backtracks as i32) * 1.5 {
                     clear = next;
                     laid = tried;
+                    met_now = None;
                     break;
                 }
                 scale *= 0.5;
             }
         }
-        if span < 1.0 {
-            laid = self.lay(run, lines, clear, span);
+        let met = met_now.unwrap_or_else(|| [0, 1].map(|j| self.met(&laid, side, j).0));
+        Cleared {
+            lines: laid,
+            clear,
+            met,
         }
-        (laid, clear)
     }
+}
+
+/// A frame's lines laid with their clearance ([`Layout::lay_clear`]).
+struct Cleared {
+    lines: Vec<Line>,
+    clear: Clear,
+    /// Whether each junction, top-left and bottom-right, is a break.
+    met: [bool; 2],
+}
+
+/// Whether two of `lines`' inks touch (ruling R35.2): any two of
+/// different lines, or of one line but not neighbors — two neighbors
+/// are as far apart as the line's tracking sets them, a font with no
+/// side bearings' zero gap included. Sorted by their left edges, each
+/// box is held only against those that start before it ends.
+///
+/// Cost: O(n log n) in the lines' inks, and a pair per two that share
+/// some of their width.
+fn overlapping(lines: &[Line]) -> bool {
+    let mut boxes: Vec<(usize, usize, InkBox)> = lines
+        .iter()
+        .enumerate()
+        .flat_map(|(k, l)| l.tracked.boxes.iter().enumerate().map(move |(i, b)| (k, i, *b)))
+        .collect();
+    boxes.sort_by(|a, b| a.2 .0.x.total_cmp(&b.2 .0.x));
+    for (n, (k, i, a)) in boxes.iter().enumerate() {
+        for (l, j, b) in &boxes[n + 1..] {
+            // Every box after starts no sooner; one that is not a number
+            // ends the scan.
+            if !(b.0.x <= a.1.x + TOUCH) {
+                break;
+            }
+            if k == l && i.abs_diff(*j) <= 1 {
+                continue;
+            }
+            if box_gap(*a, *b) <= TOUCH {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// The least gap at which `short` (a line's room left, growing smaller as
@@ -1204,6 +1475,44 @@ struct Built {
     prepared: Vec<Prepared>,
     lines: Vec<Line>,
     clear: Clear,
+    /// Whether each junction is a break ([`Layout::met`]).
+    met: [bool; 2],
+    /// Whether two of its inks touch ([`overlapping`]).
+    overlap: bool,
+}
+
+/// What a frame's `lines` leave unheld (ruling R35.2), with whether
+/// each junction is a break and whether two inks touch: a line its half
+/// less the clearance cannot hold at its font's gap, a junction left
+/// short of a break, two inks touching.
+fn unheld_of(lines: &[Line], met: [bool; 2], overlap: bool) -> Unheld {
+    Unheld {
+        pressed: lines.iter().filter(|l| l.pressed).map(|l| l.half).collect(),
+        junctions: [0, 1].into_iter().filter(|&j| !met[j]).collect(),
+        overlap,
+        sides: Vec::new(),
+    }
+}
+
+impl Built {
+    /// Whether its halves hold it: nothing left unheld (ruling R35.2).
+    fn holds(&self) -> bool {
+        unheld_of(&self.lines, self.met, self.overlap).is_empty()
+    }
+
+    /// Its clearance as a seed for the text at a larger size
+    /// ([`SEED_SHARE`] of it).
+    fn seed(&self) -> Clear {
+        self.clear.map(|half| half.map(|c| c * SEED_SHARE))
+    }
+}
+
+/// The ink box on the canvas of `glyph`, placed from `run` (inked):
+/// `None` for one with no ink, a space.
+fn glyph_box(run: &ShapedRun, glyph: &PlacedGlyph) -> Option<InkBox> {
+    let ink = run.glyphs.get(glyph.glyph as usize)?.ink?;
+    let pen = glyph.pos + Vec2::new(0.0, run.baseline());
+    Some((pen + ink.min, pen + ink.max))
 }
 
 /// `clusters` without their trailing spaces.
@@ -1232,10 +1541,14 @@ fn trimmed(clusters: &[Cluster]) -> &[Cluster] {
 /// ([`resolve_ring`](crate::document::resolve::resolve_ring)).
 ///
 /// Cost: [`place_lines`]; per line a bisection of [`track`]s to center
-/// it and one per lay; the junction clearance [`CLEAR_ROUNDS`] lays at
-/// most, each with a one-copy solve per side arc; a cut a bisection of
+/// it and one per lay; the junction clearance [`CLEAR_ROUNDS`] rounds at
+/// most, at whole and again below it, each with a one-copy solve per
+/// side arc; a shrink [`SHRINK_ROUNDS`] probes, each one [`track`] a line
+/// and, where they fit, a clearance search; a cut a bisection of
 /// [`track`]s more and the clearance again, [`CUT_ROUNDS`] times at
-/// most; a side arc a bisection of lays per copy count weighed.
+/// most; a side arc a bisection of lays per copy count weighed. In all,
+/// at most [`TRACK_BUDGET`] glyph steps of tracking, and a few searches'
+/// worth past it.
 #[allow(clippy::too_many_arguments)] // `place_on_closed`'s, and the trace.
 pub(super) fn place_halves(
     run: &ShapedRun,
@@ -1272,10 +1585,7 @@ pub(super) fn place_halves(
         }
         return (fitted, natural);
     }
-    let lay = Layout {
-        halves: &halves,
-        outward,
-    };
+    let lay = Layout::new(&halves, outward);
 
     // The run the lines are laid from, and each line: its half, its
     // glyphs, and whether R27 cut it.
@@ -1305,8 +1615,13 @@ pub(super) fn place_halves(
 
     // The text at `scale` times its size: the run as drawn — the text,
     // and the side ornament on a line of its own — its lines, laid with
-    // their clearance, and whether a line is pressed.
-    let build = |scale: f32, fs: &mut FontSystemWriteGuard| {
+    // their clearance grown from `seed`. With `cheap`, `None` when a line
+    // does not fit its half less the seed at its font's gap (one `track`
+    // a line), before any clearance is grown: what a shrink's probe
+    // looks at first (ruling R35.3).
+    let build = |scale: f32, seed: Clear, cheap: bool, fs: &mut FontSystemWriteGuard| {
+        #[cfg(test)]
+        BUILDS.with(|count| count.set(count.get() + 1));
         let scaled = if scale == 1.0 {
             base.clone()
         } else {
@@ -1323,24 +1638,49 @@ pub(super) fn place_halves(
             .iter()
             .filter_map(|(k, range, cut)| lay.prepare(&drawn, *k, range.clone(), *cut))
             .collect();
-        let (lines, clear) = lay.lay_clear(&drawn, &prepared, side.as_ref().map(|r| (&drawn, r)), span);
-        Built {
+        let too_long = |p: &Prepared| {
+            let (lo, hi) = lay.room(p.half, seed[p.half]);
+            p.clusters.iter().filter(|c| !c.blank).count() >= 2
+                && !(lay.reach(p.half, &drawn, &p.clusters, lo, p.natural_gap) <= hi - lo + SLIDE_TOLERANCE)
+        };
+        if cheap && prepared.iter().any(too_long) {
+            return None;
+        }
+        let backtracks = if cheap { PROBE_BACKTRACKS } else { BACKTRACKS };
+        let cleared = lay.lay_clear(
+            &drawn,
+            &prepared,
+            side.as_ref().map(|r| (&drawn, r)),
+            span,
+            seed,
+            backtracks,
+        );
+        let overlap = overlapping(&cleared.lines);
+        Some(Built {
             drawn,
             side,
             prepared,
-            lines,
-            clear,
-        }
+            lines: cleared.lines,
+            clear: cleared.clear,
+            met: cleared.met,
+            overlap,
+        })
     };
-    let pressed = |built: &Built| built.lines.iter().any(|l| l.pressed);
-    let mut built = build(1.0, fs);
+    let zero: Clear = [[0.0; 2]; 2];
+    let Some(mut built) = build(1.0, zero, false, fs) else {
+        unreachable!("only a cheap build is refused")
+    };
     let mut scale = 1.0_f32;
-    // A `Fit` frame a line of which its half less the clearance cannot
-    // hold at its font's gap — a flat outline, its half barely longer
-    // than the level span R27 sized the text for — is shrunk, as the last
-    // resort, to the largest size within its bounds at which every line
-    // is held (§6.2 step 6).
-    if let (true, FitMode::Fit { min, .. }) = (pressed(&built), fit) {
+    // A `Fit` frame that its halves do not hold at R27's size — a line
+    // its half less the clearance cannot hold at its font's gap, a
+    // junction left short of a break, two inks touching: a flat outline,
+    // its half barely longer than the level span R27 sized the text for —
+    // is shrunk, as the last resort, to the largest size within its
+    // bounds at which they hold (§6.2 step 6, rulings R34 and R35.2).
+    // Each probe looks first at whether its lines fit their halves less
+    // a clearance seeded from the last size held, and grows that
+    // clearance only if they do (ruling R35.3).
+    if let (false, FitMode::Fit { min, .. }) = (built.holds(), fit) {
         let fitted_size = base.glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
         let declared = run.glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
         let floor = if fitted_size > 0.0 && declared > 0.0 {
@@ -1348,20 +1688,27 @@ pub(super) fn place_halves(
         } else {
             1.0
         };
-        let at_floor = build(floor, fs);
-        if pressed(&at_floor) {
-            (built, scale) = (at_floor, floor);
-        } else {
+        let Some(at_floor) = build(floor, zero, false, fs) else {
+            unreachable!("only a cheap build is refused")
+        };
+        if at_floor.holds() {
             let (mut held, mut over) = (floor, 1.0_f32);
+            let mut best = at_floor;
             for _ in 0..SHRINK_ROUNDS {
+                if lay.spent_all() {
+                    break;
+                }
                 let mid = 0.5 * (held + over);
-                if pressed(&build(mid, fs)) {
-                    over = mid;
-                } else {
-                    held = mid;
+                match build(mid, best.seed(), true, fs) {
+                    Some(probe) if probe.holds() => {
+                        (held, best) = (mid, probe);
+                    }
+                    _ => over = mid,
                 }
             }
-            (built, scale) = (build(held, fs), held);
+            (built, scale) = (best, held);
+        } else {
+            (built, scale) = (at_floor, floor);
         }
     }
     let Built {
@@ -1370,13 +1717,23 @@ pub(super) fn place_halves(
         mut prepared,
         mut lines,
         mut clear,
+        mut met,
+        mut overlap,
     } = built;
     let side_of = side.as_ref().map(|range| (&drawn, range));
 
-    // A line its half cannot hold even so is cut to what it can: a
-    // `Once` or `Spread` line at its size, a `Fit` line at its least.
+    // A frame its halves hold even so by nothing is cut (rulings R34,
+    // R35.2): a line its half less the clearance cannot hold at its
+    // font's gap — a `Once` or `Spread` line at its size, a `Fit` line at
+    // its least — to what it can. A line its half holds is never cut
+    // (ruling R34): a junction short of a break, or two inks touching,
+    // where no line is pressed, is reported in the trace instead.
     let mut truncated = natural.truncated && sized;
     for _ in 0..CUT_ROUNDS {
+        let holds = !lines.iter().any(|l| l.pressed) && met.iter().all(|&m| m) && !overlap;
+        if holds || lay.spent_all() {
+            break;
+        }
         let mut changed = false;
         for (p, line) in prepared.iter_mut().zip(&lines) {
             if !line.pressed {
@@ -1385,14 +1742,17 @@ pub(super) fn place_halves(
             if let Some(shorter) = lay.cut(&drawn, p, clear[p.half]) {
                 *p = shorter;
                 changed = true;
-                truncated = true;
             }
         }
         if !changed {
             break;
         }
-        (lines, clear) = lay.lay_clear(&drawn, &prepared, side_of, span);
+        truncated = true;
+        let cleared = lay.lay_clear(&drawn, &prepared, side_of, span, [[0.0; 2]; 2], BACKTRACKS);
+        (lines, clear, met) = (cleared.lines, cleared.clear, cleared.met);
+        overlap = overlapping(&lines);
     }
+    let mut unheld = unheld_of(&lines, met, overlap);
 
     let mut text = Vec::new();
     let mut line_ranges = Vec::new();
@@ -1406,10 +1766,36 @@ pub(super) fn place_halves(
     if let Some(range) = &side {
         let side = SideOrnament::new(&lay, &drawn, range.clone(), mean_size(&lines));
         let target = lines.iter().map(|l| l.gap).sum::<f32>() / lines.len().max(1) as f32;
-        for (_, from, to) in side_arcs(&lines) {
+        let text_boxes: Vec<InkBox> = lines
+            .iter()
+            .flat_map(|l| l.tracked.boxes.iter().copied())
+            .collect();
+        for (at, from, to) in side_arcs(&lines) {
             let budget = MAX_PLACED_GLYPHS.saturating_sub(text.len() + sides.len());
             if let Some(arc) = side.arc(from, to) {
+                let before = sides.len();
                 arc.fill(target, budget, &mut sides);
+                // An arc whose copies would touch the text, the copies
+                // already laid, or one another but for neighbors — round
+                // an outline thinner than its lines, inward, where an arc
+                // folds back across itself — is left empty, and reported
+                // (ruling R35.2).
+                let boxes: Vec<InkBox> = sides[before..]
+                    .iter()
+                    .filter_map(|g| glyph_box(&drawn, g))
+                    .collect();
+                let laid: Vec<InkBox> = sides[..before]
+                    .iter()
+                    .filter_map(|g| glyph_box(&drawn, g))
+                    .collect();
+                let touches = boxes.iter().enumerate().any(|(i, b)| {
+                    text_boxes.iter().chain(&laid).any(|t| box_gap(*b, *t) <= TOUCH)
+                        || boxes.iter().skip(i + 2).any(|c| box_gap(*b, *c) <= TOUCH)
+                });
+                if touches {
+                    sides.truncate(before);
+                    unheld.sides.extend((0..2).filter(|&j| at[j]));
+                }
             }
         }
     }
@@ -1428,6 +1814,7 @@ pub(super) fn place_halves(
                 cut: p.cut,
             })
             .collect();
+        trace.unheld = unheld;
     }
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;
@@ -1468,10 +1855,7 @@ pub(crate) fn side_floor_seam(
     fs: &mut FontSystemWriteGuard,
 ) -> Option<(ShapedRun, Vec<PlacedGlyph>, f32)> {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
-    let lay = Layout {
-        halves: &halves,
-        outward: true,
-    };
+    let lay = Layout::new(&halves, true);
     let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
     let (with, range) = side_run(run, &sides, flow, fs)?;
     let fsys: &mut FontSystem = fs;
@@ -1494,10 +1878,7 @@ pub(crate) fn side_floor_seam(
 /// junctions — [`Layout::room`], which never inverts.
 pub(crate) fn room_seam(outline: &Outline, half: usize, clear: [f32; 2]) -> ((f32, f32), (f32, f32)) {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
-    let lay = Layout {
-        halves: &halves,
-        outward: true,
-    };
+    let lay = Layout::new(&halves, true);
     (lay.room(half, clear), halves.junctions[half])
 }
 

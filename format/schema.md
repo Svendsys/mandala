@@ -689,7 +689,7 @@ What a text does when it and its path differ in length (D10, §6.4).
 | `"repeat"` | The text repeated until the path is full. Around a frame, as many whole repetitions as fit, evenly spaced, so the ring closes without a seam; along a connector, the last repetition is cut. An ornament (text with no letter or digit, such as `"✦ "`) is spaced by its ink, so its gaps look the same where the path runs level, steep, or round a corner. |
 | `"spread"` | The text once, spaced out to end where the path ends. On a frame's ring, the same as `"once"`: how far each of its two lines reaches is its [span](#span-of-a-line). |
 | `"once"` | The text once; the rest of the path gets nothing. On a frame's ring, its two lines at the declared size, as far as their [span](#span-of-a-line); a line is cut only where its half cannot hold it at the font's own letter gap. |
-| `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. On a frame's ring the filler is its [sides](#sides) when `sides` is unset: what the two lines leave is the breaks between them. |
+| `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. On a frame's ring the filler is its [sides](#sides) when `sides` is unset: what the two lines leave is the breaks between them. So a filler is held to the sides' bounds: it must have something to draw and be at most 256 bytes long. |
 | `"fit"` | The text scaled to fill the path exactly once, within the built-in bounds: `0.5` to `2.0` times the declared size. On a frame's ring, the largest size at which each line fits the level part of its half — smaller still, within the bounds, where a half less its breaks cannot hold a line at that size; text too long even at `min` has its bottom line's end cut. |
 | `{ "fit": { "min": 0.5, "max": 2.0 } }` | The same, with bounds of your own: `0 < min <= max`. The built-in bounds are written as `"fit"`. |
 
@@ -738,14 +738,32 @@ half less its breaks cannot hold its line at that gap, a `fit` frame
 is shrunk, within its bounds, and a line held even so by nothing is cut
 at its end.
 
-**Each point where the halves meet is a break.** At `"whole"`, the two
-lines' nearest letters there are at least two word gaps apart (of the
-mean of the lines that have a space; with a space on neither, two
-letter gaps stand for a word gap), so where one line ends and the next
-begins reads at a glance; at a narrower span each line lies within
-where it lies at `"whole"`, so the break round each point is no
-narrower.
+**Each point where the halves meet is a break.** At every span, the
+two lines' end letters there — the first letter of each at the top
+left, the last of each at the bottom right — are at least two word
+gaps apart (of the mean of the lines that have a space; with a space on
+neither, two letter gaps stand for a word gap), measured straight
+across between the boxes of their inks, so where one line ends and the
+next begins reads at a glance. The break is held at the span the frame
+is laid at: a line is drawn back from the point as far as that needs,
+and at a narrower span each line still lies within where it lies at
+`"whole"`. **One exception:** two end letters where the outline's
+outward directions under them differ by more than 135° are not lines
+meeting at a point but lines stacked across a thin outline, the top
+line over the bottom one; those need only not touch, as two stacked
+lines of text need not be more than a line apart.
 [`sides`](#sides) sets an ornament in each break.
+
+No two letters of a frame touch. Where its halves cannot hold its text
+so — a half too short for its line at the font's letter gap, a break
+the lines cannot be drawn far enough apart for, two letters touching —
+a `fit` frame is shrunk, within its bounds, to the largest size at which
+they hold, and a line its half still cannot hold is cut at its end. Text
+its half holds is never cut, so a frame can be left with a break short
+or two letters touching — one laid inside an outline thinner than its
+two lines, say, a `once` or `spread` frame at its size or a `fit` frame
+even at its least — and keeps its text whole. A break whose [sides](#sides) ornament would
+touch the text there is left without it.
 
 `start` and `direction` do not apply: a frame's text always begins at
 the top left. They are kept and saved, and a ring set to `repeat` uses
@@ -867,7 +885,7 @@ its path.
 | Font size as a fraction (inside a frame) | above `0`, at most `1` |
 | `opacity`, a label's `t`, `border_t`, a start point's `at`, a numeric `span` | `0` to `1` |
 | `fill_fade`, `gap`, `inset`, `spacing` | `>= 0` |
-| A [sides](#sides) `content` | something to draw, at most 256 bytes |
+| A [sides](#sides) `content`, and a `once` `filler` | something to draw, at most 256 bytes |
 | A `zoom` bound | above `0`, and `min` not above `max` (the bound the mutations hold an edit to) |
 | `fit` bounds | `0 < min <= max` |
 | Corner radius | `0` to `100` |

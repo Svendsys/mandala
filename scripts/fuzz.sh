@@ -16,7 +16,8 @@
 #     load_*               lib/baumhard/src/document/format/fixtures
 #                          lib/baumhard/src/document/tests/fuzz_findings
 #                          maps/*.mandala.json
-#     flow_structured      lib/baumhard/src/flow/tests/fuzz_findings
+#     flow_raw, flow_structured
+#                          lib/baumhard/src/flow/tests/fuzz_findings
 #     glyph_mutation_raw   lib/baumhard/src/gfx_structs/tests/fuzz_findings
 #
 # Each input is held to a time and a memory budget: `-timeout` (seconds
@@ -39,7 +40,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGETS=(load_raw load_structured flow_raw flow_structured glyph_mutation_raw glyph_mutation_structured)
 
 usage() {
-  sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 if [ "${1:-}" = "--list" ]; then
@@ -96,6 +97,9 @@ case "$TARGET" in
       [ -e "$map" ] && ln -s "$map" "$MAPS/"
     done
     CORPORA+=("$MAPS")
+    ;;
+  flow_raw)
+    CORPORA+=("lib/baumhard/src/flow/tests/fuzz_findings")
     ;;
   flow_structured)
     CORPORA+=("lib/baumhard/src/flow/tests/fuzz_findings")

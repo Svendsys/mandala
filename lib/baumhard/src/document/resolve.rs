@@ -217,7 +217,12 @@ pub struct ResolvedRing {
 /// A ring's sides ornament, resolved: one copy's text and its color.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedSides {
-    /// One copy's text, never empty.
+    /// One copy's text, never empty: something to draw, at most
+    /// [`MAX_ORNAMENT_BYTES`](crate::document::bounds::MAX_ORNAMENT_BYTES)
+    /// long ([`check_ornament`](crate::document::bounds::check_ornament)).
+    /// The loader and the mutation validator refuse any other, a `once`
+    /// filler's included; sides of any other text in a document built
+    /// otherwise resolve to none.
     pub content: String,
     /// Its own color, or else the ring's text color.
     pub color: Rgba,
@@ -949,10 +954,15 @@ pub fn resolve_ring(tree: &Tree<DocElement>, ring: NodeId, rec: &mut impl ReadRe
             Sides::Off => None,
         },
     };
-    let sides = sides.map(|(content, own)| ResolvedSides {
-        content,
-        color: own.unwrap_or_else(|| resolve_text(tree, ring, rec).color),
-    });
+    // Held to `check_ornament` here too, so that what resolves has
+    // something to draw whatever built the document: the loader and the
+    // mutation validator refuse any other (ruling R35.4).
+    let sides = sides
+        .filter(|(content, _)| crate::document::bounds::check_ornament(content).is_ok())
+        .map(|(content, own)| ResolvedSides {
+            content,
+            color: own.unwrap_or_else(|| resolve_text(tree, ring, rec).color),
+        });
     ResolvedRing {
         fit,
         span: span.unwrap_or(built_in.span),

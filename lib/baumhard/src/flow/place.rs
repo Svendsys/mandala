@@ -587,6 +587,33 @@ pub(crate) struct Trace {
     /// For a text frame, the half each of [`laid`](Self::laid)'s steps is
     /// on, 0 the top and 1 the bottom; empty for a path walked whole.
     pub(crate) laid_on: Vec<usize>,
+    /// For a text frame, what its last resorts left unheld (ruling
+    /// R35.2): empty when its halves hold it.
+    pub(crate) unheld: Unheld,
+}
+
+/// What a text frame's last resorts — a `Fit` frame's shrink, then the
+/// cut — left unheld (ruling R35.2), reported rather than left silent.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Unheld {
+    /// The halves whose lines their half less the clearance still
+    /// cannot hold at their font's gap.
+    pub(crate) pressed: Vec<usize>,
+    /// The junctions, 0 the top-left and 1 the bottom-right, still short
+    /// of a break.
+    pub(crate) junctions: Vec<usize>,
+    /// Whether two of the lines' inks still touch.
+    pub(crate) overlap: bool,
+    /// The junctions whose break was left without its side ornament,
+    /// whose copies would have touched the text.
+    pub(crate) sides: Vec<usize>,
+}
+
+impl Unheld {
+    /// Whether nothing is left unheld.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.pressed.is_empty() && self.junctions.is_empty() && !self.overlap && self.sides.is_empty()
+    }
 }
 
 /// One line of a text frame ([`Trace::lines`]).
@@ -972,7 +999,13 @@ impl PathWalk<'_> {
             if (gap - owed).abs() <= INK_TOLERANCE {
                 break;
             }
-            center = self.ink_distance_at(last, owed + distance - gap, from, center, ink);
+            let next = self.ink_distance_at(last, owed + distance - gap, from, center, ink);
+            // A turn that leaves the center where it was leaves it there
+            // every turn after: each is a function of the center alone.
+            if next.to_bits() == center.to_bits() {
+                break;
+            }
+            center = next;
         }
         center
     }
@@ -1013,10 +1046,18 @@ impl PathWalk<'_> {
         };
         for _ in 0..INK_ROUNDS {
             let middle = 0.5 * (low + high);
+            let before = (low.to_bits(), high.to_bits());
             if miss(middle) < 0.0 {
                 low = middle;
             } else {
                 high = middle;
+            }
+            // A round that leaves the bracket as it was — its ends a
+            // float apart, where the path's precision gives out — leaves
+            // it so every round after: each is a function of the bracket
+            // alone.
+            if (low.to_bits(), high.to_bits()) == before {
+                break;
             }
         }
         high

@@ -1149,7 +1149,10 @@ fn test_document_resolve_ring_once_filler_is_its_sides() {
 /// A ring whose fit is a `once` with a filler, and whose sides are unset
 /// all the way down, has the filler as its sides, in its text color
 /// (ruling R34). Controls: sides set to an ornament win, and so does
-/// `false`; a `once` with no filler has none.
+/// `false`; a `once` with no filler has none. A filler or sides that
+/// `check_ornament` refuses — blank, zero-width, past 256 bytes — is
+/// none, so a resolved ornament always has something to draw (ruling
+/// R35.4).
 pub fn do_document_resolve_ring_once_filler_is_its_sides() {
     let (mut builder, ids) = example();
     builder.edit_node(ids.a, |n| n.palette = None);
@@ -1193,6 +1196,25 @@ pub fn do_document_resolve_ring_once_filler_is_its_sides() {
     assert_eq!(sides(&builder), None, "an explicit false wins");
     edit(&mut builder, FitMode::Once { filler: None }, None);
     assert_eq!(sides(&builder), None, "no filler, no sides");
+    // Ruling R35.4: what resolves always has something to draw, however
+    // the document was built. A loaded or validated one never holds
+    // these; one built in code can.
+    for bad in ["", "   ", "\u{200B}", &"·".repeat(4000)] {
+        let once = FitMode::Once {
+            filler: Some(bad.to_string()),
+        };
+        edit(&mut builder, once, None);
+        assert_eq!(sides(&builder), None, "a filler {bad:.12?} is no sides");
+        edit(
+            &mut builder,
+            FitMode::Once { filler: None },
+            Some(Sides::On {
+                content: bad.to_string(),
+                color: None,
+            }),
+        );
+        assert_eq!(sides(&builder), None, "sides {bad:.12?} are none");
+    }
 }
 
 #[test]

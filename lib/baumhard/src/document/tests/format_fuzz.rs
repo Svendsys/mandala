@@ -638,6 +638,7 @@ fn zoom(window: Option<ZoomWindow>) -> Result<(), String> {
 fn fit(mode: &Option<FitMode>) -> Result<(), String> {
     match mode {
         Some(FitMode::Fit { min, max }) => named("fit", bounds::check_fit(*min, *max)),
+        Some(FitMode::Once { filler: Some(filler) }) => named("fit", bounds::check_ornament(filler)),
         _ => Ok(()),
     }
 }
@@ -1435,7 +1436,7 @@ const ORNAMENT: Bounded = Bounded::Length {
 /// structure's, which `corrupt` drives; the counts of palettes, theme
 /// variables and variants, verbs, edits and presentations are left to
 /// load_raw).
-pub static BOUNDED_FIELDS: [BoundedField; 107] = [
+pub static BOUNDED_FIELDS: [BoundedField; 115] = [
     BoundedField {
         name: "position x",
         needs: Needs::Nothing,
@@ -1642,6 +1643,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         value: float(FIT_LOW, fit_low),
     },
     BoundedField {
+        name: "frame fit filler",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r##"{"fit": {"once": {"filler": "#"}}}"##,
+        path: ".frame.fit.once.filler",
+        value: ORNAMENT,
+    },
+    BoundedField {
         name: "ring size",
         needs: Needs::Nothing,
         key: "frame",
@@ -1656,6 +1665,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         template: r#"{"rings": [{"fit": {"fit": {"min": #, "max": 4.0}}}]}"#,
         path: ".frame.rings[0].fit",
         value: float(FIT_LOW, fit_low),
+    },
+    BoundedField {
+        name: "ring fit filler",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r##"{"rings": [{"fit": {"once": {"filler": "#"}}}]}"##,
+        path: ".frame.rings[0].fit.once.filler",
+        value: ORNAMENT,
     },
     BoundedField {
         name: "ring weight",
@@ -1712,6 +1729,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         template: r#"{"fit": {"fit": {"min": 0.5, "max": #}}}"#,
         path: ".connector.fit",
         value: float(FIT_HIGH, fit_high),
+    },
+    BoundedField {
+        name: "connector fit filler",
+        needs: Needs::Parent,
+        key: "connector",
+        template: r##"{"fit": {"once": {"filler": "#"}}}"##,
+        path: ".connector.fit.once.filler",
+        value: ORNAMENT,
     },
     BoundedField {
         name: "cap_start size",
@@ -1866,6 +1891,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         value: float(FIT_HIGH, fit_high),
     },
     BoundedField {
+        name: "link fit filler",
+        needs: Needs::Other,
+        key: "",
+        template: r##", "fit": {"once": {"filler": "#"}}"##,
+        path: ".fit.once.filler",
+        value: ORNAMENT,
+    },
+    BoundedField {
         name: "link zoom min",
         needs: Needs::Other,
         key: "",
@@ -2010,6 +2043,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         value: float(FIT_LOW, fit_low),
     },
     BoundedField {
+        name: "defaults frame fit filler",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r##"{"fit": {"once": {"filler": "#"}}}"##,
+        path: ".frame.fit.once.filler",
+        value: ORNAMENT,
+    },
+    BoundedField {
         name: "defaults frame gap",
         needs: Needs::Defaults,
         key: "frame",
@@ -2050,6 +2091,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         value: float(FIT_HIGH, fit_high),
     },
     BoundedField {
+        name: "defaults ring fit filler",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r##"{"fit": {"once": {"filler": "#"}}}"##,
+        path: ".ring.fit.once.filler",
+        value: ORNAMENT,
+    },
+    BoundedField {
         name: "defaults ring size",
         needs: Needs::Defaults,
         key: "ring",
@@ -2074,6 +2123,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         value: float(FIT_LOW, fit_low),
     },
     BoundedField {
+        name: "defaults connector fit filler",
+        needs: Needs::Defaults,
+        key: "connector",
+        template: r##"{"fit": {"once": {"filler": "#"}}}"##,
+        path: ".connector.fit.once.filler",
+        value: ORNAMENT,
+    },
+    BoundedField {
         name: "defaults connector spacing",
         needs: Needs::Defaults,
         key: "connector",
@@ -2096,6 +2153,14 @@ pub static BOUNDED_FIELDS: [BoundedField; 107] = [
         template: r#"{"fit": {"fit": {"min": 0.5, "max": #}}}"#,
         path: ".link.fit",
         value: float(FIT_HIGH, fit_high),
+    },
+    BoundedField {
+        name: "defaults link fit filler",
+        needs: Needs::Defaults,
+        key: "link",
+        template: r##"{"fit": {"once": {"filler": "#"}}}"##,
+        path: ".link.fit.once.filler",
+        value: ORNAMENT,
     },
     BoundedField {
         name: "defaults link spacing",

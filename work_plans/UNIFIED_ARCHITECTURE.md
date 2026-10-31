@@ -774,28 +774,46 @@ line (cosmic-text gives each glyph's advance), then placed:
      side, only the one whose end moves away — a round that would press
      a line it left unpressed halved, so the clearance is approached
      from below; a junction stops growing when no line's drawing back
-     parts its ends. The clearance is kept at every span, so at a
-     narrower span each line lies within its part at whole and the
-     break along the outline is no narrower. (Two halves running side
-     by side lie closer across the outline than two word gaps anywhere
-     on a flat outline, so it is at whole, where the ends wrap round
-     the junction, that the break is measured.)
+     parts its ends, or a round it grew leaves them no further apart —
+     measured, where they overlap, by how deep, so that drawing them
+     out of an overlap counts. The break is held at the span laid
+     (ruling R35.1): the clearance found at whole grows on below it
+     until the break holds there, box to box, so a line at a narrower
+     span still lies within its part at whole. Two end inks whose
+     outward normals turn more than 135° apart are lines stacked across
+     a thin outline, not lines meeting, and need only not touch.
    - **Sides** (ruling R33.1). An ornament closes each break: whole
      copies, at least one, laid by the pairwise rule from the lines'
      end inks so every gap and both joins are equal — the count whose
      gap is nearest the lines' mean letter gap — on the text's own
      center line, its ink no taller than the text's x-height. It is
      shaped into the run as a line of its own, as a `once` filler is.
-   - **No line is laid tighter than its font.** Step 5's sizes stand
-     wherever the halves hold the lines at their font's gap — on every
-     outline from a circle to fifty to one, ellipse or rectangle, the
-     aspect sweep shows (`halves_hold_on_every_aspect`; choice 3 on
-     #294). Where they cannot, as when a long `sides` ornament takes
-     most of a half, the last resorts follow: a `fit` frame is shrunk,
-     within its bounds, to the largest size that holds every line, and
-     a line held even so by nothing — a `once` or `spread` line at its
-     size, a `fit` line at its least — is cut at its end to what its
-     half holds, the placement reporting the cut.
+   - **No line is laid tighter than its font, and no two inks touch.**
+     Step 5's sizes stand wherever the halves hold the frame: every
+     line at its font's gap, each junction a break, no two inks
+     touching. Where they do not — a long `sides` ornament taking most
+     of a half, the crowded text of a flat outline, inward lines round
+     an outline thinner than they are (`halves_hold_on_every_aspect`,
+     rulings R34 and R35.2) — the last resorts follow: a `fit` frame is
+     shrunk, within its bounds, to the largest size that holds; a line
+     its half less the clearance holds even so by nothing — a `once` or
+     `spread` line at its size, a `fit` line at its least — is cut at
+     its end to what its half holds, the placement reporting the cut;
+     and what is left unheld even so is reported in the trace, never
+     silent. A line its half holds is not cut (ruling R34), so a break
+     left short, or inks touching, with every line held, is reported
+     rather than cut; a side ornament whose copies would touch the text
+     or one another is left out of its break, and reported.
+   - **Every last resort is bounded in work** (ruling R35.3). A
+     shrink's probe first looks whether its lines fit their halves less
+     a share of the clearance of the largest size held, one `track` a
+     line, and only then grows the clearance, from that share rather
+     than from nothing, halving a round that would press a line once at
+     most; the size held is kept rather than built again. A clearance
+     search lays each line once for each part of its half it tries.
+     And a frame's tracking takes at most `TRACK_BUDGET` glyph steps in
+     all: one that reaches it keeps the best it has laid, and its trace
+     reports what is left unheld.
    - **A `once` filler** is not drawn by the frame: round a frame it
      plays the part `sides` does, so the resolver gives it to the
      frame as its `sides` when `sides` is unset all the way down (ruling

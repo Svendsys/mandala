@@ -24,6 +24,13 @@ not yet lay frames through the flow placement that reads it. A map
 written with these keys does not load in a build that predates them:
 each is an unknown key there.
 
+One existing key is narrowed with them: a `once` fit's `filler` is held
+to the sides' bounds (something to draw, at most 256 bytes), since round
+a frame it is the sides when they are unset. A map whose filler is only
+whitespace or zero-width characters, or longer than 256 bytes, is
+refused where it loaded before; give it a shorter filler with a mark in
+it, or drop the filler.
+
 ## Also: migrating portals into edges
 
 An earlier revision stored portals in a separate top-level

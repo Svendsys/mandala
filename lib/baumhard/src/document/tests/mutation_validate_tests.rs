@@ -130,6 +130,13 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
     let fit = |min, max| Some(FitMode::Fit { min, max });
     let zoom = |min, max| Some(ZoomWindow { min, max });
     let points = |n: usize| vec![Vec2::ZERO; n];
+    // A `once` filler is held to the sides' bounds (ruling R35.4): `·`
+    // is two bytes, so 128 of them are the 256-byte bound and 129 pass it.
+    let once = |filler: &str| {
+        Some(FitMode::Once {
+            filler: Some(filler.to_string()),
+        })
+    };
     let sides = |content: &str| {
         Some(Sides::On {
             content: content.to_string(),
@@ -156,6 +163,9 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
         (DocKind::Frame, DocMutation::Frame(FrameOp::SetInset(Some(f32::NAN))), DocMutation::Frame(FrameOp::SetInset(Some(5.0))), "frame.inset"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::Text(TextOp::SetSize(Some(FontSize::Rel(1.5))))), DocMutation::Frame(FrameOp::Text(TextOp::SetSize(Some(FontSize::Rel(1.0))))), "text.size"),
         (DocKind::Ring, DocMutation::Ring(RingOp::SetFit(fit(0.0, 1.0))), DocMutation::Ring(RingOp::SetFit(fit(0.1, 1.0))), "ring.fit"),
+        (DocKind::Frame, DocMutation::Frame(FrameOp::SetFit(once("   "))), DocMutation::Frame(FrameOp::SetFit(once("·"))), "frame.fit"),
+        (DocKind::Ring, DocMutation::Ring(RingOp::SetFit(once(&"·".repeat(129)))), DocMutation::Ring(RingOp::SetFit(once(&"·".repeat(128)))), "ring.fit"),
+        (DocKind::Link, DocMutation::Path(PathOp::SetFit(once("\u{200B}"))), DocMutation::Path(PathOp::SetFit(once("-"))), "path.fit"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpacing(Some(-1.0)))), DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpacing(Some(0.0)))), "frame.spacing"),
         (DocKind::Ring, DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(f32::NAN)))), DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(6.0)))), "ring.spacing"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides("")))), DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides("✦")))), "frame.sides"),

@@ -2388,6 +2388,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_one_word_line_keeps_its_neighbor_whole", |b| {
         b.iter(do_flow_halves_a_one_word_line_keeps_its_neighbor_whole)
     });
+    c.bench_function("flow_halves_the_break_holds_at_the_span_laid", |b| {
+        b.iter(do_flow_halves_the_break_holds_at_the_span_laid)
+    });
+    c.bench_function(
+        "flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines",
+        |b| b.iter(do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines),
+    );
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
     c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {

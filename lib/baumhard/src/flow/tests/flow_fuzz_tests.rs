@@ -894,3 +894,95 @@ fn test_a_spread_across_the_canvas_places_every_glyph() {
         );
     }
 }
+
+/// The coordinator's flow_structured finding on #294 (CI run
+/// 41245750394, a libFuzzer timeout at aef0eba4): a `Repeat` of an
+/// ornament, eighteen glyphs, along a cubic with a control point at
+/// `-1e30`. The walk lays the `MAX_PLACED_GLYPHS` cap, a million glyphs,
+/// every one stepped by its ink (ruling R31), and on a path that far
+/// out its points are an `f32` step or two apart where the walk is, so
+/// no glyph's ink gap could come within `INK_TOLERANCE` of what it
+/// owes: each took every one of `INK_TURNS` turns, and each turn every
+/// one of `INK_ROUNDS` rounds of bisection — 319 path lookups a glyph.
+/// A round that leaves its bracket as it was, and a turn that leaves
+/// its center where it was, leave them so every round and turn after,
+/// so each stops there, which changes no position.
+///
+/// So an ink-stepped glyph costs at most 24 path lookups here. Precondition:
+/// the input lays the cap, and is an ornament (no `STEPS_TAKEN` for most
+/// glyphs, which an ornament takes by its ink). Control: with either
+/// stop removed, the lookups pass their bound.
+#[test]
+fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solving_them() {
+    use crate::flow::path::PATH_LOOKUPS;
+    use crate::flow::place::{GLYPHS_PLACED, STEPS_TAKEN};
+    use crate::flow::MAX_PLACED_GLYPHS;
+    let found = include_bytes!("fuzz_findings/repeat_of_an_ornament_along_a_cubic_its_floats_cannot_resolve");
+    for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
+        counter.with(|count| count.set(0));
+    }
+    if let Err(why) = check_flow_structured(found) {
+        panic!("the fuzzer's input: {why}");
+    }
+    let [steps, placed, lookups] =
+        [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS].map(|counter| counter.with(std::cell::Cell::get));
+    assert!(
+        placed + 64 > MAX_PLACED_GLYPHS && steps < placed / 4,
+        "precondition: the input lays the cap of an ornament ({placed} glyphs, {steps} box steps)"
+    );
+    assert!(
+        lookups <= 24 * placed,
+        "{lookups} path lookups for {placed} glyphs placed"
+    );
+}
+
+/// The phase-2 review's flow_raw finding on #294 (a slow unit, 20.75 s
+/// against `-timeout=20` under the fuzz build): 26 bytes, mostly
+/// U+FFFD read lossily, which `check_flow_bytes` lays as a `Fit` frame
+/// round its 120 × 40 rounded rectangle. Its first build leaves a line
+/// pressed, so the shrink ran: `SHRINK_ROUNDS` probes, each a whole
+/// clearance search from nothing with its backtracks, then the size
+/// found built again — 15 builds and 17,720 `track`s for that frame,
+/// and 22,016 for the input. Now a probe first looks whether its lines
+/// fit their halves less a share of the clearance of the largest size
+/// held, one `track` a line, and grows the clearance from there rather
+/// than from nothing; the size held is kept, not built again; and a
+/// clearance search lays a line once for each part it tries
+/// (`LayMemo`), so a round that grows one line's clearance does not lay
+/// the other again. The seed `flow_raw/controls_and_tabs`, whose `Fit`
+/// frame shrinks too, is held to the same.
+///
+/// Control: with the line memo, the cheap look or the seeded clearance
+/// removed, the tracks pass their bound.
+#[test]
+fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
+    use crate::flow::place::halves::{BUILDS, TRACKS};
+    let seed = std::fs::read(crate::util::doc_fixtures::repo_path(
+        "fuzz/seeds/flow_raw/controls_and_tabs",
+    ))
+    .expect("the seed is committed");
+    let findings: [(&str, &[u8], usize); 2] = [
+        (
+            "the review's input",
+            include_bytes!("fuzz_findings/fit_frame_shrunk_by_whole_clearance_searches"),
+            8_000,
+        ),
+        ("controls_and_tabs", &seed, 4_000),
+    ];
+    for (what, found, most) in findings {
+        TRACKS.with(|count| count.set(0));
+        BUILDS.with(|count| count.set(0));
+        if let Err(why) = check_flow_bytes(found) {
+            panic!("{what}: {why}");
+        }
+        let (tracks, builds) = (
+            TRACKS.with(std::cell::Cell::get),
+            BUILDS.with(std::cell::Cell::get),
+        );
+        assert!(
+            builds > 3,
+            "precondition: {what} shrinks a frame ({builds} builds)"
+        );
+        assert!(tracks <= most, "{what}: {tracks} lines tracked, at most {most}");
+    }
+}

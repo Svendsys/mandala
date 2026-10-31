@@ -410,6 +410,9 @@ impl<'d> Validator<'d> {
     fn fit(&self, field: &'static str, fit: Option<&FitMode>) -> Result<(), MutationError> {
         match fit {
             Some(FitMode::Fit { min, max }) => self.bound(field, check_fit(*min, *max)),
+            // A filler is held to the sides' bounds, since round a frame
+            // it is its sides when they are unset (ruling R35.4).
+            Some(FitMode::Once { filler: Some(filler) }) => self.bound(field, check_ornament(filler)),
             _ => Ok(()),
         }
     }
