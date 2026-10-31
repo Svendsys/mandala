@@ -798,7 +798,12 @@ An ornament — a flow with no letter or digit, such as `✦ ·` or `─` —
 has no reading direction, so no part of it is reversed (§6.2 step 4):
 it is placed as walked. Reversed, a glyph-and-space ornament would meet
 itself space against space, or glyph against glyph, wherever the
-reading turned.
+reading turned. An ornament's space is a box as wide as it is tall
+(step 2's `line_height` is its advance), so where a ring turns steep it
+steps its width, not a whole line: a space has no ink to keep apart,
+and boxed a line high it opened a gap at every turn of a ring. In text
+a space keeps its line height, which is what parts two words stacked
+on a steep side.
 
 **A frame's lines** (ruling R27; §6.2 step 5). The modes act on the
 two lines, each against its own span, with no gap below zero between

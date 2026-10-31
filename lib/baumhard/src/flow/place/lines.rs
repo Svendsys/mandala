@@ -158,6 +158,7 @@ impl Lines<'_> {
             outward: self.outward,
             limit: span.end + end_slack(span.end),
             level: true,
+            ornament: false,
         }
     }
 

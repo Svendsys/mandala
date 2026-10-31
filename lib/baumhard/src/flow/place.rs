@@ -130,6 +130,7 @@ pub(crate) fn box_step(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, Vec2) {
         outward: false,
         limit: path.length(),
         level: false,
+        ornament: false,
     };
     walk.step(s, w, h)
 }
@@ -427,6 +428,11 @@ struct PathWalk<'p> {
     /// far horizontally, rather than by its box's extent along the chord
     /// ([`step`](Self::step)).
     level: bool,
+    /// Whether the flow is an ornament, with no letter or digit
+    /// ([`GlyphMetrics::letter`]): its spaces are then boxes as tall as
+    /// they are wide ([`height`](Self::height)), so a ring's rhythm holds
+    /// where the outline turns steep (ruling R29).
+    ornament: bool,
 }
 
 impl PathWalk<'_> {
@@ -467,6 +473,21 @@ impl PathWalk<'_> {
             step = extent(self.chord(s, step), w, h);
         }
         (step, self.chord(s, step))
+    }
+
+    /// The height of `cluster`'s box, of a flow whose line height is `h`:
+    /// `h`, but for a space of an ornament, which is its advance (at most
+    /// `h`). A space has no ink to keep apart; boxed a line high it would
+    /// step a whole line wherever the path runs steep, and a glyph-and-
+    /// space ornament would open a gap at every turn of a ring (ruling
+    /// R29). In text a space keeps its line height, which is what parts
+    /// two words stacked on a steep side.
+    fn height(&self, cluster: &Cluster, h: f32) -> f32 {
+        if self.ornament && cluster.blank {
+            cluster.advance.min(h)
+        } else {
+            h
+        }
     }
 
     /// How far along the path from `s` it moves `d` horizontally, on a
@@ -534,11 +555,28 @@ impl PathWalk<'_> {
     /// Advances and line heights are linear in size (cosmic-text's
     /// default hinting is off), so `L(scale)` needs no reshape.
     fn measure(&self, clusters: &[Cluster], scale: f32, gap: f32) -> f32 {
-        self.measure_widths(
-            clusters.iter().map(|cluster| cluster.advance * scale),
-            self.line_height * scale,
-            gap,
-        )
+        self.measure_clusters(clusters.iter(), scale, gap)
+    }
+
+    /// Where the last of `clusters`' steps ends, walked from 0 with `gap`
+    /// between steps at `scale` times their size, each box as tall as
+    /// [`height`](Self::height) says: the arithmetic of
+    /// [`lay`](Self::lay), without placing anything.
+    fn measure_clusters<'c>(&self, clusters: impl Iterator<Item = &'c Cluster>, scale: f32, gap: f32) -> f32 {
+        let h = self.line_height * scale;
+        let mut s = 0.0_f32;
+        let mut end = 0.0_f32;
+        for cluster in clusters {
+            let w = cluster.advance * scale;
+            let ch = if self.ornament && cluster.blank {
+                w.min(h)
+            } else {
+                h
+            };
+            end = s + self.step(s, w, ch).0;
+            s = end + gap;
+        }
+        end
     }
 
     /// `L(scale)` as a reshape at `scale` will lay `clusters` out
@@ -948,18 +986,6 @@ impl PathWalk<'_> {
         last
     }
 
-    /// Where the last of these cluster widths' steps ends, walked from 0
-    /// with `gap` between steps at line height `h`.
-    fn measure_widths(&self, widths: impl Iterator<Item = f32>, h: f32, gap: f32) -> f32 {
-        let mut s = 0.0_f32;
-        let mut end = 0.0_f32;
-        for width in widths {
-            end = s + self.step(s, width, h).0;
-            s = end + gap;
-        }
-        end
-    }
-
     /// Place `clusters` from `s` with `gap` between steps onto `out`,
     /// each whole: its glyphs share its box, each at its pen position.
     /// Stops before the first cluster whose step would end past the path,
@@ -974,7 +1000,8 @@ impl PathWalk<'_> {
     ) -> Laid {
         let h = self.line_height;
         for cluster in clusters {
-            let (step, dir) = self.step(s, cluster.advance, h);
+            let ch = self.height(cluster, h);
+            let (step, dir) = self.step(s, cluster.advance, ch);
             // The same arithmetic, in the same order, as `measure`: a
             // solved spacing that measures within the path must lay
             // within it, to the last bit.
@@ -985,7 +1012,7 @@ impl PathWalk<'_> {
             if out.glyphs.len() + cluster.glyphs.len() > MAX_PLACED_GLYPHS {
                 return Laid::Capped;
             }
-            let corner = self.corner(s, step, dir, cluster.advance, h);
+            let corner = self.corner(s, step, dir, cluster.advance, ch);
             out.steps.push(Stepped {
                 first: out.glyphs.len(),
                 end: out.glyphs.len() + cluster.glyphs.len(),
@@ -1872,6 +1899,7 @@ fn place(
         outward,
         limit: path.length() + end_slack(path.length()),
         level: false,
+        ornament: !run.glyphs.iter().any(|glyph| glyph.letter),
     };
     let walked = match fit {
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
@@ -2063,12 +2091,12 @@ fn close_ring(
     gap: f32,
 ) -> Option<(Laying, f32)> {
     let length = walk.path.length();
-    let widths = || (0..copies).flat_map(|_| clusters.iter().map(|cluster| cluster.advance));
+    let copied = || (0..copies).flat_map(|_| clusters.iter());
     // How far the copies, `extra` past `gap` apart, leave the seam short
     // of `gap + extra`: zero when the seam is one gap like the others.
     let miss = |extra: f32| {
         let g = gap + extra;
-        walk.measure_widths(widths(), walk.line_height, g) + g - length
+        walk.measure_clusters(copied(), 1.0, g) + g - length
     };
     let extra = if miss(0.0) >= 0.0 {
         0.0

@@ -829,9 +829,10 @@ fn test_flow_readable_a_repeat_ring_closes_evenly() {
 /// the clusters placed are whole copies of the pattern. An ornament (no
 /// letter or digit) is placed as walked, so a glyph-and-space ornament
 /// alternates all the way round, never two spaces or two glyphs side by
-/// side; a text pattern is read stretch by stretch, its gap solved as it
-/// is read. Five outlines, the README scenes' six ornaments and two text
-/// patterns, each way round.
+/// side, and its spaces step no more than √2 times their advance where
+/// the ring turns steep; a text pattern is read stretch by stretch, its
+/// gap solved as it is read. Five outlines, the README scenes' six
+/// ornaments and two text patterns, each way round.
 pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
     let outlines = [
         ("rounded rect", rounded(300.0, 160.0, 25)),
@@ -876,6 +877,26 @@ pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
                 // A glyph-and-space ornament alternates all the way round,
                 // the seam and every turn of the outline included: no two
                 // spaces meet (a gap) and no two glyphs (a stray).
+                // An ornament's space is a box as wide as it is tall: on
+                // the steep turns of a ring it steps no more than √2 times
+                // its advance, not a whole line.
+                let ornament = !placed.run.glyphs.iter().any(|g| g.letter);
+                if ornament {
+                    let blanks: Vec<(bool, f32)> = boxes(&placed.run, &placed.placed)
+                        .iter()
+                        .map(|cluster| {
+                            let glyph =
+                                &placed.run.glyphs[placed.placed.glyphs[cluster.glyphs.start].glyph as usize];
+                            (glyph.blank, cluster.size.x)
+                        })
+                        .collect();
+                    for ((blank, advance), (_, step)) in blanks.iter().zip(&placed.trace.laid) {
+                        assert!(
+                            !blank || *step <= advance * std::f32::consts::SQRT_2 + 1e-3,
+                            "{what}: a space steps {step}, its advance {advance}"
+                        );
+                    }
+                }
                 if per_copy == 2 {
                     let mut along: Vec<(f32, bool)> = boxes(&placed.run, &placed.placed)
                         .iter()
