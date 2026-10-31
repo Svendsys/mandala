@@ -2128,6 +2128,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_shape_run_marks_grapheme_starts", |b| {
         b.iter(do_flow_shape_run_marks_grapheme_starts)
     });
+    c.bench_function("flow_shape_run_marks_letters", |b| {
+        b.iter(do_flow_shape_run_marks_letters)
+    });
     c.bench_function("flow_shape_run_of_nothing", |b| {
         b.iter(do_flow_shape_run_of_nothing)
     });

@@ -189,7 +189,7 @@ fn test_flow_place_corner_moves_continuously() {
 /// alone jumps by up to half the difference of advance and line height
 /// (here 25) as its middle crosses the corner. The steps are the walk's
 /// own (`box_step`), from the start with no gap, as in
-/// `step_follows_the_chord_at_a_corner`.
+/// `test_flow_place_step_follows_the_chord_at_a_corner`.
 pub fn do_flow_place_corner_moves_continuously() {
     let square = sharp(0.0, 0.0, 100.0, 100.0);
     let mut previous: Option<Vec2> = None;

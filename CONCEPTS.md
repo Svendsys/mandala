@@ -1499,7 +1499,9 @@ element.
     stretch's last to first, each stretch in its own part of the path,
     borrowing room only from a neighbor read its way. A tight turn
     through vertical makes no stretch of its own (a hysteresis); a loop
-    reads like a seal. The one exception to keeping the walk's glyphs:
+    reads like a seal. An ornament, with no letter or digit, has no
+    reading direction and is placed as walked. The one exception to
+    keeping the walk's glyphs:
     with no slack and a zero gap, the end is cut — filler copies or
     repeat clusters first.
 

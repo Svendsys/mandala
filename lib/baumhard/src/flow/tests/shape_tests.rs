@@ -238,6 +238,26 @@ pub fn do_flow_shape_run_marks_grapheme_starts() {
 }
 
 #[test]
+fn test_flow_shape_run_marks_letters() {
+    do_flow_shape_run_marks_letters();
+}
+
+/// A glyph whose grapheme is a letter or a digit is marked `letter`, the
+/// rest not: an ornament's star and dot, a space and punctuation (#291,
+/// ruling R29). A combining mark's glyph shares its letter's grapheme,
+/// and its mark.
+pub fn do_flow_shape_run_marks_letters() {
+    let run = with_fonts(|fs| real_run("✦ a1·q\u{0301}", &style(20.0), fs));
+    let letters: Vec<bool> = run.glyphs.iter().map(|g| g.letter).collect();
+    assert_eq!(
+        letters,
+        vec![false, false, true, true, false, true, true],
+        "{:?}",
+        run.glyphs
+    );
+}
+
+#[test]
 fn test_flow_shape_run_of_nothing() {
     do_flow_shape_run_of_nothing();
 }

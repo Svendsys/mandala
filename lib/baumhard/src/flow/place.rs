@@ -235,6 +235,9 @@ struct Cluster {
     word_break: bool,
     /// Whether it is whitespace ([`GlyphMetrics::blank`]).
     blank: bool,
+    /// Whether any of its glyphs is a letter or a digit
+    /// ([`GlyphMetrics::letter`]).
+    letter: bool,
     /// Whether it is the space laid for a line break
     /// ([`GlyphMetrics::line_break`]).
     line_break: bool,
@@ -256,6 +259,7 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
                 cluster.advance += glyph.advance;
                 cluster.left = cluster.left.min(glyph.x);
                 cluster.reading = cluster.reading.min(reading);
+                cluster.letter |= glyph.letter;
             }
             _ => clusters.push(Cluster {
                 glyphs: index..index + 1,
@@ -264,6 +268,7 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
                 reading,
                 word_break: glyph.word_break,
                 blank: glyph.blank,
+                letter: glyph.letter,
                 line_break: glyph.line_break,
             }),
         }
@@ -291,6 +296,8 @@ struct Stepped {
     reading: (usize, usize),
     /// [`Cluster::word_break`].
     word_break: bool,
+    /// [`Cluster::letter`].
+    letter: bool,
 }
 
 /// A placement being built: the glyphs, and the step each cluster took.
@@ -592,6 +599,7 @@ impl PathWalk<'_> {
                 corner: Vec2::ZERO,
                 reading: (0, 0),
                 word_break,
+                letter: true,
             });
             s += step;
         }
@@ -988,6 +996,7 @@ impl PathWalk<'_> {
                 corner,
                 reading: cluster.reading,
                 word_break: cluster.word_break,
+                letter: cluster.letter,
             });
             for index in cluster.glyphs.clone() {
                 out.glyphs.push(PlacedGlyph {
@@ -1076,7 +1085,11 @@ impl PathWalk<'_> {
             trace.chords = steps.iter().map(|step| step.dir).collect();
             trace.stretches = traced_stretches(&stretches, steps);
         }
-        if !stretches.iter().any(PathStretch::is_reversed) {
+        // A flow with no letter or digit — an ornament — has no reading
+        // direction: it is placed as walked (ruling R29), its rhythm whole
+        // where a reversed stretch would turn it about.
+        let reads = steps.iter().any(|step| step.letter);
+        if !reads || !stretches.iter().any(PathStretch::is_reversed) {
             if let Some(trace) = trace {
                 trace.laid = steps.iter().map(|step| (step.s, step.step)).collect();
             }

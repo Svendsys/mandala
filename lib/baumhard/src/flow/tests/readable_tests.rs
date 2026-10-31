@@ -826,8 +826,12 @@ fn test_flow_readable_a_repeat_ring_closes_evenly() {
 /// copies and closes without a seam (ruling R29): the gap between every
 /// two consecutive clusters along the path — the seam from the last back
 /// round to the first included — is the same, within half a point, and
-/// the clusters placed are whole copies of the pattern. Five outlines,
-/// six ornaments, each way round; the ornaments are the README scenes'.
+/// the clusters placed are whole copies of the pattern. An ornament (no
+/// letter or digit) is placed as walked, so a glyph-and-space ornament
+/// alternates all the way round, never two spaces or two glyphs side by
+/// side; a text pattern is read stretch by stretch, its gap solved as it
+/// is read. Five outlines, the README scenes' six ornaments and two text
+/// patterns, each way round.
 pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
     let outlines = [
         ("rounded rect", rounded(300.0, 160.0, 25)),
@@ -838,7 +842,7 @@ pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
     ];
     let top = start(Edge::Top, 0.0);
     for (name, shape) in &outlines {
-        for pattern in ["✦ ", "❦ ", "· ", "+ ", "~ ", "·:·"] {
+        for pattern in ["✦ ", "❦ ", "· ", "+ ", "~ ", "·:·", "To see ", "Heaven "] {
             for direction in [Direction::Clockwise, Direction::CounterClockwise] {
                 let what = format!("{name} {pattern:?} {direction:?}");
                 let placed = around(pattern, shape, top, direction, &FitMode::Repeat, false);
@@ -869,6 +873,26 @@ pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
                     "{what}: gaps from {least} to {most}, the seam {}",
                     gaps[gaps.len() - 1]
                 );
+                // A glyph-and-space ornament alternates all the way round,
+                // the seam and every turn of the outline included: no two
+                // spaces meet (a gap) and no two glyphs (a stray).
+                if per_copy == 2 {
+                    let mut along: Vec<(f32, bool)> = boxes(&placed.run, &placed.placed)
+                        .iter()
+                        .map(|cluster| {
+                            let glyph = placed.placed.glyphs[cluster.glyphs.start].glyph as usize;
+                            (
+                                arc_position(&placed.path, cluster.center()),
+                                placed.run.glyphs[glyph].blank,
+                            )
+                        })
+                        .collect();
+                    along.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    let next = along.iter().cycle().skip(1);
+                    for (k, (here, there)) in along.iter().zip(next).enumerate() {
+                        assert_ne!(here.1, there.1, "{what}: clusters {k} and the next are alike");
+                    }
+                }
             }
         }
     }

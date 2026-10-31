@@ -115,6 +115,11 @@ pub struct GlyphMetrics {
     /// two-line layout parts its lines at the first one (ruling R27);
     /// any other path flow reads it as the space it is.
     pub line_break: bool,
+    /// Whether the glyph's grapheme is a letter or a digit
+    /// (alphanumeric): text a reader reads in a direction. A flow with no
+    /// such glyph — an ornament, `✦ ·` or `─` — has no reading direction,
+    /// and placement does not reverse any part of it (#291, ruling R29).
+    pub letter: bool,
 }
 
 /// A flow shaped as one line, for placement along a path or at a point.
@@ -539,11 +544,12 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
                     None => true,
                 };
             previous_cluster = Some(key);
-            let blank = starts
+            let first = starts
                 .get(cluster.wrapping_sub(1))
                 .and_then(|&at| run.text.get(at..))
-                .and_then(|rest| rest.chars().next())
-                .is_some_and(char::is_whitespace);
+                .and_then(|rest| rest.chars().next());
+            let blank = first.is_some_and(char::is_whitespace);
+            let letter = first.is_some_and(char::is_alphanumeric);
             out.push(GlyphMetrics {
                 span,
                 bytes,
@@ -556,6 +562,7 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
                 word_break,
                 blank,
                 line_break,
+                letter,
             });
         }
     }

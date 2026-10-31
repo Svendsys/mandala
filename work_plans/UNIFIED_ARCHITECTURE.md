@@ -627,7 +627,8 @@ line (cosmic-text gives each glyph's advance), then placed:
    by `inset + Σ(thickness of rings < k) + k · gap`.
 4. **Every stretch reads left to right or top to bottom** (D33, #291).
    This step places a `repeat` ring and every connector; a frame's
-   text is two lines instead (step 5). Walked in text order, glyphs on
+   text is two lines instead (step 5). An ornament, with no letter or
+   digit, has no reading direction and is placed as walked (§6.4). Walked in text order, glyphs on
    a leftward stretch would read backward and on an upward one bottom
    to top, since they are never rotated. So placement is two phases
    (rulings R25, R25.1, R26):
@@ -792,6 +793,12 @@ the neighbor whose way the outline runs there — a ring's clusters are
 copies of one pattern — and the ring is laid again, a bounded number of
 rounds. A ring too short for one whole repetition is cut as a connector
 is. Along an open path `repeat` is unchanged.
+
+An ornament — a flow with no letter or digit, such as `✦ ·` or `─` —
+has no reading direction, so no part of it is reversed (§6.2 step 4):
+it is placed as walked. Reversed, a glyph-and-space ornament would meet
+itself space against space, or glyph against glyph, wherever the
+reading turned.
 
 **A frame's lines** (ruling R27; §6.2 step 5). The modes act on the
 two lines, each against its own span, with no gap below zero between
