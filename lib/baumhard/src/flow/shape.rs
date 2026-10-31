@@ -28,6 +28,35 @@
 //! stretch of each line came from — and maps every glyph back through
 //! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
 //! caller's span and bytes of the caller's text.
+//!
+//! **Faces** (ruling R30 on #278). A span pinned to an `AppFont` is
+//! handed to cosmic-text with its family's name and the nearest weight
+//! the family's compiled faces have ([`PinnedFamily`], resolved once per
+//! shaping by the private `families_of`), never the weight it asked for:
+//! cosmic-text keeps a pinned family only at an exact weight, and draws a
+//! weight the family lacks in whatever host face has it. So a span is
+//! drawn in its family's compiled faces on every machine, and the tab
+//! check below measures the face the tab is shaped in.
+//!
+//! **Tabs** (rulings R24, R24.1 and R24.2 on #278). A tab is drawn as
+//! cosmic-text draws it: a space widened to the next tab stop, eight of
+//! the face's spaces apart from the start of its line. A face whose
+//! space has no width cannot measure a stop — cosmic-text would give the
+//! tab, and every glyph after it on its line, a `NaN` advance and
+//! position — so the decision is made **per span, from that span's face,
+//! before shaping**: a span whose face's space has no finite, positive
+//! advance has its tabs drawn as spaces (one byte for one, so its span
+//! bytes are unchanged), and every other span keeps its tab stops, on
+//! its own line or beside it.
+//!
+//! That decision measures a span's primary face, and a tab cosmic-text
+//! shapes in a fallback face can still come back non-finite. So the
+//! laid-out widths and positions of text that holds a tab are checked
+//! after shaping, as a **last resort** (R24.2): when one is not finite,
+//! the text is laid out again with its tabs as spaces — on the failing
+//! lines only, in a box, so a line that came out finite keeps its stops;
+//! on the whole run, for a run — and the event is logged (`warn!`). No
+//! `NaN` from a tab reaches placement or the renderer.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -38,7 +67,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{
-    clamp_font_metric, face_family_name_for_pin, AppFont, FontSystemWriteGuard, MIN_FONT_SIZE_PT,
+    clamp_font_metric, pinned_family, AppFont, FontSystemWriteGuard, PinnedFamily, MIN_FONT_SIZE_PT,
 };
 use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Wrap, SHAPING_ADVANCED};
 use crate::util::grapheme_chad;
@@ -256,12 +285,12 @@ fn metrics_of(attrs: &Attrs<'_>) -> Metrics {
 /// gets one more, so it ends with the empty line an editor shows there
 /// (cosmic-text drops a trailing empty line; D26 breaks at every `\n`).
 ///
-/// `families` holds each span's pinned family name (same indexing as
+/// `families` holds each span's pinned family (same indexing as
 /// `spans`). Cost: O(text) scan for line breaks, one `Vec` entry per
 /// stretch.
 fn assemble<'f>(
     spans: &[FlowSpan<'f>],
-    families: &'f [Option<String>],
+    families: &'f [Option<PinnedFamily>],
     scale: f32,
     breaks: Breaks,
 ) -> Assembly<'f> {
@@ -278,7 +307,7 @@ fn assemble<'f>(
     // after it.
     let mut open_break: Option<Attrs<'f>> = None;
     for (index, span) in spans.iter().enumerate() {
-        let attrs = span_attrs(span, scale, families[index].as_deref());
+        let attrs = span_attrs(span, scale, families[index].as_ref());
         let metrics = metrics_of(&attrs);
         assembly.span_metrics.font_size = assembly.span_metrics.font_size.max(metrics.font_size);
         assembly.span_metrics.line_height = assembly.span_metrics.line_height.max(metrics.line_height);
@@ -333,19 +362,35 @@ fn assemble<'f>(
     assembly
 }
 
-/// Each span's pinned family name, resolved once against `fs`:
+/// Each span's pinned family and its compiled weights, resolved once against `fs`:
 /// `None` for `AppFont::Any`, or a face the font system does not know.
-fn families_of<'s>(styles: impl Iterator<Item = &'s ResolvedText>, fs: &FontSystem) -> Vec<Option<String>> {
+fn families_of<'s>(
+    styles: impl Iterator<Item = &'s ResolvedText>,
+    fs: &FontSystem,
+) -> Vec<Option<PinnedFamily>> {
     styles
         .map(|style| match style.font {
             AppFont::Any => None,
-            font => face_family_name_for_pin(fs, font),
+            font => pinned_family(fs, font),
         })
         .collect()
 }
 
 /// A buffer with no wrapping, no size limit and metrics no smaller than
-/// the shaper accepts, holding `rich`.
+/// the shaper accepts, holding `rich`: a box's lines when `align` is
+/// given, a run otherwise.
+///
+/// Its tabs have already been decided per span ([`untabbed`]). When the
+/// text holds a tab, the laid-out widths and positions are checked, and
+/// when one is not finite — a face [`space_measures`] passed whose tab
+/// stop still fails, such as a fallback face — the text is laid out
+/// again with its tabs as spaces, byte for byte: in a box on the lines
+/// that failed alone, in a run throughout (R24.2). The event is logged.
+///
+/// Cost: one shaping pass, and one pass over the laid-out glyphs when
+/// the text holds a tab; a second shaping pass, and one copy of each
+/// stretch that holds a tab on a failing line, only when that check
+/// fails.
 fn new_buffer(
     fs: &mut FontSystem,
     rich: Vec<(&str, Attrs<'_>)>,
@@ -355,13 +400,209 @@ fn new_buffer(
 ) -> Buffer {
     let font_size = font_size.max(MIN_FONT_SIZE_PT);
     let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
-    let mut buffer = Buffer::new(fs, Metrics::new(font_size, line_height));
+    let metrics = Metrics::new(font_size, line_height);
+    if !rich.iter().any(|(text, _)| text.contains('\t')) {
+        return filled_buffer(fs, rich, metrics, align);
+    }
+    let buffer = filled_buffer(fs, rich.clone(), metrics, align);
+    let failing = non_finite_lines(&buffer);
+    if failing.is_empty() {
+        return buffer;
+    }
+    let whole = align.is_none();
+    log::warn!(
+        "flow: a tab stop laid out a width or position that is not finite; laying out {} with its tabs as spaces",
+        if whole { "the run" } else { "the failing lines" }
+    );
+    #[cfg(test)]
+    TABS_RELAID.with(|count| count.set(count.get() + 1));
+    // The line each stretch is on: a box's lines are split by the `\n`
+    // stretches `assemble` hands over.
+    let mut line = 0usize;
+    let spaced: Vec<Option<String>> = rich
+        .iter()
+        .map(|(text, _)| {
+            let on = line;
+            if *text == "\n" {
+                line += 1;
+            }
+            ((whole || failing.contains(&on)) && text.contains('\t')).then(|| text.replace('\t', " "))
+        })
+        .collect();
+    let relaid: Vec<(&str, Attrs<'_>)> = rich
+        .iter()
+        .zip(&spaced)
+        .map(|((text, attrs), spaced)| (spaced.as_deref().unwrap_or(*text), attrs.clone()))
+        .collect();
+    let buffer = filled_buffer(fs, relaid, metrics, align);
+    if !non_finite_lines(&buffer).is_empty() {
+        log::warn!(
+            "flow: a laid-out width or position is still not finite with every failing tab as a space"
+        );
+    }
+    buffer
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test hook (R24.2): while it names a face on a thread, the
+    /// last-resort check ([`non_finite_lines`]) counts every tab glyph
+    /// laid out in that face as a width that is not finite — what a
+    /// fallback face's `0 / 0` tab stop is. So the check, and the second
+    /// layout it leads to, are driven the same way on every machine,
+    /// whatever its font set makes of a real face's tab.
+    pub(crate) static TABS_NOT_FINITE_IN: std::cell::Cell<Option<AppFont>> =
+        const { std::cell::Cell::new(None) };
+    /// Test hook (R24.2): while set on a thread, [`space_measures`]
+    /// passes every face, so a tab in a face that cannot measure its stop
+    /// (SilhousTwo, drawn in SilhousTwo on every machine since R30)
+    /// reaches cosmic-text, as one shaped in a fallback face would, and
+    /// is laid out as a real `0 / 0` that only the last-resort check in
+    /// [`new_buffer`] stands between and placement.
+    pub(crate) static TRUST_EVERY_FACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test counter (R24.2): how many times [`new_buffer`] has laid text
+    /// out again with its tabs as spaces on this thread.
+    pub(crate) static TABS_RELAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The lines of `buffer` the last-resort check finds failing: what a test
+/// of the check reads back.
+#[cfg(test)]
+pub(crate) fn failing_lines(buffer: &Buffer) -> Vec<usize> {
+    non_finite_lines(buffer)
+}
+
+/// Whether the test hook [`TABS_NOT_FINITE_IN`] counts `glyph`, laid out
+/// on a line of text `line`, as not finite: a tab in the face it names.
+#[cfg(test)]
+fn hooked_tab(line: &str, glyph: &LayoutGlyph) -> bool {
+    TABS_NOT_FINITE_IN.with(std::cell::Cell::get).is_some_and(|font| {
+        line.get(glyph.start..glyph.end) == Some("\t")
+            && crate::font::fonts::COMPILED_FONT_ID_MAP
+                .get(&font)
+                .is_some_and(|ids| ids.contains(&glyph.font_id))
+    })
+}
+
+/// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
+fn filled_buffer(
+    fs: &mut FontSystem,
+    rich: Vec<(&str, Attrs<'_>)>,
+    metrics: Metrics,
+    align: Option<Align>,
+) -> Buffer {
+    let mut buffer = Buffer::new(fs, metrics);
     buffer.set_wrap(Wrap::None);
     buffer.set_size(None, None);
-    let defaults = Attrs::new().metrics(Metrics::new(font_size, line_height));
+    let defaults = Attrs::new().metrics(metrics);
     buffer.set_rich_text(rich, &defaults, SHAPING_ADVANCED, align.map(cosmic_align));
     buffer.shape_until_scroll(fs, false);
     buffer
+}
+
+/// Whether the face `attrs` select can measure a tab stop: its space,
+/// shaped alone, has a finite, positive advance (cosmic-text widens a tab
+/// to a multiple of it, so a zero advance is a `0 / 0` stop).
+///
+/// Cost: one shaping of one character.
+fn space_measures(attrs: &Attrs<'_>, fs: &mut FontSystem) -> bool {
+    #[cfg(test)]
+    if TRUST_EVERY_FACE.with(std::cell::Cell::get) {
+        return true;
+    }
+    let metrics = metrics_of(attrs);
+    let size = metrics.font_size.max(MIN_FONT_SIZE_PT);
+    let metrics = Metrics::new(size, size * LINE_HEIGHT_FACTOR);
+    let buffer = filled_buffer(fs, vec![(" ", attrs.clone())], metrics, None);
+    let mut glyphs = buffer.layout_runs().flat_map(|run| run.glyphs.iter());
+    glyphs
+        .next()
+        .is_some_and(|glyph| glyph.w.is_finite() && glyph.w > 0.0)
+}
+
+/// A face as [`untabbed`] tells faces apart: its family (`None` for the
+/// default), weight and slant.
+type Face<'a> = (Option<&'a str>, u16, bool);
+
+/// Each span's text with its tabs drawn as spaces when its face cannot
+/// measure a tab stop ([`space_measures`]), decided per span and before
+/// shaping (R24.1): `None` keeps the span's own text, tabs and all. The
+/// replacement is byte for byte, so a glyph's span bytes name the same
+/// characters of the caller's text. Empty when no span holds a tab.
+///
+/// Cost: nothing for text without a tab; otherwise one space shaped per
+/// distinct face, weight and slant among the spans that hold one, and
+/// one copy of each such span's text whose face fails.
+fn untabbed(
+    spans: &[FlowSpan<'_>],
+    families: &[Option<PinnedFamily>],
+    scale: f32,
+    fs: &mut FontSystem,
+) -> Vec<Option<String>> {
+    if !spans.iter().any(|span| span.text.contains('\t')) {
+        return Vec::new();
+    }
+    let mut measured: Vec<(Face<'_>, bool)> = Vec::new();
+    spans
+        .iter()
+        .enumerate()
+        .map(|(index, span)| {
+            if !span.text.contains('\t') {
+                return None;
+            }
+            let family = families.get(index).and_then(Option::as_ref);
+            let face = (
+                family.map(|pin| pin.name.as_str()),
+                span.style.weight.get(),
+                span.style.italic,
+            );
+            let measures = match measured.iter().find(|(seen, _)| *seen == face) {
+                Some((_, measures)) => *measures,
+                None => {
+                    let measures = space_measures(&span_attrs(span, scale, family), fs);
+                    measured.push((face, measures));
+                    measures
+                }
+            };
+            (!measures).then(|| span.text.replace('\t', " "))
+        })
+        .collect()
+}
+
+/// `spans`, each span whose entry of `untabbed` is `Some` reading that
+/// text instead of its own.
+fn with_untabbed<'s>(spans: &[FlowSpan<'s>], untabbed: &'s [Option<String>]) -> Vec<FlowSpan<'s>> {
+    spans
+        .iter()
+        .enumerate()
+        .map(
+            |(index, span)| match untabbed.get(index).and_then(Option::as_deref) {
+                Some(text) => FlowSpan { text, ..*span },
+                None => *span,
+            },
+        )
+        .collect()
+}
+
+/// The buffer lines on which a laid-out width, or a glyph's width or
+/// position, is not finite.
+fn non_finite_lines(buffer: &Buffer) -> Vec<usize> {
+    let mut lines: Vec<usize> = buffer
+        .layout_runs()
+        .filter(|run| {
+            !run.line_w.is_finite()
+                || run.glyphs.iter().any(|glyph| {
+                    #[cfg(test)]
+                    if hooked_tab(run.text, glyph) {
+                        return true;
+                    }
+                    !glyph.w.is_finite() || !glyph.x.is_finite()
+                })
+        })
+        .map(|run| run.line_i)
+        .collect();
+    lines.dedup();
+    lines
 }
 
 /// The document's alignment as cosmic-text's.
@@ -503,7 +744,9 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
 pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemWriteGuard) -> ShapedRun {
     let fs: &mut FontSystem = fs;
     let families = families_of(spans.iter().map(|span| span.style), fs);
-    let assembly = assemble(spans, &families, scale, Breaks::None);
+    let untabbed = untabbed(spans, &families, scale, fs);
+    let spans = with_untabbed(spans, &untabbed);
+    let assembly = assemble(&spans, &families, scale, Breaks::None);
     run_from_assembly(assembly, fs)
 }
 
@@ -552,6 +795,23 @@ pub(crate) fn reshape(
         text.chars().filter(|&ch| !is_paragraph_separator(ch)).collect()
     });
     let filler_family = filler.and_then(|(_, style)| families_of(std::iter::once(style), fs).pop().flatten());
+    // The filler is a span of its own: its tabs keep their stops unless
+    // its face cannot measure one (R24.1).
+    let filler_text = match filler {
+        Some((text, style)) if filler_text.contains('\t') => {
+            let span = FlowSpan {
+                text,
+                style,
+                link: None,
+            };
+            if space_measures(&span_attrs(&span, factor, filler_family.as_ref()), fs) {
+                filler_text
+            } else {
+                filler_text.replace('\t', " ")
+            }
+        }
+        _ => filler_text,
+    };
 
     let mut rich: Vec<(&str, Attrs<'_>)> = Vec::with_capacity(run.pieces.len() + 2);
     let mut pieces = Vec::with_capacity(run.pieces.len() + 1);
@@ -599,7 +859,7 @@ pub(crate) fn reshape(
             style,
             link: None,
         };
-        let attrs = span_attrs(&span, factor, filler_family.as_deref());
+        let attrs = span_attrs(&span, factor, filler_family.as_ref());
         track(&attrs);
         rich.push(("\n", attrs.clone()));
         rich.push((filler_text.as_str(), attrs));
@@ -669,6 +929,8 @@ pub fn shape_box(
 ) -> ShapedBox {
     let fs: &mut FontSystem = fs;
     let families = families_of(spans.iter().map(|span| span.style), fs);
+    let untabbed = untabbed(spans, &families, 1.0, fs);
+    let spans = &with_untabbed(spans, &untabbed);
     let assembly = assemble(spans, &families, 1.0, Breaks::Newline);
     // A line with nothing on it — the whole box, when the text is empty
     // — is as tall as the spans' line height.

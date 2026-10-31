@@ -1465,7 +1465,14 @@ element.
   an optional link. Its face, size (per span, through cosmic-text's
   per-span metrics), weight, slant and color all reach the shaper.
   Sizes arrive in points; converting a frame's relative size is the
-  projection's job.
+  projection's job. A span pinned to a compiled family is drawn in that
+  family's compiled faces on every machine: its weight is resolved to
+  the nearest one the family has, as CSS Fonts 4 matches `font-weight`
+  and with nothing synthesized, before cosmic-text sees it — the
+  shaper keeps a pin only at an exact weight and would otherwise draw
+  the span in any host face of that weight (R30 on #278,
+  `PinnedFamily`). Only a character the family does not hold falls
+  back to another face.
 - **Glyphs are never rotated.** The unit of placement is the grapheme
   cluster, so a mark never leaves its letter. A cluster of advance `w`
   and line height `h` takes a step `|cos θ|·w + |sin θ|·h` along the
@@ -1491,6 +1498,20 @@ element.
   span's text (`GlyphMetrics`, `ShapedBox::glyph_spans`); a filler
   glyph names `FILLER_SPAN`. No paragraph separator but a box's `\n`
   is drawn or breaks a line.
+- **Tabs** (R24, R24.1, R24.2 on #278). A tab is a space widened to the next
+  tab stop, eight of the face's spaces apart from the start of its
+  line, as cosmic-text draws it. A face whose space has no width cannot
+  measure a stop (cosmic-text would make the tab and every glyph after
+  it on the line `NaN` wide or placed), so shaping decides **per span,
+  from that span's face, before shaping**: a span whose face's space
+  has no finite, positive advance draws its tabs as spaces, and every
+  other span keeps its tab stops, beside it or on another line. That
+  decision measures each span's primary face, and a tab shaped in a
+  fallback face can still come back non-finite, so a last-resort check
+  after shaping (R24.2) lays the text out again with its tabs as spaces
+  when a width or position is not finite — only the failing lines of a
+  box, so the others keep their stops, and the whole of a run — and
+  logs it. No `NaN` from a tab reaches placement or the renderer.
 
 `lib/baumhard/src/flow/`. It caches nothing, builds no glyph tree and
 never takes the font lock: every shaping function takes the guard its

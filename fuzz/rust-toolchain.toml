@@ -1,0 +1,8 @@
+# The nightly cargo-fuzz builds with (TEST_CONVENTIONS §T14). It
+# applies inside `fuzz/` only: the workspace, and `./test.sh`, stay on
+# the stable toolchain the root `rust-toolchain.toml` pins. Pinned to a
+# dated nightly so a fuzz build is reproducible; bump it as a change of
+# its own, and run every target once after the bump.
+[toolchain]
+channel = "nightly-2026-10-15"
+profile = "minimal"

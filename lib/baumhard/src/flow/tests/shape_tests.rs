@@ -51,7 +51,12 @@ pub fn do_flow_span_attrs_carry_weight_slant_and_size() {
         link: None,
     };
 
-    let attrs = span_attrs(&span(&bold_italic), 2.0, Some("Galatia SIL"));
+    let galatia = crate::font::fonts::PinnedFamily {
+        name: "Galatia SIL".to_string(),
+        weights: vec![400, 700],
+        faces: Vec::new(),
+    };
+    let attrs = span_attrs(&span(&bold_italic), 2.0, Some(&galatia));
     assert_eq!(attrs.weight, FontWeight(700));
     assert_eq!(attrs.style, Style::Italic);
     assert_eq!(

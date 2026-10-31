@@ -117,7 +117,10 @@ pub fn attrs_list_from_regions(
         // abort the process" rule.
         let family = resolve_font_family(region.font.as_ref(), font_system);
         attrs = match family {
-            Some(ref name) => attrs.family(Family::Name(name.as_str())),
+            // At the weight the family draws the regular one at (R30).
+            Some(ref pin) => attrs
+                .family(Family::Name(pin.name.as_str()))
+                .weight(cosmic_text::Weight(pin.weight_for(400))),
             None => attrs.family(Family::Monospace),
         };
         if start >= end {
@@ -174,7 +177,7 @@ fn region_byte_bounds<'r>(
 fn resolve_font_family(
     font_id: Option<&crate::font::fonts::AppFont>,
     font_system: &mut FontSystem,
-) -> Option<String> {
+) -> Option<crate::font::fonts::PinnedFamily> {
     let font_id = font_id?;
     let face_ids = match COMPILED_FONT_ID_MAP.get(font_id) {
         Some(ids) if !ids.is_empty() => ids,
@@ -196,7 +199,7 @@ fn resolve_font_family(
     // `first()` rather than `[0]` so we degrade with a warn rather
     // than panicking inside the renderer's frame loop (§9).
     match face.families.first() {
-        Some((name, _)) => Some(name.clone()),
+        Some(_) => crate::font::fonts::pinned_family(font_system, *font_id),
         None => {
             warn!("font::attrs: face for {font_id:?} has no family records, dropping family pin");
             None
@@ -232,10 +235,11 @@ pub struct RegionFamilies<'r> {
     text: &'r str,
     /// Borrowed regions slice, allocated once at resolve time.
     regions: Vec<&'r ColorFontRegion>,
-    /// Resolved family-name string per region; same indexing as
-    /// `regions`. `None` means the region had no font pin, or the
-    /// pin's lookup missed (logged via `log::warn!` at resolve time).
-    names: Vec<Option<String>>,
+    /// Resolved family per region — its name and its compiled weights;
+    /// same indexing as `regions`. `None` means the region had no font
+    /// pin, or the pin's lookup missed (logged via `log::warn!` at
+    /// resolve time).
+    names: Vec<Option<crate::font::fonts::PinnedFamily>>,
     /// Byte `(start, end)` into `text` per region; same indexing as
     /// `regions`. Resolved in one grapheme walk at resolve time (see
     /// `region_byte_bounds`) rather than once per shape pass.
@@ -253,10 +257,11 @@ impl<'r> RegionFamilies<'r> {
     /// styled runs.
     ///
     /// Cost: O(n_text + n_regions) — one grapheme walk over `text`
-    /// for the whole run table — plus one `font_system.db().face()`
-    /// lookup per region with a font id. Allocates one
+    /// for the whole run table — plus, per region with a font id, one
+    /// walk over the compiled faces' `fontdb` records for the family's
+    /// weights (`pinned_family`). Allocates one
     /// `Vec<&ColorFontRegion>` (from `source.all_regions()`), one
-    /// `Vec<Option<String>>`, one `Vec<(usize, usize)>`, and the
+    /// `Vec<Option<PinnedFamily>>`, one `Vec<(usize, usize)>`, and the
     /// three interior `Vec`s `region_byte_bounds` builds. The caller
     /// holds the `font_system` write guard for the duration;
     /// downstream shape passes that consult the result need their
@@ -332,8 +337,11 @@ pub fn rich_text_spans_into<'a>(
         if let Some(c) = color {
             attrs = attrs.color(c);
         }
-        if let Some(family) = region.and_then(|i| families.names[i].as_deref()) {
-            attrs = attrs.family(Family::Name(family));
+        if let Some(pin) = region.and_then(|i| families.names[i].as_ref()) {
+            // At the weight the family draws the regular one at (R30).
+            attrs = attrs
+                .family(Family::Name(pin.name.as_str()))
+                .weight(cosmic_text::Weight(pin.weight_for(400)));
         }
         out.push((slice, attrs));
     }

@@ -461,3 +461,282 @@ fn test_acquire_font_system_write_panics_on_timeout() {
         Duration::from_millis(200),
     );
 }
+
+#[test]
+fn test_nearest_weight_follows_css_fonts_4() {
+    do_nearest_weight_follows_css_fonts_4();
+}
+
+/// Ruling R30: a pinned span's weight is matched within its family as
+/// CSS Fonts 4 §5.2 matches `font-weight`, with nothing synthesized.
+/// Each case is one where a nearest-by-distance rule answers otherwise
+/// or has a tie, so a rule other than CSS's is caught.
+pub fn do_nearest_weight_follows_css_fonts_4() {
+    for (desired, available, expected) in [
+        // A weight the family has is kept.
+        (700, &[400, 700][..], 700),
+        // 400–500: lighter-or-equal heavier weights up to 500 first...
+        (450, &[400, 500][..], 500),
+        // ...then lighter ones, before anything above 500.
+        (500, &[400, 900][..], 400),
+        (400, &[300, 500][..], 500),
+        (400, &[300, 600][..], 300),
+        // ...and only then heavier ones above 500, lightest first.
+        (400, &[600, 700][..], 600),
+        // Below 400: lighter first, however much nearer a heavier one is.
+        (300, &[200, 400][..], 200),
+        (300, &[100, 310][..], 100),
+        (200, &[400, 700][..], 400),
+        // Above 500: heavier first.
+        (600, &[500, 700][..], 700),
+        (600, &[500, 900][..], 900),
+        (800, &[400, 700][..], 700),
+        // A single-weight family draws every weight at its one.
+        (100, &[400][..], 400),
+        (900, &[400][..], 400),
+        // No faces: the weight asked for.
+        (200, &[][..], 200),
+    ] {
+        assert_eq!(
+            fonts::nearest_weight(desired, available),
+            expected,
+            "{desired} among {available:?}"
+        );
+    }
+}
+
+#[test]
+fn test_a_pinned_family_lists_its_compiled_weights_and_faces() {
+    do_a_pinned_family_lists_its_compiled_weights_and_faces();
+}
+
+/// A family is all its compiled faces: Galatia SIL is a regular and a
+/// bold face, pinned through either `AppFont`, and a span pinned to it
+/// at 600 is drawn at 700 (CSS's heavier-first above 500).
+pub fn do_a_pinned_family_lists_its_compiled_weights_and_faces() {
+    fonts::init();
+    let fs = acquire_font_system_write("fonts_tests::do_*");
+    let regular = fonts::pinned_family(&fs, AppFont::GalatiaSIL).unwrap();
+    let bold = fonts::pinned_family(&fs, AppFont::GalatiaSILBold).unwrap();
+    assert_eq!(regular, bold, "one family, whichever face pins it");
+    assert_eq!(regular.weights, vec![400, 700]);
+    assert_eq!(regular.faces.len(), 2);
+    for font in [AppFont::GalatiaSIL, AppFont::GalatiaSILBold] {
+        for id in &fonts::COMPILED_FONT_ID_MAP[&font] {
+            assert!(regular.faces.contains(id), "{font:?}'s face is the family's");
+        }
+    }
+    assert_eq!(regular.weight_for(600), 700);
+    let silhous = fonts::pinned_family(&fs, AppFont::SilhousTwo).unwrap();
+    assert_eq!(silhous.weights, vec![400]);
+    assert_eq!(silhous.weight_for(200), 400);
+}
+
+/// Whether the font file `data` (a single face or a collection's first)
+/// has an `fvar` table: whether it is a variable font.
+fn has_fvar(data: &[u8]) -> bool {
+    let read_u32 = |at: usize| {
+        data.get(at..at + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_u16 = |at: usize| data.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    // A collection names its first face's offset table at byte 12.
+    let base = if data.get(0..4) == Some(b"ttcf") {
+        read_u32(12).unwrap_or(0) as usize
+    } else {
+        0
+    };
+    let tables = read_u16(base + 4).unwrap_or(0) as usize;
+    (0..tables).any(|index| data.get(base + 12 + 16 * index..base + 16 + 16 * index) == Some(b"fvar"))
+}
+
+#[test]
+fn test_no_compiled_face_is_variable() {
+    do_no_compiled_face_is_variable();
+}
+
+/// [`fonts::PinnedFamily`] lists a family's static weights, and
+/// cosmic-text also keeps a pin at a weight a variable face's `wght` axis
+/// covers. The weights listed are all the weights a family can be drawn
+/// at only while no compiled face is variable; a variable face added
+/// later must widen the rule first. The scanner is checked on a planted
+/// `fvar` table before it is trusted with the compiled set.
+pub fn do_no_compiled_face_is_variable() {
+    let mut planted = vec![0u8, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+    planted.extend_from_slice(b"fvar");
+    planted.extend_from_slice(&[0; 12]);
+    assert!(has_fvar(&planted), "control: a planted fvar table is found");
+    planted[12..16].copy_from_slice(b"glyf");
+    assert!(!has_fvar(&planted), "control: another table is not");
+    let mut read = 0;
+    for (font, source) in fonts::FONT_SOURCES.iter() {
+        let cosmic_text::fontdb::Source::Binary(data) = source else {
+            continue;
+        };
+        let data: &[u8] = (**data).as_ref();
+        assert!(!has_fvar(data), "{font:?} is a variable font");
+        read += 1;
+    }
+    assert!(read >= 50, "precondition: the compiled sources are read ({read})");
+}
+
+/// Ruling R30.1: no face but a compiled one bears a compiled family's
+/// name, so a pin names the compiled faces on every machine. The test
+/// build registers a stand-in for a host face with a compiled family's
+/// name and weight (`SHADOWING_DECOY`, "SilhousTwo" at 400, Galatia SIL's
+/// outlines) ahead of the compiled set in the database, as the host's
+/// faces are; loading removes it, and a SilhousTwo span is drawn in the
+/// compiled SilhousTwo. Plain, not a `do_*()` pair: it reads the
+/// test-build record of what loading removed.
+#[test]
+fn test_no_face_but_a_compiled_one_bears_a_compiled_family_name() {
+    fonts::init();
+    let removed = fonts::SHADOWING_FACES_REMOVED
+        .get()
+        .expect("precondition: the fonts are loaded");
+    assert!(
+        removed.iter().any(|name| name == fonts::SHADOWING_DECOY),
+        "precondition: the stand-in host face was registered and removed ({removed:?})"
+    );
+    // Read everything under the guard, and assert once it is released, so
+    // a failure here does not poison the lock for the tests beside it.
+    let (shadowing, families, pin, drawn) = {
+        let mut fs = acquire_font_system_write("fonts_tests::shadowing");
+        let compiled: Vec<cosmic_text::fontdb::ID> = fonts::COMPILED_FONT_ID_MAP
+            .values()
+            .flat_map(|ids| ids.iter().copied())
+            .collect();
+        let names: Vec<String> = compiled
+            .iter()
+            .filter_map(|id| fs.db().face(*id))
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .collect();
+        let shadowing: Vec<String> = fs
+            .db()
+            .faces()
+            .filter(|face| !compiled.contains(&face.id))
+            .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
+            .map(|face| face.post_script_name.clone())
+            .collect();
+        let families: Vec<(AppFont, String)> = fonts::COMPILED_FONT_ID_MAP
+            .iter()
+            .filter_map(|(font, ids)| {
+                let face = fs.db().face(*ids.first()?)?;
+                Some((*font, face.families.first()?.0.clone()))
+            })
+            .collect();
+        // What a SilhousTwo pin draws "ab" in.
+        let pin = fonts::pinned_family(&fs, AppFont::SilhousTwo).unwrap();
+        let mut buffer = cosmic_text::Buffer::new(&mut fs, cosmic_text::Metrics::new(16.0, 20.0));
+        buffer.set_text(
+            "ab",
+            &fonts::regular_attrs(Some(&pin)),
+            cosmic_text::Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut fs, false);
+        let drawn: Vec<(cosmic_text::fontdb::ID, Option<String>)> = buffer
+            .layout_runs()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.font_id).collect::<Vec<_>>())
+            .map(|id| (id, fs.db().face(id).map(|info| info.post_script_name.clone())))
+            .collect();
+        (shadowing, families, pin, drawn)
+    };
+    assert_eq!(
+        shadowing,
+        Vec::<String>::new(),
+        "faces not compiled in that bear a compiled family's name"
+    );
+    // A map naming a compiled family resolves to its compiled face, not to
+    // `Any`, as it would were a host face of that name met first.
+    assert!(
+        families.len() >= 50,
+        "precondition: the compiled families are read"
+    );
+    for (font, name) in families {
+        let resolved = fonts::app_font_by_family(&name);
+        assert!(
+            resolved.is_some_and(|resolved| resolved != AppFont::Any),
+            "{font:?}'s family {name:?} resolves to {resolved:?}"
+        );
+    }
+    assert_eq!(drawn.len(), 2, "precondition: two glyphs");
+    for (id, name) in drawn {
+        assert!(pin.faces.contains(&id), "a SilhousTwo glyph is drawn in {name:?}");
+    }
+}
+
+/// `Err` naming a family, among `faces` as `(family, weight, italic)`,
+/// with both slants where one slant has a weight the other lacks.
+fn slant_weights_agree(faces: &[(String, u16, bool)]) -> Result<(), String> {
+    let mut families: Vec<&str> = faces.iter().map(|(family, _, _)| family.as_str()).collect();
+    families.sort_unstable();
+    families.dedup();
+    for family in families {
+        let weights = |italic: bool| {
+            let mut weights: Vec<u16> = faces
+                .iter()
+                .filter(|(name, _, slant)| name == family && *slant == italic)
+                .map(|(_, weight, _)| *weight)
+                .collect();
+            weights.sort_unstable();
+            weights.dedup();
+            weights
+        };
+        let (upright, italic) = (weights(false), weights(true));
+        if !upright.is_empty() && !italic.is_empty() && upright != italic {
+            return Err(format!("{family}: upright {upright:?}, italic {italic:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks() {
+    do_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks();
+}
+
+/// [`fonts::PinnedFamily::weights`] mixes a family's upright and italic
+/// faces, where CSS Fonts 4 §5.2 narrows the faces by slant before it
+/// matches the weight. The two agree while no family that has both
+/// slants has one at a weight the other lacks (Perpetrator's Regular
+/// and Italic are both 400); a face that breaks it must widen the rule
+/// first. A family with one slant is narrowed to it either way. The
+/// check is held to a planted family before it is trusted.
+pub fn do_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks() {
+    let planted = vec![
+        ("Planted".to_string(), 400, false),
+        ("Planted".to_string(), 700, false),
+        ("Planted".to_string(), 400, true),
+    ];
+    assert!(
+        slant_weights_agree(&planted).is_err(),
+        "control: a bold without an italic bold is found"
+    );
+    assert!(
+        slant_weights_agree(&planted[..1]).is_ok(),
+        "control: a family of one slant is not"
+    );
+    fonts::init();
+    let fs = acquire_font_system_write("fonts_tests::do_*");
+    let faces: Vec<(String, u16, bool)> = fonts::COMPILED_FONT_ID_MAP
+        .values()
+        .flat_map(|ids| ids.iter())
+        .filter_map(|id| fs.db().face(*id))
+        .flat_map(|face| {
+            let italic = face.style != cosmic_text::fontdb::Style::Normal;
+            face.families
+                .iter()
+                .map(move |(name, _)| (name.clone(), face.weight.0, italic))
+        })
+        .collect();
+    assert!(
+        faces
+            .iter()
+            .any(|(name, _, italic)| name == "Perpetrator" && *italic),
+        "precondition: a family with both slants is read"
+    );
+    if let Err(why) = slant_weights_agree(&faces) {
+        panic!("{why}");
+    }
+}

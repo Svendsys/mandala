@@ -1,0 +1,86 @@
+# Coverage-guided fuzzing of every untrusted-input boundary (design
+# D29, V1-B8 #278; TEST_CONVENTIONS §T14).
+#
+# Deliberately **not** a workspace member: cargo-fuzz needs a nightly
+# toolchain (`-Zsanitizer=address` and libFuzzer's instrumentation),
+# and `./test.sh` is the gate on the stable toolchain the root
+# `rust-toolchain.toml` pins. The empty `[workspace]` table below makes
+# this crate the root of its own workspace, so cargo never treats it as
+# a member of the root one, and `./test.sh` never builds it. This
+# directory's own `rust-toolchain.toml` pins the nightly.
+#
+# The targets are thin: each hands its bytes to a property function in
+# baumhard's tests trees (`document::tests::format_fuzz`,
+# `flow::tests::flow_fuzz`, `gfx_structs::tests::glyph_layer_fuzz`) and
+# panics on the `Err` it returns. The properties, the structure-aware
+# decoders and every finding's regression test therefore compile and
+# run on stable, in `./test.sh`.
+#
+# Run one with `scripts/fuzz.sh <target> <seconds>`, which assembles the
+# seed corpus; see TEST_CONVENTIONS §T14.
+
+[package]
+name = "mandala-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MPL-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# Pinned exactly so a fuzz run is reproducible from the lockfile here,
+# which is committed; both are cargo-fuzz's own runtime.
+libfuzzer-sys = "=0.4.13"
+baumhard = { path = "../lib/baumhard" }
+
+[workspace]
+
+# Debug assertions and overflow checks stay on in the fuzzed build, as
+# cargo-fuzz builds by default: a `debug_assert!` that fires on an input
+# is a finding, the way it would be in `./test.sh`.
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "load_raw"
+path = "fuzz_targets/load_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "load_structured"
+path = "fuzz_targets/load_structured.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flow_raw"
+path = "fuzz_targets/flow_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flow_structured"
+path = "fuzz_targets/flow_structured.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "glyph_mutation_raw"
+path = "fuzz_targets/glyph_mutation_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "glyph_mutation_structured"
+path = "fuzz_targets/glyph_mutation_structured.rs"
+test = false
+doc = false
+bench = false

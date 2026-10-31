@@ -18,8 +18,9 @@ use crate::document::element::DocElement;
 use crate::document::format::{check_savable, load, save};
 use crate::document::ids::NodeIdent;
 use crate::document::tests::format_depth::{
-    deep_chain_survives_every_walk, planted_recursive_count, CHAIN_DEPTH,
+    chain_text, deep_chain_survives_every_walk, planted_recursive_count, CHAIN_DEPTH,
 };
+use crate::document::tests::format_fuzz::check_load_bytes;
 
 /// Set in the child process of the control: run a recursive walk over
 /// the chain instead.
@@ -46,6 +47,46 @@ fn test_a_chain_100000_deep_survives_every_walk_on_a_default_stack() {
         })
         .expect("a thread with the default stack");
     let outcome = run.join().expect("the walk thread finished");
+    assert_eq!(outcome, Ok(()));
+}
+
+/// The fuzz loader's properties (TEST_CONVENTIONS §T14) walk the same
+/// chain on the same stack: `check_load_bytes`, the load_raw target's
+/// whole body, holds a document 100,000 deep to every property it holds
+/// a fuzzed one to — validation, the bounds, both savable checks, the
+/// round trip — so a recursive walk added to any of them overflows here
+/// rather than only past the fuzz chains' 4,096. (Review of #293: every
+/// walk in them is iterative, and this is the proof.) The chain and the
+/// thread are the ones the process control below shows a recursion
+/// cannot survive.
+#[test]
+fn test_the_fuzz_loader_properties_survive_a_chain_100000_deep_on_a_default_stack() {
+    let text = chain_text(CHAIN_DEPTH);
+    let run = std::thread::Builder::new()
+        .stack_size(DEFAULT_TEST_STACK)
+        .spawn(move || {
+            // Precondition: the load is accepted, so the properties of a
+            // loaded document run, not a refusal's.
+            let doc = load(&text).map_err(|error| format!("the chain is refused: {error}"))?;
+            // Down the chain one node child at a time, iteratively.
+            let node_child = |id| {
+                doc.children(id)
+                    .find(|&child| doc.get(child).is_some_and(|element| element.as_node().is_some()))
+            };
+            let mut deepest = 0;
+            let mut at = node_child(doc.root());
+            while let Some(node) = at {
+                deepest += 1;
+                at = node_child(node);
+            }
+            if deepest != CHAIN_DEPTH {
+                return Err(format!("the chain is {deepest} deep, not {CHAIN_DEPTH}"));
+            }
+            drop(doc);
+            check_load_bytes(text.as_bytes())
+        })
+        .expect("a thread with the default stack");
+    let outcome = run.join().expect("the property thread finished");
     assert_eq!(outcome, Ok(()));
 }
 

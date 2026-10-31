@@ -69,6 +69,46 @@ attrs builder.
   to monospace — the renderer never panics on a bad family
   (interactive-path invariant per CODE_CONVENTIONS §9).
 
+## Weight within a pinned family
+
+A pinned family is drawn only in its compiled faces, at the nearest
+weight they have (ruling R30 on #278). A request for a weight the
+family's compiled faces lack — `"bold"` on a single-weight face, `300`
+on SilhousTwo — is matched within the family as CSS Fonts 4 §5.2
+matches `font-weight`, and nothing is synthesized: a weight the family
+has is kept; for one from 400 to 500, the lightest heavier weight up
+to 500, then the heaviest lighter one, then the lightest above 500; for
+one below 400, the heaviest lighter weight, then the lightest heavier;
+for one above 500, the lightest heavier, then the heaviest lighter. A
+family whose only face is 400 draws every weight at 400.
+
+The reason is the shaper. cosmic-text keeps a pinned family only
+through a face of exactly the weight asked for, and otherwise draws in
+whatever host face has that exact weight — on the CI runner,
+`DejaVuSans-ExtraLight` for SilhousTwo at 200 — so the host's fonts, not
+the map, would decide the face on native, where the browser has only
+the compiled set. Every shaping path resolves the weight before
+cosmic-text sees it: a TextFlow span's style weight
+(`flow::span_attrs`, and the tab check that measures with it), and the
+regular weight the measuring and region paths ask for
+(`font::fonts::PinnedFamily::weight_for`). The slant needs no
+resolving: the matcher keeps a pinned face whatever its slant. A
+character no compiled face of the family holds is still drawn in a
+fallback face, as it must be.
+
+**Compiled families are authoritative by name too** (ruling R30.1).
+cosmic-text matches a pin by family name and weight alone, and
+`FontSystem::new` indexes the host's fonts before the compiled set is
+added, so a host face bearing a compiled family's name — the Noto Sans
+Hebrew, Noto Sans Devanagari, Noto Serif Tibetan or Noto Sans Egyptian
+Hieroglyphs a Debian or Ubuntu desktop installs — would be met first and
+drawn in place of the compiled one, and a map naming that family would
+resolve to the host's face (`AppFont::Any`). So once the compiled faces
+are registered, every other face bearing a compiled family's name is
+removed from the font system (`remove_shadowing_faces`). A pin then
+names the compiled faces on every machine; the host's other families
+stay, for fallback and for `font list`.
+
 ## Console verbs
 
 Three forms live under one `font` command:
