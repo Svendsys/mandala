@@ -240,7 +240,8 @@ fn test_writer_makes_one_entry_of_a_request_with_many_anchors() {
 }
 
 /// A request at three nodes is one history entry, one revision, and one
-/// record; one undo takes all three back.
+/// record; the same request again changes nothing and makes neither;
+/// one undo takes all three back.
 pub fn do_writer_makes_one_entry_of_a_request_with_many_anchors() {
     let (mut doc, ids) = built();
     let original = saved(&doc);
@@ -257,6 +258,13 @@ pub fn do_writer_makes_one_entry_of_a_request_with_many_anchors() {
         vec![("fade".to_string(), ChangeSource::Action, Revision(1))]
     );
     assert_eq!(doc.take_changes().len(), 1, "one record");
+    assert_eq!(
+        doc.apply(fade(vec![ids.a, ids.b, ids.d], 0.5), ChangeSource::Action),
+        Ok(Revision(1)),
+        "the same change again changes nothing"
+    );
+    assert_eq!(doc.history().count(), 1, "and makes no entry");
+    assert!(doc.take_changes().is_empty(), "and no record");
     doc.undo().unwrap();
     assert_eq!(saved(&doc), original, "one undo restores every anchor");
     assert_eq!(doc.redo_len(), 1);
