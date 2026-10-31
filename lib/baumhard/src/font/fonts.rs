@@ -59,9 +59,53 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
         debug!("loaded font {x:?}");
         compiled_font_id_map.insert(x, font_id);
     });
+    #[cfg(test)]
+    register_host_decoys(&mut font_system);
     drop(font_system);
     debug!("Released font-system lock.");
     compiled_font_id_map
+}
+
+/// The weights [`register_host_decoys`] gives a decoy face: every CSS
+/// weight but the regular and the bold, which compiled faces have (so a
+/// span resolved to one of those is never drawn in a decoy).
+#[cfg(test)]
+pub(crate) const DECOY_WEIGHTS: [u16; 7] = [100, 200, 300, 500, 600, 800, 900];
+
+/// The family the decoys are registered under: the first of
+/// cosmic-text's common fallback families on Linux.
+#[cfg(test)]
+pub(crate) const DECOY_FAMILY: &str = "Noto Sans";
+
+/// Test builds only (ruling R30): register, under [`DECOY_FAMILY`], one
+/// face at each of [`DECOY_WEIGHTS`] — Galatia SIL's outlines under
+/// another name — standing in for a host that has an exact-weight face
+/// in a family cosmic-text falls back to, as the CI runner has for 200
+/// (`DejaVuSans-ExtraLight`). cosmic-text 0.19 keeps a pinned family only
+/// at a weight it has; without [`PinnedFamily::weight_for`], a span
+/// pinned to a single-weight family at another weight would be drawn in
+/// one of these. Registered once, with the compiled fonts, so every test
+/// of the binary sees the same faces whatever runs first, and every
+/// machine the same decoys.
+#[cfg(test)]
+fn register_host_decoys(font_system: &mut FontSystem) {
+    use cosmic_text::fontdb::{FaceInfo, Language, Stretch, Style, Weight};
+    let Some(source) = FONT_SOURCES.get(&AppFont::GalatiaSIL).cloned() else {
+        return;
+    };
+    for weight in DECOY_WEIGHTS {
+        font_system.db_mut().push_face_info(FaceInfo {
+            id: ID::dummy(),
+            source: source.clone(),
+            index: 0,
+            families: vec![(DECOY_FAMILY.to_string(), Language::English_UnitedStates)],
+            post_script_name: format!("Decoy-{weight}"),
+            style: Style::Normal,
+            weight: Weight(weight),
+            stretch: Stretch::Normal,
+            monospaced: false,
+        });
+    }
 }
 
 lazy_static! {
@@ -390,6 +434,114 @@ pub(crate) fn face_family_name_for_pin(
     let ids = COMPILED_FONT_ID_MAP.get(&app_font)?;
     let face = font_system.db().face(*ids.first()?)?;
     Some(face.families.first()?.0.clone())
+}
+
+/// A compiled family a span is pinned to, resolved once against the font
+/// system: the family name cosmic-text matches on, and the weights the
+/// compiled faces of that family have (ruling R30 on #278).
+///
+/// cosmic-text 0.19 keeps a pinned family only through a face of
+/// exactly the requested weight (or a variable face whose `wght` axis
+/// covers it). A request for a weight the family lacks skips the pin and
+/// draws in whatever host face has that exact weight — the CI runner's
+/// `DejaVuSans-ExtraLight` for SilhousTwo at 200 — so on native the
+/// host's fonts would decide the face, where the browser has only the
+/// compiled ones. Every shaping path that pins a family therefore asks
+/// for [`PinnedFamily::weight_for`] the weight it wants, never the
+/// weight itself. No compiled face is variable
+/// (`test_no_compiled_face_is_variable`), so the weights listed here are
+/// all the weights the family can be drawn at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinnedFamily {
+    /// The family name, as the compiled face stores it.
+    pub name: String,
+    /// The weights of the compiled faces in that family, ascending, each
+    /// once.
+    pub weights: Vec<u16>,
+    /// The compiled faces in that family: the only faces a span pinned
+    /// to it may be drawn in, but for a character none of them holds.
+    pub faces: Vec<ID>,
+}
+
+impl PinnedFamily {
+    /// The weight to ask cosmic-text for when `requested` is wanted: the
+    /// one [`nearest_weight`] picks among the family's compiled faces.
+    /// O(weights).
+    pub fn weight_for(&self, requested: u16) -> u16 {
+        nearest_weight(requested, &self.weights)
+    }
+}
+
+/// The weight CSS Fonts 4 §5.2 (step 4, `font-weight`) matches `desired`
+/// to among `available`, with no weight synthesized: `desired` itself if
+/// a face has it; else, for a desired weight from 400 to 500, the
+/// lightest heavier weight up to 500, then the heaviest lighter weight,
+/// then the lightest weight above 500; for one below 400, the heaviest
+/// lighter weight, then the lightest heavier one; for one above 500, the
+/// lightest heavier weight, then the heaviest lighter one. `desired`
+/// when `available` is empty. O(available).
+pub fn nearest_weight(desired: u16, available: &[u16]) -> u16 {
+    if available.is_empty() || available.contains(&desired) {
+        return desired;
+    }
+    let lightest_above = |floor: u16, ceiling: u16| {
+        available
+            .iter()
+            .copied()
+            .filter(|&weight| weight > floor && weight <= ceiling)
+            .min()
+    };
+    let heaviest_below = || available.iter().copied().filter(|&weight| weight < desired).max();
+    let found = if (400..=500).contains(&desired) {
+        lightest_above(desired, 500)
+            .or_else(heaviest_below)
+            .or_else(|| lightest_above(500, u16::MAX))
+    } else if desired < 400 {
+        heaviest_below().or_else(|| lightest_above(desired, u16::MAX))
+    } else {
+        lightest_above(desired, u16::MAX).or_else(heaviest_below)
+    };
+    found.unwrap_or(desired)
+}
+
+/// The compiled family `app_font` pins, with the weights its compiled
+/// faces have: `None` where [`face_family_name_for_pin`] finds no name.
+///
+/// Cost: one walk over every compiled face's `fontdb` record.
+pub(crate) fn pinned_family(
+    font_system: &cosmic_text::FontSystem,
+    app_font: AppFont,
+) -> Option<PinnedFamily> {
+    let name = face_family_name_for_pin(font_system, app_font)?;
+    let faces: Vec<&cosmic_text::fontdb::FaceInfo> = COMPILED_FONT_ID_MAP
+        .values()
+        .flat_map(|ids| ids.iter())
+        .filter_map(|id| font_system.db().face(*id))
+        .filter(|face| face.families.iter().any(|(family, _)| *family == name))
+        .collect();
+    let mut weights: Vec<u16> = faces.iter().map(|face| face.weight.0).collect();
+    weights.sort_unstable();
+    weights.dedup();
+    let mut ids: Vec<ID> = faces.iter().map(|face| face.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    Some(PinnedFamily {
+        name,
+        weights,
+        faces: ids,
+    })
+}
+
+/// Attributes pinning `pin`'s family, at the weight it draws a request
+/// for the regular weight (400) at; cosmic-text's defaults when `pin` is
+/// `None`. For the measuring paths, which shape at the regular weight.
+pub(crate) fn regular_attrs(pin: Option<&PinnedFamily>) -> Attrs<'_> {
+    match pin {
+        Some(pin) => Attrs::new()
+            .family(Family::Name(pin.name.as_str()))
+            .weight(cosmic_text::Weight(pin.weight_for(400))),
+        None => Attrs::new(),
+    }
 }
 
 /// Longest one thread waits on **another** thread's hold of
@@ -897,12 +1049,8 @@ pub fn measure_glyph_ink_bounds(
     // glyphs shape against the intended face instead of cosmic-text's
     // default fallback. The family name string must outlive `attrs`,
     // so we hold it in a local binding.
-    let family_name: Option<String> =
-        font.and_then(|app_font| face_family_name_for_pin(font_system, app_font));
-    let attrs = match family_name.as_deref() {
-        Some(name) => Attrs::new().family(Family::Name(name)),
-        None => Attrs::new(),
-    };
+    let pin: Option<PinnedFamily> = font.and_then(|app_font| pinned_family(font_system, app_font));
+    let attrs = regular_attrs(pin.as_ref());
 
     buffer.set_text(glyph, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
@@ -1022,12 +1170,8 @@ pub fn measure_text_block_unbounded(
     // cosmic-text's default monospace and the box undersizes by
     // 30–60%. The family-name string must outlive `attrs`, so
     // we hold it in a local binding.
-    let family_name: Option<String> =
-        font.and_then(|app_font| face_family_name_for_pin(font_system, app_font));
-    let attrs = match family_name.as_deref() {
-        Some(name) => Attrs::new().family(Family::Name(name)),
-        None => Attrs::new(),
-    };
+    let pin: Option<PinnedFamily> = font.and_then(|app_font| pinned_family(font_system, app_font));
+    let attrs = regular_attrs(pin.as_ref());
 
     buffer.set_text(text, &attrs, Shaping::Advanced, None);
     // cosmic-text 0.19 made the setters lazy: `set_text` / `set_size`

@@ -1465,7 +1465,14 @@ element.
   an optional link. Its face, size (per span, through cosmic-text's
   per-span metrics), weight, slant and color all reach the shaper.
   Sizes arrive in points; converting a frame's relative size is the
-  projection's job.
+  projection's job. A span pinned to a compiled family is drawn in that
+  family's compiled faces on every machine: its weight is resolved to
+  the nearest one the family has, as CSS Fonts 4 matches `font-weight`
+  and with nothing synthesized, before cosmic-text sees it — the
+  shaper keeps a pin only at an exact weight and would otherwise draw
+  the span in any host face of that weight (R30 on #278,
+  `PinnedFamily`). Only a character the family does not hold falls
+  back to another face.
 - **Glyphs are never rotated.** The unit of placement is the grapheme
   cluster, so a mark never leaves its letter. A cluster of advance `w`
   and line height `h` takes a step `|cos θ|·w + |sin θ|·h` along the

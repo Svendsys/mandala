@@ -723,7 +723,14 @@ What they hold, in short (each module's docs are the full list):
   sweep requires each step to be both taken and skipped.
 - **TextFlow.** No panic; every glyph names its span (or the filler) and
   whole characters of its text; every metric, placed position and box
-  size is finite; no placement exceeds `MAX_PLACED_GLYPHS`.
+  size is finite; no placement exceeds `MAX_PLACED_GLYPHS`; a span
+  pinned to a compiled family is drawn in that family's compiled faces
+  but for a character none of them holds (R30). The generator draws
+  every weight from 100 to 900, and the test build registers a host
+  face at every weight but 400 and 700 in cosmic-text's first common
+  fallback family (`fonts::register_host_decoys`), so a span the
+  matcher would let slip to a host face does so on every machine, not
+  only where the host happens to have one.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and

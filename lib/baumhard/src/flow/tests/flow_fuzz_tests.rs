@@ -138,15 +138,87 @@ fn test_the_placement_property_finds_a_position_that_is_not_finite() {
         .contains("placed glyph 2 of 2"));
 }
 
-/// The style of the flow finding: a face whose space has no width.
+/// The style of the flow finding: a face whose space has no width, at
+/// the weight and slant SilhousTwo has (R30). The finding was shaped at
+/// 200 italic; SilhousTwo has only a 400 upright face, and before R30 a
+/// weight it lacks was drawn in whatever host face had that weight — the
+/// CI runner's `DejaVuSans-ExtraLight`, whose space measures — so these
+/// tests never met a zero-width space there.
 fn zero_width_space_style() -> ResolvedText {
     ResolvedText {
         font: AppFont::SilhousTwo,
         size: FontSize::Pt(16.0),
         color: Rgba::new(255, 255, 255, 255),
-        weight: Weight::new(200).unwrap(),
-        italic: true,
+        weight: Weight::NORMAL,
+        italic: false,
     }
+}
+
+/// `Err` naming the first laid-out glyph of `buffer` not drawn in a
+/// compiled face of `font`'s family (ruling R30): the precondition that a
+/// test of a face shapes in that face, on every machine.
+fn drawn_in(buffer: &crate::font::Buffer, font: AppFont) -> Result<(), String> {
+    drawn_in_lines(buffer, font, |_| true)
+}
+
+/// [`drawn_in`] for the lines `which` keeps.
+fn drawn_in_lines(
+    buffer: &crate::font::Buffer,
+    font: AppFont,
+    which: impl Fn(usize) -> bool,
+) -> Result<(), String> {
+    let fs = crate::font::fonts::acquire_font_system_write("drawn_in");
+    let pin = crate::font::fonts::pinned_family(&fs, font).ok_or("the face has no family")?;
+    for run in buffer.layout_runs().filter(|run| which(run.line_i)) {
+        for glyph in run.glyphs {
+            if !pin.faces.contains(&glyph.font_id) {
+                let face = fs
+                    .db()
+                    .face(glyph.font_id)
+                    .map(|info| info.post_script_name.clone());
+                return Err(format!(
+                    "{:?} of line {} is drawn in {face:?}, not in {:?}",
+                    run.text.get(glyph.start..glyph.end),
+                    run.line_i,
+                    pin.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `Err` naming the first glyph of span `span` of `run` not drawn in a
+/// compiled face of `font`'s family.
+fn span_drawn_in(run: &crate::flow::ShapedRun, span: usize, font: AppFont) -> Result<(), String> {
+    let fs = crate::font::fonts::acquire_font_system_write("span_drawn_in");
+    let pin = crate::font::fonts::pinned_family(&fs, font).ok_or("the face has no family")?;
+    for (glyph, metrics) in run.layout_glyphs().zip(&run.glyphs) {
+        if metrics.span == span && !pin.faces.contains(&glyph.font_id) {
+            let face = fs
+                .db()
+                .face(glyph.font_id)
+                .map(|info| info.post_script_name.clone());
+            return Err(format!(
+                "a glyph of span {span} is drawn in {face:?}, not in {:?}",
+                pin.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The precondition of the zero-width tests: SilhousTwo's space has no
+/// width as drawn here, in SilhousTwo.
+fn assert_zero_width_space(face: &ResolvedText) {
+    let space = with_fonts(|fs| real_run(" ", face, fs));
+    if let Err(why) = drawn_in(&space.buffer, AppFont::SilhousTwo) {
+        panic!("precondition: {why}");
+    }
+    assert_eq!(
+        space.glyphs[0].advance, 0.0,
+        "precondition: the space has no width"
+    );
 }
 
 /// The flow target's finding (ruling R24): a tab in a face whose space
@@ -158,6 +230,7 @@ fn zero_width_space_style() -> ResolvedText {
 #[test]
 fn test_a_tab_in_a_face_whose_space_has_no_width_shapes_finite() {
     let face = zero_width_space_style();
+    assert_zero_width_space(&face);
     for text in ["\t", "\tab\tc"] {
         let spans = [FlowSpan {
             text,
@@ -175,6 +248,11 @@ fn test_a_tab_in_a_face_whose_space_has_no_width_shapes_finite() {
             text.chars().count(),
             "{text:?}: one glyph per character"
         );
+        for buffer in [&run.buffer, &shaped.buffer] {
+            if let Err(why) = drawn_in(buffer, AppFont::SilhousTwo) {
+                panic!("precondition, {text:?}: {why}");
+            }
+        }
         assert_eq!(check_run(&spans, &run, "the run"), Ok(()), "{text:?}");
         let laid_out: Vec<(f32, f32)> = run.layout_glyphs().map(|glyph| (glyph.x, glyph.w)).collect();
         assert!(
@@ -282,6 +360,15 @@ fn test_a_measurable_tab_keeps_its_stop_beside_one_that_cannot_be_measured() {
         );
         (alone, mixed, box_alone, box_mixed)
     });
+    // Preconditions (R30): the face that cannot measure is SilhousTwo's
+    // zero-width space, on the run and on line 1 of the box.
+    assert_zero_width_space(&face);
+    if let Err(why) = span_drawn_in(&mixed, 1, AppFont::SilhousTwo) {
+        panic!("precondition: {why}");
+    }
+    if let Err(why) = drawn_in_lines(&box_mixed.buffer, AppFont::SilhousTwo, |line| line == 1) {
+        panic!("precondition: {why}");
+    }
     let space = with_fonts(|fs| real_run(" ", &plain, fs)).glyphs[0].advance;
     assert!(
         tab_in(&alone) > 1.5 * space,
@@ -477,6 +564,151 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
     ) {
         panic!("the run holds every flow property: {why}");
     }
+}
+
+/// Ruling R30: a span pinned to a family, at a weight the family's
+/// compiled faces lack, is drawn in that family at the nearest weight it
+/// has — on every machine. Before R30 cosmic-text skipped the pin and
+/// drew it in any host face of the exact weight: the CI runner's
+/// `DejaVuSans-ExtraLight` for SilhousTwo at 200. The test build stands
+/// in for such a host on every machine: it registers a face at 200 (and
+/// at every other weight but 400 and 700) in cosmic-text's first common
+/// fallback family (`fonts::register_host_decoys`). This is the style
+/// the R24 finding was shaped in, and the control that the zero-width
+/// tests' precondition bites.
+#[test]
+fn test_a_span_at_a_weight_its_family_lacks_is_drawn_in_its_family() {
+    use crate::font::fonts::{pinned_family, DECOY_FAMILY};
+    let face = ResolvedText {
+        weight: Weight::new(200).unwrap(),
+        italic: true,
+        ..zero_width_space_style()
+    };
+    let (decoys, pin) = with_fonts(|fs| {
+        let fs: &crate::font::FontSystem = fs;
+        let decoys = fs
+            .db()
+            .faces()
+            .filter(|info| info.weight.0 == 200 && info.families.iter().any(|(name, _)| name == DECOY_FAMILY))
+            .count();
+        (decoys, pinned_family(fs, AppFont::SilhousTwo))
+    });
+    assert!(
+        decoys > 0,
+        "precondition: a host face at 200 the matcher falls back to"
+    );
+    let pin = pin.expect("precondition: SilhousTwo has a family");
+    assert_eq!(
+        pin.weights,
+        vec![400],
+        "precondition: SilhousTwo has only a 400 face"
+    );
+    assert_eq!(pin.weight_for(200), 400);
+    for text in ["a b\tc", "\t"] {
+        let spans = [FlowSpan {
+            text,
+            style: &face,
+            link: None,
+        }];
+        let (run, shaped) = with_fonts(|fs| {
+            (
+                shape_run(&spans, 1.0, fs),
+                shape_box(&spans, None, Align::Left, fs),
+            )
+        });
+        for (what, buffer) in [("run", &run.buffer), ("box", &shaped.buffer)] {
+            if let Err(why) = drawn_in(buffer, AppFont::SilhousTwo) {
+                panic!("{text:?}, the {what}: {why}");
+            }
+        }
+    }
+}
+
+/// R24.2 on a real `0 / 0`: the up-front check, told by
+/// `TRUST_EVERY_FACE` to pass every face, lets SilhousTwo's tab through
+/// — as it would one shaped in a fallback face it cannot see — and
+/// cosmic-text lays it out with a zero-width space as its stop. The
+/// last-resort check finds it and lays out again with the tab as a
+/// space: on that line alone in a box, and throughout a run. Since R30
+/// SilhousTwo is drawn in SilhousTwo on every machine, so this is the
+/// same `0 / 0` everywhere; `test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space`
+/// drives the same guard through a face whose stops are finite.
+#[test]
+fn test_a_real_zero_width_tab_stop_the_up_front_check_lets_through_is_laid_out_again() {
+    use crate::flow::shape::{failing_lines, TABS_RELAID, TRUST_EVERY_FACE};
+    let plain = style(16.0);
+    let face = zero_width_space_style();
+    assert_zero_width_space(&face);
+    let first_on = |shaped: &crate::flow::ShapedBox, line: usize| {
+        shaped
+            .buffer
+            .layout_runs()
+            .find(|run| run.line_i == line)
+            .and_then(|run| run.glyphs.first().map(|glyph| glyph.w))
+    };
+    let box_spans = [
+        FlowSpan {
+            text: "\tx\n",
+            style: &plain,
+            link: None,
+        },
+        FlowSpan {
+            text: "\ty",
+            style: &face,
+            link: None,
+        },
+    ];
+    let run_spans = [
+        FlowSpan {
+            text: "a\tb",
+            style: &plain,
+            link: None,
+        },
+        FlowSpan {
+            text: "\tc",
+            style: &face,
+            link: None,
+        },
+    ];
+    let (box_alone, hooked_box, hooked_run, relaid) = with_fonts(|fs| {
+        let box_alone = shape_box(&box_spans[..1], None, Align::Left, fs);
+        TRUST_EVERY_FACE.with(|trust| trust.set(true));
+        let before = TABS_RELAID.with(std::cell::Cell::get);
+        let hooked_box = shape_box(&box_spans, None, Align::Left, fs);
+        let hooked_run = shape_run(&run_spans, 1.0, fs);
+        TRUST_EVERY_FACE.with(|trust| trust.set(false));
+        let relaid = TABS_RELAID.with(std::cell::Cell::get) - before;
+        (box_alone, hooked_box, hooked_run, relaid)
+    });
+    // Preconditions: the tab that came through is SilhousTwo's, and the
+    // guard, not the up-front check, laid both flows out again.
+    if let Err(why) = drawn_in_lines(&hooked_box.buffer, AppFont::SilhousTwo, |line| line == 1) {
+        panic!("precondition: {why}");
+    }
+    if let Err(why) = span_drawn_in(&hooked_run, 1, AppFont::SilhousTwo) {
+        panic!("precondition: {why}");
+    }
+    assert_eq!(relaid, 2, "precondition: the guard laid both flows out again");
+    assert_eq!(
+        (
+            failing_lines(&hooked_box.buffer),
+            failing_lines(&hooked_run.buffer)
+        ),
+        (Vec::new(), Vec::new()),
+        "after the guard, nothing laid out is not finite"
+    );
+    assert_eq!(
+        first_on(&hooked_box, 0),
+        first_on(&box_alone, 0),
+        "the line that came out finite keeps its tab stop"
+    );
+    assert_eq!(
+        first_on(&hooked_box, 1),
+        Some(0.0),
+        "the failing line's tab is SilhousTwo's space"
+    );
+    assert_eq!(check_box(&box_spans, &hooked_box, None), Ok(()), "the box");
+    assert_eq!(check_run(&run_spans, &hooked_run, "the run"), Ok(()), "the run");
 }
 
 /// The flow_structured smoke's finding on #293 (CI run 41146219501): a

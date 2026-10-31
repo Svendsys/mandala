@@ -172,13 +172,47 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
             let min = choices.one_in(2).then(|| any_vec2(choices));
             let align = *choices.pick(&[Align::Left, Align::Center, Align::Right]);
             let shaped = shape_box(&spans, min, align, &mut fs);
-            check_box(&spans, &shaped, min)
+            check_box(&spans, &shaped, min)?;
+            // `glyph_spans` lists the glyphs in the buffer's layout order.
+            let glyphs = shaped
+                .buffer
+                .layout_runs()
+                .flat_map(|run| {
+                    run.glyphs
+                        .iter()
+                        .map(|glyph| (glyph.font_id, cluster(run.text, glyph)))
+                        .collect::<Vec<_>>()
+                })
+                .zip(shaped.glyph_spans.iter())
+                .map(|((face, text), (span, _))| (face, *span, text))
+                .collect::<Vec<_>>();
+            shapes_in_pinned_faces(&spans, glyphs, &mut fs).map_err(|why| format!("in a box: {why}"))
         }
         layout => {
             let scale = any_f32(choices);
             let run = shape_run(&spans, scale, &mut fs);
             check_run(&spans, &run, "the run")
                 .map_err(|why| format!("{why}, at scale {scale}, of {spans:?}"))?;
+            // `glyphs` lists them in visual order: a right-to-left line's
+            // backward (`ShapedRun::layout_glyphs`).
+            let glyphs = run
+                .buffer
+                .layout_runs()
+                .flat_map(|line| {
+                    let mut laid: Vec<_> = line
+                        .glyphs
+                        .iter()
+                        .map(|glyph| (glyph.font_id, cluster(line.text, glyph)))
+                        .collect();
+                    if line.rtl {
+                        laid.reverse();
+                    }
+                    laid
+                })
+                .zip(&run.glyphs)
+                .map(|((face, text), metrics)| (face, metrics.span, text))
+                .collect::<Vec<_>>();
+            shapes_in_pinned_faces(&spans, glyphs, &mut fs).map_err(|why| format!("in the run: {why}"))?;
             match layout {
                 1 => {
                     let rect = Rect::new(any_vec2(choices), any_vec2(choices));
@@ -441,6 +475,65 @@ pub fn check_box(spans: &[FlowSpan<'_>], shaped: &ShapedBox, min: Option<Vec2>) 
     }
     for (span, bytes) in &shaped.glyph_spans {
         names_its_source(spans, *span, bytes).map_err(|why| format!("a box: {why}"))?;
+    }
+    Ok(())
+}
+
+/// The cluster `glyph` was shaped from, as text of its line.
+fn cluster(line: &str, glyph: &crate::font::LayoutGlyph) -> String {
+    line.get(glyph.start..glyph.end).unwrap_or_default().to_string()
+}
+
+/// Ruling R30's property: every glyph of a span pinned to a compiled
+/// family is drawn in one of that family's compiled faces, unless its
+/// cluster holds a character none of them has (which cosmic-text draws
+/// in a fallback face, as it must). `glyphs` are the laid-out glyphs,
+/// each with its face, the span its cluster starts in, and the cluster
+/// as cosmic-text shaped it (the bytes of its line, which may run on
+/// into the next span); a filler glyph ([`FILLER_SPAN`]) is not a
+/// span's and is not checked. `Err` names the first glyph drawn in
+/// another face.
+///
+/// Without the weight resolved within the family
+/// ([`PinnedFamily::weight_for`](crate::font::fonts::PinnedFamily::weight_for)),
+/// a span at a weight its family lacks is drawn in any host face of that
+/// exact weight; the test build registers such faces on every machine
+/// (`fonts::register_host_decoys`), so this property catches it there.
+pub fn shapes_in_pinned_faces(
+    spans: &[FlowSpan<'_>],
+    glyphs: impl IntoIterator<Item = (cosmic_text::fontdb::ID, usize, String)>,
+    fs: &mut crate::font::FontSystem,
+) -> Result<(), String> {
+    let pins: Vec<Option<crate::font::fonts::PinnedFamily>> = spans
+        .iter()
+        .map(|span| match span.style.font {
+            AppFont::Any => None,
+            font => crate::font::fonts::pinned_family(fs, font),
+        })
+        .collect();
+    for (face, span, text) in glyphs {
+        let Some(Some(pin)) = pins.get(span) else {
+            continue;
+        };
+        if pin.faces.contains(&face) {
+            continue;
+        }
+        let held = |ch: char| {
+            // cosmic-text shapes a tab as a space.
+            let ch = if ch == '\t' { ' ' } else { ch };
+            pin.faces.iter().any(|&id| {
+                fs.get_font(id, cosmic_text::fontdb::Weight(400))
+                    .is_some_and(|font| font.as_swash().charmap().map(ch) != 0)
+            })
+        };
+        if !text.is_empty() && text.chars().all(held) {
+            let family = fs.db().face(face).map(|info| info.post_script_name.clone());
+            return Err(format!(
+                "span {span} ({:?}) is pinned to {:?} (weights {:?}), and its cluster {text:?}, which the family holds, was drawn in {family:?}",
+                spans[span],
+                pin.name, pin.weights
+            ));
+        }
     }
     Ok(())
 }

@@ -461,3 +461,119 @@ fn test_acquire_font_system_write_panics_on_timeout() {
         Duration::from_millis(200),
     );
 }
+
+#[test]
+fn test_nearest_weight_follows_css_fonts_4() {
+    do_nearest_weight_follows_css_fonts_4();
+}
+
+/// Ruling R30: a pinned span's weight is matched within its family as
+/// CSS Fonts 4 §5.2 matches `font-weight`, with nothing synthesized.
+/// Each case is one where a nearest-by-distance rule answers otherwise
+/// or has a tie, so a rule other than CSS's is caught.
+pub fn do_nearest_weight_follows_css_fonts_4() {
+    for (desired, available, expected) in [
+        // A weight the family has is kept.
+        (700, &[400, 700][..], 700),
+        // 400–500: lighter-or-equal heavier weights up to 500 first...
+        (450, &[400, 500][..], 500),
+        // ...then lighter ones, before anything above 500.
+        (500, &[400, 900][..], 400),
+        (400, &[300, 500][..], 500),
+        (400, &[300, 600][..], 300),
+        // Below 400: lighter first, however much nearer a heavier one is.
+        (300, &[200, 400][..], 200),
+        (300, &[100, 310][..], 100),
+        (200, &[400, 700][..], 400),
+        // Above 500: heavier first.
+        (600, &[500, 700][..], 700),
+        (600, &[500, 900][..], 900),
+        (800, &[400, 700][..], 700),
+        // A single-weight family draws every weight at its one.
+        (100, &[400][..], 400),
+        (900, &[400][..], 400),
+        // No faces: the weight asked for.
+        (200, &[][..], 200),
+    ] {
+        assert_eq!(
+            fonts::nearest_weight(desired, available),
+            expected,
+            "{desired} among {available:?}"
+        );
+    }
+}
+
+#[test]
+fn test_a_pinned_family_lists_its_compiled_weights_and_faces() {
+    do_a_pinned_family_lists_its_compiled_weights_and_faces();
+}
+
+/// A family is all its compiled faces: Galatia SIL is a regular and a
+/// bold face, pinned through either `AppFont`, and a span pinned to it
+/// at 600 is drawn at 700 (CSS's heavier-first above 500).
+pub fn do_a_pinned_family_lists_its_compiled_weights_and_faces() {
+    fonts::init();
+    let fs = acquire_font_system_write("fonts_tests::do_*");
+    let regular = fonts::pinned_family(&fs, AppFont::GalatiaSIL).unwrap();
+    let bold = fonts::pinned_family(&fs, AppFont::GalatiaSILBold).unwrap();
+    assert_eq!(regular, bold, "one family, whichever face pins it");
+    assert_eq!(regular.weights, vec![400, 700]);
+    assert_eq!(regular.faces.len(), 2);
+    for font in [AppFont::GalatiaSIL, AppFont::GalatiaSILBold] {
+        for id in &fonts::COMPILED_FONT_ID_MAP[&font] {
+            assert!(regular.faces.contains(id), "{font:?}'s face is the family's");
+        }
+    }
+    assert_eq!(regular.weight_for(600), 700);
+    let silhous = fonts::pinned_family(&fs, AppFont::SilhousTwo).unwrap();
+    assert_eq!(silhous.weights, vec![400]);
+    assert_eq!(silhous.weight_for(200), 400);
+}
+
+/// Whether the font file `data` (a single face or a collection's first)
+/// has an `fvar` table: whether it is a variable font.
+fn has_fvar(data: &[u8]) -> bool {
+    let read_u32 = |at: usize| {
+        data.get(at..at + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_u16 = |at: usize| data.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    // A collection names its first face's offset table at byte 12.
+    let base = if data.get(0..4) == Some(b"ttcf") {
+        read_u32(12).unwrap_or(0) as usize
+    } else {
+        0
+    };
+    let tables = read_u16(base + 4).unwrap_or(0) as usize;
+    (0..tables).any(|index| data.get(base + 12 + 16 * index..base + 16 + 16 * index) == Some(b"fvar"))
+}
+
+#[test]
+fn test_no_compiled_face_is_variable() {
+    do_no_compiled_face_is_variable();
+}
+
+/// [`fonts::PinnedFamily`] lists a family's static weights, and
+/// cosmic-text also keeps a pin at a weight a variable face's `wght` axis
+/// covers. The weights listed are all the weights a family can be drawn
+/// at only while no compiled face is variable; a variable face added
+/// later must widen the rule first. The scanner is checked on a planted
+/// `fvar` table before it is trusted with the compiled set.
+pub fn do_no_compiled_face_is_variable() {
+    let mut planted = vec![0u8, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+    planted.extend_from_slice(b"fvar");
+    planted.extend_from_slice(&[0; 12]);
+    assert!(has_fvar(&planted), "control: a planted fvar table is found");
+    planted[12..16].copy_from_slice(b"glyf");
+    assert!(!has_fvar(&planted), "control: another table is not");
+    let mut read = 0;
+    for (font, source) in fonts::FONT_SOURCES.iter() {
+        let cosmic_text::fontdb::Source::Binary(data) = source else {
+            continue;
+        };
+        let data: &[u8] = (**data).as_ref();
+        assert!(!has_fvar(data), "{font:?} is a variable font");
+        read += 1;
+    }
+    assert!(read >= 50, "precondition: the compiled sources are read ({read})");
+}

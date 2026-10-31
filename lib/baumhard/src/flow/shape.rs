@@ -29,6 +29,15 @@
 //! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
 //! caller's span and bytes of the caller's text.
 //!
+//! **Faces** (ruling R30 on #278). A span pinned to an `AppFont` is
+//! handed to cosmic-text with its family's name and the nearest weight
+//! the family's compiled faces have ([`PinnedFamily`], resolved once per
+//! shaping by the private `families_of`), never the weight it asked for:
+//! cosmic-text keeps a pinned family only at an exact weight, and draws a
+//! weight the family lacks in whatever host face has it. So a span is
+//! drawn in its family's compiled faces on every machine, and the tab
+//! check below measures the face the tab is shaped in.
+//!
 //! **Tabs** (rulings R24, R24.1 and R24.2 on #278). A tab is drawn as
 //! cosmic-text draws it: a space widened to the next tab stop, eight of
 //! the face's spaces apart from the start of its line. A face whose
@@ -58,7 +67,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{
-    clamp_font_metric, face_family_name_for_pin, AppFont, FontSystemWriteGuard, MIN_FONT_SIZE_PT,
+    clamp_font_metric, pinned_family, AppFont, FontSystemWriteGuard, PinnedFamily, MIN_FONT_SIZE_PT,
 };
 use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Wrap, SHAPING_ADVANCED};
 use crate::util::grapheme_chad;
@@ -276,12 +285,12 @@ fn metrics_of(attrs: &Attrs<'_>) -> Metrics {
 /// gets one more, so it ends with the empty line an editor shows there
 /// (cosmic-text drops a trailing empty line; D26 breaks at every `\n`).
 ///
-/// `families` holds each span's pinned family name (same indexing as
+/// `families` holds each span's pinned family (same indexing as
 /// `spans`). Cost: O(text) scan for line breaks, one `Vec` entry per
 /// stretch.
 fn assemble<'f>(
     spans: &[FlowSpan<'f>],
-    families: &'f [Option<String>],
+    families: &'f [Option<PinnedFamily>],
     scale: f32,
     breaks: Breaks,
 ) -> Assembly<'f> {
@@ -298,7 +307,7 @@ fn assemble<'f>(
     // after it.
     let mut open_break: Option<Attrs<'f>> = None;
     for (index, span) in spans.iter().enumerate() {
-        let attrs = span_attrs(span, scale, families[index].as_deref());
+        let attrs = span_attrs(span, scale, families[index].as_ref());
         let metrics = metrics_of(&attrs);
         assembly.span_metrics.font_size = assembly.span_metrics.font_size.max(metrics.font_size);
         assembly.span_metrics.line_height = assembly.span_metrics.line_height.max(metrics.line_height);
@@ -353,13 +362,16 @@ fn assemble<'f>(
     assembly
 }
 
-/// Each span's pinned family name, resolved once against `fs`:
+/// Each span's pinned family and its compiled weights, resolved once against `fs`:
 /// `None` for `AppFont::Any`, or a face the font system does not know.
-fn families_of<'s>(styles: impl Iterator<Item = &'s ResolvedText>, fs: &FontSystem) -> Vec<Option<String>> {
+fn families_of<'s>(
+    styles: impl Iterator<Item = &'s ResolvedText>,
+    fs: &FontSystem,
+) -> Vec<Option<PinnedFamily>> {
     styles
         .map(|style| match style.font {
             AppFont::Any => None,
-            font => face_family_name_for_pin(fs, font),
+            font => pinned_family(fs, font),
         })
         .collect()
 }
@@ -441,6 +453,13 @@ thread_local! {
     /// whatever its font set makes of a real face's tab.
     pub(crate) static TABS_NOT_FINITE_IN: std::cell::Cell<Option<AppFont>> =
         const { std::cell::Cell::new(None) };
+    /// Test hook (R24.2): while set on a thread, [`space_measures`]
+    /// passes every face, so a tab in a face that cannot measure its stop
+    /// (SilhousTwo, drawn in SilhousTwo on every machine since R30)
+    /// reaches cosmic-text, as one shaped in a fallback face would, and
+    /// is laid out as a real `0 / 0` that only the last-resort check in
+    /// [`new_buffer`] stands between and placement.
+    pub(crate) static TRUST_EVERY_FACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test counter (R24.2): how many times [`new_buffer`] has laid text
     /// out again with its tabs as spaces on this thread.
     pub(crate) static TABS_RELAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -487,6 +506,10 @@ fn filled_buffer(
 ///
 /// Cost: one shaping of one character.
 fn space_measures(attrs: &Attrs<'_>, fs: &mut FontSystem) -> bool {
+    #[cfg(test)]
+    if TRUST_EVERY_FACE.with(std::cell::Cell::get) {
+        return true;
+    }
     let metrics = metrics_of(attrs);
     let size = metrics.font_size.max(MIN_FONT_SIZE_PT);
     let metrics = Metrics::new(size, size * LINE_HEIGHT_FACTOR);
@@ -512,7 +535,7 @@ type Face<'a> = (Option<&'a str>, u16, bool);
 /// one copy of each such span's text whose face fails.
 fn untabbed(
     spans: &[FlowSpan<'_>],
-    families: &[Option<String>],
+    families: &[Option<PinnedFamily>],
     scale: f32,
     fs: &mut FontSystem,
 ) -> Vec<Option<String>> {
@@ -527,8 +550,12 @@ fn untabbed(
             if !span.text.contains('\t') {
                 return None;
             }
-            let family = families.get(index).and_then(|family| family.as_deref());
-            let face = (family, span.style.weight.get(), span.style.italic);
+            let family = families.get(index).and_then(Option::as_ref);
+            let face = (
+                family.map(|pin| pin.name.as_str()),
+                span.style.weight.get(),
+                span.style.italic,
+            );
             let measures = match measured.iter().find(|(seen, _)| *seen == face) {
                 Some((_, measures)) => *measures,
                 None => {
@@ -777,7 +804,7 @@ pub(crate) fn reshape(
                 style,
                 link: None,
             };
-            if space_measures(&span_attrs(&span, factor, filler_family.as_deref()), fs) {
+            if space_measures(&span_attrs(&span, factor, filler_family.as_ref()), fs) {
                 filler_text
             } else {
                 filler_text.replace('\t', " ")
@@ -832,7 +859,7 @@ pub(crate) fn reshape(
             style,
             link: None,
         };
-        let attrs = span_attrs(&span, factor, filler_family.as_deref());
+        let attrs = span_attrs(&span, factor, filler_family.as_ref());
         track(&attrs);
         rich.push(("\n", attrs.clone()));
         rich.push((filler_text.as_str(), attrs));
