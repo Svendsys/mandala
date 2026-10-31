@@ -325,8 +325,9 @@ fn test_document_validate_refuses_a_missing_reference() {
     do_document_validate_refuses_a_missing_reference();
 }
 
-/// A verb, a palette, a theme variable, a theme variant and a palette
-/// group each must exist; the last one that does passes.
+/// A verb, a palette, a theme variable — a sides color's included, on
+/// a frame, a ring and each defaults table — a theme variant and a
+/// palette group each must exist; the last one that does passes.
 pub fn do_document_validate_refuses_a_missing_reference() {
     let (doc, _) = document();
     assert_eq!(doc.definitions().verbs.len(), 1);
@@ -355,6 +356,47 @@ pub fn do_document_validate_refuses_a_missing_reference() {
         validate(&node(NodeOp::SetFill(Some(ColorRef::Var(VarId(1))))), &doc),
         Ok(())
     );
+    // A sides color naming a theme variable, per tier: a frame's, a
+    // ring's, and each defaults table's. A mutation is the only route
+    // to these (the loader refuses such a map).
+    let sides = |var| {
+        Some(Sides::On {
+            content: "✦".to_string(),
+            color: Some(ColorRef::Var(VarId(var))),
+        })
+    };
+    for var in [2, 1] {
+        let frame = at_root(
+            DocKind::Frame,
+            DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides(var)))),
+        );
+        let ring = at_root(
+            DocKind::Ring,
+            DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(sides(var)))),
+        );
+        let mut frame_default = DefaultsData::default();
+        frame_default.frame.ring_layout.sides = sides(var);
+        let mut ring_default = DefaultsData::default();
+        ring_default.ring.ring_layout.sides = sides(var);
+        let defaults = |d: DefaultsData| {
+            at_root(
+                DocKind::Defaults,
+                DocMutation::Defaults(DefaultsOp::Replace(Box::new(d))),
+            )
+        };
+        for (tier, mutator) in [
+            ("frame", frame),
+            ("ring", ring),
+            ("defaults.frame", defaults(frame_default)),
+            ("defaults.ring", defaults(ring_default)),
+        ] {
+            if var == 2 {
+                assert_eq!(missing(mutator), ("theme variable", 2), "{tier}.sides");
+            } else {
+                assert_eq!(validate(&mutator, &doc), Ok(()), "{tier}.sides");
+            }
+        }
+    }
     let link = DocMutation::Span(SpanOp::SetLink(Some(LinkTarget::Verb(VerbId(4)))));
     assert_eq!(missing(at_root(DocKind::Span, link)), ("verb", 4));
 

@@ -498,19 +498,20 @@ pub(crate) fn length_of(v: Vec2) -> f32 {
 }
 
 /// `v`'s unit direction: [`Vec2::try_normalize`], or, for a vector too
-/// long for it, its direction scaled first as [`length_of`] scales it.
-/// `None` for a zero vector or one that is not finite.
+/// long for it — whose [`Vec2::length`] is not finite though `v` is —
+/// its direction scaled first as [`length_of`] scales it. `None` for a
+/// zero vector, one that is not finite, and one so short its length
+/// underflows to zero, as `try_normalize` answers: every vector it has
+/// an answer for gets that answer, to the bit.
 ///
 /// Cost: O(1).
 pub(crate) fn direction_of(v: Vec2) -> Option<Vec2> {
     let largest = v.abs().max_element();
-    v.try_normalize().or_else(|| {
-        if largest > 0.0 && largest.is_finite() {
-            (v / largest).try_normalize()
-        } else {
-            None
-        }
-    })
+    if v.length().is_finite() || !(largest > 0.0 && largest.is_finite()) {
+        v.try_normalize()
+    } else {
+        (v / largest).try_normalize()
+    }
 }
 
 /// How many samples [`ArcPath::nearest`] takes along a path.

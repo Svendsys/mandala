@@ -557,6 +557,25 @@ pub fn do_flow_path_measures_past_the_root_of_the_largest_f32() {
     ] {
         assert_eq!(direction_of(v), None, "{v} has no direction");
     }
+    // Below the overflow, `try_normalize`'s answer exactly: `None` for a
+    // vector whose length underflows to zero, as for zero itself.
+    for v in [
+        Vec2::new(1.0e-38, 0.0),
+        Vec2::new(3.0e-25, -4.0e-25),
+        Vec2::new(0.3, -0.4),
+        Vec2::new(3.0e18, 4.0e18),
+    ] {
+        assert_eq!(
+            direction_of(v),
+            v.try_normalize(),
+            "{v}: try_normalize's direction"
+        );
+    }
+    assert_eq!(
+        direction_of(Vec2::new(1.0e-38, 0.0)),
+        None,
+        "an underflowing vector has no direction"
+    );
     // A line from -1e20 to 1e20, and a diagonal one.
     let (a, b) = (Vec2::new(-1.0e20, 0.0), Vec2::new(1.0e20, 0.0));
     let line = ArcPath::open(&Curve::Line(a, b), 1.0);
