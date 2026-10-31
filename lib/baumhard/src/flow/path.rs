@@ -145,9 +145,8 @@ impl Stretch {
                 };
                 let t = t0 + (t1 - t0) * frac;
                 let forward = if t1 >= t0 { 1.0 } else { -1.0 };
-                let tangent = (param.derivative(t) * forward)
-                    .try_normalize()
-                    .or_else(|| (param.point(t1) - param.point(t0)).try_normalize())
+                let tangent = direction_of(param.derivative(t) * forward)
+                    .or_else(|| direction_of(param.point(t1) - param.point(t0)))
                     .unwrap_or(Vec2::X);
                 (param.point(t), tangent)
             }
@@ -252,13 +251,10 @@ impl ArcPath {
                     (Vec2::new(min.x + r, max.y - r), half_pi),
                     (Vec2::new(min.x + r, min.y + r), std::f32::consts::PI),
                 ];
-                let line = |from: Vec2, to: Vec2| {
-                    let len = (to - from).length();
-                    Stretch::Line {
-                        from,
-                        dir: (to - from).try_normalize().unwrap_or(Vec2::X),
-                        len,
-                    }
+                let line = |from: Vec2, to: Vec2| Stretch::Line {
+                    from,
+                    dir: direction_of(to - from).unwrap_or(Vec2::X),
+                    len: length_of(to - from),
                 };
                 let corner = |i: usize, clockwise: bool| {
                     let (center, angle) = corners[i];
@@ -339,8 +335,8 @@ impl ArcPath {
         let stretch = match *curve {
             Curve::Line(a, b) => Some(Stretch::Line {
                 from: a,
-                dir: (b - a).try_normalize().unwrap_or(Vec2::X),
-                len: (b - a).length(),
+                dir: direction_of(b - a).unwrap_or(Vec2::X),
+                len: length_of(b - a),
             }),
             _ => table(Param::Curve(*curve), 0.0, 1.0, curve.speed_bound(), spacing),
         };
@@ -382,9 +378,10 @@ impl ArcPath {
 
     /// Where along the path the point nearest `p` lies: a sampling every
     /// [`NEAREST_SAMPLES`]th of the path, then a golden-section search
-    /// between the best sample's neighbors. On a convex path whose
-    /// nearest point is unique, that point; ties go to the first. `0.0`
-    /// for an empty path.
+    /// between the best sample's neighbors — across the seam of a closed
+    /// path, the result in `0.0..length` — on an open one within its
+    /// ends. On a convex path whose nearest point is unique, that point;
+    /// ties go to the first. `0.0` for an empty path.
     ///
     /// Cost: [`NEAREST_SAMPLES`] path lookups, and [`NEAREST_ROUNDS`] more.
     pub(crate) fn nearest(&self, p: Vec2) -> f32 {
@@ -402,7 +399,15 @@ impl ArcPath {
                 best = (d, s);
             }
         }
-        let (mut low, mut high) = ((best.1 - step).max(0.0), (best.1 + step).min(self.length));
+        // On a closed path the bracket runs across the seam, which `at`
+        // wraps: a nearest point just before it is found from a best
+        // sample at its start.
+        let closed = self.winding != 0.0;
+        let (mut low, mut high) = if closed {
+            (best.1 - step, best.1 + step)
+        } else {
+            ((best.1 - step).max(0.0), (best.1 + step).min(self.length))
+        };
         let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
         for _ in 0..NEAREST_ROUNDS {
             let a = high - ratio * (high - low);
@@ -413,7 +418,12 @@ impl ArcPath {
                 low = a;
             }
         }
-        0.5 * (low + high)
+        let found = 0.5 * (low + high);
+        if closed {
+            found.rem_euclid(self.length)
+        } else {
+            found
+        }
     }
 
     /// The outward unit normal beside `tangent`, for a closed path: the
@@ -422,6 +432,40 @@ impl ArcPath {
     pub(crate) fn outward(&self, tangent: Vec2) -> Vec2 {
         Vec2::new(tangent.y, -tangent.x) * self.winding
     }
+}
+
+/// `v`'s length, finite wherever it is: [`Vec2::length`], or, for a
+/// vector longer than `√f32::MAX` (about `1.8e19`) — whose squared
+/// length passes every `f32`, so `Vec2::length` answers infinity — the
+/// length measured scaled down by its largest component. Without it, a
+/// path drawn that far had no length and placed nothing. Every shorter
+/// vector measures as `Vec2::length` measures it, to the bit.
+///
+/// Cost: O(1).
+pub(crate) fn length_of(v: Vec2) -> f32 {
+    let length = v.length();
+    let largest = v.abs().max_element();
+    if length.is_finite() || !(largest > 0.0 && largest.is_finite()) {
+        length
+    } else {
+        largest * (v / largest).length()
+    }
+}
+
+/// `v`'s unit direction: [`Vec2::try_normalize`], or, for a vector too
+/// long for it, its direction scaled first as [`length_of`] scales it.
+/// `None` for a zero vector or one that is not finite.
+///
+/// Cost: O(1).
+pub(crate) fn direction_of(v: Vec2) -> Option<Vec2> {
+    let largest = v.abs().max_element();
+    v.try_normalize().or_else(|| {
+        if largest > 0.0 && largest.is_finite() {
+            (v / largest).try_normalize()
+        } else {
+            None
+        }
+    })
 }
 
 /// How many samples [`ArcPath::nearest`] takes along a path.
@@ -457,7 +501,7 @@ fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<S
     for i in 0..=count {
         let t = from + (to - from) * (i as f32 / count as f32);
         let point = param.point(t);
-        walked += (point - previous).length();
+        walked += length_of(point - previous);
         previous = point;
         params.push(t);
         distances.push(walked);

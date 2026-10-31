@@ -24,8 +24,8 @@
 //! element — is cheap.
 
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Rgba,
-    Shape, Sides, Span, StartPoint, VerbId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
+    PlainColor, Rgba, Shape, Sides, StartPoint, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::element::TreeElement;
 use crate::font::fonts::AppFont;
@@ -331,11 +331,11 @@ pub struct FrameStyle {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RingLayoutStyle {
     /// How much of its half each of a two-line ring's lines covers.
-    pub span: Option<Span>,
+    pub span: Option<LineSpan>,
     /// The ornament in the breaks between a two-line ring's lines.
     pub sides: Option<Sides>,
-    /// The space a `repeat` ring adds between its copies, ink to ink, in
-    /// canvas units.
+    /// The space a `repeat` ring adds between every two of its glyph
+    /// steps, ink to ink, in canvas units.
     pub spacing: Option<f32>,
 }
 

@@ -57,7 +57,7 @@ develops it.
 | D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
 | D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line, and edits to keys of one node that are not on adjacent lines merge cleanly. Two edits to neighboring keys, or an edit to a node's last key while another branch appends a key after it, are one git conflict, as for any line-based text. The layout lives in the saver's writer alone. | §7.1 |
 | D32 | **New ids start above every id the map names** (amends §5.2's id rule; owner, #236 Q3 option B, R20). The counter is still not saved. At load it starts one above the highest node id and above every node id a verb or presentation target names, so a verb or presentation can never be silently retargeted to a new node after a reload. The named ids come from one hook, `ids::idents_named_by`, which V1-D1 to V1-D3 (#250–#252) extend when definitions gain targets. | §5.2, §7.2 |
-| D33 | **Path text is readable** (owner, #291; rulings R25, R25.1, R26, R27, R28, R31, R32, R33, R33.1). Every path flow reads left to right or top to bottom. The owner, on the README samples: "In the sample images, the words are always backwards at the bottom. It's impossible to read basically. Can we instead try to make the text always straight forward?" Asked whether to keep the old look as an option: "Readable always, no option (Recommended)". **A frame's text is two lines** (R27): a ring in `once`, `spread` or `fit` sets its text over the top and along the bottom, each line on the level part of its half of the outline, reading left to right, the steep sides clear — the owner: "Couldn't it be formatted smarter like, defining lines for each halve, rather than one line that must be fitted to both", approving "Sides clear, auto split (Recommended)". **A frame's line is spaced as it was shaped** (R28): each glyph's step is its advance measured horizontally, not an upright box's extent along the slope. **A pattern and a connector read stretch by stretch** (R25, R25.1, R26): on a `repeat` ring and on every connector, a leftward or upward stretch's glyphs are placed in reverse, so a loop reads like a seal, and a word is never torn across two stretches. It is the only behavior, with no field and no option. | §6.2, §6.4 |
+| D33 | **Path text is readable** (owner, #291; rulings R25, R25.1, R26, R27, R28, R31, R32, R33, R33.1, R34). Every path flow reads left to right or top to bottom. The owner, on the README samples: "In the sample images, the words are always backwards at the bottom. It's impossible to read basically. Can we instead try to make the text always straight forward?" Asked whether to keep the old look as an option: "Readable always, no option (Recommended)". **A frame's text is two lines along the outline's diagonal halves** (R27, R32, R33, R33.1, R34): a ring in `once`, `spread` or `fit` is parted into two lines as R27 parts it — the owner: "Couldn't it be formatted smarter like, defining lines for each halve, rather than one line that must be fitted to both" — and `fit` sizes it against the level parts of the outline (R27, R28); each line then follows its half of the outline split on the diagonal, the first from the top-left over the top and down the right side, the second down the left side and along the bottom, glyphs upright, so every steep run reads down — the owner: "It should follow the path of its halve, this should be adjustable in the solution". Each line is tracked evenly by its letters' inks (R31's pairwise rule, R32); `span` sets how far along its half it reaches, from its font's own gap at `natural` to the whole half at `whole`; each junction is a break of two word gaps, and `sides` sets an ornament in it (R33.1). **A pattern and a connector read stretch by stretch** (R25, R25.1, R26): on a `repeat` ring and on every connector, a leftward or upward stretch's glyphs are placed in reverse, so a loop reads like a seal, and a word is never torn across two stretches. It is the only behavior, with no field and no option. | §6.2, §6.4 |
 
 ---
 
@@ -718,17 +718,24 @@ line (cosmic-text gives each glyph's advance), then placed:
      them. A
      placement lists the top line's glyphs, then the bottom's, in text
      order.
-6. **Each line follows its half** (D33, rulings R32, R33, R33.1;
+6. **Each line follows its half** (D33, rulings R32, R33, R33.1, R34;
    `flow/place/halves.rs`). The owner, on step 5's renders: "It should
    follow the path of its halve, this should be adjustable in the
    solution. But the point here was to demo the text actually taking
-   the shape of our nodes." Step 5 still parts the text and sizes it;
-   this step lays the two lines.
+   the shape of our nodes." Step 5 still parts the text, and sizes a
+   `fit` frame; this step lays the two lines. A `once` or `spread`
+   frame's lines are parted as step 5 parts them but never cut to its
+   level span: a line's room is its diagonal half less the junction
+   clearance (ruling R34).
    - **The diagonal halves** (ruling R33). The outline is split at its
      support points in the directions `(−1, −1)` and `(1, 1)`
      (`Outline::support`): on an ellipse where the tangent runs at 45°,
      on a rounded rectangle its top-left and bottom-right corner arcs'
-     midpoints, on a sharp one the corners. The first line takes the
+     midpoints, on a sharp one the corners. This is the reading of R33's
+     "in its own aspect" that keeps every horizontal run reading
+     rightward, chosen over the bounding box's diagonal, which on a
+     wide ellipse would start the second half leftward. The first line
+     takes the
      upper-right half, from the top-left junction clockwise over the
      top and down the right side to the bottom-right junction; the
      second the lower-left half, from the top-left junction down the
@@ -745,28 +752,57 @@ line (cosmic-text gives each glyph's advance), then placed:
      number between) sets each line's part of its half. At `natural`
      the line is tracked at its font's own gap (its letters' mean side
      bearings) and centered on its half's apex (the support point
-     straight up or down, where step 5 centers it); a natural line that
-     would reach into a junction's clearance is slid along its half
-     rather than pressed. Above it each end moves by arc length that
-     part of the way toward its junction, never into the clearance, so
-     the ends only move outward as the span grows. The built-in span is
-     `whole`.
-   - **Each junction is a break** (ruling R33.1). The two lines'
-     nearest end inks at a junction are at least two word gaps apart,
-     of the two lines' mean (`JUNCTION_WORD_GAPS`), so where one line
-     ends and the other begins reads at a glance. The clearance is
-     found at the whole span, a few rounds, and kept at every span.
-     With `sides`, the clearance also holds one copy of the ornament
-     and its two joins at the lines' mean natural gap.
+     straight up or down, where step 5 centers it) — by bisection, the
+     arc either side of the apex equal; a natural line that would reach
+     into a junction's clearance is slid along its half rather than
+     pressed. At `whole` each end is at its half's junction less the
+     clearance; in between each end moves by arc length that part of the
+     way from natural to whole (`na + (lo − na) · span`), so the ends
+     only move outward as the span grows. The built-in span is `whole`.
+   - **Each junction is a break** (ruling R33.1). At the whole span,
+     the two lines' nearest end inks at a junction are at least two
+     word gaps apart, of the mean of the lines that have one
+     (`JUNCTION_WORD_GAPS`; a line of one word has none, its letter
+     gaps the span's alone, and with none on either line two letter
+     gaps stand for one), so where one line ends and the other begins
+     reads at a glance; with
+     `sides`, the junction also holds one whole copy of the ornament at
+     its own floor gap, the test the ornament's own lay makes. Each
+     line keeps its own clearance from each junction, grown round by
+     round and shared among the lines whose drawing back parts the
+     ends there — on a long flat outline, where both halves run side by
+     side, only the one whose end moves away — a round that would press
+     a line it left unpressed halved, so the clearance is approached
+     from below; a junction stops growing when no line's drawing back
+     parts its ends. The clearance is kept at every span, so at a
+     narrower span each line lies within its part at whole and the
+     break along the outline is no narrower. (Two halves running side
+     by side lie closer across the outline than two word gaps anywhere
+     on a flat outline, so it is at whole, where the ends wrap round
+     the junction, that the break is measured.)
    - **Sides** (ruling R33.1). An ornament closes each break: whole
      copies, at least one, laid by the pairwise rule from the lines'
      end inks so every gap and both joins are equal — the count whose
      gap is nearest the lines' mean letter gap — on the text's own
      center line, its ink no taller than the text's x-height. It is
      shaped into the run as a line of its own, as a `once` filler is.
-   - No line its half holds is laid tighter than its font: step 5's
-     sizes stand, and a `once` filler is not drawn on a frame (its
-     lines leave nothing to fill but the breaks, which `sides` fills).
+   - **No line is laid tighter than its font.** Step 5's sizes stand
+     wherever the halves hold the lines at their font's gap — on every
+     outline from a circle to fifty to one, ellipse or rectangle, the
+     aspect sweep shows (`halves_hold_on_every_aspect`; choice 3 on
+     #294). Where they cannot, as when a long `sides` ornament takes
+     most of a half, the last resorts follow: a `fit` frame is shrunk,
+     within its bounds, to the largest size that holds every line, and
+     a line held even so by nothing — a `once` or `spread` line at its
+     size, a `fit` line at its least — is cut at its end to what its
+     half holds, the placement reporting the cut.
+   - **A `once` filler** is not drawn by the frame: round a frame it
+     plays the part `sides` does, so the resolver gives it to the
+     frame as its `sides` when `sides` is unset all the way down (ruling
+     R34); an explicit `sides`, `false` included, wins.
+   - **An outline too large for its length to be an `f32`** is laid
+     shrunk about its center until its length is one, its positions
+     grown back, so every position stays finite.
 
 ### §6.3 Outlines and corner radius (D11)
 
@@ -787,7 +823,7 @@ When a flow's text is shorter or longer than its path:
 
 | Mode | Behavior | Frames | Connectors |
 |---|---|---|---|
-| `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing. On a frame: two lines at the declared size along the diagonal halves (§6.2 step 6); the filler is not drawn | ✓ | ✓ |
+| `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing. On a frame: two lines at the declared size along the diagonal halves (§6.2 step 6), cut only where a half cannot hold its line; the filler is the frame's `sides` when `sides` is unset | ✓ | ✓ |
 | `repeat` | Text repeated until the path is full. Along a connector the last repetition is cut at a grapheme boundary; around a frame the ring holds a whole number of repetitions, evenly spaced, and closes without a seam (rulings R29, R31) | ✓ | ✓ (default — a `─` pattern) |
 | `spread` | Text placed once with extra spacing distributed so it ends exactly at the path's end. On a frame: as `once`; how far each line reaches is its `span` | ✓ | ✓ |
 | `fit { min, max }` | Font size **and** spacing are scaled so the text fills the path exactly once (algorithm below). On a frame: one size for both lines, the largest at which each fits its level span (§6.2 step 5), laid along the diagonal halves (step 6) | ✓ (default) | ✓ |

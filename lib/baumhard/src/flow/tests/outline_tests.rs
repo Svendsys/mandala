@@ -9,7 +9,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI};
 use glam::Vec2;
 
 use crate::document::values::{Direction, Edge, Percent, Shape, StartPoint};
-use crate::flow::path::ArcPath;
+use crate::flow::path::{direction_of, length_of, ArcPath};
 use crate::flow::tests::support::{close, de_casteljau, de_casteljau_derivative};
 use crate::flow::{offset, outline, ring_offset, Curve, Outline, Rect};
 
@@ -424,4 +424,184 @@ pub fn do_flow_non_finite_curves_build_no_table() {
     let path = ArcPath::closed(&ellipse, start(Edge::Top, 0.0), Direction::Clockwise, 1.0);
     assert_eq!(path.table_samples(), 0, "NaN ellipse");
     assert_eq!(path.length(), 0.0, "NaN ellipse");
+}
+
+#[test]
+fn test_flow_outline_support_faces_its_direction() {
+    do_flow_outline_support_faces_its_direction();
+}
+
+/// `Outline::support` (#291, ruling R33), against values worked out
+/// here: on a 400 × 200 ellipse the point `c + (a², b²)/√(a² + b²)` for
+/// `(1, 1)` — where its tangent runs at 45° — and in every direction a
+/// point on the ellipse whose normal, `(x/a², y/b²)`, is parallel to the
+/// direction; on a rounded rectangle its corner arc's midpoint; on a
+/// sharp one its corner; on a pill the end of its cap; and its center
+/// for a direction of no length or one not a number.
+pub fn do_flow_outline_support_faces_its_direction() {
+    let near = |a: Vec2, b: Vec2| a.distance(b) <= 1e-3;
+    let (a, b) = (200.0_f32, 100.0_f32);
+    let ellipse = outline(rect(0.0, 0.0, 2.0 * a, 2.0 * b), Shape::Ellipse);
+    let c = Vec2::new(a, b);
+    let expected = c + Vec2::new(a * a, b * b) / (a * a + b * b).sqrt();
+    assert!(
+        near(ellipse.support(Vec2::ONE), expected),
+        "{}",
+        ellipse.support(Vec2::ONE)
+    );
+    for dir in [
+        Vec2::new(-1.0, -1.0),
+        Vec2::new(1.0, 1.0),
+        Vec2::new(0.0, -1.0),
+        Vec2::new(3.0, 1.0),
+        Vec2::new(-1.0, 4.0),
+    ] {
+        let p = ellipse.support(dir) - c;
+        assert!(
+            ((p.x / a).powi(2) + (p.y / b).powi(2) - 1.0).abs() < 1e-4,
+            "{dir}: {p} on the ellipse"
+        );
+        let normal = Vec2::new(p.x / (a * a), p.y / (b * b)).normalize();
+        assert!(
+            normal.dot(dir.normalize()) > 1.0 - 1e-5,
+            "{dir}: the normal {normal} faces it"
+        );
+    }
+    // A rounded rectangle 400 × 200 at 50%: corner radius 50.
+    let round = outline(rect(0.0, 0.0, 400.0, 200.0), rounded(50));
+    let corner = Vec2::new(350.0, 150.0) + Vec2::splat(50.0 * FRAC_1_SQRT_2);
+    assert!(
+        near(round.support(Vec2::ONE), corner),
+        "{}",
+        round.support(Vec2::ONE)
+    );
+    let top_left = Vec2::new(50.0, 50.0) - Vec2::splat(50.0 * FRAC_1_SQRT_2);
+    assert!(near(round.support(-Vec2::ONE), top_left));
+    let sharp = outline(rect(10.0, 20.0, 400.0, 200.0), rounded(0));
+    assert!(near(sharp.support(-Vec2::ONE), Vec2::new(10.0, 20.0)));
+    assert!(near(sharp.support(Vec2::ONE), Vec2::new(410.0, 220.0)));
+    let pill = outline(rect(0.0, 0.0, 400.0, 200.0), rounded(100));
+    assert!(
+        near(pill.support(Vec2::X), Vec2::new(400.0, 100.0)),
+        "{}",
+        pill.support(Vec2::X)
+    );
+    assert!(near(
+        pill.support(Vec2::ONE),
+        Vec2::new(300.0, 100.0) + Vec2::splat(100.0 * FRAC_1_SQRT_2)
+    ));
+    for nothing in [Vec2::ZERO, Vec2::new(f32::NAN, 1.0)] {
+        assert_eq!(ellipse.support(nothing), c, "{nothing}");
+        assert_eq!(round.support(nothing), Vec2::new(200.0, 100.0), "{nothing}");
+    }
+}
+
+#[test]
+fn test_flow_path_nearest_finds_its_own_points() {
+    do_flow_path_nearest_finds_its_own_points();
+}
+
+/// `ArcPath::nearest` on a closed ellipse finds, for a point a little
+/// off the path at `s`, that `s` — round the path, a point just before
+/// the seam included, which sits as near the sample at the seam's start
+/// as at its end — to within a hundredth of a point, measured round the
+/// path.
+pub fn do_flow_path_nearest_finds_its_own_points() {
+    let shape = outline(rect(0.0, 0.0, 400.0, 200.0), Shape::Ellipse);
+    let path = ArcPath::closed(&shape, start(Edge::Left, 0.5), Direction::CounterClockwise, 0.25);
+    let length = path.length();
+    for s in [
+        0.0,
+        1.0,
+        0.25 * length,
+        0.5 * length,
+        0.9 * length,
+        length - 0.1,
+        length - 0.01,
+    ] {
+        let (p, tangent) = path.at(s);
+        let off = p + path.outward(tangent) * 3.0;
+        let found = path.nearest(off);
+        let apart = (found - s).rem_euclid(length);
+        let apart = apart.min(length - apart);
+        assert!(apart <= 1e-2, "at {s} of {length}: found {found}");
+    }
+}
+
+#[test]
+fn test_flow_path_measures_past_the_root_of_the_largest_f32() {
+    do_flow_path_measures_past_the_root_of_the_largest_f32();
+}
+
+/// A vector, a line, a curve and an outline longer than `√f32::MAX`
+/// (about `1.8e19`) — whose squared length passes every `f32` — measure
+/// their lengths, each against the same length worked in `f64`, and
+/// walk to their ends. Control: measured by `Vec2::length`, each is
+/// infinite or not walked at all.
+pub fn do_flow_path_measures_past_the_root_of_the_largest_f32() {
+    let near = |got: f32, want: f64, what: &str| {
+        assert!(
+            ((got as f64) - want).abs() <= want * 1e-5,
+            "{what}: {got:e}, owed {want:e}"
+        );
+    };
+    near(length_of(Vec2::new(3.0e30, -4.0e30)), 5.0e30, "a vector");
+    near(length_of(Vec2::new(3.0, 4.0)), 5.0, "a short vector");
+    let dir = direction_of(Vec2::new(3.0e30, -4.0e30)).expect("a direction");
+    assert!(dir.distance(Vec2::new(0.6, -0.8)) <= 1e-6, "its direction {dir}");
+    assert_eq!(length_of(Vec2::ZERO), 0.0);
+    for v in [
+        Vec2::ZERO,
+        Vec2::new(f32::NAN, 1.0),
+        Vec2::new(f32::INFINITY, 0.0),
+    ] {
+        assert_eq!(direction_of(v), None, "{v} has no direction");
+    }
+    // A line from -1e20 to 1e20, and a diagonal one.
+    let (a, b) = (Vec2::new(-1.0e20, 0.0), Vec2::new(1.0e20, 0.0));
+    let line = ArcPath::open(&Curve::Line(a, b), 1.0);
+    near(line.length(), 2.0e20, "a line");
+    assert!(
+        line.at(line.length()).0.distance(b) <= 1.0e15,
+        "the line walks to its end"
+    );
+    let (a, b) = (Vec2::splat(-1.0e37), Vec2::splat(1.0e37));
+    near(
+        ArcPath::open(&Curve::Line(a, b), 1.0).length(),
+        2.0e37 * std::f64::consts::SQRT_2,
+        "a diagonal line",
+    );
+    // A curve with a control point far out: its length lies between its
+    // chord and its control polygon.
+    let (a, c, b) = (
+        Vec2::new(0.0, 0.0),
+        Vec2::new(5.0e25, 0.0),
+        Vec2::new(0.0, 1.0e25),
+    );
+    let curve = ArcPath::open(&Curve::Quadratic(a, c, b), 1.0);
+    let polygon = (c - a).as_dvec2().length() + (b - c).as_dvec2().length();
+    let chord = (b - a).as_dvec2().length();
+    assert!(
+        (curve.length() as f64) >= chord && (curve.length() as f64) <= polygon * (1.0 + 1e-5),
+        "a curve {:e}, between {chord:e} and {polygon:e}",
+        curve.length()
+    );
+    // A rounded rectangle 1e30 wide.
+    let (w, h, r) = (1.0e30_f64, 40.0_f64, 10.0_f64);
+    let rounded = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(w as f32, h as f32)),
+        Shape::Rectangle {
+            radius: Percent::new(50),
+        },
+    );
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.0,
+    };
+    let path = ArcPath::closed(&rounded, start, Direction::Clockwise, 1.0);
+    near(
+        path.length(),
+        2.0 * (w - 2.0 * r) + 2.0 * (h - 2.0 * r) + 2.0 * PI as f64 * r,
+        "an outline",
+    );
 }

@@ -1655,6 +1655,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     // the document: shape rules, identity, resolution and its read
     // records, the predicate surface, the bounds //
+    c.bench_function("document_bounds_ornament", |b| {
+        b.iter(do_document_bounds_ornament)
+    });
     c.bench_function("document_bounds_canvas_coord", |b| {
         b.iter(do_document_bounds_canvas_coord)
     });
@@ -1721,6 +1724,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_inspect_a_field_the_kind_lacks_falls_through", |b| {
         b.iter(do_document_inspect_a_field_the_kind_lacks_falls_through)
     });
+    c.bench_function("document_inspect_spacing_reads_frames_and_rings", |b| {
+        b.iter(do_document_inspect_spacing_reads_frames_and_rings)
+    });
     c.bench_function("document_inspect_optional_fields", |b| {
         b.iter(do_document_inspect_optional_fields)
     });
@@ -1744,6 +1750,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_resolve_ring_layout_chain", |b| {
         b.iter(do_document_resolve_ring_layout_chain)
+    });
+    c.bench_function("document_resolve_ring_sides_color", |b| {
+        b.iter(do_document_resolve_ring_sides_color)
+    });
+    c.bench_function("document_resolve_ring_sides_var_records_the_theme", |b| {
+        b.iter(do_document_resolve_ring_sides_var_records_the_theme)
+    });
+    c.bench_function("document_resolve_ring_once_filler_is_its_sides", |b| {
+        b.iter(do_document_resolve_ring_once_filler_is_its_sides)
     });
     c.bench_function("document_resolve_defaults_tier", |b| {
         b.iter(do_document_resolve_defaults_tier)
@@ -2105,6 +2120,15 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_flow_open_path_holds_its_ends)
     });
     c.bench_function("flow_curve_from_points", |b| b.iter(do_flow_curve_from_points));
+    c.bench_function("flow_outline_support_faces_its_direction", |b| {
+        b.iter(do_flow_outline_support_faces_its_direction)
+    });
+    c.bench_function("flow_path_nearest_finds_its_own_points", |b| {
+        b.iter(do_flow_path_nearest_finds_its_own_points)
+    });
+    c.bench_function("flow_path_measures_past_the_root_of_the_largest_f32", |b| {
+        b.iter(do_flow_path_measures_past_the_root_of_the_largest_f32)
+    });
     c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
         b.iter(do_flow_place_horizontal_steps_by_advance)
     });
@@ -2290,6 +2314,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_lines_center_and_fill", |b| {
         b.iter(do_flow_lines_center_and_fill)
     });
+    c.bench_function("flow_lines_fill_a_frame_as_wide_as_an_f32_reaches", |b| {
+        b.iter(do_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches)
+    });
     c.bench_function("flow_lines_fit_sweeps_a_sharp_rect", |b| {
         b.iter(do_flow_lines_fit_sweeps_a_sharp_rect)
     });
@@ -2324,6 +2351,42 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_halves_a_repeat_ring_takes_its_spacing", |b| {
         b.iter(do_flow_halves_a_repeat_ring_takes_its_spacing)
+    });
+    c.bench_function("flow_halves_a_resolved_ring_lays_as_it_says", |b| {
+        b.iter(do_flow_halves_a_resolved_ring_lays_as_it_says)
+    });
+    c.bench_function("flow_halves_hold_on_every_aspect", |b| {
+        b.iter(do_flow_halves_hold_on_every_aspect)
+    });
+    c.bench_function("flow_halves_a_crowded_frame_shrinks_or_cuts", |b| {
+        b.iter(do_flow_halves_a_crowded_frame_shrinks_or_cuts)
+    });
+    c.bench_function("flow_halves_span_half_is_the_mean_of_natural_and_whole", |b| {
+        b.iter(do_flow_halves_span_half_is_the_mean_of_natural_and_whole)
+    });
+    c.bench_function("flow_halves_a_line_keeps_its_half", |b| {
+        b.iter(do_flow_halves_a_line_keeps_its_half)
+    });
+    c.bench_function("flow_halves_a_glyph_with_no_outline_is_laid", |b| {
+        b.iter(do_flow_halves_a_glyph_with_no_outline_is_laid)
+    });
+    c.bench_function("flow_halves_spread_and_once_and_inward", |b| {
+        b.iter(do_flow_halves_spread_and_once_and_inward)
+    });
+    c.bench_function("flow_halves_once_holds_what_r27_cuts", |b| {
+        b.iter(do_flow_halves_once_holds_what_r27_cuts)
+    });
+    c.bench_function("flow_halves_a_junction_holds_at_most_its_copies", |b| {
+        b.iter(do_flow_halves_a_junction_holds_at_most_its_copies)
+    });
+    c.bench_function("flow_halves_a_part_never_inverts", |b| {
+        b.iter(do_flow_halves_a_part_never_inverts)
+    });
+    c.bench_function("flow_halves_a_copy_at_its_floor_clears_its_neighbors", |b| {
+        b.iter(do_flow_halves_a_copy_at_its_floor_clears_its_neighbors)
+    });
+    c.bench_function("flow_halves_a_one_word_line_keeps_its_neighbor_whole", |b| {
+        b.iter(do_flow_halves_a_one_word_line_keeps_its_neighbor_whole)
     });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //

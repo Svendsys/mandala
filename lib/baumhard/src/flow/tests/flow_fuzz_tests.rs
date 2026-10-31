@@ -126,14 +126,16 @@ fn test_the_placement_property_finds_a_position_that_is_not_finite() {
         truncated: false,
     };
     assert_eq!(
-        check_placement(&run, &placed(Vec2::ONE, 1), "p"),
+        check_placement(&run, &placed(Vec2::ONE, 1), false, "p"),
         Ok(()),
         "precondition: the control passes"
     );
-    assert!(check_placement(&run, &placed(Vec2::new(f32::NAN, 0.0), 0), "p")
-        .unwrap_err()
-        .contains("placed at"));
-    assert!(check_placement(&run, &placed(Vec2::ONE, 2), "p")
+    assert!(
+        check_placement(&run, &placed(Vec2::new(f32::NAN, 0.0), 0), false, "p")
+            .unwrap_err()
+            .contains("placed at")
+    );
+    assert!(check_placement(&run, &placed(Vec2::ONE, 2), false, "p")
         .unwrap_err()
         .contains("placed glyph 2 of 2"));
 }
@@ -762,9 +764,73 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
                 "precondition: {fit:?} {direction:?} places all three glyphs ({})",
                 placed.glyphs.len()
             );
-            if let Err(why) = check_placement(&run, &placed, "around the outline") {
+            if let Err(why) = check_placement(&run, &placed, true, "around the outline") {
                 panic!("{fit:?} {direction:?}: {why}");
             }
         }
+    }
+}
+
+/// The finding above along an open line, where `solve_gap` still lays
+/// a `Spread` (a frame round a closed outline is laid along its halves
+/// now, #291): along a line as long as an `f32` goes, a `Spread` — and a
+/// `Fit` held at scale 1 — of three letters places every glyph, finite,
+/// and cuts nothing (`check_placement`'s whole-placement property). A
+/// line longer than `√f32::MAX` (about `1.8e19`) once measured its
+/// length infinite, kept no stretch, and placed nothing; the lines here
+/// run from there to the largest. Control: with path lengths measured
+/// by `Vec2::length`, which overflows there, the property sees the cut.
+#[test]
+fn test_a_spread_along_a_line_as_long_as_an_f32_places_every_glyph() {
+    use crate::document::values::FitMode;
+    use crate::flow::{place_on_open, Curve};
+    let plain = style(16.0);
+    for reach in [1.0e19_f32, 1.0e20, 1.0e30, 1.7e38] {
+        let curve = Curve::Line(Vec2::new(-reach, 0.0), Vec2::new(reach, 0.0));
+        for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
+            let (run, placed) = with_fonts(|fs| {
+                let run = real_run("abc", &plain, fs);
+                let (replaced, placed) = place_on_open(&run, &curve, &fit, 0.0, &plain, fs);
+                (replaced.unwrap_or(run), placed)
+            });
+            if let Err(why) = check_placement(&run, &placed, true, "along the line") {
+                panic!("{reach:e} {fit:?}: {why}");
+            }
+        }
+    }
+}
+
+/// `check_placement`'s whole-placement property: a `Spread` — and a
+/// `Fit` held at scale 1 — of three letters along a line from one side
+/// of the canvas to the other, the longest a map can draw, places every
+/// glyph and cuts nothing. Control: the property refuses a placement
+/// that left a glyph out.
+#[test]
+fn test_a_spread_across_the_canvas_places_every_glyph() {
+    use crate::document::bounds::MAX_CANVAS_COORD;
+    use crate::document::values::FitMode;
+    use crate::flow::{place_on_open, Curve};
+    let plain = style(16.0);
+    let curve = Curve::Line(
+        Vec2::new(-MAX_CANVAS_COORD, 0.0),
+        Vec2::new(MAX_CANVAS_COORD, 0.0),
+    );
+    for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
+        let (run, placed) = with_fonts(|fs| {
+            let run = real_run("abc", &plain, fs);
+            let (replaced, placed) = place_on_open(&run, &curve, &fit, 0.0, &plain, fs);
+            (replaced.unwrap_or(run), placed)
+        });
+        if let Err(why) = check_placement(&run, &placed, true, "across the canvas") {
+            panic!("{fit:?}: {why}");
+        }
+        let mut short = placed.clone();
+        short.glyphs.pop();
+        assert!(
+            check_placement(&run, &short, true, "short")
+                .unwrap_err()
+                .contains("was not placed"),
+            "{fit:?}: the property sees a glyph left out"
+        );
     }
 }

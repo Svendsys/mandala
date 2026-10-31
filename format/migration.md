@@ -11,6 +11,19 @@ Earlier development iterations used a miMind-derived format with:
 Mandala no longer reads that format. A one-shot migration tool converts
 legacy files to the current format.
 
+## Also: frame keys added since #291 (no migration)
+
+`span`, `sides` and a ring's `spacing` (#291; `schema.md`, "Span of a
+line" and "Sides") are additive keys on a frame, a ring,
+`defaults.frame` and `defaults.ring`. A map that does not write them
+needs no conversion: an absent key means its built-in value — `span`
+`"whole"`, `sides` `false` (or a ring's `once` filler, when its fit has
+one), `spacing` `0` — and saving it writes none of them back. `span`'s
+built-in `"whole"` changes no shipped rendering, because the app does
+not yet lay frames through the flow placement that reads it. A map
+written with these keys does not load in a build that predates them:
+each is an unknown key there.
+
 ## Also: migrating portals into edges
 
 An earlier revision stored portals in a separate top-level

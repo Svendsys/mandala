@@ -577,7 +577,8 @@ fn test_flow_place_keeps_every_position_finite() {
 /// stretches. Two marks with no base step zero along a horizontal
 /// tangent, so they fit even an empty path and are placed — at the
 /// origin, not at `NaN` — and `"hello"` is cut, or placed on what is
-/// finite. Every mode, and a point placement at a center that is not
+/// finite. Every mode — a frame's at span natural, at whole, and with
+/// sides and a spacing — and a point placement at a center that is not
 /// finite.
 pub fn do_flow_place_keeps_every_position_finite() {
     let (marks, hello) = with_fonts(|fs| {
@@ -638,24 +639,38 @@ pub fn do_flow_place_keeps_every_position_finite() {
         edge: Edge::Top,
         at: 0.5,
     };
+    // The frame's layouts: at natural, at whole (the built-in), and at
+    // whole with sides and a spacing, so the clearance and the side arcs
+    // meet the broken outline too.
+    let layouts = [
+        RingLayout::natural(),
+        RingLayout::whole(),
+        RingLayout {
+            sides: Some(("·".to_string(), crate::document::values::Rgba::opaque(9, 9, 9))),
+            spacing: 4.0,
+            ..RingLayout::whole()
+        },
+    ];
     let mut placed_on_broken = 0;
-    for fit in &modes {
-        for (name, run) in [("marks", &marks), ("hello", &hello)] {
-            let (_, placed) = with_fonts(|fs| {
-                place_on_closed(
-                    run,
-                    &broken,
-                    top,
-                    Direction::Clockwise,
-                    fit,
-                    &RingLayout::natural(),
-                    true,
-                    &style(12.0),
-                    fs,
-                )
-            });
-            finite(&placed, &format!("NaN rect, {fit:?}, {name}"));
-            placed_on_broken += placed.glyphs.len();
+    for layout in &layouts {
+        for fit in &modes {
+            for (name, run) in [("marks", &marks), ("hello", &hello)] {
+                let (_, placed) = with_fonts(|fs| {
+                    place_on_closed(
+                        run,
+                        &broken,
+                        top,
+                        Direction::Clockwise,
+                        fit,
+                        layout,
+                        true,
+                        &style(12.0),
+                        fs,
+                    )
+                });
+                finite(&placed, &format!("NaN rect, {fit:?}, {name}, {layout:?}"));
+                placed_on_broken += placed.glyphs.len();
+            }
         }
     }
     assert!(

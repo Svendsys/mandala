@@ -17,7 +17,7 @@ use crate::document::format::dto::DirectionDto;
 use crate::document::format::from_dto::{Builder, LoadResult};
 use crate::document::format::spelling::{ColorDto, FitDto, LineSpanDto, SidesDto, StartDto, WeightDto};
 use crate::document::place::Unit;
-use crate::document::values::{Direction, Sides, Span};
+use crate::document::values::{Direction, LineSpan, Sides};
 
 /// A view of the five text-style keys.
 pub(crate) struct TextIn<'a> {
@@ -142,12 +142,12 @@ impl Builder {
     pub(super) fn ring_layout(&mut self, layout: LayoutIn<'_>) -> LoadResult<RingLayoutStyle> {
         let span = match layout.span {
             None => None,
-            Some(LineSpanDto::Natural) => Some(Span::NATURAL),
-            Some(LineSpanDto::Whole) => Some(Span::WHOLE),
+            Some(LineSpanDto::Natural) => Some(LineSpan::NATURAL),
+            Some(LineSpanDto::Whole) => Some(LineSpan::WHOLE),
             Some(LineSpanDto::Fraction(value)) => {
                 let value = self.number("span", value, bounds::check_unit_interval)?;
                 // In range: the check above holds it to `0..=1`.
-                Some(Span::new(value).unwrap_or(Span::WHOLE))
+                Some(LineSpan::new(value).unwrap_or(LineSpan::WHOLE))
             }
         };
         let sides = match layout.sides {

@@ -264,3 +264,44 @@ pub fn do_document_field_json_spelling() {
         "a percentage read from JSON clamps"
     );
 }
+
+#[test]
+fn test_document_inspect_spacing_reads_frames_and_rings() {
+    do_document_inspect_spacing_reads_frames_and_rings();
+}
+
+/// `spacing` is a frame's and a ring's stored spacing as it is a
+/// path's (#291): unset, it does not exist; set, it compares by value.
+/// Control: a section, which has no spacing, falls through.
+pub fn do_document_inspect_spacing_reads_frames_and_rings() {
+    let (mut builder, ids) = example();
+    let spacing = DocField::Spacing(6.0);
+    for id in [ids.frame, ids.ring] {
+        let unset = builder.tree().arena()[id].get();
+        assert_eq!(
+            unset.test_field(&spacing, &Comparator::exists()),
+            Some(false),
+            "{id:?}"
+        );
+    }
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout.spacing = Some(6.0);
+        }
+    });
+    builder.edit(ids.ring, |e| {
+        if let DocElement::Ring(r) = e {
+            r.style.ring_layout.spacing = Some(4.0);
+        }
+    });
+    let frame = builder.tree().arena()[ids.frame].get();
+    assert_eq!(frame.test_field(&spacing, &Comparator::equals()), Some(true));
+    let ring = builder.tree().arena()[ids.ring].get();
+    assert_eq!(ring.test_field(&spacing, &Comparator::less()), Some(true));
+    let section = builder.tree().arena()[ids.b_section].get();
+    assert_eq!(
+        section.test_field(&spacing, &Comparator::exists()),
+        None,
+        "a section has none"
+    );
+}

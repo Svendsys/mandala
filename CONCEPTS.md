@@ -1480,23 +1480,22 @@ element.
   a horizontal stretch, a line apart along a vertical one, blended on a
   curve and turning smoothly through a sharp corner — the way ASCII art
   makes one. That is the box step, which `Repeat` rings and connectors
-  take. A frame's text line takes the level step instead (ruling R28,
-  `PathWalk::level_len`): it moves `w` horizontally, so letters keep
-  their shaped spacing where the outline curves. Around an outline each
-  cluster is pushed outward by half its extent (straight up or down on a
-  level step), so text sits on the outline rather than across it.
+  take. A frame's text is sized with the level step (ruling R28,
+  `PathWalk::level_len`: `w` horizontally), then laid by its letters'
+  inks along its half (below). Around an outline each cluster is
+  pushed outward by half its extent, so text sits on the outline
+  rather than across it.
 - **Readable path text** (D33, #291). Path text reads left to right or
   top to bottom.
   - **A frame's text is two lines** (ruling R27; `flow/place/lines.rs`).
-    A ring in `Once`, `Spread` or `Fit` is split at the outline's
-    leftmost and rightmost points into a top and a bottom half, each
-    walked left to right; each half's span is where the outline runs
-    within 45° of level, and the steep sides stay clear. The text is
-    parted at its first line break, or at the word break where the two
-    lines best balance, and each line is centered on (or, for `Spread`,
-    spread over) its span; `Fit` takes the largest size at which both
-    fit, and too long at `min` cuts only the bottom line's end. `start`
-    and `direction` apply to `Repeat` rings only.
+    A ring in `Once`, `Spread` or `Fit` is parted at its first line
+    break, or at the word break where the two lines best balance against
+    the level parts of the outline — over the top and along the bottom,
+    where it runs within 45° of level — and `Fit` takes the largest size
+    at which both lines fit those parts, too long at `min` cutting only
+    the bottom line's end. That is the parting and the size; the lines
+    are laid along the halves below. `start` and `direction` apply to
+    `Repeat` rings only.
   - **Each line follows its half** (rulings R32, R33, R33.1;
     `flow/place/halves.rs`). R27 parts and sizes the text; the lines are
     then laid along the outline's diagonal halves, split where it faces
@@ -1506,11 +1505,14 @@ element.
     Each line is tracked evenly — one ink gap between every two letters,
     by the ornament's pairwise rule, and a space plus two gaps between
     words — over the part of its half its `span` gives it
-    (`RingLayout`, `values::Span`: `natural`, at its font's own gap and
-    centered on its half's apex, to `whole`, the default). At each
+    (`RingLayout`, `values::LineSpan`: `natural`, at its font's own gap
+    and centered on its half's apex, to `whole`, the default). At each
     junction the two lines' end inks stay two word gaps apart, and
     `sides` (`values::Sides`) fills that break with whole, evenly
-    spaced copies of an ornament no taller than the text's x-height.
+    spaced copies of an ornament no taller than the text's x-height —
+    a `Once` filler, when `sides` is unset (ruling R34). A `Once` or
+    `Spread` line is never cut to the level part; only a line its half
+    cannot hold at its font's gap is cut, a `Fit` frame shrunk first.
   - **A pattern and a connector read stretch by stretch**. On a `Repeat`
     ring and every connector, the walk (the fit mode) decides which
     clusters are placed and which stretch — rightward, leftward,
@@ -1541,12 +1543,14 @@ element.
 - **Fit modes** say what happens when text and path differ in length:
   `Once` (with an optional filler, appended to the run in the flow's
   style), `Repeat` (reusing the run's glyph indices; around a closed
-  outline, whole copies evenly spaced so the ring closes without a seam,
-  rulings R29 and R31, a ring's `spacing` more between copies), `Spread` and
-  `Fit` (rescaling the run), the last two solved so the last cluster
-  ends at the path's end — on a frame, each line at its span's end. Text too long is cut to the longest prefix,
-  in reading order, that fits — a right-to-left run keeps its
-  beginning — and never overlaps.
+  outline, whole copies evenly spaced so the ring closes without a
+  seam, rulings R29 and R31, a ring's `spacing` more between every two
+  steps), `Spread` and `Fit` (rescaling the run), the last two solved
+  so the last cluster ends at the path's end. On a frame they part and
+  size its two lines, which its `span` then lays along its halves.
+  Text too long is cut to the longest prefix, in reading order, that
+  fits — a right-to-left run keeps its beginning — and never
+  overlaps.
 - **Hit mapping.** Every glyph names its span and its bytes of that
   span's text (`GlyphMetrics`, `ShapedBox::glyph_spans`); a filler
   glyph names `FILLER_SPAN`. No paragraph separator is drawn. A box

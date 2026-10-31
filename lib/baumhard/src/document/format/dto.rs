@@ -416,7 +416,7 @@ pub(crate) struct FrameDefaultsDto<'a> {
         deserialize_with = "present"
     )]
     pub sides: Option<SidesDto<'a>>,
-    /// The space a `repeat` ring adds between its copies.
+    /// The space a `repeat` ring adds between every two glyph steps.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -485,7 +485,7 @@ pub(crate) struct RingDefaultsDto<'a> {
         deserialize_with = "present"
     )]
     pub sides: Option<SidesDto<'a>>,
-    /// The space a `repeat` ring adds between its copies.
+    /// The space a `repeat` ring adds between every two glyph steps.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -877,7 +877,7 @@ pub(crate) struct RingDto<'a> {
         deserialize_with = "present"
     )]
     pub sides: Option<SidesDto<'a>>,
-    /// The space a `repeat` ring adds between its copies.
+    /// The space a `repeat` ring adds between every two glyph steps.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -984,7 +984,7 @@ pub(crate) struct FrameDto<'a> {
         deserialize_with = "present"
     )]
     pub sides: Option<SidesDto<'a>>,
-    /// The space a `repeat` ring adds between its copies.
+    /// The space a `repeat` ring adds between every two glyph steps.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

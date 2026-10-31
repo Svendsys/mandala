@@ -13,8 +13,9 @@ use crate::document::ids::Definitions;
 use crate::document::tests::format_support::{fixture, kid, kids, node, same_document, written, FIXTURES};
 use crate::document::tests::test_support::{example, node_data, DocumentBuilder};
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteField,
-    PaletteId, Percent, PlainColor, Rgba, Shape, Sides, Span, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LineSpan, LinkKind, LinkTarget,
+    PaletteField, PaletteId, Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight,
+    ZoomWindow,
 };
 use crate::font::fonts::AppFont;
 use glam::Vec2;
@@ -147,7 +148,7 @@ pub fn do_format_full_fixture_reads_as_written() {
             gap: Some(2.0),
             inset: Some(4.0),
             ring_layout: RingLayoutStyle {
-                span: Some(Span::WHOLE),
+                span: Some(LineSpan::WHOLE),
                 sides: Some(Sides::On {
                     content: "✦".to_string(),
                     color: Some(ColorRef::Var(VarId(0))),
@@ -168,7 +169,7 @@ pub fn do_format_full_fixture_reads_as_written() {
         RingStyle {
             fit: Some(FitMode::Repeat),
             ring_layout: RingLayoutStyle {
-                span: Span::new(0.5),
+                span: LineSpan::new(0.5),
                 sides: Some(Sides::Off),
                 spacing: Some(0.0),
             },

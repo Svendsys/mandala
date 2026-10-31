@@ -27,8 +27,8 @@ use crate::document::mutation::ops::{
 };
 use crate::document::tests::test_support::{example, palette_group};
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, Percent,
-    Rgba, Shape, Sides, Span, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
+    Percent, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::mutation::Mutation;
 use crate::font::fonts::AppFont;
@@ -114,7 +114,7 @@ fn rich_frame() -> DocElement {
             gap: Some(1.0),
             inset: Some(2.0),
             ring_layout: RingLayoutStyle {
-                span: Span::new(0.25),
+                span: LineSpan::new(0.25),
                 sides: Some(Sides::On {
                     content: "✦".to_string(),
                     color: Some(ColorRef::Rgba(Rgba::opaque(1, 2, 3))),
@@ -132,7 +132,7 @@ fn rich_ring() -> DocElement {
         style: RingStyle {
             fit: Some(FitMode::Spread),
             ring_layout: RingLayoutStyle {
-                span: Some(Span::NATURAL),
+                span: Some(LineSpan::NATURAL),
                 sides: Some(Sides::Off),
                 spacing: Some(1.0),
             },
@@ -622,9 +622,9 @@ pub fn do_document_frame_and_ring_ops_write_their_field() {
     case(
         "SetSpan",
         &f,
-        DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpan(Some(Span::WHOLE)))),
+        DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpan(Some(LineSpan::WHOLE)))),
         &s,
-        |e| frame(e).ring_layout.span = Some(Span::WHOLE),
+        |e| frame(e).ring_layout.span = Some(LineSpan::WHOLE),
     );
     case(
         "SetSides",
@@ -666,9 +666,9 @@ pub fn do_document_frame_and_ring_ops_write_their_field() {
     case(
         "Layout span",
         &r,
-        DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpan(Span::new(0.75)))),
+        DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpan(LineSpan::new(0.75)))),
         &s,
-        |e| ring(e).style.ring_layout.span = Span::new(0.75),
+        |e| ring(e).style.ring_layout.span = LineSpan::new(0.75),
     );
     case(
         "SetChannel",

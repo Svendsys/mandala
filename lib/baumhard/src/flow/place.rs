@@ -114,8 +114,8 @@ use std::ops::Range;
 
 use glam::Vec2;
 
-use crate::document::resolve::ResolvedText;
-use crate::document::values::{Direction, FitMode, Rgba, Span, StartPoint};
+use crate::document::resolve::{ResolvedRing, ResolvedText};
+use crate::document::values::{Direction, FitMode, LineSpan, Rgba, StartPoint};
 use crate::flow::curve::Curve;
 use crate::flow::outline::Outline;
 use crate::flow::path::ArcPath;
@@ -173,7 +173,12 @@ const INK_TURNS: usize = 12;
 
 /// How near the gap the box rule leaves between two inks must be to the
 /// gap owed for [`PathWalk::ink_gap_at`] to keep it, in points.
-const INK_TOLERANCE: f32 = 1e-3;
+pub(crate) const INK_TOLERANCE: f32 = 1e-3;
+
+/// The most times a frame's outline is halved for its length to be an
+/// `f32` ([`place_on_closed`]): the largest outline's perimeter is about
+/// `2 · f32::MAX`, so one halving does; more are slack.
+const MAX_SHRINKS: usize = 8;
 
 /// The rounds of Newton's method [`PathWalk::level_len`] takes.
 const LEVEL_ROUNDS: usize = 4;
@@ -256,9 +261,9 @@ pub struct PlacedRun {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RingLayout {
     /// How much of its half each line of a two-line ring covers: from
-    /// its natural width ([`Span::NATURAL`]) to its whole half
-    /// ([`Span::WHOLE`], the built-in). A `repeat` ring ignores it.
-    pub span: Span,
+    /// its natural width ([`LineSpan::NATURAL`]) to its whole half
+    /// ([`LineSpan::WHOLE`], the built-in). A `repeat` ring ignores it.
+    pub span: LineSpan,
     /// The ornament closing what a two-line ring's lines leave uncovered
     /// round its junctions: its text and its color. `None` leaves those
     /// parts empty. A `repeat` ring ignores it.
@@ -274,18 +279,28 @@ impl RingLayout {
     /// extra spacing.
     pub fn whole() -> Self {
         RingLayout {
-            span: Span::WHOLE,
+            span: LineSpan::WHOLE,
             sides: None,
             spacing: 0.0,
         }
     }
 
-    /// Each line at its natural width (ruling R27's layout), no sides, no
-    /// extra spacing.
+    /// Each line at its natural width — its font's own gap, centered on
+    /// its half's apex — no sides, no extra spacing.
     pub fn natural() -> Self {
         RingLayout {
-            span: Span::NATURAL,
+            span: LineSpan::NATURAL,
             ..RingLayout::whole()
+        }
+    }
+
+    /// The layout a resolved ring says: its span, its sides' text and
+    /// color, its spacing. O(1), and a clone of the sides' text.
+    pub fn of(ring: &ResolvedRing) -> Self {
+        RingLayout {
+            span: ring.span,
+            sides: ring.sides.as_ref().map(|s| (s.content.clone(), s.color)),
+            spacing: ring.spacing,
         }
     }
 }
@@ -2115,7 +2130,7 @@ impl PathStretch {
 /// diagonal (ruling R33) — the first from the top-left junction over
 /// the top and down the right side, the second from it down the left
 /// side and along the bottom — with even ink tracking (ruling R32). At
-/// [`Span::NATURAL`] a line is at its font's own gap, centered on its
+/// [`LineSpan::NATURAL`] a line is at its font's own gap, centered on its
 /// half's apex; above it, its ends move from there toward the
 /// junctions by `span`, each junction a visible break of two word gaps
 /// (ruling R33.1). `sides` closes what the lines leave round the
@@ -2178,10 +2193,38 @@ pub(crate) fn place_on_closed_traced(
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     if !matches!(fit, FitMode::Repeat) {
+        // A frame whose outline is too large for its length to be an
+        // `f32` is laid on the outline shrunk about its center until its
+        // length is one, and its positions grown back: every position
+        // finite, the lines where they would lie, spread to the outline.
+        let probe = ArcPath::closed(path, start, direction, MIN_TABLE_SPACING).length();
+        if !probe.is_finite() {
+            let center = path.rect().center();
+            let mut factor = 1.0_f32;
+            let mut small = *path;
+            for _ in 0..MAX_SHRINKS {
+                if ArcPath::closed(&small, start, direction, MIN_TABLE_SPACING)
+                    .length()
+                    .is_finite()
+                {
+                    break;
+                }
+                factor *= 0.5;
+                small = path.scaled(factor);
+            }
+            let (replaced, mut placed) =
+                halves::place_halves(run, &small, fit, layout, outward, flow, fs, trace);
+            for glyph in &mut placed.glyphs {
+                glyph.pos = center + (glyph.pos - center) / factor;
+            }
+            return (replaced, placed);
+        }
         return halves::place_halves(run, path, fit, layout, outward, flow, fs, trace);
     }
     let spacing = table_spacing(run, fit, flow);
     let arc = ArcPath::closed(path, start, direction, spacing);
+    // A gap past the whole outline lays one copy: the walk stops at the
+    // first step that ends past the path (`PathWalk::lay`).
     let gap = if layout.spacing.is_finite() {
         layout.spacing.max(0.0)
     } else {

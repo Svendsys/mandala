@@ -50,7 +50,8 @@
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{
-    DocElement, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData, PortalEndStyle, RingStyle, TextStyle,
+    DocElement, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData, PortalEndStyle, RingLayoutStyle,
+    RingStyle, TextStyle,
 };
 use crate::document::format::context::EXCERPT_BYTES;
 use crate::document::format::{
@@ -59,7 +60,7 @@ use crate::document::format::{
 };
 use crate::document::ids::Document;
 use crate::document::tests::format_support::same_document;
-use crate::document::values::{FitMode, FontSize, Shape, ZoomWindow};
+use crate::document::values::{FitMode, FontSize, Shape, Sides, ZoomWindow};
 
 /// Every property of a load of `bytes`, whatever they are: the
 /// load_raw target's whole body.
@@ -673,12 +674,29 @@ fn frame_style(style: &FrameStyle) -> Result<(), String> {
             named(field, bounds::check_non_negative(value))?;
         }
     }
+    ring_layout(&style.ring_layout)?;
     text_style(&style.text)
 }
 
 fn ring_style(style: &RingStyle) -> Result<(), String> {
     fit(&style.fit)?;
+    ring_layout(&style.ring_layout)?;
     text_style(&style.text)
+}
+
+/// A frame's or a ring's layout: a span in `0..=1`, a spacing `>= 0`, a
+/// sides ornament with something to draw and no longer than its bound.
+fn ring_layout(layout: &RingLayoutStyle) -> Result<(), String> {
+    if let Some(span) = layout.span {
+        named("span", bounds::check_unit_interval(span.get()))?;
+    }
+    if let Some(spacing) = layout.spacing {
+        named("spacing", bounds::check_non_negative(spacing))?;
+    }
+    match &layout.sides {
+        Some(Sides::On { content, .. }) => named("sides", bounds::check_ornament(content)),
+        _ => Ok(()),
+    }
 }
 
 fn flow_style(style: &FlowStyle) -> Result<(), String> {
@@ -1292,6 +1310,15 @@ pub enum Bounded {
         /// One of them, as JSON text.
         item: &'static str,
     },
+    /// A text of `item`s, written for `#` inside a JSON string: from one
+    /// to `most` bytes of them hold — none is a text with nothing to
+    /// draw, which the bound refuses as well.
+    Length {
+        /// The most bytes it may be.
+        most: u32,
+        /// One of them, a character that draws.
+        item: &'static str,
+    },
 }
 
 /// One field `format/schema.md`'s bounds table bounds, as the
@@ -1395,6 +1422,10 @@ const POINTS_COUNT: Bounded = Bounded::Count {
     most: bounds::MAX_CONTROL_POINTS as u32,
     item: "[0.0, 0.0]",
 };
+const ORNAMENT: Bounded = Bounded::Length {
+    most: bounds::MAX_ORNAMENT_BYTES as u32,
+    item: "x",
+};
 
 /// Every bounded field of a node, a section, a span (under each kind of
 /// parent, whose unit it reads), a frame and its rings, a connector, its
@@ -1404,7 +1435,7 @@ const POINTS_COUNT: Bounded = Bounded::Count {
 /// structure's, which `corrupt` drives; the counts of palettes, theme
 /// variables and variants, verbs, edits and presentations are left to
 /// load_raw).
-pub static BOUNDED_FIELDS: [BoundedField; 93] = [
+pub static BOUNDED_FIELDS: [BoundedField; 107] = [
     BoundedField {
         name: "position x",
         needs: Needs::Nothing,
@@ -2154,6 +2185,120 @@ pub static BOUNDED_FIELDS: [BoundedField; 93] = [
         path: ".span.weight",
         value: WEIGHT,
     },
+    // #291's frame and ring layout keys, after the fields B8 seeded, so
+    // each seed of those still names the field it was written for.
+    BoundedField {
+        name: "frame span",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"span": #}"#,
+        path: ".frame.span",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "frame spacing",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"spacing": #}"#,
+        path: ".frame.spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "frame sides",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r##"{"sides": "#"}"##,
+        path: ".frame.sides",
+        value: ORNAMENT,
+    },
+    BoundedField {
+        name: "frame sides content",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r##"{"sides": {"content": "#"}}"##,
+        path: ".frame.sides.content",
+        value: ORNAMENT,
+    },
+    BoundedField {
+        name: "ring span",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"rings": [{"span": #}]}"#,
+        path: ".frame.rings[0].span",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "ring spacing",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r#"{"rings": [{"spacing": #}]}"#,
+        path: ".frame.rings[0].spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "ring sides",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r##"{"rings": [{"sides": "#"}]}"##,
+        path: ".frame.rings[0].sides",
+        value: ORNAMENT,
+    },
+    BoundedField {
+        name: "defaults frame span",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"span": #}"#,
+        path: ".frame.span",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "defaults frame spacing",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r#"{"spacing": #}"#,
+        path: ".frame.spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "defaults frame sides",
+        needs: Needs::Defaults,
+        key: "frame",
+        template: r##"{"sides": "#"}"##,
+        path: ".frame.sides",
+        value: ORNAMENT,
+    },
+    BoundedField {
+        name: "defaults ring span",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r#"{"span": #}"#,
+        path: ".ring.span",
+        value: float(UNIT, unit),
+    },
+    BoundedField {
+        name: "defaults ring spacing",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r#"{"spacing": #}"#,
+        path: ".ring.spacing",
+        value: float(NON_NEGATIVE, non_negative),
+    },
+    BoundedField {
+        name: "defaults ring sides",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r##"{"sides": "#"}"##,
+        path: ".ring.sides",
+        value: ORNAMENT,
+    },
+    BoundedField {
+        name: "defaults ring sides content",
+        needs: Needs::Defaults,
+        key: "ring",
+        template: r##"{"sides": {"content": "#"}}"##,
+        path: ".ring.sides.content",
+        value: ORNAMENT,
+    },
 ];
 
 /// `value` as a JSON number: its shortest form when finite; past the
@@ -2265,6 +2410,12 @@ pub fn bounded(
             let count = integer_near(choices, [0, most]);
             let items = vec![item; count as usize].join(", ");
             (field.template.replace('#', &items), count <= most)
+        }
+        Bounded::Length { most, item } => {
+            let count = integer_near(choices, [0, most / item.len() as u32]);
+            let text = item.repeat(count as usize);
+            let bytes = text.len() as u32;
+            (field.template.replace('#', &text), (1..=most).contains(&bytes))
         }
     };
     let node = &mut nodes[k];

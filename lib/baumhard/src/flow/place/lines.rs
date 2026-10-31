@@ -451,6 +451,38 @@ pub(crate) fn place_lines(
     }
 }
 
+/// The glyphs of each of `run`'s two lines as [`place_lines`] parts it
+/// (ruling R27), uncut: ranges of glyph indices, the parting whitespace
+/// and each line's outer whitespace left out, an empty range for a line
+/// with nothing on it. What a frame's `Once` or `Spread` lines hold, laid
+/// along their diagonal halves, which R27's level span does not limit
+/// (ruling R34).
+///
+/// Cost: the two halves ([`frame_halves`]) and the parting, O(clusters).
+pub(crate) fn line_partition(
+    run: &ShapedRun,
+    outline: &Outline,
+    fit: &FitMode,
+    flow: &ResolvedText,
+) -> [Range<usize>; 2] {
+    let halves = frame_halves(outline, table_spacing(run, fit, flow));
+    let spans = [0, 1].map(|k| {
+        let (path, span) = &halves[k];
+        path.at(span.end).0.x - path.at(span.start).0.x
+    });
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
+    part(&clusters, spans).map(|range| {
+        let line = &clusters[range];
+        match (
+            line.iter().map(|c| c.glyphs.start).min(),
+            line.iter().map(|c| c.glyphs.end).max(),
+        ) {
+            (Some(start), Some(end)) => start..end,
+            _ => 0..0,
+        }
+    })
+}
+
 /// `run` reshaped at `scale`, the size `Fit` settled on, or `None` at
 /// scale 1. The scale was found on the run's own advances times each
 /// glyph's [`size_factor`]; should the reshape lay a line longer than
@@ -503,7 +535,8 @@ fn fit_reshape(
 /// Returns whether any copy was placed; `laid_on` gains the half each
 /// copy's steps are on.
 ///
-/// Cost: a lay per copy, and per side a bounded number of measures.
+/// Cost: a lay per copy, and per side a measure per copy before the
+/// line and [`CHORD_ROUNDS`] more; at most [`MAX_PLACED_GLYPHS`] glyphs.
 fn fill(
     lines: &Lines<'_>,
     copy: &[Cluster],
@@ -551,9 +584,20 @@ fn fill(
             continue;
         }
         // Before it: as many copies as fit between the span's start and
-        // the line, laid so the last ends against the line.
+        // the line, laid so the last ends against the line — counted one
+        // copy on from the last, no more than the placement's glyph
+        // budget holds, and stopping at a copy that moves nowhere (its
+        // steps lost below an `f32`'s precision, far from the origin).
+        let per_copy = copy.iter().map(|c| c.glyphs.len()).sum::<usize>().max(1);
+        let budget = MAX_PLACED_GLYPHS.saturating_sub(out.glyphs.len()) / per_copy;
         let mut count = 0;
-        while reach(span.start, count + 1) <= room_before {
+        let mut end = span.start;
+        while count < budget {
+            let next = reach(end, 1);
+            if !(next > end && next <= room_before) {
+                break;
+            }
+            end = next;
             count += 1;
         }
         if count > 0 {

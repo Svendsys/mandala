@@ -68,13 +68,13 @@ impl Curve {
     /// how an arc-length table picks its sample count. O(1).
     ///
     /// `NaN` when any leg's length is not finite — a control point that
-    /// is not finite, or legs too long for `f32` — since such a curve has
-    /// no bound. (`f32::max` would drop a `NaN` leg and bound the rest.)
+    /// is not finite, or a leg longer than the largest `f32` — since such
+    /// a curve has no bound. (`f32::max` would drop a `NaN` leg and bound the rest.)
     pub fn speed_bound(&self) -> f32 {
         let bound = |degree: f32, legs: &[Vec2]| {
             let mut longest = 0.0_f32;
             for leg in legs {
-                let length = leg.length();
+                let length = crate::flow::path::length_of(*leg);
                 if !length.is_finite() {
                     return f32::NAN;
                 }

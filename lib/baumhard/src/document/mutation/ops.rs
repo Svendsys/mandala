@@ -32,8 +32,8 @@ use crate::document::bounds::{clamp_canvas_coord, clamp_font_size_pt, clamp_rel_
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteGroup, TextStyle};
 use crate::document::mutation::inherited::DocInherited;
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, Rgba, Shape,
-    Sides, Span, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId, Rgba,
+    Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::MutatorTree;
@@ -228,12 +228,12 @@ pub enum FrameOp {
 pub enum LayoutOp {
     /// Set how much of its half each of a two-line ring's lines covers;
     /// `None` inherits.
-    SetSpan(Option<Span>),
+    SetSpan(Option<LineSpan>),
     /// Set the ornament in the breaks between a two-line ring's lines;
     /// `None` inherits.
     SetSides(Option<Sides>),
-    /// Set the space a `repeat` ring adds between its copies; `None`
-    /// inherits.
+    /// Set the space a `repeat` ring adds between every two glyph steps;
+    /// `None` inherits.
     SetSpacing(Option<f32>),
 }
 

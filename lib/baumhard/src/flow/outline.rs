@@ -103,6 +103,23 @@ impl Outline {
         }
     }
 
+    /// The outline scaled by `factor` about its rectangle's center: its
+    /// rectangle and its corner radius alike. O(1).
+    pub fn scaled(&self, factor: f32) -> Outline {
+        let grow = |rect: Rect| {
+            let center = rect.center();
+            let size = rect.size * factor;
+            Rect::new(center - size * 0.5, size)
+        };
+        match *self {
+            Outline::RoundedRect { rect, radius } => Outline::RoundedRect {
+                rect: grow(rect),
+                radius: radius * factor,
+            },
+            Outline::Ellipse { rect } => Outline::Ellipse { rect: grow(rect) },
+        }
+    }
+
     /// The outline's support point in direction `dir`: its point farthest
     /// along `dir` — on an ellipse where the outward normal is `dir`, on
     /// a rounded rectangle the point of its corner arc facing `dir` (a

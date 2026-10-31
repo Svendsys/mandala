@@ -40,9 +40,10 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, StartPoint, Weight,
 };
+use crate::flow::place::{frame_halves, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_closed, place_on_open, shape_box, shape_run, Curve, FlowSpan,
-    PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
+    Outline, PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
 };
 use crate::font::fonts::{self, acquire_font_system_write, AppFont, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
@@ -134,12 +135,19 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
             &style,
             &mut fs,
         );
-        check_placed(&spans, &run, placed, "around a rectangle")?;
+        let whole = owes_whole(&run, &fit, frame_room(&path));
+        check_placed(&spans, &run, placed, whole, "around a rectangle")?;
         let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
         let placed = place_on_open(&run, &curve, &fit, 1.0, &style, &mut fs);
-        check_placed(&spans, &run, placed, "along a line")?;
+        check_placed(
+            &spans,
+            &run,
+            placed,
+            owes_whole(&run, &fit, curve_room(&curve)),
+            "along a line",
+        )?;
     }
-    check_placement(&run, &place_at_point(&run, Vec2::ZERO), "at a point")
+    check_placement(&run, &place_at_point(&run, Vec2::ZERO), false, "at a point")
 }
 
 /// Every property of the flow `bytes` choose: the flow_structured
@@ -244,7 +252,8 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                         &flow,
                         &mut fs,
                     );
-                    check_placed(&spans, &run, placed, "around an outline")
+                    let whole = owes_whole(&run, &fit, frame_room(&path));
+                    check_placed(&spans, &run, placed, whole, "around an outline")
                 }
                 2 => {
                     let points: Vec<Vec2> = (0..choices.below(3)).map(|_| any_vec2(choices)).collect();
@@ -255,9 +264,17 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                     let fit = fit(choices, &texts);
                     let spacing = any_f32(choices);
                     let placed = place_on_open(&run, &curve, &fit, spacing, &flow, &mut fs);
-                    check_placed(&spans, &run, placed, "along a curve")
+                    // `Spread` and `Fit` solve the gap; the spacing does not
+                    // enter (ruling R6, reading 7).
+                    let whole = owes_whole(&run, &fit, curve_room(&curve));
+                    check_placed(&spans, &run, placed, whole, "along a curve")
                 }
-                _ => check_placement(&run, &place_at_point(&run, any_vec2(choices)), "at a point"),
+                _ => check_placement(
+                    &run,
+                    &place_at_point(&run, any_vec2(choices)),
+                    false,
+                    "at a point",
+                ),
             }
         }
     }
@@ -435,6 +452,7 @@ fn check_placed(
     spans: &[FlowSpan<'_>],
     run: &ShapedRun,
     (replaced, placed): (Option<ShapedRun>, PlacedRun),
+    whole: bool,
     what: &str,
 ) -> Result<(), String> {
     let refers_to = match &replaced {
@@ -444,12 +462,90 @@ fn check_placed(
         }
         None => run,
     };
-    check_placement(refers_to, &placed, what)
+    check_placement(refers_to, &placed, whole, what)
+}
+
+/// The run's natural length, every cluster as long as the longer of its
+/// advance and the line height — what the longest step the walk takes
+/// for it is, a steep one — and so no shorter than any lay of it at no
+/// gap.
+fn natural_length(run: &ShapedRun) -> f32 {
+    let height = run.line_height.max(0.0);
+    run.glyphs
+        .iter()
+        .filter(|g| g.span != FILLER_SPAN)
+        .map(|g| g.advance.max(0.0).max(height))
+        .sum()
+}
+
+/// Whether `fit` on a path of room `room` owes the whole run: a
+/// `Spread` or `Fit` whose natural length fits — for `Fit` at its least
+/// scale — places every cluster, and cuts nothing. Owed of every path
+/// whose room is finite, as far from the origin as an `f32` reaches: a
+/// glyph's step lost below an `f32`'s precision there moves it nowhere,
+/// but it is placed.
+fn owes_whole(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
+    let length = natural_length(run);
+    let least = match fit {
+        FitMode::Spread => 1.0,
+        FitMode::Fit { min, .. } => *min,
+        _ => return false,
+    };
+    room.is_finite() && length.is_finite() && length * least <= room
+}
+
+/// The room a curve gives a run: its length, measured on a polyline
+/// through it, which is no longer than it.
+/// Summed in `f64`, so a curve longer than `√f32::MAX` measures what it
+/// is rather than infinite.
+fn curve_room(curve: &Curve) -> f32 {
+    const SAMPLES: usize = 256;
+    (0..SAMPLES)
+        .map(|k| {
+            let (a, b) = (k as f32 / SAMPLES as f32, (k + 1) as f32 / SAMPLES as f32);
+            (curve.point(b) - curve.point(a)).as_dvec2().length()
+        })
+        .sum::<f64>() as f32
+}
+
+/// The room a frame round `outline` gives a run: the narrower of the
+/// level spans R27 sizes its two lines against, which each half of the
+/// outline holds, so that the whole run fits one line there.
+fn frame_room(outline: &Outline) -> f32 {
+    frame_halves(outline, MIN_TABLE_SPACING)
+        .iter()
+        .map(|(path, span)| path.at(span.end).0.x - path.at(span.start).0.x)
+        .fold(f32::INFINITY, f32::min)
 }
 
 /// Every placed glyph is finite, names a glyph of `run`, and there are
-/// at most [`MAX_PLACED_GLYPHS`].
-pub fn check_placement(run: &ShapedRun, placed: &PlacedRun, what: &str) -> Result<(), String> {
+/// at most [`MAX_PLACED_GLYPHS`]. With `whole` — a `Spread` or `Fit`
+/// whose natural length fits its path (`owes_whole`) — nothing is cut:
+/// every glyph of the run that draws (not a space, not a filler's) is
+/// placed, and the placement is not truncated. A gap solved past every
+/// `f32` that the walk then cut silently is caught here.
+pub fn check_placement(run: &ShapedRun, placed: &PlacedRun, whole: bool, what: &str) -> Result<(), String> {
+    if whole {
+        if placed.truncated {
+            return Err(format!("{what}: its natural length fits, and it was cut"));
+        }
+        let mut drawn: Vec<bool> = vec![false; run.glyphs.len()];
+        for glyph in &placed.glyphs {
+            if let Some(seen) = drawn.get_mut(glyph.glyph as usize) {
+                *seen = true;
+            }
+        }
+        if let Some(missing) = run
+            .glyphs
+            .iter()
+            .zip(&drawn)
+            .position(|(g, seen)| !seen && !g.blank && g.span != FILLER_SPAN)
+        {
+            return Err(format!(
+                "{what}: its natural length fits, and glyph {missing} was not placed"
+            ));
+        }
+    }
     if placed.glyphs.len() > MAX_PLACED_GLYPHS {
         return Err(format!("{what}: {} glyphs placed", placed.glyphs.len()));
     }

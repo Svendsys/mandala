@@ -554,7 +554,7 @@ impl<'de> Deserialize<'de> for FitDto<'_> {
 
 /// How much of its half each line of a frame's ring covers: `"natural"`,
 /// `"whole"`, or a number, which the loader holds to `0..=1`
-/// ([`Span`](crate::document::values::Span)). The saver writes `0` and
+/// ([`LineSpan`](crate::document::values::LineSpan)). The saver writes `0` and
 /// `1` as their names.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum LineSpanDto {

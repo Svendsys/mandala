@@ -20,7 +20,7 @@
 
 use crate::document::resolve::{BorderPoint, ResolvedText};
 use crate::document::values::{
-    Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, Sides, Span, StartPoint, Weight,
+    Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, Sides, StartPoint, Weight,
 };
 use crate::font::fonts::AppFont;
 
@@ -103,10 +103,10 @@ pub struct BuiltInFrame {
     /// The first ring's distance from the outline.
     pub inset: f32,
     /// How much of its half each of a two-line ring's lines covers.
-    pub span: Span,
+    pub span: LineSpan,
     /// The ornament in the breaks between a two-line ring's lines.
     pub sides: Sides,
-    /// The space a `repeat` ring adds between its copies.
+    /// The space a `repeat` ring adds between every two glyph steps.
     pub spacing: f32,
 }
 
@@ -218,7 +218,7 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         inset: 0.0,
         // #291 (ruling R32): each line over its whole half, no ornament
         // in the breaks, a ring's copies as the font sets them.
-        span: Span::WHOLE,
+        span: LineSpan::WHOLE,
         sides: Sides::Off,
         spacing: 0.0,
     },

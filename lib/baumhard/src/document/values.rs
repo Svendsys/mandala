@@ -276,23 +276,23 @@ pub enum FitMode {
 /// How much of its half each line of a frame's two-line ring covers
 /// (#291, rulings R32 and R33): `0.0` its natural width — its font's own
 /// letter gap, centered on its apex — up to `1.0` the whole half, short
-/// of each junction by the clearance R33.1 keeps. In between, each end of the line moves by arc
-/// length from its natural place toward its half's junction in
-/// proportion. A `repeat` ring ignores it. In range by construction:
-/// [`Span::new`] refuses anything outside `0.0..=1.0` (and a number that
-/// is not one).
+/// of each junction by the clearance R33.1 keeps. In between, each end
+/// of the line moves by arc length from its natural place toward its
+/// place at whole, in proportion. A `repeat` ring ignores it. In range
+/// by construction: [`LineSpan::new`] refuses anything outside
+/// `0.0..=1.0` (and a number that is not one).
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Span(f32);
+pub struct LineSpan(f32);
 
-impl Span {
+impl LineSpan {
     /// The line at its natural width: `"natural"`.
-    pub const NATURAL: Span = Span(0.0);
+    pub const NATURAL: LineSpan = LineSpan(0.0);
     /// The whole half: `"whole"`, the built-in.
-    pub const WHOLE: Span = Span(1.0);
+    pub const WHOLE: LineSpan = LineSpan(1.0);
 
     /// `value` as a span, or `None` outside `0.0..=1.0`. O(1).
-    pub fn new(value: f32) -> Option<Span> {
-        (0.0..=1.0).contains(&value).then_some(Span(value))
+    pub fn new(value: f32) -> Option<LineSpan> {
+        (0.0..=1.0).contains(&value).then_some(LineSpan(value))
     }
 
     /// The fraction, `0.0..=1.0`. O(1).

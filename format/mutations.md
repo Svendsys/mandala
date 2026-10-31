@@ -848,7 +848,7 @@ in `snake_case`, beside the same comparators as above:
 | `start_at`, `gap`, `inset` | number | frame |
 | `direction` | `"clockwise"`, `"counter_clockwise"` | frame |
 | `fit` | `"repeat"`, `"spread"`, `{"once": {"filler": …}}`, `{"fit": {"min": n, "max": n}}` | frame, ring, connector, link |
-| `spacing` | number | connector, link |
+| `spacing` | number | frame, ring, connector, link |
 | `anchor_from`, `anchor_to` | `"auto"`, `"top"`, `"right"`, `"bottom"`, `"left"` | connector, link |
 | `link_kind` | `"line"`, `"portal"` | link |
 | `label_t` | number | label |

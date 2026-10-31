@@ -131,8 +131,17 @@ pub enum BoundError {
         /// How many are allowed.
         max: usize,
     },
-    /// An empty text, where one with something to draw is required.
+    /// A text with nothing to draw — empty, or only whitespace, line
+    /// breaks and zero-width characters — where one with something to
+    /// draw is required.
     EmptyText,
+    /// A text longer than the bound allows, in bytes.
+    TooLong {
+        /// How long it is.
+        len: usize,
+        /// How long it may be.
+        max: usize,
+    },
 }
 
 impl std::fmt::Display for BoundError {
@@ -162,7 +171,10 @@ impl std::fmt::Display for BoundError {
                 "{value} is not a weight: {MIN_WEIGHT}..={MAX_WEIGHT} in steps of {WEIGHT_STEP}"
             ),
             BoundError::TooMany { count, max } => write!(f, "{count} items, at most {max} allowed"),
-            BoundError::EmptyText => f.write_str("the text is empty"),
+            BoundError::EmptyText => f.write_str("the text has nothing to draw"),
+            BoundError::TooLong { len, max } => {
+                write!(f, "the text is {len} bytes long, at most {max} allowed")
+            }
         }
     }
 }
@@ -274,11 +286,27 @@ pub fn check_unit_interval(value: f32) -> Result<f32, BoundError> {
     in_closed(value, 0.0, 1.0)
 }
 
+/// The longest a frame's [`Sides`](crate::document::values::Sides)
+/// ornament may be, in bytes: one copy is laid many times round each
+/// junction, every glyph of it solved against the last, so a long one
+/// is costly long before it is useful.
+pub const MAX_ORNAMENT_BYTES: usize = 256;
+
 /// Check a frame's [`Sides`](crate::document::values::Sides) ornament:
-/// one copy's text, which must not be empty — a break holds at least one
-/// copy, and an empty one is none (#291, ruling R33.1). O(1).
+/// one copy's text, which must have something to draw — a character
+/// that is not whitespace (a line break included) nor zero-width — since
+/// a break holds at least one copy, and a copy of nothing is none (#291,
+/// ruling R33.1); and at most [`MAX_ORNAMENT_BYTES`] long. O(length).
 pub fn check_ornament(content: &str) -> Result<&str, BoundError> {
-    if content.is_empty() {
+    if content.len() > MAX_ORNAMENT_BYTES {
+        return Err(BoundError::TooLong {
+            len: content.len(),
+            max: MAX_ORNAMENT_BYTES,
+        });
+    }
+    let zero_width =
+        |c: char| matches!(c, '\u{200B}'..='\u{200F}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{034F}');
+    if content.chars().all(|c| c.is_whitespace() || zero_width(c)) {
         Err(BoundError::EmptyText)
     } else {
         Ok(content)
