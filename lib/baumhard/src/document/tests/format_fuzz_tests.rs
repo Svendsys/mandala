@@ -11,11 +11,12 @@ use crate::document::format::{load, save};
 use crate::document::ids::{get, Document, IdentIndex};
 use crate::document::tests::format_fuzz::{
     begun_nodes, bounded, bounds_hold, check_generated, check_load_bytes, check_loaded, check_refusal,
-    excerpt_length, kind_name, node_lines, oracle, path_resolves, reference, render, saved_text_is_clean,
-    BoundedField, Fault, MapSpec, NodeSpec, Spelled, BOUNDED_FIELDS,
+    derived_holds, excerpt_length, kind_name, node_lines, oracle, path_resolves, reference, render,
+    saved_text_is_clean, BoundedField, Fault, MapSpec, NodeSpec, Spelled, BOUNDED_FIELDS,
 };
 use crate::document::tests::format_support::fixture;
 use crate::document::values::{FitMode, FontSize};
+use crate::document::writer::Derived;
 use crate::util::tests::choices::Choices;
 
 use std::collections::BTreeMap;
@@ -402,7 +403,34 @@ fn changed(
             _ => None,
         })
         .collect();
-    Document::from_loaded(tree, doc.definitions().clone(), index, highest).unwrap()
+    let derived = Derived::scan(&tree, doc.definitions());
+    Document::from_loaded(tree, doc.definitions().clone(), index, highest, derived).unwrap()
+}
+
+/// The derived-state property holds on a loaded fixture with links,
+/// and catches each way the loader's gathering could drift from the
+/// tree: a link left out of the index, one element miscounted, one byte
+/// of text miscounted.
+#[test]
+fn test_the_derived_property_finds_what_the_loader_miscounted() {
+    let doc = load(fixture("full")).unwrap();
+    assert_eq!(derived_holds(&doc), Ok(()));
+    assert!(
+        !doc.derived.incoming.is_empty(),
+        "precondition: the fixture has links"
+    );
+    let mut unlinked = doc.clone();
+    unlinked.derived.incoming.clear();
+    let mut miscounted = doc.clone();
+    miscounted.derived.budget.elements += 1;
+    let mut misread = doc.clone();
+    misread.derived.budget.text -= 1;
+    for (name, drifted) in [("index", unlinked), ("elements", miscounted), ("text", misread)] {
+        assert!(
+            derived_holds(&drifted).is_err(),
+            "{name}: the property sees the drift"
+        );
+    }
 }
 
 #[test]

@@ -11,7 +11,7 @@
 //! as the next target. So an edit is an ordered list of steps, each of
 //! which builds its [`DocWalk`](crate::document::mutation::step::DocWalk)
 //! — a mutator tree and its anchors — from the document as it stands
-//! when its turn comes. The writer (V1-B4) runs every step of a request
+//! when its turn comes. [The writer](crate::document::writer) runs every step of a request
 //! on **one** journal builder, so the request is one journal, one history
 //! entry, and all or nothing: a step that fails, or whose walk fails,
 //! abandons the builder and the document is as it was.

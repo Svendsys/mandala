@@ -401,3 +401,86 @@ pub fn do_document_deep_chain_resolves_at_the_leaf() {
         "the leaf's binding walk reads each node above it once"
     );
 }
+
+#[test]
+fn test_document_deep_chain_through_the_writer() {
+    do_document_deep_chain_through_the_writer();
+}
+
+/// The writer over a chain as deep as memory allows, through
+/// `Document::apply`: a link from the other root node to the leaf, then
+/// a subtree as deep again inserted below the leaf — every one of its
+/// nodes given an ident, the top first — then the whole chain deleted,
+/// which takes the link into the leaf with it, found through the
+/// incoming-link index, and names every element it removed; each undone
+/// and redone. No step recurses or climbs per level: the idents, the
+/// removed addresses and the indexes all walk the journal.
+pub fn do_document_deep_chain_through_the_writer() {
+    use crate::document::element::LinkData;
+    use crate::document::values::LinkKind;
+    use crate::document::writer::{ChangeSource, EditRequest};
+    let mut chain = chain();
+    let (top, leaf, other) = (chain.nodes[0], chain.leaf(), chain.other);
+    let link = DocElement::Link(LinkData {
+        to: leaf,
+        kind: LinkKind::Line,
+        path: path_data(),
+    });
+    let insert = |subtree, at: NodeId| {
+        let mutator = DocMutatorTree::new_with(Mutator::new_structure(
+            StructOp::Insert {
+                subtree,
+                at: Placement::Last,
+            },
+            BranchKey::new(DocKind::Node, 0),
+        ));
+        EditRequest::new(
+            vec![DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(vec![at])))],
+            "insert",
+        )
+    };
+    let doc = &mut chain.doc;
+    doc.apply(insert(Subtree::leaf(link), other), ChangeSource::Action)
+        .unwrap();
+    let first = doc.next_ident().unwrap();
+    doc.apply(insert(deep_node_subtree(), leaf), ChangeSource::Action)
+        .unwrap();
+    let below = doc
+        .children(leaf)
+        .find(|&id| doc.get(id).map(DocElement::kind) == Some(DocKind::Node))
+        .expect("the subtree is below the leaf");
+    let ident_of = |doc: &Document, id: NodeId| doc.get(id).and_then(DocElement::as_node).map(|n| n.ident);
+    assert_eq!(ident_of(doc, below), Some(first), "the subtree's top first");
+    assert_eq!(
+        doc.next_ident().map(|ident| ident.0 - first.0),
+        Some(DEEP as u32),
+        "every node of the subtree has its own"
+    );
+    doc.take_changes();
+
+    let elements = top.descendants(doc.tree().arena()).count();
+    let steps = crate::document::mutation::compose::delete(doc, &[top]).unwrap();
+    doc.apply(EditRequest::new(steps, "delete"), ChangeSource::Action)
+        .unwrap();
+    assert!(
+        doc.children(other)
+            .all(|id| doc.get(id).map(DocElement::kind) != Some(DocKind::Link)),
+        "the link into the deleted chain is gone"
+    );
+    let records = doc.take_changes();
+    assert_eq!(
+        records[0].removed.len(),
+        elements + 1,
+        "every element removed has its address: the chain's, and the link"
+    );
+    doc.undo().unwrap();
+    assert_eq!(
+        doc.node_by_ident(first),
+        Some(below),
+        "the deep subtree is back, its idents with it"
+    );
+    assert_eq!(doc.incoming_links(leaf).len(), 1, "and the link into the leaf");
+    doc.redo().unwrap();
+    assert_eq!(doc.node_by_ident(first), None);
+    assert!(doc.incoming_links(leaf).is_empty());
+}

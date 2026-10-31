@@ -1410,8 +1410,9 @@ naming nothing of the model it replaces.
 Every change a document can undergo, as the engine's payload for the
 document (V1-B3, #237). Every path that changes a map — actions, the
 console, IPC, drags, text editing, edits, presentations, verbs — builds
-mutator trees from this vocabulary and nothing else; the writer that
-applies them with history is V1-B4.
+mutator trees from this vocabulary and nothing else, and the
+[writer](#the-documents-writer--documentapply-editrequest-transaction-changerecord)
+applies them with history.
 
 - **`DocMutation`** has one payload per kind (`Node(NodeOp)`,
   `Span(SpanOp)`, `Path(PathOp)` for connectors and links, `Cap(TextOp)`
@@ -1447,6 +1448,55 @@ applies them with history is V1-B4.
   nothing.
 
 `lib/baumhard/src/document/mutation/`.
+
+### The document's writer — `Document::apply`, `EditRequest`, `Transaction`, `ChangeRecord`
+
+**The only way a document changes after it is loaded** (design §8,
+§9; V1-B4, #238). Every change is an `EditRequest` — the ordered
+`DocStep`s of one change and a label — declared by a `ChangeSource`
+(`Action`, `Console`, `Ipc`, `Input`, `Edit`, `Verb`; `Undo`, `Redo`
+and `Presentation` are the history's and the presentation layer's own,
+and a request cannot declare them). Nothing outside `document` holds a
+`&mut` to the tree or an element; `util::document_surface` holds every
+`pub` item there to handing none out.
+
+- **`apply`** runs a request's steps on one journal builder, then adds
+  the writer's own steps to the same builder: every inserted node is
+  given the next `NodeIdent` (never past `MAX_NODE_IDENT`, never
+  issued twice), and every link left leading into a removed subtree is
+  removed — found through the document's index of incoming links,
+  which every journal moves, never by a scan. The closed journal is
+  judged once (`validate_applied`) and held to wasm32's element and
+  text budget; any failure leaves the document byte-identical. The
+  journal becomes one history entry and advances the `Revision`.
+- **Undo and redo** revert and replay an entry's journals, newest first
+  and oldest first; nothing is evaluated again, and there is no other
+  undo representation. The history is bounded (`DEFAULT_HISTORY_LIMIT`,
+  50, D18); a journal that leaves it — off the end, or with the redo
+  branch a new change clears — is discarded, which frees the subtrees
+  it held out of the tree. `is_dirty` compares the history position
+  with the saved one by identity, so undoing back to the saved state is
+  clean and a different change of the same length is not.
+- **Transactions** (`begin`, `stage`, `apply_in`, `interpolate`,
+  `commit`, `cancel`) are live interaction: a stage replaces the one
+  before it, so a drag stages the whole offset every frame and the
+  document is exact at each; a base call (`apply_in`) stays across
+  stages, so the node an editor session creates keeps its id; the
+  commit is one entry. One is open at a time (D28): an interactive one
+  refuses every other `apply` and `begin`, an animated one is
+  fast-forwarded to its end and committed first, and an undo or a redo
+  cancels whichever is open. `save_json` writes the committed state.
+- **The change feed** (`take_changes`) is one `ChangeRecord` per change
+  — its source, the revision, every element it touched with how
+  (`Touch`), and the address (`RemovedAddress`: the owning node's
+  ident, the kind, the channel, the index among its siblings) of each
+  element it took out of the tree. The projector (V1-B7) and IPC's
+  event stream (V1-E2) read it; neither diffs anything.
+- **One funnel.** Every call that changes the tree runs through one
+  private method, `mutate`, where the presentation layer (V1-D2) will
+  revert and re-apply around each change.
+
+`lib/baumhard/src/document/writer/`.
 
 ### TextFlow — `FlowSpan`, `ShapedRun`, `ShapedBox`, `PlacedRun`, `Outline`, `Curve`
 

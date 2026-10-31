@@ -16,6 +16,8 @@ use baumhard::document::tests::mutation_validate_tests::*;
 use baumhard::document::tests::resolve_tests::*;
 use baumhard::document::tests::shape_tests::*;
 use baumhard::document::tests::structure_tests::*;
+use baumhard::document::tests::writer_tests::*;
+use baumhard::document::tests::writer_transaction_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
 use baumhard::engine::tests::contains_tests::*;
@@ -1927,6 +1929,77 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_deep_chain_resolves_at_the_leaf", |b| {
         b.iter(do_document_deep_chain_resolves_at_the_leaf)
     });
+    c.bench_function("document_deep_chain_through_the_writer", |b| {
+        b.iter(do_document_deep_chain_through_the_writer)
+    });
+    c.bench_function("writer_refuses_a_request_whole", |b| {
+        b.iter(do_writer_refuses_a_request_whole)
+    });
+    c.bench_function(
+        "writer_undo_and_redo_are_exact_for_every_composite_builder",
+        |b| b.iter(do_writer_undo_and_redo_are_exact_for_every_composite_builder),
+    );
+    c.bench_function("writer_makes_one_entry_of_a_request_with_many_anchors", |b| {
+        b.iter(do_writer_makes_one_entry_of_a_request_with_many_anchors)
+    });
+    c.bench_function("writer_dirty_is_the_saved_state_not_a_count", |b| {
+        b.iter(do_writer_dirty_is_the_saved_state_not_a_count)
+    });
+    c.bench_function("writer_history_keeps_its_limit_and_frees_what_leaves_it", |b| {
+        b.iter(do_writer_history_keeps_its_limit_and_frees_what_leaves_it)
+    });
+    c.bench_function("writer_removes_the_links_into_what_a_request_removes", |b| {
+        b.iter(do_writer_removes_the_links_into_what_a_request_removes)
+    });
+    c.bench_function("writer_gives_inserted_nodes_fresh_idents", |b| {
+        b.iter(do_writer_gives_inserted_nodes_fresh_idents)
+    });
+    c.bench_function("writer_stops_at_the_last_ident", |b| {
+        b.iter(do_writer_stops_at_the_last_ident)
+    });
+    c.bench_function("writer_feed_names_what_each_change_touched", |b| {
+        b.iter(do_writer_feed_names_what_each_change_touched)
+    });
+    c.bench_function("writer_holds_edits_to_the_platform_budget", |b| {
+        b.iter(do_writer_holds_edits_to_the_platform_budget)
+    });
+    c.bench_function("writer_starts_from_what_the_loader_derived", |b| {
+        b.iter(do_writer_starts_from_what_the_loader_derived)
+    });
+    c.bench_function("writer_refuses_the_sources_a_change_cannot_declare", |b| {
+        b.iter(do_writer_refuses_the_sources_a_change_cannot_declare)
+    });
+    c.bench_function(
+        "writer_session_of_edits_undos_and_transactions_stays_exact",
+        |b| b.iter(do_writer_session_of_edits_undos_and_transactions_stays_exact),
+    );
+    c.bench_function("writer_apply_of_a_fifty_anchor_request", |b| {
+        b.iter(do_writer_apply_of_a_fifty_anchor_request)
+    });
+    c.bench_function("writer_thirty_stages_commit_as_one_apply_of_the_last", |b| {
+        b.iter(do_writer_thirty_stages_commit_as_one_apply_of_the_last)
+    });
+    c.bench_function("writer_cancel_restores_the_document", |b| {
+        b.iter(do_writer_cancel_restores_the_document)
+    });
+    c.bench_function("writer_one_transaction_at_a_time", |b| {
+        b.iter(do_writer_one_transaction_at_a_time)
+    });
+    c.bench_function("writer_undo_and_redo_cancel_an_open_transaction", |b| {
+        b.iter(do_writer_undo_and_redo_cancel_an_open_transaction)
+    });
+    c.bench_function("writer_base_keeps_a_created_node_across_stages", |b| {
+        b.iter(do_writer_base_keeps_a_created_node_across_stages)
+    });
+    c.bench_function("writer_saves_the_committed_state_with_a_stage_open", |b| {
+        b.iter(do_writer_saves_the_committed_state_with_a_stage_open)
+    });
+    c.bench_function("writer_an_animated_transaction_yields_by_finishing", |b| {
+        b.iter(do_writer_an_animated_transaction_yields_by_finishing)
+    });
+    c.bench_function("writer_records_every_stage_commit_and_cancel", |b| {
+        b.iter(do_writer_records_every_stage_commit_and_cancel)
+    });
     c.bench_function("document_compose_normalizes_in_log_steps", |b| {
         b.iter(do_document_compose_normalizes_in_log_steps)
     });
@@ -2569,6 +2642,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("structure_rebuilding_a_row_as_it_stood_before_is_one_pass", |b| {
         b.iter(do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass)
+    });
+    c.bench_function("journal_rows_before_are_the_rows_the_tree_had", |b| {
+        b.iter(do_journal_rows_before_are_the_rows_the_tree_had)
+    });
+    c.bench_function("journal_builder_names_what_it_recorded_and_created", |b| {
+        b.iter(do_journal_builder_names_what_it_recorded_and_created)
     });
     c.bench_function("structure_discard_frees_only_what_is_still_detached", |b| {
         b.iter(do_structure_discard_frees_only_what_is_still_detached)

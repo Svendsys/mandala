@@ -233,10 +233,35 @@ impl<E: TreeElement> JournalBuilder<E> {
         self.recorded.len()
     }
 
-    /// The nodes the builder has recorded, oldest first. For the
-    /// engine's tests. No allocation.
-    pub(in crate::engine) fn recorded_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+    /// The nodes the builder has recorded so far, oldest first: every
+    /// element a journaled call has applied to, moved, removed or
+    /// created, each once. What a caller that adds to a request before
+    /// it closes — a writer assigning what the request's inserts need,
+    /// or removing what its removals leave dangling — reads to find
+    /// where the request has been, in proportion to what it recorded.
+    /// A node that has left the tree since is still named: its slot is
+    /// held, by the builder, until the builder is closed or abandoned.
+    ///
+    /// No allocation; O(1) per node.
+    pub fn recorded_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.recorded.iter().map(|recorded| recorded.node)
+    }
+
+    /// The nodes the builder's structural commands have created so far,
+    /// oldest first: the root of each inserted subtree and the second
+    /// part of each split — not the nodes below an inserted root, which
+    /// are reached from it. A created node may have been removed again
+    /// since, by a later command of the same builder.
+    ///
+    /// No allocation; O(1) per node recorded.
+    pub fn created_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        // `record_created` alone records a node with no start position
+        // and as moved: the root also has no start position, but the
+        // engine never moves it.
+        self.recorded
+            .iter()
+            .filter(|recorded| recorded.at.is_none() && recorded.moved)
+            .map(|recorded| recorded.node)
     }
 
     /// Note that a journaled call on this builder is about to change
@@ -813,6 +838,56 @@ pub(in crate::engine) fn children_before<E>(
     steps
 }
 
+/// The rows of a tree as they stood before a journal, read without
+/// restoring that arrangement ([`Journal::rows_before`]).
+///
+/// [`Self::row`] rebuilds one row as [`Journal::revert`] would put it
+/// back — the children the journal left in place keep their order among
+/// themselves, and every moved node that stood under the parent goes
+/// back right after the sibling it was recorded behind — by the same
+/// function a journal's close names a removed subtree with. With the
+/// tree in the arrangement before the journal (after a revert, or a
+/// [`Journal::write_interpolated`] short of the snap point) a row is the
+/// tree's own.
+pub struct RowsBefore<'j, E: TreeElement> {
+    journal: &'j Journal<E>,
+    /// The nodes whose position changed, with the parent each stood
+    /// under before (`None`: out of the tree).
+    before_parent: FxHashMap<NodeId, Option<NodeId>>,
+    /// Those that stood under a parent, by that parent, each with the
+    /// sibling it followed.
+    moved_from: FxHashMap<NodeId, Vec<(NodeId, Option<NodeId>)>>,
+    /// Scratch for [`children_before`].
+    follows: FxHashMap<Option<NodeId>, NodeId>,
+}
+
+impl<E: TreeElement> RowsBefore<'_, E> {
+    /// The children of `parent` before the journal, front to back, into
+    /// `row` (cleared first). `tree` must be the journal's tree; a
+    /// `parent` not in its arena has an empty row.
+    ///
+    /// Cost: O(the row now + the moved nodes that stood in it); no
+    /// allocation beyond `row`'s growth.
+    pub fn row(&mut self, tree: &Tree<E>, parent: NodeId, row: &mut Vec<NodeId>) {
+        row.clear();
+        if tree.arena.get(parent).is_none() {
+            return;
+        }
+        if self.journal.side.get() == Side::Before {
+            row.extend(parent.children(&tree.arena));
+            return;
+        }
+        children_before(
+            &tree.arena,
+            parent,
+            &self.before_parent,
+            &self.moved_from,
+            &mut self.follows,
+            row,
+        );
+    }
+}
+
 /// Append to `row` the run of moved nodes behind `prev` in `follows`,
 /// each found by the one before it, taking them out of `follows`.
 fn place_run(
@@ -1253,6 +1328,37 @@ impl<E: TreeElement> Journal<E> {
             position.after.map(|at| at.parent),
         );
         (parents.0 != parents.1).then_some(parents)
+    }
+
+    /// A reader of the rows as they stood **before** the journal, for
+    /// a tree in the arrangement after it: what a caller that reports
+    /// where a removed element was — its place in the row it left —
+    /// needs once the tree has moved on. See [`RowsBefore`].
+    ///
+    /// Cost: one pass over the entries whose position changed, indexing
+    /// them by the parent they stood under; allocates that index.
+    pub fn rows_before(&self) -> RowsBefore<'_, E> {
+        let mut before_parent = FxHashMap::default();
+        let mut moved_from: FxHashMap<NodeId, Vec<(NodeId, Option<NodeId>)>> = FxHashMap::default();
+        for &i in &self.out {
+            let entry = &self.entries[i];
+            let Some(position) = entry.position else {
+                continue;
+            };
+            before_parent.insert(entry.node, position.before.map(|at| at.parent));
+            if let Some(at) = position.before {
+                moved_from
+                    .entry(at.parent)
+                    .or_default()
+                    .push((entry.node, at.prev));
+            }
+        }
+        RowsBefore {
+            journal: self,
+            before_parent,
+            moved_from,
+            follows: FxHashMap::default(),
+        }
     }
 
     /// Undo the journal: write every entry's before-image, newest entry

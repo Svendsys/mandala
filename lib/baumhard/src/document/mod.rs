@@ -23,8 +23,8 @@
 //! input it reads so the projection can track what depends on what.
 //!
 //! Every change a document can undergo is a [`mutation`](crate::document::mutation)
-//! (V1-B3); the writer that applies them, with history, is V1-B4. A
-//! document is built by [`format::load`](crate::document::format::load) — the one place a
+//! (V1-B3), and [the writer](crate::document::writer) is the one place
+//! they are applied, with history (V1-B4). A document is built by [`format::load`](crate::document::format::load) — the one place a
 //! file becomes a document — and written back by [`format::save`](crate::document::format::save).
 
 /// Every numeric bound the loader and the mutations enforce.
@@ -71,3 +71,6 @@ pub mod shape;
 pub mod tests;
 /// Typed values: colors, sizes, shapes, anchors, modes.
 pub mod values;
+/// The writer: apply, the history, transactions and the change feed —
+/// the only way a document changes after load.
+pub mod writer;
