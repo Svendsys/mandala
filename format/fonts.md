@@ -96,6 +96,19 @@ resolving: the matcher keeps a pinned face whatever its slant. A
 character no compiled face of the family holds is still drawn in a
 fallback face, as it must be.
 
+**Compiled families are authoritative by name too** (ruling R30.1).
+cosmic-text matches a pin by family name and weight alone, and
+`FontSystem::new` indexes the host's fonts before the compiled set is
+added, so a host face bearing a compiled family's name — the Noto Sans
+Hebrew, Noto Sans Devanagari, Noto Serif Tibetan or Noto Sans Egyptian
+Hieroglyphs a Debian or Ubuntu desktop installs — would be met first and
+drawn in place of the compiled one, and a map naming that family would
+resolve to the host's face (`AppFont::Any`). So once the compiled faces
+are registered, every other face bearing a compiled family's name is
+removed from the font system (`remove_shadowing_faces`). A pin then
+names the compiled faces on every machine; the host's other families
+stay, for fallback and for `font list`.
+
 ## Console verbs
 
 Three forms live under one `font` command:

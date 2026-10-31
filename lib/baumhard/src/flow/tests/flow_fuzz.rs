@@ -44,9 +44,7 @@ use crate::flow::{
     offset, outline, place_at_point, place_on_closed, place_on_open, shape_box, shape_run, Curve, FlowSpan,
     PlacedRun, Rect, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
 };
-use crate::font::fonts::{
-    self, acquire_font_system_write, app_font_by_family, loaded_families_iter, AppFont,
-};
+use crate::font::fonts::{self, acquire_font_system_write, AppFont, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
 
 /// The most characters a structured span holds: enough for a cut, a
@@ -266,9 +264,19 @@ fn plain_style() -> ResolvedText {
     }
 }
 
-/// Every face a span can name: the compiled-in families and `Any`.
+/// Every face a span can name: each compiled-in `AppFont`, in name
+/// order, and `Any`. Read from the compiled set itself rather than from
+/// the family index, which attributes a family to `Any` when a host face
+/// bearing its name comes first (the shadowing R30.1 removes): a sweep
+/// that drew its faces from the index would stop pinning that family at
+/// all, and so could not see a host face win its pin.
 fn faces() -> Vec<AppFont> {
-    let mut faces: Vec<AppFont> = loaded_families_iter().filter_map(app_font_by_family).collect();
+    let mut faces: Vec<AppFont> = COMPILED_FONT_ID_MAP
+        .iter()
+        .filter(|(_, ids)| !ids.is_empty())
+        .map(|(font, _)| *font)
+        .collect();
+    faces.sort_by_key(|font| format!("{font:?}"));
     faces.push(AppFont::Any);
     faces
 }

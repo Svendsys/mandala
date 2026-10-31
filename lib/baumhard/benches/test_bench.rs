@@ -1295,6 +1295,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("no_compiled_face_is_variable", |b| {
         b.iter(do_no_compiled_face_is_variable)
     });
+    c.bench_function(
+        "no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks",
+        |b| b.iter(do_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks),
+    );
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
         b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
     });

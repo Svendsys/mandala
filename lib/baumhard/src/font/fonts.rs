@@ -48,23 +48,83 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// guard on this thread makes the acquire panic at once, naming both
 /// sites, instead of hanging — but that never happens in practice
 /// because [`init`] runs `load_fonts` at startup, before any guard
-/// is held. Costs: one lock acquisition plus one `load_font_source`
-/// call per entry in [`FONT_SOURCES`].
+/// is held. Once they are registered, every other face that bears a
+/// compiled family's name is removed ([`remove_shadowing_faces`], ruling
+/// R30.1). Costs: one lock acquisition, one `load_font_source` call per
+/// entry in [`FONT_SOURCES`], and one walk over every face in the
+/// database.
 fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     debug!("Waiting for font-system write lock");
     let mut font_system = acquire_font_system_write("load_fonts");
+    // Where the host's faces are: indexed by `FontSystem::new`, ahead of
+    // the compiled set.
+    #[cfg(test)]
+    register_host_decoys(&mut font_system);
     let mut compiled_font_id_map = FxHashMap::default();
     do_for_all_sources(|x, source| {
         let font_id = font_system.db_mut().load_font_source(source.clone());
         debug!("loaded font {x:?}");
         compiled_font_id_map.insert(x, font_id);
     });
+    let removed = remove_shadowing_faces(&mut font_system, &compiled_font_id_map);
     #[cfg(test)]
-    register_host_decoys(&mut font_system);
+    let _ = SHADOWING_FACES_REMOVED.set(removed);
+    #[cfg(not(test))]
+    drop(removed);
     drop(font_system);
     debug!("Released font-system lock.");
     compiled_font_id_map
 }
+
+/// Remove from the database every face that is not compiled in and bears
+/// a compiled family's name (ruling R30.1 on #278), returning their
+/// PostScript names.
+///
+/// cosmic-text matches a pinned family by name and weight alone, and
+/// `FontSystem::new` indexes the host's fonts before the compiled set is
+/// added. So a host face with a compiled family's name and weight — the
+/// Noto Sans Hebrew or Noto Serif Tibetan a Debian or Ubuntu desktop
+/// installs — is met first and drawn in place of the compiled one, with
+/// its own metrics, unlike the browser. With it gone, a pin names the
+/// compiled faces on every machine. The host's other families stay, for
+/// fallback and for `font list`. Cost: one walk over every face in the
+/// database, and one removal per shadowing face.
+fn remove_shadowing_faces(
+    font_system: &mut FontSystem,
+    compiled: &FxHashMap<AppFont, TinyVec<[ID; 8]>>,
+) -> Vec<String> {
+    let compiled_ids: Vec<ID> = compiled.values().flat_map(|ids| ids.iter().copied()).collect();
+    let names: Vec<String> = compiled_ids
+        .iter()
+        .filter_map(|id| font_system.db().face(*id))
+        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+        .collect();
+    let shadowing: Vec<(ID, String)> = font_system
+        .db()
+        .faces()
+        .filter(|face| !compiled_ids.contains(&face.id))
+        .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
+        .map(|face| (face.id, face.post_script_name.clone()))
+        .collect();
+    for (id, name) in &shadowing {
+        debug!("removed {name}: it bears a compiled family's name");
+        font_system.db_mut().remove_face(*id);
+    }
+    shadowing.into_iter().map(|(_, name)| name).collect()
+}
+
+/// Test builds only: the faces [`remove_shadowing_faces`] removed when
+/// the compiled set was loaded, by PostScript name — what a test of the
+/// removal reads.
+#[cfg(test)]
+pub(crate) static SHADOWING_FACES_REMOVED: OnceLock<Vec<String>> = OnceLock::new();
+
+/// The compiled family a test build's decoy borrows the name of
+/// ([`register_host_decoys`]): SilhousTwo, whose space has no width, so a
+/// pin that reached the decoy (Galatia SIL's outlines, whose space has
+/// one) would show in every zero-width test.
+#[cfg(test)]
+pub(crate) const SHADOWING_DECOY: &str = "Decoy-SilhousTwo";
 
 /// The weights [`register_host_decoys`] gives a decoy face: every CSS
 /// weight but the regular and the bold, which compiled faces have (so a
@@ -84,15 +144,33 @@ pub(crate) const DECOY_FAMILY: &str = "Noto Sans";
 /// (`DejaVuSans-ExtraLight`). cosmic-text 0.19 keeps a pinned family only
 /// at a weight it has; without [`PinnedFamily::weight_for`], a span
 /// pinned to a single-weight family at another weight would be drawn in
-/// one of these. Registered once, with the compiled fonts, so every test
+/// one of these. Registered once, before the compiled fonts, so every test
 /// of the binary sees the same faces whatever runs first, and every
 /// machine the same decoys.
+///
+/// And (ruling R30.1) one face under a compiled family's name, at that
+/// family's weight: [`SHADOWING_DECOY`], SilhousTwo 400 upright,
+/// registered before the compiled set as a host face is indexed before
+/// it, so it comes first in the database. cosmic-text would draw every
+/// SilhousTwo pin in it; [`remove_shadowing_faces`] removes it, as it
+/// removes a real host face of that name.
 #[cfg(test)]
 fn register_host_decoys(font_system: &mut FontSystem) {
     use cosmic_text::fontdb::{FaceInfo, Language, Stretch, Style, Weight};
     let Some(source) = FONT_SOURCES.get(&AppFont::GalatiaSIL).cloned() else {
         return;
     };
+    font_system.db_mut().push_face_info(FaceInfo {
+        id: ID::dummy(),
+        source: source.clone(),
+        index: 0,
+        families: vec![("SilhousTwo".to_string(), Language::English_UnitedStates)],
+        post_script_name: SHADOWING_DECOY.to_string(),
+        style: Style::Normal,
+        weight: Weight(400),
+        stretch: Stretch::Normal,
+        monospaced: false,
+    });
     for weight in DECOY_WEIGHTS {
         font_system.db_mut().push_face_info(FaceInfo {
             id: ID::dummy(),

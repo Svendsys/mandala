@@ -816,17 +816,16 @@ fn test_a_font_this_build_has_no_face_for_is_refused() {
 #[test]
 fn test_a_system_font_is_not_a_face_the_file_can_name() {
     // An installed system font resolves to the fallback face on native,
-    // which has no name a file could write back. Which families a
-    // machine has is the machine's; the test finds one if there is one.
-    let system = crate::font::fonts::loaded_families_iter().find(|family| {
-        crate::font::fonts::app_font_by_family(family) == Some(crate::font::fonts::AppFont::Any)
-    });
-    let Some(family) = system else {
-        crate::util::test_skip::note_skipped(
-            "no system font is installed: the fallback-face arm is unreachable here",
-        );
-        return;
-    };
+    // which has no name a file could write back. The test build always
+    // has one: the decoy faces under "Noto Sans" (`fonts::DECOY_FAMILY`,
+    // ruling R30) stand in for a host font and are attributed
+    // `AppFont::Any`, as a host face is, so the arm is reached on every
+    // machine whatever it has installed.
+    let family = crate::font::fonts::loaded_families_iter()
+        .find(|family| {
+            crate::font::fonts::app_font_by_family(family) == Some(crate::font::fonts::AppFont::Any)
+        })
+        .expect("precondition: the test build's decoy family is a family no compiled face provides");
     rejects(
         &map_of(&format!(r#","font":{}"#, serde_json::to_string(family).unwrap())),
         "nodes[0].font",

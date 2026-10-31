@@ -730,7 +730,12 @@ What they hold, in short (each module's docs are the full list):
   face at every weight but 400 and 700 in cosmic-text's first common
   fallback family (`fonts::register_host_decoys`), so a span the
   matcher would let slip to a host face does so on every machine, not
-  only where the host happens to have one.
+  only where the host happens to have one; and one face under a
+  compiled family's name, ahead of the compiled set, which loading must
+  remove (R30.1). The suite's sweep, with the decoys, is the
+  deterministic half of R30's regression; the fuzz targets, which build
+  baumhard without them, are the other half, and what they can catch
+  depends on the host's fonts.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and
