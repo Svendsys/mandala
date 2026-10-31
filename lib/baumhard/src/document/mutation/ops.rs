@@ -33,7 +33,7 @@ use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteGroup, 
 use crate::document::mutation::inherited::DocInherited;
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, Rgba, Shape,
-    StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Sides, Span, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::MutatorTree;
@@ -216,8 +216,25 @@ pub enum FrameOp {
     SetGap(Option<f32>),
     /// Set the first ring's distance from the outline; `None` inherits.
     SetInset(Option<f32>),
+    /// Change how its rings are laid, which they inherit.
+    Layout(LayoutOp),
     /// Change its text style, which its rings inherit.
     Text(TextOp),
+}
+
+/// A change to how a ring is laid (#291): a frame's, which its rings
+/// inherit, or a ring's own.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LayoutOp {
+    /// Set how much of its half each of a two-line ring's lines covers;
+    /// `None` inherits.
+    SetSpan(Option<Span>),
+    /// Set the ornament in the breaks between a two-line ring's lines;
+    /// `None` inherits.
+    SetSides(Option<Sides>),
+    /// Set the space a `repeat` ring adds between its copies; `None`
+    /// inherits.
+    SetSpacing(Option<f32>),
 }
 
 /// A change to a ring. Its size is its text style's `size`, always
@@ -226,6 +243,8 @@ pub enum FrameOp {
 pub enum RingOp {
     /// Override the frame's fit mode; `None` inherits.
     SetFit(Option<FitMode>),
+    /// Override how the frame lays it, key by key.
+    Layout(LayoutOp),
     /// Set its channel among the frame's rings.
     SetChannel(usize),
     /// Change its text style, which its spans inherit.
@@ -478,10 +497,12 @@ impl Mutation<DocElement> for DocMutation {
                 FrameOp::SetFit(fit) => frame.style.fit.clone_from(fit),
                 FrameOp::SetGap(gap) => frame.style.gap = *gap,
                 FrameOp::SetInset(inset) => frame.style.inset = *inset,
+                FrameOp::Layout(op) => apply_layout(op, &mut frame.style.ring_layout),
                 FrameOp::Text(op) => apply_text(op, &mut frame.style.text, kind, inherited),
             },
             (DocMutation::Ring(op), DocElement::Ring(ring)) => match op {
                 RingOp::SetFit(fit) => ring.style.fit.clone_from(fit),
+                RingOp::Layout(op) => apply_layout(op, &mut ring.style.ring_layout),
                 RingOp::SetChannel(channel) => ring.channel = *channel,
                 RingOp::Text(op) => apply_text(op, &mut ring.style.text, kind, inherited),
             },
@@ -549,6 +570,16 @@ fn relative(style: &TextStyle, kind: DocKind, inherited: &DocInherited, f: impl 
         FontSize::Rel(clamp_rel_size(value))
     } else {
         FontSize::Pt(clamp_font_size_pt(value))
+    }
+}
+
+/// Apply `op` to a frame's or a ring's layout. O(1), or the length of
+/// the ornament a `SetSides` carries.
+fn apply_layout(op: &LayoutOp, layout: &mut crate::document::element::RingLayoutStyle) {
+    match op {
+        LayoutOp::SetSpan(span) => layout.span = *span,
+        LayoutOp::SetSides(sides) => layout.sides.clone_from(sides),
+        LayoutOp::SetSpacing(spacing) => layout.spacing = *spacing,
     }
 }
 

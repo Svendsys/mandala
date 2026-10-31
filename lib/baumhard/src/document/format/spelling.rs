@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The file's spellings of the values that are not plain JSON numbers,
-//! strings or booleans: a color, a weight, a fit mode, a start point,
-//! and an object whose keys the author chooses.
+//! strings or booleans: a color, a weight, a fit mode, a frame ring's
+//! span and sides, a start point, and an object whose keys the author
+//! chooses.
 //!
 //! Each is a type of its own with a hand-written `Deserialize` and
 //! `Serialize`, because each has more than one JSON shape (a color is
@@ -548,6 +549,137 @@ impl<'de> Deserialize<'de> for FitDto<'_> {
         }
 
         deserializer.deserialize_any(FitVisitor)
+    }
+}
+
+/// How much of its half each line of a frame's ring covers: `"natural"`,
+/// `"whole"`, or a number, which the loader holds to `0..=1`
+/// ([`Span`](crate::document::values::Span)). The saver writes `0` and
+/// `1` as their names.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum LineSpanDto {
+    /// `"natural"`: `0`.
+    Natural,
+    /// `"whole"`: `1`.
+    Whole,
+    /// A number, unchecked.
+    Fraction(f32),
+}
+
+impl Serialize for LineSpanDto {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            LineSpanDto::Natural => serializer.serialize_str("natural"),
+            LineSpanDto::Whole => serializer.serialize_str("whole"),
+            LineSpanDto::Fraction(value) => serializer.serialize_f32(*value),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LineSpanDto {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SpanVisitor;
+
+        impl Visitor<'_> for SpanVisitor {
+            type Value = LineSpanDto;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a span: `natural`, `whole` or a number from 0 to 1")
+            }
+
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<LineSpanDto, E> {
+                match text {
+                    "natural" => Ok(LineSpanDto::Natural),
+                    "whole" => Ok(LineSpanDto::Whole),
+                    _ => Err(E::invalid_value(Unexpected::Str(text), &self)),
+                }
+            }
+
+            fn visit_f64<E: de::Error>(self, value: f64) -> Result<LineSpanDto, E> {
+                Ok(LineSpanDto::Fraction(value as f32))
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<LineSpanDto, E> {
+                Ok(LineSpanDto::Fraction(value as f32))
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<LineSpanDto, E> {
+                Ok(LineSpanDto::Fraction(value as f32))
+            }
+        }
+
+        deserializer.deserialize_any(SpanVisitor)
+    }
+}
+
+/// The ornament in the breaks between a frame ring's lines: its text,
+/// `"✦"`; `{ "content": "✦", "color": … }`; or `false`, none. `true` is
+/// not a spelling: it says nothing of what to draw. The saver writes an
+/// object without a `color` as the bare string.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SidesDto<'a> {
+    /// `false`.
+    Off,
+    /// The ornament's text, in the ring's text color.
+    Text(Cow<'a, str>),
+    /// The ornament's text and its color.
+    Object(SidesObjectDto<'a>),
+}
+
+/// `{ "content": "✦", "color": "#c8c8c8" }`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SidesObjectDto<'a> {
+    /// One copy's text, unchecked.
+    pub content: Cow<'a, str>,
+    /// Its color; the ring's text color when absent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub color: Option<ColorDto<'a>>,
+}
+
+impl Serialize for SidesDto<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            SidesDto::Off => serializer.serialize_bool(false),
+            SidesDto::Text(content) => serializer.serialize_str(content),
+            SidesDto::Object(object) => object.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SidesDto<'_> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SidesVisitor;
+
+        impl<'de> Visitor<'de> for SidesVisitor {
+            type Value = SidesDto<'static>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("sides: an ornament's text, `{\"content\": …, \"color\": …}` or `false`")
+            }
+
+            fn visit_bool<E: de::Error>(self, value: bool) -> Result<SidesDto<'static>, E> {
+                if value {
+                    Err(E::invalid_value(Unexpected::Bool(true), &self))
+                } else {
+                    Ok(SidesDto::Off)
+                }
+            }
+
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<SidesDto<'static>, E> {
+                Ok(SidesDto::Text(Cow::Owned(text.to_owned())))
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<SidesDto<'static>, A::Error> {
+                SidesObjectDto::deserialize(de::value::MapAccessDeserializer::new(map)).map(SidesDto::Object)
+            }
+        }
+
+        deserializer.deserialize_any(SidesVisitor)
     }
 }
 

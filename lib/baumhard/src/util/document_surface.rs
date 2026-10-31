@@ -58,7 +58,9 @@ fn builder_references(source: &str) -> Vec<(usize, &'static str)> {
 const FORBIDDEN: &[&str] = &["mindmap", "gfx_structs", "parent_id", "edge_type", "parent_child"];
 
 /// The `String`-holding fields #235 allows on document elements, as
-/// `Type.field` (a tuple field by its index, an enum's by its variant).
+/// `Type.field` (a tuple field by its index, an enum's by its variant),
+/// and a frame's sides ornament, which #291 adds beside the `once`
+/// filler it stands in for on a frame.
 const ALLOWED_STRINGS: &[&str] = &[
     "FitMode::Once.filler",
     "FlowStyle.content",
@@ -66,6 +68,7 @@ const ALLOWED_STRINGS: &[&str] = &[
     "MapData.name",
     "PaletteData.name",
     "PortalEndStyle.content",
+    "Sides::On.content",
     "SpanData.text",
     "ThemeData.variables",
     "ThemeVariant.name",

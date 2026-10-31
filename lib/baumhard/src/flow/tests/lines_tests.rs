@@ -10,8 +10,8 @@
 
 use glam::Vec2;
 
-use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
-use crate::flow::place::{frame_halves, place_on_closed_traced, table_spacing, Trace, TracedLine};
+use crate::document::values::{FitMode, Percent, Shape};
+use crate::flow::place::{frame_halves, place_lines, table_spacing, Trace, TracedLine};
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{outline, Outline, PlacedRun, Rect, ShapedRun};
 
@@ -56,23 +56,9 @@ struct Frame {
 fn frame(text: &str, outline: &Outline, fit: &FitMode) -> Frame {
     let mut trace = Trace::default();
     let flow = style(12.0);
-    let start = StartPoint {
-        edge: Edge::Top,
-        at: 0.0,
-    };
     let (run, rescaled, placed, spacing) = with_fonts(|fs| {
         let run = real_run(text, &flow, fs);
-        let (rescaled, placed) = place_on_closed_traced(
-            &run,
-            outline,
-            start,
-            Direction::Clockwise,
-            fit,
-            false,
-            &flow,
-            fs,
-            Some(&mut trace),
-        );
+        let (rescaled, placed) = place_lines(&run, outline, fit, false, &flow, fs, Some(&mut trace));
         let spacing = table_spacing(&run, fit, &flow);
         (run, rescaled, placed, spacing)
     });
@@ -532,16 +518,10 @@ pub fn do_flow_lines_spread_sweeps_a_sharp_rect() {
         for n in (10..=60).step_by(2) {
             let run = crate::flow::tests::support::synthetic(&vec![w; n], 14.0);
             let mut trace = Trace::default();
-            let start = StartPoint {
-                edge: Edge::Top,
-                at: 0.5,
-            };
             let (_, placed) = with_fonts(|fs| {
-                place_on_closed_traced(
+                place_lines(
                     &run,
                     &shape,
-                    start,
-                    Direction::Clockwise,
                     &FitMode::Spread,
                     false,
                     &style(12.0),

@@ -10,12 +10,14 @@
 
 use crate::document::bounds;
 use crate::document::element::DocKind;
-use crate::document::element::{FlowStyle, FrameStyle, LabelStyle, PortalEndStyle, TextStyle};
+use crate::document::element::{
+    FlowStyle, FrameStyle, LabelStyle, PortalEndStyle, RingLayoutStyle, TextStyle,
+};
 use crate::document::format::dto::DirectionDto;
 use crate::document::format::from_dto::{Builder, LoadResult};
-use crate::document::format::spelling::{ColorDto, FitDto, StartDto, WeightDto};
+use crate::document::format::spelling::{ColorDto, FitDto, LineSpanDto, SidesDto, StartDto, WeightDto};
 use crate::document::place::Unit;
-use crate::document::values::Direction;
+use crate::document::values::{Direction, Sides, Span};
 
 /// A view of the five text-style keys.
 pub(crate) struct TextIn<'a> {
@@ -45,8 +47,20 @@ pub(crate) struct FrameIn<'a> {
     pub gap: Option<f32>,
     /// `inset`.
     pub inset: Option<f32>,
+    /// The layout keys.
+    pub layout: LayoutIn<'a>,
     /// The text-style keys.
     pub text: TextIn<'a>,
+}
+
+/// A view of the layout keys a frame, a ring and their defaults share.
+pub(crate) struct LayoutIn<'a> {
+    /// `span`.
+    pub span: Option<LineSpanDto>,
+    /// `sides`.
+    pub sides: Option<&'a SidesDto<'a>>,
+    /// `spacing`.
+    pub spacing: Option<f32>,
 }
 
 /// A view of a path's style keys.
@@ -117,7 +131,47 @@ impl Builder {
             },
             gap: self.opt_number("gap", frame.gap, bounds::check_non_negative)?,
             inset: self.opt_number("inset", frame.inset, bounds::check_non_negative)?,
+            ring_layout: self.ring_layout(frame.layout)?,
             text: self.text_style(frame.text, Unit::of_tier(DocKind::Frame))?,
+        })
+    }
+
+    /// A frame's or a ring's layout keys: a numeric `span` in `0..=1`, a
+    /// `sides` ornament that is not empty, a `spacing` `>= 0`. The
+    /// current path is the object that holds the keys.
+    pub(super) fn ring_layout(&mut self, layout: LayoutIn<'_>) -> LoadResult<RingLayoutStyle> {
+        let span = match layout.span {
+            None => None,
+            Some(LineSpanDto::Natural) => Some(Span::NATURAL),
+            Some(LineSpanDto::Whole) => Some(Span::WHOLE),
+            Some(LineSpanDto::Fraction(value)) => {
+                let value = self.number("span", value, bounds::check_unit_interval)?;
+                // In range: the check above holds it to `0..=1`.
+                Some(Span::new(value).unwrap_or(Span::WHOLE))
+            }
+        };
+        let sides = match layout.sides {
+            None => None,
+            Some(SidesDto::Off) => Some(Sides::Off),
+            Some(SidesDto::Text(content)) => Some(Sides::On {
+                content: self.bounded("sides", bounds::check_ornament(content))?.to_owned(),
+                color: None,
+            }),
+            Some(SidesDto::Object(object)) => Some(self.key("sides", |b| {
+                let content = b.bounded("content", bounds::check_ornament(&object.content))?;
+                Ok(Sides::On {
+                    content: content.to_owned(),
+                    color: match &object.color {
+                        Some(color) => Some(b.color("color", color)?),
+                        None => None,
+                    },
+                })
+            })?),
+        };
+        Ok(RingLayoutStyle {
+            span,
+            sides,
+            spacing: self.opt_number("spacing", layout.spacing, bounds::check_non_negative)?,
         })
     }
 

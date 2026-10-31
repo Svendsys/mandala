@@ -160,6 +160,7 @@ impl Lines<'_> {
             level: true,
             ornament: false,
             baseline: self.run.baseline(),
+            push: None,
         }
     }
 
@@ -326,7 +327,7 @@ impl Lines<'_> {
 /// `Fit`'s scale, a bounded bisection of arithmetic lays and one reshape;
 /// each line laid once, its centering or spreading a bounded number of
 /// lays more; a filler one reshape and a lay per copy.
-pub(super) fn place_lines(
+pub(crate) fn place_lines(
     run: &ShapedRun,
     outline: &Outline,
     fit: &FitMode,

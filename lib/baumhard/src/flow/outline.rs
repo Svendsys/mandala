@@ -102,6 +102,56 @@ impl Outline {
             Outline::Ellipse { .. } => 0.0,
         }
     }
+
+    /// The outline's support point in direction `dir`: its point farthest
+    /// along `dir` — on an ellipse where the outward normal is `dir`, on
+    /// a rounded rectangle the point of its corner arc facing `dir` (a
+    /// sharp rectangle's corner). Where a frame's two lines meet (#291,
+    /// ruling R33): the supports in `(−1, −1)` and `(1, 1)`. The center
+    /// for a `dir` of no length, or one not a number. O(1).
+    pub fn support(&self, dir: Vec2) -> Vec2 {
+        let rect = self.rect();
+        let center = rect.center();
+        let Some(unit) = dir.try_normalize() else {
+            return center;
+        };
+        match *self {
+            Outline::RoundedRect { .. } => {
+                let r = self.corner_radius();
+                let half = (rect.size * 0.5 - Vec2::splat(r)).max(Vec2::ZERO);
+                let corner = center + Vec2::new(half.x * unit.x.signum0(), half.y * unit.y.signum0());
+                corner + unit * r
+            }
+            Outline::Ellipse { .. } => {
+                let radii = rect.size * 0.5;
+                let stretched = radii * radii * unit;
+                let reach = (radii * unit).length();
+                if reach > 0.0 {
+                    center + stretched / reach
+                } else {
+                    center
+                }
+            }
+        }
+    }
+}
+
+/// `-1`, `0` or `1` by the sign of a number, `0` for zero and a number
+/// that is not one: which side of a corner a support direction faces.
+trait Signum0 {
+    fn signum0(self) -> f32;
+}
+
+impl Signum0 for f32 {
+    fn signum0(self) -> f32 {
+        if self > 0.0 {
+            1.0
+        } else if self < 0.0 {
+            -1.0
+        } else {
+            0.0
+        }
+    }
 }
 
 /// The outline of a node drawn in `rect` with `shape` (D11).

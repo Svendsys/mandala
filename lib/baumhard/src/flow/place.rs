@@ -115,7 +115,7 @@ use std::ops::Range;
 use glam::Vec2;
 
 use crate::document::resolve::ResolvedText;
-use crate::document::values::{Direction, FitMode, StartPoint};
+use crate::document::values::{Direction, FitMode, Rgba, Span, StartPoint};
 use crate::flow::curve::Curve;
 use crate::flow::outline::Outline;
 use crate::flow::path::ArcPath;
@@ -124,8 +124,9 @@ use crate::flow::span::{point_size, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{clamp_font_metric, FontSystemWriteGuard, MIN_FONT_SIZE_PT};
 use crate::font::FontSystem;
 
+pub(crate) mod halves;
 mod lines;
-pub(crate) use lines::frame_halves;
+pub(crate) use lines::{frame_halves, place_lines};
 
 /// The most steps [`PathWalk::runs_on`] probes past a text's end to find
 /// where the path stops running the last stretch's way: a path that long
@@ -149,6 +150,7 @@ pub(crate) fn box_step(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, Vec2) {
         level: false,
         ornament: false,
         baseline: 0.0,
+        push: None,
     };
     walk.step(s, w, h)
 }
@@ -167,7 +169,7 @@ const INK_STRIDES: usize = 64;
 /// The rounds [`PathWalk::ink_gap_at`] takes to bring the gap between two
 /// inks to what is owed, each solving the distance between their centers
 /// that leaves the gap the last round's left.
-const INK_TURNS: usize = 4;
+const INK_TURNS: usize = 12;
 
 /// How near the gap the box rule leaves between two inks must be to the
 /// gap owed for [`PathWalk::ink_gap_at`] to keep it, in points.
@@ -247,6 +249,51 @@ pub struct PlacedRun {
     /// copy is cut, or a filler that stops short of the end, is the mode
     /// working, not a truncation.
     pub truncated: bool,
+}
+
+/// How a frame's ring is laid, besides its fit (#291, rulings R32, R33,
+/// R33.1, R31): the resolved ring's `span`, `sides` and `spacing`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RingLayout {
+    /// How much of its half each line of a two-line ring covers: from
+    /// its natural width ([`Span::NATURAL`]) to its whole half
+    /// ([`Span::WHOLE`], the built-in). A `repeat` ring ignores it.
+    pub span: Span,
+    /// The ornament closing what a two-line ring's lines leave uncovered
+    /// round its junctions: its text and its color. `None` leaves those
+    /// parts empty. A `repeat` ring ignores it.
+    pub sides: Option<(String, Rgba)>,
+    /// A `repeat` ring's extra space between steps, canvas units (ruling
+    /// R31): `0.0` sets the ornament's copies as far apart as the font
+    /// and the ring's slack do. A two-line ring ignores it.
+    pub spacing: f32,
+}
+
+impl RingLayout {
+    /// The built-in layout: each line over its whole half, no sides, no
+    /// extra spacing.
+    pub fn whole() -> Self {
+        RingLayout {
+            span: Span::WHOLE,
+            sides: None,
+            spacing: 0.0,
+        }
+    }
+
+    /// Each line at its natural width (ruling R27's layout), no sides, no
+    /// extra spacing.
+    pub fn natural() -> Self {
+        RingLayout {
+            span: Span::NATURAL,
+            ..RingLayout::whole()
+        }
+    }
+}
+
+impl Default for RingLayout {
+    fn default() -> Self {
+        RingLayout::whole()
+    }
 }
 
 /// The tolerance a float compare against the path's length allows, so
@@ -590,6 +637,11 @@ struct PathWalk<'p> {
     /// Where the run's baseline sits below a box's top
     /// ([`ShapedRun::baseline`]): where an ornament's ink is in its box.
     baseline: f32,
+    /// The half size an ink is pushed off a closed path by
+    /// ([`ink_at`](Self::ink_at)), when not its own: a frame's side
+    /// ornaments are pushed as far as the text's mean ink, so they sit on
+    /// the text's own center line (#291, ruling R33.1).
+    push: Option<Vec2>,
 }
 
 impl PathWalk<'_> {
@@ -700,10 +752,11 @@ impl PathWalk<'_> {
     /// The center on the canvas of the ink of a glyph whose ink is `ink`
     /// (in its box's coordinates) set at `c` along the path (ruling R31):
     /// on the path there — pushed outward on a closed path by the
-    /// [`support`] of the ellipse its ink box bounds, along the normal of
-    /// the chord across its own reach, so the ink, not its box, clears a
-    /// side of the outline, and the push turns with the chord through a
-    /// sharp corner rather than jumping.
+    /// [`support`] of the ellipse its ink box bounds (or the walk's
+    /// [`push`](Self::push), when set), along the normal of the chord
+    /// across its own reach, so the ink, not its box, clears a side of the
+    /// outline, and the push turns with the chord through a sharp corner
+    /// rather than jumping.
     fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {
         let size = ink.max - ink.min;
         let (mut center, tangent) = self.path.at(c);
@@ -714,7 +767,7 @@ impl PathWalk<'_> {
             } else {
                 tangent
             };
-            center += support(self.path.outward(dir), size * 0.5);
+            center += support(self.path.outward(dir), self.push.unwrap_or(size * 0.5));
         }
         center
     }
@@ -782,9 +835,10 @@ impl PathWalk<'_> {
     /// half size of the ink of the glyph before, set at `from` — the
     /// distance between the two boxes (ruling R31). `natural`, the box
     /// rule's center, where that is within [`INK_TOLERANCE`]; otherwise
-    /// [`INK_TURNS`] rounds, each solving for the distance between the
-    /// two centers that leaves the gap the last round's centers left, so
-    /// the gap converges on `owed`.
+    /// up to [`INK_TURNS`] rounds, each solving for the distance between
+    /// the two centers that leaves the gap the last round's centers left,
+    /// so the gap converges on `owed`, stopping at the first round whose
+    /// gap is within the tolerance.
     ///
     /// The centers' distance, unlike the boxes' gap, never stands still
     /// as the glyph moves on — the gap does wherever one box slides past
@@ -794,20 +848,21 @@ impl PathWalk<'_> {
     /// continuously with the glyphs before it, as a ring's spacing solve
     /// needs ([`close_ring`]).
     ///
-    /// Cost: [`INK_TURNS`] solves ([`ink_distance_at`](Self::ink_distance_at)),
-    /// each a path lookup or two where the path runs straight.
+    /// Cost: at most [`INK_TURNS`] solves
+    /// ([`ink_distance_at`](Self::ink_distance_at)), each a path lookup or
+    /// two where the path runs straight.
     fn ink_gap_at(&self, (last, half): (Vec2, Vec2), from: f32, natural: f32, owed: f32, ink: Ink) -> f32 {
         let reach = half + (ink.max - ink.min) * 0.5;
         let gap_at = |center: f32| {
             let between = (self.ink_at(center, ink) - last).abs();
             (between.length(), (between - reach).max(Vec2::ZERO).length())
         };
-        if (gap_at(natural).1 - owed).abs() <= INK_TOLERANCE {
-            return natural;
-        }
         let mut center = natural;
         for _ in 0..INK_TURNS {
             let (distance, gap) = gap_at(center);
+            if (gap - owed).abs() <= INK_TOLERANCE {
+                break;
+            }
             center = self.ink_distance_at(last, owed + distance - gap, from, center, ink);
         }
         center
@@ -2044,11 +2099,21 @@ impl PathStretch {
 }
 
 /// Place `run` around the closed `path` (a frame ring), from `start`
-/// in `direction`, as `fit` says (#239 §5, §6). A ring in `Once`,
-/// `Spread` or `Fit` is text, set in two lines over the top and along
-/// the bottom (#291, ruling R27), and ignores `start` and `direction`;
-/// a `Repeat` ring is walked whole from `start`, every stretch read
-/// forward.
+/// in `direction`, as `fit` and `layout` say (#239 §5, §6).
+///
+/// A ring in `Once`, `Spread` or `Fit` is text, set in two lines (#291,
+/// ruling R27) and ignoring `start` and `direction`: R27 parts and sizes
+/// it, and each line runs along its half of the outline split on the
+/// diagonal (ruling R33) — the first from the top-left junction over
+/// the top and down the right side, the second from it down the left
+/// side and along the bottom — with even ink tracking (ruling R32). At
+/// [`Span::NATURAL`] a line is at its font's own gap, centered on its
+/// half's apex; above it, its ends move from there toward the
+/// junctions by `span`, each junction a visible break of two word gaps
+/// (ruling R33.1). `sides` closes what the lines leave round the
+/// junctions with an ornament.
+/// A `Repeat` ring is walked whole from `start`, every stretch read
+/// forward, `layout.spacing` more between its steps.
 ///
 /// With `outward`, each cluster is pushed off the outline by half its
 /// extent along the outward normal, so the ring sits outside the
@@ -2057,32 +2122,36 @@ impl PathStretch {
 /// "Fits" means the last cluster's step ends at or before the path's
 /// length: the start point is not reused.
 ///
-/// `flow` is the flow's own resolved style (sizes in points), read only
-/// to shape a `Once` filler (ruling R6). `fs` is the guard the caller
-/// holds; only `Fit` (reshaping at the fitted size) and `Once` with a
-/// filler shape anything, and nothing here acquires the font lock.
+/// `flow` is the flow's own resolved style (sizes in points), read to
+/// shape a `Once` filler (ruling R6) and a frame's sides. `fs` is the
+/// guard the caller holds; `Fit` (reshaping at the fitted size), a
+/// filler, sides and a line's ink measure shape or scale glyphs, and
+/// nothing here acquires the font lock.
 ///
 /// Returns the run the placement refers to when it is not `run` — the
-/// rescaled run for `Fit`, or `run` plus one shaped copy of the filler
-/// for `Once` — and the placement.
+/// rescaled run for `Fit`, `run` plus one shaped copy of a filler or a
+/// frame's side ornament, each a line of its own — and the placement.
 ///
 /// Cost: one arc-length path (O(1) for a rounded rectangle or a circle,
 /// a table for an ellipse); O(clusters placed) steps, each a handful of
 /// path lookups; `Spread` and `Fit` measure the run a bounded number of
 /// times more to solve their end condition, and a cut a logarithmic
-/// number; `Fit` and a filler shape once.
-#[allow(clippy::too_many_arguments)] // #239's signature, as amended by ruling R6.
+/// number; `Fit` and a filler shape once. A line along its half solves
+/// its tracking by bisection, and its junction clearance in a few
+/// rounds more (`halves::place_halves`).
+#[allow(clippy::too_many_arguments)] // #239's signature, as amended by rulings R6 and R32.
 pub fn place_on_closed(
     run: &ShapedRun,
     path: &Outline,
     start: StartPoint,
     direction: Direction,
     fit: &FitMode,
+    layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
     fs: &mut FontSystemWriteGuard,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    place_on_closed_traced(run, path, start, direction, fit, outward, flow, fs, None)
+    place_on_closed_traced(run, path, start, direction, fit, layout, outward, flow, fs, None)
 }
 
 /// [`place_on_closed`], filling `trace` with what the walk did: the
@@ -2094,17 +2163,23 @@ pub(crate) fn place_on_closed_traced(
     start: StartPoint,
     direction: Direction,
     fit: &FitMode,
+    layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
     fs: &mut FontSystemWriteGuard,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     if !matches!(fit, FitMode::Repeat) {
-        return lines::place_lines(run, path, fit, outward, flow, fs, trace);
+        return halves::place_halves(run, path, fit, layout, outward, flow, fs, trace);
     }
     let spacing = table_spacing(run, fit, flow);
     let arc = ArcPath::closed(path, start, direction, spacing);
-    place(run, &arc, true, fit, 0.0, outward, flow, fs, trace)
+    let gap = if layout.spacing.is_finite() {
+        layout.spacing.max(0.0)
+    } else {
+        0.0
+    };
+    place(run, &arc, true, fit, gap, outward, flow, fs, trace)
 }
 
 /// Place `run` along the open `curve` (a connector or a line link),
@@ -2307,6 +2382,7 @@ fn place(
         level: false,
         ornament: !run.glyphs.iter().any(|glyph| glyph.letter),
         baseline: run.baseline(),
+        push: None,
     };
     let walked = match fit {
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),

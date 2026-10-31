@@ -19,7 +19,9 @@
 //! today those draw at different sizes and in different colors.
 
 use crate::document::resolve::{BorderPoint, ResolvedText};
-use crate::document::values::{Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, StartPoint, Weight};
+use crate::document::values::{
+    Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, Sides, Span, StartPoint, Weight,
+};
 use crate::font::fonts::AppFont;
 
 /// A node's opacity when the file does not give one: fully opaque.
@@ -100,6 +102,12 @@ pub struct BuiltInFrame {
     pub gap: f32,
     /// The first ring's distance from the outline.
     pub inset: f32,
+    /// How much of its half each of a two-line ring's lines covers.
+    pub span: Span,
+    /// The ornament in the breaks between a two-line ring's lines.
+    pub sides: Sides,
+    /// The space a `repeat` ring adds between its copies.
+    pub spacing: f32,
 }
 
 /// [`BUILT_IN`]'s ring fields.
@@ -208,6 +216,11 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         // first sits on the outline.
         gap: 0.0,
         inset: 0.0,
+        // #291 (ruling R32): each line over its whole half, no ornament
+        // in the breaks, a ring's copies as the font sets them.
+        span: Span::WHOLE,
+        sides: Sides::Off,
+        spacing: 0.0,
     },
     ring: BuiltInRing {
         // Size: #235's table (amended: a ring's size is its text size,

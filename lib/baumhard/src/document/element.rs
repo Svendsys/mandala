@@ -25,7 +25,7 @@
 
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Rgba,
-    Shape, StartPoint, VerbId, Weight, ZoomWindow,
+    Shape, Sides, Span, StartPoint, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::element::TreeElement;
 use crate::font::fonts::AppFont;
@@ -318,8 +318,25 @@ pub struct FrameStyle {
     pub gap: Option<f32>,
     /// The distance of the first ring from the outline, in canvas units.
     pub inset: Option<f32>,
+    /// How its rings are laid, unless a ring overrides it.
+    pub ring_layout: RingLayoutStyle,
     /// Text defaults for its rings.
     pub text: TextStyle,
+}
+
+/// How a ring is laid besides its fit (#291, rulings R31, R32, R33,
+/// R33.1): the keys a ring, its frame, `defaults.ring` and
+/// `defaults.frame` share, each resolved along that chain on its own.
+/// Every field inherits when `None`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RingLayoutStyle {
+    /// How much of its half each of a two-line ring's lines covers.
+    pub span: Option<Span>,
+    /// The ornament in the breaks between a two-line ring's lines.
+    pub sides: Option<Sides>,
+    /// The space a `repeat` ring adds between its copies, ink to ink, in
+    /// canvas units.
+    pub spacing: Option<f32>,
 }
 
 /// A frame: the node's outline text, in rings.
@@ -335,6 +352,8 @@ pub struct FrameData {
 pub struct RingStyle {
     /// Overrides the frame's fit mode for this ring.
     pub fit: Option<FitMode>,
+    /// Overrides the frame's layout for this ring, key by key.
+    pub ring_layout: RingLayoutStyle,
     /// Text defaults for its spans.
     pub text: TextStyle,
 }

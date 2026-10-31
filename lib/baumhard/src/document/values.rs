@@ -273,6 +273,53 @@ pub enum FitMode {
     },
 }
 
+/// How much of its half each line of a frame's two-line ring covers
+/// (#291, rulings R32 and R33): `0.0` its natural width — its font's own
+/// letter gap, centered on its apex — up to `1.0` the whole half, short
+/// of each junction by the clearance R33.1 keeps. In between, each end of the line moves by arc
+/// length from its natural place toward its half's junction in
+/// proportion. A `repeat` ring ignores it. In range by construction:
+/// [`Span::new`] refuses anything outside `0.0..=1.0` (and a number that
+/// is not one).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Span(f32);
+
+impl Span {
+    /// The line at its natural width: `"natural"`.
+    pub const NATURAL: Span = Span(0.0);
+    /// The whole half: `"whole"`, the built-in.
+    pub const WHOLE: Span = Span(1.0);
+
+    /// `value` as a span, or `None` outside `0.0..=1.0`. O(1).
+    pub fn new(value: f32) -> Option<Span> {
+        (0.0..=1.0).contains(&value).then_some(Span(value))
+    }
+
+    /// The fraction, `0.0..=1.0`. O(1).
+    pub fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// What closes the parts of a frame's outline its two lines leave
+/// uncovered (#291, rulings R32 and R33.1): around each junction where
+/// the lines meet, whole copies of an ornament, every gap and both joins
+/// to the text equal, its ink no taller than the text's x-height.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Sides {
+    /// None: what a ring says to drop sides its frame or the defaults
+    /// give it.
+    Off,
+    /// An ornament.
+    On {
+        /// The ornament's text, one copy (`"·"`, `"✦"`); never empty
+        /// ([`check_ornament`](crate::document::bounds::check_ornament)).
+        content: String,
+        /// Its color; the ring's when `None`.
+        color: Option<ColorRef>,
+    },
+}
+
 /// The zoom range an element renders in. Either bound may be open.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ZoomWindow {

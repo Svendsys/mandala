@@ -14,7 +14,8 @@
 //! point: text, fonts, weights, flags, ids, links, a color given by a
 //! theme variable or a palette, and every enum, with what it carries —
 //! a shape and its corner radius, a fit mode and its range, a frame's
-//! start point — and a zoom window. A field interpolates only when both
+//! start point — and a zoom window, and a frame's or ring's `span`,
+//! `sides` and `spacing` (#291), which #237's list predates. A field interpolates only when both
 //! sides hold a value of the same form; otherwise it snaps, so a field
 //! that appears or disappears switches rather than inventing a value.
 //! (B1 blended fit ranges, corner radii, zoom windows and start points

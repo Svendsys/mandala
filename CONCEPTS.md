@@ -1490,6 +1490,20 @@ element.
     spread over) its span; `Fit` takes the largest size at which both
     fit, and too long at `min` cuts only the bottom line's end. `start`
     and `direction` apply to `Repeat` rings only.
+  - **Each line follows its half** (rulings R32, R33, R33.1;
+    `flow/place/halves.rs`). R27 parts and sizes the text; the lines are
+    then laid along the outline's diagonal halves, split where it faces
+    up-left and down-right (`Outline::support`): the first from the
+    top-left junction clockwise over the top and down the right side,
+    the second down the left side and along the bottom, glyphs upright.
+    Each line is tracked evenly — one ink gap between every two letters,
+    by the ornament's pairwise rule, and a space plus two gaps between
+    words — over the part of its half its `span` gives it
+    (`RingLayout`, `values::Span`: `natural`, at its font's own gap and
+    centered on its half's apex, to `whole`, the default). At each
+    junction the two lines' end inks stay two word gaps apart, and
+    `sides` (`values::Sides`) fills that break with whole, evenly
+    spaced copies of an ornament no taller than the text's x-height.
   - **A pattern and a connector read stretch by stretch**. On a `Repeat`
     ring and every connector, the walk (the fit mode) decides which
     clusters are placed and which stretch — rightward, leftward,
@@ -1521,7 +1535,7 @@ element.
   `Once` (with an optional filler, appended to the run in the flow's
   style), `Repeat` (reusing the run's glyph indices; around a closed
   outline, whole copies evenly spaced so the ring closes without a seam,
-  rulings R29 and R31), `Spread` and
+  rulings R29 and R31, a ring's `spacing` more between copies), `Spread` and
   `Fit` (rescaling the run), the last two solved so the last cluster
   ends at the path's end — on a frame, each line at its span's end. Text too long is cut to the longest prefix,
   in reading order, that fits — a right-to-left run keeps its

@@ -96,8 +96,8 @@ use crate::document::element::{
 };
 use crate::document::ids::{defaults, palette, theme};
 use crate::document::values::{
-    ColorRef, Direction, FitMode, FontSize, PaletteField, PaletteId, PlainColor, Rgba, Shape, StartPoint,
-    VarId, Weight,
+    ColorRef, Direction, FitMode, FontSize, PaletteField, PaletteId, PlainColor, Rgba, Shape, Sides, Span,
+    StartPoint, VarId, Weight,
 };
 use crate::engine::tree::Tree;
 use crate::font::fonts::AppFont;
@@ -206,6 +206,12 @@ pub struct ResolvedFrame {
 pub struct ResolvedRing {
     /// What its text does when text and outline differ in length.
     pub fit: FitMode,
+    /// How much of its half each of its two lines covers.
+    pub span: Span,
+    /// The ornament in the breaks between its two lines.
+    pub sides: Sides,
+    /// The space added between its copies when it repeats.
+    pub spacing: f32,
 }
 
 /// What a path or a portal end draws.
@@ -867,31 +873,54 @@ pub fn resolve_frame(tree: &Tree<DocElement>, frame: NodeId, rec: &mut impl Read
     }
 }
 
-/// A ring's fit. The chain: the ring, its frame, `Defaults.ring`,
-/// `Defaults.frame`, `BUILT_IN`'s frame fit. Its text is
-/// [`resolve_text`] of the ring.
+/// A ring's fit, span, sides and spacing, each on its own. The chain:
+/// the ring, its frame, `Defaults.ring`, `Defaults.frame`, `BUILT_IN`'s
+/// frame. Its text is [`resolve_text`] of the ring.
 ///
-/// Cost: O(1). No allocation beyond cloning a `FitMode::Once` filler.
+/// Cost: O(1). No allocation beyond cloning a `FitMode::Once` filler and
+/// a `Sides` ornament.
 pub fn resolve_ring(tree: &Tree<DocElement>, ring: NodeId, rec: &mut impl ReadRecorder) -> ResolvedRing {
     let mut inputs = Inputs::new(tree, rec, None);
-    let mut fit = match inputs.style(ring) {
-        Some(DocElement::Ring(ring)) => ring.style.fit.as_ref(),
+    let own = match inputs.style(ring) {
+        Some(DocElement::Ring(ring)) => Some(&ring.style),
         _ => None,
     };
-    if fit.is_none() {
+    let mut fit = own.and_then(|s| s.fit.as_ref());
+    let mut span = own.and_then(|s| s.ring_layout.span);
+    let mut sides = own.and_then(|s| s.ring_layout.sides.as_ref());
+    let mut spacing = own.and_then(|s| s.ring_layout.spacing);
+    let complete =
+        |fit: Option<&FitMode>, span: Option<Span>, sides: Option<&Sides>, spacing: Option<f32>| {
+            fit.is_some() && span.is_some() && sides.is_some() && spacing.is_some()
+        };
+    if !complete(fit, span, sides, spacing) {
         if let Some(frame) = parent(tree, ring) {
             if let Some(DocElement::Frame(frame)) = inputs.style(frame) {
-                fit = frame.style.fit.as_ref();
+                let f = &frame.style;
+                fit = fit.or(f.fit.as_ref());
+                span = span.or(f.ring_layout.span);
+                sides = sides.or(f.ring_layout.sides.as_ref());
+                spacing = spacing.or(f.ring_layout.spacing);
             }
         }
     }
-    if fit.is_none() {
+    if !complete(fit, span, sides, spacing) {
         if let Some(defaults) = inputs.defaults() {
-            fit = defaults.ring.fit.as_ref().or(defaults.frame.fit.as_ref());
+            let (r, f) = (&defaults.ring, &defaults.frame);
+            fit = fit.or(r.fit.as_ref()).or(f.fit.as_ref());
+            span = span.or(r.ring_layout.span).or(f.ring_layout.span);
+            sides = sides
+                .or(r.ring_layout.sides.as_ref())
+                .or(f.ring_layout.sides.as_ref());
+            spacing = spacing.or(r.ring_layout.spacing).or(f.ring_layout.spacing);
         }
     }
+    let built_in = &BUILT_IN.frame;
     ResolvedRing {
-        fit: fit.cloned().unwrap_or(BUILT_IN.frame.fit),
+        fit: fit.cloned().unwrap_or(built_in.fit.clone()),
+        span: span.unwrap_or(built_in.span),
+        sides: sides.cloned().unwrap_or(built_in.sides.clone()),
+        spacing: spacing.unwrap_or(built_in.spacing),
     }
 }
 

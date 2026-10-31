@@ -17,7 +17,7 @@ use crate::flow::tests::support::{
 };
 use crate::flow::{
     offset, outline, place_at_point, place_on_closed, place_on_open, ring_offset, Curve, Outline, PlacedRun,
-    Rect, ShapedRun,
+    Rect, RingLayout, ShapedRun,
 };
 
 const ONCE: FitMode = FitMode::Once { filler: None };
@@ -38,8 +38,19 @@ fn closed(
     fit: &FitMode,
     outward: bool,
 ) -> PlacedRun {
-    let (rescaled, placed) =
-        with_fonts(|fs| place_on_closed(run, path, start, direction, fit, outward, &style(12.0), fs));
+    let (rescaled, placed) = with_fonts(|fs| {
+        place_on_closed(
+            run,
+            path,
+            start,
+            direction,
+            fit,
+            &RingLayout::natural(),
+            outward,
+            &style(12.0),
+            fs,
+        )
+    });
     assert!(rescaled.is_none(), "these modes place the run they are given");
     placed
 }
@@ -637,6 +648,7 @@ pub fn do_flow_place_keeps_every_position_finite() {
                     top,
                     Direction::Clockwise,
                     fit,
+                    &RingLayout::natural(),
                     true,
                     &style(12.0),
                     fs,

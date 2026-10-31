@@ -14,10 +14,10 @@ use glam::Vec2;
 use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
 use crate::flow::path::ArcPath;
 use crate::flow::place::{
-    place_on_closed_traced, place_on_open_traced, table_spacing, Trace, Travel, VERTICAL_EPSILON,
+    place_lines, place_on_closed_traced, place_on_open_traced, table_spacing, Trace, Travel, VERTICAL_EPSILON,
 };
 use crate::flow::tests::support::{real_run, style, with_fonts};
-use crate::flow::{outline, Curve, Outline, PlacedRun, Rect, ShapedRun};
+use crate::flow::{outline, Curve, Outline, PlacedRun, Rect, RingLayout, ShapedRun};
 
 /// A line of verse, long enough to go around every fixture here.
 const VERSE: &str = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower";
@@ -96,17 +96,23 @@ fn around_at(
     let flow = style(points);
     let (run, rescaled, placed, spacing) = with_fonts(|fs| {
         let run = real_run(text, &flow, fs);
-        let (rescaled, placed) = place_on_closed_traced(
-            &run,
-            outline,
-            from,
-            direction,
-            fit,
-            outward,
-            &flow,
-            fs,
-            Some(&mut trace),
-        );
+        // A ring walks the outline; a frame is R27's lines, which the
+        // readable rule shapes (the halves above them: `halves_tests`).
+        let (rescaled, placed) = match fit {
+            FitMode::Repeat => place_on_closed_traced(
+                &run,
+                outline,
+                from,
+                direction,
+                fit,
+                &RingLayout::whole(),
+                outward,
+                &flow,
+                fs,
+                Some(&mut trace),
+            ),
+            _ => place_lines(&run, outline, fit, outward, &flow, fs, Some(&mut trace)),
+        };
         let spacing = table_spacing(&run, fit, &flow);
         (run, rescaled, placed, spacing)
     });

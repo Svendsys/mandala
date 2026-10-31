@@ -28,6 +28,7 @@ use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::structure_tests::*;
 use baumhard::engine::tests::walker_tests::*;
 use baumhard::flow::tests::fit_tests::*;
+use baumhard::flow::tests::halves_tests::*;
 use baumhard::flow::tests::lines_tests::*;
 use baumhard::flow::tests::outline_tests::*;
 use baumhard::flow::tests::place_tests::*;
@@ -1728,6 +1729,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_resolve_ring_owner_chain", |b| {
         b.iter(do_document_resolve_ring_owner_chain)
     });
+    c.bench_function("document_resolve_ring_layout_chain", |b| {
+        b.iter(do_document_resolve_ring_layout_chain)
+    });
     c.bench_function("document_resolve_defaults_tier", |b| {
         b.iter(do_document_resolve_defaults_tier)
     });
@@ -2284,6 +2288,29 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_lines_never_overlap_on_the_steepest_slope", |b| {
         b.iter(do_flow_lines_never_overlap_on_the_steepest_slope)
+    });
+    // a text frame's lines along its diagonal halves (#291, rulings
+    // R32, R33, R33.1) //
+    c.bench_function("flow_halves_track_evenly_and_read_down", |b| {
+        b.iter(do_flow_halves_track_evenly_and_read_down)
+    });
+    c.bench_function("flow_halves_junctions_are_breaks", |b| {
+        b.iter(do_flow_halves_junctions_are_breaks)
+    });
+    c.bench_function("flow_halves_span_moves_the_ends_monotonically", |b| {
+        b.iter(do_flow_halves_span_moves_the_ends_monotonically)
+    });
+    c.bench_function("flow_halves_tracking_grows_with_the_gap", |b| {
+        b.iter(do_flow_halves_tracking_grows_with_the_gap)
+    });
+    c.bench_function("flow_halves_sides_hold_the_junctions", |b| {
+        b.iter(do_flow_halves_sides_hold_the_junctions)
+    });
+    c.bench_function("flow_halves_no_line_is_laid_tighter_than_its_font", |b| {
+        b.iter(do_flow_halves_no_line_is_laid_tighter_than_its_font)
+    });
+    c.bench_function("flow_halves_a_repeat_ring_takes_its_spacing", |b| {
+        b.iter(do_flow_halves_a_repeat_ring_takes_its_spacing)
     });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //

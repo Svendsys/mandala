@@ -31,7 +31,7 @@ use baumhard::document::values::{
 use baumhard::engine::tree::Placement;
 use baumhard::flow::{
     outline, place_at_point, place_on_closed, place_on_open, shape_run, Curve, FlowSpan, PlacedGlyph,
-    PlacedRun, Rect, ShapedRun,
+    PlacedRun, Rect, RingLayout, ShapedRun,
 };
 use baumhard::font::fonts::{self, acquire_font_system_write, AppFont, FontSystemWriteGuard};
 use baumhard::gfx_structs::camera::Camera2D;
@@ -320,8 +320,17 @@ fn test_frames_of_text_around_a_rounded_rectangle_and_an_ellipse_draw_in_one_cal
         let mut runs = Vec::new();
         let frame = |text: &str, style: &ResolvedText, path, fit: &FitMode, fs: &mut FontSystemWriteGuard| {
             let shaped = shape(text, style, fs);
-            let (rescaled, placed) =
-                place_on_closed(&shaped, &path, top, Direction::Clockwise, fit, true, style, fs);
+            let (rescaled, placed) = place_on_closed(
+                &shaped,
+                &path,
+                top,
+                Direction::Clockwise,
+                fit,
+                &RingLayout::natural(),
+                true,
+                style,
+                fs,
+            );
             let run = Arc::new(rescaled.unwrap_or(shaped));
             path_run(run, placed, 1.0)
         };

@@ -6,7 +6,7 @@
 
 use crate::document::element::{
     CapData, DocElement, DocKind, FrameStyle, LabelData, LabelStyle, LinkData, NodeStyle, PathData,
-    PortalEndStyle, RingStyle, TextStyle, ThemeData, ThemeVariant,
+    PortalEndStyle, RingLayoutStyle, RingStyle, TextStyle, ThemeData, ThemeVariant,
 };
 use crate::document::format::load;
 use crate::document::ids::Definitions;
@@ -14,7 +14,7 @@ use crate::document::tests::format_support::{fixture, kid, kids, node, same_docu
 use crate::document::tests::test_support::{example, node_data, DocumentBuilder};
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteField,
-    PaletteId, Percent, PlainColor, Rgba, Shape, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    PaletteId, Percent, PlainColor, Rgba, Shape, Sides, Span, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::font::fonts::AppFont;
 use glam::Vec2;
@@ -146,6 +146,14 @@ pub fn do_format_full_fixture_reads_as_written() {
             fit: Some(FitMode::Fit { min: 0.5, max: 2.0 }),
             gap: Some(2.0),
             inset: Some(4.0),
+            ring_layout: RingLayoutStyle {
+                span: Some(Span::WHOLE),
+                sides: Some(Sides::On {
+                    content: "✦".to_string(),
+                    color: Some(ColorRef::Var(VarId(0))),
+                }),
+                spacing: Some(2.0),
+            },
             text: TextStyle {
                 font: Some(AppFont::PublicPixel),
                 size: Some(FontSize::Rel(0.05)),
@@ -159,6 +167,11 @@ pub fn do_format_full_fixture_reads_as_written() {
         defaults.ring,
         RingStyle {
             fit: Some(FitMode::Repeat),
+            ring_layout: RingLayoutStyle {
+                span: Span::new(0.5),
+                sides: Some(Sides::Off),
+                spacing: Some(0.0),
+            },
             text: TextStyle {
                 font: Some(AppFont::Novem),
                 size: Some(FontSize::Rel(0.06)),

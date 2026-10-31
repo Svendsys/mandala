@@ -50,7 +50,9 @@ mod span;
 pub use curve::Curve;
 pub use outline::{offset, outline, ring_offset, Outline, Rect};
 pub use path::MAX_TABLE_SAMPLES;
-pub use place::{place_at_point, place_on_closed, place_on_open, PlacedGlyph, PlacedRun, MAX_PLACED_GLYPHS};
+pub use place::{
+    place_at_point, place_on_closed, place_on_open, PlacedGlyph, PlacedRun, RingLayout, MAX_PLACED_GLYPHS,
+};
 pub use shape::{shape_box, shape_run, GlyphMetrics, Ink, ShapedBox, ShapedRun, FILLER_SPAN};
 pub use span::{point_size, span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 
