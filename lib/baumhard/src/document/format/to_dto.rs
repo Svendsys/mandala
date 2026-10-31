@@ -35,7 +35,7 @@
 use crate::document::defaults::{FIT_MAX, FIT_MIN};
 use crate::document::element::{
     CapData, DefaultsData, DocElement, DocKind, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData,
-    PortalEndData, PortalEndStyle, RingStyle, TextStyle,
+    PortalEndData, PortalEndStyle, RingLayoutStyle, RingStyle, TextStyle,
 };
 use crate::document::format::context::tree_excerpt;
 use crate::document::format::dto::{
@@ -48,15 +48,15 @@ use crate::document::format::error::{render_path, NodeContext, SaveError, SaveEr
 use crate::document::format::index::FORMAT;
 use crate::document::format::rows::{Halt, RowSource, Rows, RowsError};
 use crate::document::format::spelling::{
-    ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, Named, PaletteFieldDto, RectangleDto,
-    ShapeDto, StartDto, StartPointDto, WeightDto,
+    ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, LineSpanDto, Named, PaletteFieldDto,
+    RectangleDto, ShapeDto, SidesDto, SidesObjectDto, StartDto, StartPointDto, WeightDto,
 };
 use crate::document::ids::{Document, VerbDef};
 use crate::document::keyed::{KeyedMap, KeyedSet};
 use crate::document::place::{nameable_font, sizes_its_own_text, Unit};
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteField,
-    PlainColor, Shape, ZoomWindow,
+    PlainColor, Shape, Sides, ZoomWindow,
 };
 use crate::font::fonts::{family_name_of, AppFont};
 use indextree::NodeId;
@@ -736,6 +736,9 @@ impl<'a> Saver<'a> {
             fit: style.fit,
             gap: style.gap,
             inset: style.inset,
+            span: style.layout.span,
+            sides: style.layout.sides,
+            spacing: style.layout.spacing,
             font: style.text.font,
             size: style.text.size,
             color: style.text.color,
@@ -751,9 +754,13 @@ impl<'a> Saver<'a> {
             return Err(self.error(SaveErrorKind::WrongElement));
         };
         let text = self.text(&ring.style.text, Unit::of_tier(DocKind::Ring))?;
+        let layout = self.layout(&ring.style.ring_layout)?;
         Ok(RingDto {
             channel: channel_of(ring.channel),
             fit: Self::fit(&ring.style.fit),
+            span: layout.span,
+            sides: layout.sides,
+            spacing: layout.spacing,
             font: text.font,
             size: text.size,
             color: text.color,
@@ -785,7 +792,36 @@ impl<'a> Saver<'a> {
             fit: Self::fit(&style.fit),
             gap: style.gap,
             inset: style.inset,
+            layout: self.layout(&style.ring_layout)?,
             text: self.text(&style.text, Unit::of_tier(DocKind::Frame))?,
+        })
+    }
+
+    /// A frame's or a ring's layout keys: a span of exactly `0` or `1`
+    /// by its name, an ornament with no color of its own as its bare
+    /// text.
+    fn layout(&self, layout: &'a RingLayoutStyle) -> SaveResult<LayoutOut<'a>> {
+        Ok(LayoutOut {
+            span: layout.span.map(|span| match span.get() {
+                0.0 => LineSpanDto::Natural,
+                1.0 => LineSpanDto::Whole,
+                fraction => LineSpanDto::Fraction(fraction),
+            }),
+            sides: match &layout.sides {
+                None => None,
+                Some(Sides::Off) => Some(SidesDto::Off),
+                Some(Sides::On { content, color: None }) => {
+                    Some(SidesDto::Text(Cow::Borrowed(content.as_str())))
+                }
+                Some(Sides::On {
+                    content,
+                    color: Some(color),
+                }) => Some(SidesDto::Object(SidesObjectDto {
+                    content: Cow::Borrowed(content.as_str()),
+                    color: self.color("sides.color", Some(*color))?,
+                })),
+            },
+            spacing: layout.spacing,
         })
     }
 
@@ -1078,6 +1114,9 @@ impl<'a> Saver<'a> {
             fit: out.fit,
             gap: out.gap,
             inset: out.inset,
+            span: out.layout.span,
+            sides: out.layout.sides,
+            spacing: out.layout.spacing,
             font: out.text.font,
             size: out.text.size,
             color: out.text.color,
@@ -1091,8 +1130,12 @@ impl<'a> Saver<'a> {
             return Ok(None);
         }
         let text = self.text(&style.text, Unit::of_tier(DocKind::Ring))?;
+        let layout = self.layout(&style.ring_layout)?;
         Ok(Some(RingDefaultsDto {
             fit: Self::fit(&style.fit),
+            span: layout.span,
+            sides: layout.sides,
+            spacing: layout.spacing,
             font: text.font,
             size: text.size,
             color: text.color,
@@ -1156,7 +1199,15 @@ struct FrameOut<'a> {
     fit: Option<FitDto<'a>>,
     gap: Option<f32>,
     inset: Option<f32>,
+    layout: LayoutOut<'a>,
     text: TextOut<'a>,
+}
+
+/// A frame's or a ring's layout keys, as the file spells them.
+struct LayoutOut<'a> {
+    span: Option<LineSpanDto>,
+    sides: Option<SidesDto<'a>>,
+    spacing: Option<f32>,
 }
 
 /// A path's style keys, as the file spells them.

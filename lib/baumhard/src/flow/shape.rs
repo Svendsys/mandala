@@ -20,10 +20,11 @@
 //!
 //! **Span mapping.** cosmic-text reports each glyph's cluster as bytes
 //! of the *line* it shaped, and the line is not the caller's text: the
-//! spans are concatenated, and the characters a flow does not draw are
-//! left out: every paragraph separator (the private
-//! `is_paragraph_separator` names them) in a run, every one but `\n` in
-//! a box (D26, ruling R9.5). Shaping
+//! spans are concatenated, and no paragraph separator (the private
+//! `is_paragraph_separator` names them) reaches it but a box's `\n`
+//! (D26, ruling R9.5): a box leaves the others out, and a run lays each
+//! one — a `\r\n` pair as one — as a space that maps back to it, marked
+//! [`GlyphMetrics::line_break`] (ruling R27). Shaping
 //! therefore records a piece table — which bytes of which span each
 //! stretch of each line came from — and maps every glyph back through
 //! it, so [`GlyphMetrics::span`] and [`GlyphMetrics::bytes`] name the
@@ -38,9 +39,10 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{
-    clamp_font_metric, face_family_name_for_pin, AppFont, FontSystemWriteGuard, MIN_FONT_SIZE_PT,
+    clamp_font_metric, face_family_name_for_pin, glyph_outline_ink, AppFont, FontSystemWriteGuard,
+    MIN_FONT_SIZE_PT,
 };
-use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Wrap, SHAPING_ADVANCED};
+use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, SwashCache, Wrap, SHAPING_ADVANCED};
 use crate::util::grapheme_chad;
 
 /// The span index a filler glyph reports: it belongs to no span of the
@@ -95,6 +97,51 @@ pub struct GlyphMetrics {
     /// cut that keeps whole graphemes keeps whole runs of glyphs from
     /// one `true` to the next (ruling R6, reading 1).
     pub grapheme_start: bool,
+    /// Whether the text may be parted between this glyph and the one
+    /// before it in visual order without tearing a word (#291, ruling
+    /// R26): a Unicode word boundary (UAX #29) with whitespace on one
+    /// side or a word on both (as between two ideographs), so "Sand,"
+    /// and "well-known" stay whole. `true` at a line's first glyph and
+    /// where the two glyphs are not neighbors in the text (a bidi
+    /// reorder); `false` inside a grapheme cluster. Placement keeps a
+    /// word in one stretch with it, and parts a frame's two lines at one
+    /// (ruling R27).
+    pub word_break: bool,
+    /// Whether the glyph's grapheme is whitespace: what a frame's two
+    /// lines drop where they part, and at their ends (ruling R27).
+    pub blank: bool,
+    /// Whether the glyph is the space a run lays where its text held a
+    /// line break (a paragraph separator: `\n`, `\r\n`, U+2029 and the
+    /// rest). Its [`bytes`](Self::bytes) are the break's. A frame's
+    /// two-line layout parts its lines at the first one (ruling R27);
+    /// any other path flow reads it as the space it is.
+    pub line_break: bool,
+    /// Whether the glyph's grapheme is a letter or a digit
+    /// (alphanumeric): text a reader reads in a direction. A flow with no
+    /// such glyph — an ornament, `✦ ·` or `─` — has no reading direction,
+    /// and placement does not reverse any part of it (#291, ruling R29).
+    pub letter: bool,
+    /// Where the glyph's ink lies, measured from its outline (#291,
+    /// ruling R31): what placement steps an ornament's glyphs by, so a
+    /// ring's gaps are the gaps a reader sees. Measured only in a run
+    /// that is an ornament — no glyph a [`letter`](Self::letter) — since
+    /// text keeps its line-height boxes (ruling R9.2); `None` there, and
+    /// for a glyph with no outline (a space, a bitmap-only emoji).
+    pub ink: Option<Ink>,
+}
+
+/// A glyph's ink: the bounding box of its outline, relative to its pen
+/// on the baseline, in points at the size it was shaped at, `y` pointing
+/// down — where a renderer drawing the glyph at that pen puts its ink,
+/// the shaper's offsets included
+/// ([`glyph_outline_ink`]).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Ink {
+    /// The box's top-left corner: its left edge, and how far above the
+    /// baseline the ink reaches (negative above it).
+    pub min: Vec2,
+    /// The box's bottom-right corner.
+    pub max: Vec2,
 }
 
 /// A flow shaped as one line, for placement along a path or at a point.
@@ -140,6 +187,10 @@ pub(crate) struct Piece {
     pub(crate) line_start: usize,
     /// Its length in bytes.
     pub(crate) len: usize,
+    /// For the space a run lays where its text held a line break
+    /// (#291, ruling R27), the break's length in bytes of the span: the
+    /// space maps back to the break. 0 for every other stretch.
+    pub(crate) line_break: usize,
 }
 
 impl ShapedRun {
@@ -196,13 +247,14 @@ pub struct ShapedBox {
     pub glyph_spans: Vec<(usize /* span */, Range<usize> /* bytes */)>,
 }
 
-/// Which characters of a flow's text are not drawn: every paragraph
-/// separator ([`is_paragraph_separator`]) but a box flow's `\n`, which
-/// breaks the line (D26, ruling R9.5). A path flow is one line, so it
-/// draws none of them and breaks at none.
+/// What becomes of a flow's paragraph separators
+/// ([`is_paragraph_separator`]): a box flow breaks its line at `\n` (D26,
+/// ruling R9.5) and leaves the others out; a path flow is one line, so it
+/// breaks at none and lays each as a space (ruling R27).
 #[derive(Copy, Clone, PartialEq)]
 enum Breaks {
-    /// Every paragraph separator is left out.
+    /// Every paragraph separator is laid as a space marked a line break;
+    /// a `\r\n` pair is one.
     None,
     /// `\n` breaks the line; every other paragraph separator is left out.
     Newline,
@@ -300,6 +352,7 @@ fn assemble<'f>(
                 line,
                 line_start: *line_len,
                 len: end - start,
+                line_break: 0,
             });
             *line_len += end - start;
             assembly.line_height = assembly.line_height.max(metrics.line_height);
@@ -308,6 +361,28 @@ fn assemble<'f>(
         let mut start = 0usize;
         for (at, ch) in text.match_indices(is_paragraph_separator) {
             push(&mut assembly, &mut open_break, start, at, line, &mut line_len);
+            if breaks == Breaks::None && ch == "\n" && at > 0 && at == start && text[..at].ends_with('\r') {
+                // The second of a pair (`\r\n`): one break, one space.
+                if let Some(space) = assembly.pieces.last_mut().filter(|piece| piece.line_break > 0) {
+                    space.line_break += ch.len();
+                }
+            } else if breaks == Breaks::None {
+                // A run is one line: its break is laid as a space, which
+                // a frame's two-line layout parts its lines at (ruling
+                // R27) and any other path flow reads as a space.
+                assembly.rich.push((" ", attrs.clone()));
+                assembly.pieces.push(Piece {
+                    span: index,
+                    span_start: at,
+                    line,
+                    line_start: line_len,
+                    len: 1,
+                    line_break: ch.len(),
+                });
+                line_len += 1;
+                assembly.line_height = assembly.line_height.max(metrics.line_height);
+                assembly.font_size = assembly.font_size.max(metrics.font_size);
+            }
             if breaks == Breaks::Newline && ch == "\n" {
                 // The break itself is handed to cosmic-text so it splits
                 // the paragraph there; it belongs to no piece.
@@ -381,8 +456,9 @@ fn piece_of(pieces: &[Piece], line: usize, at: usize) -> Option<&Piece> {
     (piece.line == line).then_some(piece)
 }
 
-/// `glyph`'s span and its cluster as bytes of that span's text.
-fn span_bytes(pieces: &[Piece], line: usize, glyph: &LayoutGlyph) -> (usize, Range<usize>) {
+/// `glyph`'s span, its cluster as bytes of that span's text, and whether
+/// it is the space a run lays for a line break.
+fn span_bytes(pieces: &[Piece], line: usize, glyph: &LayoutGlyph) -> (usize, Range<usize>, bool) {
     // Every glyph starts inside a piece, since cosmic-text shapes only
     // the text it was handed and no separator that would move a glyph to
     // a line of its own reaches it. If that ever stops being true, the
@@ -394,11 +470,23 @@ fn span_bytes(pieces: &[Piece], line: usize, glyph: &LayoutGlyph) -> (usize, Ran
             "flow: a glyph at line {line} byte {} has no piece",
             glyph.start
         );
-        return (FILLER_SPAN, 0..0);
+        return (FILLER_SPAN, 0..0, false);
     };
+    if piece.line_break > 0 {
+        // The space laid for a line break maps to the break.
+        return (
+            piece.span,
+            piece.span_start..piece.span_start + piece.line_break,
+            true,
+        );
+    }
     let offset = glyph.start - piece.line_start;
     let end = glyph.end.min(piece.line_start + piece.len).max(glyph.start) - piece.line_start;
-    (piece.span, piece.span_start + offset..piece.span_start + end)
+    (
+        piece.span,
+        piece.span_start + offset..piece.span_start + end,
+        false,
+    )
 }
 
 /// A laid-out line's glyphs in visual order, left to right: cosmic-text
@@ -418,17 +506,20 @@ const UNKNOWN_FACE_EXTENT: (f32, f32) = (0.8, 0.2);
 
 /// The per-glyph facts of a shaped buffer: span and bytes through the
 /// piece table, advance, the face's ascent and descent at the glyph's
-/// size, and where each grapheme cluster begins.
+/// size, where each grapheme cluster begins, and where the text may be
+/// parted between words ([`word_breaks`]).
 ///
-/// Cost: one grapheme walk per line (to learn its cluster starts), one
-/// binary search per glyph into the piece table and one into the line's
-/// cluster starts, and one font lookup per change of face.
+/// Cost: one grapheme walk and one word-boundary walk per line (to learn
+/// its cluster starts and word breaks), one binary search per glyph into
+/// the piece table and one into the line's cluster starts, one more per
+/// cluster into its word breaks, and one font lookup per change of face.
 fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<GlyphMetrics> {
     let mut out = Vec::new();
     // The last glyph whose face was looked up, and that face's ascent
     // and descent per unit of size: consecutive glyphs mostly share one.
     let mut face: Option<(&LayoutGlyph, f32, f32)> = None;
     let mut starts: Vec<usize> = Vec::new();
+    let mut breaks: Vec<usize> = Vec::new();
     let mut current_line = usize::MAX;
     let mut previous_cluster: Option<(usize, usize)> = None;
     for run in buffer.layout_runs() {
@@ -436,10 +527,11 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
             current_line = run.line_i;
             starts.clear();
             starts.extend(grapheme_chad::grapheme_byte_starts(run.text));
+            word_breaks(run.text, &mut breaks);
             previous_cluster = None;
         }
         for glyph in visual(run.glyphs, run.rtl) {
-            let (span, bytes) = span_bytes(pieces, run.line_i, glyph);
+            let (span, bytes, line_break) = span_bytes(pieces, run.line_i, glyph);
             let (ascent, descent) = match face {
                 Some((seen, ascent, descent))
                     if seen.font_id == glyph.font_id && seen.font_weight == glyph.font_weight =>
@@ -462,7 +554,24 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
             let cluster = starts.partition_point(|&s| s <= glyph.start);
             let key = (run.line_i, cluster);
             let grapheme_start = previous_cluster != Some(key);
+            // This glyph's grapheme is `cluster - 1`. Between it and the
+            // previous glyph's, the text parts where the later of the two
+            // starts (a ligature before it may cover several graphemes).
+            let word_break = grapheme_start
+                && match previous_cluster {
+                    Some((_, before)) if before < cluster => {
+                        breaks.binary_search(&starts[cluster - 1]).is_ok()
+                    }
+                    Some((_, before)) => breaks.binary_search(&starts[before - 1]).is_ok(),
+                    None => true,
+                };
             previous_cluster = Some(key);
+            let first = starts
+                .get(cluster.wrapping_sub(1))
+                .and_then(|&at| run.text.get(at..))
+                .and_then(|rest| rest.chars().next());
+            let blank = first.is_some_and(char::is_whitespace);
+            let letter = first.is_some_and(char::is_alphanumeric);
             out.push(GlyphMetrics {
                 span,
                 bytes,
@@ -472,18 +581,67 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
                 ascent: ascent * glyph.font_size,
                 descent: descent * glyph.font_size,
                 grapheme_start,
+                word_break,
+                blank,
+                line_break,
+                letter,
+                ink: None,
             });
         }
     }
+    if !out.iter().any(|glyph| glyph.letter) {
+        measure_ink(buffer, &mut out, fs);
+    }
     out
+}
+
+/// Every glyph's [`GlyphMetrics::ink`], into `glyphs` (which lists the
+/// buffer's glyphs in [`ShapedRun::layout_glyphs`]'s order), but a
+/// space's, which has none to keep apart.
+///
+/// Cost: one outline scale per glyph that is not a space, and one
+/// scaler context for the run.
+fn measure_ink(buffer: &Buffer, glyphs: &mut [GlyphMetrics], fs: &mut FontSystem) {
+    let mut cache = SwashCache::new();
+    let laid = buffer.layout_runs().flat_map(|run| visual(run.glyphs, run.rtl));
+    for (metrics, laid) in glyphs.iter_mut().zip(laid) {
+        if !metrics.blank {
+            metrics.ink = glyph_outline_ink(fs, &mut cache, laid).map(|(min, max)| Ink { min, max });
+        }
+    }
+}
+
+/// The byte offsets in `text` where it may be parted without tearing a
+/// word, into `out` (cleared), ascending: each Unicode word boundary
+/// (UAX #29) with whitespace on either side, or a word — a segment
+/// holding a letter or digit — on both. A boundary beside punctuation
+/// is not one, so "Sand," and "well-known" stay whole.
+///
+/// Cost: one word-boundary walk of `text`; no allocation beyond `out`.
+fn word_breaks(text: &str, out: &mut Vec<usize>) {
+    use unicode_segmentation::UnicodeSegmentation;
+    out.clear();
+    let blank = |segment: &str| segment.chars().all(char::is_whitespace);
+    let word = |segment: &str| segment.chars().any(char::is_alphanumeric);
+    let mut before: Option<&str> = None;
+    for (offset, segment) in text.split_word_bound_indices() {
+        if let Some(before) = before {
+            if blank(before) || blank(segment) || (word(before) && word(segment)) {
+                out.push(offset);
+            }
+        }
+        before = Some(segment);
+    }
 }
 
 /// Shape `spans` as one line, every span's size times `scale`.
 ///
 /// The input of the path and point flows. Each span is shaped with its
-/// own face, size, weight, slant and color ([`span_attrs`]); no paragraph
-/// separator in a span (`\n`, `\r`, U+001C–U+001E, U+0085, U+2029) is
-/// drawn, since a run is one line. `scale` is what `Fit` uses to
+/// own face, size, weight, slant and color ([`span_attrs`]); a paragraph
+/// separator in a span (`\n`, `\r\n`, `\r`, U+001C–U+001E, U+0085,
+/// U+2029) breaks no line, since a run is one line: it is laid as a space
+/// marked [`GlyphMetrics::line_break`], where a frame's two-line layout
+/// parts its lines (ruling R27). `scale` is what `Fit` uses to
 /// rescale a flow (#239 §6); a caller shaping at the declared size
 /// passes `1.0`.
 ///
@@ -590,6 +748,7 @@ pub(crate) fn reshape(
             line: 0,
             line_start: line_len,
             len: slice.len(),
+            line_break: piece.line_break,
         });
         line_len += slice.len();
     }
@@ -609,6 +768,7 @@ pub(crate) fn reshape(
             line: 1,
             line_start: 0,
             len: filler_text.len(),
+            line_break: 0,
         });
     }
     let buffer = new_buffer(fs, rich, font_size, line_height, None);
@@ -696,7 +856,10 @@ pub fn shape_box(
     let glyph_spans = buffer
         .layout_runs()
         .flat_map(|run| run.glyphs.iter().map(move |glyph| (run.line_i, glyph)))
-        .map(|(line, glyph)| span_bytes(&pieces, line, glyph))
+        .map(|(line, glyph)| {
+            let (span, bytes, _) = span_bytes(&pieces, line, glyph);
+            (span, bytes)
+        })
         .collect();
     ShapedBox {
         buffer: Arc::new(buffer),

@@ -360,11 +360,11 @@ fn test_a_size_in_the_wrong_unit_has_no_spelling() {
         DocElement::Ring(RingData {
             channel: 0,
             style: RingStyle {
-                fit: None,
                 text: TextStyle {
                     size: Some(FontSize::Pt(24.0)),
                     ..TextStyle::default()
                 },
+                ..RingStyle::default()
             },
         }),
     );
@@ -377,11 +377,11 @@ fn test_a_size_in_the_wrong_unit_has_no_spelling() {
     let mut builder = DocumentBuilder::new();
     builder.defaults(DefaultsData {
         ring: RingStyle {
-            fit: None,
             text: TextStyle {
                 size: Some(FontSize::Pt(24.0)),
                 ..TextStyle::default()
             },
+            ..RingStyle::default()
         },
         ..DefaultsData::default()
     });

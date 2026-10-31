@@ -17,7 +17,10 @@ use std::time::Duration;
 use cosmic_text::fontdb::Source;
 use cosmic_text::fontdb::ID;
 use cosmic_text::FontSystem;
-use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, SwashCache};
+use cosmic_text::{
+    Attrs, Buffer, CacheKey, CacheKeyFlags, Command as OutlineCommand, Family, Metrics, Shaping, SwashCache,
+};
+use glam::Vec2;
 use lazy_static::lazy_static;
 use log::debug;
 use parking_lot::{RecursiveRwLock, RecursiveRwLockReadGuard, RecursiveRwLockWriteGuard};
@@ -954,6 +957,134 @@ pub fn measure_glyph_ink_bounds(
 
     out.advance = advance_total;
     out
+}
+
+/// The ink of one laid-out glyph: the bounding box of its outline, as
+/// its `(min, max)` corners relative to its pen on the baseline, in
+/// points at its size, `y` pointing down — where a renderer drawing it
+/// at that pen puts its ink, the shaper's offsets included. `None` for
+/// a glyph with no outline: a space, a bitmap-only emoji, a face that
+/// is not loaded.
+///
+/// Measured from the outline, not a rasterization: unhinted, so it is
+/// linear in size and a measure at one size scales to another, and
+/// exact to the curve — each Bézier's extrema are solved, so a control
+/// point off the curve does not widen it. The flow's ornaments are
+/// stepped by it (#291, ruling R31).
+///
+/// Cost: one outline scale through `swash_cache`'s scaler, uncached (a
+/// `Fit` reshapes at many sizes, and every size would be an entry), and
+/// one pass over its commands; no allocation beyond the commands.
+pub fn glyph_outline_ink(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    glyph: &cosmic_text::LayoutGlyph,
+) -> Option<(Vec2, Vec2)> {
+    let (key, _, _) = CacheKey::new(
+        glyph.font_id,
+        glyph.glyph_id,
+        glyph.font_size,
+        (0.0, 0.0),
+        glyph.font_weight,
+        glyph.cache_key_flags | CacheKeyFlags::DISABLE_HINTING,
+    );
+    let commands = swash_cache.get_outline_commands_uncached(font_system, key)?;
+    let (low, high) = outline_bounds(&commands)?;
+    let offset = Vec2::new(
+        glyph.font_size * glyph.x_offset,
+        -glyph.font_size * glyph.y_offset,
+    );
+    // An outline's `y` points up, the canvas's down.
+    let min = Vec2::new(low.x, -high.y) + offset;
+    let max = Vec2::new(high.x, -low.y) + offset;
+    (min.is_finite() && max.is_finite()).then_some((min, max))
+}
+
+/// The bounding box of an outline's commands, `(min, max)` in its own
+/// coordinates: every point the path passes through, a curve's own
+/// extrema included, and not the control points it bends toward. `None`
+/// for a path that draws nothing.
+///
+/// Cost: one pass over `commands`; at most two roots solved per axis
+/// per curve.
+pub(crate) fn outline_bounds(commands: &[OutlineCommand]) -> Option<(Vec2, Vec2)> {
+    let mut bounds: Option<(Vec2, Vec2)> = None;
+    let mut take = |p: Vec2| {
+        bounds = Some(match bounds {
+            Some((min, max)) => (min.min(p), max.max(p)),
+            None => (p, p),
+        });
+    };
+    let mut at = Vec2::ZERO;
+    let mut start = Vec2::ZERO;
+    for command in commands {
+        match *command {
+            OutlineCommand::MoveTo(to) => {
+                at = Vec2::new(to.x, to.y);
+                start = at;
+                take(at);
+            }
+            OutlineCommand::LineTo(to) => {
+                at = Vec2::new(to.x, to.y);
+                take(at);
+            }
+            OutlineCommand::QuadTo(control, to) => {
+                let (c, to) = (Vec2::new(control.x, control.y), Vec2::new(to.x, to.y));
+                // B'(t) = 0 where t = (p0 − c) / (p0 − 2c + p1), per axis.
+                let denominator = at - 2.0 * c + to;
+                for axis in 0..2 {
+                    if denominator[axis] != 0.0 {
+                        let t = (at[axis] - c[axis]) / denominator[axis];
+                        if t > 0.0 && t < 1.0 {
+                            let u = 1.0 - t;
+                            take(u * u * at + 2.0 * u * t * c + t * t * to);
+                        }
+                    }
+                }
+                at = to;
+                take(at);
+            }
+            OutlineCommand::CurveTo(first, second, to) => {
+                let (c1, c2, to) = (
+                    Vec2::new(first.x, first.y),
+                    Vec2::new(second.x, second.y),
+                    Vec2::new(to.x, to.y),
+                );
+                // B'(t)/3 = a·t² + b·t + c, per axis.
+                let a = -at + 3.0 * c1 - 3.0 * c2 + to;
+                let b = 2.0 * (at - 2.0 * c1 + c2);
+                let c = c1 - at;
+                for axis in 0..2 {
+                    for t in quadratic_roots(a[axis], b[axis], c[axis]).into_iter().flatten() {
+                        if t > 0.0 && t < 1.0 {
+                            let u = 1.0 - t;
+                            take(
+                                u * u * u * at + 3.0 * u * u * t * c1 + 3.0 * u * t * t * c2 + t * t * t * to,
+                            );
+                        }
+                    }
+                }
+                at = to;
+                take(at);
+            }
+            OutlineCommand::Close => at = start,
+        }
+    }
+    bounds
+}
+
+/// The real roots of `a·t² + b·t + c = 0`, or of `b·t + c = 0` where
+/// `a` is zero; `None` in a slot with no root.
+fn quadratic_roots(a: f32, b: f32, c: f32) -> [Option<f32>; 2] {
+    if a.abs() <= f32::EPSILON * (b.abs() + c.abs()) {
+        return [(b != 0.0).then(|| -c / b), None];
+    }
+    let discriminant = b * b - 4.0 * a * c;
+    if discriminant < 0.0 {
+        return [None, None];
+    }
+    let root = discriminant.sqrt();
+    [Some((-b + root) / (2.0 * a)), Some((-b - root) / (2.0 * a))]
 }
 
 /// Natural-size measurement of a text block laid out as unbroken

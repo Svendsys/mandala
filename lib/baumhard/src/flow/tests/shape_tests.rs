@@ -178,8 +178,9 @@ fn test_flow_shape_run_maps_glyphs_to_spans() {
 }
 
 /// Every glyph names its span and its bytes of that span's text, even
-/// though the line it was shaped on concatenates the spans and leaves
-/// out the line breaks a run does not draw.
+/// though the line it was shaped on concatenates the spans and lays each
+/// line break as a space (ruling R27): the space names the break's
+/// bytes, and is the only glyph marked a line break.
 pub fn do_flow_shape_run_maps_glyphs_to_spans() {
     let text = style(14.0);
     let run = with_fonts(|fs| {
@@ -201,10 +202,15 @@ pub fn do_flow_shape_run_maps_glyphs_to_spans() {
         )
     });
     let mapped: Vec<_> = run.glyphs.iter().map(|g| (g.span, g.bytes.clone())).collect();
-    assert_eq!(mapped, vec![(0, 0..1), (0, 1..2), (1, 1..2), (1, 2..3)]);
+    assert_eq!(
+        mapped,
+        vec![(0, 0..1), (0, 1..2), (1, 0..1), (1, 1..2), (1, 2..3), (1, 3..4)]
+    );
     assert_eq!(run.buffer.lines.len(), 1, "a run is one line");
-    assert_eq!(run.buffer.lines[0].text(), "abcd");
+    assert_eq!(run.buffer.lines[0].text(), "ab cd ");
     assert!(run.glyphs.iter().all(|g| g.grapheme_start));
+    let breaks: Vec<bool> = run.glyphs.iter().map(|g| g.line_break).collect();
+    assert_eq!(breaks, vec![false, false, true, false, false, true]);
 }
 
 #[test]
@@ -232,18 +238,121 @@ pub fn do_flow_shape_run_marks_grapheme_starts() {
 }
 
 #[test]
+fn test_flow_shape_run_marks_letters() {
+    do_flow_shape_run_marks_letters();
+}
+
+/// A glyph whose grapheme is a letter or a digit is marked `letter`, the
+/// rest not: an ornament's star and dot, a space and punctuation (#291,
+/// ruling R29). A combining mark's glyph shares its letter's grapheme,
+/// and its mark.
+pub fn do_flow_shape_run_marks_letters() {
+    let run = with_fonts(|fs| real_run("✦ a1·q\u{0301}", &style(20.0), fs));
+    let letters: Vec<bool> = run.glyphs.iter().map(|g| g.letter).collect();
+    assert_eq!(
+        letters,
+        vec![false, false, true, true, false, true, true],
+        "{:?}",
+        run.glyphs
+    );
+}
+
+#[test]
+fn test_flow_shape_run_measures_an_ornaments_ink() {
+    do_flow_shape_run_measures_an_ornaments_ink();
+}
+
+/// An ornament's glyphs carry their ink, measured from the outline at
+/// shaping (ruling R31): where the rasterizer draws them, to its pixel,
+/// relative to the pen on the baseline — a star's and a middle dot's
+/// inside their advances and above the baseline, the dot's clear of it
+/// by a tenth of the size — and a space none. Text
+/// (any glyph a letter) carries none: it is stepped by its line-height
+/// boxes.
+pub fn do_flow_shape_run_measures_an_ornaments_ink() {
+    with_fonts(|fs| {
+        let run = real_run("✦ ·", &style(40.0), fs);
+        let laid: Vec<_> = run.layout_glyphs().cloned().collect();
+        assert_eq!(laid.len(), 3, "{:?}", run.glyphs);
+        assert!(
+            run.glyphs[1].ink.is_none(),
+            "a space has no ink: {:?}",
+            run.glyphs[1]
+        );
+        let mut cache = crate::font::SwashCache::new();
+        for k in [0, 2] {
+            let (glyph, laid) = (&run.glyphs[k], &laid[k]);
+            let ink = glyph
+                .ink
+                .unwrap_or_else(|| panic!("glyph {k} has no ink: {glyph:?}"));
+            let (key, _, _) = cosmic_text::CacheKey::new(
+                laid.font_id,
+                laid.glyph_id,
+                laid.font_size,
+                (0.0, 0.0),
+                laid.font_weight,
+                laid.cache_key_flags | cosmic_text::CacheKeyFlags::DISABLE_HINTING,
+            );
+            let fs: &mut crate::font::FontSystem = fs;
+            let image = cache
+                .get_image_uncached(fs, key)
+                .unwrap_or_else(|| panic!("glyph {k} does not rasterize"));
+            let placement = image.placement;
+            let offset = Vec2::new(laid.font_size * laid.x_offset, -laid.font_size * laid.y_offset);
+            let drawn_min = Vec2::new(placement.left as f32, -placement.top as f32) + offset;
+            let drawn_max = drawn_min + Vec2::new(placement.width as f32, placement.height as f32);
+            // The rasterizer covers every pixel the ink touches: its box is
+            // the ink's, rounded out to whole pixels.
+            for (axis, (measured, drawn)) in [(ink.min, drawn_min), (ink.max, drawn_max)]
+                .into_iter()
+                .flat_map(|(m, d)| [(m.x, d.x), (m.y, d.y)])
+                .enumerate()
+            {
+                assert!(
+                    (measured - drawn).abs() <= 1.0,
+                    "glyph {k} bound {axis}: measured {measured}, drawn {drawn}: {ink:?}"
+                );
+            }
+            assert!(
+                ink.min.x > 0.0 && ink.max.x < glyph.advance,
+                "glyph {k} inside its advance: {ink:?}"
+            );
+            assert!(ink.min.y < 0.0, "glyph {k} reaches above the baseline: {ink:?}");
+        }
+        let dot = run.glyphs[2].ink.unwrap_or_else(|| panic!("no dot ink"));
+        assert!(
+            dot.max.y < -0.1 * 40.0,
+            "a middle dot sits above the baseline: {dot:?}"
+        );
+        let text = real_run("a·", &style(40.0), fs);
+        assert!(
+            text.glyphs.iter().all(|glyph| glyph.ink.is_none()),
+            "{:?}",
+            text.glyphs
+        );
+    });
+}
+
+#[test]
 fn test_flow_shape_run_of_nothing() {
     do_flow_shape_run_of_nothing();
 }
 
-/// No text, or only line breaks, is a run with no glyphs and no height.
+/// No text is a run with no glyphs and no height. Line breaks alone are
+/// spaces (ruling R27), a pair like `\r\n` one break: `"\n\r\n"` is two
+/// spaces, the second naming both bytes of its `\r\n`.
 pub fn do_flow_shape_run_of_nothing() {
-    for text in ["", "\n\r\n"] {
-        let run = with_fonts(|fs| real_run(text, &style(12.0), fs));
-        assert!(run.glyphs.is_empty(), "{text:?}");
-        assert_eq!(run.line_height, 0.0, "{text:?}");
-        assert_eq!(run.baseline(), 0.0, "{text:?}");
-    }
+    let run = with_fonts(|fs| real_run("", &style(12.0), fs));
+    assert!(run.glyphs.is_empty());
+    assert_eq!(run.line_height, 0.0);
+    assert_eq!(run.baseline(), 0.0);
+    let breaks = with_fonts(|fs| real_run("\n\r\n", &style(12.0), fs));
+    let mapped: Vec<_> = breaks
+        .glyphs
+        .iter()
+        .map(|g| (g.bytes.clone(), g.line_break))
+        .collect();
+    assert_eq!(mapped, vec![(0..1, true), (1..3, true)]);
 }
 
 #[test]
@@ -480,28 +589,31 @@ fn test_flow_separators_never_break_a_run() {
     do_flow_separators_never_break_a_run();
 }
 
-/// No paragraph separator breaks a run or is drawn (ruling R9.5): for
-/// each of U+001C–U+001E, U+0085 and U+2029, `"ab" + sep + "cd"` is one
-/// line reading `"abcd"`, and the glyphs after the separator name span 0
-/// at their own bytes, past it.
+/// No paragraph separator breaks a run (ruling R9.5); each is laid as a
+/// space marked a line break (ruling R27): for each of U+001C–U+001E,
+/// U+0085 and U+2029, `"ab" + sep + "cd"` is one line reading `"ab cd"`,
+/// the space names the separator's bytes, and the glyphs after it name
+/// span 0 at their own bytes, past it.
 pub fn do_flow_separators_never_break_a_run() {
     for separator in SEPARATORS {
         let text = format!("ab{separator}cd");
         let run = with_fonts(|fs| real_run(&text, &style(14.0), fs));
         let after = 2 + separator.len_utf8();
         assert_eq!(run.buffer.lines.len(), 1, "{separator:?}: a run is one line");
-        assert_eq!(run.buffer.lines[0].text(), "abcd", "{separator:?}");
+        assert_eq!(run.buffer.lines[0].text(), "ab cd", "{separator:?}");
         let mapped: Vec<_> = run.glyphs.iter().map(|g| (g.span, g.bytes.clone())).collect();
         assert_eq!(
             mapped,
             vec![
                 (0, 0..1),
                 (0, 1..2),
+                (0, 2..after),
                 (0, after..after + 1),
                 (0, after + 1..after + 2)
             ],
             "{separator:?}"
         );
+        assert!(run.glyphs[2].line_break, "{separator:?}: the space is the break");
     }
 }
 
@@ -530,8 +642,10 @@ fn test_flow_separators_survive_a_reshape() {
 
 /// The paths that shape a run again keep all of its text when it held a
 /// separator (ruling R9.5): a `Fit` places all four letters of
-/// `"ab" + sep + "cd"`, and a `Once` filler — itself holding a separator,
-/// which is not drawn — comes after all four, not instead of them.
+/// `"ab" + sep + "cd"` and the space its separator is laid as (ruling
+/// R27), still marked a line break, and a `Once` filler — itself holding
+/// a separator, which is not drawn — comes after all five, not instead
+/// of them.
 pub fn do_flow_separators_survive_a_reshape() {
     let line = Curve::Line(Vec2::ZERO, Vec2::new(300.0, 0.0));
     for separator in ['\u{85}', '\u{2029}'] {
@@ -548,8 +662,9 @@ pub fn do_flow_separators_survive_a_reshape() {
             )
         });
         let fitted = fitted.expect("the fit rescales");
-        assert_eq!(fitted.glyphs.len(), 4, "{separator:?}");
-        assert_eq!(placed.glyphs.len(), 4, "{separator:?}");
+        assert_eq!(fitted.glyphs.len(), 5, "{separator:?}");
+        assert!(fitted.glyphs[2].line_break, "{separator:?}: the break survives");
+        assert_eq!(placed.glyphs.len(), 5, "{separator:?}");
         assert!(!placed.truncated, "{separator:?}");
 
         let filler = FitMode::Once {
@@ -561,9 +676,9 @@ pub fn do_flow_separators_survive_a_reshape() {
         });
         let filled = filled.expect("the filler is placed");
         let spans: Vec<usize> = filled.glyphs.iter().map(|g| g.span).collect();
-        assert_eq!(spans, vec![0, 0, 0, 0, FILLER_SPAN], "{separator:?}");
-        let text_placed = placed.glyphs.iter().filter(|g| g.glyph < 4).count();
-        assert_eq!(text_placed, 4, "{separator:?}: the text is placed whole");
+        assert_eq!(spans, vec![0, 0, 0, 0, 0, FILLER_SPAN], "{separator:?}");
+        let text_placed = placed.glyphs.iter().filter(|g| g.glyph < 5).count();
+        assert_eq!(text_placed, 5, "{separator:?}: the text is placed whole");
     }
 }
 

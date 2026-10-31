@@ -10,14 +10,15 @@
 //! which fails if the tier was never the source.
 
 use crate::document::defaults::BUILT_IN;
-use crate::document::element::{DefaultsData, DocElement, PaletteData, TextStyle};
+use crate::document::element::{DefaultsData, DocElement, PaletteData, RingLayoutStyle, TextStyle};
 use crate::document::resolve::{
     resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end, resolve_ring, resolve_text,
     BorderPoint, Content, Input, ResolvedText,
 };
 use crate::document::tests::test_support::{example, palette_group, DocumentBuilder, Example};
 use crate::document::values::{
-    ColorRef, FitMode, FontSize, PaletteField, PaletteId, Percent, PlainColor, Rgba, Shape, VarId, Weight,
+    ColorRef, FitMode, FontSize, PaletteField, PaletteId, Percent, PlainColor, Rgba, Shape, Sides, Span,
+    VarId, Weight,
 };
 use crate::font::fonts::AppFont;
 use indextree::NodeId;
@@ -949,6 +950,105 @@ pub fn do_document_resolve_portal_end_content_and_position() {
     );
     assert_eq!(end(&builder, ids.portal_target).border_t, BorderPoint::At(0.75));
     assert_eq!(end(&builder, ids.portal_source).content, Content::Spans);
+}
+
+#[test]
+fn test_document_resolve_ring_layout_chain() {
+    do_document_resolve_ring_layout_chain();
+}
+
+/// A ring's span, sides and spacing (#291) each run ring → frame →
+/// `Defaults.ring` → `Defaults.frame` → `BUILT_IN`'s frame, on their
+/// own: every tier sets all three to its own values, and as each tier
+/// is cleared the next gives all three — and a tier that sets one only
+/// gives that one, the others passing it by. `sides: Off` is a value,
+/// not an absence: a ring's `Off` hides the frame's ornament.
+pub fn do_document_resolve_ring_layout_chain() {
+    let (mut builder, ids) = example();
+    let ring = |b: &DocumentBuilder| {
+        let r = resolve_ring(b.tree(), ids.ring, &mut ());
+        (r.span.get(), r.sides, r.spacing)
+    };
+    let on = |content: &str| Sides::On {
+        content: content.to_string(),
+        color: None,
+    };
+    let tier = |k: f32, content: &str| RingLayoutStyle {
+        span: Span::new(k / 10.0),
+        sides: Some(on(content)),
+        spacing: Some(k),
+    };
+    let built_in = (
+        BUILT_IN.frame.span.get(),
+        BUILT_IN.frame.sides.clone(),
+        BUILT_IN.frame.spacing,
+    );
+    assert_eq!(ring(&builder), built_in);
+    assert_eq!(built_in, (1.0, Sides::Off, 0.0), "whole, no sides, no spacing");
+    defaults(&mut builder, |d| {
+        d.frame.ring_layout = tier(1.0, "a");
+        d.ring.ring_layout = tier(2.0, "b");
+    });
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout = tier(3.0, "c");
+        }
+    });
+    let edit_ring = |b: &mut DocumentBuilder, layout: RingLayoutStyle| {
+        b.edit(ids.ring, |e| {
+            if let DocElement::Ring(r) = e {
+                r.style.ring_layout = layout;
+            }
+        });
+    };
+    edit_ring(&mut builder, tier(4.0, "d"));
+    assert_eq!(ring(&builder), (0.4, on("d"), 4.0), "the ring's own");
+    edit_ring(&mut builder, RingLayoutStyle::default());
+    assert_eq!(ring(&builder), (0.3, on("c"), 3.0), "the frame's");
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout = RingLayoutStyle::default();
+        }
+    });
+    assert_eq!(ring(&builder), (0.2, on("b"), 2.0), "Defaults.ring");
+    defaults(&mut builder, |d| d.ring.ring_layout = RingLayoutStyle::default());
+    assert_eq!(ring(&builder), (0.1, on("a"), 1.0), "Defaults.frame");
+
+    // Each field on its own: the ring sets its span only, the frame its
+    // sides only; the spacing comes from `Defaults.frame`.
+    edit_ring(
+        &mut builder,
+        RingLayoutStyle {
+            span: Some(Span::NATURAL),
+            ..RingLayoutStyle::default()
+        },
+    );
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout.sides = Some(on("e"));
+        }
+    });
+    assert_eq!(ring(&builder), (0.0, on("e"), 1.0));
+    edit_ring(
+        &mut builder,
+        RingLayoutStyle {
+            sides: Some(Sides::Off),
+            ..RingLayoutStyle::default()
+        },
+    );
+    assert_eq!(
+        ring(&builder),
+        (0.1, Sides::Off, 1.0),
+        "a ring's Off hides the frame's ornament"
+    );
+    defaults(&mut builder, |d| d.frame.ring_layout = RingLayoutStyle::default());
+    edit_ring(&mut builder, RingLayoutStyle::default());
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout = RingLayoutStyle::default();
+        }
+    });
+    assert_eq!(ring(&builder), built_in, "every tier cleared");
 }
 
 #[test]

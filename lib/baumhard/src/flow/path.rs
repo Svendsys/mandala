@@ -380,6 +380,42 @@ impl ArcPath {
         self.stretches[index].at(s - self.starts[index])
     }
 
+    /// Where along the path the point nearest `p` lies: a sampling every
+    /// [`NEAREST_SAMPLES`]th of the path, then a golden-section search
+    /// between the best sample's neighbors. On a convex path whose
+    /// nearest point is unique, that point; ties go to the first. `0.0`
+    /// for an empty path.
+    ///
+    /// Cost: [`NEAREST_SAMPLES`] path lookups, and [`NEAREST_ROUNDS`] more.
+    pub(crate) fn nearest(&self, p: Vec2) -> f32 {
+        // A length that is not a number is no length either.
+        if self.stretches.is_empty() || self.length.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+            return 0.0;
+        }
+        let step = self.length / NEAREST_SAMPLES as f32;
+        let distance = |s: f32| self.at(s).0.distance_squared(p);
+        let mut best = (f32::INFINITY, 0.0_f32);
+        for k in 0..=NEAREST_SAMPLES {
+            let s = step * k as f32;
+            let d = distance(s);
+            if d < best.0 {
+                best = (d, s);
+            }
+        }
+        let (mut low, mut high) = ((best.1 - step).max(0.0), (best.1 + step).min(self.length));
+        let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
+        for _ in 0..NEAREST_ROUNDS {
+            let a = high - ratio * (high - low);
+            let b = low + ratio * (high - low);
+            if distance(a) <= distance(b) {
+                high = b;
+            } else {
+                low = a;
+            }
+        }
+        0.5 * (low + high)
+    }
+
     /// The outward unit normal beside `tangent`, for a closed path: the
     /// direction of travel turned a quarter toward the outside. Zero for
     /// an open path, which has no outside.
@@ -387,6 +423,14 @@ impl ArcPath {
         Vec2::new(tangent.y, -tangent.x) * self.winding
     }
 }
+
+/// How many samples [`ArcPath::nearest`] takes along a path.
+pub(crate) const NEAREST_SAMPLES: usize = 2048;
+
+/// How many rounds of golden-section search [`ArcPath::nearest`] refines
+/// its best sample with: a bracket of two samples closes by a factor of
+/// about 10⁷.
+pub(crate) const NEAREST_ROUNDS: usize = 34;
 
 /// A table walking `param` from `from` to `to`, its samples close
 /// enough that no neighbors are more than `spacing` apart, given that the

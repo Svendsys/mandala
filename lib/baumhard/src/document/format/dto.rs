@@ -32,7 +32,7 @@
 
 use crate::document::format::rows::Rows;
 use crate::document::format::spelling::{
-    present, ColorDto, FitDto, HexDto, Named, ShapeDto, StartDto, WeightDto,
+    present, ColorDto, FitDto, HexDto, LineSpanDto, Named, ShapeDto, SidesDto, StartDto, WeightDto,
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -402,6 +402,27 @@ pub(crate) struct FrameDefaultsDto<'a> {
         deserialize_with = "present"
     )]
     pub inset: Option<f32>,
+    /// How much of its half each line of a two-line ring covers.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub span: Option<LineSpanDto>,
+    /// The ornament in the breaks between a two-line ring's lines.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub sides: Option<SidesDto<'a>>,
+    /// The space a `repeat` ring adds between its copies.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub spacing: Option<f32>,
     /// The font family name.
     #[serde(
         default,
@@ -450,6 +471,27 @@ pub(crate) struct RingDefaultsDto<'a> {
         deserialize_with = "present"
     )]
     pub fit: Option<FitDto<'a>>,
+    /// How much of its half each line of a two-line ring covers.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub span: Option<LineSpanDto>,
+    /// The ornament in the breaks between a two-line ring's lines.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub sides: Option<SidesDto<'a>>,
+    /// The space a `repeat` ring adds between its copies.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub spacing: Option<f32>,
     /// The font family name.
     #[serde(
         default,
@@ -821,6 +863,27 @@ pub(crate) struct RingDto<'a> {
         deserialize_with = "present"
     )]
     pub fit: Option<FitDto<'a>>,
+    /// How much of its half each line of a two-line ring covers.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub span: Option<LineSpanDto>,
+    /// The ornament in the breaks between a two-line ring's lines.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub sides: Option<SidesDto<'a>>,
+    /// The space a `repeat` ring adds between its copies.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub spacing: Option<f32>,
     /// The font family name.
     #[serde(
         default,
@@ -907,6 +970,27 @@ pub(crate) struct FrameDto<'a> {
         deserialize_with = "present"
     )]
     pub inset: Option<f32>,
+    /// How much of its half each line of a two-line ring covers.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub span: Option<LineSpanDto>,
+    /// The ornament in the breaks between a two-line ring's lines.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub sides: Option<SidesDto<'a>>,
+    /// The space a `repeat` ring adds between its copies.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub spacing: Option<f32>,
     /// The font family name.
     #[serde(
         default,

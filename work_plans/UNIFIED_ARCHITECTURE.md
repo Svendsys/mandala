@@ -57,6 +57,7 @@ develops it.
 | D30 | **The file's node list is flat** (amends D3/D4; owner, #236). `nodes` is one array in depth-first pre-order; a node names its parent by `id` in `parent` (absent on a root) and has no `children` key. Pre-order is the one spelling and is checked in one pass; sibling order is order of appearance, so a subtree is one contiguous block. JSON nesting no longer grows with tree depth, and depth has **no bound of its own** (owner, #236 R13): like map size, it is limited only by memory. Every tree walk is iterative and linear in depth (§20 rule 11). | §7, §20 |
 | D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line, and edits to keys of one node that are not on adjacent lines merge cleanly. Two edits to neighboring keys, or an edit to a node's last key while another branch appends a key after it, are one git conflict, as for any line-based text. The layout lives in the saver's writer alone. | §7.1 |
 | D32 | **New ids start above every id the map names** (amends §5.2's id rule; owner, #236 Q3 option B, R20). The counter is still not saved. At load it starts one above the highest node id and above every node id a verb or presentation target names, so a verb or presentation can never be silently retargeted to a new node after a reload. The named ids come from one hook, `ids::idents_named_by`, which V1-D1 to V1-D3 (#250–#252) extend when definitions gain targets. | §5.2, §7.2 |
+| D33 | **Path text is readable** (owner, #291; rulings R25, R25.1, R26, R27, R28, R31, R32, R33, R33.1). Every path flow reads left to right or top to bottom. The owner, on the README samples: "In the sample images, the words are always backwards at the bottom. It's impossible to read basically. Can we instead try to make the text always straight forward?" Asked whether to keep the old look as an option: "Readable always, no option (Recommended)". **A frame's text is two lines** (R27): a ring in `once`, `spread` or `fit` sets its text over the top and along the bottom, each line on the level part of its half of the outline, reading left to right, the steep sides clear — the owner: "Couldn't it be formatted smarter like, defining lines for each halve, rather than one line that must be fitted to both", approving "Sides clear, auto split (Recommended)". **A frame's line is spaced as it was shaped** (R28): each glyph's step is its advance measured horizontally, not an upright box's extent along the slope. **A pattern and a connector read stretch by stretch** (R25, R25.1, R26): on a `repeat` ring and on every connector, a leftward or upward stretch's glyphs are placed in reverse, so a loop reads like a seal, and a word is never torn across two stretches. It is the only behavior, with no field and no option. | §6.2, §6.4 |
 
 ---
 
@@ -600,16 +601,172 @@ line (cosmic-text gives each glyph's advance), then placed:
 
 1. Walk the path by arc length from the flow's start point in its
    direction.
-2. Each glyph occupies a step whose length depends on the direction
-   of travel θ at that point:
-   `step = |cos θ| · advance + |sin θ| · line_height`.
-   Along a horizontal stretch glyphs sit side by side; along a
-   vertical stretch they stack one line apart; on a curve the two
-   blend — the way ASCII art builds a curve.
+2. Each glyph occupies a step. There are two rules, one per kind of
+   flow (ruling R28):
+   - **The box step** — a `repeat` ring and every connector (step 4):
+     its length depends on the direction of travel θ at that point,
+     `step = |cos θ| · advance + |sin θ| · line_height`.
+     Along a horizontal stretch glyphs sit side by side; along a
+     vertical stretch they stack one line apart; on a curve the two
+     blend — the way ASCII art builds a curve. An ornament steps by
+     its ink instead (ruling R31, §6.4).
+   - **The level step** — a frame's text line (step 5): the step runs
+     the path until it has moved the glyph's advance horizontally, so
+     from one pen to the next is the advance plus the line's gap,
+     measured along x, as the text was shaped: `step = advance / cos θ`
+     on a straight stretch. The box step would space letters out
+     wherever the outline curves — by 70% at a 16° slope, the line
+     height being twice an advance or more. A line lies where
+     `|cos θ| ≥ cos 45°` (step 5), so the level step is at most `√2`
+     advances along the path, and neighbors sit side by side, offset
+     only vertically: their boxes, and so their ink, cannot overlap.
 3. The glyph's center sits on the path, offset along the outward
    normal by half its extent, so text sits on the outline rather
-   than across it. Ring *k* is placed on the outline offset outward
+   than across it — on a level step straight up or down, as far as
+   clears the outline along the normal, so the offset keeps the
+   spacing. Ring *k* is placed on the outline offset outward
    by `inset + Σ(thickness of rings < k) + k · gap`.
+4. **Every stretch reads left to right or top to bottom** (D33, #291).
+   This step places a `repeat` ring and every connector; a frame's
+   text is two lines instead (step 5). An ornament, with no letter or
+   digit, has no reading direction and is placed as walked (§6.4). Walked in text order, glyphs on
+   a leftward stretch would read backward and on an upward one bottom
+   to top, since they are never rotated. So placement is two phases
+   (rulings R25, R25.1, R26):
+   - **The walk.** Steps 1–3 and the fit mode (§6.4) decide which
+     glyphs are placed and where each one's step starts. The path
+     splits into **stretches**, maximal runs of one direction of
+     travel, each step classed by its dominant direction: *rightward*
+     where `cos θ > ε`, *leftward* where `cos θ < −ε`, otherwise
+     *downward* or *upward* by `sin θ` (`y` grows downward), with
+     `ε = cos 45°` — so the steep sides of a circle or an ellipse read
+     top to bottom, as a rectangle's do, and so does a connector steeper
+     than 45°. The hysteresis: a run of steep steps is a vertical
+     stretch only when it spans at least 3 line heights, or is the
+     whole placement. A shorter one — a tight turn through vertical, the
+     tip of a flat ellipse — makes no stretch of its own; each of its
+     steps joins the horizontal stretch whose way it moves (the sign of
+     `cos θ`), and a step with no horizontal motion joins the one that
+     reads it top to bottom (rightward going down, leftward going up). A
+     glyph belongs to the stretch its step is in, with one exception:
+   - **Whole words** (ruling R26). A boundary between two stretches that
+     falls inside a word moves to the word's start or end, whichever
+     moves fewer glyphs, so the word lies in one stretch: torn next to a
+     reversed stretch, its head and tail would land at that stretch's
+     two ends. A word break is a Unicode word boundary (UAX #29) with
+     whitespace on one side or a word on both, so punctuation stays on
+     its word ("heaven:"). A boundary moves at most one word and never
+     takes more than half of a stretch's glyphs — except from the first
+     or last stretch, beside the path's start, which may give up all but
+     one, so a flow's last word is never left with its tail alone at the
+     start. A word too long to move so stays parted (each part still
+     reads forward), as does one whose taker would find room only in a
+     neighbor read the other way.
+   - **The lay.** The same glyphs are laid forward along the path in
+     **reading order**, stretch after stretch in the order the path
+     visits them, each leftward and upward stretch's glyphs last to
+     first; rightward and downward stretches keep their order. Each
+     stretch keeps to the part of the path it held in the walk, so none
+     runs into its neighbor's direction and reads backward there. A
+     reversed stretch need not take the length it took walked (a wide
+     glyph moved onto a vertical part steps the line height, not its
+     advance) and a moved word takes room, so a stretch that needs more
+     room borrows it from a neighbor read the same way, where it still
+     reads forward. Text that ends short of the path keeps its last
+     stretch to where the path runs on that stretch's way: past the
+     turn of an S or a U, a moved word would read backward. Its spacing
+     is solved within its part; §6.4 says how
+     each mode ends. Where the stretches cannot each keep to their parts,
+     they are laid on one from the next with one uniform spacing.
+
+   On a loop this reads like a seal: the top left to right, the right
+   side top to bottom, the bottom left to right, the left side top to
+   bottom. A placement keeps the walk's glyph order, so a glyph's index
+   — what hit testing, the span mapping, run overrides and the caret
+   read — means what it meant; only positions move.
+5. **A frame's text is two lines** (D33, ruling R27). The owner, seeing
+   step 4 fit one line around a whole frame: "Couldn't it be formatted
+   smarter like, defining lines for each halve, rather than one line
+   that must be fitted to both"; of the options put to them, "Sides
+   clear, auto split (Recommended)". A ring whose fit mode is `once`,
+   `spread` or `fit` holds text, not a pattern, and is set as two
+   lines; this replaces step 4 for it.
+   - **The halves.** The outline is split at its leftmost and rightmost
+     points — at mid-height of a rounded rectangle's sides — into a top
+     half, walked left to right over the top, and a bottom half, walked
+     left to right along the bottom. Each half's **span** is where its
+     direction is level-dominant, `|cos θ| ≥ cos 45°` (step 4's `ε`).
+     The steep sides between the spans stay clear: no glyph stacks
+     there.
+   - **The parting.** The text is parted into a top line and a bottom
+     line at a word break (step 4's: punctuation stays on its word). An
+     explicit line break parts it there; any further line break reads
+     as a space. Otherwise it parts where the lines balance best: of
+     every word break, the one whose larger fill ratio — a line's
+     advances over its span — is least. A text with no word break is
+     one line, on top. The whitespace at the parting and at each line's
+     ends is not placed.
+   - **The lines.** Each line is laid by steps 2–3, with the level
+     step, along its half's span, reading left to right, centered on
+     the span's arc-length midpoint — as much of the span before it as
+     after — and both share one size. Every measure of a line is a level
+     one: the parting balances advances against each span's width, and
+     `fit`'s scale, `spread`'s gap and `once`'s centering are taken
+     with level steps. The owner's coordinator, on the renders with the
+     box step: "It looks uneven and will be the first thing the owner
+     notices" (ruling R28). §6.4 says how each mode sizes and spaces
+     them. A
+     placement lists the top line's glyphs, then the bottom's, in text
+     order.
+6. **Each line follows its half** (D33, rulings R32, R33, R33.1;
+   `flow/place/halves.rs`). The owner, on step 5's renders: "It should
+   follow the path of its halve, this should be adjustable in the
+   solution. But the point here was to demo the text actually taking
+   the shape of our nodes." Step 5 still parts the text and sizes it;
+   this step lays the two lines.
+   - **The diagonal halves** (ruling R33). The outline is split at its
+     support points in the directions `(−1, −1)` and `(1, 1)`
+     (`Outline::support`): on an ellipse where the tangent runs at 45°,
+     on a rounded rectangle its top-left and bottom-right corner arcs'
+     midpoints, on a sharp one the corners. The first line takes the
+     upper-right half, from the top-left junction clockwise over the
+     top and down the right side to the bottom-right junction; the
+     second the lower-left half, from the top-left junction down the
+     left side and along the bottom. Glyphs stay upright, so every
+     steep run reads down and every level one right.
+   - **Even tracking** (ruling R32). A line is laid with one ink gap
+     `g` between every two neighboring letters — box to box between
+     their inks, by the pairwise rule an ornament steps by (ruling
+     R31, §6.4), a zero gap included — and a space's advance plus `2g`
+     between words. Its first and last ink centers sit on its part's
+     ends; `g` is solved by bisection, the line's length growing with
+     it.
+   - **The span** (ruling R32). `span` (`"natural"`, `"whole"`, or a
+     number between) sets each line's part of its half. At `natural`
+     the line is tracked at its font's own gap (its letters' mean side
+     bearings) and centered on its half's apex (the support point
+     straight up or down, where step 5 centers it); a natural line that
+     would reach into a junction's clearance is slid along its half
+     rather than pressed. Above it each end moves by arc length that
+     part of the way toward its junction, never into the clearance, so
+     the ends only move outward as the span grows. The built-in span is
+     `whole`.
+   - **Each junction is a break** (ruling R33.1). The two lines'
+     nearest end inks at a junction are at least two word gaps apart,
+     of the two lines' mean (`JUNCTION_WORD_GAPS`), so where one line
+     ends and the other begins reads at a glance. The clearance is
+     found at the whole span, a few rounds, and kept at every span.
+     With `sides`, the clearance also holds one copy of the ornament
+     and its two joins at the lines' mean natural gap.
+   - **Sides** (ruling R33.1). An ornament closes each break: whole
+     copies, at least one, laid by the pairwise rule from the lines'
+     end inks so every gap and both joins are equal — the count whose
+     gap is nearest the lines' mean letter gap — on the text's own
+     center line, its ink no taller than the text's x-height. It is
+     shaped into the run as a line of its own, as a `once` filler is.
+   - No line its half holds is laid tighter than its font: step 5's
+     sizes stand, and a `once` filler is not drawn on a frame (its
+     lines leave nothing to fill but the breaks, which `sides` fills).
 
 ### §6.3 Outlines and corner radius (D11)
 
@@ -630,16 +787,17 @@ When a flow's text is shorter or longer than its path:
 
 | Mode | Behavior | Frames | Connectors |
 |---|---|---|---|
-| `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing | ✓ | ✓ |
-| `repeat` | Text repeated until the path is full; the last repetition is cut at a grapheme boundary | ✓ | ✓ (default — a `─` pattern) |
-| `spread` | Text placed once with extra spacing distributed so it ends exactly at the path's end | ✓ | ✓ |
-| `fit { min, max }` | Font size **and** spacing are scaled so the text fills the path exactly once (algorithm below) | ✓ (default) | ✓ |
+| `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing. On a frame: two lines at the declared size along the diagonal halves (§6.2 step 6); the filler is not drawn | ✓ | ✓ |
+| `repeat` | Text repeated until the path is full. Along a connector the last repetition is cut at a grapheme boundary; around a frame the ring holds a whole number of repetitions, evenly spaced, and closes without a seam (rulings R29, R31) | ✓ | ✓ (default — a `─` pattern) |
+| `spread` | Text placed once with extra spacing distributed so it ends exactly at the path's end. On a frame: as `once`; how far each line reaches is its `span` | ✓ | ✓ |
+| `fit { min, max }` | Font size **and** spacing are scaled so the text fills the path exactly once (algorithm below). On a frame: one size for both lines, the largest at which each fits its level span (§6.2 step 5), laid along the diagonal halves (step 6) | ✓ (default) | ✓ |
 
 **There is no "grow the node" mode for frames.** Ring font size is
 relative to the node's size (D10), so the text's length and the
 outline's perimeter scale together; growing the node never makes the
-text fit. `fit` is the mode that answers "the poem, exactly once,
-all the way around." (Box flows — sections and labels — grow their
+text fit. `fit` is the mode that answers "the poem, exactly once, as
+large as the frame holds it" — on a frame, in two lines, over the top
+and along the bottom (§6.2 step 5). (Box flows — sections and labels — grow their
 box, D5.)
 
 **The `fit` algorithm.** Let `L` be the flow's natural length along
@@ -660,8 +818,122 @@ factor `s` gives length `s · L`.
    never overlap.
 
 `start` (a point on the outline: a corner or a side plus a fraction)
-and `direction` (clockwise / counter-clockwise) are per frame;
-connectors start at their source end.
+and `direction` (clockwise / counter-clockwise) are per frame, and
+apply to a `repeat` ring only (ruling R27): a frame's text always
+reads over the top and then along the bottom (§6.2 step 5), so on a
+ring in another mode they are kept, saved and ignored — the loader
+does not refuse them. Connectors start at their source end. With
+readable placement (§6.2 step 4) they keep their meaning on a `repeat`
+ring: they decide where the pattern begins and which stretch comes
+next, while each stretch reads left to right or top to bottom
+whichever way the path runs through it.
+
+**A ring closes without a seam** (ruling R29). Cut at its last
+repetition, a `repeat` ring around a closed outline left a stray part of
+a pattern, or a gap, where it closed (the README's "a time to plant"
+ring read `❦❦❦❦❦❦❦❦❦❦ ❦`). Around a closed outline `repeat` places as many
+whole repetitions as fit, and spreads the slack evenly as spacing: every
+two consecutive clusters, as they are read, are one gap apart, the seam
+from the last back round to the first included. The gap is solved for
+the ring as it is read (§6.2 step 4), since reversing a stretch changes
+which cluster straddles a corner and so the stretch's length; laid on
+one gap, a stretch drifts against the part of the outline the walk gave
+it, so a stretch's clusters that drift past a corner are regrouped into
+the neighbor whose way the outline runs there — a ring's clusters are
+copies of one pattern — and the ring is laid again, a bounded number of
+rounds. An ornament is spaced by its ink, the seam too (ruling R31,
+below). A ring too short for one whole repetition is cut as a connector
+is. Along an open path `repeat` is unchanged.
+
+An ornament — a flow with no letter or digit, such as `✦ ·` or `─` —
+has no reading direction, so no part of it is reversed (§6.2 step 4):
+it is placed as walked. Reversed, a glyph-and-space ornament would meet
+itself space against space, or glyph against glyph, wherever the
+reading turned.
+
+**An ornament steps by its ink** (ruling R31). Stepped by line-high
+boxes, an ornament's glyphs parted further on a ring's steep sides than
+on its level ones — by the line height less the ink's — and its gaps
+ran from 6 to 36 px around one ring of the README's scenes. Shaping
+measures each ornament glyph's ink from its outline (unhinted, exact to
+the curve: `GlyphMetrics::ink`); text keeps its boxes (step 2). Then:
+
+- A glyph's step is its ink box's extent along the chord (step 2's rule,
+  with the ink's width and height for `advance` and `line_height`) plus
+  its side bearings, `advance − ink width`, which do not turn with the
+  path. A space has no ink, and steps its advance: on a steep side too,
+  not a whole line.
+- A glyph's ink is centered on the path its left bearing plus half its
+  extent into its step, where a line would set it; on a closed path it
+  is pushed outward by the support of the ellipse its ink box bounds,
+  along the normal of the chord across its own reach — on a side the
+  box's half-extent, as text's; round a turn it turns with the normal,
+  so the ink's center traces a convex path round a sharp corner, where
+  the box's corner reach would swing it out past the side and back.
+- Each glyph after the first is then set where its ink is as far from
+  the last glyph's as a line would set them — the last's right bearing,
+  every space's advance and every gap between steps since, and its own
+  left bearing — measured as the distance between the two ink boxes.
+  Where the path runs straight that is where the step put it; where it
+  turns — a tight corner pushed outward, two inks either side of a
+  sharp one — the step alone would not keep it. The distance is found
+  by the distance between the centers, which grows continuously as the
+  glyph moves on around a convex outline where the boxes' own gap
+  stands still as one slides past the other's corner: a few rounds,
+  each solving the centers' distance that leaves the gap the last
+  round left, so the glyph moves continuously with the glyphs before
+  it, as the ring's spacing solve needs.
+- A ring's seam is that same gap: the copies are spread until the last
+  glyph's ink is as far from the first's as owed. The last space, or a
+  glyph whose ink was set further on than its steps, may step past the
+  path's end; its ink is then where the path begins again.
+
+Every two consecutive inks are so as far apart, measured box to box,
+wherever the ring runs: as far as the font sets them on a line, plus
+the spacing. `Fit` predicts an ornament's length the same way.
+
+**A frame's lines** (ruling R27; §6.2 step 5). The modes act on the
+two lines, each against its own span, with no gap below zero between
+glyph extents. This is how the lines are parted and sized; they are
+then laid along the diagonal halves (rulings R32, R33, R33.1; §6.2
+step 6), where `spread`'s spacing and `once`'s centering and filler
+give way to the span and the sides:
+
+- `fit`: the largest scale in `[min, max]` at which each line, laid
+  with no extra spacing, fits its span — found by bisection on the
+  lines' advances times the reshape's size factors, then reshaped; a
+  reshape that lays a line longer than predicted shrinks the scale by
+  the overrun and reshapes again, a bounded number of times, never
+  below `min`. Text too long even at `min` keeps the top line whole —
+  it is parted again to take the most words that fit there — and the
+  bottom line is cut at the last grapheme boundary that fits (step 4).
+  Only with an explicit line break, or a first word that alone
+  overruns the top, can the top line be cut too.
+- `spread`: each line spread over its whole span, its first step at
+  the span's start and its last ending at the span's end.
+- `once`: each line at its declared size, centered on its span; a
+  filler fills the rest of each span with whole copies, on both sides
+  of each line, never touching it.
+
+**The modes and the readable lay** (rulings R25, R25.1, R26). On a
+`repeat` ring and on a connector, the fit mode acts in the walk; the lay then keeps its end condition. Under
+`Spread` and `Fit` each stretch ends where its part of the path does,
+so the last ends where the walk ended, at the path's end. Under `Once`
+and `Repeat` each keeps the walk's spacing where that fits its part,
+and takes less where not. Spacing never goes below a zero gap. Where
+even no gap passes the path's end — the cases with no slack: a full
+`Repeat`, `Once` with a filler — the placement is cut at the last
+grapheme boundary that fits, as `fit` step 4 cuts: whole filler copies
+or repeat clusters from the end first, the text only if none is left
+(then last-read cluster first). This is the one case in which the
+placed glyphs differ from the walk's: at the end, by the cut clusters
+only. `Fit` measures `L` as the text will be read — every torn word
+moved whole, and a stretch that would run on into one read the other
+way counted as overrunning — when it chooses its scale, so it keeps the
+whole text, every word whole, and cuts only at `min` (step 4); when
+spreading the rest moves glyphs between stretches so that the text as
+read no longer fits, it shrinks the scale by the overrun and reshapes
+again, a bounded number of times.
 
 ### §6.5 What is shaped, and when
 

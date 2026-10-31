@@ -16,18 +16,19 @@ use crate::document::bounds::{MAX_CANVAS_COORD, MAX_FONT_SIZE_PT, MIN_FONT_SIZE_
 use crate::document::element::{
     CapData, ConnectorData, DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, LabelData,
     LabelStyle, LinkData, MapData, NodeData, NodeStyle, PaletteData, PathData, PortalEndData, PortalEndStyle,
-    RingData, RingStyle, SectionData, SpanData, TextStyle, ThemeData, ThemeVariant, Triggers,
+    RingData, RingLayoutStyle, RingStyle, SectionData, SpanData, TextStyle, ThemeData, ThemeVariant,
+    Triggers,
 };
 use crate::document::ids::NodeIdent;
 use crate::document::mutation::inherited::{inherited_seed, DocInherited};
 use crate::document::mutation::ops::{
-    DefaultsOp, DocMutation, FrameOp, LabelOp, LinkOp, MapOp, NodeOp, PaletteOp, PathOp, PortalEndOp, RingOp,
-    SectionOp, SpanOp, TextOp, ThemeOp,
+    DefaultsOp, DocMutation, FrameOp, LabelOp, LayoutOp, LinkOp, MapOp, NodeOp, PaletteOp, PathOp,
+    PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
 };
 use crate::document::tests::test_support::{example, palette_group};
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, Percent,
-    Rgba, Shape, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Rgba, Shape, Sides, Span, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::mutation::Mutation;
 use crate::font::fonts::AppFont;
@@ -112,6 +113,14 @@ fn rich_frame() -> DocElement {
             fit: Some(FitMode::Repeat),
             gap: Some(1.0),
             inset: Some(2.0),
+            ring_layout: RingLayoutStyle {
+                span: Span::new(0.25),
+                sides: Some(Sides::On {
+                    content: "✦".to_string(),
+                    color: Some(ColorRef::Rgba(Rgba::opaque(1, 2, 3))),
+                }),
+                spacing: Some(3.0),
+            },
             text: rich_text(FontSize::Rel(0.05)),
         },
     })
@@ -122,6 +131,11 @@ fn rich_ring() -> DocElement {
         channel: 3,
         style: RingStyle {
             fit: Some(FitMode::Spread),
+            ring_layout: RingLayoutStyle {
+                span: Some(Span::NATURAL),
+                sides: Some(Sides::Off),
+                spacing: Some(1.0),
+            },
             text: rich_text(FontSize::Rel(0.07)),
         },
     })
@@ -606,6 +620,27 @@ pub fn do_document_frame_and_ring_ops_write_their_field() {
         |e| frame(e).inset = None,
     );
     case(
+        "SetSpan",
+        &f,
+        DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpan(Some(Span::WHOLE)))),
+        &s,
+        |e| frame(e).ring_layout.span = Some(Span::WHOLE),
+    );
+    case(
+        "SetSides",
+        &f,
+        DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(Some(Sides::Off)))),
+        &s,
+        |e| frame(e).ring_layout.sides = Some(Sides::Off),
+    );
+    case(
+        "SetSpacing",
+        &f,
+        DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpacing(None))),
+        &s,
+        |e| frame(e).ring_layout.spacing = None,
+    );
+    case(
         "Text",
         &f,
         DocMutation::Frame(FrameOp::Text(TextOp::SetSize(Some(FontSize::Rel(0.2))))),
@@ -617,6 +652,24 @@ pub fn do_document_frame_and_ring_ops_write_their_field() {
     case("SetFit", &r, DocMutation::Ring(RingOp::SetFit(None)), &s, |e| {
         ring(e).style.fit = None
     });
+    let ornament = Some(Sides::On {
+        content: "·".to_string(),
+        color: Some(ColorRef::Var(VarId(0))),
+    });
+    case(
+        "Layout",
+        &r,
+        DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(ornament.clone()))),
+        &s,
+        |e| ring(e).style.ring_layout.sides = ornament.clone(),
+    );
+    case(
+        "Layout span",
+        &r,
+        DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpan(Span::new(0.75)))),
+        &s,
+        |e| ring(e).style.ring_layout.span = Span::new(0.75),
+    );
     case(
         "SetChannel",
         &r,

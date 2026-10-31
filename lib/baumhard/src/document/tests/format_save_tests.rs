@@ -425,3 +425,37 @@ fn test_a_connector_the_file_writes_loads_back_to_its_fields() {
     let back = load(&written(&doc)).unwrap();
     same_document(&doc, &back).unwrap();
 }
+
+#[test]
+fn test_a_frame_rings_layout_is_written_in_its_shortest_spelling() {
+    // A span of exactly 0 or 1 by its name, any other as its number; a
+    // sides object without a color as its bare text, with one as the
+    // object; `false` as itself. Each reads back to the same value.
+    let frame = |keys: &str| {
+        map_of(&format!(
+            r#","frame":{{{keys},"rings":[{{"spans":[{{"text":"x"}}]}}]}}"#
+        ))
+    };
+    for (file, saved) in [
+        (r#""span":0"#, r#""span": "natural""#),
+        (r#""span":0.0"#, r#""span": "natural""#),
+        (r#""span":1"#, r#""span": "whole""#),
+        (r#""span":"natural""#, r#""span": "natural""#),
+        (r#""span":"whole""#, r#""span": "whole""#),
+        (r#""span":0.25"#, r#""span": 0.25"#),
+        (r#""sides":{"content":"✦"}"#, r#""sides": "✦""#),
+        (r#""sides":"✦""#, r#""sides": "✦""#),
+        (
+            r#""sides":{"content":"·","color":"var(fg)"}"#,
+            r#""sides": {"content": "·", "color": "var(fg)"}"#,
+        ),
+        (r#""sides":false"#, r#""sides": false"#),
+        (r#""spacing":6"#, r#""spacing": 6.0"#),
+    ] {
+        let doc = load(&frame(file)).unwrap_or_else(|error| panic!("{file} loads: {error}"));
+        let text = written(&doc);
+        assert!(text.contains(saved), "{file} is written {saved}: {text}");
+        let again = load(&text).unwrap_or_else(|error| panic!("{file}, saved, loads: {error}"));
+        same_document(&doc, &again).unwrap_or_else(|why| panic!("{file} changed over a round trip: {why}"));
+    }
+}

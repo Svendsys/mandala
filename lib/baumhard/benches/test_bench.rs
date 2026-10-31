@@ -28,8 +28,11 @@ use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::structure_tests::*;
 use baumhard::engine::tests::walker_tests::*;
 use baumhard::flow::tests::fit_tests::*;
+use baumhard::flow::tests::halves_tests::*;
+use baumhard::flow::tests::lines_tests::*;
 use baumhard::flow::tests::outline_tests::*;
 use baumhard::flow::tests::place_tests::*;
+use baumhard::flow::tests::readable_tests::*;
 use baumhard::flow::tests::shape_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::color_tests::*;
@@ -1286,6 +1289,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("measure_glyph_ink_bounds_latin_has_positive_advance", |b| {
         b.iter(do_measure_glyph_ink_bounds_latin_has_positive_advance)
     });
+    c.bench_function("outline_bounds_follows_the_curve", |b| {
+        b.iter(do_outline_bounds_follows_the_curve)
+    });
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
         b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
     });
@@ -1723,6 +1729,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_resolve_ring_owner_chain", |b| {
         b.iter(do_document_resolve_ring_owner_chain)
     });
+    c.bench_function("document_resolve_ring_layout_chain", |b| {
+        b.iter(do_document_resolve_ring_layout_chain)
+    });
     c.bench_function("document_resolve_defaults_tier", |b| {
         b.iter(do_document_resolve_defaults_tier)
     });
@@ -2027,11 +2036,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_fit_fills_a_line_exactly", |b| {
         b.iter(do_flow_fit_fills_a_line_exactly)
     });
-    c.bench_function("flow_fit_goes_around_once", |b| {
-        b.iter(do_flow_fit_goes_around_once)
-    });
-    c.bench_function("flow_fit_shrinks_past_the_naive_scale", |b| {
-        b.iter(do_flow_fit_shrinks_past_the_naive_scale)
+    c.bench_function("flow_fit_fills_a_steep_line_with_an_ornament", |b| {
+        b.iter(do_flow_fit_fills_a_steep_line_with_an_ornament)
     });
     c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
         b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
@@ -2053,9 +2059,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_spread_ends_on_a_line", |b| {
         b.iter(do_flow_spread_ends_on_a_line)
-    });
-    c.bench_function("flow_spread_ends_around_a_rounded_rect", |b| {
-        b.iter(do_flow_spread_ends_around_a_rounded_rect)
     });
     c.bench_function("flow_spread_too_long_is_cut", |b| {
         b.iter(do_flow_spread_too_long_is_cut)
@@ -2135,6 +2138,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_shape_run_marks_grapheme_starts", |b| {
         b.iter(do_flow_shape_run_marks_grapheme_starts)
     });
+    c.bench_function("flow_shape_run_marks_letters", |b| {
+        b.iter(do_flow_shape_run_marks_letters)
+    });
+    c.bench_function("flow_shape_run_measures_an_ornaments_ink", |b| {
+        b.iter(do_flow_shape_run_measures_an_ornaments_ink)
+    });
     c.bench_function("flow_shape_run_of_nothing", |b| {
         b.iter(do_flow_shape_run_of_nothing)
     });
@@ -2169,12 +2178,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_cut_keeps_the_reading_start", |b| {
         b.iter(do_flow_cut_keeps_the_reading_start)
     });
-    c.bench_function("flow_fit_shrinks_below_max", |b| {
-        b.iter(do_flow_fit_shrinks_below_max)
-    });
-    c.bench_function("flow_fit_sweeps_a_sharp_rect", |b| {
-        b.iter(do_flow_fit_sweeps_a_sharp_rect)
-    });
     c.bench_function("flow_place_corner_moves_continuously", |b| {
         b.iter(do_flow_place_corner_moves_continuously)
     });
@@ -2196,12 +2199,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_shape_run_maps_bidi_text", |b| {
         b.iter(do_flow_shape_run_maps_bidi_text)
     });
-    c.bench_function("flow_spread_sweeps_a_sharp_rect", |b| {
-        b.iter(do_flow_spread_sweeps_a_sharp_rect)
-    });
-    c.bench_function("flow_fit_finishes_a_creeping_shrink", |b| {
-        b.iter(do_flow_fit_finishes_a_creeping_shrink)
-    });
     c.bench_function("flow_place_sets_glyphs_at_their_pen_positions", |b| {
         b.iter(do_flow_place_sets_glyphs_at_their_pen_positions)
     });
@@ -2216,6 +2213,104 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_table_spacing_has_a_floor", |b| {
         b.iter(do_flow_table_spacing_has_a_floor)
+    });
+    // the readable rule (#291): every stretch reads forward //
+    c.bench_function("flow_readable_every_stretch_reads_forward", |b| {
+        b.iter(do_flow_readable_every_stretch_reads_forward)
+    });
+    c.bench_function("flow_readable_a_loop_reads_like_a_seal", |b| {
+        b.iter(do_flow_readable_a_loop_reads_like_a_seal)
+    });
+    c.bench_function("flow_readable_keeps_the_walks_glyphs_in_their_stretches", |b| {
+        b.iter(do_flow_readable_keeps_the_walks_glyphs_in_their_stretches)
+    });
+    c.bench_function(
+        "flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches",
+        |b| b.iter(do_flow_readable_hysteresis_keeps_a_flat_loop_to_two_stretches),
+    );
+    c.bench_function("flow_readable_keeps_a_torn_word_whole", |b| {
+        b.iter(do_flow_readable_keeps_a_torn_word_whole)
+    });
+    c.bench_function("flow_readable_keeps_a_flows_last_word_whole", |b| {
+        b.iter(do_flow_readable_keeps_a_flows_last_word_whole)
+    });
+    c.bench_function("flow_readable_parts_a_word_too_long_to_move", |b| {
+        b.iter(do_flow_readable_parts_a_word_too_long_to_move)
+    });
+    c.bench_function("flow_readable_fit_keeps_a_connectors_text_whole", |b| {
+        b.iter(do_flow_readable_fit_keeps_a_connectors_text_whole)
+    });
+    c.bench_function("flow_readable_cuts_copies_rather_than_overlap", |b| {
+        b.iter(do_flow_readable_cuts_copies_rather_than_overlap)
+    });
+    c.bench_function("flow_readable_a_short_side_reads_top_to_bottom", |b| {
+        b.iter(do_flow_readable_a_short_side_reads_top_to_bottom)
+    });
+    c.bench_function("flow_readable_stops_where_the_path_turns", |b| {
+        b.iter(do_flow_readable_stops_where_the_path_turns)
+    });
+    c.bench_function("flow_readable_a_repeat_ring_closes_evenly", |b| {
+        b.iter(do_flow_readable_a_repeat_ring_closes_evenly)
+    });
+    c.bench_function("flow_readable_an_ornament_ring_is_evenly_inked", |b| {
+        b.iter(do_flow_readable_an_ornament_ring_is_evenly_inked)
+    });
+    // a text frame in two lines (#291, ruling R27) //
+    c.bench_function("flow_lines_balance_a_sentence", |b| {
+        b.iter(do_flow_lines_balance_a_sentence)
+    });
+    c.bench_function("flow_lines_part_at_a_line_break", |b| {
+        b.iter(do_flow_lines_part_at_a_line_break)
+    });
+    c.bench_function("flow_lines_keep_one_word_on_top", |b| {
+        b.iter(do_flow_lines_keep_one_word_on_top)
+    });
+    c.bench_function("flow_lines_fit_to_the_fuller_line", |b| {
+        b.iter(do_flow_lines_fit_to_the_fuller_line)
+    });
+    c.bench_function("flow_lines_cut_the_bottom_line_at_min", |b| {
+        b.iter(do_flow_lines_cut_the_bottom_line_at_min)
+    });
+    c.bench_function("flow_lines_spread_over_their_spans", |b| {
+        b.iter(do_flow_lines_spread_over_their_spans)
+    });
+    c.bench_function("flow_lines_center_and_fill", |b| {
+        b.iter(do_flow_lines_center_and_fill)
+    });
+    c.bench_function("flow_lines_fit_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_lines_fit_sweeps_a_sharp_rect)
+    });
+    c.bench_function("flow_lines_spread_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_lines_spread_sweeps_a_sharp_rect)
+    });
+    c.bench_function("flow_lines_space_glyphs_level", |b| {
+        b.iter(do_flow_lines_space_glyphs_level)
+    });
+    c.bench_function("flow_lines_never_overlap_on_the_steepest_slope", |b| {
+        b.iter(do_flow_lines_never_overlap_on_the_steepest_slope)
+    });
+    // a text frame's lines along its diagonal halves (#291, rulings
+    // R32, R33, R33.1) //
+    c.bench_function("flow_halves_track_evenly_and_read_down", |b| {
+        b.iter(do_flow_halves_track_evenly_and_read_down)
+    });
+    c.bench_function("flow_halves_junctions_are_breaks", |b| {
+        b.iter(do_flow_halves_junctions_are_breaks)
+    });
+    c.bench_function("flow_halves_span_moves_the_ends_monotonically", |b| {
+        b.iter(do_flow_halves_span_moves_the_ends_monotonically)
+    });
+    c.bench_function("flow_halves_tracking_grows_with_the_gap", |b| {
+        b.iter(do_flow_halves_tracking_grows_with_the_gap)
+    });
+    c.bench_function("flow_halves_sides_hold_the_junctions", |b| {
+        b.iter(do_flow_halves_sides_hold_the_junctions)
+    });
+    c.bench_function("flow_halves_no_line_is_laid_tighter_than_its_font", |b| {
+        b.iter(do_flow_halves_no_line_is_laid_tighter_than_its_font)
+    });
+    c.bench_function("flow_halves_a_repeat_ring_takes_its_spacing", |b| {
+        b.iter(do_flow_halves_a_repeat_ring_takes_its_spacing)
     });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //

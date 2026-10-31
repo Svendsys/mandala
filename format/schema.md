@@ -358,11 +358,14 @@ text-style `size` is a [fraction](#size-units).
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `visible` | boolean | no | unset | Whether a frame is drawn. |
-| `start` | [start point](#start-point) | no | unset | Where the text starts. |
-| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text runs. |
+| `start` | [start point](#start-point) | no | unset | Where a `repeat` ring starts; a ring in another mode ignores it. |
+| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way a `repeat` ring goes around; every stretch still [reads forward](#readable-path-text). A ring in another mode is [two lines](#readable-path-text) and ignores it. |
 | `fit` | [fit](#fit) | no | unset | |
 | `gap` | number `>= 0` | no | unset | |
 | `inset` | number `>= 0` | no | unset | |
+| `span` | [span](#span-of-a-line) | no | unset | |
+| `sides` | [sides](#sides) | no | unset | |
+| `spacing` | number `>= 0` | no | unset | |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | A fraction of the node's shorter side. |
 | `color` | [color](#colors) | no | unset | |
@@ -372,10 +375,15 @@ text-style `size` is a [fraction](#size-units).
 ### Ring defaults
 
 `defaults.ring`. The text-style `size` is a [fraction](#size-units).
+A ring's `fit`, `span`, `sides` and `spacing` are each the first set
+of: the ring's, its frame's, `defaults.ring`'s, `defaults.frame`'s.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `fit` | [fit](#fit) | no | unset | |
+| `span` | [span](#span-of-a-line) | no | unset | |
+| `sides` | [sides](#sides) | no | unset | |
+| `spacing` | number `>= 0` | no | unset | |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | A fraction of the node's shorter side. |
 | `color` | [color](#colors) | no | unset | |
@@ -514,17 +522,20 @@ A node's outline text, in rings. Inside a frame, `size` is a
 [fraction](#size-units) of the node's shorter side, never points. Every
 key is unset when absent; the built-in values that then apply are
 `visible` `true` (D25: shown unless it says otherwise), `start`
-`"top-left"`, `direction` `"clockwise"`, `fit` `"fit"`, `gap` `0` and
-`inset` `0`.
+`"top-left"`, `direction` `"clockwise"`, `fit` `"fit"`, `gap` `0`,
+`inset` `0`, `span` `"whole"`, `sides` `false` and `spacing` `0`.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `visible` | boolean | no | unset | Whether the frame is drawn. |
-| `start` | [start point](#start-point) | no | unset | Where the text starts on the outline. |
-| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way the text runs. |
+| `start` | [start point](#start-point) | no | unset | Where a `repeat` ring starts on the outline; a ring in another mode is [two lines](#readable-path-text) and ignores it. |
+| `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way a `repeat` ring goes around; every stretch still [reads forward](#readable-path-text). A ring in another mode is [two lines](#readable-path-text) and ignores it. |
 | `fit` | [fit](#fit) | no | unset | What the rings do when text and outline differ in length. |
 | `gap` | number `>= 0` | no | unset | The space between rings, canvas units. |
 | `inset` | number `>= 0` | no | unset | The first ring's distance from the outline, canvas units. |
+| `span` | [span](#span-of-a-line) | no | unset | How much of its half each of a ring's two lines covers. |
+| `sides` | [sides](#sides) | no | unset | An ornament in the breaks between a ring's two lines. |
+| `spacing` | number `>= 0` | no | unset | On a `repeat` ring, the space added between its copies, ink to ink, canvas units. |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | A fraction of the node's shorter side. |
 | `color` | [color](#colors) | no | unset | |
@@ -538,6 +549,9 @@ key is unset when absent; the built-in values that then apply are
 |---|---|---|---|---|
 | `channel` | integer `0..=4294967295` | no | `0` | The place among the frame's rings. |
 | `fit` | [fit](#fit) | no | the frame's | Overrides the frame's fit. |
+| `span` | [span](#span-of-a-line) | no | the frame's | Overrides the frame's span. |
+| `sides` | [sides](#sides) | no | the frame's | Overrides the frame's sides. |
+| `spacing` | number `>= 0` | no | the frame's | Overrides the frame's spacing. |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | The ring's size: a fraction of the node's shorter side, the one `size` a ring has. |
 | `color` | [color](#colors) | no | unset | |
@@ -665,16 +679,103 @@ What a text does when it and its path differ in length (D10, §6.4).
 
 | Spelling | Meaning |
 |---|---|
-| `"repeat"` | The text repeated until the path is full. |
-| `"spread"` | The text once, spaced out to end where the path ends. |
-| `"once"` | The text once; the rest of the path gets nothing. |
-| `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. |
-| `"fit"` | The text scaled to fill the path exactly once, within the built-in bounds: `0.5` to `2.0` times the declared size. |
+| `"repeat"` | The text repeated until the path is full. Around a frame, as many whole repetitions as fit, evenly spaced, so the ring closes without a seam; along a connector, the last repetition is cut. An ornament (text with no letter or digit, such as `"✦ "`) is spaced by its ink, so its gaps look the same where the path runs level, steep, or round a corner. |
+| `"spread"` | The text once, spaced out to end where the path ends. On a frame's ring, the same as `"once"`: how far each of its two lines reaches is its [span](#span-of-a-line). |
+| `"once"` | The text once; the rest of the path gets nothing. On a frame's ring, its two lines at the declared size, as far as their [span](#span-of-a-line). |
+| `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. On a frame's ring the filler is not drawn: what the two lines leave is the breaks between them, which [sides](#sides) fills. |
+| `"fit"` | The text scaled to fill the path exactly once, within the built-in bounds: `0.5` to `2.0` times the declared size. On a frame's ring, the largest size at which each line fits the level part of its half; text too long even at `min` has its bottom line's end cut. |
 | `{ "fit": { "min": 0.5, "max": 2.0 } }` | The same, with bounds of your own: `0 < min <= max`. The built-in bounds are written as `"fit"`. |
+
+### Readable path text
+
+Text along a path — a frame's ring, a connector, a link — is placed so
+that it reads left to right or top to bottom (D33, §6.2). There is
+nothing to set: it is how path text is placed.
+
+**A frame's text is two lines.** A ring whose [fit](#fit) is `once`,
+`spread` or `fit` is parted into two lines, at a word break,
+punctuation staying on its word:
+
+- at its first line break (`\n`, `\r\n`, or any other paragraph
+  separator), if it holds one; any further line break reads as a
+  space;
+- otherwise where the two lines best balance against the level parts
+  of the outline — where it runs within 45° of level, over the top and
+  along the bottom;
+- a text with no word break is one line, on top.
+
+Both lines share one size, which `fit` finds against those level
+parts; the whitespace they part at is not drawn.
+
+**Each line follows its half.** The outline is split on its diagonal,
+at the two points where it faces up-left and down-right: on an ellipse
+where its tangent runs at 45°, on a rounded rectangle the middle of the
+top-left and bottom-right corners. The first line takes the
+upper-right half, from the top-left point clockwise over the top and
+down the right side; the second the lower-left half, from the top-left
+point down the left side and along the bottom. Glyphs stay upright, so
+every steep stretch reads down and every level one reads right.
+
+**Each line is evenly tracked.** Between every two neighboring letters
+of a line is one gap, measured between their inks — the marks the
+letters make, not their boxes — so it looks the same where the line
+runs level, steep or round a corner; between two words is a space and
+two such gaps. How long the line is, and so its gap, is its
+[span](#span-of-a-line): at `"natural"` the gap is its font's own (its
+letters' side bearings) and the line is centered on the top or the
+bottom of its half; at `"whole"`, the built-in span, it reaches as
+far along its half as the breaks allow; a number between moves each of
+its ends that part of the way. A line too long for its half at its
+font's gap reaches no further, its gap narrowed.
+
+**Each point where the halves meet is a break.** There the two lines'
+nearest letters are at least two word gaps apart (of the two lines'
+mean), so where one line ends and the next begins reads at a glance.
+[`sides`](#sides) sets an ornament in each break.
+
+`start` and `direction` do not apply: a frame's text always begins at
+the top left. They are kept and saved, and a ring set to `repeat` uses
+them.
+
+**A pattern and a connector read stretch by stretch.** On a `repeat`
+ring and along a connector or a link, glyphs are never rotated, so
+where the path runs leftward (the bottom of a clockwise frame) or
+upward (its left side), that stretch's glyphs are placed last to
+first, and a word is never torn across two stretches. `start` and
+`direction` decide where a `repeat` ring begins and which stretch comes
+next; they never make a stretch read backward. A line break in such a
+text reads as a space.
+
+### Span of a line
+
+How much of its half each of a frame ring's [two
+lines](#readable-path-text) covers: `"natural"` (each line at its
+font's own letter gap, centered on its half's top or bottom),
+`"whole"` (each line as far along its half as the breaks between the
+lines allow), or a number from `0` (`"natural"`) to `1` (`"whole"`),
+which moves each end of a line that part of the way from its natural
+place toward its half's end. The ends move only outward as the span
+grows. The saver writes `0` as `"natural"` and `1` as `"whole"`. A
+`repeat` ring has no lines and ignores it.
+
+### Sides
+
+An ornament in each break between a frame ring's [two
+lines](#readable-path-text): the text of a copy, `"✦"`; the same with a
+color of its own, `{ "content": "✦", "color": "#c8c8c8" }`; or `false`,
+none, which overrides sides set further up the chain. Each break holds
+whole copies, at least one, with every gap between two copies and the
+gap from each line's last letter to the nearest copy the same: as near
+the lines' letter gap as whole copies allow. A copy is scaled so that
+its ink is no taller than the text's x-height, and sits on the text's
+center line. Without a `color` it takes the ring's text color. A
+`repeat` ring ignores it. The saver writes `{ "content": … }` without a
+`color` as the bare string.
 
 ### Start point
 
-Where a frame's text starts on the outline. Edges run clockwise: top
+Where a `repeat` ring starts on the outline (a ring in another mode is
+[two lines](#readable-path-text)). Edges run clockwise: top
 runs left to right, right runs top to bottom, bottom runs right to left,
 left runs bottom to top.
 
@@ -703,6 +804,8 @@ The keys of the objects that spell the values above:
 | `max` | number | yes | | In `{ "fit": ... }`. |
 | `edge` | `"top"`, `"right"`, `"bottom"` or `"left"` | yes | | In a start point. |
 | `at` | number, `0` to `1` | yes | | In a start point. |
+| `content` | string, not empty | yes | | In a [sides](#sides) object. |
+| `color` | [color](#colors) | no | the ring's text color | In a [sides](#sides) object. |
 
 ### Size units
 
@@ -740,8 +843,9 @@ its path.
 | Canvas coordinates: `position`, `offset`, control points, a label's or portal end's `offset`, either part of a `min_size` | magnitude at most 1e9 (a `min_size` also `>= 0`) |
 | Font size in points | `0.5` to `4096` |
 | Font size as a fraction (inside a frame) | above `0`, at most `1` |
-| `opacity`, a label's `t`, `border_t`, a start point's `at` | `0` to `1` |
+| `opacity`, a label's `t`, `border_t`, a start point's `at`, a numeric `span` | `0` to `1` |
 | `fill_fade`, `gap`, `inset`, `spacing` | `>= 0` |
+| A [sides](#sides) `content` | not empty |
 | A `zoom` bound | above `0`, and `min` not above `max` (the bound the mutations hold an edit to) |
 | `fit` bounds | `0 < min <= max` |
 | Corner radius | `0` to `100` |

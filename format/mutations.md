@@ -268,10 +268,16 @@ variant.
   `"Clear"` drops every override. `range` is `{"start": s, "end": e}`,
   half-open, and indexes the run's **placed glyphs** — the glyphs as
   drawn, so a `Repeat`ed run counts every copy and a combining mark
-  counts as a glyph. A range is clamped to the glyph count: one that
+  counts as a glyph. They are counted in text order: a stretch placed
+  last to first so it reads forward ([readable path
+  text](./schema.md#readable-path-text)) does not reorder them, and a
+  frame's text set in two lines counts the first line's glyphs (the
+  upper-right half), then the second's, without the whitespace they
+  part at. A range is clamped to the glyph count: one that
   runs past the end writes up to it, and one that starts past the end,
-  runs backward or is empty writes nothing. A `Once` frame's filler
-  glyphs are skipped by every range, since they belong to no span. A
+  runs backward or is empty writes nothing. A `Once` filler's glyphs
+  and a frame's [sides](./schema.md#sides) ornament are skipped by
+  every range, since they belong to no span. A
   run's hit-test box does not move with its overrides.
 - `FillColor` — an `[r, g, b, a]` array of bytes.
 - `FillRect` — `{"origin": [x, y], "size": [w, h]}`: the rectangle the

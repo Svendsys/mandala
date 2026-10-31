@@ -4,17 +4,16 @@
 //! places the text once and fills the rest with whole filler copies;
 //! `Repeat` reuses the run's glyph indices and cuts its last copy at a
 //! grapheme; `Spread` and `Fit` end their last glyph's step at the
-//! path's end, on a curved path as on a straight one; text too long is
-//! cut at a grapheme and never overlaps.
+//! path's end; text too long is cut at a grapheme and never overlaps.
+//! These hold along an open path. A frame ring in `Once`, `Spread` or
+//! `Fit` is text in two lines (#291, ruling R27), whose end conditions
+//! `lines_tests` holds.
 
 use glam::Vec2;
 
-use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
+use crate::document::values::FitMode;
 use crate::flow::tests::support::{close, clustered, real_run, style, synthetic, with_fonts};
-use crate::flow::{
-    outline, place_on_closed, place_on_open, shape_run, Curve, FlowSpan, Outline, PlacedRun, Rect, ShapedRun,
-    FILLER_SPAN,
-};
+use crate::flow::{place_on_open, shape_run, Curve, FlowSpan, PlacedRun, ShapedRun, FILLER_SPAN};
 use crate::font::fonts::MIN_FONT_SIZE_PT;
 
 /// A horizontal line from the origin, `length` long.
@@ -60,38 +59,6 @@ fn on_line(run: &ShapedRun, curve: Curve, fit: &FitMode, spacing: f32) -> Placed
     placed
 }
 
-/// `text` shaped at 12 pt and placed clockwise around `path` from the
-/// middle of its top side, glyph centers on the outline.
-fn shaped_around(text: &str, path: &Outline, fit: &FitMode) -> (ShapedRun, Option<ShapedRun>, PlacedRun) {
-    with_fonts(|fs| {
-        let run = real_run(text, &style(12.0), fs);
-        let start = StartPoint {
-            edge: Edge::Top,
-            at: 0.5,
-        };
-        let (rescaled, placed) = place_on_closed(
-            &run,
-            path,
-            start,
-            Direction::Clockwise,
-            fit,
-            false,
-            &style(12.0),
-            fs,
-        );
-        (run, rescaled, placed)
-    })
-}
-
-fn rounded(w: f32, h: f32, percent: u8) -> Outline {
-    outline(
-        Rect::new(Vec2::ZERO, Vec2::new(w, h)),
-        Shape::Rectangle {
-            radius: Percent::new(percent),
-        },
-    )
-}
-
 #[test]
 fn test_flow_fit_fills_a_line_exactly() {
     do_flow_fit_fills_a_line_exactly();
@@ -120,82 +87,36 @@ pub fn do_flow_fit_fills_a_line_exactly() {
 }
 
 #[test]
-fn test_flow_fit_goes_around_once() {
-    do_flow_fit_goes_around_once();
+fn test_flow_fit_fills_a_steep_line_with_an_ornament() {
+    do_flow_fit_fills_a_steep_line_with_an_ornament();
 }
 
-/// Around a rounded rectangle, starting at the middle of its top side,
-/// an unclamped `Fit` ends its last glyph's step back at the start: the
-/// last glyph is on the top side and its box ends at the start point,
-/// within half a point, though rescaling moved glyphs onto stretches
-/// where their steps differ (ruling R6).
-pub fn do_flow_fit_goes_around_once() {
-    let path = rounded(300.0, 160.0, 25);
-    let fit = FitMode::Fit { min: 0.1, max: 10.0 };
-    let (run, rescaled, placed) = shaped_around("the poem goes around the node exactly once", &path, &fit);
+/// An ornament steps by its ink (ruling R31), and `Fit` predicts its
+/// length so: down a vertical line each glyph steps its ink's height
+/// plus its side bearings, each space its advance, so `L` is their sum
+/// and `Fit` rescales by `P / L` — not by the line-high boxes' sum, which
+/// would leave it smaller with the rest spread as gaps — the last ink
+/// ending its right bearing short of the line's end.
+pub fn do_flow_fit_fills_a_steep_line_with_an_ornament() {
+    let text = "✦ · ✦ · ✦";
+    let probe = with_fonts(|fs| real_run(text, &style(12.0), fs));
+    let step = |glyph: &crate::flow::GlyphMetrics| match glyph.ink {
+        Some(ink) => (ink.max.y - ink.min.y) + glyph.advance - (ink.max.x - ink.min.x),
+        None => glyph.advance,
+    };
+    let natural: f32 = probe.glyphs.iter().map(step).sum();
+    let length = natural * 1.37;
+    let down = Curve::Line(Vec2::ZERO, Vec2::new(0.0, length));
+    let (run, rescaled, placed) = shaped_on_line(text, down, &FitMode::Fit { min: 0.5, max: 2.0 });
     let rescaled = rescaled.expect("an unclamped fit rescales");
+    close(rescaled.line_height / run.line_height, 1.37, 2e-3, "scale");
     assert!(!placed.truncated);
     assert_eq!(placed.glyphs.len(), run.glyphs.len());
-    close(
-        placed.glyphs[0].pos.x,
-        150.0,
-        1e-3,
-        "the first box starts at the start",
-    );
-    let last = placed.glyphs.last().unwrap();
-    close(
-        last.pos.y + rescaled.line_height / 2.0,
-        0.0,
-        1e-3,
-        "the last glyph is on the top side",
-    );
-    close(
-        last.pos.x + rescaled.glyphs[last.glyph as usize].advance,
-        150.0,
-        0.5,
-        "it ends at the start",
-    );
-}
-
-#[test]
-fn test_flow_fit_shrinks_past_the_naive_scale() {
-    do_flow_fit_shrinks_past_the_naive_scale();
-}
-
-/// Short text that sits on the level top side at its declared size
-/// reaches the vertical sides once scaled up, where each glyph steps its
-/// (taller) line height instead of its advance — so the naive scale
-/// `P / L` would overrun the path. `Fit` settles below it, still
-/// unclamped, and the text goes around exactly once, whole (ruling R6).
-/// `P` and `L` are computed here from the rectangle and the advances.
-pub fn do_flow_fit_shrinks_past_the_naive_scale() {
-    let path = rounded(600.0, 200.0, 0);
-    let fit = FitMode::Fit { min: 0.1, max: 40.0 };
-    let (run, rescaled, placed) = shaped_around("a short line of text", &path, &fit);
-    let natural: f32 = run.glyphs.iter().map(|g| g.advance).sum();
-    assert!(
-        natural < 300.0,
-        "the fixture needs the text on the top side at scale 1"
-    );
-    let naive = 1600.0 / natural;
-    let rescaled = rescaled.expect("an unclamped fit rescales");
-    let scale = rescaled.line_height / run.line_height;
-    assert!(scale < naive * 0.98, "scale {scale} vs naive {naive}");
-    assert!(!placed.truncated);
-    assert_eq!(placed.glyphs.len(), run.glyphs.len());
-    let last = placed.glyphs.last().unwrap();
-    close(
-        last.pos.y + rescaled.line_height / 2.0,
-        0.0,
-        1e-3,
-        "the last glyph is on the top side",
-    );
-    close(
-        last.pos.x + rescaled.glyphs[last.glyph as usize].advance,
-        300.0,
-        0.5,
-        "it ends at the start",
-    );
+    let last = placed.glyphs[placed.glyphs.len() - 1];
+    let glyph = &rescaled.glyphs[last.glyph as usize];
+    let ink = glyph.ink.expect("the last star has ink");
+    let bottom = last.pos.y + rescaled.baseline() + ink.max.y;
+    close(bottom + glyph.advance - ink.max.x, length, 0.5, "end");
 }
 
 #[test]
@@ -361,41 +282,6 @@ pub fn do_flow_spread_ends_on_a_line() {
 }
 
 #[test]
-fn test_flow_spread_ends_around_a_rounded_rect() {
-    do_flow_spread_ends_around_a_rounded_rect();
-}
-
-/// `Spread` around a rounded rectangle from the middle of its top side
-/// ends its last glyph's step back at the start, within half a point:
-/// the spacing is solved for the end condition, not taken from the
-/// straight-path formula (ruling R6).
-pub fn do_flow_spread_ends_around_a_rounded_rect() {
-    let run = synthetic(&[6.0; 20], 14.0);
-    let path = rounded(200.0, 120.0, 20);
-    let start = StartPoint {
-        edge: Edge::Top,
-        at: 0.5,
-    };
-    let (rescaled, placed) = with_fonts(|fs| {
-        place_on_closed(
-            &run,
-            &path,
-            start,
-            Direction::Clockwise,
-            &FitMode::Spread,
-            false,
-            &style(12.0),
-            fs,
-        )
-    });
-    assert!(rescaled.is_none());
-    assert_eq!(placed.glyphs.len(), 20);
-    let last = placed.glyphs.last().unwrap();
-    close(last.pos.y + 7.0, 0.0, 1e-3, "the last glyph is on the top side");
-    close(last.pos.x + 6.0, 100.0, 0.5, "it ends at the start");
-}
-
-#[test]
 fn test_flow_spread_too_long_is_cut() {
     do_flow_spread_too_long_is_cut();
 }
@@ -408,140 +294,6 @@ pub fn do_flow_spread_too_long_is_cut() {
     let x: Vec<f32> = placed.glyphs.iter().map(|g| g.pos.x).collect();
     assert_eq!(x, vec![0.0, 30.0]);
     assert!(placed.truncated);
-}
-
-/// The last placed glyph's box on a sharp rectangle placed from the
-/// middle of its top side, as `(right edge, center height)`: a whole run
-/// that fills the outline ends there, level, on the top side.
-fn end_on_top(run: &ShapedRun, placed: &PlacedRun) -> (f32, f32) {
-    let last = placed.glyphs.last().unwrap();
-    (
-        last.pos.x + run.glyphs[last.glyph as usize].advance,
-        last.pos.y + run.line_height / 2.0,
-    )
-}
-
-#[test]
-fn test_flow_spread_sweeps_a_sharp_rect() {
-    do_flow_spread_sweeps_a_sharp_rect();
-}
-
-/// `Spread` on the default frame's outline, a sharp rectangle, over a
-/// sweep of runs — three advances, 26 lengths each, all short enough to
-/// fit — rather than one fixture: every run is placed whole, and its last
-/// step ends back at the start within half a point (rulings R6, R9.2).
-/// With steps taken from the tangent, the end jumps at each corner and
-/// the solver settles on a jump: up to 9 pt short, in the review's sweep.
-pub fn do_flow_spread_sweeps_a_sharp_rect() {
-    let path = rounded(200.0, 120.0, 0);
-    let start = StartPoint {
-        edge: Edge::Top,
-        at: 0.5,
-    };
-    for w in [5.0_f32, 6.0, 7.5] {
-        for n in (10..=60).step_by(2) {
-            let run = synthetic(&vec![w; n], 14.0);
-            let (_, placed) = with_fonts(|fs| {
-                place_on_closed(
-                    &run,
-                    &path,
-                    start,
-                    Direction::Clockwise,
-                    &FitMode::Spread,
-                    false,
-                    &style(12.0),
-                    fs,
-                )
-            });
-            let what = format!("w {w}, n {n}");
-            assert!(!placed.truncated, "{what}: truncated");
-            assert_eq!(placed.glyphs.len(), n, "{what}");
-            let (end, level) = end_on_top(&run, &placed);
-            close(level, 0.0, 1e-3, &format!("{what}: on the top side"));
-            close(end, 100.0, 0.5, &format!("{what}: ends at the start"));
-        }
-    }
-}
-
-#[test]
-fn test_flow_fit_sweeps_a_sharp_rect() {
-    do_flow_fit_sweeps_a_sharp_rect();
-}
-
-/// `Fit` on the default frame's outline, a sharp rectangle, over every
-/// prefix of a sentence from 5 to 68 characters, shaped for real: no
-/// prefix is truncated, and each ends back at the start within half a
-/// point — whether its scale is free, held at `max` with spacing to
-/// spare, or shrunk below `max` because it overran (rulings R6, R9.2,
-/// R9.3).
-pub fn do_flow_fit_sweeps_a_sharp_rect() {
-    let path = rounded(200.0, 120.0, 0);
-    let sentence = "the quick brown fox jumps over the lazy dog while the poem goes around";
-    let fit = FitMode::Fit { min: 0.1, max: 10.0 };
-    for n in 5..=68 {
-        let text = &sentence[..n];
-        let (run, rescaled, placed) = shaped_around(text, &path, &fit);
-        let rescaled = rescaled.expect("the scale is never exactly 1 here");
-        assert!(!placed.truncated, "{text:?}: truncated");
-        assert_eq!(placed.glyphs.len(), run.glyphs.len(), "{text:?}");
-        let (end, level) = end_on_top(&rescaled, &placed);
-        close(level, 0.0, 1e-3, &format!("{text:?}: on the top side"));
-        close(end, 100.0, 0.5, &format!("{text:?}: ends at the start"));
-    }
-}
-
-#[test]
-fn test_flow_fit_shrinks_below_max() {
-    do_flow_fit_shrinks_below_max();
-}
-
-/// Text short enough that `P / L` is past `max`, but that at `max` still
-/// overruns the outline — its glyphs grow onto the sides, where each
-/// steps its line height — is shrunk below `max` until it fits, not cut
-/// (ruling R9.3: only text too long at `min` is cut).
-pub fn do_flow_fit_shrinks_below_max() {
-    let path = rounded(200.0, 120.0, 0);
-    let fit = FitMode::Fit { min: 0.1, max: 10.0 };
-    let (run, rescaled, placed) = shaped_around("abcdefghi", &path, &fit);
-    let natural: f32 = run.glyphs.iter().map(|g| g.advance).sum();
-    assert!(
-        640.0 / natural > 10.0,
-        "the fixture needs P / L past max: {}",
-        640.0 / natural
-    );
-    let rescaled = rescaled.expect("the run is rescaled");
-    let scale = rescaled.line_height / run.line_height;
-    assert!(scale < 10.0 * 0.99, "scale {scale} was not shrunk below max");
-    assert!(!placed.truncated);
-    assert_eq!(placed.glyphs.len(), run.glyphs.len());
-    let (end, level) = end_on_top(&rescaled, &placed);
-    close(level, 0.0, 1e-3, "the last glyph is on the top side");
-    close(end, 100.0, 0.5, "it ends at the start");
-}
-
-#[test]
-fn test_flow_fit_finishes_a_creeping_shrink() {
-    do_flow_fit_finishes_a_creeping_shrink();
-}
-
-/// Where the shrink `s ← s·P/L(s)` creeps — around a long, flat sharp
-/// rectangle, 32 letters of a sentence scaled up near tenfold, where
-/// `L(s)` falls more slowly than `s` and the shrink stops short with the
-/// text still overrunning by more than the solver's slack — `Fit`
-/// finishes by bisection rather than reshaping at a scale that still
-/// overruns: the text goes around whole and ends back at the start
-/// (ruling R9.3). Without the bisection this fixture is cut.
-pub fn do_flow_fit_finishes_a_creeping_shrink() {
-    let path = rounded(800.0, 30.0, 0);
-    let sentence = "the quick brown fox jumps over the lazy dog";
-    let fit = FitMode::Fit { min: 0.1, max: 40.0 };
-    let (run, rescaled, placed) = shaped_around(&sentence[..32], &path, &fit);
-    let rescaled = rescaled.expect("the run is rescaled");
-    assert!(!placed.truncated);
-    assert_eq!(placed.glyphs.len(), run.glyphs.len());
-    let (end, level) = end_on_top(&rescaled, &placed);
-    close(level, 0.0, 1e-3, "the last glyph is on the top side");
-    close(end, 400.0, 0.5, "it ends at the start");
 }
 
 #[test]

@@ -27,23 +27,23 @@
 
 use crate::document::bounds::{
     check_canvas_coord, check_channel, check_control_points, check_extent, check_fit, check_font_size_pt,
-    check_non_negative, check_rel_size, check_unit_interval, check_zoom_window, BoundError,
+    check_non_negative, check_ornament, check_rel_size, check_unit_interval, check_zoom_window, BoundError,
 };
 use crate::document::element::{
     DefaultsData, DocElement, DocKind, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PaletteGroup, PathData,
-    PortalEndStyle, TextStyle,
+    PortalEndStyle, RingLayoutStyle, TextStyle,
 };
 use crate::document::ids::{owning_node, Document, NodeIdent};
 use crate::document::mutation::error::{MutationError, MutatorPath, StructureRule};
 use crate::document::mutation::ops::{
-    DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LinkOp, MapOp, NodeOp, PaletteOp, PathOp,
-    PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
+    DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LayoutOp, LinkOp, MapOp, NodeOp, PaletteOp,
+    PathOp, PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
 };
 use crate::document::place::{name_fault, nameable_font, sizes_its_own_text, Unit};
 use crate::document::shape::validate_shape;
 use crate::document::values::{
-    ColorRef, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, StartPoint, VarId, VerbId,
-    ZoomWindow,
+    ColorRef, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Sides, StartPoint, VarId,
+    VerbId, ZoomWindow,
 };
 use crate::engine::journal::{Journal, Touch};
 use crate::engine::key::BranchKey;
@@ -263,10 +263,12 @@ impl<'d> Validator<'d> {
                 FrameOp::SetFit(fit) => self.fit("frame.fit", fit.as_ref()),
                 FrameOp::SetGap(gap) => self.non_negative("frame.gap", *gap),
                 FrameOp::SetInset(inset) => self.non_negative("frame.inset", *inset),
+                FrameOp::Layout(op) => self.layout_op("frame", op),
                 FrameOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Frame)),
             },
             DocMutation::Ring(op) => match op {
                 RingOp::SetFit(fit) => self.fit("ring.fit", fit.as_ref()),
+                RingOp::Layout(op) => self.layout_op("ring", op),
                 RingOp::SetChannel(channel) => self.bound("ring.channel", check_channel(*channel)),
                 RingOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Ring)),
             },
@@ -553,7 +555,47 @@ impl<'d> Validator<'d> {
         self.fit("frame.fit", style.fit.as_ref())?;
         self.non_negative("frame.gap", style.gap)?;
         self.non_negative("frame.inset", style.inset)?;
+        self.layout("frame", &style.ring_layout)?;
         self.text_style(&style.text, Unit::of_tier(DocKind::Frame))
+    }
+
+    /// A frame's or a ring's layout (`tier` names which): its spacing
+    /// `>= 0`, its sides' ornament not empty and its color a variable
+    /// the map has. A span is in range by construction.
+    fn layout(&self, tier: &'static str, layout: &RingLayoutStyle) -> Result<(), MutationError> {
+        self.spacing(tier, layout.spacing)?;
+        self.sides(tier, layout.sides.as_ref())
+    }
+
+    /// One change to a frame's or a ring's layout, as [`layout`](Self::layout).
+    fn layout_op(&self, tier: &'static str, op: &LayoutOp) -> Result<(), MutationError> {
+        match op {
+            LayoutOp::SetSpan(_) => Ok(()),
+            LayoutOp::SetSides(sides) => self.sides(tier, sides.as_ref()),
+            LayoutOp::SetSpacing(spacing) => self.spacing(tier, *spacing),
+        }
+    }
+
+    fn spacing(&self, tier: &'static str, spacing: Option<f32>) -> Result<(), MutationError> {
+        let field = if tier == "frame" {
+            "frame.spacing"
+        } else {
+            "ring.spacing"
+        };
+        self.non_negative(field, spacing)
+    }
+
+    fn sides(&self, tier: &'static str, sides: Option<&Sides>) -> Result<(), MutationError> {
+        let Some(Sides::On { content, color }) = sides else {
+            return Ok(());
+        };
+        let field = if tier == "frame" {
+            "frame.sides"
+        } else {
+            "ring.sides"
+        };
+        self.bound(field, check_ornament(content))?;
+        self.color(color.as_ref())
     }
 
     fn label_style(&self, style: &LabelStyle) -> Result<(), MutationError> {
@@ -577,6 +619,7 @@ impl<'d> Validator<'d> {
         self.text_style(&defaults.section, Unit::of_tier(DocKind::Section))?;
         self.frame_style(&defaults.frame)?;
         self.fit("ring.fit", defaults.ring.fit.as_ref())?;
+        self.layout("ring", &defaults.ring.ring_layout)?;
         self.text_style(&defaults.ring.text, Unit::of_tier(DocKind::Ring))?;
         self.flow(&defaults.connector)?;
         self.flow(&defaults.link)?;
@@ -636,6 +679,7 @@ impl<'d> Validator<'d> {
             DocElement::Ring(ring) => {
                 self.bound("ring.channel", check_channel(ring.channel))?;
                 self.fit("ring.fit", ring.style.fit.as_ref())?;
+                self.layout("ring", &ring.style.ring_layout)?;
                 self.text_style(&ring.style.text, Unit::of_tier(DocKind::Ring))
             }
             DocElement::Connector(connector) => self.path_data(&connector.path),

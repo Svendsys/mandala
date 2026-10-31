@@ -1686,3 +1686,65 @@ fn test_more_definitions_than_an_index_addresses_are_refused() {
     let (_, data) = crate::document::tests::format_support::node(&doc, 1);
     assert_eq!(data.on.click.map(|verb| verb.0), Some(u16::MAX));
 }
+
+#[test]
+fn test_a_frame_rings_layout_is_held_to_its_bounds() {
+    // A numeric span in `0..=1`, a sides ornament with something to
+    // draw, a spacing `>= 0`, each at its own path, on a frame, a ring
+    // and both defaults; `true`, an unknown name and an unknown key are
+    // not spellings.
+    rejects_bound(
+        &map_of(r#","frame":{"span":1.5}"#),
+        "nodes[0].frame.span",
+        BoundError::Above { value: 1.5, max: 1.0 },
+    );
+    rejects_bound(
+        &map_of(r#","frame":{"rings":[{"span":-0.5}]}"#),
+        "nodes[0].frame.rings[0].span",
+        BoundError::Below {
+            value: -0.5,
+            min: 0.0,
+            inclusive: true,
+        },
+    );
+    rejects_bound(
+        &map_with(r#","defaults":{"ring":{"sides":""}}"#, ""),
+        "defaults.ring.sides",
+        BoundError::EmptyText,
+    );
+    rejects_bound(
+        &map_with(r#","defaults":{"frame":{"sides":{"content":""}}}"#, ""),
+        "defaults.frame.sides.content",
+        BoundError::EmptyText,
+    );
+    rejects_bound(
+        &map_of(r#","frame":{"rings":[{"spacing":-2}]}"#),
+        "nodes[0].frame.rings[0].spacing",
+        BoundError::Below {
+            value: -2.0,
+            min: 0.0,
+            inclusive: true,
+        },
+    );
+    rejects(
+        &map_of(r#","frame":{"sides":{"content":"·","color":"var(nope)"}}"#),
+        "nodes[0].frame.sides.color",
+        LoadErrorKind::UnknownVariable {
+            name: "nope".to_string(),
+        },
+    );
+    rejects_as_invalid(&map_of(r#","frame":{"sides":true}"#), "nodes[0].frame.sides");
+    rejects_as_invalid(&map_of(r#","frame":{"span":"half"}"#), "nodes[0].frame.span");
+    rejects(
+        &map_of(r#","frame":{"sides":{"content":"·","size":3}}"#),
+        "nodes[0].frame.sides.size",
+        LoadErrorKind::UnknownKey {
+            key: "size".to_string(),
+        },
+    );
+    // The ends of the range are in.
+    assert!(load(&map_of(
+        r#","frame":{"span":0,"spacing":0,"rings":[{"span":1,"sides":"·"}]}"#
+    ))
+    .is_ok());
+}

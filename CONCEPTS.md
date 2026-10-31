@@ -1472,8 +1472,59 @@ element.
   path, θ the direction of the chord the step spans: side by side along
   a horizontal stretch, a line apart along a vertical one, blended on a
   curve and turning smoothly through a sharp corner — the way ASCII art
-  makes one. Around an outline each cluster is pushed outward by half
-  its extent, so text sits on the outline rather than across it.
+  makes one. That is the box step, which `Repeat` rings and connectors
+  take. A frame's text line takes the level step instead (ruling R28,
+  `PathWalk::level_len`): it moves `w` horizontally, so letters keep
+  their shaped spacing where the outline curves. Around an outline each
+  cluster is pushed outward by half its extent (straight up or down on a
+  level step), so text sits on the outline rather than across it.
+- **Readable path text** (D33, #291). Path text reads left to right or
+  top to bottom.
+  - **A frame's text is two lines** (ruling R27; `flow/place/lines.rs`).
+    A ring in `Once`, `Spread` or `Fit` is split at the outline's
+    leftmost and rightmost points into a top and a bottom half, each
+    walked left to right; each half's span is where the outline runs
+    within 45° of level, and the steep sides stay clear. The text is
+    parted at its first line break, or at the word break where the two
+    lines best balance, and each line is centered on (or, for `Spread`,
+    spread over) its span; `Fit` takes the largest size at which both
+    fit, and too long at `min` cuts only the bottom line's end. `start`
+    and `direction` apply to `Repeat` rings only.
+  - **Each line follows its half** (rulings R32, R33, R33.1;
+    `flow/place/halves.rs`). R27 parts and sizes the text; the lines are
+    then laid along the outline's diagonal halves, split where it faces
+    up-left and down-right (`Outline::support`): the first from the
+    top-left junction clockwise over the top and down the right side,
+    the second down the left side and along the bottom, glyphs upright.
+    Each line is tracked evenly — one ink gap between every two letters,
+    by the ornament's pairwise rule, and a space plus two gaps between
+    words — over the part of its half its `span` gives it
+    (`RingLayout`, `values::Span`: `natural`, at its font's own gap and
+    centered on its half's apex, to `whole`, the default). At each
+    junction the two lines' end inks stay two word gaps apart, and
+    `sides` (`values::Sides`) fills that break with whole, evenly
+    spaced copies of an ornament no taller than the text's x-height.
+  - **A pattern and a connector read stretch by stretch**. On a `Repeat`
+    ring and every connector, the walk (the fit mode) decides which
+    clusters are placed and which stretch — rightward, leftward,
+    downward, upward, by each step's dominant direction — each lies in,
+    a word a boundary would tear moved whole to one side; then the same
+    clusters are laid in reading order, each leftward and upward
+    stretch's last to first, each stretch in its own part of the path,
+    borrowing room only from a neighbor read its way. A tight turn
+    through vertical makes no stretch of its own (a hysteresis); a loop
+    reads like a seal. An ornament, with no letter or digit, has no
+    reading direction and is placed as walked, each glyph stepped by
+    its ink, not a line-high box, and set as far from the last glyph's
+    ink as a line would set them, so a ring's gaps are even where its
+    outline runs steep and round its corners (ruling R31). The one
+    exception to
+    keeping the walk's glyphs:
+    with no slack and a zero gap, the end is cut — filler copies or
+    repeat clusters first.
+
+  Either way a placement lists its glyphs in text order; only positions
+  move.
 - **Outlines** (`outline`, `offset`, `ring_offset`): a node's
   rectangle shaped as a rounded rectangle (radius a percentage of half
   the shorter side) or the inscribed ellipse; ring *k* runs around the
@@ -1482,15 +1533,19 @@ element.
   whose points are evaluated on the curve itself.
 - **Fit modes** say what happens when text and path differ in length:
   `Once` (with an optional filler, appended to the run in the flow's
-  style), `Repeat` (reusing the run's glyph indices), `Spread` and
+  style), `Repeat` (reusing the run's glyph indices; around a closed
+  outline, whole copies evenly spaced so the ring closes without a seam,
+  rulings R29 and R31, a ring's `spacing` more between copies), `Spread` and
   `Fit` (rescaling the run), the last two solved so the last cluster
-  ends at the path's end. Text too long is cut to the longest prefix,
+  ends at the path's end — on a frame, each line at its span's end. Text too long is cut to the longest prefix,
   in reading order, that fits — a right-to-left run keeps its
   beginning — and never overlaps.
 - **Hit mapping.** Every glyph names its span and its bytes of that
   span's text (`GlyphMetrics`, `ShapedBox::glyph_spans`); a filler
-  glyph names `FILLER_SPAN`. No paragraph separator but a box's `\n`
-  is drawn or breaks a line.
+  glyph names `FILLER_SPAN`. No paragraph separator is drawn. A box
+  breaks a line at `\n`; a path run lays each separator as a space
+  (`GlyphMetrics::line_break`), and a frame's text parts its two lines
+  at the first.
 
 `lib/baumhard/src/flow/`. It caches nothing, builds no glyph tree and
 never takes the font lock: every shaping function takes the guard its

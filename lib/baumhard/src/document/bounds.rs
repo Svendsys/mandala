@@ -131,6 +131,8 @@ pub enum BoundError {
         /// How many are allowed.
         max: usize,
     },
+    /// An empty text, where one with something to draw is required.
+    EmptyText,
 }
 
 impl std::fmt::Display for BoundError {
@@ -160,6 +162,7 @@ impl std::fmt::Display for BoundError {
                 "{value} is not a weight: {MIN_WEIGHT}..={MAX_WEIGHT} in steps of {WEIGHT_STEP}"
             ),
             BoundError::TooMany { count, max } => write!(f, "{count} items, at most {max} allowed"),
+            BoundError::EmptyText => f.write_str("the text is empty"),
         }
     }
 }
@@ -271,8 +274,19 @@ pub fn check_unit_interval(value: f32) -> Result<f32, BoundError> {
     in_closed(value, 0.0, 1.0)
 }
 
+/// Check a frame's [`Sides`](crate::document::values::Sides) ornament:
+/// one copy's text, which must not be empty — a break holds at least one
+/// copy, and an empty one is none (#291, ruling R33.1). O(1).
+pub fn check_ornament(content: &str) -> Result<&str, BoundError> {
+    if content.is_empty() {
+        Err(BoundError::EmptyText)
+    } else {
+        Ok(content)
+    }
+}
+
 /// A finite value `≥ 0`: a node's `fill_fade`, a frame's `gap` and
-/// `inset`, and a path's `spacing`. O(1).
+/// `inset`, and a path's or a ring's `spacing`. O(1).
 pub fn check_non_negative(value: f32) -> Result<f32, BoundError> {
     in_closed(value, 0.0, f32::MAX)
 }
