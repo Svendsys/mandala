@@ -34,14 +34,24 @@ pub const EXCERPT_GRAPHEMES: usize = 32;
 pub const EXCERPT_BYTES: usize = 256;
 
 /// Whether the saver writes `c` as a `\uXXXX` escape although JSON lets
-/// it stand raw (design B.9): U+0085, U+2028 and U+2029, which some
-/// editors and diff viewers break a line at, and the bidi embedding,
-/// override and isolate controls U+202A–U+202E and U+2066–U+2069, which
-/// can make a line display in an order other than its bytes. With them
-/// escaped, a key's line is one physical line in every editor and a
-/// diff of it cannot be visually reordered.
+/// it stand raw (design B.9, §7.2):
+///
+/// - U+0085, U+2028 and U+2029, which some editors and diff viewers
+///   break a line at;
+/// - the bidi embedding, override and isolate controls U+202A–U+202E and
+///   U+2066–U+2069, which can make a line display in an order other than
+///   its bytes;
+/// - DEL (U+007F) and the C1 controls U+0080–U+009F (ruling R23 on
+///   #278), which a UTF-8 terminal can act on: U+009B is CSI, so a map
+///   holding it raw could drive the terminal it is printed, grepped or
+///   diffed in. U+0085 is one of them.
+///
+/// With all of them escaped, a key's line is one physical line in every
+/// editor, a diff of it cannot be visually reordered, and no control
+/// character stands raw in the file (JSON escapes C0 itself). The loader
+/// reads either spelling as the same text.
 pub(crate) fn saver_escapes(c: char) -> bool {
-    matches!(c, '\u{85}' | '\u{2028}' | '\u{2029}') || is_bidi_control(c)
+    matches!(c, '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}') || is_bidi_control(c)
 }
 
 /// Whether `c` is a bidi embedding, override or isolate control:

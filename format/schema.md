@@ -188,11 +188,18 @@ reload. (Verbs and presentations carry no targets yet; a node's
   subtree is a moved block of lines, `grep '"id": 7,'` finds a node and
   `grep '"parent": 7,'` its children.
 - **Escapes.** Strings are escaped as serde_json escapes them (`"`, `\`,
-  and the characters below U+0020), and on top of that U+0085, U+2028
-  and U+2029 — where some editors and diff viewers break a line — and
-  the bidi controls U+202A–U+202E and U+2066–U+2069 — which can make a
-  line display in an order other than its bytes — are written as
-  `\uXXXX`. All other text is written as raw UTF-8.
+  and the characters below U+0020), and on top of that these are
+  written as `\uXXXX`, in lowercase hex:
+  - U+2028 and U+2029, where some editors and diff viewers break a line;
+  - the bidi controls U+202A–U+202E and U+2066–U+2069, which can make a
+    line display in an order other than its bytes;
+  - DEL (U+007F) and the C1 controls U+0080–U+009F, U+0085 among them,
+    which a terminal can act on: U+009B is CSI, so a raw one in a shared
+    map could drive the terminal it is printed or diffed in.
+
+  So no control character is ever written raw. All other text is written
+  as raw UTF-8, and the loader reads either spelling of a character as
+  the same text.
 - **Streaming.** `save_to` writes the header, then each node's block as
   its walk reaches it, to any `io::Write`, so a large map is never held
   as one text; `save` is `save_to` into a string. A failing writer is a

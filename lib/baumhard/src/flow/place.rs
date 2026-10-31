@@ -1457,7 +1457,15 @@ impl PathWalk<'_> {
             // solved spacing that measures within the path must lay
             // within it, to the last bit.
             let end = start + step;
-            if end > self.limit {
+            // An `end` that is not a number overshoots, as it does in
+            // `solve_gap`: read as fitting, it would place the cluster and
+            // report `Fits(NaN)`. No input reaches it today — every path
+            // point is finite (`ArcPath`), and the gaps `lay` is handed are
+            // finite (`solve_gap`'s answer, or a spacing `place_on_open`
+            // makes finite) — so this holds the next caller to it, not a
+            // case a test can construct. (`!(end <= limit)` says the same;
+            // clippy's `neg_cmp_op_on_partial_ord` asks for this spelling.)
+            if end.is_nan() || end > self.limit {
                 return Laid::Overran;
             }
             if out.glyphs.len() + cluster.glyphs.len() > MAX_PLACED_GLYPHS {
@@ -2700,6 +2708,11 @@ fn solve_gap(miss: impl Fn(f32) -> f32, length: f32, guess: f32) -> f32 {
     let mut probe = guess.max(f32::EPSILON);
     for _ in 0..SOLVE_ROUNDS {
         let probe_miss = miss(probe);
+        // A miss that is not a number overshoots: the walk ran past every
+        // `f32` (a gap that large on a path near the largest one), so it
+        // is no fitting low side. Taken as one, the doubling ran on to an
+        // infinite gap and placed every cluster after the first at `NaN`
+        // (a CI smoke finding of #293).
         if probe_miss.is_nan() || probe_miss >= 0.0 {
             high = Some((probe, probe_miss));
             break;

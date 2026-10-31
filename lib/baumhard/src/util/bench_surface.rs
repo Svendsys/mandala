@@ -485,6 +485,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "font/tests/fonts_tests.rs",
+            "test_no_face_but_a_compiled_one_bears_a_compiled_family_name",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "font/tests/fonts_tests.rs",
             "test_acquire_font_system_write_panics_on_timeout",
             DrivesAPanic,
         ),

@@ -3,11 +3,14 @@
 //! The loader is handed untrusted bytes, so it must answer any input
 //! with a document or an error, never a panic, and a document it
 //! accepts must save to text that loads and saves to the same text.
-//! This is a deterministic stand-in for a fuzzer (V1-D29): the same
-//! property, driven over mutations of the fixtures.
+//! The coverage-guided fuzzer (`fuzz/`, TEST_CONVENTIONS §T14) holds
+//! every input it finds to `format_fuzz`'s properties; the sweep here
+//! holds deterministic mutations of the fixtures to the same properties
+//! on every `./test.sh`, on the pinned toolchain.
 
 use crate::document::format::{load, load_bytes_under, load_from_bytes, Limits, LoadErrorKind};
-use crate::document::tests::format_support::{same_document, written, FIXTURES};
+use crate::document::tests::format_fuzz::check_load_bytes;
+use crate::document::tests::format_support::FIXTURES;
 
 /// A small deterministic generator (xorshift).
 struct Rng(u64);
@@ -100,17 +103,11 @@ fn test_no_input_makes_the_loader_panic_and_what_loads_round_trips() {
             if rng.below(3) == 0 {
                 bytes = mutate(&bytes, &mut rng);
             }
+            if let Err(why) = check_load_bytes(&bytes) {
+                panic!("{name}: {why}\n{}", String::from_utf8_lossy(&bytes));
+            }
             match load_from_bytes(&bytes) {
-                Ok(doc) => {
-                    loaded += 1;
-                    let saved = written(&doc);
-                    let again = load(&saved).unwrap_or_else(|error| {
-                        panic!("{name}: what loaded saved to text that does not: {error}")
-                    });
-                    same_document(&doc, &again)
-                        .unwrap_or_else(|why| panic!("{name}: load, save, load changed the map: {why}"));
-                    assert_eq!(written(&again), saved, "{name}: save is not a fixed point");
-                }
+                Ok(_) => loaded += 1,
                 Err(error) => {
                     refused += 1;
                     // Every refusal but the whole-text ones names a

@@ -112,14 +112,14 @@
 //!   is what the vertical-rail line-height math actually reads.
 
 use cosmic_text::SwashCache;
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
+use cosmic_text::{Buffer, FontSystem, Metrics, Shaping};
 use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
 use std::sync::{Mutex, RwLock};
 
 use crate::font::fonts::{
-    acquire_font_system_write, ensure_warm, face_family_name_for_pin, measure_glyph_ink_bounds, AppFont,
+    acquire_font_system_write, ensure_warm, measure_glyph_ink_bounds, pinned_family, regular_attrs, AppFont,
 };
 
 /// Outer cache key: the face pin plus the size in points. `Copy`,
@@ -367,11 +367,8 @@ fn shape_advance_with(
     grapheme: &str,
 ) -> f32 {
     let mut buffer = Buffer::new(font_system, Metrics::new(size_pt, size_pt));
-    let family_name: Option<String> = face.and_then(|f| face_family_name_for_pin(font_system, f));
-    let attrs = match family_name.as_deref() {
-        Some(name) => Attrs::new().family(Family::Name(name)),
-        None => Attrs::new(),
-    };
+    let pin = face.and_then(|f| pinned_family(font_system, f));
+    let attrs = regular_attrs(pin.as_ref());
     buffer.set_text(grapheme, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
     let mut total = 0.0f32;

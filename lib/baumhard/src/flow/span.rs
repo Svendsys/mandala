@@ -11,7 +11,7 @@
 
 use crate::document::resolve::ResolvedText;
 use crate::document::values::{FontSize, LinkTarget};
-use crate::font::fonts::{clamp_font_metric, MIN_FONT_SIZE_PT};
+use crate::font::fonts::{clamp_font_metric, PinnedFamily, MIN_FONT_SIZE_PT};
 use crate::font::{Attrs, Color, Family, FontWeight, Metrics, Style};
 
 /// The ratio of a line's height to its font size: every span's line
@@ -79,33 +79,42 @@ pub fn point_size(style: &ResolvedText) -> f32 {
 /// The cosmic-text attributes `span` is shaped with, at `scale` times
 /// its size.
 ///
-/// - **Face:** `Family::Name(family)` when `family` is `Some`, which is
-///   how a caller pins the span's `AppFont` (it resolves the face's
-///   family name once, against the font system it holds). `None` keeps
-///   cosmic-text's default family — what an `AppFont::Any` span asks
-///   for, or a face the font system does not know.
+/// - **Face:** `Family::Name` of `pin` when it is `Some`, which is how a
+///   caller pins the span's `AppFont` (it resolves the family once,
+///   against the font system it holds). `None` keeps cosmic-text's
+///   default family — what an `AppFont::Any` span asks for, or a face
+///   the font system does not know.
 /// - **Size:** through [`Attrs::metrics`], at `scale ×` [`point_size`],
 ///   clamped to the shaper's domain, with a line height
 ///   [`LINE_HEIGHT_FACTOR`] times that.
-/// - **Weight** from the style's [`Weight`](crate::document::values::Weight),
-///   **slant** `Style::Italic` when the style is italic, and the
-///   style's **color**.
+/// - **Weight** from the style's [`Weight`](crate::document::values::Weight)
+///   — on a pinned span, the nearest weight its family's compiled faces
+///   have ([`PinnedFamily::weight_for`], CSS Fonts 4 §5.2, nothing
+///   synthesized): cosmic-text keeps a pin only at a weight the family
+///   has, and would otherwise draw the span in whatever host face has
+///   the exact weight asked for (ruling R30). **Slant** `Style::Italic`
+///   when the style is italic: the matcher keeps a pinned face whatever
+///   its slant, so the slant needs no resolving. And the style's
+///   **color**.
 ///
-/// Cost: O(1), no allocation; the returned attributes borrow `family`.
-pub fn span_attrs<'f>(span: &FlowSpan<'_>, scale: f32, family: Option<&'f str>) -> Attrs<'f> {
+/// Cost: O(the pinned family's weights), no allocation; the returned
+/// attributes borrow `pin`.
+pub fn span_attrs<'f>(span: &FlowSpan<'_>, scale: f32, pin: Option<&'f PinnedFamily>) -> Attrs<'f> {
     let size = clamp_font_metric(point_size(span.style) * scale, MIN_FONT_SIZE_PT);
     let [r, g, b, a] = span.style.color.0;
+    let requested = span.style.weight.get();
+    let weight = pin.map_or(requested, |pin| pin.weight_for(requested));
     let attrs = Attrs::new()
         .metrics(Metrics::new(size, size * LINE_HEIGHT_FACTOR))
-        .weight(FontWeight(span.style.weight.get()))
+        .weight(FontWeight(weight))
         .style(if span.style.italic {
             Style::Italic
         } else {
             Style::Normal
         })
         .color(Color::rgba(r, g, b, a));
-    match family {
-        Some(name) => attrs.family(Family::Name(name)),
+    match pin {
+        Some(pin) => attrs.family(Family::Name(pin.name.as_str())),
         None => attrs,
     }
 }

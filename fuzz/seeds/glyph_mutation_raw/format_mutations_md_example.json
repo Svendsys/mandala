@@ -1,0 +1,14 @@
+{
+  "mutations": [
+    {"RunOpacity": 0.5},
+    {"RunOrigin": [12.0, -4.0]},
+    {"RunOverrides": {"Offset": {"range": {"start": 0, "end": 3}, "value": [0.0, -2.0]}}},
+    {"RunOverrides": {"Color": {"range": {"start": 0, "end": 3}, "value": [255, 0, 0, 255]}}},
+    {"RunOverrides": {"Color": {"range": {"start": 4, "end": 6}, "value": null}}},
+    {"RunOverrides": {"Scale": {"range": {"start": 3, "end": 6}, "value": 1.5}}},
+    {"RunOverrides": "Clear"},
+    {"FillColor": [30, 60, 90, 255]},
+    {"FillOpacity": 0.25},
+    {"FillRect": {"origin": [0.0, 0.0], "size": [120.0, 60.0]}}
+  ]
+}

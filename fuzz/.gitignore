@@ -1,0 +1,7 @@
+# What a fuzz run writes. Only the seed corpus (`seeds/`) is committed:
+# the generated corpus and crash artifacts are not (a finding becomes a
+# regression test in baumhard instead; TEST_CONVENTIONS §T14).
+/target
+/corpus
+/artifacts
+/coverage

@@ -458,6 +458,19 @@ the parity trajectory (or why none is owed):
   sections — so the flag cannot come back to either of them on a
   member that has no library target. It reads nothing else: the rest
   of this file, and every other document, is on your own care.
+- **Fuzz an untrusted-input surface**: `scripts/fuzz.sh <target>
+  <seconds>` runs one coverage-guided target of `fuzz/` for that long
+  (`scripts/fuzz.sh --list` names them: the `.mandala.json` loader,
+  TextFlow shaping, authored glyph-layer mutations, each raw and
+  structure-aware). `fuzz/` is outside the workspace, on the nightly
+  its own `rust-toolchain.toml` pins, and needs `cargo install
+  cargo-fuzz --version 0.13.2 --locked`; `./test.sh` never builds it.
+  The properties every input is held to, and every finding's
+  regression test, live in baumhard's tests trees and run in
+  `./test.sh` on stable. A finding is minimized, committed with a
+  regression test and fixed where it lives, never by weakening a check;
+  a sub-issue that adds or changes an untrusted-input surface ships its
+  target in the same PR (TEST_CONVENTIONS §T14).
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
 - **Drive the running app over IPC** (native): launch with
