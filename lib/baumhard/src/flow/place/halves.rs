@@ -479,6 +479,14 @@ struct Layout<'a> {
 /// that grows one line's clearance lays the other where it lay.
 type LayMemo = FxHashMap<(usize, u32, u32, u32), Line>;
 
+/// One clearance search's state ([`Layout::lay_clear`]): the lines it
+/// has laid, and how many times a round that would press a line is
+/// halved in it.
+struct Search {
+    memo: LayMemo,
+    backtracks: usize,
+}
+
 impl<'a> Layout<'a> {
     fn new(halves: &'a Halves, outward: bool) -> Self {
         Layout {
@@ -1110,12 +1118,15 @@ impl Layout<'_> {
         seed: Clear,
         backtracks: usize,
     ) -> Cleared {
-        let mut memo = LayMemo::default();
-        let whole = self.grow(run, lines, side, 1.0, seed, backtracks, &mut memo);
+        let mut search = Search {
+            memo: LayMemo::default(),
+            backtracks,
+        };
+        let whole = self.grow(run, lines, side, 1.0, seed, &mut search);
         if span >= 1.0 {
             return whole;
         }
-        self.grow(run, lines, side, span, whole.clear, backtracks, &mut memo)
+        self.grow(run, lines, side, span, whole.clear, &mut search)
     }
 
     /// The lines laid at `span` with each line's clearance grown from
@@ -1143,9 +1154,10 @@ impl Layout<'_> {
         side: Option<(&ShapedRun, &Range<usize>)>,
         span: f32,
         mut clear: Clear,
-        backtracks: usize,
-        memo: &mut LayMemo,
+        search: &mut Search,
     ) -> Cleared {
+        let backtracks = search.backtracks;
+        let memo = &mut search.memo;
         let mut laid = self.lay(run, lines, clear, span, memo);
         // Each junction's measure before the round that grew it, if the
         // last round did: a junction is judged by what its own growth did.
@@ -1290,7 +1302,7 @@ fn overlapping(lines: &[Line]) -> bool {
         for (l, j, b) in &boxes[n + 1..] {
             // Every box after starts no sooner; one that is not a number
             // ends the scan.
-            if !(b.0.x <= a.1.x + TOUCH) {
+            if !b.0.x.le(&(a.1.x + TOUCH)) {
                 break;
             }
             if k == l && i.abs_diff(*j) <= 1 {
@@ -1641,7 +1653,9 @@ pub(super) fn place_halves(
         let too_long = |p: &Prepared| {
             let (lo, hi) = lay.room(p.half, seed[p.half]);
             p.clusters.iter().filter(|c| !c.blank).count() >= 2
-                && !(lay.reach(p.half, &drawn, &p.clusters, lo, p.natural_gap) <= hi - lo + SLIDE_TOLERANCE)
+                && !lay
+                    .reach(p.half, &drawn, &p.clusters, lo, p.natural_gap)
+                    .le(&(hi - lo + SLIDE_TOLERANCE))
         };
         if cheap && prepared.iter().any(too_long) {
             return None;
