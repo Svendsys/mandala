@@ -22,6 +22,7 @@ use crate::document::tests::format_support::{same_document, written};
 use crate::document::tests::format_text::{map_of, map_of_two, map_with, node_of};
 use crate::document::tests::test_support::{node_data, path_data, DocumentBuilder};
 use crate::document::values::{ColorRef, FontSize, LinkKind, PlainColor, Rgba, VarId, VerbId};
+use crate::document::writer::Derived;
 use crate::font::fonts::AppFont;
 
 /// The error `save` gives for the document `builder` makes; `check_savable`
@@ -706,7 +707,8 @@ fn test_the_one_node_check_never_passes_what_the_full_build_refuses() {
         .into_iter()
         .collect();
     for (name, index) in [("short", short), ("sized", sized)] {
-        let doc = Document::from_loaded(tree.clone(), loaded.definitions().clone(), index, 3)
+        let derived = Derived::scan(&tree, loaded.definitions());
+        let doc = Document::from_loaded(tree.clone(), loaded.definitions().clone(), index, 3, derived)
             .expect("the map row is fine");
         assert_eq!(doc.ident_count(), if name == "short" { 1 } else { 2 });
         // An id refusal is the full build's to name.

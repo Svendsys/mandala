@@ -1486,3 +1486,123 @@ pub fn do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass() {
         "one step per moved node indexed, per kept sibling and per moved node placed"
     );
 }
+
+#[test]
+fn test_journal_rows_before_name_each_siblings_predecessor() {
+    do_journal_rows_before_name_each_siblings_predecessor();
+}
+
+/// For every seeded structural run: with the tree as the builder left
+/// it, `rows_before` names, for every node of the snapshot taken before
+/// the first call, the sibling right before it there — the inserted
+/// left out, the removed and the re-parented where they stood, `None`
+/// at the front of a row — and, after a revert, the tree's own. The
+/// expected siblings are read from the snapshot, which shares no code
+/// with the journal. The runs must change the siblings of many nodes, or
+/// there is nothing for the answer read back to differ by.
+pub fn do_journal_rows_before_name_each_siblings_predecessor() {
+    let mut stats = StructuralStats::default();
+    let mut differed = 0;
+    for seed in 0..SEEDS {
+        let StructuralRun {
+            mut tree,
+            before,
+            journal,
+            ..
+        } = run_structural(seed, &mut stats);
+        // Each node of the snapshot with its parent and the sibling
+        // before it there.
+        let mut last_child: FxHashMap<NodeId, NodeId> = FxHashMap::default();
+        let mut expected: Vec<(NodeId, NodeId, Option<NodeId>)> = Vec::new();
+        for (id, parent, _) in &before {
+            if let Some(parent) = parent {
+                expected.push((*id, *parent, last_child.insert(*parent, *id)));
+            }
+        }
+        let rows = journal.rows_before();
+        for &(node, parent, prev) in &expected {
+            assert_eq!(
+                rows.prev(&tree, parent, node),
+                prev,
+                "seed {seed}: the sibling before {node} before the journal"
+            );
+            let now = tree.arena().get(node).and_then(|n| n.previous_sibling());
+            differed += usize::from(now != prev);
+        }
+        journal.revert(&mut tree).unwrap();
+        let rows = journal.rows_before();
+        for &(node, parent, prev) in &expected {
+            assert_eq!(
+                rows.prev(&tree, parent, node),
+                prev,
+                "seed {seed}: the sibling before {node} after a revert"
+            );
+        }
+    }
+    assert!(
+        differed >= SEEDS as usize,
+        "the runs must change the siblings they are read back from: {differed}"
+    );
+}
+
+#[test]
+fn test_journal_builder_names_what_it_recorded_and_created() {
+    do_journal_builder_names_what_it_recorded_and_created();
+}
+
+/// A builder names every node it recorded, oldest first, and among them
+/// the ones its commands created — the root of an insert and the second
+/// part of a split, not the node below the inserted root, nor the root
+/// of the tree, nor a node it only changed or removed — the created
+/// node removed again included, since the builder still holds it.
+pub fn do_journal_builder_names_what_it_recorded_and_created() {
+    let (mut tree, t) = flat_tree(&[(0, 5), (0, 6), (0, 7)]);
+    let (a, b, c) = (t[0], t[1], t[2]);
+    let mut builder = JournalBuilder::new();
+    let insert = command(StructOp::Insert {
+        subtree: Subtree {
+            root: TestElement::new(1, 50),
+            children: vec![Subtree::leaf(TestElement::new(0, 51))],
+        },
+        at: Placement::Last,
+    });
+    run(&mut tree, &insert, vec![a], &mut builder).unwrap();
+    let inserted = tree.arena()[a].last_child().unwrap();
+    let below = inserted.children(tree.arena()).next().unwrap();
+    run(
+        &mut tree,
+        &command(StructOp::Split { at: 2 }),
+        vec![b],
+        &mut builder,
+    )
+    .unwrap();
+    let second = tree.arena()[b].next_sibling().unwrap();
+    assert_eq!(value(&tree, second), 4, "precondition: the split's second part");
+    run(&mut tree, &command(StructOp::Remove), vec![c], &mut builder).unwrap();
+    let root = tree.root;
+    tree.update_journaled(root, &mut builder, |e| e.value = 1)
+        .unwrap();
+    run(
+        &mut tree,
+        &command(StructOp::Remove),
+        vec![inserted],
+        &mut builder,
+    )
+    .unwrap();
+
+    assert_eq!(
+        builder.created_nodes().collect::<Vec<_>>(),
+        vec![inserted, second],
+        "the inserted root and the split's second part, in creation order"
+    );
+    assert_eq!(
+        builder.recorded_nodes().collect::<Vec<_>>(),
+        vec![inserted, b, second, c, root],
+        "every node recorded, oldest first, each once"
+    );
+    assert!(
+        !builder.recorded_nodes().any(|n| n == below),
+        "the node below an inserted root is reached from it, not recorded"
+    );
+    builder.abandon(&mut tree);
+}

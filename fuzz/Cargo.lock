@@ -96,6 +96,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "slab",
+ "smallvec",
  "strum",
  "strum_macros",
  "tinyvec",

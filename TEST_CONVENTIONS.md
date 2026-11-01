@@ -702,8 +702,10 @@ What they hold, in short (each module's docs are the full list):
   line separator or bidi character, its excerpt is at most 256 bytes,
   its path resolves in the input and agrees with its node context, and
   its line is inside its node. What loads passes `validate_shape`, holds
-  every number inside the bound `format/schema.md` gives it, is savable
-  by both `check_savable` and the full build (which agree, the refusal
+  every number inside the bound `format/schema.md` gives it, carries
+  what the loader derived for the writer — the links into each node, the
+  element and text counts — exactly as a walk of its tree finds them, is
+  savable by both `check_savable` and the full build (which agree, the refusal
   included), and saves, loads and saves byte for byte, with no raw
   control, line separator or bidi character in the text. The structured
   target also holds the loader to a differential oracle and a reference

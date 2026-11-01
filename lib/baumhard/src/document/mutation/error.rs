@@ -171,7 +171,7 @@ pub enum MutationError {
         /// What is wrong.
         error: ShapeError,
     },
-    /// An inserted node that carries an ident: the writer (V1-B4)
+    /// An inserted node that carries an ident: [the writer](crate::document::writer)
     /// assigns idents, so an inserted node carries
     /// [`NodeIdent::UNASSIGNED`].
     AssignedIdent {
