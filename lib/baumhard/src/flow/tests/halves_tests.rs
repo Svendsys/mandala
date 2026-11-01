@@ -1715,7 +1715,10 @@ fn test_flow_halves_the_break_holds_at_the_span_laid() {
 /// at 0.9 as well, and on the 10:1 ellipse at 0.9 (32 points apart);
 /// on the center ellipse they meet, two word gaps apart.
 /// Precondition: the table holds both a meeting and lines stacked.
-/// Control: the clearance kept from whole below it, the ½ rows fail.
+/// Control: these rows hold even with the clearance kept from whole
+/// below it (their ends are stacked); the inward frames of
+/// `do_flow_halves_the_break_holds_below_whole_round_a_flat_outline_inward`
+/// do not.
 pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     let ellipse = outline(rect(600.0, 12.0), Shape::Ellipse);
@@ -1803,6 +1806,44 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
         kinds == [true, true],
         "precondition: the table holds both a meeting and lines stacked ({kinds:?})"
     );
+}
+
+#[test]
+fn test_flow_halves_the_break_holds_below_whole_round_a_flat_outline_inward() {
+    do_flow_halves_the_break_holds_below_whole_round_a_flat_outline_inward();
+}
+
+/// Below whole the break is held at the span laid (ruling R35.1), and
+/// that is not the clearance found at whole kept: inward round the
+/// 600 × 12 ellipse, the Ecclesiastes text as a `Once` frame and the
+/// quatrain as a `Fit` frame, at span ½ and natural, each line lies
+/// short of where it lies at whole, and with the whole span's clearance
+/// alone their top-left ends meet short of a break. The clearance grown
+/// on at the span laid holds it, and nothing is left unheld.
+/// Control: with the clearance kept from whole below it, each frame
+/// reports its top-left junction short of a break.
+pub fn do_flow_halves_the_break_holds_below_whole_round_a_flat_outline_inward() {
+    let flat = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
+    let half = LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE);
+    for (text, points, fit) in [
+        (ECCLESIASTES, 18.0, FitMode::Once { filler: None }),
+        (QUATRAIN, 18.0, FIT),
+    ] {
+        for span in [half, LineSpan::NATURAL] {
+            let layout = RingLayout {
+                span,
+                ..RingLayout::whole()
+            };
+            let (_, _, trace) = frame_with(text, points, &flat, &fit, &layout, false);
+            let what = format!("{:.8} {fit:?} span {}", text, span.get());
+            assert_eq!(trace.lines.len(), 2, "precondition: {what}: two lines");
+            assert!(
+                trace.unheld.junctions.is_empty(),
+                "{what}: junctions {:?} short of a break",
+                trace.unheld.junctions
+            );
+        }
+    }
 }
 
 #[test]

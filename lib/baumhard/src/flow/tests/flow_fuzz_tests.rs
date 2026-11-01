@@ -776,8 +776,8 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
 /// whose control point is `1e30` off its ends — and the review's of the
 /// same kind, thirty glyphs along a cubic with a control point at
 /// `-4.94e33`. The path is about `1e30`
-/// long, so the walk lays copies to the `MAX_PLACED_GLYPHS` cap, a
-/// million glyphs — which any `Repeat` as long as the canvas reaches
+/// long, so the walk lays copies to the `MAX_PLACED_GLYPHS` cap — a
+/// million glyphs then, 65,536 since ruling R41 — which any `Repeat` as long as the canvas reaches
 /// too. The cost was in how often each was walked: the readable pass laid
 /// the placement again to measure each stretch and the reading order
 /// before laying them, five walks more in all, and every step looked up
@@ -795,7 +795,7 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
 #[test]
 fn test_a_repeat_along_a_curve_as_long_as_an_f32_walks_each_glyph_thrice_at_most() {
     use crate::flow::path::PATH_LOOKUPS;
-    use crate::flow::place::{GLYPHS_PLACED, STEPS_TAKEN};
+    use crate::flow::place::{GLYPHS_PLACED, MAX_RUN_ON_STEPS, STEPS_TAKEN};
     use crate::flow::MAX_PLACED_GLYPHS;
     let findings: [(&str, &[u8]); 2] = [
         (
@@ -820,12 +820,16 @@ fn test_a_repeat_along_a_curve_as_long_as_an_f32_walks_each_glyph_thrice_at_most
             placed + 64 > MAX_PLACED_GLYPHS,
             "precondition: {what} lays the cap ({placed} glyphs)"
         );
+        // Past the text's end the readable walk probes at most
+        // `MAX_RUN_ON_STEPS` steps more for where the path stops running
+        // its last stretch's way: a bound of its own, not the glyphs'.
         assert!(
-            steps <= 3 * placed,
+            steps <= 3 * placed + MAX_RUN_ON_STEPS,
             "{what}: {steps} steps taken for {placed} glyphs placed"
         );
+        // And each step of that probe looks the path up a few times.
         assert!(
-            lookups <= 14 * placed,
+            lookups <= 14 * placed + 8 * MAX_RUN_ON_STEPS,
             "{what}: {lookups} path lookups for {placed} glyphs placed"
         );
     }
@@ -898,7 +902,8 @@ fn test_a_spread_across_the_canvas_places_every_glyph() {
 /// The coordinator's flow_structured finding on #294 (CI run
 /// 41245750394, a libFuzzer timeout at aef0eba4): a `Repeat` of an
 /// ornament, eighteen glyphs, along a cubic with a control point at
-/// `-1e30`. The walk lays the `MAX_PLACED_GLYPHS` cap, a million glyphs,
+/// `-1e30`. The walk lays the `MAX_PLACED_GLYPHS` cap (a million glyphs
+/// then, 65,536 since ruling R41),
 /// every one stepped by its ink (ruling R31), and on a path that far
 /// out its points are an `f32` step or two apart where the walk is, so
 /// no glyph's ink gap could come within `INK_TOLERANCE` of what it
@@ -915,7 +920,7 @@ fn test_a_spread_across_the_canvas_places_every_glyph() {
 #[test]
 fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solving_them() {
     use crate::flow::path::PATH_LOOKUPS;
-    use crate::flow::place::{GLYPHS_PLACED, STEPS_TAKEN};
+    use crate::flow::place::{GLYPHS_PLACED, MAX_RUN_ON_STEPS, STEPS_TAKEN};
     use crate::flow::MAX_PLACED_GLYPHS;
     let found = include_bytes!("fuzz_findings/repeat_of_an_ornament_along_a_cubic_its_floats_cannot_resolve");
     for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
@@ -927,11 +932,13 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
     let [steps, placed, lookups] =
         [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS].map(|counter| counter.with(std::cell::Cell::get));
     assert!(
-        placed + 64 > MAX_PLACED_GLYPHS && steps < placed / 4,
+        placed + 64 > MAX_PLACED_GLYPHS && steps < placed / 4 + MAX_RUN_ON_STEPS,
         "precondition: the input lays the cap of an ornament ({placed} glyphs, {steps} box steps)"
     );
+    // The readable walk's run-on probe past the text's end is a bound
+    // of its own (`MAX_RUN_ON_STEPS` steps), a few lookups a step.
     assert!(
-        lookups <= 24 * placed,
+        lookups <= 24 * placed + 8 * MAX_RUN_ON_STEPS,
         "{lookups} path lookups for {placed} glyphs placed"
     );
 }

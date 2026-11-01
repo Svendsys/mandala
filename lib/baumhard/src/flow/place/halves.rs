@@ -139,11 +139,6 @@ pub(crate) const JUNCTION_WORD_GAPS: f32 = 2.0;
 /// rounds below.
 const CLEAR_MARGIN: f32 = 1.01;
 
-/// How much further apart a junction's end inks must move in a round of
-/// its clearance for the next round to be worth it, in points: less,
-/// and the lines can give no more room there.
-const PROGRESS: f32 = 1e-3;
-
 /// The least a junction's clearance grows by in a round, in points.
 const MIN_GROWTH: f32 = 0.25;
 
@@ -274,20 +269,6 @@ fn unwrap(s: f32, from: f32, length: f32) -> f32 {
 /// The distance between two boxes, `(min, max)` each: 0 where they meet.
 fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
     (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length()
-}
-
-/// How far apart two boxes, `(min, max)` each, are: their distance
-/// ([`box_gap`]) where they are apart, and where they overlap how deep,
-/// as a negative — the overlap along the axis it is least on, how far
-/// one must move to clear the other — so that two inks drawn apart out
-/// of an overlap measure the progress (ruling R35.2).
-fn separation(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
-    let apart = (b.0 - a.1).max(a.0 - b.1);
-    if apart.x > 0.0 || apart.y > 0.0 {
-        apart.max(Vec2::ZERO).length()
-    } else {
-        apart.x.max(apart.y)
-    }
 }
 
 /// The center of a box, `(min, max)`.
@@ -866,7 +847,6 @@ impl Layout<'_> {
         };
         let mut out = Junctions {
             apart: [f32::INFINITY; 2],
-            depth: [f32::INFINITY; 2],
             want: [0.0; 2],
             helps: [[0.0; 2]; 2],
         };
@@ -879,7 +859,6 @@ impl Layout<'_> {
                             out.want[j] = TOUCH;
                         }
                         out.apart[j] = box_gap(e1, e2);
-                        out.depth[j] = separation(e1, e2);
                         out.helps[one.half][j] = helps(one, j, e1, e2);
                         out.helps[two.half][j] = helps(two, j, e2, e1);
                     }
@@ -907,7 +886,6 @@ impl Layout<'_> {
                 if let Some((a, b)) = one.tracked.ends {
                     for (j, (e, p)) in [(a, points[0]), (b, points[1])].into_iter().enumerate() {
                         out.apart[j] = box_gap(e, (p, p));
-                        out.depth[j] = separation(e, (p, p));
                         out.helps[one.half][j] = helps(one, j, e, (p, p));
                     }
                 }
@@ -923,11 +901,6 @@ impl Layout<'_> {
 /// them by drawing back.
 struct Junctions {
     apart: [f32; 2],
-    /// [`apart`](Self::apart) where the inks are apart, and how deep
-    /// they overlap, as a negative, where they do ([`separation`]): what
-    /// a round's progress is measured in, so that two inks drawn out of
-    /// an overlap show it (ruling R35.2).
-    depth: [f32; 2],
     want: [f32; 2],
     /// `[half][junction]`.
     helps: [[f32; 2]; 2],
@@ -1246,9 +1219,8 @@ impl Layout<'_> {
     /// unpressed is halved until it does not ([`BACKTRACKS`] times at
     /// most), so the rounds close on the least clearance from below
     /// rather than overshoot. A junction stops growing when no line's
-    /// drawing back parts its ends, or a round leaves them no further
-    /// apart — below whole, a round that moved them: a natural line's end
-    /// does not move at all until the clearance reaches it.
+    /// drawing back parts its ends, when a line is pressed, or after
+    /// [`CLEAR_ROUNDS`] rounds: the bound on its work.
     fn grow(
         &self,
         run: &ShapedRun,
@@ -1261,10 +1233,6 @@ impl Layout<'_> {
         let backtracks = search.backtracks;
         let memo = &mut search.memo;
         let mut laid = self.lay(run, lines, clear, span, memo);
-        // Each junction's measure before the round that grew it, if the
-        // last round did: a junction is judged by what its own growth did.
-        let mut before = [f32::NEG_INFINITY; 2];
-        let mut parts_before: Vec<(f32, f32)> = Vec::new();
         let mut stuck = [false; 2];
         let mut met_now: Option<[bool; 2]> = None;
         for _ in 0..CLEAR_ROUNDS {
@@ -1278,21 +1246,11 @@ impl Layout<'_> {
             }
             let mut grow: Clear = [[0.0; 2]; 2];
             let mut grown = false;
-            let mut measured_depth = [f32::NEG_INFINITY; 2];
             let mut met_here = [false; 2];
             let mut measured_helps = [[0.0_f32; 2]; 2];
-            let parts: Vec<(f32, f32)> = laid.iter().map(|l| l.part).collect();
-            // Below whole, a round that moved no end proves nothing.
-            let moved = span >= 1.0
-                || parts.len() != parts_before.len()
-                || parts
-                    .iter()
-                    .zip(&parts_before)
-                    .any(|(a, b)| (a.0 - b.0).abs() > PROGRESS || (a.1 - b.1).abs() > PROGRESS);
             for j in 0..2 {
                 let (met, measured) = self.met(&laid, side, j);
                 met_here[j] = met;
-                measured_depth[j] = measured.depth[j];
                 for (row, helps) in measured_helps.iter_mut().zip(measured.helps) {
                     row[j] = helps[j].max(0.0);
                 }
@@ -1300,11 +1258,6 @@ impl Layout<'_> {
                     continue;
                 }
                 let apart = measured.apart[j];
-                let depth = measured.depth[j];
-                if moved && depth.is_finite() && before[j].is_finite() && depth <= before[j] + PROGRESS {
-                    stuck[j] = true;
-                    continue;
-                }
                 let helps = [0, 1].map(|k| measured.helps[k][j].max(0.0));
                 let total = helps[0] + helps[1];
                 if total.partial_cmp(&0.0) != Some(Ordering::Greater) {
@@ -1417,14 +1370,6 @@ impl Layout<'_> {
                     }
                 }
             }
-            for j in 0..2 {
-                before[j] = if grow[0][j] > 0.0 || grow[1][j] > 0.0 {
-                    measured_depth[j]
-                } else {
-                    f32::NEG_INFINITY
-                };
-            }
-            parts_before = parts;
             met_now = Some(met_here);
             if !grown {
                 break;

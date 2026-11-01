@@ -589,6 +589,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             EnumerationIsTheRuntime,
         ),
         (
+            "flow/tests/fit_tests.rs",
+            "test_flow_the_glyph_ceiling_is_65536_a_placement",
+            EnumerationIsTheRuntime,
+        ),
+        (
             "engine/tests/contains_tests.rs",
             "test_contains_matches_a_climb_through_the_journal_lifecycle",
             EnumerationIsTheRuntime,

@@ -980,6 +980,7 @@ would have had in the file.
 | A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |
 | Counts an index addresses | Palettes, theme variables and variants, verbs, edits, presentations: at most 65,536 each. |
 | Rows | No bound on sections, spans, rings or links per element. |
+| Glyphs one path places | At most 65,536 (`MAX_PLACED_GLYPHS`) for one path's flow: a ring, a frame's two lines with its sides, a connector's or a link's flow. Text, `repeat` copies, `once` fillers and sides all count. A flow that would place more stops there and the placement says it was cut; the map is not refused. |
 
 ## Predicates
 

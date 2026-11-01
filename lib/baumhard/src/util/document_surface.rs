@@ -167,8 +167,8 @@ const MAY_EDIT: &[&str] = &["tests/test_support.rs"];
 /// - `spelled` derives a spelling enum and its conversions.
 /// - `forward_methods` and `forward_scalars` forward a deserializer's
 ///   methods to the one it wraps, on a type private to `format`.
-/// - `text_in`, `frame_in`, `flow_in` and `portal_in` build a style
-///   from a DTO's fields, in a body, as an expression.
+/// - `text_in`, `frame_in`, `layout_in`, `flow_in` and `portal_in`
+///   build a style from a DTO's fields, in a body, as an expression.
 const ALLOWED_MACROS: &[(&str, Option<&str>)] = &[
     ("macro_rules", None),
     ("thread_local", None),
@@ -177,6 +177,7 @@ const ALLOWED_MACROS: &[(&str, Option<&str>)] = &[
     ("forward_scalars", Some("format/strict.rs")),
     ("text_in", Some("format/macros.rs")),
     ("frame_in", Some("format/macros.rs")),
+    ("layout_in", Some("format/macros.rs")),
     ("flow_in", Some("format/macros.rs")),
     ("portal_in", Some("format/macros.rs")),
 ];

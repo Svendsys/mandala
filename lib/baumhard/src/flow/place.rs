@@ -134,7 +134,7 @@ pub(crate) use lines::{frame_halves, place_lines};
 /// where the path stops running the last stretch's way: a path that long
 /// in line heights is followed no further, and the last stretch's part
 /// ends there.
-const MAX_RUN_ON_STEPS: usize = 1 << 16;
+pub(crate) const MAX_RUN_ON_STEPS: usize = 1 << 16;
 
 /// The most rounds [`PathWalk::even_out`] regroups a closed ring's
 /// stretches in.
@@ -186,10 +186,12 @@ const MAX_SHRINKS: usize = 8;
 /// The rounds of Newton's method [`PathWalk::level_len`] takes.
 const LEVEL_ROUNDS: usize = 4;
 
-/// The most glyphs one placement places (ruling R6, reading 9). A
-/// repeating flow on a path long enough to need more stops here and
-/// reports [`PlacedRun::truncated`].
-pub const MAX_PLACED_GLYPHS: usize = 1 << 20;
+/// The most glyphs one placement — one path's flow — places (ruling R6,
+/// reading 9; ruling R41: 65,536, chosen by the owner). Text, repeat
+/// copies, fillers and a frame's sides all count against it. A flow on a
+/// path long enough to need more stops here and reports
+/// [`PlacedRun::truncated`].
+pub const MAX_PLACED_GLYPHS: usize = 1 << 16;
 
 /// How far inside its end condition a solved spacing lands: `Spread`
 /// and `Fit` end their last cluster's step within this of the path's

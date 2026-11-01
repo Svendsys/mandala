@@ -1584,7 +1584,9 @@ element.
     repeat clusters first.
 
   Either way a placement lists its glyphs in text order; only positions
-  move.
+  move. One placement places at most `MAX_PLACED_GLYPHS`, 65,536
+  glyphs (ruling R41), text, repeat copies, fillers and sides together;
+  past it the flow stops and reports `PlacedRun::truncated`.
 - **Outlines** (`outline`, `offset`, `ring_offset`): a node's
   rectangle shaped as a rounded rectangle (radius a percentage of half
   the shorter side) or the inscribed ellipse; ring *k* runs around the

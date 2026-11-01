@@ -288,10 +288,14 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
     }
 }
 
-/// The plain style the raw target shapes in.
+/// The plain style the raw target shapes in: a compiled face, pinned,
+/// so a finding replays alike on every machine (ruling R30's intent) —
+/// `AppFont::Any` draws in whatever face the host falls back to, and a
+/// raw input's path through the placement was the host's. A character
+/// the face lacks still falls back, as it would in a map.
 fn plain_style() -> ResolvedText {
     ResolvedText {
-        font: AppFont::Any,
+        font: AppFont::GalatiaSIL,
         size: FontSize::Pt(16.0),
         color: Rgba::new(255, 255, 255, 255),
         weight: Weight::NORMAL,
@@ -299,8 +303,10 @@ fn plain_style() -> ResolvedText {
     }
 }
 
-/// Every face a span can name: each compiled-in `AppFont`, in name
-/// order, and `Any`. Read from the compiled set itself rather than from
+/// Every face a span can name and replay alike on every machine: each
+/// compiled-in `AppFont`, in name order — not `Any`, which draws in the
+/// host's fallback face, so a finding in it need not replay elsewhere
+/// (ruling R30's intent). Read from the compiled set itself rather than from
 /// the family index, which attributes a family to `Any` when a host face
 /// bearing its name comes first (the shadowing R30.1 removes): a sweep
 /// that drew its faces from the index would stop pinning that family at
@@ -312,7 +318,6 @@ fn faces() -> Vec<AppFont> {
         .map(|(font, _)| *font)
         .collect();
     faces.sort_by_key(|font| format!("{font:?}"));
-    faces.push(AppFont::Any);
     faces
 }
 
