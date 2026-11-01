@@ -764,7 +764,8 @@ far enough apart for, two letters touching — a `fit` frame is shrunk,
 within its bounds, to the largest size at which they hold, and a line
 its half still cannot hold is cut at its end. Where two letters still
 touch — a frame laid inside an outline too thin to hold its two lines
-apart, a `once` or `spread` frame at its size or a `fit` frame even at
+apart, or a line of tall letters wrapped round a bend too tight for
+them, a `once` or `spread` frame at its size or a `fit` frame even at
 its least — the second line is cut at its end to the most of it that
 touches nothing, or left out, and then the first likewise if two of its
 own letters still touch; a `once` frame is never shrunk. Text its

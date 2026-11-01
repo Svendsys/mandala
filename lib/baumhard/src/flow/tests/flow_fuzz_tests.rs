@@ -1084,3 +1084,27 @@ fn test_a_frame_whose_other_line_can_give_the_clearance_is_not_cut() {
         panic!("the fuzzer's input: {why}");
     }
 }
+
+/// The 300 s runs' findings at 9eeb66c0, both "its natural length fits,
+/// and it was cut": a frame that cut a line so that no two inks touch
+/// (ruling R38.1) and reported it in `Trace::cut_apart`, outward — the
+/// raw input's second line is seven NULs, ink boxes a line high and no
+/// wide, wrapped round the 120 × 40 rectangle's tight end, where two of
+/// them that are not neighbors meet. The properties excused a reported
+/// cut only inward; a line of tall inks round a tight bend cannot be
+/// held apart outward either, so a reported cut is excused on both
+/// sides. Each input replays under the pinned face.
+///
+/// Control: with the excuse narrowed to inward frames again, the raw
+/// input, laid outward, fails.
+#[test]
+fn test_a_frame_cut_apart_outward_is_owed_no_longer() {
+    let raw = include_bytes!("fuzz_findings/raw_frame_cut_apart_round_a_tight_bend");
+    if let Err(why) = check_flow_bytes(raw) {
+        panic!("the raw input: {why}");
+    }
+    let structured = include_bytes!("fuzz_findings/structured_frame_cut_apart_outward");
+    if let Err(why) = check_flow_structured(structured) {
+        panic!("the structured input: {why}");
+    }
+}

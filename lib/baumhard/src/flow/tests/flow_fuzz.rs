@@ -42,8 +42,8 @@ use crate::document::values::{
 };
 use crate::flow::place::{frame_halves, place_on_closed_traced, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
-    offset, outline, place_at_point, place_on_closed, place_on_open, shape_box, shape_run, Curve, FlowSpan,
-    Outline, PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
+    offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
+    PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
 };
 use crate::font::fonts::{self, acquire_font_system_write, AppFont, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
@@ -124,7 +124,8 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
                 radius: Percent::new(50),
             },
         );
-        let placed = place_on_closed(
+        let mut trace = Trace::default();
+        let placed = place_on_closed_traced(
             &run,
             &path,
             start,
@@ -134,8 +135,11 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
             true,
             &style,
             &mut fs,
+            Some(&mut trace),
         );
-        let whole = owes_whole(&run, &fit, frame_room(&path));
+        // A line cut so that no two inks touch, and reported so, is owed
+        // no longer (ruling R38.1).
+        let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
         check_placed(&spans, &run, placed, whole, "around a rectangle")?;
         let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
         let placed = place_on_open(&run, &curve, &fit, 1.0, &style, &mut fs);
@@ -254,13 +258,12 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                         &mut fs,
                         Some(&mut trace),
                     );
-                    // A frame laid inward round an outline too thin to
-                    // hold its two lines apart cuts the line that cannot
-                    // be held and says so (ruling R38.1): what it cut is
-                    // no longer owed. Outward, the lines lie on either
-                    // side of the outline, so nothing excuses a cut.
-                    let excused = !outward && !trace.cut_apart.is_empty();
-                    let whole = owes_whole(&run, &fit, frame_room(&path)) && !excused;
+                    // A frame that cannot hold its lines without two inks
+                    // touching — inward round an outline too thin for
+                    // both, or a line of tall inks wrapped round a tight
+                    // bend — cuts the line that cannot be held and says so
+                    // (ruling R38.1): what it cut is no longer owed.
+                    let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
                     check_placed(&spans, &run, placed, whole, "around an outline")
                 }
                 2 => {
