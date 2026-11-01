@@ -346,7 +346,8 @@ fn test_writer_history_keeps_its_limit_and_frees_what_leaves_it() {
 /// dropped and the nodes they removed are freed — their ids stale —
 /// while the three kept still hold theirs, detached, for an undo. Two
 /// undos and a new edit clear the redo branch, and the nodes the
-/// undone entries had created are freed with it.
+/// undone entries had created are freed with it. A limit lowered with
+/// nothing applied keeps the undone entry nearest a redo.
 pub fn do_writer_history_keeps_its_limit_and_frees_what_leaves_it() {
     let mut builder = DocumentBuilder::new();
     let root = builder.root();
@@ -404,6 +405,22 @@ pub fn do_writer_history_keeps_its_limit_and_frees_what_leaves_it() {
         );
     }
     assert_consistent(&doc, "after the new edit");
+
+    // Everything undone, then a lower limit: with nothing applied left,
+    // the undone entries furthest from a redo go, and the nearest stays
+    // redoable.
+    while doc.undo().is_some() {}
+    let undone = doc.redo_len();
+    assert!(undone >= 2, "precondition: a redo branch to trim: {undone}");
+    doc.redo().unwrap();
+    let nearest = saved(&doc);
+    doc.undo().unwrap();
+    doc.set_history_limit(1);
+    assert_eq!(doc.redo_len(), 1, "the redo branch kept to the limit");
+    doc.redo().unwrap();
+    assert_eq!(saved(&doc), nearest, "the entry kept is the next to redo");
+    assert_eq!(doc.redo(), None);
+    assert_consistent(&doc, "after the lowered limit");
 }
 
 #[test]
