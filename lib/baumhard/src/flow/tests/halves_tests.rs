@@ -879,8 +879,9 @@ fn tracks_so_far() -> usize {
 /// line cut apart (ruling R38.1), and some here are.
 pub fn do_flow_halves_hold_on_every_aspect() {
     /// The most lines a frame here may track (rulings R35.3, R38.3): the
-    /// most any does is 10,534, the crowded text shrunk round a flat
-    /// outline (17,031 when a line's gap was bisected).
+    /// most any does is 6,164, the Ecclesiastes text shrunk inward round
+    /// the 50:1 ellipse (10,534 before the shrink stopped at a useful
+    /// precision, ruling R42.2; 17,031 when a line's gap was bisected).
     const MOST_TRACKS: usize = 12_000;
     // Opt-in: the sweep's tallies, for reading the counts this test's
     // bounds are set from.
@@ -929,6 +930,9 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     // The most lines one frame here tracks: its work, bounded (ruling
     // R35.3).
     let mut most_tracks = 0;
+    // The most glyph steps a frame here takes (`Trace::spent`, what
+    // `TRACK_BUDGET` bounds), reported with the tallies.
+    let mut most_spent = 0;
     let size = |run: &ShapedRun| {
         run.glyphs
             .iter()
@@ -989,6 +993,7 @@ pub fn do_flow_halves_hold_on_every_aspect() {
                             if tracks > MOST_TRACKS {
                                 faults.push(format!("{what}: {tracks} lines tracked"));
                             }
+                            most_spent = most_spent.max(trace.spent);
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
                                 shrunk += 1;
                             }
@@ -1141,7 +1146,7 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     }
     if report {
         eprintln!(
-            "the aspect sweep: shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks}\n{}",
+            "the aspect sweep: shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks} most glyph steps {most_spent}\n{}",
             faults.join("\n")
         );
     }

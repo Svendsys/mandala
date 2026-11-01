@@ -171,6 +171,14 @@ const JOIN_FLOOR: f32 = 4.0 * INK_TOLERANCE;
 /// cannot hold its lines at the size R27 gave it.
 const SHRINK_ROUNDS: usize = 12;
 
+/// The shrink stops once its bracket on the scale is within this share
+/// of the scale held (ruling R42.2).
+const SHRINK_PRECISION: f32 = 0.01;
+
+/// The shrink stops once its bracket spans less than this size step, in
+/// points, at the frame's largest glyph (ruling R42.2).
+const SHRINK_LEAST_STEP_PT: f32 = 0.25;
+
 /// How much of the clearance of the largest size a shrink has found
 /// held a probe at a larger size starts from (ruling R35.3): a clearance
 /// grows with the word gap, so with the size — or stays, where a wide
@@ -238,10 +246,21 @@ impl Halves {
         let mut junctions = [(0.0, 0.0); 2];
         let mut apexes = [0.0; 2];
         for k in 0..2 {
-            let start = paths[k].nearest(top_left);
-            let end = unwrap(paths[k].nearest(bottom_right), start, length);
+            // A support that is not a number — an outline with a side
+            // that is not one — is nowhere along the path, though the
+            // point nearest it would be somewhere: its place is not a
+            // number either, so the halves read as unmeasured.
+            let along = |p: Vec2| {
+                if p.is_finite() {
+                    paths[k].nearest(p)
+                } else {
+                    f32::NAN
+                }
+            };
+            let start = along(top_left);
+            let end = unwrap(along(bottom_right), start, length);
             junctions[k] = (start, end);
-            apexes[k] = unwrap(paths[k].nearest(tops[k]), start, length);
+            apexes[k] = unwrap(along(tops[k]), start, length);
         }
         Halves {
             paths,
@@ -1810,7 +1829,15 @@ impl Layout<'_> {
     /// for the line when only leaving it out does so — or `None` when
     /// even leaving it out leaves two inks touching (ruling R38.1).
     ///
-    /// Cost: a bisection of clearance searches over the line's clusters.
+    /// The prefix is bisected on a cheap look (ruling R42.1): the frame
+    /// with the line cut to it, laid once against the clearance `held`,
+    /// and whether two of its inks touch. The clearance search runs once,
+    /// on the prefix chosen; only where its inks touch even so is the
+    /// prefix bisected again below it on whole searches.
+    ///
+    /// Cost: a bisection of [`lay`](Self::lay)s over the line's clusters
+    /// and one clearance search; where that search's inks touch, a
+    /// bisection of clearance searches below the prefix.
     fn cut_apart(
         &self,
         run: &ShapedRun,
@@ -1818,11 +1845,12 @@ impl Layout<'_> {
         i: usize,
         side: Option<(&ShapedRun, &Range<usize>)>,
         span: f32,
+        held: Clear,
     ) -> Option<(Option<Prepared>, Cleared)> {
         let p = &lines[i];
-        // The frame with line `i` cut to its first `k` clusters, and its
-        // lines laid, when no two of their inks touch.
-        let apart = |k: usize| {
+        // The frame with line `i` cut to its first `k` clusters: the
+        // line, `None` when it is left out, and the frame's lines.
+        let frame_of = |k: usize| {
             let kept = trimmed(&p.clusters[..k]).to_vec();
             let line = if kept.is_empty() {
                 None
@@ -1836,17 +1864,46 @@ impl Layout<'_> {
                     frame.remove(i);
                 }
             }
+            (line, frame)
+        };
+        // That frame, its clearance found again, when no two of its inks
+        // touch.
+        let apart = |k: usize| {
+            let (line, frame) = frame_of(k);
             let cleared = self.lay_clear(run, &frame, side, span, [[0.0; 2]; 2], BACKTRACKS);
             (!overlapping(&cleared.lines)).then_some((line, cleared))
         };
-        let mut best = apart(0)?;
+        // That frame laid once against the clearance held: whether no two
+        // of its inks touch.
+        let looks_apart = |k: usize| {
+            let (_, frame) = frame_of(k);
+            !overlapping(&self.lay(run, &frame, held, span, &mut LayMemo::default()))
+        };
         // Apart with none of the line's clusters, touching with all of
         // them; the longest prefix apart lies between.
-        let (mut held, mut over) = (0, p.clusters.len());
-        while over - held > 1 && !self.spent_all() {
-            let mid = held + (over - held) / 2;
+        let (mut chosen, mut over) = (0, p.clusters.len());
+        while over - chosen > 1 && !self.spent_all() {
+            let mid = chosen + (over - chosen) / 2;
+            if looks_apart(mid) {
+                chosen = mid;
+            } else {
+                over = mid;
+            }
+        }
+        if let Some(found) = apart(chosen) {
+            return Some(found);
+        }
+        if chosen == 0 {
+            return None;
+        }
+        // The look misled: the prefix is bisected below it on whole
+        // clearance searches.
+        let mut best = apart(0)?;
+        let (mut held_k, mut over) = (0, chosen);
+        while over - held_k > 1 && !self.spent_all() {
+            let mid = held_k + (over - held_k) / 2;
             match apart(mid) {
-                Some(found) => (held, best) = (mid, found),
+                Some(found) => (held_k, best) = (mid, found),
                 None => over = mid,
             }
         }
@@ -2105,7 +2162,13 @@ pub(super) fn place_halves(
             let (mut held, mut over) = (floor, 1.0_f32);
             let mut best = at_floor;
             for _ in 0..SHRINK_ROUNDS {
-                if lay.spent_all() {
+                // Sub-percent precision in a last resort buys nothing a
+                // reader can see (ruling R42.2): the bracket within 1% of
+                // the scale held, or a size step under a quarter point,
+                // ends the shrink.
+                let step = over - held;
+                let precise = step <= SHRINK_PRECISION * held || step * fitted_size < SHRINK_LEAST_STEP_PT;
+                if lay.spent_all() || precise {
                     break;
                 }
                 let mid = 0.5 * (held + over);
@@ -2176,7 +2239,7 @@ pub(super) fn place_halves(
         if !overlap || lay.spent_all() {
             break;
         }
-        if let Some((kept, cleared)) = lay.cut_apart(&drawn, &prepared, i, side_of, span) {
+        if let Some((kept, cleared)) = lay.cut_apart(&drawn, &prepared, i, side_of, span, clear) {
             cut_apart.push(prepared[i].half);
             match kept {
                 Some(p) => prepared[i] = p,
@@ -2254,6 +2317,7 @@ pub(super) fn place_halves(
         trace.unheld = unheld;
         trace.cut_apart = cut_apart;
         trace.clear = clear;
+        trace.spent = lay.spent.get();
     }
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;

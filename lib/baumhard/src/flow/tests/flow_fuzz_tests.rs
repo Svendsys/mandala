@@ -1146,3 +1146,24 @@ fn test_a_frame_whose_clearances_pass_its_half_places_finitely() {
         }
     }
 }
+
+/// CI's flow_structured crash at 8baf8e6e (sha1 6f1864cf…), "around an
+/// outline: its natural length fits, and it was cut": a rounded
+/// rectangle whose width is not a number. Its support points' `x` is
+/// not a number, yet the point of its path nearest each is somewhere,
+/// so both halves' junctions fell at one place: halves of no length,
+/// whose `Spread` line was cut to one cluster where R27 had laid it
+/// whole along the side that is a number. A support that is not a
+/// number now places its junction nowhere, and the frame keeps R27's
+/// placement, as an outline whose halves cannot be measured does.
+/// Minimized on stable (692 → 517 bytes).
+///
+/// Control: with the junctions taken from the nearest point again, it
+/// fails with "its natural length fits, and it was cut".
+#[test]
+fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
+    let found = include_bytes!("fuzz_findings/structured_frame_round_an_outline_whose_width_is_not_a_number");
+    if let Err(why) = check_flow_structured(found) {
+        panic!("the fuzzer's input: {why}");
+    }
+}

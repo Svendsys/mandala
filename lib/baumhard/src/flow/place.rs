@@ -600,6 +600,9 @@ pub(crate) struct Trace {
     /// junction, `[half][junction]`, as its last clearance search left
     /// it: never `NaN`.
     pub(crate) clear: [[f32; 2]; 2],
+    /// For a text frame, the glyph steps its tracking took in all, what
+    /// [`TRACK_BUDGET`](halves::TRACK_BUDGET) bounds.
+    pub(crate) spent: usize,
 }
 
 /// What a text frame's last resorts — a `Fit` frame's shrink, then the
