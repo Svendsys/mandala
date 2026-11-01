@@ -156,17 +156,32 @@ fn test_writer_undo_and_redo_cancel_an_open_transaction() {
     do_writer_undo_and_redo_cancel_an_open_transaction();
 }
 
-/// An undo with a transaction open cancels it, then undoes the newest
-/// entry; the handle is then stale. A redo does the same.
+/// One keypress, one visible step (ruling R36): an undo with an
+/// interactive transaction open cancels it and stops there — the entry
+/// before stays — returning the revision as it is; the handle is then
+/// stale. A redo does the same. With an empty history, the undo that
+/// cancels still answers `Some`, since the document changed; with
+/// nothing open and nothing to undo, `None`.
 pub fn do_writer_undo_and_redo_cancel_an_open_transaction() {
     let (mut doc, ids) = built();
     let original = saved(&doc);
+    let tx = doc.begin(ChangeSource::Input, Interactive).unwrap();
+    doc.stage(&tx, place(vec![ids.a], Vec2::new(9.0, 9.0))).unwrap();
+    assert_eq!(
+        doc.undo(),
+        Some(Revision(0)),
+        "an empty history: the cancel is the change"
+    );
+    assert_eq!(saved(&doc), original, "the stage is gone");
+    assert_eq!(doc.undo(), None, "nothing open, nothing to undo");
+
     doc.apply(fade(vec![ids.a], 0.5), ChangeSource::Action).unwrap();
     let faded = saved(&doc);
     let tx = doc.begin(ChangeSource::Input, Interactive).unwrap();
     doc.stage(&tx, place(vec![ids.a], Vec2::new(9.0, 9.0))).unwrap();
-    assert_eq!(doc.undo(), Some(Revision(2)));
-    assert_eq!(saved(&doc), original, "the stage cancelled, and the fade undone");
+    assert_eq!(doc.undo(), Some(Revision(1)), "the revision as it is");
+    assert_eq!(saved(&doc), faded, "the stage cancelled, the fade kept");
+    assert_eq!(doc.history().count(), 1);
     assert_eq!(
         doc.stage(&tx, place(vec![ids.a], Vec2::new(1.0, 1.0))),
         Err(ApplyError::TransactionClosed),
@@ -175,13 +190,17 @@ pub fn do_writer_undo_and_redo_cancel_an_open_transaction() {
     assert_eq!(doc.commit(tx), None);
     assert_consistent(&doc, "after the undo");
 
+    doc.undo().unwrap();
+    assert_eq!(saved(&doc), original, "the next undo undoes the fade");
     let tx = doc.begin(ChangeSource::Input, Interactive).unwrap();
     doc.stage(&tx, place(vec![ids.d], Vec2::new(9.0, 9.0))).unwrap();
-    assert_eq!(doc.redo(), Some(Revision(3)));
-    assert_eq!(saved(&doc), faded, "the stage cancelled, and the fade redone");
-    assert_eq!(doc.history().count(), 1);
+    assert_eq!(doc.redo(), Some(Revision(2)), "the redo that cancels");
+    assert_eq!(saved(&doc), original, "the stage cancelled, nothing redone");
+    assert_eq!(doc.redo_len(), 1);
     doc.cancel(tx);
-    assert_eq!(saved(&doc), faded, "cancelling a stale handle does nothing");
+    assert_eq!(saved(&doc), original, "cancelling a stale handle does nothing");
+    assert_eq!(doc.redo(), Some(Revision(3)));
+    assert_eq!(saved(&doc), faded, "the next redo redoes the fade");
 }
 
 #[test]
@@ -238,7 +257,8 @@ fn test_writer_saves_the_committed_state_with_a_stage_open() {
 
 /// With a base call and a stage open, the saved text is the committed
 /// document's, and the document keeps both: the stage is still drawn
-/// after the save, and commits as it would have.
+/// after the save, the save records nothing, and the transaction
+/// commits as it would have.
 pub fn do_writer_saves_the_committed_state_with_a_stage_open() {
     let (mut doc, ids) = built();
     let committed = saved(&doc);
@@ -247,6 +267,10 @@ pub fn do_writer_saves_the_committed_state_with_a_stage_open() {
     doc.apply_in(&tx, EditRequest::new(steps, "create")).unwrap();
     doc.stage(&tx, place(vec![ids.a], Vec2::new(8.0, 8.0))).unwrap();
     let live = doc.tree().descendants().count();
+    assert!(
+        !doc.take_changes().is_empty(),
+        "precondition: the stage and the base recorded"
+    );
     assert_eq!(doc.save_json().unwrap(), committed, "the committed state");
     assert_eq!(
         position(&doc, ids.a),
@@ -254,10 +278,7 @@ pub fn do_writer_saves_the_committed_state_with_a_stage_open() {
         "the stage is back"
     );
     assert_eq!(doc.tree().descendants().count(), live, "and the base");
-    assert!(doc
-        .take_changes()
-        .iter()
-        .all(|record| record.revision == Revision(0)));
+    assert!(doc.take_changes().is_empty(), "the save records nothing");
     assert_eq!(doc.commit(tx), Some(Revision(1)));
     assert_ne!(saved(&doc), committed);
     assert_consistent(&doc, "committed after the save");
@@ -272,7 +293,8 @@ fn test_writer_an_animated_transaction_yields_by_finishing() {
 /// the animation is fast-forwarded to its end and committed as its own
 /// entry, and the apply follows as the next. A `begin` does the same.
 /// Interpolation writes the document part-way, and is refused on an
-/// interactive transaction.
+/// interactive transaction. An undo during an animation commits it and
+/// undoes it alone, so it can be redone; a redo commits it (ruling R36).
 pub fn do_writer_an_animated_transaction_yields_by_finishing() {
     let (mut doc, ids) = built();
     let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
@@ -320,17 +342,40 @@ pub fn do_writer_an_animated_transaction_yields_by_finishing() {
     );
     doc.cancel(next);
 
-    // Undo during an animation cancels it: the entry before stays.
+    // An undo during an animation finishes and commits it, then undoes
+    // it alone: the entry before stays, and a redo brings the animation
+    // back whole. A redo during one finishes it too, which leaves nothing
+    // to redo.
+    let before = position(&doc, ids.d);
     let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
     doc.stage(&tx, place(vec![ids.d], Vec2::new(0.0, 20.0))).unwrap();
     doc.interpolate(&tx, 0.5, Snap::End).unwrap();
-    doc.undo().unwrap();
+    let revision = doc.revision().0;
+    assert_eq!(
+        doc.undo(),
+        Some(Revision(revision + 2)),
+        "a commit, then its undo"
+    );
     assert_eq!(
         position(&doc, ids.d),
-        Some(Vec2::ZERO),
-        "the animation and the entry before undone"
+        before,
+        "the animation undone, the entry before kept"
     );
-    assert_eq!(doc.history().count(), 2);
+    assert_eq!(doc.history().count(), 3);
+    assert_eq!(doc.redo_len(), 1, "the animation can be redone");
+    doc.redo().unwrap();
+    assert_eq!(position(&doc, ids.d), Some(Vec2::new(0.0, 20.0)), "whole");
+    let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
+    doc.stage(&tx, place(vec![ids.d], Vec2::new(0.0, 30.0))).unwrap();
+    doc.interpolate(&tx, 0.5, Snap::End).unwrap();
+    let revision = doc.revision().0;
+    assert_eq!(
+        doc.redo(),
+        Some(Revision(revision + 1)),
+        "the commit is the change"
+    );
+    assert_eq!(position(&doc, ids.d), Some(Vec2::new(0.0, 30.0)), "finished");
+    assert_eq!(doc.redo_len(), 0);
     assert_consistent(&doc, "after the undo");
 }
 

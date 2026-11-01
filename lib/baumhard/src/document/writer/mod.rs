@@ -56,7 +56,7 @@ use crate::document::mutation::step::DocStep;
 use crate::document::writer::error::ApplyError;
 use crate::document::writer::feed::{addresses, reversed, Arrangement, ChangeRecord, RemovedAddress};
 use crate::document::writer::history::History;
-use crate::document::writer::transaction::{inserted_by, removed_by, Open};
+use crate::document::writer::transaction::{inserted_by, removed_by, Open, TransactionKind};
 use crate::document::writer::upkeep::Direction;
 use crate::engine::journal::Touch;
 use indextree::NodeId;
@@ -145,6 +145,17 @@ impl ChangeSource {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Revision(pub u64);
 
+/// What [`Document::settle_open`] did.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Settled {
+    /// Nothing was open, or an animation that changed nothing.
+    Nothing,
+    /// An interactive transaction was cancelled.
+    Cancelled,
+    /// An animated transaction was committed as an entry.
+    Committed,
+}
+
 /// The writer's state beside the tree.
 #[derive(Clone, Debug)]
 pub(crate) struct Writer {
@@ -194,7 +205,9 @@ impl Document {
     /// every node it inserted the next ident, removes every link left
     /// leading into what it removed, and judges what it did — the shape
     /// of every row it changed, every link it inserted, this target's
-    /// budget. Any failure leaves the document exactly as it was. A
+    /// budget. A refused request leaves nothing of itself applied, and the
+    /// document as it was but for an animated transaction that was open:
+    /// D28 finishes and commits that first, and it stays committed. A
     /// request that changes nothing returns the current revision and
     /// makes no entry.
     ///
@@ -230,15 +243,22 @@ impl Document {
         })
     }
 
-    /// Undo the newest entry: revert its journals, newest first. An open
-    /// transaction is cancelled first. Returns the new revision, or
-    /// `None` when there is nothing to undo.
+    /// Undo the newest entry: revert its journals, newest first. Returns
+    /// the new revision, or `None` when nothing changed.
+    ///
+    /// With a transaction open, one undo is one visible step (ruling R36
+    /// on #238): an interactive transaction is cancelled and the undo
+    /// stops there, returning the current revision; an animated one
+    /// yields as D28 has it — fast-forwarded and committed — and the undo
+    /// then reverts that entry, which a redo brings back.
     ///
     /// Cost: a revert of each of the entry's journals, and O(its
     /// touches) for the derived state and the record.
     pub fn undo(&mut self) -> Option<Revision> {
         self.mutate(|doc| {
-            doc.cancel_open();
+            if doc.settle_open() == Settled::Cancelled {
+                return Some(doc.revision());
+            }
             let mut entry = doc.writer.history.take_applied()?;
             let mut touched = Vec::new();
             let mut removed = Vec::new();
@@ -270,15 +290,25 @@ impl Document {
         })
     }
 
-    /// Redo the entry undone last: replay its journals, oldest first. An
-    /// open transaction is cancelled first. Returns the new revision, or
-    /// `None` when there is nothing to redo.
+    /// Redo the entry undone last: replay its journals, oldest first.
+    /// Returns the new revision, or `None` when nothing changed.
+    ///
+    /// With a transaction open, as [`Self::undo`]: an interactive one is
+    /// cancelled and the redo stops there; an animated one is
+    /// fast-forwarded and committed, which clears the redo branch, so the
+    /// redo then has nothing left to replay and returns the revision the
+    /// commit made.
     ///
     /// Cost: [`Self::undo`]'s.
     pub fn redo(&mut self) -> Option<Revision> {
         self.mutate(|doc| {
-            doc.cancel_open();
-            let mut entry = doc.writer.history.take_undone()?;
+            let settled = doc.settle_open();
+            if settled == Settled::Cancelled {
+                return Some(doc.revision());
+            }
+            let Some(mut entry) = doc.writer.history.take_undone() else {
+                return (settled == Settled::Committed).then(|| doc.revision());
+            };
             let mut touched = Vec::new();
             let mut removed = Vec::new();
             for (i, journal) in entry.journals.iter().enumerate() {
@@ -396,6 +426,23 @@ impl Document {
     /// of the wasm32 bounds, on every target. O(1).
     pub(crate) fn set_limits(&mut self, limits: Limits) {
         self.writer.limits = limits;
+    }
+
+    /// What an undo or a redo does first with the open transaction
+    /// (ruling R36 on #238): cancel an interactive one, fast-forward and
+    /// commit an animated one.
+    fn settle_open(&mut self) -> Settled {
+        match self.writer.open.as_ref().map(|open| open.kind()) {
+            None => Settled::Nothing,
+            Some(TransactionKind::Interactive) => {
+                self.cancel_open();
+                Settled::Cancelled
+            }
+            Some(TransactionKind::Animated) => match self.commit_open() {
+                Some(_) => Settled::Committed,
+                None => Settled::Nothing,
+            },
+        }
     }
 
     /// Advance the revision and return it. O(1).

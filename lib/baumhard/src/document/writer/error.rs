@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! [`ApplyError`]: why the
-//! writer refused a change. Every refusal leaves the document exactly as
-//! it was.
+//! [`ApplyError`]: why the writer refused a change. A refusal leaves the
+//! document as it was, but for the one change D28 makes first: an
+//! animated transaction open when the change arrived is finished and
+//! committed before the change is tried.
 
 use crate::document::mutation::error::MutationError;
 use crate::document::writer::ChangeSource;
@@ -10,8 +11,11 @@ use std::fmt;
 
 /// Why [`Document::apply`](crate::document::ids::Document::apply), a
 /// transaction call or [`Document::begin`](crate::document::ids::Document::begin)
-/// refused. The document is unchanged after every one of them: nothing
-/// was applied, or everything applied was undone.
+/// refused. Nothing of the refused change is applied: nothing was, or
+/// everything that was is undone. An animated transaction that was open
+/// when an `apply` or a `begin` arrived stays committed, since D28
+/// finishes and commits it before the change is tried; a refused source
+/// is refused before that.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ApplyError {
     /// An interactive transaction is open — a text editor session, a
@@ -55,6 +59,19 @@ pub enum ApplyError {
     /// The change would leave the document with more bytes of text than
     /// this target holds ([`MAX_MAP_BYTES`](crate::document::format::MAX_MAP_BYTES),
     /// wasm32 only).
+    ///
+    /// **What it bounds is the bytes of the strings the elements hold**,
+    /// not the length of the file a save would write, which
+    /// [`check_savable`](crate::document::format::check_savable) bounds on
+    /// wasm32. The file is longer — its keys, its numbers, its escapes —
+    /// and how much longer depends on where each string sits, so an
+    /// accepted edit near the bound can leave a document `check_savable`
+    /// refuses. Counting the file's length exactly at every edit would
+    /// take a per-node cache of lengths beside the tree (rule 4) or a full
+    /// serialization per edit (rule 5); at a bound of a sixth of 3 GiB of
+    /// text the gap is not reached in practice. Ruled so (R36 on #238,
+    /// recorded on #230); the one exception to "a savable document stays
+    /// savable" (R11).
     TooMuchText {
         /// How many bytes of text the document would hold.
         bytes: u64,

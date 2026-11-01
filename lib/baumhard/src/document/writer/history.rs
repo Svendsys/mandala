@@ -138,19 +138,20 @@ impl History {
     }
 
     /// Drop entries until at most `limit` are held: the oldest applied
-    /// first, then — with none applied left — the undone entry that would
-    /// be redone last.
+    /// first, then — with none applied left — the undone entries that
+    /// would be redone last.
+    ///
+    /// Cost: O(the entries dropped), each discarded; one drain per list.
     fn trim(&mut self, tree: &mut Tree<DocElement>) {
-        while self.applied.len() + self.undone.len() > self.limit {
-            if let Some(oldest) = self.applied.pop_front() {
-                self.base = oldest.serial;
-                discard(tree, oldest);
-            } else if !self.undone.is_empty() {
-                let farthest = self.undone.remove(0);
-                discard(tree, farthest);
-            } else {
-                break;
-            }
+        let over = (self.applied.len() + self.undone.len()).saturating_sub(self.limit);
+        let from_applied = over.min(self.applied.len());
+        for oldest in self.applied.drain(..from_applied) {
+            self.base = oldest.serial;
+            discard(tree, oldest);
+        }
+        let from_undone = (over - from_applied).min(self.undone.len());
+        for farthest in self.undone.drain(..from_undone) {
+            discard(tree, farthest);
         }
     }
 

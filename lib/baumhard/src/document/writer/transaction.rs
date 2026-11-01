@@ -29,8 +29,11 @@
 //! **One open at a time, and who yields** (D28). While an interactive
 //! transaction is open, an `apply` or a `begin` is refused with
 //! [`ApplyError::TransactionOpen`]. An animated one yields: it is
-//! fast-forwarded to its end and committed, and the change proceeds. An
-//! undo or a redo cancels whichever is open, then proceeds.
+//! fast-forwarded to its end and committed, and the change proceeds —
+//! and stays committed if the change is then refused. An undo or a redo
+//! is one visible step (ruling R36): it cancels an interactive
+//! transaction and stops there, and makes an animated one an entry of
+//! its own before it goes on.
 
 use crate::document::element::DocElement;
 use crate::document::ids::Document;
@@ -99,6 +102,13 @@ pub(super) struct Open {
     stage: Option<Staged>,
 }
 
+impl Open {
+    /// Whether it is interactive or animated. O(1).
+    pub(super) fn kind(&self) -> TransactionKind {
+        self.kind
+    }
+}
+
 /// A stage, and where it stands.
 #[derive(Clone, Debug)]
 struct Staged {
@@ -137,8 +147,9 @@ impl Document {
     ///
     /// An open interactive transaction refuses it
     /// ([`ApplyError::TransactionOpen`]); an open animated one is
-    /// fast-forwarded and committed first (D28). A source no change may
-    /// declare is refused ([`ApplyError::Source`]).
+    /// fast-forwarded and committed first (D28), and stays committed. A
+    /// source no change may declare is refused
+    /// ([`ApplyError::Source`]), before anything is committed.
     ///
     /// Cost: O(1), or the commit of the animated transaction it yields.
     pub fn begin(&mut self, source: ChangeSource, kind: TransactionKind) -> Result<Transaction, ApplyError> {

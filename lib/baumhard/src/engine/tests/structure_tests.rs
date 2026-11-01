@@ -1488,19 +1488,19 @@ pub fn do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass() {
 }
 
 #[test]
-fn test_journal_rows_before_are_the_rows_the_tree_had() {
-    do_journal_rows_before_are_the_rows_the_tree_had();
+fn test_journal_rows_before_name_each_siblings_predecessor() {
+    do_journal_rows_before_name_each_siblings_predecessor();
 }
 
 /// For every seeded structural run: with the tree as the builder left
-/// it, `rows_before` gives every parent of the snapshot taken before
-/// the first call exactly the children it had there, in order — the
-/// inserted left out, the removed and the re-parented put back where
-/// they stood — and, after a revert, the tree's own rows, which are the
-/// same. The expected rows are read from the snapshot, which shares no
-/// code with the journal. The runs must change rows, or there is
-/// nothing for the row read back to differ by.
-pub fn do_journal_rows_before_are_the_rows_the_tree_had() {
+/// it, `rows_before` names, for every node of the snapshot taken before
+/// the first call, the sibling right before it there — the inserted
+/// left out, the removed and the re-parented where they stood, `None`
+/// at the front of a row — and, after a revert, the tree's own. The
+/// expected siblings are read from the snapshot, which shares no code
+/// with the journal. The runs must change the siblings of many nodes, or
+/// there is nothing for the answer read back to differ by.
+pub fn do_journal_rows_before_name_each_siblings_predecessor() {
     let mut stats = StructuralStats::default();
     let mut differed = 0;
     for seed in 0..SEEDS {
@@ -1510,34 +1510,38 @@ pub fn do_journal_rows_before_are_the_rows_the_tree_had() {
             journal,
             ..
         } = run_structural(seed, &mut stats);
-        let mut expected: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
+        // Each node of the snapshot with its parent and the sibling
+        // before it there.
+        let mut last_child: FxHashMap<NodeId, NodeId> = FxHashMap::default();
+        let mut expected: Vec<(NodeId, NodeId, Option<NodeId>)> = Vec::new();
         for (id, parent, _) in &before {
-            expected.entry(*id).or_default();
             if let Some(parent) = parent {
-                expected.entry(*parent).or_default().push(*id);
+                expected.push((*id, *parent, last_child.insert(*parent, *id)));
             }
         }
-        let mut row = Vec::new();
-        let mut rows = journal.rows_before();
-        for (&parent, children) in &expected {
-            rows.row(&tree, parent, &mut row);
+        let rows = journal.rows_before();
+        for &(node, parent, prev) in &expected {
             assert_eq!(
-                &row, children,
-                "seed {seed}: the row of {parent} before the journal"
+                rows.prev(&tree, parent, node),
+                prev,
+                "seed {seed}: the sibling before {node} before the journal"
             );
-            let now: Vec<NodeId> = parent.children(tree.arena()).collect();
-            differed += usize::from(&now != children);
+            let now = tree.arena().get(node).and_then(|n| n.previous_sibling());
+            differed += usize::from(now != prev);
         }
         journal.revert(&mut tree).unwrap();
-        let mut rows = journal.rows_before();
-        for (&parent, children) in &expected {
-            rows.row(&tree, parent, &mut row);
-            assert_eq!(&row, children, "seed {seed}: the row of {parent} after a revert");
+        let rows = journal.rows_before();
+        for &(node, parent, prev) in &expected {
+            assert_eq!(
+                rows.prev(&tree, parent, node),
+                prev,
+                "seed {seed}: the sibling before {node} after a revert"
+            );
         }
     }
     assert!(
         differed >= SEEDS as usize,
-        "the runs must change the rows they are read back from: {differed}"
+        "the runs must change the siblings they are read back from: {differed}"
     );
 }
 

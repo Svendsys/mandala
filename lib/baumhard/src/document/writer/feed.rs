@@ -17,10 +17,9 @@ use crate::document::ids::{owning_node, NodeIdent};
 use crate::document::writer::{ChangeSource, Revision};
 use crate::engine::element::TreeElement;
 use crate::engine::journal::{Journal, Touch};
-use crate::engine::key::BranchKey;
 use crate::engine::tree::Tree;
 use indextree::NodeId;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 /// One change the writer made: an apply, a stage, a commit, a cancel,
 /// a base call of a transaction, an interpolation step of an animated
@@ -64,8 +63,9 @@ pub struct RemovedAddress {
     pub channel: usize,
     /// Its place among the siblings of its kind and channel under the
     /// element it hung from, counted from `0`: which span of a section,
-    /// which link of a node.
-    pub index: usize,
+    /// which link of a node. `None` for a node, which its id names
+    /// (ruling R36 on #238).
+    pub index: Option<usize>,
 }
 
 /// Where the rows that removed elements are read from.
@@ -82,12 +82,15 @@ pub(super) enum Arrangement<'j> {
 /// arrangement `rows` names, in pre-order, as a journal's touches name
 /// them — in that arrangement.
 ///
-/// Cost: per element O(1) — the node it belongs to is carried down from
-/// its parent, read for the parent of each subtree's top by one climb
+/// Cost: per element, the node it belongs to is carried down from its
+/// parent — read for the parent of each subtree's top by one climb
 /// within that parent's node ([`owning_node`]), never per level of the
-/// tree (§20 rule 11); per distinct parent, one read of its row.
-/// Allocates the result, a rank per sibling of a parent read, and the
-/// owner of each element.
+/// tree (§20 rule 11) — and, for an element other than a node, its rank
+/// is found by walking back through the siblings of its own key alone
+/// ([`RowsBefore::prev`](crate::engine::journal::RowsBefore::prev) in the arrangement before a journal, the arena
+/// otherwise). No row is read whole: the work is the journal's, and the
+/// same-key run of each removed element that is not a node (ruling R36).
+/// Allocates the result and the owner of each element.
 pub(super) fn addresses(
     tree: &Tree<DocElement>,
     leaving: impl IntoIterator<Item = NodeId>,
@@ -98,7 +101,7 @@ pub(super) fn addresses(
         Arrangement::Current => None,
         Arrangement::Before(journal) => Some(journal),
     };
-    let mut reader = journal.map(Journal::rows_before);
+    let reader = journal.map(Journal::rows_before);
     // The element at `id` in the arrangement read: the journal's
     // before-image when it changed it, the arena's otherwise.
     let state = |id: NodeId| -> Option<&DocElement> {
@@ -121,38 +124,40 @@ pub(super) fn addresses(
     // is here before it is, unless the parent stayed in the tree.
     let mut owners: FxHashMap<NodeId, Option<NodeIdent>> = FxHashMap::default();
     let ident_of = |id: NodeId| state(id).and_then(DocElement::as_node).map(|node| node.ident);
-    let mut ranks: FxHashMap<NodeId, usize> = FxHashMap::default();
-    let mut read: FxHashSet<NodeId> = FxHashSet::default();
-    let mut row = Vec::new();
+    // The sibling right before `id` under `parent`, in the arrangement
+    // read.
+    let prev = |parent: NodeId, id: NodeId| -> Option<NodeId> {
+        #[cfg(test)]
+        steps::count();
+        match &reader {
+            Some(reader) => reader.prev(tree, parent, id),
+            None => arena.get(id)?.previous_sibling(),
+        }
+    };
     let mut out = Vec::new();
     for id in leaving {
         let Some(element) = state(id) else {
             continue;
         };
         let parent = parent_of(id);
-        if let Some(parent) = parent.filter(|&parent| read.insert(parent)) {
-            match reader.as_mut() {
-                Some(reader) => reader.row(tree, parent, &mut row),
-                None => {
-                    row.clear();
-                    row.extend(parent.children(arena));
+        // A row is sorted by key, so the siblings of one key are a run,
+        // and a rank is the distance back to the run's start.
+        let index = match (element, parent) {
+            (DocElement::Node(_), _) => None,
+            (_, None) => Some(0),
+            (_, Some(parent)) => {
+                let key = element.key();
+                let mut rank = 0;
+                let mut at = id;
+                while let Some(before) =
+                    prev(parent, at).filter(|&b| state(b).map(TreeElement::key) == Some(key))
+                {
+                    rank += 1;
+                    at = before;
                 }
+                Some(rank)
             }
-            // A row is sorted by key, so the siblings of one key are a
-            // run: a rank is the distance from the run's start.
-            let mut run: Option<(BranchKey<DocKind>, usize)> = None;
-            for &sibling in &row {
-                let Some(key) = state(sibling).map(TreeElement::key) else {
-                    continue;
-                };
-                let rank = match run {
-                    Some((current, rank)) if current == key => rank + 1,
-                    _ => 0,
-                };
-                run = Some((key, rank));
-                ranks.insert(sibling, rank);
-            }
-        }
+        };
         let node = match (element, parent) {
             (DocElement::Node(node), _) => Some(node.ident),
             (_, None) => None,
@@ -168,11 +173,33 @@ pub(super) fn addresses(
                 node,
                 kind: element.kind(),
                 channel: element.channel(),
-                index: ranks.get(&id).copied().unwrap_or(0),
+                index,
             },
         ));
     }
     out
+}
+
+/// How many siblings [`addresses`] has stepped back through on this
+/// thread: what the test that holds it to the journal reads. Compiled for
+/// tests only.
+#[cfg(test)]
+pub(crate) mod steps {
+    use std::cell::Cell;
+
+    thread_local! {
+        static STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more sibling read.
+    pub(super) fn count() {
+        STEPS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The siblings read on this thread so far.
+    pub(crate) fn taken() -> usize {
+        STEPS.with(Cell::get)
+    }
 }
 
 /// `touch` as seen from the other side of its journal: what an undo does

@@ -278,8 +278,9 @@ fn test_writer_dirty_is_the_saved_state_not_a_count() {
 /// `mark_saved`, an edit, its undo: clean. An edit, its undo, a
 /// different edit: dirty, though the history is as long as it was when
 /// saved. A redo away from the saved state is dirty; the undo back is
-/// clean. An entry dropped off the end of the history takes the saved
-/// state with it when it was the saved one.
+/// clean. A saved state the history has dropped is out of reach: undoing
+/// as far as the history goes is still dirty. A saved entry that is
+/// dropped becomes the history's base, and undoing back to it is clean.
 pub fn do_writer_dirty_is_the_saved_state_not_a_count() {
     let (mut doc, ids) = built();
     assert!(!doc.is_dirty(), "a loaded document is clean");
@@ -305,6 +306,35 @@ pub fn do_writer_dirty_is_the_saved_state_not_a_count() {
         doc.is_dirty(),
         "a different edit with as many entries is not the saved state"
     );
+
+    // A trimmed history: the loaded state was saved and has left the
+    // history, so undoing as far as the history reaches is still dirty.
+    let (mut doc, ids) = built();
+    doc.set_history_limit(2);
+    for (i, node) in [ids.a, ids.b, ids.c, ids.d].into_iter().enumerate() {
+        doc.apply(fade(vec![node], 0.1 * (i + 1) as f32), ChangeSource::Action)
+            .unwrap();
+    }
+    assert!(doc.undo().is_some() && doc.undo().is_some());
+    assert_eq!(doc.undo(), None, "the history reaches two entries back");
+    assert!(doc.is_dirty(), "the base is the trimmed state, not the saved one");
+
+    // The saved state is an entry that is trimmed: it becomes the base,
+    // and undoing back to it is clean.
+    let (mut doc, ids) = built();
+    doc.set_history_limit(2);
+    doc.apply(fade(vec![ids.a], 0.5), ChangeSource::Action).unwrap();
+    doc.mark_saved();
+    doc.apply(fade(vec![ids.b], 0.5), ChangeSource::Action).unwrap();
+    doc.apply(fade(vec![ids.c], 0.5), ChangeSource::Action).unwrap();
+    assert_eq!(
+        doc.history().count(),
+        2,
+        "precondition: the saved entry left the history"
+    );
+    assert!(doc.is_dirty());
+    assert!(doc.undo().is_some() && doc.undo().is_some());
+    assert!(!doc.is_dirty(), "back at the saved state, now the base");
 }
 
 #[test]
@@ -576,10 +606,12 @@ fn test_writer_feed_names_what_each_change_touched() {
 
 /// An edit's record names exactly the elements it touched, with its
 /// source and the revision it made; a second drain is empty. A delete's
-/// record names what it removed with the address each had — the link it
-/// took is the second of `a`'s links — and the undo's record, as
-/// [`ChangeSource::Undo`], names them back in. The undo of a create
-/// reports the created node removed, with its own ident.
+/// record names what it removed with the address each had — a node by
+/// its ident, the link it took as the second of `a`'s links — and the
+/// undo's record, as [`ChangeSource::Undo`], names them back in. The undo
+/// of a create reports the created node removed, with its own ident. Two
+/// links removed together are ranked where they stood before either
+/// left.
 pub fn do_writer_feed_names_what_each_change_touched() {
     let (mut doc, ids) = built();
     doc.apply(fade(vec![ids.a, ids.d], 0.5), ChangeSource::Console)
@@ -617,9 +649,9 @@ pub fn do_writer_feed_names_what_each_change_touched() {
             node: d_ident,
             kind: DocKind::Node,
             channel: 0,
-            index: 1,
+            index: None,
         }),
-        "d, the second root node"
+        "d, named by its id"
     );
     assert_eq!(
         address(ids.portal),
@@ -627,7 +659,7 @@ pub fn do_writer_feed_names_what_each_change_touched() {
             node: a_ident,
             kind: DocKind::Link,
             channel: 0,
-            index: 1,
+            index: Some(1),
         }),
         "the portal, a's second link"
     );
@@ -637,7 +669,7 @@ pub fn do_writer_feed_names_what_each_change_touched() {
             node: a_ident,
             kind: DocKind::PortalEnd,
             channel: 1,
-            index: 0,
+            index: Some(0),
         }),
         "inside it, the target end"
     );
@@ -679,9 +711,30 @@ pub fn do_writer_feed_names_what_each_change_touched() {
             node: new_ident,
             kind: DocKind::Node,
             channel: 0,
-            index: 2,
+            index: None,
         }),
-        "the undone node, third of the root nodes"
+        "the undone node, named by its id"
+    );
+
+    // Both of a's links in one request: each is ranked where it stood
+    // before the request — the portal behind the line, which left first.
+    doc.apply(
+        EditRequest::new(vec![remove_links(vec![ids.line, ids.portal])], "unlink"),
+        ChangeSource::Action,
+    )
+    .unwrap();
+    let records = doc.take_changes();
+    let rank = |id: NodeId| {
+        records[0]
+            .removed
+            .iter()
+            .find(|(r, _)| *r == id)
+            .and_then(|(_, address)| address.index)
+    };
+    assert_eq!(
+        (rank(ids.line), rank(ids.portal)),
+        (Some(0), Some(1)),
+        "the ranks the links had before either left"
     );
 }
 
@@ -835,26 +888,82 @@ impl Lcg {
 }
 
 /// What the session expects the history to hold: the saved text of the
-/// base and of each applied entry, the undone ones' for a redo, under
-/// the same limit the document keeps.
+/// base and of each applied entry, the undone ones' for a redo, each
+/// with an identity of its own, under the same limit the document keeps;
+/// and which of them was saved last.
 struct Model {
-    base: String,
-    applied: Vec<String>,
-    undone: Vec<String>,
+    base: (u64, String),
+    applied: Vec<(u64, String)>,
+    undone: Vec<(u64, String)>,
     limit: usize,
+    next: u64,
+    saved: u64,
 }
 
 impl Model {
+    fn new(text: String, limit: usize) -> Self {
+        Model {
+            base: (0, text),
+            applied: Vec::new(),
+            undone: Vec::new(),
+            limit,
+            next: 1,
+            saved: 0,
+        }
+    }
+
+    fn position(&self) -> u64 {
+        self.applied.last().unwrap_or(&self.base).0
+    }
+
     fn current(&self) -> &str {
-        self.applied.last().unwrap_or(&self.base)
+        &self.applied.last().unwrap_or(&self.base).1
     }
 
     fn push(&mut self, text: String) {
         self.undone.clear();
-        self.applied.push(text);
+        self.applied.push((self.next, text));
+        self.next += 1;
+        self.trim();
+    }
+
+    fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        self.trim();
+    }
+
+    fn trim(&mut self) {
         while self.applied.len() + self.undone.len() > self.limit {
-            self.base = self.applied.remove(0);
+            if self.applied.is_empty() {
+                self.undone.remove(0);
+            } else {
+                self.base = self.applied.remove(0);
+            }
         }
+    }
+
+    fn undo(&mut self) -> bool {
+        match self.applied.pop() {
+            Some(entry) => {
+                self.undone.push(entry);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn redo(&mut self) -> bool {
+        match self.undone.pop() {
+            Some(entry) => {
+                self.applied.push(entry);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.position() != self.saved
     }
 }
 
@@ -907,32 +1016,35 @@ fn test_writer_session_of_edits_undos_and_transactions_stays_exact() {
     do_writer_session_of_edits_undos_and_transactions_stays_exact();
 }
 
-/// A seeded session of four hundred moves on the example under a
-/// history limit of eight — applies of every kind of edit (refused ones
-/// included), undos, redos, interactive transactions committed or
-/// cancelled, animations written part-way and committed, saves with a
-/// stage open — never loses its place: every undo and redo the model
-/// expects succeeds and lands on the saved text the model holds for it,
-/// so no journal is ever refused as out of order (A5's version stamps),
-/// and every state is consistent. The session must have done each kind
-/// of move, or it proves nothing about the one it skipped.
+/// Whether the staged change just made touched anything, draining the
+/// feed: a stage that touches nothing makes no entry when committed.
+fn staged_something(doc: &mut Document) -> bool {
+    !doc.take_changes().is_empty()
+}
+
+/// A seeded session of six hundred moves on the example, under a history
+/// limit the session itself moves — applies of every kind of edit
+/// (refused ones included), undos, redos, saves marked, interactive
+/// transactions with base calls and stages that commit, cancel, or meet
+/// an undo, a redo or an apply, animations written part-way that commit,
+/// or yield to an apply, a begin, an undo or a redo, saves with a stage
+/// open — never loses its place: every undo and redo the model expects
+/// succeeds and lands on the saved text the model holds for it, so no
+/// journal is ever refused as out of order (A5's version stamps), the
+/// dirty flag is the model's, and every state is consistent. The session
+/// must have made each kind of move, or it proves nothing about the one
+/// it skipped.
 pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
     use crate::document::writer::transaction::TransactionKind;
     use crate::engine::interpolate::Snap;
     let (mut doc, _) = built();
-    let limit = 8;
-    doc.set_history_limit(limit);
-    let mut model = Model {
-        base: saved(&doc),
-        applied: Vec::new(),
-        undone: Vec::new(),
-        limit,
-    };
+    doc.set_history_limit(8);
+    let mut model = Model::new(saved(&doc), 8);
     let mut rng = Lcg(0x5eed);
-    let mut done = [0usize; 7];
-    for step in 0..400 {
-        match rng.below(7) {
-            0 => {
+    let mut done = [0usize; 16];
+    for step in 0..600 {
+        match rng.below(10) {
+            0 | 1 => {
                 if let Some(request) = random_request(&doc, &mut rng) {
                     let (before, revision) = (saved(&doc), doc.revision());
                     match doc.apply(request, ChangeSource::Action) {
@@ -945,27 +1057,36 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                     }
                 }
             }
-            1 => {
-                let expected = model.applied.pop();
-                assert_eq!(doc.undo().is_some(), expected.is_some(), "step {step}: undo");
-                if let Some(text) = expected {
-                    model.undone.push(text);
-                    done[1] += 1;
-                }
-            }
             2 => {
-                let expected = model.undone.pop();
-                assert_eq!(doc.redo().is_some(), expected.is_some(), "step {step}: redo");
-                if let Some(text) = expected {
-                    model.applied.push(text);
-                    done[2] += 1;
-                }
+                assert_eq!(doc.undo().is_some(), model.undo(), "step {step}: undo");
+                done[1] += 1;
             }
-            3 | 4 => {
+            3 => {
+                assert_eq!(doc.redo().is_some(), model.redo(), "step {step}: redo");
+                done[2] += 1;
+            }
+            4 => {
+                let limit = 2 + rng.below(10);
+                doc.set_history_limit(limit);
+                model.set_limit(limit);
+                if rng.below(2) == 0 {
+                    doc.mark_saved();
+                    model.saved = model.position();
+                }
+                done[3] += 1;
+            }
+            5 | 6 => {
                 let tx = doc
                     .begin(ChangeSource::Input, TransactionKind::Interactive)
                     .unwrap();
                 let base = saved(&doc);
+                if rng.below(2) == 0 {
+                    if let Some(request) = random_request(&doc, &mut rng) {
+                        if doc.apply_in(&tx, request).is_ok() {
+                            done[4] += 1;
+                        }
+                    }
+                }
                 for _ in 0..=rng.below(3) {
                     if let Some(request) = random_request(&doc, &mut rng) {
                         let _ = doc.stage(&tx, request);
@@ -977,37 +1098,122 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                         base,
                         "step {step}: a save writes the committed state"
                     );
-                    done[6] += 1;
+                    done[5] += 1;
                 }
-                if rng.below(2) == 0 {
-                    let staged = saved(&doc);
-                    if doc.commit(tx).is_some() {
-                        assert_eq!(saved(&doc), staged, "step {step}: the commit keeps the stage");
-                        model.push(staged);
-                        done[3] += 1;
+                match rng.below(5) {
+                    0 | 1 => {
+                        let staged = saved(&doc);
+                        if doc.commit(tx).is_some() {
+                            assert_eq!(saved(&doc), staged, "step {step}: the commit keeps the stage");
+                            model.push(staged);
+                            done[6] += 1;
+                        } else {
+                            assert_eq!(
+                                staged, base,
+                                "step {step}: only a transaction that changed nothing makes no entry"
+                            );
+                        }
                     }
-                } else {
-                    doc.cancel(tx);
-                    assert_eq!(saved(&doc), base, "step {step}: the cancel restores");
-                    done[4] += 1;
+                    2 => {
+                        doc.cancel(tx);
+                        assert_eq!(saved(&doc), base, "step {step}: the cancel restores");
+                        done[7] += 1;
+                    }
+                    3 => {
+                        let revision = doc.revision();
+                        let answer = if rng.below(2) == 0 { doc.undo() } else { doc.redo() };
+                        assert_eq!(
+                            answer,
+                            Some(revision),
+                            "step {step}: the undo or redo only cancels"
+                        );
+                        assert_eq!(saved(&doc), base, "step {step}: and stops there");
+                        done[8] += 1;
+                    }
+                    _ => {
+                        let request = random_request(&doc, &mut rng).unwrap_or_else(|| fade(Vec::new(), 0.5));
+                        assert_eq!(
+                            doc.apply(request, ChangeSource::Action),
+                            Err(ApplyError::TransactionOpen),
+                            "step {step}: an interactive transaction refuses"
+                        );
+                        doc.cancel(tx);
+                        done[9] += 1;
+                    }
                 }
             }
             _ => {
                 let tx = doc.begin(ChangeSource::Edit, TransactionKind::Animated).unwrap();
+                doc.take_changes();
                 let staged =
                     random_request(&doc, &mut rng).is_some_and(|request| doc.stage(&tx, request).is_ok());
-                if staged {
-                    let full = saved(&doc);
-                    let snap = if rng.below(2) == 0 { Snap::Start } else { Snap::End };
-                    doc.interpolate(&tx, rng.below(10) as f32 / 10.0, snap).unwrap();
-                    assert_consistent(&doc, "part-way");
-                    if doc.commit(tx).is_some() {
-                        assert_eq!(saved(&doc), full, "step {step}: committed at its end");
-                        model.push(full);
-                        done[5] += 1;
-                    }
-                } else {
+                if !staged {
                     doc.cancel(tx);
+                    continue;
+                }
+                let changed = staged_something(&mut doc);
+                let full = saved(&doc);
+                let snap = if rng.below(2) == 0 { Snap::Start } else { Snap::End };
+                doc.interpolate(&tx, rng.below(10) as f32 / 10.0, snap).unwrap();
+                assert_consistent(&doc, "part-way");
+                // Every arm finishes the animation first: committed, an
+                // entry of its own when it changed something.
+                let finish = |model: &mut Model| {
+                    if changed {
+                        model.push(full.clone());
+                    }
+                };
+                match rng.below(5) {
+                    0 => {
+                        let committed = doc.commit(tx).is_some();
+                        assert_eq!(committed, changed, "step {step}: the animation commits");
+                        assert_eq!(saved(&doc), full, "step {step}: at its end");
+                        finish(&mut model);
+                        done[10] += 1;
+                    }
+                    1 => {
+                        finish(&mut model);
+                        let revision = doc.revision();
+                        let committed = Revision(revision.0 + u64::from(changed));
+                        if let Some(request) = random_request(&doc, &mut rng) {
+                            match doc.apply(request, ChangeSource::Action) {
+                                Ok(now) if now != committed => model.push(saved(&doc)),
+                                _ => {}
+                            }
+                        } else {
+                            doc.commit(tx);
+                        }
+                        done[11] += 1;
+                    }
+                    2 => {
+                        finish(&mut model);
+                        let next = doc
+                            .begin(ChangeSource::Input, TransactionKind::Interactive)
+                            .unwrap();
+                        assert_eq!(saved(&doc), full, "step {step}: a begin finishes the animation");
+                        doc.cancel(next);
+                        done[12] += 1;
+                    }
+                    3 => {
+                        finish(&mut model);
+                        assert_eq!(
+                            doc.undo().is_some(),
+                            model.undo(),
+                            "step {step}: an undo of the animation"
+                        );
+                        done[13] += 1;
+                    }
+                    _ => {
+                        finish(&mut model);
+                        let answer = doc.redo();
+                        let expected = model.redo();
+                        assert_eq!(
+                            answer.is_some(),
+                            expected || changed,
+                            "step {step}: a redo after the animation"
+                        );
+                        done[14] += 1;
+                    }
                 }
             }
         }
@@ -1017,7 +1223,15 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
             "step {step}: the document is where the model is"
         );
         assert_eq!(doc.redo_len(), model.undone.len(), "step {step}");
-        assert_consistent(&doc, "a session step");
+        assert_eq!(
+            doc.is_dirty(),
+            model.is_dirty(),
+            "step {step}: dirty is the model's"
+        );
+        if step % 10 == 0 {
+            assert_consistent(&doc, "a session step");
+        }
+        done[15] += 1;
     }
     assert!(
         done.iter().all(|&n| n >= 3),
@@ -1071,4 +1285,60 @@ pub fn do_writer_apply_of_a_fifty_anchor_request() {
             .sum::<usize>(),
         3 * FIFTY
     );
+}
+
+#[test]
+fn test_writer_numbers_a_nested_insert_once_in_pre_order() {
+    do_writer_numbers_a_nested_insert_once_in_pre_order();
+}
+
+/// One request inserts a root node and then, in a later step, a child
+/// under the node the first step created, and a grandchild under that:
+/// the three take consecutive idents in pre-order — top, child,
+/// grandchild — and the counter moves by three, though the inner
+/// subtrees are reached from more than one created root.
+pub fn do_writer_numbers_a_nested_insert_once_in_pre_order() {
+    let (mut doc, _) = built();
+    let first = doc.next_ident().unwrap();
+    // The last node of `parent`'s row once the earlier steps have run.
+    let under_newest = |parent: fn(&Document) -> NodeId| {
+        DocStep::new(move |doc: &Document| {
+            let at = parent(doc);
+            let Some(&newest) = children_of(doc, at, DocKind::Node).last() else {
+                return Ok(None);
+            };
+            let mut steps = create_child(doc, newest, Vec2::ONE)?;
+            match steps.pop() {
+                Some(step) => step.build(doc),
+                None => Ok(None),
+            }
+        })
+    };
+    let mut steps = create_root(&doc, Vec2::ZERO).unwrap();
+    steps.push(under_newest(|doc| doc.root()));
+    steps.push(under_newest(|doc| {
+        *children_of(doc, doc.root(), DocKind::Node)
+            .last()
+            .expect("the new root")
+    }));
+    doc.apply(EditRequest::new(steps, "nested"), ChangeSource::Action)
+        .unwrap();
+    let top = *children_of(&doc, doc.root(), DocKind::Node).last().unwrap();
+    let child = children_of(&doc, top, DocKind::Node)[0];
+    let grandchild = children_of(&doc, child, DocKind::Node)[0];
+    assert_eq!(
+        [ident(&doc, top), ident(&doc, child), ident(&doc, grandchild)],
+        [
+            Some(first),
+            Some(NodeIdent(first.0 + 1)),
+            Some(NodeIdent(first.0 + 2))
+        ],
+        "consecutive, in pre-order"
+    );
+    assert_eq!(
+        doc.next_ident(),
+        Some(NodeIdent(first.0 + 3)),
+        "no ident spent twice"
+    );
+    assert_consistent(&doc, "after the nested insert");
 }

@@ -1954,6 +1954,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("writer_gives_inserted_nodes_fresh_idents", |b| {
         b.iter(do_writer_gives_inserted_nodes_fresh_idents)
     });
+    c.bench_function("writer_numbers_a_nested_insert_once_in_pre_order", |b| {
+        b.iter(do_writer_numbers_a_nested_insert_once_in_pre_order)
+    });
     c.bench_function("writer_stops_at_the_last_ident", |b| {
         b.iter(do_writer_stops_at_the_last_ident)
     });
@@ -2643,8 +2646,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("structure_rebuilding_a_row_as_it_stood_before_is_one_pass", |b| {
         b.iter(do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass)
     });
-    c.bench_function("journal_rows_before_are_the_rows_the_tree_had", |b| {
-        b.iter(do_journal_rows_before_are_the_rows_the_tree_had)
+    c.bench_function("journal_rows_before_name_each_siblings_predecessor", |b| {
+        b.iter(do_journal_rows_before_name_each_siblings_predecessor)
     });
     c.bench_function("journal_builder_names_what_it_recorded_and_created", |b| {
         b.iter(do_journal_builder_names_what_it_recorded_and_created)

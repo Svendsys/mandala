@@ -1485,7 +1485,8 @@ and a request cannot declare them). Nothing outside `document` holds a
   commit is one entry. One is open at a time (D28): an interactive one
   refuses every other `apply` and `begin`, an animated one is
   fast-forwarded to its end and committed first, and an undo or a redo
-  cancels whichever is open. `save_json` writes the committed state.
+  is one visible step: it cancels an interactive transaction and stops,
+  or makes an animated one its own entry and goes on. `save_json` writes the committed state.
 - **The change feed** (`take_changes`) is one `ChangeRecord` per change
   — its source, the revision, every element it touched with how
   (`Touch`), and the address (`RemovedAddress`: the owning node's

@@ -95,6 +95,16 @@ impl Document {
             }));
         }
         for id in fresh {
+            // A subtree inserted under a node an earlier step of the same
+            // request created is reached from both roots: the second time
+            // its nodes already hold their idents.
+            let unassigned = matches!(
+                self.tree.arena()[id].get(),
+                DocElement::Node(node) if node.ident == NodeIdent::UNASSIGNED
+            );
+            if !unassigned {
+                continue;
+            }
             let Some(ident) = self.next_ident() else {
                 builder.abandon(&mut self.tree);
                 return Err(ApplyError::IdentSpaceExhausted {
