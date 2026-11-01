@@ -164,16 +164,68 @@ const MAY_EDIT: &[&str] = &["tests/test_support.rs"];
 /// - `spelled` derives a spelling enum and its conversions.
 /// - `forward_methods` and `forward_scalars` forward a deserializer's
 ///   methods to the one it wraps, on a type private to `format`.
+/// - `text_in`, `frame_in`, `flow_in` and `portal_in` build a style
+///   from a DTO's fields, in a body, as an expression.
 const ALLOWED_MACROS: &[(&str, Option<&str>)] = &[
     ("macro_rules", None),
     ("thread_local", None),
     ("spelled", Some("format/macros.rs")),
     ("forward_methods", Some("format/strict.rs")),
     ("forward_scalars", Some("format/strict.rs")),
+    ("text_in", Some("format/macros.rs")),
+    ("frame_in", Some("format/macros.rs")),
+    ("flow_in", Some("format/macros.rs")),
+    ("portal_in", Some("format/macros.rs")),
 ];
 
-/// The visible items the gate allows one shape in their return type,
-/// each with the shape and why it grants nothing.
+/// The macros of `std`, `core`, `alloc` and `log` that `document/` may
+/// invoke inside a body, as a statement or an expression, where
+/// [`ALLOWED_MACROS`] does not name them (ruling R40 on #238). Each
+/// expands to an expression or a statement built from its arguments and
+/// emits no item of its own, so the gate reads the arguments instead: an
+/// item keyword among them ([`ITEM_KEYWORDS`]) is refused, and so is a
+/// macro invoked among them that this list does not name. A
+/// `macro_rules!` that reuses one of these names is refused under
+/// `document/`, and one defined anywhere else in the crate makes the name
+/// the crate's, no longer one of these.
+const EXPRESSION_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "matches",
+    "vec",
+    "format",
+    "format_args",
+    "write",
+    "writeln",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "concat",
+    "stringify",
+    "include_str",
+    "debug",
+    "error",
+    "warn",
+    "info",
+    "trace",
+];
+
+/// The keywords an item is written with, which an expression macro's
+/// arguments never need: one among them is an item hidden from the gate
+/// in tokens it does not parse. A lifetime's name (`'static`) is not one.
+const ITEM_KEYWORDS: &[&str] = &[
+    "impl", "fn", "struct", "enum", "union", "trait", "mod", "static", "const", "extern", "use", "type",
+];
+
+/// The visible items the gate allows one shape, each by the file under
+/// `document/` that defines it and its full path there (ruling R40 on
+/// #238: a bare name would excuse an impostor of the same name in another
+/// file or module), with the shape and why it grants nothing.
 ///
 /// An `impl Trait` allowed here is an `impl Iterator` whose `Item` the
 /// gate still judges by the whole rule, so it yields nothing that grants
@@ -183,56 +235,81 @@ const ALLOWED_MACROS: &[(&str, Option<&str>)] = &[
 /// error type a caller's own callback returns: the value is built from
 /// text or handed back from the caller's code, never a borrow into a
 /// document.
-const EXCEPTIONS: &[(&str, &str, &str)] = &[
-    ("Document::children", IMPL_TRAIT, "an iterator of child ids"),
+const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
     (
+        "ids.rs",
+        "Document::children",
+        IMPL_TRAIT,
+        "an iterator of child ids",
+    ),
+    (
+        "ids.rs",
         "Document::palettes",
         IMPL_TRAIT,
         "an iterator of shared palette references",
     ),
     (
+        "writer/mod.rs",
         "Document::history",
         IMPL_TRAIT,
         "an iterator of history labels, sources and revisions",
     ),
     (
+        "ids.rs",
         "palettes",
         IMPL_TRAIT,
         "an iterator of shared palette references, over a tree",
     ),
     (
+        "deps.rs",
         "inputs_changed",
         IMPL_TRAIT,
         "an iterator of the resolution inputs a change touches, by value",
     ),
     (
+        "ids.rs",
         "idents_named_by",
         IMPL_TRAIT,
         "an iterator of node ids a definition names, by value",
     ),
     (
+        "format/index.rs",
         "parse_extent",
         PARAM,
         "serde: the value a deserializer reads from text",
     ),
     (
+        "format/spelling.rs",
         "present",
         PARAM,
         "serde: the value a deserializer reads from text, and its error",
     ),
-    ("serialize_spelled", PARAM, "serde: the serializer's own output"),
     (
+        "format/spelling.rs",
+        "serialize_spelled",
+        PARAM,
+        "serde: the serializer's own output",
+    ),
+    (
+        "format/spelling.rs",
         "deserialize_spelled",
         PARAM,
         "serde: the value a deserializer reads from text, and its error",
     ),
-    ("Rows::each", PARAM, "the error the caller's own callback returns"),
     (
+        "format/rows.rs",
+        "Rows::each",
+        PARAM,
+        "the error the caller's own callback returns",
+    ),
+    (
+        "format/rows.rs",
         "RowSource::each",
         HANDS,
         "the saver's row of items: the `&mut` it hands is to the sink that takes them, not into a document",
     ),
     (
+        "format/rows.rs",
         "Rows::arena",
         LENDS,
         "takes the saver's row of items, whose `each` it hands that sink",
@@ -269,10 +346,14 @@ const OWNED_STD: &[&str] = &[
 ];
 
 /// The document's internals: what a function that takes a `&mut` must
-/// neither take nor give back by value (ruling R39 on #238). A caller
-/// that could take the tree out, edit it and put it back would change a
-/// document without a `&mut` ever crossing; a shared reference to one
-/// grants nothing, and is not refused.
+/// neither take nor give back by value (ruling R39 on #238), nor take
+/// behind another `&mut` (R40), and what a visible `const`, `static` or
+/// field must not hold by value (R40). A caller that could take the tree
+/// out, edit it and put it back — or swap its own in — would change a
+/// document without a `&mut` into it ever crossing; a shared reference
+/// to one grants nothing, and is not refused. The document's elements
+/// ([`Crate::elements`]) are held to the same rule but for fields and
+/// consts, which carry an edit's values to `apply` and a default's.
 const INTERNALS: &[&str] = &[
     "Tree",
     "Arena",
@@ -286,6 +367,26 @@ const INTERNALS: &[&str] = &[
     "Journal",
     "JournalBuilder",
 ];
+
+/// What the gate names a visible function's round trip of an internal by.
+const INTERNAL_BY_VALUE: &str = "takes or gives back a document internal by value";
+/// See [`INTERNAL_BY_VALUE`].
+const INTERNAL_BEHIND_MUT: &str = "takes a document internal behind a `&mut`";
+/// See [`INTERNAL_BY_VALUE`].
+const ELEMENT_BY_VALUE: &str = "takes or gives back a document element by value";
+/// See [`INTERNAL_BY_VALUE`].
+const ELEMENT_BEHIND_MUT: &str = "takes a document element behind a `&mut`";
+
+/// What a visible `const`, `static` or field type is held to beyond the
+/// rule for returns: nothing more (an alias or associated type, which
+/// holds no value), [`INTERNALS`] by value (a `const` or a field), or
+/// those and the elements by value (a `static`, the one that can stash).
+#[derive(Clone, Copy, PartialEq)]
+enum Holds {
+    Nothing,
+    Value,
+    Stash,
+}
 
 /// What the gate knows of the crate while it judges `document/`.
 #[derive(Default)]
@@ -302,13 +403,38 @@ struct Crate {
     /// receiver, something that can hold a borrow: a callback trait, whose
     /// implementor a function would hand that borrow to.
     lending: BTreeSet<String>,
+    /// Every type, alias and trait declared outside `document/`, by name:
+    /// one so named is reachable, whatever `document/` declares of the
+    /// same name.
+    outside: BTreeSet<String>,
+    /// Every `macro_rules!` declared outside `document/`, by name: one so
+    /// named is the crate's, not one [`ALLOWED_MACROS`] or
+    /// [`EXPRESSION_MACROS`] allows.
+    outside_macros: BTreeSet<String>,
+    /// The document's elements: every type `document/element.rs`
+    /// declares that carries data — a struct or union, or an enum with a
+    /// variant that has fields. A fieldless enum is a tag, holding no
+    /// document data to round trip.
+    elements: BTreeSet<String>,
 }
 
 impl Crate {
     /// Whether the type `name` is reachable beyond `document`: declared
-    /// there and visible, or not declared there at all.
+    /// outside it, or declared there and visible, or not declared at all.
     fn reachable(&self, name: &str) -> bool {
-        self.local.get(name).copied().unwrap_or(true)
+        self.outside.contains(name) || self.local.get(name).copied().unwrap_or(true)
+    }
+
+    /// Whether `name` is a macro [`ALLOWED_MACROS`] allows, and not one
+    /// the crate defines outside `document/` under the same name.
+    fn allowed(&self, name: &str) -> bool {
+        ALLOWED_MACROS.iter().any(|(allowed, _)| *allowed == name) && !self.outside_macros.contains(name)
+    }
+
+    /// Whether `name` is one of [`EXPRESSION_MACROS`], and not one the
+    /// crate defines outside `document/` under the same name.
+    fn expression(&self, name: &str) -> bool {
+        EXPRESSION_MACROS.contains(&name) && !self.outside_macros.contains(name)
     }
 
     /// Whether `ty`, handed to someone else's code, can carry a way into
@@ -494,12 +620,16 @@ fn visible(vis: &Visibility, depth: usize) -> bool {
 }
 
 /// What [`mutable_access`] found: every function visible beyond
-/// `document` that it judged, and every way it found to hand out access
-/// — `Owner::name: why` for a method, `name: why` for a function or any
-/// other item, `Type.field: why` for a field, `name!` for a macro.
+/// `document` that it judged, as `(file, path)`, and every way it found
+/// to hand out access — `Owner::name: why` for a method, `name: why` for
+/// a function or any other item, `Type.field: why` for a field, `name!`
+/// for a macro, each path led by the inline modules and the enclosing
+/// items it is nested in (`inner::deep`, `hide::Document::tree_in_fn`).
+/// `file` is the file under `document/` being walked.
 #[derive(Debug, Default, PartialEq)]
 struct Access {
-    read: Vec<String>,
+    file: String,
+    read: Vec<(String, String)>,
     offenders: Vec<String>,
 }
 
@@ -532,11 +662,15 @@ fn type_params(generics: &syn::Generics) -> BTreeSet<String> {
         .collect()
 }
 
-/// The first pass over one file of the crate: what it declares.
-fn declare(items: &[Item], depth: usize, in_document: bool, krate: &mut Crate) {
+/// The first pass over one file of the crate: what it declares, nested
+/// items included. `file` is its path under `document/`, for one there.
+fn declare(items: &[Item], depth: usize, in_document: bool, file: Option<&str>, krate: &mut Crate) {
     for item in items {
         if is_test_gated(item_attrs(item)) {
             continue;
+        }
+        if !matches!(item, Item::Mod(_)) {
+            declare(&Nested::of_item(item).items, depth, in_document, None, krate);
         }
         let (name, generics, vis) = match item {
             Item::Struct(item) => (item.ident.to_string(), &item.generics, &item.vis),
@@ -551,26 +685,49 @@ fn declare(items: &[Item], depth: usize, in_document: bool, krate: &mut Crate) {
             Item::Trait(item) => (item.ident.to_string(), &item.generics, &item.vis),
             Item::Mod(module) => {
                 if let Some((_, items)) = &module.content {
-                    declare(items, depth + 1, in_document, krate);
+                    declare(items, depth + 1, in_document, file, krate);
+                }
+                continue;
+            }
+            Item::Macro(mac) => {
+                if let (false, Some(ident)) = (in_document, &mac.ident) {
+                    krate.outside_macros.insert(ident.to_string());
                 }
                 continue;
             }
             _ => continue,
         };
+        let carries_data = match item {
+            Item::Struct(_) | Item::Union(_) => true,
+            Item::Enum(item) => item.variants.iter().any(|variant| !variant.fields.is_empty()),
+            _ => false,
+        };
+        if in_document && file == Some("element.rs") && carries_data {
+            krate.elements.insert(name.clone());
+        }
         let lifetimes = generics.lifetimes().next().is_some();
         *krate.borrows.entry(name.clone()).or_insert(false) |= lifetimes;
         if in_document {
             *krate.local.entry(name).or_insert(false) |= visible(vis, depth);
+        } else {
+            krate.outside.insert(name);
         }
     }
 }
 
 /// The second half of the first pass, once every type is known: the
-/// callback traits of the crate ([`Crate::lending`]).
+/// callback traits of the crate ([`Crate::lending`]), nested ones too.
+/// It reads traits; every other kind declares none.
 fn find_lending(items: &[Item], krate: &mut Crate) {
     for item in items {
+        if is_test_gated(item_attrs(item)) {
+            continue;
+        }
+        if !matches!(item, Item::Mod(_)) {
+            find_lending(&Nested::of_item(item).items, krate);
+        }
         match item {
-            Item::Trait(item) if !is_test_gated(&item.attrs) => {
+            Item::Trait(item) => {
                 let params = type_params(&item.generics);
                 let lends = item.items.iter().any(|member| match member {
                     syn::TraitItem::Fn(method) => method.sig.inputs.iter().any(|input| match input {
@@ -590,6 +747,99 @@ fn find_lending(items: &[Item], krate: &mut Crate) {
             }
             _ => {}
         }
+    }
+}
+
+/// The items and macros nested in an item's blocks and expressions — fn
+/// bodies, `const` and `static` initializers, `const _` blocks, array
+/// lengths, discriminants — which its own arms in [`walk_items`] do not
+/// reach (ruling R40 on #238). It stops at each nested item, which is
+/// walked in its turn, and skips test-gated members. A macro in a body is
+/// one a statement, an expression or a pattern invokes (a pattern's is
+/// an expression macro to `syn`); one in an item,
+/// `impl` or trait position is judged where it stands. `type_macros`
+/// counts macros in type position, whose expansion is a type the gate
+/// cannot read.
+#[derive(Default)]
+struct Nested {
+    items: Vec<Item>,
+    macros: Vec<syn::Macro>,
+    type_macros: usize,
+    entered: bool,
+}
+
+impl Nested {
+    /// What `item` nests. A module's items are walked as its own.
+    fn of_item(item: &Item) -> Self {
+        let mut nested = Nested::default();
+        nested.visit_item(item);
+        nested
+    }
+
+    /// What an expression nests: a `thread_local!` static's initializer.
+    fn of_expr(expr: &syn::Expr) -> Self {
+        let mut nested = Nested {
+            entered: true,
+            ..Nested::default()
+        };
+        nested.visit_expr(expr);
+        nested
+    }
+}
+
+/// The attributes of an `impl` member.
+fn impl_member_attrs(member: &ImplItem) -> &[syn::Attribute] {
+    match member {
+        ImplItem::Const(member) => &member.attrs,
+        ImplItem::Fn(member) => &member.attrs,
+        ImplItem::Type(member) => &member.attrs,
+        ImplItem::Macro(member) => &member.attrs,
+        _ => &[],
+    }
+}
+
+/// The attributes of a trait member.
+fn trait_member_attrs(member: &syn::TraitItem) -> &[syn::Attribute] {
+    match member {
+        syn::TraitItem::Const(member) => &member.attrs,
+        syn::TraitItem::Fn(member) => &member.attrs,
+        syn::TraitItem::Type(member) => &member.attrs,
+        syn::TraitItem::Macro(member) => &member.attrs,
+        _ => &[],
+    }
+}
+
+impl<'ast> Visit<'ast> for Nested {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !self.entered {
+            self.entered = true;
+            if !matches!(item, Item::Mod(_)) {
+                visit::visit_item(self, item);
+            }
+        } else if !is_test_gated(item_attrs(item)) {
+            self.items.push(item.clone());
+        }
+    }
+    fn visit_impl_item(&mut self, member: &'ast ImplItem) {
+        if !is_test_gated(impl_member_attrs(member)) {
+            visit::visit_impl_item(self, member);
+        }
+    }
+    fn visit_trait_item(&mut self, member: &'ast syn::TraitItem) {
+        if !is_test_gated(trait_member_attrs(member)) {
+            visit::visit_trait_item(self, member);
+        }
+    }
+    fn visit_stmt_macro(&mut self, mac: &'ast syn::StmtMacro) {
+        if !is_test_gated(&mac.attrs) {
+            self.macros.push(mac.mac.clone());
+        }
+    }
+    fn visit_expr_macro(&mut self, mac: &'ast syn::ExprMacro) {
+        self.macros.push(mac.mac.clone());
+    }
+    fn visit_type_macro(&mut self, _: &'ast syn::TypeMacro) {
+        self.type_macros += 1;
     }
 }
 
@@ -658,20 +908,66 @@ fn lends(sig: &Signature, krate: &Crate, params: &BTreeSet<String>, takes_mut: b
     finder.found
 }
 
-/// Whether `ty` names one of [`INTERNALS`] by value: outside any
-/// reference (a `&mut` to one is judged as a `&mut`).
-fn names_internal(ty: &Type) -> bool {
-    struct Internal(bool);
-    impl<'ast> Visit<'ast> for Internal {
-        fn visit_type_reference(&mut self, _: &'ast TypeReference) {}
+/// Whether `ty` names a type `wanted` picks by value — outside any
+/// reference and any raw pointer — or, with `through_mut`, behind a
+/// `&mut` too. Aliases are resolved, so an alias of one is one.
+fn holds(ty: &Type, krate: &Crate, through_mut: bool, wanted: &dyn Fn(&str) -> bool) -> bool {
+    holds_at(ty, krate, through_mut, wanted, 0)
+}
+
+/// [`holds`], `depth` aliases deep.
+fn holds_at(
+    ty: &Type,
+    krate: &Crate,
+    through_mut: bool,
+    wanted: &dyn Fn(&str) -> bool,
+    depth: usize,
+) -> bool {
+    struct Holds<'k> {
+        krate: &'k Crate,
+        through_mut: bool,
+        wanted: &'k dyn Fn(&str) -> bool,
+        depth: usize,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Holds<'_> {
+        fn visit_type_reference(&mut self, reference: &'ast TypeReference) {
+            if self.through_mut && reference.mutability.is_some() {
+                visit::visit_type_reference(self, reference);
+            }
+        }
+        fn visit_type_ptr(&mut self, _: &'ast syn::TypePtr) {}
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            if let (None, [segment]) = (
+                &path.qself,
+                path.path.segments.iter().collect::<Vec<_>>().as_slice(),
+            ) {
+                if let Some(alias) = self.krate.aliases.get(&segment.ident.to_string()) {
+                    self.found |= self.depth < 8
+                        && holds_at(alias, self.krate, self.through_mut, self.wanted, self.depth + 1);
+                }
+            }
+            visit::visit_type_path(self, path);
+        }
         fn visit_path_segment(&mut self, segment: &'ast PathSegment) {
-            self.0 |= INTERNALS.contains(&segment.ident.to_string().as_str());
+            self.found |= (self.wanted)(&segment.ident.to_string());
             visit::visit_path_segment(self, segment);
         }
     }
-    let mut internal = Internal(false);
-    internal.visit_type(ty);
-    internal.0
+    let mut finder = Holds {
+        krate,
+        through_mut,
+        wanted,
+        depth,
+        found: false,
+    };
+    finder.visit_type(ty);
+    finder.found
+}
+
+/// Whether `name` is one of [`INTERNALS`].
+fn is_internal(name: &str) -> bool {
+    INTERNALS.contains(&name)
 }
 
 /// Judge one signature, as `name`, and note it read. `defined` is set
@@ -702,10 +998,11 @@ fn judge_fn(
             finder.0
         }
     });
+    let file = access.file.clone();
     let excepted = |why: &str| {
         EXCEPTIONS
             .iter()
-            .any(|(item, shape, _)| *item == name && *shape == why)
+            .any(|(home, item, shape, _)| *home == file && *item == name && *shape == why)
             || (why == PARAM && trait_name.is_some_and(|t| EXCEPTED_TRAITS.iter().any(|(e, _)| *e == t)))
     };
     let mut found: Vec<&'static str> = Vec::new();
@@ -726,8 +1023,49 @@ fn judge_fn(
         ReturnType::Type(_, ty) => Some(&**ty),
         ReturnType::Default => None,
     };
-    if scope.takes_mut && typed.iter().copied().chain(returned).any(names_internal) {
-        found.push("takes or gives back a document internal by value");
+    // A round trip (rulings R39 and R40 on #238): an internal or an
+    // element taken or given back by value by a function that takes a
+    // `&mut`, or taken behind a `&mut` by one that takes another — a
+    // swap needs two places to write.
+    let mutable: Vec<bool> = sig
+        .inputs
+        .iter()
+        .map(|input| match input {
+            FnArg::Receiver(receiver) => matches!(receiver.kind, syn::ReceiverKind::Reference(_, _, Some(_))),
+            FnArg::Typed(typed) => {
+                let mut finder = MutFinder(false);
+                finder.visit_type(&typed.ty);
+                finder.0
+            }
+        })
+        .collect();
+    let is_element = |name: &str| scope.krate.elements.contains(name);
+    for (wanted, by_value, behind) in [
+        (
+            &is_internal as &dyn Fn(&str) -> bool,
+            INTERNAL_BY_VALUE,
+            INTERNAL_BEHIND_MUT,
+        ),
+        (&is_element, ELEMENT_BY_VALUE, ELEMENT_BEHIND_MUT),
+    ] {
+        let mut shapes = Vec::new();
+        for (index, input) in sig.inputs.iter().enumerate() {
+            let FnArg::Typed(typed) = input else { continue };
+            let another = mutable.iter().enumerate().any(|(other, m)| other != index && *m);
+            if scope.takes_mut && holds(&typed.ty, scope.krate, false, wanted) {
+                shapes.push(by_value);
+            } else if another && holds(&typed.ty, scope.krate, true, wanted) {
+                shapes.push(behind);
+            }
+        }
+        if scope.takes_mut && returned.is_some_and(|ty| holds(ty, scope.krate, false, wanted)) {
+            shapes.push(by_value);
+        }
+        for shape in shapes {
+            if !found.contains(&shape) {
+                found.push(shape);
+            }
+        }
     }
     if let Some(ty) = returned {
         found.extend(
@@ -742,17 +1080,39 @@ fn judge_fn(
     {
         access.offenders.push(format!("{name}: {why}"));
     }
-    access.read.push(name);
+    access.read.push((file, name));
 }
 
 /// Judge the type of a visible `const`, `static`, field, alias or
 /// associated type, as `name`, the way a return type is judged — and,
-/// for one that holds a callback, the way a parameter is.
-fn judge_type(name: String, trait_name: Option<&str>, ty: &Type, scope: &Scope<'_>, access: &mut Access) {
+/// for one that holds a callback, the way a parameter is — and what it
+/// may not hold by value besides ([`Holds`]).
+fn judge_type(
+    name: String,
+    trait_name: Option<&str>,
+    ty: &Type,
+    scope: &Scope<'_>,
+    holding: Holds,
+    access: &mut Access,
+) {
     let excepted =
         |why: &str| why == PARAM && trait_name.is_some_and(|t| EXCEPTED_TRAITS.iter().any(|(e, _)| *e == t));
     if let Some(why) = judge(ty, scope, 0).into_iter().find(|why| !excepted(why)) {
         access.offenders.push(format!("{name}: {why}"));
+    }
+    if holding != Holds::Nothing && holds(ty, scope.krate, false, &is_internal) {
+        access
+            .offenders
+            .push(format!("{name}: holds a document internal by value"));
+    }
+    if holding == Holds::Stash
+        && holds(ty, scope.krate, false, &|name| {
+            scope.krate.elements.contains(name)
+        })
+    {
+        access
+            .offenders
+            .push(format!("{name}: holds a document element by value"));
     }
     struct Callback<'k> {
         krate: &'k Crate,
@@ -832,15 +1192,25 @@ fn judge_fields(
     for (i, field) in fields.iter().enumerate() {
         if shown(&field.vis) {
             let name = field.ident.as_ref().map_or(i.to_string(), ToString::to_string);
-            judge_type(format!("{owner}.{name}"), None, &field.ty, scope, access);
+            judge_type(
+                format!("{owner}.{name}"),
+                None,
+                &field.ty,
+                scope,
+                Holds::Value,
+                access,
+            );
         }
     }
 }
 
-/// The second pass over one file of `document/`: every item, by kind.
-/// A kind it has no arm for is an offender (ruling R39 on #238), so an
-/// item `syn` grows is judged before it can be used.
-fn walk_items(items: &[Item], depth: usize, file: &str, krate: &Crate, access: &mut Access) {
+/// The second pass over one file of `document/`: every item, by kind,
+/// each named under `path` — the inline modules and enclosing items it is
+/// nested in, `::`-terminated. A kind it has no arm for is an offender
+/// (ruling R39 on #238), so an item `syn` grows is judged before it can
+/// be used; and every item's blocks and expressions are walked for the
+/// items and macros nested in them (R40, [`Nested`]).
+fn walk_items(items: &[Item], depth: usize, file: &str, path: &str, krate: &Crate, access: &mut Access) {
     let scope = |params: BTreeSet<String>, assoc: BTreeMap<String, Type>| Scope {
         krate,
         params,
@@ -855,71 +1225,60 @@ fn walk_items(items: &[Item], depth: usize, file: &str, krate: &Crate, access: &
         match item {
             Item::Fn(item) => {
                 if visible(&item.vis, depth) {
-                    judge_fn(
-                        item.sig.ident.to_string(),
-                        None,
-                        false,
-                        &item.sig,
-                        plain(),
-                        access,
-                    );
+                    let name = format!("{path}{}", item.sig.ident);
+                    judge_fn(name, None, false, &item.sig, plain(), access);
                 }
             }
             Item::Const(item) => {
                 if visible(&item.vis, depth) {
-                    judge_type(item.ident.to_string(), None, &item.ty, &plain(), access);
+                    let name = format!("{path}{}", item.ident);
+                    judge_type(name, None, &item.ty, &plain(), Holds::Value, access);
                 }
             }
             Item::Static(item) => {
                 if visible(&item.vis, depth) {
-                    judge_type(item.ident.to_string(), None, &item.ty, &plain(), access);
+                    let name = format!("{path}{}", item.ident);
+                    judge_type(name, None, &item.ty, &plain(), Holds::Stash, access);
                 }
                 if matches!(item.mutability, syn::StaticMutability::Mut(_)) {
-                    access.offenders.push(format!("{}: a `static mut`", item.ident));
+                    access
+                        .offenders
+                        .push(format!("{path}{}: a `static mut`", item.ident));
                 }
             }
             Item::Type(item) => {
                 if visible(&item.vis, depth) {
-                    judge_type(format!("type {}", item.ident), None, &item.ty, &plain(), access);
+                    let name = format!("type {path}{}", item.ident);
+                    judge_type(name, None, &item.ty, &plain(), Holds::Nothing, access);
                 }
             }
             Item::Struct(item) => {
                 if visible(&item.vis, depth) {
-                    judge_fields(
-                        &item.ident.to_string(),
-                        &item.fields,
-                        |vis| visible(vis, depth),
-                        &plain(),
-                        access,
-                    );
+                    let owner = format!("{path}{}", item.ident);
+                    judge_fields(&owner, &item.fields, |vis| visible(vis, depth), &plain(), access);
                 }
             }
             Item::Union(item) => {
                 if visible(&item.vis, depth) {
                     let fields = Fields::Named(item.fields.clone());
-                    judge_fields(
-                        &item.ident.to_string(),
-                        &fields,
-                        |vis| visible(vis, depth),
-                        &plain(),
-                        access,
-                    );
+                    let owner = format!("{path}{}", item.ident);
+                    judge_fields(&owner, &fields, |vis| visible(vis, depth), &plain(), access);
                 }
             }
             Item::Enum(item) => {
                 if visible(&item.vis, depth) {
                     for variant in &item.variants {
-                        let owner = format!("{}::{}", item.ident, variant.ident);
+                        let owner = format!("{path}{}::{}", item.ident, variant.ident);
                         judge_fields(&owner, &variant.fields, |_| true, &plain(), access);
                     }
                 }
             }
             Item::Trait(item) => {
                 if visible(&item.vis, depth) {
-                    walk_trait(item, krate, access);
+                    walk_trait(item, path, krate, access);
                 }
             }
-            Item::Impl(item) => walk_impl(item, depth, krate, access),
+            Item::Impl(item) => walk_impl(item, depth, path, krate, access),
             Item::Macro(mac) => {
                 let name = macro_name(&mac.mac);
                 if name == "macro_rules" {
@@ -928,24 +1287,191 @@ fn walk_items(items: &[Item], depth: usize, file: &str, krate: &Crate, access: &
                         if *home != Some(file) {
                             access
                                 .offenders
-                                .push(format!("macro_rules! {defined}: reuses an allowed name"));
+                                .push(format!("macro_rules! {path}{defined}: reuses an allowed name"));
                         }
                     }
+                    if EXPRESSION_MACROS.contains(&defined.as_str()) {
+                        access.offenders.push(format!(
+                            "macro_rules! {path}{defined}: reuses a standard macro's name"
+                        ));
+                    }
+                } else if name == "thread_local" && krate.allowed(&name) {
+                    thread_local(&mac.mac, depth, file, path, krate, access);
                 } else {
-                    invoked(&name, "", access);
+                    invoked(&name, path, krate, access);
                 }
             }
             Item::Mod(module) => {
                 if let Some((_, items)) = &module.content {
-                    walk_items(items, depth + 1, file, krate, access);
+                    let inner = format!("{path}{}::", module.ident);
+                    walk_items(items, depth + 1, file, &inner, krate, access);
                 }
             }
             // A `use` names an item; re-exporting one that is not visible
             // is the compiler's to refuse (E0364). An `extern crate`
             // names a crate.
             Item::Use(_) | Item::ExternCrate(_) => {}
-            other => access.offenders.push(format!("{}: {UNJUDGED}", item_kind(other))),
+            other => access
+                .offenders
+                .push(format!("{path}{}: {UNJUDGED}", item_kind(other))),
         }
+        if !matches!(item, Item::Mod(_) | Item::Use(_) | Item::ExternCrate(_)) {
+            let place = format!("{path}{}", item_place(item));
+            walk_nested(Nested::of_item(item), &place, depth, file, krate, access);
+        }
+    }
+}
+
+/// The name an item's nested items are walked under: its own, its self
+/// type's for an `impl`, its macro's for a macro.
+fn item_place(item: &Item) -> String {
+    match item {
+        Item::Fn(item) => item.sig.ident.to_string(),
+        Item::Const(item) => item.ident.to_string(),
+        Item::Static(item) => item.ident.to_string(),
+        Item::Type(item) => item.ident.to_string(),
+        Item::Struct(item) => item.ident.to_string(),
+        Item::Union(item) => item.ident.to_string(),
+        Item::Enum(item) => item.ident.to_string(),
+        Item::Trait(item) => item.ident.to_string(),
+        Item::Impl(item) => type_name(&item.self_ty),
+        Item::Macro(mac) => format!("{}!", macro_name(&mac.mac)),
+        other => item_kind(other).to_string(),
+    }
+}
+
+/// Walk what an item or expression at `place` nests: its items, under
+/// `place`, by the rules of [`walk_items`]; the macros of its bodies by
+/// [`body_macro`]; and a macro in type position, which is refused.
+fn walk_nested(nested: Nested, place: &str, depth: usize, file: &str, krate: &Crate, access: &mut Access) {
+    for mac in &nested.macros {
+        body_macro(mac, place, depth, file, krate, access);
+    }
+    if nested.type_macros > 0 {
+        access
+            .offenders
+            .push(format!("{place}: a macro in type position"));
+    }
+    walk_items(&nested.items, depth, file, &format!("{place}::"), krate, access);
+}
+
+/// Judge a macro a body at `place` invokes. One [`ALLOWED_MACROS`] names
+/// is read as it is where an item goes; a `thread_local!` is parsed and
+/// its statics judged; one of [`EXPRESSION_MACROS`] passes when its
+/// arguments hold no item ([`argument_offense`]); any other is refused.
+fn body_macro(mac: &syn::Macro, place: &str, depth: usize, file: &str, krate: &Crate, access: &mut Access) {
+    let name = macro_name(mac);
+    if name == "thread_local" && krate.allowed(&name) {
+        thread_local(mac, depth, file, &format!("{place}::"), krate, access);
+    } else if name == "macro_rules" || !(krate.allowed(&name) || krate.expression(&name)) {
+        access.offenders.push(format!("{place}: {name}!"));
+    } else if krate.expression(&name) {
+        if let Some(why) = argument_offense(mac.tokens.clone(), krate) {
+            access.offenders.push(format!("{place}: {name}! {why}"));
+        }
+    }
+}
+
+/// Why an expression macro's arguments hide an item, if they do: an
+/// [`ITEM_KEYWORDS`] word outside a lifetime, or a macro invoked among
+/// them that is not one of [`EXPRESSION_MACROS`].
+fn argument_offense(tokens: proc_macro2::TokenStream, krate: &Crate) -> Option<String> {
+    use proc_macro2::TokenTree;
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    for (index, tree) in trees.iter().enumerate() {
+        match tree {
+            TokenTree::Ident(ident) => {
+                let word = ident.to_string();
+                let lifetime =
+                    index > 0 && matches!(&trees[index - 1], TokenTree::Punct(p) if p.as_char() == '\'');
+                if !lifetime && ITEM_KEYWORDS.contains(&word.as_str()) {
+                    return Some(format!("holds an item (`{word}`) in its arguments"));
+                }
+                let invokes = matches!(trees.get(index + 1), Some(TokenTree::Punct(p)) if p.as_char() == '!')
+                    && matches!(trees.get(index + 2), Some(TokenTree::Group(_)));
+                if invokes && !krate.expression(&word) {
+                    return Some(format!("invokes `{word}!` in its arguments"));
+                }
+            }
+            TokenTree::Group(group) => {
+                if let Some(why) = argument_offense(group.stream(), krate) {
+                    return Some(why);
+                }
+            }
+            TokenTree::Punct(_) | TokenTree::Literal(_) => {}
+        }
+    }
+    None
+}
+
+/// One static a `thread_local!` declares.
+struct LocalStatic {
+    attrs: Vec<syn::Attribute>,
+    vis: Visibility,
+    ident: syn::Ident,
+    ty: Type,
+    expr: syn::Expr,
+}
+
+/// The statics a `thread_local!` declares, parsed from its tokens:
+/// `[attrs] [vis] static NAME: Type = init;`, the last `;` optional.
+fn local_statics(tokens: proc_macro2::TokenStream) -> syn::Result<Vec<LocalStatic>> {
+    use syn::parse::Parser;
+    let parse = |input: syn::parse::ParseStream<'_>| {
+        let mut statics = Vec::new();
+        while !input.is_empty() {
+            let attrs = input.call(syn::Attribute::parse_outer)?;
+            let vis: Visibility = input.parse()?;
+            input.parse::<syn::Token![static]>()?;
+            let ident: syn::Ident = input.parse()?;
+            input.parse::<syn::Token![:]>()?;
+            let ty: Type = input.parse()?;
+            input.parse::<syn::Token![=]>()?;
+            let expr: syn::Expr = input.parse()?;
+            if !input.is_empty() {
+                input.parse::<syn::Token![;]>()?;
+            }
+            statics.push(LocalStatic {
+                attrs,
+                vis,
+                ident,
+                ty,
+                expr,
+            });
+        }
+        Ok(statics)
+    };
+    parse.parse2(tokens)
+}
+
+/// Judge the statics a `thread_local!` declares under `path` (ruling R40
+/// on #238): a `pub` one is refused, a visible one is judged as a
+/// `static` is, and each initializer is walked for what it nests.
+fn thread_local(mac: &syn::Macro, depth: usize, file: &str, path: &str, krate: &Crate, access: &mut Access) {
+    let Ok(statics) = local_statics(mac.tokens.clone()) else {
+        access.offenders.push(format!(
+            "{path}thread_local!: a declaration the gate cannot parse"
+        ));
+        return;
+    };
+    let scope = Scope {
+        krate,
+        params: BTreeSet::new(),
+        assoc: BTreeMap::new(),
+        takes_mut: false,
+    };
+    for local in statics {
+        if is_test_gated(&local.attrs) {
+            continue;
+        }
+        let name = format!("{path}{}", local.ident);
+        if matches!(local.vis, Visibility::Public(_)) {
+            access.offenders.push(format!("{name}: a `pub` `thread_local!`"));
+        }
+        if visible(&local.vis, depth) {
+            judge_type(name.clone(), None, &local.ty, &scope, Holds::Stash, access);
+        }
+        walk_nested(Nested::of_expr(&local.expr), &name, depth, file, krate, access);
     }
 }
 
@@ -962,7 +1488,7 @@ fn item_kind(item: &Item) -> &'static str {
 /// Judge a visible trait: its methods (required and default) — their
 /// parameters too, which its implementors are handed — its associated
 /// consts and the defaults of its associated types.
-fn walk_trait(item: &syn::ItemTrait, krate: &Crate, access: &mut Access) {
+fn walk_trait(item: &syn::ItemTrait, path: &str, krate: &Crate, access: &mut Access) {
     let defaults: BTreeMap<String, Type> = item
         .items
         .iter()
@@ -980,21 +1506,23 @@ fn walk_trait(item: &syn::ItemTrait, krate: &Crate, access: &mut Access) {
         assoc: defaults.clone(),
         takes_mut: false,
     };
-    let owner = item.ident.to_string();
+    let bare = item.ident.to_string();
+    let owner = format!("{path}{bare}");
     for member in &item.items {
         match member {
             syn::TraitItem::Fn(method) => {
                 if !is_test_gated(&method.attrs) {
                     let name = format!("{owner}::{}", method.sig.ident);
-                    judge_fn(name, Some(&owner), true, &method.sig, scope(), access);
+                    judge_fn(name, Some(&bare), true, &method.sig, scope(), access);
                 }
             }
             syn::TraitItem::Const(constant) => {
                 judge_type(
                     format!("{owner}::{}", constant.ident),
-                    Some(&owner),
+                    Some(&bare),
                     &constant.ty,
                     &scope(),
+                    Holds::Value,
                     access,
                 );
             }
@@ -1002,14 +1530,17 @@ fn walk_trait(item: &syn::ItemTrait, krate: &Crate, access: &mut Access) {
                 if let Some((_, default)) = &ty.default {
                     judge_type(
                         format!("{owner}::{}", ty.ident),
-                        Some(&owner),
+                        Some(&bare),
                         default,
                         &scope(),
+                        Holds::Nothing,
                         access,
                     );
                 }
             }
-            syn::TraitItem::Macro(mac) => invoked(&macro_name(&mac.mac), &format!("{owner}: "), access),
+            syn::TraitItem::Macro(mac) => {
+                invoked(&macro_name(&mac.mac), &format!("{owner}: "), krate, access)
+            }
             _ => access
                 .offenders
                 .push(format!("{owner}: {UNJUDGED} (a trait member)")),
@@ -1021,14 +1552,15 @@ fn walk_trait(item: &syn::ItemTrait, krate: &Crate, access: &mut Access) {
 /// — for a trait's — its trait is; whatever its self type, a trait
 /// implemented for a type outside `document` is reachable. Its methods,
 /// associated consts and associated types are judged.
-fn walk_impl(item: &syn::ItemImpl, depth: usize, krate: &Crate, access: &mut Access) {
-    let owner = type_name(&item.self_ty);
+fn walk_impl(item: &syn::ItemImpl, depth: usize, path: &str, krate: &Crate, access: &mut Access) {
+    let bare = type_name(&item.self_ty);
+    let owner = format!("{path}{bare}");
     let trait_name = item
         .trait_
         .as_ref()
         .and_then(|(path, _)| path.segments.last())
         .map(|segment| segment.ident.to_string());
-    let reachable = krate.reachable(&owner) && trait_name.as_deref().is_none_or(|name| krate.reachable(name));
+    let reachable = krate.reachable(&bare) && trait_name.as_deref().is_none_or(|name| krate.reachable(name));
     let assoc: BTreeMap<String, Type> = item
         .items
         .iter()
@@ -1059,6 +1591,7 @@ fn walk_impl(item: &syn::ItemImpl, depth: usize, krate: &Crate, access: &mut Acc
                         trait_name.as_deref(),
                         &constant.ty,
                         &scope(),
+                        Holds::Value,
                         access,
                     );
                 }
@@ -1070,13 +1603,14 @@ fn walk_impl(item: &syn::ItemImpl, depth: usize, krate: &Crate, access: &mut Acc
                         trait_name.as_deref(),
                         &ty.ty,
                         &scope(),
+                        Holds::Nothing,
                         access,
                     );
                 }
             }
             ImplItem::Macro(mac) => {
                 if !is_test_gated(&mac.attrs) {
-                    invoked(&macro_name(&mac.mac), &format!("{owner}: "), access);
+                    invoked(&macro_name(&mac.mac), &format!("{owner}: "), krate, access);
                 }
             }
             _ => access
@@ -1086,9 +1620,10 @@ fn walk_impl(item: &syn::ItemImpl, depth: usize, krate: &Crate, access: &mut Acc
     }
 }
 
-/// Refuse an invocation of `name` that [`ALLOWED_MACROS`] does not name.
-fn invoked(name: &str, owner: &str, access: &mut Access) {
-    if !ALLOWED_MACROS.iter().any(|(allowed, _)| *allowed == name) {
+/// Refuse an invocation, where an item or a member goes, of `name` that
+/// [`ALLOWED_MACROS`] does not allow ([`Crate::allowed`]).
+fn invoked(name: &str, owner: &str, krate: &Crate, access: &mut Access) {
+    if !krate.allowed(name) {
         access.offenders.push(format!("{owner}{name}!"));
     }
 }
@@ -1096,11 +1631,13 @@ fn invoked(name: &str, owner: &str, access: &mut Access) {
 /// Everything in `document` — each source its path under `document/`,
 /// its text and how many modules below the crate root it sits — that
 /// hands out a way to change a document, judged by shape and complete
-/// by item kind (rulings R37 and R39 on #238). Every item kind `syn`
-/// parses is judged — a kind it has no arm for is an offender — and an
-/// item reaches beyond `document` by [`visible`]: a function, an `impl`
-/// method of a reachable type, every method of a trait defined there or
-/// implemented there whatever its self type (default bodies included).
+/// by item kind (rulings R37, R39 and R40 on #238). Every item kind
+/// `syn` parses is judged — a kind it has no arm for is an offender —
+/// wherever it is nested: in a module, a fn body, a `const` or `static`
+/// initializer, a `const _` block ([`Nested`]). An item reaches beyond
+/// `document` by [`visible`]: a function, an `impl` method of a
+/// reachable type, every method of a trait defined there or implemented
+/// there whatever its self type (default bodies included).
 ///
 /// A function offends when, after aliases and associated types are
 /// resolved:
@@ -1109,7 +1646,8 @@ fn invoked(name: &str, owner: &str, access: &mut Access) {
 ///   [`EXCEPTIONS`]), or a type parameter its caller chooses;
 /// - it takes a `&mut`, and its return holds a lifetime or a type that
 ///   can hold one ([`Crate::can_borrow`]), or it takes or gives back one
-///   of [`INTERNALS`] by value;
+///   of [`INTERNALS`] or of the elements ([`Crate::elements`]) by value,
+///   or takes one behind a `&mut` while it takes another `&mut` too;
 /// - it lends: a closure bound or a bare `fn` pointer among its
 ///   parameters or bounds is handed a `&mut` or a `*mut` — or, when it
 ///   takes a `&mut`, anything that can hold a borrow — or a callback
@@ -1120,10 +1658,15 @@ fn invoked(name: &str, owner: &str, access: &mut Access) {
 ///
 /// A visible `const`, `static`, field, alias or associated type offends
 /// as a return type would, and when it holds a `fn` pointer whose inputs
-/// can hold a borrow ([`CALLBACK`]). A
-/// `static mut` offends, and so does a macro in item position that
-/// [`ALLOWED_MACROS`] does not name, or a `macro_rules!` that reuses an
-/// allowed name outside its file. `others` are the rest of the crate's
+/// can hold a borrow ([`CALLBACK`]); a `const`, `static` or field when
+/// it holds one of [`INTERNALS`] by value, and a `static` an element.
+/// The statics a `thread_local!` declares are judged as a `static` is,
+/// and a `pub` one offends. A `static mut` offends, and so does a macro
+/// in item position that [`ALLOWED_MACROS`] does not name, a macro in a
+/// body that neither it nor [`EXPRESSION_MACROS`] names or whose
+/// arguments hide an item, a macro in type position, and a
+/// `macro_rules!` that reuses an allowed name outside its file or a
+/// standard one anywhere. `others` are the rest of the crate's
 /// sources, read for the types and traits they declare. Test-gated
 /// items are not read. The compiler's privacy on the tree and the
 /// element fields is what keeps a document closed, and
@@ -1138,17 +1681,18 @@ fn mutable_access(sources: &[(&str, &str, usize)], others: &[&str]) -> Access {
     let others: Vec<syn::File> = others.iter().map(|other| parse(other)).collect();
     let mut krate = Crate::default();
     for other in &others {
-        declare(&other.items, 1, false, &mut krate);
+        declare(&other.items, 1, false, None, &mut krate);
     }
-    for (_, file, depth) in &documents {
-        declare(&file.items, *depth, true, &mut krate);
+    for (path, file, depth) in &documents {
+        declare(&file.items, *depth, true, Some(path), &mut krate);
     }
     for file in others.iter().chain(documents.iter().map(|(_, file, _)| file)) {
         find_lending(&file.items, &mut krate);
     }
     let mut access = Access::default();
     for (path, file, depth) in &documents {
-        walk_items(&file.items, *depth, path, &krate, &mut access);
+        access.file = path.to_string();
+        walk_items(&file.items, *depth, path, "", &krate, &mut access);
     }
     access
 }
@@ -1194,16 +1738,19 @@ mod tests {
     }
 
     /// **No visible item under `document/` hands out a way to change a
-    /// document** (design §8.4, #238 §7, ruling R37). No function the
-    /// rest of the crate or the app can call — free, inherent, or of a
-    /// trait defined or implemented there, whatever its self type —
-    /// returns a `&mut`, an `impl Trait` or `dyn Trait` the exceptions do
-    /// not name, a type its caller chooses, or a borrow of a `&mut` it
-    /// took, or lends a `&mut` to its caller's closure; no visible field
-    /// holds a `&mut`; and no macro whose expansion the gate cannot read
-    /// is invoked where an item goes. Preconditions: the scan reads the
-    /// writer's API and the trait impls of the elements, and every
-    /// exception names an item it read.
+    /// document** (design §8.4, #238 §7, rulings R37, R39 and R40). No
+    /// item the rest of the crate or the app can reach, wherever it is
+    /// nested, offends by the rules of [`mutable_access`]: no function —
+    /// free, inherent, or of a trait defined or implemented there,
+    /// whatever its self type — returns a `&mut`, an `impl Trait` or
+    /// `dyn Trait` the exceptions do not name, a type its caller chooses,
+    /// or a borrow of a `&mut` it took, lends a borrow to its caller's
+    /// callback, or round trips an internal or an element; no visible
+    /// `const`, `static`, field or thread-local holds what it may not; and
+    /// no macro whose expansion the gate cannot read is invoked.
+    /// Preconditions: the scan reads the writer's API and the trait impls
+    /// of the elements, and every exception names an item it read at its
+    /// file and path.
     #[test]
     fn test_no_document_item_hands_out_mutable_access() {
         let (documents, others) = gate_sources();
@@ -1224,14 +1771,17 @@ mod tests {
             "DocElement::split",
         ] {
             assert!(
-                access.read.iter().any(|name| name == witness),
+                access.read.iter().any(|(_, name)| name == witness),
                 "the scan must read {witness}"
             );
         }
-        for (item, _, _) in EXCEPTIONS {
+        for (file, item, _, _) in EXCEPTIONS {
             assert!(
-                access.read.iter().any(|name| name == item),
-                "the exception {item} must name an item the scan reads"
+                access
+                    .read
+                    .iter()
+                    .any(|(read, name)| read == file && name == item),
+                "the exception {file}: {item} must name an item the scan reads"
             );
         }
         assert!(
@@ -1282,6 +1832,12 @@ impl Document {
     pub fn visit_shared(&self, f: impl FnOnce(&Document)) {}
     pub const OPENER: fn(&mut Document) -> &mut Tree<DocElement> = open_tree;
     pub const LIMIT: usize = 3;
+    pub fn swap_tree(&mut self, slot: &mut Tree<DocElement>) {}
+    pub fn set_node(&mut self, node: NodeData) {}
+    pub fn take_element(&mut self) -> DocElement { todo!() }
+    pub fn swap_node(&mut self, slot: &mut NodeData) {}
+    pub fn read_node(&self, node: NodeData) {}
+    pub fn kind_of(&mut self, kind: DocKind) {}
     pub fn children(&self) -> impl Iterator<Item = NodeId> + '_ { todo!() }
     pub fn palettes(&self) -> impl Iterator<Item = &mut PaletteData> + '_ { todo!() }
     pub fn apply(&mut self, n: u32) -> Result<Revision, ApplyError> { todo!() }
@@ -1319,6 +1875,43 @@ pub trait Opens {
     tree_in_trait!();
 }
 impl Document { fn bodiless(); }
+const _: () = { impl Document { pub fn tree_in_const(&mut self) -> &mut Tree<DocElement> { todo!() } } };
+fn hide() { impl Document { pub fn tree_in_fn(&mut self) -> &mut Tree<DocElement> { todo!() } } }
+pub static IN_STATIC: u8 = { impl Document { pub fn tree_in_static(&mut self) -> &mut Tree<DocElement> { todo!() } } 0 };
+pub struct Host;
+impl Host { fn host(&self) { impl Document { pub fn tree_in_method(&mut self) -> &mut Tree<DocElement> { todo!() } } } }
+pub trait Defaulted { fn run(&self) { impl Document { pub fn tree_in_default(&mut self) -> &mut Tree<DocElement> { todo!() } } } }
+fn hide_macro() { tree_by_macro!(); }
+fn hide_in_args() { let _ = vec![{ impl Document { pub fn tree_in_vec(&mut self) -> &mut Tree<DocElement> { todo!() } } 1 }]; }
+fn hide_nested_macro() { let _ = format!("{}", tree_by_macro!()); }
+fn hide_macro_rules() { macro_rules! debug { () => {}; } }
+fn uses_warn() { warn!("shadowed"); }
+fn fine_body() { debug!("{}", 1); let _ = vec![1, 2]; assert!(matches!(Some(1), Some(_))); let _: &'static str = ""; }
+pub fn typed(doc: &mut Document) -> tree_ty!() { todo!() }
+pub static STASH: Mutex<Option<Tree<DocElement>>> = Mutex::new(None);
+pub static ELEMENT_STASH: Mutex<Option<NodeData>> = Mutex::new(None);
+pub const DEFAULT_NODE: Option<NodeData> = None;
+pub const EMPTY: Option<Tree<DocElement>> = None;
+pub struct Carrier { pub tree: Tree<DocElement>, pub node: NodeData }
+pub type TreeAlias = Tree<DocElement>;
+pub fn round_alias(doc: &mut Document, t: TreeAlias) {}
+thread_local! {
+    pub static TL_STASH: RefCell<Option<Tree<DocElement>>> = const { RefCell::new(None) };
+    pub(crate) static TL_HOOK: Cell<Option<fn(&mut Tree<DocElement>)>> = const { Cell::new(None) };
+    static TL_FINE: u8 = 0;
+    static TL_HIDES: u8 = { impl Document { pub fn tree_in_local(&mut self) -> &mut Tree<DocElement> { todo!() } } 0 };
+}
+pub struct Edit;
+impl Edit { pub fn apply_to(&self, e: &mut DocElement) {} }
+pub mod shadow {
+    pub trait RowSource { fn each(&self, tree: &mut Tree<DocElement>); }
+    pub struct Rows;
+    impl Rows { pub fn arena(doc: &mut Document, v: &dyn RowSource) {} }
+    pub fn palettes() -> impl std::fmt::Debug { todo!() }
+}
+pub trait RowSource { fn each(&self, tree: &mut Tree<DocElement>); }
+struct Revision;
+impl Revision { pub fn tree_via_revision(&mut self) -> &mut Tree<DocElement> { todo!() } }
 pub trait Odd { pub fn odd(); }
 extern "C" {}
 pub trait Reach { fn reach(doc: &mut Document) -> &mut Tree<DocElement>; }
@@ -1345,8 +1938,14 @@ macro_rules! spelled { () => {}; }
 hidden_items!();
 "#;
         let out_of_document = "pub struct OutGuard<'a>(pub &'a mut Tree<DocElement>);\n\
-                               pub struct Revision;\npub enum ApplyError {}\npub struct SaveError;\n";
-        let access = mutable_access(&[("ids.rs", planted, 2)], &[out_of_document]);
+                               pub struct Revision;\npub enum ApplyError {}\npub struct SaveError;\n\
+                               macro_rules! warn { ($($t:tt)*) => {}; }\n";
+        let elements = "pub struct NodeData { pub x: u8 }\npub enum DocKind { Node }\n\
+                        pub enum DocElement { Node(NodeData) }\n";
+        let access = mutable_access(
+            &[("ids.rs", planted, 2), ("element.rs", elements, 2)],
+            &[out_of_document],
+        );
         let in_mod_rs = "pub(super) fn tree_of(doc: &mut Document) -> &mut Tree<DocElement> { todo!() }\n\
                          pub(super) fn fine(doc: &Document) {}\n";
         let at_the_top = mutable_access(&[("mod.rs", in_mod_rs, 1)], &[]);
@@ -1410,7 +2009,36 @@ hidden_items!();
             "Document::Out: a `&mut`",
             "type TreeMut: a `&mut`",
             "Guard.tree: a `&mut`",
-            "deep: a `&mut`",
+            "inner::deep: a `&mut`",
+            "_::Document::tree_in_const: a `&mut`",
+            "hide::Document::tree_in_fn: a `&mut`",
+            "IN_STATIC::Document::tree_in_static: a `&mut`",
+            "Host::Document::tree_in_method: a `&mut`",
+            "Defaulted::Document::tree_in_default: a `&mut`",
+            "hide_macro: tree_by_macro!",
+            "hide_in_args: vec! holds an item (`impl`) in its arguments",
+            "hide_nested_macro: format! invokes `tree_by_macro!` in its arguments",
+            "macro_rules! hide_macro_rules::debug: reuses a standard macro's name",
+            "uses_warn: warn!",
+            "typed: a macro in type position",
+            "STASH: holds a document internal by value",
+            "ELEMENT_STASH: holds a document element by value",
+            "EMPTY: holds a document internal by value",
+            "Carrier.tree: holds a document internal by value",
+            "round_alias: takes or gives back a document internal by value",
+            "TL_STASH: a `pub` `thread_local!`",
+            "TL_STASH: holds a document internal by value",
+            "TL_HOOK: a `&mut`",
+            "TL_HIDES::Document::tree_in_local: a `&mut`",
+            "Document::swap_tree: takes a document internal behind a `&mut`",
+            "Document::set_node: takes or gives back a document element by value",
+            "Document::take_element: takes or gives back a document element by value",
+            "Document::swap_node: takes a document element behind a `&mut`",
+            "shadow::RowSource::each: hands its implementor a borrow",
+            "shadow::Rows::arena: lends a borrow to the caller's callback",
+            "shadow::palettes: an `impl Trait`",
+            "RowSource::each: hands its implementor a borrow",
+            "Revision::tree_via_revision: a `&mut`",
             "macro_rules! spelled: reuses an allowed name",
             "hidden_items!",
         ]
@@ -1441,11 +2069,14 @@ hidden_items!();
             "Document::shared_tree",
             "Document::visit_shared",
             "Document::fmt",
+            "Document::read_node",
+            "Document::kind_of",
+            "Edit::apply_to",
             "named",
             "bytes",
             "element",
         ] {
-            assert!(access.read.iter().any(|name| name == kept), "{kept} is read");
+            assert!(access.read.iter().any(|(_, name)| name == kept), "{kept} is read");
             assert!(
                 !access
                     .offenders
@@ -1463,7 +2094,7 @@ hidden_items!();
             "Hidden::apply_to",
         ] {
             assert!(
-                !access.read.iter().any(|name| name == unread),
+                !access.read.iter().any(|(_, name)| name == unread),
                 "{unread} is not visible"
             );
         }

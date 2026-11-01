@@ -36,9 +36,9 @@ pub(crate) type IncomingIndex = FxHashMap<NodeId, SmallVec<[NodeId; 2]>>;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Derived {
     /// The links into each node.
-    pub incoming: IncomingIndex,
+    pub(in crate::document) incoming: IncomingIndex,
     /// The elements and the bytes of text the document holds.
-    pub budget: Budget,
+    pub(in crate::document) budget: Budget,
 }
 
 impl Derived {
