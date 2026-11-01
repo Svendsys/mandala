@@ -180,6 +180,16 @@ pub(super) fn addresses(
     out
 }
 
+/// `touch` as seen from the other side of its journal: what an undo does
+/// to an element the edit inserted is to remove it.
+pub(super) fn reversed(touch: Touch) -> Touch {
+    match touch {
+        Touch::Inserted => Touch::Removed,
+        Touch::Removed => Touch::Inserted,
+        other => other,
+    }
+}
+
 /// How many siblings [`addresses`] has stepped back through on this
 /// thread: what the test that holds it to the journal reads. Compiled for
 /// tests only.
@@ -199,15 +209,5 @@ pub(crate) mod steps {
     /// The siblings read on this thread so far.
     pub(crate) fn taken() -> usize {
         STEPS.with(Cell::get)
-    }
-}
-
-/// `touch` as seen from the other side of its journal: what an undo does
-/// to an element the edit inserted is to remove it.
-pub(super) fn reversed(touch: Touch) -> Touch {
-    match touch {
-        Touch::Inserted => Touch::Removed,
-        Touch::Removed => Touch::Inserted,
-        other => other,
     }
 }
