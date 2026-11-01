@@ -27,7 +27,7 @@
 //! The vocabulary is built by code and never read from a file in V1 —
 //! authored edits are V1-D1's — so nothing here parses a string. Nothing
 //! here writes a document either: running the steps of a request is the
-//! writer's, V1-B4.
+//! [writer's](crate::document::writer).
 
 /// The composite builders.
 pub mod compose;

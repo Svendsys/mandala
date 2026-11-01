@@ -43,7 +43,7 @@ pub const MAX_CONTROL_POINTS: usize = 2;
 /// counter then has no ident left to issue
 /// ([`Document::next_ident`](crate::document::ids::Document::next_ident)
 /// is `None`), and the writer refuses to issue one past it
-/// ([`DocumentError::IdentSpaceExhausted`](crate::document::ids::DocumentError::IdentSpaceExhausted))
+/// ([`ApplyError::IdentSpaceExhausted`](crate::document::writer::error::ApplyError::IdentSpaceExhausted))
 /// rather than issue one twice.
 pub const MAX_NODE_IDENT: u32 = u32::MAX - 1;
 

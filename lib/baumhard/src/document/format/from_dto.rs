@@ -50,6 +50,7 @@ use crate::document::values::{
     ColorRef, FitMode, FontSize, Percent, PlainColor, Rgba, Shape, StartPoint, VarId, VerbId, Weight,
     ZoomWindow,
 };
+use crate::document::writer::Derived;
 use crate::engine::tree::{Placement, Tree};
 use crate::font::fonts::{app_font_by_family, AppFont};
 use glam::Vec2;
@@ -158,6 +159,11 @@ pub(super) struct Builder {
     pub fonts: KeyedMap<String, Option<AppFont>>,
     /// The definitions the header carries, for the document.
     pub definitions: Definitions,
+    /// What the document derives from its tree, gathered as it is
+    /// built: the links into each node as each is resolved, and the
+    /// bytes of text of every element appended (the element count is
+    /// [`Self::elements`]). The writer moves it from there.
+    pub derived: Derived,
     /// How many elements have had their row checked against the shape
     /// rules. Every element is checked once: an element is added by
     /// [`Self::element`], which checks it once its children are in, or
@@ -189,10 +195,13 @@ impl Builder {
     /// Phase 3: a builder holding the map's root and everything its
     /// nodes resolve against, built from the header. O(header).
     pub(super) fn begin(header: &MapHeaderDto, keep: Keep, max_elements: Option<u64>) -> LoadResult<Builder> {
+        let root = DocElement::Map(MapData {
+            name: header.name.clone(),
+        });
+        let mut derived = Derived::default();
+        derived.appended(&root);
         let mut builder = Builder {
-            tree: Tree::new_non_indexed_with(DocElement::Map(MapData {
-                name: header.name.clone(),
-            })),
+            tree: Tree::new_non_indexed_with(root),
             path: Vec::new(),
             current: None,
             vars: Vec::new(),
@@ -204,6 +213,7 @@ impl Builder {
             links: Vec::new(),
             fonts: KeyedMap::default(),
             definitions: Definitions::default(),
+            derived,
             checked: 0,
             keep,
             stand_in: None,
@@ -232,7 +242,11 @@ impl Builder {
             .iter()
             .map(|(id, placed)| (NodeIdent(*id), placed.node))
             .collect();
-        Document::from_loaded(self.tree, self.definitions, index, self.highest)
+        // The loader's own count is the budget's: every element appended,
+        // the root included, and every definition read.
+        let mut derived = self.derived;
+        derived.budget.elements = self.elements;
+        Document::from_loaded(self.tree, self.definitions, index, self.highest, derived)
             .map(|document| (document, checked))
             .map_err(|error| {
                 LoadError::new(
@@ -466,6 +480,7 @@ impl Builder {
     /// appended.
     pub(super) fn add(&mut self, parent: NodeId, element: DocElement) -> LoadResult<NodeId> {
         self.count(1)?;
+        self.derived.appended(&element);
         let id = self
             .tree
             .insert_child(parent, element, Placement::Last)

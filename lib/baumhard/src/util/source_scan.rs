@@ -1800,9 +1800,10 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
 ///   a macro's arguments, so its tokens are read instead.
 ///
 /// The raw-pointer spellings (`&raw mut`, `addr_of_mut!`) can write
-/// only in `unsafe` code, and the workspace has none; but no
-/// `forbid(unsafe_code)` holds that — it is a convention
-/// (lib/baumhard/CONVENTIONS.md) — so the scan reads them too.
+/// only in `unsafe` code, and the workspace has none; baumhard's
+/// `forbid(unsafe_code)` holds that for baumhard, but the scan's other
+/// roots carry no such lint — there it is a convention — so the scan
+/// reads them too.
 /// `Tree::root` is a public field, kept public for its reads; writing
 /// it would move the tree's root without the engine knowing, and the
 /// set behind `Tree::contains` and every journal with it would then

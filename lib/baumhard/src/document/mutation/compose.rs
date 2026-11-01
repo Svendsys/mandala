@@ -6,7 +6,7 @@
 //! Each builder reads the document, checks what it was given, and
 //! returns the ordered [`DocStep`](crate::document::mutation::step::DocStep)s
 //! of the change. It writes nothing: running the steps — on one journal
-//! builder, all or nothing — is the writer's (V1-B4). A step that needs
+//! builder, all or nothing — is [the writer's](crate::document::writer). A step that needs
 //! something an earlier step creates builds its walk from the document
 //! as that step left it.
 //!
@@ -30,7 +30,7 @@
 //! writer holds the index of incoming links, and finding them otherwise
 //! is a scan. The writer appends
 //! [`remove_links`](crate::document::mutation::compose::remove_links) for them as a further
-//! step of the same request (V1-B4 §2.4(b)).
+//! step of the same request (#238 §2.4(b)).
 
 use crate::document::defaults::DEFAULT_OPACITY;
 use crate::document::element::{

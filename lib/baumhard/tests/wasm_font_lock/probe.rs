@@ -248,6 +248,7 @@ deep_scenario!(deep_document_deep_chain_journaled_edit_at_the_leaf, baumhard::do
 deep_scenario!(deep_document_deep_chain_moves_whole, baumhard::document::tests::deep_tests::do_document_deep_chain_moves_whole);
 deep_scenario!(deep_document_deep_subtree_validates_and_inserts, baumhard::document::tests::deep_tests::do_document_deep_subtree_validates_and_inserts);
 deep_scenario!(deep_document_deep_chain_resolves_at_the_leaf, baumhard::document::tests::deep_tests::do_document_deep_chain_resolves_at_the_leaf);
+deep_scenario!(deep_document_deep_chain_through_the_writer, baumhard::document::tests::deep_tests::do_document_deep_chain_through_the_writer);
 deep_scenario!(deep_document_validate_walks_a_deep_insert, baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_insert);
 
 /// R13's acceptance on wasm32's default stack, in a debug build: a map

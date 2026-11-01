@@ -23,13 +23,14 @@
 //! counter is not saved, so after a save and a reload an ident deleted
 //! at the top of the range may be issued again. Ident `0` is reserved
 //! as "not yet assigned": a node a mutation inserts carries it until
-//! the writer (V1-B4) assigns the next ident.
+//! [the writer](crate::document::writer) assigns the next ident, in the
+//! same request.
 //!
 //! There is no public `&mut` access to a `Document` here: the document
-//! changes only through its writer (V1-B4), which runs the steps of a
-//! request through `run_steps`, visible to `document` alone, and is
-//! built only by the loader (V1-B2) and, for tests, `DocumentBuilder`,
-//! crate-private in `document::tests::test_support`.
+//! changes only through [its writer](crate::document::writer), which runs
+//! the steps of a request through `run_steps`, visible to `document`
+//! alone, and is built only by the loader (V1-B2) and, for tests,
+//! `DocumentBuilder`, crate-private in `document::tests::test_support`.
 
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
@@ -39,6 +40,7 @@ use crate::document::mutation::inherited::inherited_seed;
 use crate::document::mutation::validate::validate;
 use crate::document::shape::{validate_shape, validate_subtree, ShapeError};
 use crate::document::values::PaletteId;
+use crate::document::writer::{Derived, Writer};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
@@ -112,14 +114,6 @@ pub enum DocumentError {
     DuplicateIdent(NodeIdent),
     /// A node carries [`NodeIdent::UNASSIGNED`].
     UnassignedIdent(NodeId),
-    /// No ident is left to issue: the counter has passed
-    /// [`MAX_NODE_IDENT`](crate::document::bounds::MAX_NODE_IDENT), and
-    /// issuing one would reuse an ident or make one no loader accepts.
-    /// The writer (V1-B4) returns it when asked to issue an ident while
-    /// [`Document::next_ident`] is `None`. Never returned at load: every
-    /// ident a load accepts leaves the counter within the bound or just
-    /// past it.
-    IdentSpaceExhausted,
     /// A number is out of its bound: a node ident, or a count an index
     /// type cannot address — palettes, theme variables or variants,
     /// verbs, edits or presentations.
@@ -137,7 +131,6 @@ impl std::fmt::Display for DocumentError {
             DocumentError::Shape(error) => write!(f, "{error}"),
             DocumentError::DuplicateIdent(ident) => write!(f, "two nodes carry the id {}", ident.0),
             DocumentError::UnassignedIdent(node) => write!(f, "node {node} has no id"),
-            DocumentError::IdentSpaceExhausted => f.write_str("no node id is left to issue"),
             DocumentError::Bound { what, error } => write!(f, "{what}: {error}"),
         }
     }
@@ -188,14 +181,21 @@ pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item =
 }
 
 /// A map: a `Tree<DocElement>` whose root is the
-/// [`Map`](DocKind::Map), its ident index and counter, and the
-/// definitions it carries.
+/// [`Map`](DocKind::Map), its ident index and counter, the definitions
+/// it carries, what it derives from its tree, and its
+/// [writer state](crate::document::writer) — the history, the revision, the
+/// change feed and the open transaction.
+///
+/// Its fields are private to `document` (§8.4): outside it a document is
+/// read through its read API and changed through its writer alone.
 #[derive(Clone, Debug)]
 pub struct Document {
-    tree: Tree<DocElement>,
-    ident_index: IdentIndex,
-    next_ident: u32,
-    definitions: Definitions,
+    pub(in crate::document) tree: Tree<DocElement>,
+    pub(in crate::document) ident_index: IdentIndex,
+    pub(in crate::document) next_ident: u32,
+    pub(in crate::document) definitions: Definitions,
+    pub(in crate::document) derived: Derived,
+    pub(in crate::document) writer: Writer,
 }
 
 impl Document {
@@ -210,10 +210,15 @@ impl Document {
     ///
     /// Only the root row is checked; whoever built the tree checks the
     /// rest — the loader calls [`validate_shape`] for every element as it
-    /// builds. Crate-private: a document is built by the loader or the
-    /// test builder, never assembled by the app.
+    /// builds. What the writer keeps beside the tree — the incoming
+    /// links, the budget — is derived by a second pass
+    /// ([`Derived::scan`]). Crate-private:
+    /// a document is built by the test builder, never assembled by the
+    /// app; the loader builds its indexes as it reads
+    /// ([`Self::from_loaded`]).
     ///
-    /// Cost: one pass over the tree, one hash insert per node.
+    /// Cost: two passes over the tree, one hash insert per node and per
+    /// link.
     pub(crate) fn from_tree(tree: Tree<DocElement>, definitions: Definitions) -> Result<Self, DocumentError> {
         validate_shape(&tree, tree.root()).map_err(DocumentError::Shape)?;
         check_indexes(&tree, &definitions)?;
@@ -236,21 +241,26 @@ impl Document {
             highest = highest.max(node.ident.0);
         }
         let next_ident = first_free_ident(highest, idents_named_by(&definitions));
+        let derived = Derived::scan(&tree, &definitions);
         Ok(Document {
             tree,
             ident_index,
             next_ident,
             definitions,
+            derived,
+            writer: Writer::default(),
         })
     }
 
     /// Make a document of what the loader built: `tree`, whose every row
     /// the loader has checked, `ident_index`, which the loader built as
     /// it placed each node (unique idents, each within the bound, none
-    /// unassigned), and the highest ident in it. Checks the map row and
-    /// the index bounds as [`Self::from_tree`] does, but does not walk the
-    /// tree again to index it. Crate-private: only the loader holds an
-    /// index it built itself.
+    /// unassigned), the highest ident in it, and what it derived as it
+    /// built — the links into each node, the elements and the text
+    /// counted. Checks the map row and the index bounds as
+    /// [`Self::from_tree`] does, but does not walk the tree again to
+    /// index it. Crate-private: only the loader holds indexes it built
+    /// itself.
     ///
     /// Cost: one pass over the map's row (the palettes are counted).
     pub(crate) fn from_loaded(
@@ -258,6 +268,7 @@ impl Document {
         definitions: Definitions,
         ident_index: IdentIndex,
         highest: u32,
+        derived: Derived,
     ) -> Result<Self, DocumentError> {
         check_loaded(&tree, &definitions)?;
         Ok(Document {
@@ -265,6 +276,8 @@ impl Document {
             ident_index,
             next_ident: first_free_ident(highest, idents_named_by(&definitions)),
             definitions,
+            derived,
+            writer: Writer::default(),
         })
     }
 
@@ -377,7 +390,7 @@ impl Document {
     /// closure may see a row that breaks the shape rules (see
     /// [`DocStep`](crate::document::mutation::step::DocStep)).
     ///
-    /// The loop the writer (V1-B4) runs a request's steps through, and
+    /// The loop [the writer](crate::document::writer) runs a request's steps through, and
     /// the only code that walks a mutator over a document. Visible to
     /// `document` alone: no other code changes a document (rule 4).
     ///

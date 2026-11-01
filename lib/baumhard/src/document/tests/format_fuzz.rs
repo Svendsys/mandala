@@ -27,9 +27,10 @@
 //! - **What loads is valid.** Every element passes `validate_shape`,
 //!   every number is inside its bound in
 //!   [`bounds`](crate::document::bounds) (read here from
-//!   `format/schema.md`'s table, not from the loader's calls), the
-//!   document is savable, and the one-node check agrees with the full
-//!   build.
+//!   `format/schema.md`'s table, not from the loader's calls), what the
+//!   loader derived for the writer — the incoming links, the element
+//!   and text counts — is what a walk of the tree finds, the document
+//!   is savable, and the one-node check agrees with the full build.
 //! - **What loads round-trips.** `save`, `load`, `save` reproduces the
 //!   document and the text, byte for byte, and the text holds no raw
 //!   control (C0 but the line feeds between keys, DEL, C1), line
@@ -61,6 +62,7 @@ use crate::document::format::{
 use crate::document::ids::Document;
 use crate::document::tests::format_support::same_document;
 use crate::document::values::{FitMode, FontSize, Shape, Sides, ZoomWindow};
+use crate::document::writer::Derived;
 
 /// Every property of a load of `bytes`, whatever they are: the
 /// load_raw target's whole body.
@@ -79,8 +81,36 @@ pub fn check_loaded(doc: &Document) -> Result<(), String> {
             .map_err(|error| format!("a loaded element breaks the shape rules: {error:?}"))?;
     }
     bounds_hold(doc)?;
+    derived_holds(doc)?;
     savable_checks_agree(doc, LIMITS)?;
     round_trips(doc)
+}
+
+/// What the loader derived as it built `doc` — the links into each
+/// node, its elements and its bytes of text, which the writer moves from
+/// there and never counts again — is what a walk of the tree finds.
+pub fn derived_holds(doc: &Document) -> Result<(), String> {
+    let scan = Derived::scan(doc.tree(), doc.definitions());
+    let pairs = |derived: &Derived| {
+        let mut pairs: Vec<_> = derived
+            .incoming
+            .iter()
+            .flat_map(|(&to, links)| links.iter().map(move |&link| (to, link)))
+            .collect();
+        pairs.sort();
+        pairs
+    };
+    if pairs(doc.derived()) != pairs(&scan) {
+        return Err("the loader's index of incoming links is not the tree's".to_string());
+    }
+    if doc.derived().budget != scan.budget {
+        return Err(format!(
+            "the loader counted {:?}, the tree holds {:?}",
+            doc.derived().budget,
+            scan.budget
+        ));
+    }
+    Ok(())
 }
 
 /// `check_savable` and the full build it stands in for give the same
@@ -2916,7 +2946,8 @@ fn tampered_documents_agree(
             _ => None,
         })
         .collect();
-    let Ok(tampered) = Document::from_loaded(tree, doc.definitions().clone(), index, highest) else {
+    let derived = Derived::scan(&tree, doc.definitions());
+    let Ok(tampered) = Document::from_loaded(tree, doc.definitions().clone(), index, highest, derived) else {
         return Ok(());
     };
     savable_checks_agree(&tampered, LIMITS)?;

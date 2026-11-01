@@ -51,6 +51,12 @@ cosmic-text = "0.19.0"
 # the browser takes — `tests/wasm_font_lock.rs` runs that claim.
 parking_lot = "0.13.0"
 tinyvec = "1.13.3"
+# The document writer's index of incoming links
+# (`document::writer::upkeep`): one inline slot pair per linked-to node,
+# since most nodes are the target of one or two links. `tinyvec` cannot
+# hold a `NodeId`, which has no `Default`. Already in the lockfile, at
+# this version, through cosmic-text and parking_lot.
+smallvec = "1.16.3"
 unicode-segmentation = "1.13.3"
 rustc-hash.workspace = true
 strum.workspace = true

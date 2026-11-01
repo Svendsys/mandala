@@ -71,3 +71,9 @@ pub mod structure_tests;
 /// changed by its writer (rule 4). `util::document_surface` holds every
 /// other file of the workspace to not naming it.
 pub(crate) mod test_support;
+#[cfg(test)]
+mod writer_cost_tests;
+/// What the writer's tests share.
+pub(crate) mod writer_support;
+pub mod writer_tests;
+pub mod writer_transaction_tests;
