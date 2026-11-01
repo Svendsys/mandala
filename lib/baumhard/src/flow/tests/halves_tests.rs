@@ -882,7 +882,9 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     /// most any does is 10,534, the crowded text shrunk round a flat
     /// outline (17,031 when a line's gap was bisected).
     const MOST_TRACKS: usize = 12_000;
-    let report = std::env::var_os("ZZ").is_some();
+    // Opt-in: the sweep's tallies, for reading the counts this test's
+    // bounds are set from.
+    let report = std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some();
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     // Each outline, its height, and the size its text is set at.
     let mut outlines: Vec<(String, Outline, f32, f32)> = Vec::new();
@@ -1139,7 +1141,7 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     }
     if report {
         eprintln!(
-            "ZZSWEEP shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks}\n{}",
+            "the aspect sweep: shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks}\n{}",
             faults.join("\n")
         );
     }
@@ -1589,7 +1591,10 @@ fn test_flow_halves_a_part_never_inverts() {
 /// A line's part of its half with a clearance kept at each junction
 /// (ruling R34): the half less both clearances while they leave any of
 /// it, and where they divide the half in their ratio once together they
-/// pass it — never inverted, never off the half.
+/// pass it — never inverted, never off the half: clearances whose
+/// product with the half's length, or whose sum, is past the largest
+/// `f32` included, and infinite ones, the whole half to an infinite
+/// clearance against a finite one and half each to two.
 pub fn do_flow_halves_a_part_never_inverts() {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(400.0, 160.0));
     for shape in [
@@ -1610,6 +1615,12 @@ pub fn do_flow_halves_a_part_never_inverts() {
                 ),
                 ([2.0 * len, 0.0], (jb, jb)),
                 ([0.0, 3.0 * len], (ja, ja)),
+                ([1e36, 1e36], (ja + 0.5 * len, ja + 0.5 * len)),
+                ([1e36, 3e36], (ja + 0.25 * len, ja + 0.25 * len)),
+                ([3e38, 3e38], (ja + 0.5 * len, ja + 0.5 * len)),
+                ([f32::INFINITY, 1.0], (jb, jb)),
+                ([1.0, f32::INFINITY], (ja, ja)),
+                ([f32::INFINITY; 2], (ja + 0.5 * len, ja + 0.5 * len)),
             ];
             for (clear, (lo, hi)) in cases {
                 let ((a, b), junctions) = room_seam(&shape, half, clear);
@@ -2027,6 +2038,78 @@ fn test_flow_halves_an_ordinary_frame_lays_each_line_a_few_times() {
                 "{name} at span {}: {tracks} lines tracked, at most 160",
                 layout.span.get()
             );
+        }
+    }
+}
+
+#[test]
+fn test_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
+    do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely();
+}
+
+/// A frame round an outline as long as an `f32` is laid along its
+/// halves and placed finitely: every line's ends, every clearance and
+/// every glyph a number. The 10³⁸ outlines' junctions lie past half the
+/// largest `f32` (asserted), so a midpoint taken as the half of a sum
+/// overflows; round the 10³⁶ one a break of two word gaps, its line's
+/// gaps stretched over its half, is wider than any `f32`. Found by a probe of outlines from 10³⁰ to the largest
+/// `f32` long beside the flow_structured findings
+/// (`test_a_frame_whose_clearances_pass_its_half_places_finitely`),
+/// which the fuzzer had not reached.
+///
+/// Controls: with a one-letter line centered at `0.5 * (sa + sb)` again,
+/// "a b" round the 10³⁸ × 10 rectangle places a glyph at `[NaN, NaN]`;
+/// with the clearance step no longer held to the largest `f32`, "ab"
+/// round the 10³⁶ × 10 one keeps a clearance that is not a number
+/// (`[[NaN, 0.0], [NaN, 0.0]]`: an infinite step shared by a share of
+/// zero, and held to a slack, is `inf * 0` and `inf - inf`); with the
+/// old quotient in `Layout::room`, "ab" round the 10³⁶ × 10 rectangle
+/// ends a line where no number does.
+pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
+    for (width, height) in [(1e36_f32, 10.0_f32), (1e38, 10.0), (1e38, 1e37)] {
+        let shape = outline(
+            Rect::new(Vec2::ZERO, Vec2::new(width, height)),
+            Shape::Rectangle {
+                radius: Percent::new(0),
+            },
+        );
+        let (junctions, apexes, length) = halves_seam(&shape);
+        assert!(
+            length.is_finite() && apexes.iter().chain(junctions.iter().flat_map(|(a, b)| [a, b])).all(|s| s.is_finite()),
+            "precondition: the {width} × {height} outline's halves are measured, so its lines are laid along them"
+        );
+        if width >= 1e38 {
+            assert!(
+                junctions.iter().any(|(_, end)| *end > 0.5 * f32::MAX),
+                "precondition: a junction of the {width} × {height} outline lies past half the largest f32, {junctions:?}"
+            );
+        }
+        for text in ["ab", "a b", "ab cd ef gh"] {
+            for fit in [FitMode::Spread, FitMode::Once { filler: None }, FIT] {
+                for outward in [true, false] {
+                    let what = format!("{text:?} round {width} × {height}, {fit:?}, outward {outward}");
+                    let (_, placed, trace) =
+                        frame_with(text, 18.0, &shape, &fit, &RingLayout::whole(), outward);
+                    assert!(
+                        !trace.lines.is_empty(),
+                        "precondition: {what} is laid as a frame's lines"
+                    );
+                    for line in &trace.lines {
+                        assert!(
+                            line.from.is_finite() && line.to.is_finite(),
+                            "{what}: line {line:?} ends where no number does"
+                        );
+                    }
+                    assert!(
+                        trace.clear.iter().flatten().all(|c| !c.is_nan()),
+                        "{what}: a clearance that is not a number, {:?}",
+                        trace.clear
+                    );
+                    for glyph in &placed.glyphs {
+                        assert!(glyph.pos.is_finite(), "{what}: a glyph placed at {}", glyph.pos);
+                    }
+                }
+            }
         }
     }
 }

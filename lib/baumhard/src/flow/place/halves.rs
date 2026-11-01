@@ -266,6 +266,33 @@ fn unwrap(s: f32, from: f32, length: f32) -> f32 {
     }
 }
 
+/// The share of a half that the first of two clearances, `a` and `b`
+/// (neither negative), claims where together they pass it: `a / (a + b)`,
+/// in `[0, 1]`. Taken over the larger of the two, so that neither their
+/// sum nor its product with the half's length can overflow: a clearance
+/// grown toward a break its line's gaps make wider than the outline —
+/// a line tracked over an outline some 10²⁶ long — is many times the
+/// half, and the product once took the meeting point to infinity, where
+/// a line's ends are not a number (the 300 s flow_structured run's
+/// finding on #294). An infinite clearance claims the whole of the half
+/// against a finite one, and two claim half each.
+fn share(a: f32, b: f32) -> f32 {
+    match (a.is_infinite(), b.is_infinite()) {
+        (true, true) => 0.5,
+        (true, false) => 1.0,
+        (false, true) => 0.0,
+        (false, false) => {
+            let larger = a.max(b);
+            if larger > 0.0 {
+                let (a, b) = (a / larger, b / larger);
+                a / (a + b)
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
 /// The distance between two boxes, `(min, max)` each: 0 where they meet.
 fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
     (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length()
@@ -273,7 +300,7 @@ fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
 
 /// The center of a box, `(min, max)`.
 fn middle(b: (Vec2, Vec2)) -> Vec2 {
-    0.5 * (b.0 + b.1)
+    Vec2::new(b.0.x.midpoint(b.1.x), b.0.y.midpoint(b.1.y))
 }
 
 /// `run` with every glyph's [`GlyphMetrics::ink`] measured but a space's:
@@ -450,7 +477,7 @@ fn clear_of(walk: &PathWalk<'_>, (last, half): (Vec2, Vec2), center: f32, owed: 
         strides += 1;
     }
     for _ in 0..INK_ROUNDS {
-        let middle = 0.5 * (low + high);
+        let middle = low.midpoint(high);
         if !(middle > low && middle < high) {
             break;
         }
@@ -642,15 +669,16 @@ impl Layout<'_> {
 
     /// The part of half `half` a line may cover with `clear` kept at
     /// each junction (top-left, bottom-right): `(lo, hi)`, never
-    /// inverted. Clearances that together pass the whole half meet where
-    /// they divide it in their ratio: the line is then a point, pressed.
+    /// inverted and never off the half. Clearances that together pass
+    /// the whole half meet where they divide it in their ratio
+    /// ([`share`]): the line is then a point, pressed.
     fn room(&self, half: usize, clear: [f32; 2]) -> (f32, f32) {
         let (ja, jb) = self.halves.junctions[half];
         let (lo, hi) = (ja + clear[0], jb - clear[1]);
         if lo <= hi {
             (lo, hi)
         } else {
-            let mid = ja + (jb - ja) * clear[0] / (clear[0] + clear[1]).max(f32::MIN_POSITIVE);
+            let mid = ja + (jb - ja) * share(clear[0], clear[1]);
             (mid, mid)
         }
     }
@@ -747,7 +775,7 @@ impl Layout<'_> {
         let letters = p.clusters.iter().filter(|c| !c.blank).count();
         let steps = letters.saturating_sub(1) + p.clusters.iter().filter(|c| c.blank).count();
         let (gap, tracked) = if letters < 2 {
-            let mid = 0.5 * (sa + sb);
+            let mid = sa.midpoint(sb);
             let gap = p.natural_gap;
             (gap, self.track(&walk, &run.glyphs, &p.clusters, (mid, mid), gap))
         } else {
@@ -1050,7 +1078,7 @@ impl<'s> SideArc<'s> {
             return None;
         }
         for _ in 0..SIDE_ROUNDS {
-            let mid = 0.5 * (low + high);
+            let mid = low.midpoint(high);
             if self.fits(n, mid) {
                 low = mid;
             } else {
@@ -1325,7 +1353,21 @@ impl Layout<'_> {
                 } else {
                     shortfall
                 };
-                let step = damped.max(MIN_GROWTH);
+                // A break wider than any `f32` — two word gaps of a line
+                // tracked over an outline as long as an `f32` — is short
+                // by an infinite amount, and an infinite step shared by
+                // a share of zero, or held to a line's slack, is not a
+                // number: the step is held to the largest `f32`, past
+                // which a clearance presses its line to a point however
+                // much more it is (the probe in
+                // `test_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely`).
+                // A step that is not a number — a shortfall that is not
+                // one — grows by the least.
+                let step = if damped.is_nan() {
+                    MIN_GROWTH
+                } else {
+                    damped.clamp(MIN_GROWTH, f32::MAX)
+                };
                 for k in 0..2 {
                     // Two lines that both draw back part by about the
                     // sum: each gives its share.
@@ -1489,7 +1531,7 @@ fn falsi<T>(
     let (mut at_low, mut at_high) = (low.1, high.1);
     let mut kept: Option<bool> = None;
     for _ in 0..rounds {
-        let mid = 0.5 * (low.0 + high.0);
+        let mid = low.0.midpoint(high.0);
         if !(mid > low.0 && mid < high.0) || high.0 - low.0 <= width {
             break;
         }
@@ -2211,6 +2253,7 @@ pub(super) fn place_halves(
             .collect();
         trace.unheld = unheld;
         trace.cut_apart = cut_apart;
+        trace.clear = clear;
     }
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;

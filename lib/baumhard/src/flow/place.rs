@@ -596,6 +596,10 @@ pub(crate) struct Trace {
     /// because its outline is too thin to hold its two lines apart
     /// (ruling R38.1): never overlap wins over never cut.
     pub(crate) cut_apart: Vec<usize>,
+    /// For a text frame, the clearance each half's line keeps at each
+    /// junction, `[half][junction]`, as its last clearance search left
+    /// it: never `NaN`.
+    pub(crate) clear: [[f32; 2]; 2],
 }
 
 /// What a text frame's last resorts — a `Fit` frame's shrink, then the

@@ -1108,3 +1108,41 @@ fn test_a_frame_cut_apart_outward_is_owed_no_longer() {
         panic!("the structured input: {why}");
     }
 }
+
+/// The 300 s flow_structured runs' findings at a7896c70, here and on
+/// CI, both "around an outline: a glyph placed at [NaN, NaN]": one line
+/// round an outline some 10²⁶ (here) or 10³⁰ (CI) long, its letters a
+/// fraction of a point apart, owing a break of two word gaps that its
+/// gaps, stretched over its half, made some 10³³ wide. The clearance
+/// search grew both of its clearances toward that break until together
+/// they passed its half many times over, and `Layout::room` took the
+/// point where they meet as `ja + (jb - ja) * clear[0] / (clear[0] +
+/// clear[1])`: the product overflowed to infinity, the line's part was
+/// `(inf, inf)`, and `track` laid it at `inf - inf`. The share is now
+/// taken over the larger clearance, so neither the product nor the sum
+/// can overflow (`share`; the cases are held by
+/// `test_flow_halves_a_part_never_inverts`). Each input is minimized
+/// on stable.
+///
+/// Control: with the old quotient restored in `room`, each input fails
+/// with "a glyph placed at [NaN, NaN]".
+#[test]
+fn test_a_frame_whose_clearances_pass_its_half_places_finitely() {
+    for (name, found) in [
+        (
+            "here",
+            &include_bytes!("fuzz_findings/structured_frame_clearances_past_its_half_overflow_their_meeting")
+                [..],
+        ),
+        (
+            "on CI",
+            &include_bytes!(
+                "fuzz_findings/structured_frame_clearances_past_its_half_overflow_their_meeting_on_ci"
+            )[..],
+        ),
+    ] {
+        if let Err(why) = check_flow_structured(found) {
+            panic!("the input found {name}: {why}");
+        }
+    }
+}

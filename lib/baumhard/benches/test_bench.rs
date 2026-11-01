@@ -2458,6 +2458,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_part_never_inverts", |b| {
         b.iter(do_flow_halves_a_part_never_inverts)
     });
+    c.bench_function("flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely", |b| {
+        b.iter(do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely)
+    });
     c.bench_function("flow_halves_a_copy_at_its_floor_clears_its_neighbors", |b| {
         b.iter(do_flow_halves_a_copy_at_its_floor_clears_its_neighbors)
     });
