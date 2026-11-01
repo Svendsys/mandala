@@ -939,50 +939,141 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
 /// The phase-2 review's flow_raw finding on #294 (a slow unit, 20.75 s
 /// against `-timeout=20` under the fuzz build): 26 bytes, mostly
 /// U+FFFD read lossily, which `check_flow_bytes` lays as a `Fit` frame
-/// round its 120 × 40 rounded rectangle. Its first build leaves a line
+/// round its 120 × 40 rounded rectangle. Its first build left a line
 /// pressed, so the shrink ran: `SHRINK_ROUNDS` probes, each a whole
-/// clearance search from nothing with its backtracks, then the size
-/// found built again — 15 builds and 17,720 `track`s for that frame,
-/// and 22,016 for the input. Now a probe first looks whether its lines
-/// fit their halves less a share of the clearance of the largest size
-/// held, one `track` a line, and grows the clearance from there rather
-/// than from nothing; the size held is kept, not built again; and a
-/// clearance search lays a line once for each part it tries
-/// (`LayMemo`), so a round that grows one line's clearance does not lay
-/// the other again. The seed `flow_raw/controls_and_tabs`, whose `Fit`
-/// frame shrinks too, is held to the same.
+/// clearance search from nothing with its backtracks — 15 builds and
+/// 17,720 `track`s for that frame, 22,016 for the input. A probe now
+/// looks first whether its lines fit at all and grows its clearance
+/// from the last size held; a clearance search lays a line once for
+/// each part it tries (`LayMemo`); and (ruling R38.3) a line's tracking
+/// is solved by regula falsi from the straight path's answer rather than
+/// by bisection, its slide and its centering likewise, and a round of
+/// the clearance draws back only the line with the slack to give, its
+/// step damped by what drawing back eases the break wanted — so the
+/// review's input is now held at R27's size, 1,083 `track`s in all.
 ///
-/// Control: with the line memo, the cheap look or the seeded clearance
-/// removed, the tracks pass their bound.
+/// The shrink itself is held by a frame that reaches it on every
+/// machine: the README quatrain in the pinned face (`FACE`, so no host
+/// face draws a glyph of it, ruling R30) round the aspect sweep's
+/// 600 × 12 rectangle, outward. The raw target's own style is
+/// `AppFont::Any`, drawn in whatever face the host falls back to, so a
+/// raw input's path through the last resorts is the host's: the seed
+/// `flow_raw/controls_and_tabs`, which this test once held here, shrank
+/// on one machine and not on CI's.
+///
+/// Control: with the tracking bisected, the review's input passes its
+/// bound (1,943 `track`s). The line memo, the cheap look, the seeded
+/// clearance and the probe's single halving no longer move either count
+/// past its bound on their own: each is a refinement no claim here rests
+/// on.
 #[test]
 fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
+    use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
     use crate::flow::place::halves::{BUILDS, TRACKS};
-    let seed = std::fs::read(crate::util::doc_fixtures::repo_path(
-        "fuzz/seeds/flow_raw/controls_and_tabs",
-    ))
-    .expect("the seed is committed");
-    let findings: [(&str, &[u8], usize); 2] = [
-        (
-            "the review's input",
-            include_bytes!("fuzz_findings/fit_frame_shrunk_by_whole_clearance_searches"),
-            8_000,
-        ),
-        ("controls_and_tabs", &seed, 4_000),
-    ];
-    for (what, found, most) in findings {
+    use crate::flow::{outline, place_on_closed, RingLayout};
+    let counted = |run: &mut dyn FnMut()| {
         TRACKS.with(|count| count.set(0));
         BUILDS.with(|count| count.set(0));
-        if let Err(why) = check_flow_bytes(found) {
-            panic!("{what}: {why}");
-        }
-        let (tracks, builds) = (
+        run();
+        (
             TRACKS.with(std::cell::Cell::get),
             BUILDS.with(std::cell::Cell::get),
-        );
-        assert!(
-            builds > 3,
-            "precondition: {what} shrinks a frame ({builds} builds)"
-        );
-        assert!(tracks <= most, "{what}: {tracks} lines tracked, at most {most}");
+        )
+    };
+    let review = include_bytes!("fuzz_findings/fit_frame_shrunk_by_whole_clearance_searches");
+    let (tracks, _) = counted(&mut || {
+        if let Err(why) = check_flow_bytes(review) {
+            panic!("the review's input: {why}");
+        }
+    });
+    assert!(
+        tracks <= 1_500,
+        "the review's input: {tracks} lines tracked, at most 1,500"
+    );
+
+    let quatrain = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower, \
+         Hold Infinity in the palm of your hand, And Eternity in an hour. ";
+    let flow = style(18.0);
+    let thin = outline(
+        crate::flow::Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    // Asserted outside the font lock, so a failure cannot poison it for
+    // the tests after.
+    let (mut pinned, mut truncated) = (false, true);
+    let (tracks, builds) = counted(&mut || {
+        (pinned, truncated) = with_fonts(|fs| {
+            let run = real_run(quatrain, &flow, fs);
+            let pinned = crate::font::fonts::pinned_family(fs, flow.font)
+                .is_some_and(|pins| run.layout_glyphs().all(|g| pins.faces.contains(&g.font_id)));
+            let start = StartPoint {
+                edge: Edge::Top,
+                at: 0.0,
+            };
+            let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+            let (_, placed) = place_on_closed(
+                &run,
+                &thin,
+                start,
+                Direction::Clockwise,
+                &fit,
+                &RingLayout::whole(),
+                true,
+                &flow,
+                fs,
+            );
+            (pinned, placed.truncated)
+        });
+    });
+    assert!(pinned, "precondition: every glyph is drawn in the pinned face");
+    assert!(!truncated, "the quatrain round the flat rectangle: nothing cut");
+    assert!(
+        builds > 3,
+        "precondition: the quatrain round the flat rectangle shrinks ({builds} builds)"
+    );
+    assert!(
+        tracks <= 2_000,
+        "the shrunk quatrain: {tracks} lines tracked, at most 2,000"
+    );
+}
+
+/// The 300 s flow_raw run's finding on #294 (base64 `bnAgZXRhaWx4dA==`,
+/// "np etailxt"): "around a rectangle: its natural length fits, and it
+/// was cut". `check_flow_bytes` lays it as a `Fit` frame round its
+/// 120 × 40 rounded rectangle, "np" on the first half and "etailxt" on
+/// the second. At span whole "np" is stretched over its whole half, so
+/// its letter gap, and the break of two of them owed at the top-left
+/// junction, was some 200 points; the round that grew that junction's
+/// clearance by the whole shortfall, shared between the two lines, drew
+/// "etailxt" back by 107 points of its 151, and the bottom-right
+/// junction then pressed it. Nothing was left but the shrink, which
+/// held nothing either, and R34's cut. Yet the line can be held: "np"
+/// had 140 points to give. Under ruling R38.1 a cut is the last resort
+/// only where the line cannot be held without overlap, so the cut was
+/// the fault, not the property.
+///
+/// Now a round's step is damped by how much drawing the lines back eases
+/// the break wanted (a line's gap narrows with its part), and each line
+/// is drawn back no further than its slack — the room its part leaves
+/// and its gaps past its font's own — what it cannot give handed to the
+/// other line where that parts the ends too (ruling R38.3). The frame
+/// is held, uncut, at R27's size.
+///
+/// The raw target shapes in `AppFont::Any`, in whatever face the host
+/// falls back to, so this replay is this machine's path through it; the
+/// two mechanisms are each held on every machine, in the pinned face, by
+/// `test_flow_halves_a_frame_its_lines_can_hold_is_not_shrunk`. On this
+/// input no one of R38.3's changes reverted alone, nor the slack cap and
+/// the damping together, cuts the frame again: the replay holds the input
+/// to the property, whose "it was cut" branch is shown red by
+/// `test_a_spread_along_a_line_as_long_as_an_f32_places_every_glyph` under
+/// the PR's control C30.
+#[test]
+fn test_a_frame_whose_other_line_can_give_the_clearance_is_not_cut() {
+    let found = include_bytes!("fuzz_findings/fit_frame_pressed_by_a_clearance_its_other_line_could_give");
+    if let Err(why) = check_flow_bytes(found) {
+        panic!("the fuzzer's input: {why}");
     }
 }

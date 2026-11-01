@@ -322,6 +322,21 @@ fn test_flow_halves_a_one_word_line_keeps_its_neighbor_whole() {
     do_flow_halves_a_one_word_line_keeps_its_neighbor_whole();
 }
 
+/// The cosine between `outline`'s outward normals at the points nearest
+/// the centers of the ink boxes `a` and `b`.
+fn outward_turn(outline: &Outline, a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
+    let left = StartPoint {
+        edge: Edge::Left,
+        at: 0.5,
+    };
+    let path = ArcPath::closed(outline, left, Direction::Clockwise, MIN_TABLE_SPACING);
+    let normal = |p: Vec2| {
+        let tangent = path.at(path.nearest(p)).1;
+        Vec2::new(tangent.y, -tangent.x)
+    };
+    normal(center(a)).dot(normal(center(b)))
+}
+
 /// A line of one word, or of glyphs with no space between them, has no
 /// word gap: spread over its half at span whole, its letter gaps are
 /// the span's, and the junction break is owed in the other line's word
@@ -329,7 +344,9 @@ fn test_flow_halves_a_one_word_line_keeps_its_neighbor_whole() {
 /// have. So the other line keeps its room: a `Once` frame cuts nothing,
 /// a `Fit` frame keeps the size R27 gives it, and each junction is two
 /// of the other line's word gaps wide. With no word gap on either line,
-/// each junction is two of the lines' doubled letter gaps wide.
+/// each junction is two of the lines' doubled letter gaps wide — or, its
+/// ends drawn back until they are stacked across the outline (their
+/// normals turned past 135°, rulings R35.1 and R38.2), clear.
 pub fn do_flow_halves_a_one_word_line_keeps_its_neighbor_whole() {
     let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(820.0, 330.0)), Shape::Ellipse);
     for (text, spaced) in [
@@ -373,9 +390,14 @@ fn one_word_line(shape: &Outline, text: &str, spaced: bool) {
         let word = word_gap(&lines);
         let (a1, b1) = lines[0].ends;
         let (a2, b2) = lines[1].ends;
-        for (junction, apart) in [("top-left", gap(a1, a2)), ("bottom-right", gap(b1, b2))] {
+        for (junction, a, b) in [("top-left", a1, a2), ("bottom-right", b1, b2)] {
+            let apart = gap(a, b);
+            // Ends drawn back until their outward normals turn past 135°
+            // are stacked across the outline, not meeting at it (rulings
+            // R35.1, R38.2): they need only not touch.
+            let stacked = outward_turn(shape, a, b) < (135.0_f32).to_radians().cos();
             assert!(
-                apart >= 2.0 * word,
+                apart >= 2.0 * word || (stacked && apart > 0.0),
                 "{text:?} {fit:?} {junction}: the lines' ends {apart} apart, the word gap {word}"
             );
         }
@@ -853,12 +875,13 @@ fn tracks_so_far() -> usize {
 /// only not touching. What a frame's last resorts cannot hold it
 /// reports in its trace rather than leave silent (ruling R35.2): only a
 /// frame laid inward whose two lines' inks are together taller than the
-/// outline may, and the rest must hold.
+/// outline may, and the rest must hold. Only such a frame may have a
+/// line cut apart (ruling R38.1), and some here are.
 pub fn do_flow_halves_hold_on_every_aspect() {
-    /// The most lines a frame here may track (ruling R35.3): the most
-    /// any does is 17,031, the crowded text shrunk round a flat outline,
-    /// and without the no-progress exit 18,741.
-    const MOST_TRACKS: usize = 17_500;
+    /// The most lines a frame here may track (rulings R35.3, R38.3): the
+    /// most any does is 10,534, the crowded text shrunk round a flat
+    /// outline (17,031 when a line's gap was bisected).
+    const MOST_TRACKS: usize = 12_000;
     let report = std::env::var_os("ZZ").is_some();
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     // Each outline, its height, and the size its text is set at.
@@ -900,7 +923,7 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     // How many frames reached a last resort: a `Fit` frame shrunk below
     // R27's size, a `Once` frame cut, and one that reports what is left
     // unheld.
-    let (mut shrunk, mut cut, mut reported) = (0, 0, 0);
+    let (mut shrunk, mut cut, mut reported, mut apart) = (0, 0, 0, 0);
     // The most lines one frame here tracks: its work, bounded (ruling
     // R35.3).
     let mut most_tracks = 0;
@@ -987,7 +1010,16 @@ pub fn do_flow_halves_hold_on_every_aspect() {
                                     .map(|(a, b)| b.y - a.y)
                                     .fold(0.0_f32, f32::max)
                             };
-                            let thin = !outward && trace.lines.iter().map(tallest).sum::<f32>() > *height;
+                            // With a line left out (ruling R38.1), the one
+                            // left stands for both.
+                            let tall = trace.lines.iter().map(tallest).fold(0.0_f32, f32::max);
+                            let thin = !outward && 2.0 * tall > *height;
+                            if !trace.cut_apart.is_empty() {
+                                apart += 1;
+                                if !thin {
+                                    faults.push(format!("{what}: cut {:?} apart", trace.cut_apart));
+                                }
+                            }
                             let unheld = &trace.unheld;
                             if !unheld.is_empty() {
                                 reported += 1;
@@ -1107,7 +1139,7 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     }
     if report {
         eprintln!(
-            "ZZSWEEP shrunk {shrunk} cut {cut} reported {reported} most tracks {most_tracks}\n{}",
+            "ZZSWEEP shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks}\n{}",
             faults.join("\n")
         );
     }
@@ -1120,6 +1152,9 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     // The sweep reaches the last resorts it holds to account: the
     // crowded text's frames are shrunk.
     assert!(shrunk > 0, "precondition: a frame here is shrunk");
+    // And the inward frames round outlines too thin for their two lines
+    // are cut apart (ruling R38.1).
+    assert!(apart > 0, "precondition: a frame here is cut apart");
 }
 
 #[test]
@@ -1847,6 +1882,109 @@ pub fn do_flow_halves_a_side_that_would_touch_is_left_out() {
                 "two inks touch at {:?} and {:?}",
                 center(*a),
                 center(*b)
+            );
+        }
+    }
+}
+
+#[test]
+fn test_flow_halves_a_frame_its_lines_can_hold_is_not_shrunk() {
+    do_flow_halves_a_frame_its_lines_can_hold_is_not_shrunk();
+}
+
+/// A frame whose lines can be held at R27's size is held there, not
+/// shrunk (rulings R34, R38.1): the README quatrain, at 18 pt, `Fit`,
+/// at span whole, round outlines its two lines fill. Drawn back to part
+/// a junction, a line with no slack left would be pressed while the
+/// other line has room to give, and a pressed line sends the frame to
+/// its shrink; so each line is drawn back no further than its slack, the
+/// rest handed to the other line (outward, the 10:1 and 50:1 ellipses
+/// and the 50:1 pill). And each round's step is damped by how much the
+/// drawing back eases the break wanted, so it does not overshoot into a
+/// press the clearance never needed (inward, the 10:1 rectangle).
+///
+/// Control: with the slack cap removed the outward frames shrink; with
+/// the step undamped the inward one does.
+pub fn do_flow_halves_a_frame_its_lines_can_hold_is_not_shrunk() {
+    let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
+    let size = |run: &ShapedRun| {
+        run.glyphs
+            .iter()
+            .filter(|g| g.span != FILLER_SPAN)
+            .map(|g| g.size)
+            .fold(0.0_f32, f32::max)
+    };
+    let rows = [
+        ("ellipse 10:1", outline(rect(600.0, 60.0), Shape::Ellipse), true),
+        ("ellipse 50:1", outline(rect(600.0, 12.0), Shape::Ellipse), true),
+        (
+            "pill 50:1",
+            outline(
+                rect(600.0, 12.0),
+                Shape::Rectangle {
+                    radius: Percent::new(50),
+                },
+            ),
+            true,
+        ),
+        (
+            "rectangle 10:1, inward",
+            outline(
+                rect(600.0, 60.0),
+                Shape::Rectangle {
+                    radius: Percent::new(0),
+                },
+            ),
+            false,
+        ),
+    ];
+    for (name, shape, outward) in rows {
+        let sized = with_fonts(|fs| {
+            let flow = style(18.0);
+            let run = real_run(QUATRAIN, &flow, fs);
+            let (rescaled, _) = place_lines(&run, &shape, &FIT, true, &flow, fs, None);
+            size(&rescaled.unwrap_or(run))
+        });
+        let (run, placed, trace) = frame_with(QUATRAIN, 18.0, &shape, &FIT, &RingLayout::whole(), outward);
+        assert_eq!(trace.lines.len(), 2, "precondition: {name}: two lines");
+        assert!(
+            !placed.truncated && trace.unheld.is_empty(),
+            "{name}: held whole ({:?})",
+            trace.unheld
+        );
+        assert!(
+            (size(&run) - sized).abs() < 1e-3,
+            "{name}: shrunk to {} from R27's {sized}",
+            size(&run)
+        );
+    }
+}
+
+/// An ordinary frame's work is a few lays of each line (ruling R38.3):
+/// each of the README's frames, `Fit`, at span whole and natural, tracks
+/// at most 160 lines — every lay of a line solving its gap from the
+/// straight path's answer, a few `track`s, and the clearance found in a
+/// few rounds. When a line's gap was bisected (a bracket doubled from
+/// one point, then twenty rounds) the same frames tracked 192 to 303.
+///
+/// Control: with the tracking bisected again, the frames pass their
+/// bound.
+#[test]
+fn test_flow_halves_an_ordinary_frame_lays_each_line_a_few_times() {
+    for (name, shape, text, points) in scenes() {
+        for layout in [RingLayout::whole(), RingLayout::natural()] {
+            let before = tracks_so_far();
+            let (_, placed, trace) = frame(text, points, &shape, &layout);
+            let tracks = tracks_so_far() - before;
+            assert_eq!(trace.lines.len(), 2, "precondition: {name}: two lines");
+            assert!(
+                !placed.truncated && trace.unheld.is_empty(),
+                "precondition: {name}: held whole"
+            );
+            assert!(
+                tracks <= 160,
+                "{name} at span {}: {tracks} lines tracked, at most 160",
+                layout.span.get()
             );
         }
     }

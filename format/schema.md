@@ -751,19 +751,26 @@ and at a narrower span each line still lies within where it lies at
 outward directions under them differ by more than 135° are not lines
 meeting at a point but lines stacked across a thin outline, the top
 line over the bottom one; those need only not touch, as two stacked
-lines of text need not be more than a line apart.
+lines of text need not be more than a line apart. On a flat outline the
+ends at a point are drawn back until their outward directions differ
+by more than 135°, and from there they are stacked, so the exception
+holds them.
 [`sides`](#sides) sets an ornament in each break.
 
-No two letters of a frame touch. Where its halves cannot hold its text
-so — a half too short for its line at the font's letter gap, a break
-the lines cannot be drawn far enough apart for, two letters touching —
-a `fit` frame is shrunk, within its bounds, to the largest size at which
-they hold, and a line its half still cannot hold is cut at its end. Text
-its half holds is never cut, so a frame can be left with a break short
-or two letters touching — one laid inside an outline thinner than its
-two lines, say, a `once` or `spread` frame at its size or a `fit` frame
-even at its least — and keeps its text whole. A break whose [sides](#sides) ornament would
-touch the text there is left without it.
+No two letters of a frame touch, and that wins over keeping its text
+whole. Where its halves cannot hold its text so — a half too short for
+its line at the font's letter gap, a break the lines cannot be drawn
+far enough apart for, two letters touching — a `fit` frame is shrunk,
+within its bounds, to the largest size at which they hold, and a line
+its half still cannot hold is cut at its end. Where two letters still
+touch — a frame laid inside an outline too thin to hold its two lines
+apart, a `once` or `spread` frame at its size or a `fit` frame even at
+its least — the second line is cut at its end to the most of it that
+touches nothing, or left out, and then the first likewise if two of its
+own letters still touch; a `once` frame is never shrunk. Text its
+half holds without touching is never cut, so a frame can be left with
+a break short and keep its text whole. A break whose [sides](#sides)
+ornament would touch the text there is left without it.
 
 `start` and `direction` do not apply: a frame's text always begins at
 the top left. They are kept and saved, and a ring set to `repeat` uses

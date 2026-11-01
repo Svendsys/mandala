@@ -40,7 +40,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, StartPoint, Weight,
 };
-use crate::flow::place::{frame_halves, MIN_TABLE_SPACING};
+use crate::flow::place::{frame_halves, place_on_closed_traced, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_closed, place_on_open, shape_box, shape_run, Curve, FlowSpan,
     Outline, PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
@@ -241,7 +241,8 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                     let direction = *choices.pick(&[Direction::Clockwise, Direction::CounterClockwise]);
                     let fit = fit(choices, &texts);
                     let outward = choices.one_in(2);
-                    let placed = place_on_closed(
+                    let mut trace = Trace::default();
+                    let placed = place_on_closed_traced(
                         &run,
                         &path,
                         start,
@@ -251,8 +252,15 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                         outward,
                         &flow,
                         &mut fs,
+                        Some(&mut trace),
                     );
-                    let whole = owes_whole(&run, &fit, frame_room(&path));
+                    // A frame laid inward round an outline too thin to
+                    // hold its two lines apart cuts the line that cannot
+                    // be held and says so (ruling R38.1): what it cut is
+                    // no longer owed. Outward, the lines lie on either
+                    // side of the outline, so nothing excuses a cut.
+                    let excused = !outward && !trace.cut_apart.is_empty();
+                    let whole = owes_whole(&run, &fit, frame_room(&path)) && !excused;
                     check_placed(&spans, &run, placed, whole, "around an outline")
                 }
                 2 => {

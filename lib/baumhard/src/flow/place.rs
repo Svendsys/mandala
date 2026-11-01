@@ -590,6 +590,10 @@ pub(crate) struct Trace {
     /// For a text frame, what its last resorts left unheld (ruling
     /// R35.2): empty when its halves hold it.
     pub(crate) unheld: Unheld,
+    /// For a text frame, the halves whose lines were cut, or left out,
+    /// because its outline is too thin to hold its two lines apart
+    /// (ruling R38.1): never overlap wins over never cut.
+    pub(crate) cut_apart: Vec<usize>,
 }
 
 /// What a text frame's last resorts — a `Fit` frame's shrink, then the

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! A text frame's two lines along its outline's diagonal halves (#291,
-//! rulings R32, R33, R33.1 and R34).
+//! rulings R32, R33, R33.1, R34, R35 and R38).
 //!
 //! The owner, on the frame text: "It should follow the path of its
 //! halve, this should be adjustable in the solution. But the point here
@@ -29,7 +29,7 @@
 //!
 //! **The span** (ruling R32, [`LineSpan`]). At [`LineSpan::NATURAL`]
 //! each line lies at its natural width: tracked at its font's own gap,
-//! centered on its half's apex (where R27 centers it) by bisection, and
+//! centered on its half's apex (where R27 centers it), and
 //! slid along its half where that would reach into a junction's
 //! clearance. At [`LineSpan::WHOLE`] each end is at its junction less
 //! the clearance; in between, each end moves by arc length that part of
@@ -41,8 +41,12 @@
 //! a word gap is `2g` plus a space. Each letter after the first is set
 //! by the ornament walk's pairwise rule (ruling R31), as far from the
 //! last letter's ink as owed, a zero gap included, so the line's length
-//! grows with `g` and `g` is solved by bisection: the line's first and
-//! last inks centered on its part's ends ([`track`]). A glyph with no
+//! grows with `g`, nearly as a line does, and `g` is solved by regula
+//! falsi from the straight path's answer: the line's first and last inks
+//! centered on its part's ends ([`track`], [`solve_tracking`]). Round a
+//! sharp corner, where no center sets a letter exactly `g` from the one
+//! before, it is set at the nearest center past that is at least `g`
+//! away ([`clear_of`]). A glyph with no
 //! outline steps as its box; a line of one letter sits centered on its
 //! part.
 //!
@@ -55,16 +59,23 @@
 //! are lines stacked across a thin outline, and need only not touch.
 //! Each line keeps its own clearance from each junction, grown round by
 //! round among the lines whose drawing back parts the ends there, at
-//! whole and then on at the span laid ([`Layout::lay_clear`]).
+//! whole and then on at the span laid ([`Layout::lay_clear`]): each
+//! round's step damped by how much drawing back eases the break wanted,
+//! and no line drawn back past its slack while the other line has room
+//! to give (rulings R38.1, R38.3).
 //!
 //! **No line is laid tighter than its font, and no two inks touch**
 //! (rulings R34, R35.2). Where the halves do not hold the frame so — a
 //! line its half less the clearance cannot hold at its font's gap, a
 //! junction left short of a break, two inks touching — the last resorts
 //! follow: a `Fit` frame is shrunk, within its bounds; a line held even
-//! so by nothing is cut at its end, the placement reporting it; and
-//! what is left unheld even so is reported in the trace
-//! ([`Unheld`](super::Unheld)), never silent. Every last resort is
+//! so by nothing is cut at its end, the placement reporting it; two
+//! inks that still touch — an outline too thin to hold the two lines
+//! apart — have the later line cut, or left out, the trace saying so
+//! ([`Trace::cut_apart`], ruling R38.1: never
+//! overlap wins over never cut); and what is left unheld even so is
+//! reported in the trace ([`Unheld`]), never silent.
+//! Every last resort is
 //! bounded in work (ruling R35.3): a shrink's probe looks first whether
 //! its lines fit at all, and a frame's tracking takes at most
 //! [`TRACK_BUDGET`] glyph steps.
@@ -91,18 +102,21 @@ use crate::flow::span::FlowSpan;
 use crate::font::fonts::glyph_outline_ink;
 use crate::font::SwashCache;
 
-/// The rounds of bisection a line's tracking is solved in: a bracket of
-/// a few points, a line's gap, closes to some millionths of a point.
+/// The most probes a line's tracking bracket is closed in ([`falsi`]):
+/// as many as a bisection of a few points to some millionths of one
+/// takes, though a line's length, near linear in its gap, closes in a
+/// few.
 const TRACK_ROUNDS: usize = 20;
 
-/// The most times a line's tracking bracket doubles looking for a gap
-/// too wide to fit: past `2^24` points nothing is laid.
+/// The most times a line's tracking bracket widens looking for a gap
+/// too wide to fit ([`solve_tracking`]): past about `2^24` points nothing
+/// is laid.
 const TRACK_DOUBLINGS: usize = 24;
 
 /// The most rounds a natural line is slid back from its bottom-right
-/// junction in: each sets its start so that its length from there ends
-/// at the clearance, its length changing only with the path's bend, so
-/// the miss shrinks by a fraction each round.
+/// junction in: each a secant probe of the start whose line ends at the
+/// clearance, its length changing only with the path's bend
+/// ([`Layout::slid`]).
 const SLIDE_ROUNDS: usize = 16;
 
 /// How near the clearance a slid line's end must come, in points.
@@ -142,9 +156,9 @@ const BACKTRACKS: usize = 6;
 /// presses a line after one halving says, near enough, that it cannot.
 const PROBE_BACKTRACKS: usize = 1;
 
-/// The most rounds of bisection a natural line is centered on its apex
-/// in, and how near equal its two arcs either side must come, in
-/// points.
+/// The most probes a natural line is centered on its apex in
+/// ([`falsi`]), and how near equal its two arcs either side must come,
+/// in points.
 const CENTER_ROUNDS: usize = 40;
 const CENTER_TOLERANCE: f32 = 1e-3;
 
@@ -387,7 +401,10 @@ fn track(
         let size = ink.max - ink.min;
         let natural = s + ink.min.x + extent(dir, size.x, size.y) * 0.5;
         let center = match last {
-            Some((at, half, from)) => walk.ink_gap_at((at, half), from, natural, owed.max(0.0), ink),
+            Some((at, half, from)) => {
+                let center = walk.ink_gap_at((at, half), from, natural, owed.max(0.0), ink);
+                clear_of(walk, (at, half), center, owed.max(0.0), ink)
+            }
             // The first ink centered at the part's start.
             None => sa,
         };
@@ -416,6 +433,53 @@ fn track(
         ends,
         boxes,
     }
+}
+
+/// `center`, the pairwise rule's center for `ink` after the ink whose
+/// center and half size are `last`, or — where the rule's turns closed
+/// on no center that sets it `owed` from that ink, round a sharp corner
+/// where an ink turns and jumps as its center crosses it — the nearest
+/// center past it at which it is at least `owed` away, by bisection: a
+/// line's letters are never nearer than its gap (rulings R31, R34).
+///
+/// Cost: one path lookup where the rule held, and where it did not a
+/// few strides and [`INK_ROUNDS`] lookups more.
+fn clear_of(walk: &PathWalk<'_>, (last, half): (Vec2, Vec2), center: f32, owed: f32, ink: Ink) -> f32 {
+    let reach = half + (ink.max - ink.min) * 0.5;
+    let gap = |c: f32| {
+        ((walk.ink_at(c, ink) - last).abs() - reach)
+            .max(Vec2::ZERO)
+            .length()
+    };
+    // A gap that is not a number is the rule's to keep.
+    let at = gap(center);
+    if at.is_nan() || at >= owed - INK_TOLERANCE {
+        return center;
+    }
+    let stride = owed + 2.0 * reach.max_element() + INK_TOLERANCE;
+    let mut low = center;
+    let mut high = center + stride;
+    let mut strides = 1;
+    while !gap(high).ge(&owed) {
+        if strides == INK_STRIDES {
+            return center;
+        }
+        low = high;
+        high += stride;
+        strides += 1;
+    }
+    for _ in 0..INK_ROUNDS {
+        let middle = 0.5 * (low + high);
+        if !(middle > low && middle < high) {
+            break;
+        }
+        if gap(middle) >= owed {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    high
 }
 
 /// One line of the frame before it is laid: the half it takes, its
@@ -463,6 +527,14 @@ struct Line {
     /// of one sits centered on its part, which its clearance moves
     /// nowhere in particular.
     tracks: bool,
+    /// How many gaps it has ([`solve_tracking`]'s `steps`).
+    steps: usize,
+    /// How much more clearance its part can give before it is shorter
+    /// than the line at its font's own gap, by arc length, never
+    /// negative: the room its part leaves, and its gaps past its font's
+    /// own. A line of one letter, which nothing presses, has no end of
+    /// it.
+    slack: f32,
 }
 
 /// A frame's lines being laid along its halves.
@@ -530,18 +602,14 @@ impl Layout<'_> {
             .short
     }
 
-    /// The line of `run` (inked) over `range` on half `k`, ready to lay:
+    /// The line of `run` (inked) of `clusters` on half `k`, ready to lay:
     /// `None` when it holds no glyph that is not a space. Its natural
-    /// ends are centered on the apex by bisection: the arc from its
-    /// first ink center to the apex equals the arc from the apex to its
-    /// last, to [`CENTER_TOLERANCE`].
+    /// ends are centered on the apex ([`falsi`]): the arc from its first
+    /// ink center to the apex equals the arc from the apex to its last,
+    /// to [`CENTER_TOLERANCE`].
     ///
-    /// Cost: [`CENTER_ROUNDS`] [`track`]s at most.
-    fn prepare(&self, run: &ShapedRun, k: usize, range: Range<usize>, cut: bool) -> Option<Prepared> {
-        self.prepare_clusters(run, k, clusters_of(&run.glyphs, range), cut)
-    }
-
-    /// [`prepare`](Self::prepare) over `clusters`.
+    /// Cost: one [`track`] at the apex and [`CENTER_ROUNDS`] at most, one
+    /// on a straight path.
     fn prepare_clusters(
         &self,
         run: &ShapedRun,
@@ -558,30 +626,31 @@ impl Layout<'_> {
         let apex = self.halves.apexes[k];
         let reach = |from: f32| self.reach(k, run, &clusters, from, natural_gap);
         // Off-center by `before - after`: positive while the start is too
-        // far back. It falls as the start moves on, the line's length
-        // changing only with the bend of the path under it.
-        let miss = |na: f32| (apex - na) - (na + reach(na) - apex);
+        // far back. It falls as the start moves on, by about twice as
+        // much, the line's length changing only with the bend of the path
+        // under it — so the line through the bracket's ends, at the
+        // apex less the whole line and at the apex, crosses zero at the
+        // straight path's answer, half the line back, and that is the
+        // first probe. A miss that is not a number reads as too far
+        // back: the start moves on, toward the apex, where the line is
+        // no longer than it was.
+        let miss = |na: f32| {
+            let long = reach(na);
+            let m = (apex - na) - (na + long - apex);
+            (if m.is_nan() { f32::INFINITY } else { m }, long)
+        };
         let whole = reach(apex).max(0.0);
-        let (mut low, mut high) = (apex - whole, apex);
-        let mut na = apex - 0.5 * whole;
-        for _ in 0..CENTER_ROUNDS {
-            na = 0.5 * (low + high);
-            let m = miss(na);
-            if m.abs() <= CENTER_TOLERANCE {
-                break;
-            }
-            // A miss that is not a number reads as too far back: the
-            // start moves on, toward the apex, where the line is no
-            // longer than it was.
-            if m.partial_cmp(&0.0) == Some(Ordering::Less) {
-                high = na;
-            } else {
-                low = na;
-            }
-        }
+        let (na, long) = falsi(
+            miss,
+            (apex - whole, whole, whole),
+            (apex, -whole, whole),
+            CENTER_TOLERANCE,
+            CENTER_TOLERANCE,
+            CENTER_ROUNDS,
+        );
         Some(Prepared {
             half: k,
-            natural: (na, na + reach(na)),
+            natural: (na, na + long),
             clusters,
             size,
             natural_gap,
@@ -617,13 +686,31 @@ impl Layout<'_> {
             nb = lo + reach(lo);
         }
         if nb > hi {
+            // The start whose line ends at `hi`: where the miss, the
+            // line's end past `hi`, is zero. It moves with the start
+            // nearly one for one, bent only by the path under the line,
+            // so each probe is where the line through the last two
+            // crosses zero (ruling R38.3) — the first, the start the
+            // line's length from `hi` gives.
             let mut long = reach(na);
+            let mut last: Option<(f32, f32)> = None;
+            let mut next = hi - long;
             for _ in 0..SLIDE_ROUNDS {
-                na = hi - long;
+                na = next;
                 long = reach(na);
-                if (na + long - hi).abs() <= SLIDE_TOLERANCE {
+                let miss = na + long - hi;
+                if miss.abs() <= SLIDE_TOLERANCE {
                     break;
                 }
+                let secant = last.map(|(at, was)| na - miss * (na - at) / (miss - was));
+                next = match secant {
+                    Some(x) if x.is_finite() => x,
+                    _ => hi - long,
+                };
+                if next == na {
+                    break;
+                }
+                last = Some((na, miss));
             }
             if na < lo {
                 na = lo;
@@ -677,14 +764,16 @@ impl Layout<'_> {
         // A line of one letter has no gap to track: it sits at
         // its font's gap, centered on its part.
         let letters = p.clusters.iter().filter(|c| !c.blank).count();
+        let steps = letters.saturating_sub(1) + p.clusters.iter().filter(|c| c.blank).count();
         let (gap, tracked) = if letters < 2 {
             let mid = 0.5 * (sa + sb);
             let gap = p.natural_gap;
             (gap, self.track(&walk, &run.glyphs, &p.clusters, (mid, mid), gap))
         } else {
-            let short = |g: f32| self.track(&walk, &run.glyphs, &p.clusters, (sa, sb), g).short;
-            let gap = solve_tracking(short);
-            let tracked = self.track(&walk, &run.glyphs, &p.clusters, (sa, sb), gap);
+            let (gap, tracked) = solve_tracking(
+                |g| self.track(&walk, &run.glyphs, &p.clusters, (sa, sb), g),
+                steps,
+            );
             if gap < p.natural_gap - GAP_TOLERANCE {
                 // A part its line fits at its font's gap is not one that
                 // presses it, where the slide that set it fell short of
@@ -709,17 +798,29 @@ impl Layout<'_> {
             size: p.size,
             pressed: letters >= 2 && gap < p.natural_gap - GAP_TOLERANCE,
             tracks: letters >= 2,
+            steps,
+            // The room the part leaves, and what its gaps hold past the
+            // font's own, measured where the line lies: on a bend an
+            // upright letter takes more of the path than at the apex.
+            slack: if letters >= 2 {
+                ((hi - lo) - (sb - sa) + steps as f32 * (gap - p.natural_gap)).max(0.0)
+            } else {
+                f32::INFINITY
+            },
         }
     }
 
-    /// The outward normal of the outline where line `l`'s end ink at
-    /// junction `j` (top-left 0, bottom-right 1) is set.
+    /// The outward normal of the outline at the point nearest line `l`'s
+    /// end ink at junction `j` (top-left 0, bottom-right 1): the normal
+    /// of the ink as it lies, which on a sharp tip turns away from the
+    /// normal where its center is set along the path. A line with no
+    /// ink takes the normal at its part's end.
     fn normal(&self, l: &Line, j: usize) -> Vec2 {
         let path = &self.halves.paths[l.half];
-        let s = if j == 0 {
-            l.part.0
-        } else {
-            l.part.1 - l.tracked.short
+        let s = match l.tracked.ends {
+            Some((first, last)) => path.nearest(middle(if j == 0 { first } else { last })),
+            None if j == 0 => l.part.0,
+            None => l.part.1,
         };
         path.outward(path.at(s).1)
     }
@@ -1088,8 +1189,9 @@ impl Layout<'_> {
     /// apart as [`apart`](Self::apart) wants — a distance that is not a
     /// number is not — and, with `side` (the ornament's run and glyphs),
     /// one whole copy fitting between them at its own floor gap: the
-    /// test [`SideArc::solve`] makes, so the two cannot disagree. With
-    /// it, the junction's measure.
+    /// test [`SideArc::solve`] makes before it solves anything, so the
+    /// two cannot disagree, and all this asks — whether, not how wide.
+    /// With it, the junction's measure.
     fn met(&self, laid: &[Line], side: Option<(&ShapedRun, &Range<usize>)>, j: usize) -> (bool, Junctions) {
         let measured = self.apart(laid);
         let words = measured.apart[j] >= measured.want[j] * CLEAR_MARGIN;
@@ -1098,7 +1200,7 @@ impl Layout<'_> {
             side_arcs(laid)
                 .into_iter()
                 .filter(|(at, _, _)| at[j])
-                .all(|(_, from, to)| side.arc(from, to).is_none_or(|arc| arc.solve(1).is_some()))
+                .all(|(_, from, to)| side.arc(from, to).is_none_or(|arc| arc.fits(1, arc.floor)))
         });
         (words && copy, measured)
     }
@@ -1166,13 +1268,19 @@ impl Layout<'_> {
         let mut stuck = [false; 2];
         let mut met_now: Option<[bool; 2]> = None;
         for _ in 0..CLEAR_ROUNDS {
-            if self.spent_all() {
+            // A pressed line ends the search: the frame goes to its last
+            // resorts from here — a shrink, a cut — and they grow the
+            // clearance again for what they leave, so rounds that grow it
+            // round a line already too long for its room are work spent
+            // on nothing (ruling R38.3).
+            if self.spent_all() || laid.iter().any(|l| l.pressed) {
                 break;
             }
             let mut grow: Clear = [[0.0; 2]; 2];
             let mut grown = false;
             let mut measured_depth = [f32::NEG_INFINITY; 2];
             let mut met_here = [false; 2];
+            let mut measured_helps = [[0.0_f32; 2]; 2];
             let parts: Vec<(f32, f32)> = laid.iter().map(|l| l.part).collect();
             // Below whole, a round that moved no end proves nothing.
             let moved = span >= 1.0
@@ -1185,6 +1293,9 @@ impl Layout<'_> {
                 let (met, measured) = self.met(&laid, side, j);
                 met_here[j] = met;
                 measured_depth[j] = measured.depth[j];
+                for (row, helps) in measured_helps.iter_mut().zip(measured.helps) {
+                    row[j] = helps[j].max(0.0);
+                }
                 if met || stuck[j] {
                     continue;
                 }
@@ -1202,7 +1313,8 @@ impl Layout<'_> {
                 }
                 let aim = measured.want[j] * CLEAR_MARGIN;
                 // Ends whose distance is not a number are short of it.
-                let shortfall = if matches!(apart.partial_cmp(&aim), None | Some(Ordering::Less)) {
+                let by_words = matches!(apart.partial_cmp(&aim), None | Some(Ordering::Less));
+                let shortfall = if by_words {
                     aim - apart
                 } else {
                     // Room for a copy of the side ornament is room along
@@ -1226,13 +1338,84 @@ impl Layout<'_> {
                     // copy at the least.
                     (room - if laid.len() > 1 { arc } else { apart }).max(0.25 * room)
                 };
-                let step = shortfall.max(MIN_GROWTH);
+                // Drawing a line back narrows its tracking, and so the word
+                // gap the break is measured in: by twice its gap's fall,
+                // which is the span's share of the clearance spread over
+                // its gaps. A step that counts only the inks' parting
+                // overshoots by that much, so it is cut to the share of
+                // the closing the parting makes (ruling R38.3); with no
+                // word gap in the measure — a break of a copy's room, or
+                // of not touching — nothing eases.
+                let eases = [0, 1].map(|k| {
+                    let words = laid.iter().filter(|l| l.word.is_some()).count();
+                    laid.iter()
+                        .find(|l| l.half == k)
+                        .filter(|l| {
+                            by_words
+                                && l.tracks
+                                && l.gap > 0.0
+                                && measured.want[j] > TOUCH
+                                && (words == 0 || l.word.is_some())
+                        })
+                        .map_or(0.0, |l| {
+                            let among = if words == 0 { laid.len() } else { words };
+                            // A single line owes half the break.
+                            let owed = if laid.len() > 1 { 1.0 } else { 0.5 };
+                            owed * JUNCTION_WORD_GAPS * 2.0 * span / (l.steps.max(1) * among.max(1)) as f32
+                        })
+                });
+                let shares = helps.map(|h| h / total.max(1.0));
+                let parting: f32 = (0..2).map(|k| helps[k] * shares[k]).sum();
+                let closing: f32 = (0..2).map(|k| (helps[k] + eases[k]) * shares[k]).sum();
+                let damped = if closing > 0.0 {
+                    shortfall * parting / closing
+                } else {
+                    shortfall
+                };
+                let step = damped.max(MIN_GROWTH);
                 for k in 0..2 {
                     // Two lines that both draw back part by about the
                     // sum: each gives its share.
-                    grow[k][j] = step * helps[k] / total.max(1.0);
+                    grow[k][j] = step * shares[k];
                 }
                 grown = true;
+            }
+            // A line drawn back past its slack is pressed, where the
+            // other line at the junction may have room to give: each
+            // line's growth is held to its slack, what is cut handed to
+            // the other line where it parts the ends there too and has
+            // room (rulings R34, R38.1). Where no line that parts a
+            // junction has room the round grows as it would, and the line
+            // it presses takes the last resorts.
+            for k in 0..2 {
+                let Some(line) = laid.iter().find(|l| l.half == k) else {
+                    continue;
+                };
+                let wanted = grow[k][0] + grow[k][1];
+                if wanted <= line.slack || wanted <= 0.0 {
+                    continue;
+                }
+                let other = 1 - k;
+                let mut room = laid
+                    .iter()
+                    .find(|l| l.half == other)
+                    .map_or(0.0, |l| (l.slack - grow[other][0] - grow[other][1]).max(0.0));
+                let keep = line.slack / wanted;
+                for j in 0..2 {
+                    let cut = grow[k][j] * (1.0 - keep);
+                    let theirs = measured_helps[other][j];
+                    let mine = measured_helps[k][j];
+                    let handed = if theirs > 0.0 {
+                        (cut * mine / theirs).min(room)
+                    } else {
+                        0.0
+                    };
+                    if line.slack >= MIN_GROWTH || handed > 0.0 {
+                        grow[k][j] -= cut;
+                        grow[other][j] += handed;
+                        room -= handed;
+                    }
+                }
             }
             for j in 0..2 {
                 before[j] = if grow[0][j] > 0.0 || grow[1][j] > 0.0 {
@@ -1247,6 +1430,14 @@ impl Layout<'_> {
                 break;
             }
             let pressed: Vec<bool> = laid.iter().map(|l| l.pressed).collect();
+            // A round that draws a line back past what slack it has,
+            // there being no other line with room to take it, presses it
+            // knowingly: halving it would only close on the same press in
+            // smaller steps (ruling R38.3).
+            let foreseen = laid
+                .iter()
+                .any(|l| !l.pressed && l.slack < MIN_GROWTH && grow[l.half][0] + grow[l.half][1] > l.slack);
+            let backtracks = if foreseen { 0 } else { backtracks };
             let mut scale = 1.0;
             for _ in 0..=backtracks {
                 let mut next = clear;
@@ -1316,30 +1507,163 @@ fn overlapping(lines: &[Line]) -> bool {
     false
 }
 
-/// The least gap at which `short` (a line's room left, growing smaller as
-/// the gap grows) is no longer positive: 0 where the line fills its part
-/// at no gap, and at most `2^TRACK_DOUBLINGS`.
-fn solve_tracking(short: impl Fn(f32) -> f32) -> f32 {
-    // No room even at no gap, or a room that is not a number: no gap.
-    if short(0.0).partial_cmp(&0.0) != Some(Ordering::Greater) {
-        return 0.0;
-    }
-    let (mut low, mut high) = (0.0_f32, 1.0_f32);
-    let mut doublings = 0;
-    while short(high) > 0.0 && doublings < TRACK_DOUBLINGS {
-        low = high;
-        high *= 2.0;
-        doublings += 1;
-    }
-    for _ in 0..TRACK_ROUNDS {
-        let mid = 0.5 * (low + high);
-        if short(mid) > 0.0 {
-            low = mid;
+/// One end of a bracket [`falsi`] closes: where, the function's value
+/// there, and what the function made there.
+type End<T> = (f32, f32, T);
+
+/// The root of a function falling through a bracket — positive at
+/// `low`, not positive at `high`, each an [`End`] — by the Illinois
+/// regula falsi: each probe where the line through the bracket's ends
+/// crosses zero, the value at an end kept twice running halved, so a
+/// bend in the function cannot hold one end still. A probe that would
+/// not fall strictly inside the bracket — an end that is not finite, a
+/// line that crosses outside — is taken at the middle instead. It stops
+/// at a probe within `tolerance` of zero, at a bracket no probe can
+/// narrow (the middle is an end: no change) or no wider than `width` —
+/// a function with a step in it, as a line's length is where a letter
+/// crosses a corner, need never come within tolerance — or after `rounds` probes,
+/// and returns the probe within tolerance, or else the low end: the
+/// root approached from where the function is still positive.
+///
+/// `f` returns a value that is a number: the caller says which side a
+/// value that is not one reads as.
+///
+/// Cost: `rounds` calls of `f` at most, and as few as one where the
+/// function is near a line — what a line's length is in its gap, and
+/// its centering in its start, on any path but a sharp bend.
+fn falsi<T>(
+    mut f: impl FnMut(f32) -> (f32, T),
+    mut low: End<T>,
+    mut high: End<T>,
+    tolerance: f32,
+    width: f32,
+    rounds: usize,
+) -> (f32, T) {
+    // The values the line is drawn through: an end's own, halved while
+    // the other end moves and it does not.
+    let (mut at_low, mut at_high) = (low.1, high.1);
+    let mut kept: Option<bool> = None;
+    for _ in 0..rounds {
+        let mid = 0.5 * (low.0 + high.0);
+        if !(mid > low.0 && mid < high.0) || high.0 - low.0 <= width {
+            break;
+        }
+        let crossing = low.0 + (high.0 - low.0) * at_low / (at_low - at_high);
+        let x = if at_low.is_finite() && at_high.is_finite() && crossing > low.0 && crossing < high.0 {
+            crossing
         } else {
-            high = mid;
+            mid
+        };
+        let (value, made) = f(x);
+        if value > 0.0 {
+            let near = value <= tolerance;
+            low = (x, value, made);
+            at_low = value;
+            if kept == Some(true) {
+                at_high *= 0.5;
+            }
+            kept = Some(true);
+            if near {
+                return (low.0, low.2);
+            }
+        } else {
+            let near = -value <= tolerance;
+            high = (x, value, made);
+            at_high = value;
+            if kept == Some(false) {
+                at_low *= 0.5;
+            }
+            kept = Some(false);
+            if near {
+                return (high.0, high.2);
+            }
         }
     }
-    low
+    (low.0, low.2)
+}
+
+/// How near its part's end a line's last ink is laid, by arc length, in
+/// points: [`solve_tracking`]'s tolerance, at most a millionth of a
+/// point of tracking per gap on a line of a hundred.
+const SHORT_TOLERANCE: f32 = 1e-4;
+
+/// How narrow a line's tracking bracket closes to, in points of gap: a
+/// tenth of [`GAP_TOLERANCE`], what the gap a line has is judged to.
+const GAP_PRECISION: f32 = 0.1 * GAP_TOLERANCE;
+
+/// The least gap at which `track` lays a line's last ink at its part's
+/// end — [`Tracked::short`] no longer positive, the room it leaves
+/// shrinking as the gap grows — and the line laid at it: 0 where the
+/// line fills its part at no gap, and at most about `2^TRACK_DOUBLINGS`.
+/// `steps` is how many gaps the line has, each letter's but the first and
+/// each space's — what its length grows by per point of gap on a
+/// straight path.
+///
+/// The line's length is its inks and spaces and `steps` times its gap,
+/// bent only by the path under it: so the first probe is that line's
+/// root, its room at no gap shared among its gaps, aimed a hair past it
+/// so it brackets the root, and [`falsi`] closes the bracket from there
+/// (ruling R38.3).
+///
+/// Cost: one [`track`] at no gap, one per bracket widening (none on a
+/// straight path), and [`falsi`]'s, at most [`TRACK_ROUNDS`].
+fn solve_tracking(track: impl Fn(f32) -> Tracked, steps: usize) -> (f32, Tracked) {
+    let at_zero = track(0.0);
+    // No room even at no gap, or a room that is not a number: no gap.
+    if at_zero.short.partial_cmp(&0.0) != Some(Ordering::Greater) {
+        return (0.0, at_zero);
+    }
+    // A room that is not a number reads as past the end.
+    let short = |t: &Tracked| {
+        if t.short.is_nan() {
+            f32::NEG_INFINITY
+        } else {
+            t.short
+        }
+    };
+    let aim = |g: f32| g * (1.0 + 1e-3) + f32::MIN_POSITIVE;
+    let mut low = (0.0_f32, at_zero.short, at_zero);
+    let mut g = aim(low.1 / steps.max(1) as f32);
+    for round in 0..TRACK_DOUBLINGS {
+        if !g.is_finite() {
+            break;
+        }
+        let tracked = track(g);
+        let value = short(&tracked);
+        if value <= 0.0 {
+            if -value <= SHORT_TOLERANCE {
+                return (g, tracked);
+            }
+            return falsi(
+                |g| {
+                    let t = track(g);
+                    (short(&t), t)
+                },
+                low,
+                (g, value, tracked),
+                SHORT_TOLERANCE,
+                GAP_PRECISION,
+                TRACK_ROUNDS,
+            );
+        }
+        if value <= SHORT_TOLERANCE {
+            return (g, tracked);
+        }
+        // Still short: on along the line through the last two probes,
+        // at least an eighth further, at least twice as far once a few
+        // probes have not reached it, at most four times.
+        let fall = (low.1 - value) / (g - low.0);
+        let line = if fall > 0.0 {
+            g + value / fall
+        } else {
+            f32::INFINITY
+        };
+        let least = if round < 4 { 1.125 } else { 2.0 };
+        let next = aim(line).clamp(g * least, g * 4.0);
+        low = (g, value, tracked);
+        g = next;
+    }
+    (low.0, low.2)
 }
 
 /// A line's letters' mean ink half size and their font's own gap — their
@@ -1443,12 +1767,29 @@ impl Layout<'_> {
     ///
     /// Cost: a bisection of [`track`]s over the line's clusters.
     fn cut(&self, run: &ShapedRun, p: &Prepared, clear: [f32; 2]) -> Option<Prepared> {
-        let (lo, hi) = self.room(p.half, clear);
+        let kept = self.held(run, p.half, &p.clusters, p.natural_gap, clear)?;
+        self.prepare_clusters(run, p.half, kept, true)
+    }
+
+    /// The longest prefix of whole `clusters` that half `half` less
+    /// `clear` holds at gap `gap`, its trailing spaces left out and at
+    /// least its first cluster kept: [`cut`](Self::cut)'s, before the
+    /// line is prepared. `None` when it holds them all, or there is
+    /// nothing to cut.
+    fn held(
+        &self,
+        run: &ShapedRun,
+        half: usize,
+        clusters: &[Cluster],
+        gap: f32,
+        clear: [f32; 2],
+    ) -> Option<Vec<Cluster>> {
+        let (lo, hi) = self.room(half, clear);
         let fits = |k: usize| {
-            let kept = trimmed(&p.clusters[..k]);
-            kept.is_empty() || self.reach(p.half, run, kept, lo, p.natural_gap) <= hi - lo + SLIDE_TOLERANCE
+            let kept = trimmed(&clusters[..k]);
+            kept.is_empty() || self.reach(half, run, kept, lo, gap) <= hi - lo + SLIDE_TOLERANCE
         };
-        let n = p.clusters.len();
+        let n = clusters.len();
         if fits(n) {
             return None;
         }
@@ -1463,18 +1804,66 @@ impl Layout<'_> {
                 over = mid;
             }
         }
-        let kept = trimmed(&p.clusters[..held.max(1)]).to_vec();
+        let kept = trimmed(&clusters[..held.max(1)]).to_vec();
         let kept = if kept.is_empty() {
-            p.clusters[..1].to_vec()
+            clusters[..1].to_vec()
         } else {
             kept
         };
         // Nothing left to cut: a line of one cluster its half cannot
         // hold is laid pressed.
-        if kept.len() == n {
-            return None;
+        (kept.len() != n).then_some(kept)
+    }
+}
+
+impl Layout<'_> {
+    /// Line `i` of `lines` cut at its end to the longest prefix of whole
+    /// clusters with which no two of the frame's inks touch, its
+    /// clearance found again ([`lay_clear`](Self::lay_clear)) — `None`
+    /// for the line when only leaving it out does so — or `None` when
+    /// even leaving it out leaves two inks touching (ruling R38.1).
+    ///
+    /// Cost: a bisection of clearance searches over the line's clusters.
+    fn cut_apart(
+        &self,
+        run: &ShapedRun,
+        lines: &[Prepared],
+        i: usize,
+        side: Option<(&ShapedRun, &Range<usize>)>,
+        span: f32,
+    ) -> Option<(Option<Prepared>, Cleared)> {
+        let p = &lines[i];
+        // The frame with line `i` cut to its first `k` clusters, and its
+        // lines laid, when no two of their inks touch.
+        let apart = |k: usize| {
+            let kept = trimmed(&p.clusters[..k]).to_vec();
+            let line = if kept.is_empty() {
+                None
+            } else {
+                self.prepare_clusters(run, p.half, kept, true)
+            };
+            let mut frame = lines.to_vec();
+            match &line {
+                Some(shorter) => frame[i] = shorter.clone(),
+                None => {
+                    frame.remove(i);
+                }
+            }
+            let cleared = self.lay_clear(run, &frame, side, span, [[0.0; 2]; 2], BACKTRACKS);
+            (!overlapping(&cleared.lines)).then_some((line, cleared))
+        };
+        let mut best = apart(0)?;
+        // Apart with none of the line's clusters, touching with all of
+        // them; the longest prefix apart lies between.
+        let (mut held, mut over) = (0, p.clusters.len());
+        while over - held > 1 && !self.spent_all() {
+            let mid = held + (over - held) / 2;
+            match apart(mid) {
+                Some(found) => (held, best) = (mid, found),
+                None => over = mid,
+            }
         }
-        self.prepare_clusters(run, p.half, kept, true)
+        Some(best)
     }
 }
 
@@ -1552,13 +1941,16 @@ fn trimmed(clusters: &[Cluster]) -> &[Cluster] {
 /// resolver gives it to the frame as its `sides` when `sides` is unset
 /// ([`resolve_ring`](crate::document::resolve::resolve_ring)).
 ///
-/// Cost: [`place_lines`]; per line a bisection of [`track`]s to center
-/// it and one per lay; the junction clearance [`CLEAR_ROUNDS`] rounds at
-/// most, at whole and again below it, each with a one-copy solve per
-/// side arc; a shrink [`SHRINK_ROUNDS`] probes, each one [`track`] a line
-/// and, where they fit, a clearance search; a cut a bisection of
-/// [`track`]s more and the clearance again, [`CUT_ROUNDS`] times at
-/// most; a side arc a bisection of lays per copy count weighed. In all,
+/// Cost: [`place_lines`]; per line a few [`track`]s to center it
+/// ([`falsi`]) and a few per lay ([`solve_tracking`]), each O(its
+/// glyphs); the junction clearance [`CLEAR_ROUNDS`] rounds at most, at
+/// whole and again below it, each laying again only the lines whose
+/// part it moved, with a one-copy fit per side arc; a shrink
+/// [`SHRINK_ROUNDS`] probes, each one [`track`] a line and, where they
+/// fit, a clearance search; a cut a bisection of [`track`]s more and the
+/// clearance again, [`CUT_ROUNDS`] times at most; a cut apart a
+/// bisection of clearance searches per line; a side arc a bisection of
+/// lays per copy count weighed. In all,
 /// at most [`TRACK_BUDGET`] glyph steps of tracking, and a few searches'
 /// worth past it.
 #[allow(clippy::too_many_arguments)] // `place_on_closed`'s, and the trace.
@@ -1648,7 +2040,24 @@ pub(super) fn place_halves(
         let drawn = inked(&drawn, fsys);
         let prepared: Vec<Prepared> = specs
             .iter()
-            .filter_map(|(k, range, cut)| lay.prepare(&drawn, *k, range.clone(), *cut))
+            .filter_map(|(k, range, cut)| {
+                let clusters = clusters_of(&drawn.glyphs, range.clone());
+                // A `Once` or `Spread` line its whole half cannot hold at
+                // its font's gap is cut to what that holds before it is
+                // prepared or any clearance is grown: a clearance only
+                // narrows its room, so the cut would take that much and
+                // more in the end (ruling R34), and a line centered and
+                // laid whole round after round is work spent on text that
+                // is never drawn (ruling R38.3).
+                let kept = (!sized)
+                    .then(|| letters_of(&clusters))
+                    .flatten()
+                    .and_then(|(_, gap)| lay.held(&drawn, *k, &clusters, gap, [0.0; 2]));
+                match kept {
+                    Some(kept) => lay.prepare_clusters(&drawn, *k, kept, true),
+                    None => lay.prepare_clusters(&drawn, *k, clusters, *cut),
+                }
+            })
             .collect();
         let too_long = |p: &Prepared| {
             let (lo, hi) = lay.room(p.half, seed[p.half]);
@@ -1742,7 +2151,7 @@ pub(super) fn place_halves(
     // its least — to what it can. A line its half holds is never cut
     // (ruling R34): a junction short of a break, or two inks touching,
     // where no line is pressed, is reported in the trace instead.
-    let mut truncated = natural.truncated && sized;
+    let mut truncated = (natural.truncated && sized) || prepared.iter().any(|p| p.cut);
     for _ in 0..CUT_ROUNDS {
         let holds = !lines.iter().any(|l| l.pressed) && met.iter().all(|&m| m) && !overlap;
         if holds || lay.spent_all() {
@@ -1762,9 +2171,36 @@ pub(super) fn place_halves(
             break;
         }
         truncated = true;
-        let cleared = lay.lay_clear(&drawn, &prepared, side_of, span, [[0.0; 2]; 2], BACKTRACKS);
+        // The clearance grown again from a share of the last: a cut
+        // line, stretched wider, wants as much or more (ruling R38.3).
+        let seed = clear.map(|half| half.map(|c| c * SEED_SHARE));
+        let cleared = lay.lay_clear(&drawn, &prepared, side_of, span, seed, BACKTRACKS);
         (lines, clear, met) = (cleared.lines, cleared.clear, cleared.met);
         overlap = overlapping(&lines);
+    }
+    // Two inks that still touch, every line its half holds: an outline
+    // too thin to hold the lines apart — inward round a flat outline,
+    // the two lines facing across it. The line that cannot be held
+    // beside the others is cut, the last first, to the longest prefix
+    // that touches nothing, or left out (ruling R38.1); a `Once` frame
+    // is not shrunk.
+    let mut cut_apart = Vec::new();
+    for i in (0..prepared.len()).rev() {
+        if !overlap || lay.spent_all() {
+            break;
+        }
+        if let Some((kept, cleared)) = lay.cut_apart(&drawn, &prepared, i, side_of, span) {
+            cut_apart.push(prepared[i].half);
+            match kept {
+                Some(p) => prepared[i] = p,
+                None => {
+                    prepared.remove(i);
+                }
+            }
+            (lines, met) = (cleared.lines, cleared.met);
+            overlap = false;
+            truncated = true;
+        }
     }
     let mut unheld = unheld_of(&lines, met, overlap);
 
@@ -1829,6 +2265,7 @@ pub(super) fn place_halves(
             })
             .collect();
         trace.unheld = unheld;
+        trace.cut_apart = cut_apart;
     }
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;

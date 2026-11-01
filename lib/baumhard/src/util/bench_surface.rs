@@ -364,6 +364,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
     use PlainShape::*;
     &[
         (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_an_ordinary_frame_lays_each_line_a_few_times",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "gfx_structs/tests/shape_tests.rs",
             "test_from_style_string_log_routing_is_pinned",
             CannotCompileIntoTheLibrary,
