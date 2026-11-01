@@ -859,6 +859,10 @@ impl Document {
     pub fn out_guard(&mut self) -> OutGuard<'_> { todo!() }
     pub fn out_elided(&mut self) -> OutGuard { todo!() }
     pub fn foreign(&mut self) -> std::slice::IterMut<u8> { todo!() }
+    pub fn boxed(&self) -> Box<dyn Any> { todo!() }
+    pub fn chosen<T: Default>(&self) -> T { todo!() }
+    pub fn byte<'a>(&'a mut self) -> Option<&'a u8> { todo!() }
+    pub fn shared(&mut self) -> Option<&u8> { todo!() }
     pub fn children(&self) -> impl Iterator<Item = NodeId> + '_ { todo!() }
     pub fn palettes(&self) -> impl Iterator<Item = &mut PaletteData> + '_ { todo!() }
     pub fn apply(&mut self, n: u32) -> Result<Revision, ApplyError> { todo!() }
@@ -930,6 +934,9 @@ hidden_items!();
             "Document::out_guard: a type that can hold a borrow of a `&mut` argument",
             "Document::out_elided: a type that can hold a borrow of a `&mut` argument",
             "Document::foreign: a type that can hold a borrow of a `&mut` argument",
+            "Document::boxed: a `dyn Trait`",
+            "Document::chosen: a caller-chosen type parameter",
+            "Document::byte: a borrow of a `&mut` argument",
             "Document::palettes: an `impl Trait`",
             "Document::engine: a `&mut`",
             "Document: tree_by_macro!",
@@ -961,6 +968,7 @@ hidden_items!();
             "Document::children",
             "Document::apply",
             "Document::read",
+            "Document::shared",
             "Document::fmt",
             "bytes",
             "element",
