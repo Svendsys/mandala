@@ -86,7 +86,9 @@ pub(super) enum Arrangement<'j> {
 /// parent — read for the parent of each subtree's top by one climb
 /// within that parent's node ([`owning_node`]), never per level of the
 /// tree (§20 rule 11) — and, for an element other than a node, its rank
-/// is found by walking back through the siblings of its own key alone
+/// is found by walking back through the siblings of its own key alone,
+/// each walked through once per call however many leave together (a
+/// memo of the ranks found)
 /// ([`RowsBefore::prev`](crate::engine::journal::RowsBefore::prev) in the arrangement before a journal, the arena
 /// otherwise). No row is read whole: the work is the journal's, and the
 /// same-key run of each removed element that is not a node (ruling R36).
@@ -134,6 +136,10 @@ pub(super) fn addresses(
             None => arena.get(id)?.previous_sibling(),
         }
     };
+    // The rank of every sibling this call has walked through, and the
+    // siblings of the walk under way.
+    let mut ranks: FxHashMap<NodeId, usize> = FxHashMap::default();
+    let mut passed: Vec<NodeId> = Vec::new();
     let mut out = Vec::new();
     for id in leaving {
         let Some(element) = state(id) else {
@@ -146,16 +152,31 @@ pub(super) fn addresses(
             (DocElement::Node(_), _) => None,
             (_, None) => Some(0),
             (_, Some(parent)) => {
+                // Walk back to the run's start, or to a sibling this call
+                // has ranked already, then rank every sibling passed: each
+                // sibling is walked through once per call, however many of
+                // its run leave together.
                 let key = element.key();
-                let mut rank = 0;
+                passed.clear();
                 let mut at = id;
-                while let Some(before) =
-                    prev(parent, at).filter(|&b| state(b).map(TreeElement::key) == Some(key))
-                {
-                    rank += 1;
-                    at = before;
+                let mut base = 0;
+                loop {
+                    passed.push(at);
+                    match prev(parent, at).filter(|&b| state(b).map(TreeElement::key) == Some(key)) {
+                        Some(before) => match ranks.get(&before) {
+                            Some(&rank) => {
+                                base = rank + 1;
+                                break;
+                            }
+                            None => at = before,
+                        },
+                        None => break,
+                    }
                 }
-                Some(rank)
+                for (offset, &sibling) in passed.iter().rev().enumerate() {
+                    ranks.insert(sibling, base + offset);
+                }
+                ranks.get(&id).copied()
             }
         };
         let node = match (element, parent) {

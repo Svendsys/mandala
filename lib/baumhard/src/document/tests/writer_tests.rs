@@ -1047,10 +1047,15 @@ fn staged_something(doc: &mut Document) -> bool {
 /// or yield to an apply, a begin, an undo or a redo, saves with a stage
 /// open — never loses its place: every undo and redo the model expects
 /// succeeds and lands on the saved text the model holds for it, so no
-/// journal is ever refused as out of order (A5's version stamps), the
-/// dirty flag is the model's, and every state is consistent. The session
-/// must have made each kind of move, or it proves nothing about the one
-/// it skipped.
+/// journal is ever refused as out of order (A5's version stamps), and
+/// the dirty flag is the model's, after every move. The state is held to
+/// `assert_consistent` after every undo, every redo and every yield —
+/// where the indexes are likeliest to drift — and after every tenth move
+/// otherwise. Each kind of move is counted only when it did what it is
+/// named for — an undo that undid, a cancel that took something back, a
+/// yield of an animation that changed something — and the session must
+/// have made each several times, or it proves nothing about the one it
+/// skipped (ruling R37).
 pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
     use crate::document::writer::transaction::TransactionKind;
     use crate::engine::interpolate::Snap;
@@ -1060,6 +1065,8 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
     let mut rng = Lcg(0x5eed);
     let mut done = [0usize; 16];
     for step in 0..600 {
+        // Set by every move that undoes, redoes or yields.
+        let mut check = step % 10 == 0;
         match rng.below(10) {
             0 | 1 => {
                 if let Some(request) = random_request(&doc, &mut rng) {
@@ -1075,12 +1082,16 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                 }
             }
             2 => {
-                assert_eq!(doc.undo().is_some(), model.undo(), "step {step}: undo");
-                done[1] += 1;
+                let undone = model.undo();
+                assert_eq!(doc.undo().is_some(), undone, "step {step}: undo");
+                done[1] += usize::from(undone);
+                check = true;
             }
             3 => {
-                assert_eq!(doc.redo().is_some(), model.redo(), "step {step}: redo");
-                done[2] += 1;
+                let redone = model.redo();
+                assert_eq!(doc.redo().is_some(), redone, "step {step}: redo");
+                done[2] += usize::from(redone);
+                check = true;
             }
             4 => {
                 let limit = 2 + rng.below(10);
@@ -1109,13 +1120,16 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                         let _ = doc.stage(&tx, request);
                     }
                 }
+                // Whether the transaction holds anything a save, a cancel
+                // or an undo has to take back.
+                let holds = saved(&doc) != base;
                 if rng.below(3) == 0 {
                     assert_eq!(
                         doc.save_json().unwrap(),
                         base,
                         "step {step}: a save writes the committed state"
                     );
-                    done[5] += 1;
+                    done[5] += usize::from(holds);
                 }
                 match rng.below(5) {
                     0 | 1 => {
@@ -1134,18 +1148,29 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                     2 => {
                         doc.cancel(tx);
                         assert_eq!(saved(&doc), base, "step {step}: the cancel restores");
-                        done[7] += 1;
+                        done[7] += usize::from(holds);
                     }
                     3 => {
                         let revision = doc.revision();
                         let answer = if rng.below(2) == 0 { doc.undo() } else { doc.redo() };
-                        assert_eq!(
-                            answer,
-                            Some(revision),
-                            "step {step}: the undo or redo only cancels"
-                        );
+                        // A change the saved text cannot show — a portal's
+                        // kept path — still counts as one the cancel took
+                        // back, so only a visible one decides the answer.
+                        if holds {
+                            assert_eq!(
+                                answer,
+                                Some(revision),
+                                "step {step}: the undo or redo only cancels"
+                            );
+                        } else {
+                            assert!(
+                                answer.is_none() || answer == Some(revision),
+                                "step {step}: and answers None for a transaction that changed nothing"
+                            );
+                        }
                         assert_eq!(saved(&doc), base, "step {step}: and stops there");
-                        done[8] += 1;
+                        done[8] += usize::from(holds);
+                        check = true;
                     }
                     _ => {
                         let request = random_request(&doc, &mut rng).unwrap_or_else(|| fade(Vec::new(), 0.5));
@@ -1186,7 +1211,7 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                         assert_eq!(committed, changed, "step {step}: the animation commits");
                         assert_eq!(saved(&doc), full, "step {step}: at its end");
                         finish(&mut model);
-                        done[10] += 1;
+                        done[10] += usize::from(changed);
                     }
                     1 => {
                         finish(&mut model);
@@ -1197,10 +1222,11 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                                 Ok(now) if now != committed => model.push(saved(&doc)),
                                 _ => {}
                             }
+                            done[11] += usize::from(changed);
                         } else {
                             doc.commit(tx);
                         }
-                        done[11] += 1;
+                        check = true;
                     }
                     2 => {
                         finish(&mut model);
@@ -1209,7 +1235,8 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                             .unwrap();
                         assert_eq!(saved(&doc), full, "step {step}: a begin finishes the animation");
                         doc.cancel(next);
-                        done[12] += 1;
+                        done[12] += usize::from(changed);
+                        check = true;
                     }
                     3 => {
                         finish(&mut model);
@@ -1218,7 +1245,8 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                             model.undo(),
                             "step {step}: an undo of the animation"
                         );
-                        done[13] += 1;
+                        done[13] += usize::from(changed);
+                        check = true;
                     }
                     _ => {
                         finish(&mut model);
@@ -1229,7 +1257,8 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                             expected || changed,
                             "step {step}: a redo after the animation"
                         );
-                        done[14] += 1;
+                        done[14] += usize::from(changed);
+                        check = true;
                     }
                 }
             }
@@ -1245,10 +1274,10 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
             model.is_dirty(),
             "step {step}: dirty is the model's"
         );
-        if step % 10 == 0 {
+        if check {
             assert_consistent(&doc, "a session step");
+            done[15] += 1;
         }
-        done[15] += 1;
     }
     assert!(
         done.iter().all(|&n| n >= 3),

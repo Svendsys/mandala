@@ -884,6 +884,8 @@ impl<E: TreeElement> RowsBefore<'_, E> {
         }
         let mut kept = arena.get(node)?.previous_sibling();
         while let Some(moved) = kept.filter(|sibling| self.moved.contains(sibling)) {
+            #[cfg(test)]
+            tests_support::count_row_step();
             kept = arena.get(moved).and_then(|sibling| sibling.previous_sibling());
         }
         // Every moved node is placed once; the budget keeps a run finite
@@ -891,6 +893,8 @@ impl<E: TreeElement> RowsBefore<'_, E> {
         let mut budget = self.follows.len();
         let mut last = kept;
         while let Some(&next) = self.follows.get(&(parent, last)).filter(|_| budget > 0) {
+            #[cfg(test)]
+            tests_support::count_row_step();
             budget -= 1;
             last = Some(next);
         }
@@ -1703,14 +1707,27 @@ pub(in crate::engine) fn move_among_siblings<E: TreeElement>(
     siblings::reattach_in_row(arena, parent, node, prev);
 }
 
-/// What the tests read of a journal's close: how many steps the climbs
-/// of [`Presence`] have taken on this thread. Compiled for tests only.
+/// What the tests read of a journal's work: how many steps the climbs
+/// of [`Presence`] have taken on this thread, and how many siblings
+/// [`RowsBefore::prev`] has passed. Compiled for tests only.
 #[cfg(test)]
 pub(crate) mod tests_support {
     use std::cell::Cell;
 
     thread_local! {
         static PRESENCE_STEPS: Cell<usize> = const { Cell::new(0) };
+        static ROW_STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more sibling passed inside `RowsBefore::prev`: a moved one
+    /// skipped, or one of a moved run followed.
+    pub(super) fn count_row_step() {
+        ROW_STEPS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The siblings every `RowsBefore::prev` on this thread has passed.
+    pub(crate) fn row_steps() -> usize {
+        ROW_STEPS.with(Cell::get)
     }
 
     /// One more node climbed through.

@@ -435,10 +435,12 @@ impl Document {
         Some(revision)
     }
 
-    /// Cancel the open transaction: see [`Document::cancel`].
-    pub(super) fn cancel_open(&mut self) {
+    /// Cancel the open transaction: see [`Document::cancel`]. Whether the
+    /// cancel took anything back — a transaction that changed nothing
+    /// cancels to nothing.
+    pub(super) fn cancel_open(&mut self) -> bool {
         let Some(mut open) = self.writer.open.take() else {
-            return;
+            return false;
         };
         let mut done = Done::default();
         if let Some(mut stage) = open.stage.take() {
@@ -457,7 +459,9 @@ impl Document {
             }
             journal.discard(&mut self.tree);
         }
+        let reverted = !done.touched.is_empty() || !done.removed.is_empty();
         self.record(open.source, done);
+        reverted
     }
 
     /// For a save: write the open transaction's stage and base back to

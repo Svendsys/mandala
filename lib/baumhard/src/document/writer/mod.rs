@@ -150,8 +150,10 @@ pub struct Revision(pub u64);
 enum Settled {
     /// Nothing was open, or an animation that changed nothing.
     Nothing,
-    /// An interactive transaction was cancelled.
+    /// An interactive transaction was cancelled, and took something back.
     Cancelled,
+    /// An interactive transaction that had changed nothing was cancelled.
+    CancelledNothing,
     /// An animated transaction was committed as an entry.
     Committed,
 }
@@ -247,8 +249,10 @@ impl Document {
     /// the new revision, or `None` when nothing changed.
     ///
     /// With a transaction open, one undo is one visible step (ruling R36
-    /// on #238): an interactive transaction is cancelled and the undo
-    /// stops there, returning the current revision; an animated one
+    /// on #238, R37): an interactive transaction is cancelled and the undo
+    /// stops there, returning the current revision when the cancel took
+    /// something back and `None` when the transaction had changed nothing;
+    /// an animated one
     /// yields as D28 has it — fast-forwarded and committed — and the undo
     /// then reverts that entry, which a redo brings back.
     ///
@@ -256,8 +260,10 @@ impl Document {
     /// touches) for the derived state and the record.
     pub fn undo(&mut self) -> Option<Revision> {
         self.mutate(|doc| {
-            if doc.settle_open() == Settled::Cancelled {
-                return Some(doc.revision());
+            match doc.settle_open() {
+                Settled::Cancelled => return Some(doc.revision()),
+                Settled::CancelledNothing => return None,
+                Settled::Nothing | Settled::Committed => {}
             }
             let mut entry = doc.writer.history.take_applied()?;
             let mut touched = Vec::new();
@@ -303,8 +309,10 @@ impl Document {
     pub fn redo(&mut self) -> Option<Revision> {
         self.mutate(|doc| {
             let settled = doc.settle_open();
-            if settled == Settled::Cancelled {
-                return Some(doc.revision());
+            match settled {
+                Settled::Cancelled => return Some(doc.revision()),
+                Settled::CancelledNothing => return None,
+                Settled::Nothing | Settled::Committed => {}
             }
             let Some(mut entry) = doc.writer.history.take_undone() else {
                 return (settled == Settled::Committed).then(|| doc.revision());
@@ -435,8 +443,11 @@ impl Document {
         match self.writer.open.as_ref().map(|open| open.kind()) {
             None => Settled::Nothing,
             Some(TransactionKind::Interactive) => {
-                self.cancel_open();
-                Settled::Cancelled
+                if self.cancel_open() {
+                    Settled::Cancelled
+                } else {
+                    Settled::CancelledNothing
+                }
             }
             Some(TransactionKind::Animated) => match self.commit_open() {
                 Some(_) => Settled::Committed,

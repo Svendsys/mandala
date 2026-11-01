@@ -161,7 +161,9 @@ fn test_writer_undo_and_redo_cancel_an_open_transaction() {
 /// before stays — returning the revision as it is; the handle is then
 /// stale. A redo does the same. With an empty history, the undo that
 /// cancels still answers `Some`, since the document changed; with
-/// nothing open and nothing to undo, `None`.
+/// nothing open and nothing to undo, `None`; and one that cancels a
+/// transaction that had changed nothing answers `None` and stops there
+/// (ruling R37).
 pub fn do_writer_undo_and_redo_cancel_an_open_transaction() {
     let (mut doc, ids) = built();
     let original = saved(&doc);
@@ -174,6 +176,24 @@ pub fn do_writer_undo_and_redo_cancel_an_open_transaction() {
     );
     assert_eq!(saved(&doc), original, "the stage is gone");
     assert_eq!(doc.undo(), None, "nothing open, nothing to undo");
+
+    // A transaction that changed nothing — no stage, or a stage that is
+    // a no-op — cancels to nothing: the undo or redo answers `None`, and
+    // stops there all the same (ruling R37).
+    let (mut quiet, quiet_ids) = built();
+    quiet
+        .apply(fade(vec![quiet_ids.b], 0.5), ChangeSource::Action)
+        .unwrap();
+    let faded_b = saved(&quiet);
+    let tx = quiet.begin(ChangeSource::Input, Interactive).unwrap();
+    assert_eq!(quiet.undo(), None, "a transaction with no stage");
+    assert_eq!(saved(&quiet), faded_b, "and the entry before is not undone");
+    assert_eq!(quiet.commit(tx), None, "the transaction has ended");
+    let tx = quiet.begin(ChangeSource::Input, Interactive).unwrap();
+    quiet.stage(&tx, fade(vec![quiet_ids.b], 0.5)).unwrap();
+    assert_eq!(quiet.redo(), None, "a no-op stage");
+    assert_eq!(quiet.commit(tx), None);
+    assert_eq!(quiet.history().count(), 1, "the entry before stays");
 
     doc.apply(fade(vec![ids.a], 0.5), ChangeSource::Action).unwrap();
     let faded = saved(&doc);
