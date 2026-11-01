@@ -828,6 +828,16 @@ fn test_flow_halves_hold_on_every_aspect() {
     do_flow_halves_hold_on_every_aspect();
 }
 
+/// The lines this thread has tracked (`halves::TRACKS`, a test
+/// counter): none counted in a build that is not a test's — a bench's,
+/// where this tree is compiled too.
+fn tracks_so_far() -> usize {
+    #[cfg(test)]
+    return crate::flow::place::halves::TRACKS.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    0
+}
+
 /// The halves' guarantees hold from a circle to an outline fifty times
 /// wider than tall, an ellipse and rectangles sharp and rounded, and on
 /// a 600 × 12 rectangle with 22 pt text, taller than the outline:
@@ -845,8 +855,10 @@ fn test_flow_halves_hold_on_every_aspect() {
 /// frame laid inward whose two lines' inks are together taller than the
 /// outline may, and the rest must hold.
 pub fn do_flow_halves_hold_on_every_aspect() {
-    /// The most lines a frame here may track (ruling R35.3).
-    const MOST_TRACKS: usize = usize::MAX;
+    /// The most lines a frame here may track (ruling R35.3): the most
+    /// any does is 17,031, the crowded text shrunk round a flat outline,
+    /// and without the no-progress exit 18,741.
+    const MOST_TRACKS: usize = 17_500;
     let report = std::env::var_os("ZZ").is_some();
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     // Each outline, its height, and the size its text is set at.
@@ -944,10 +956,10 @@ pub fn do_flow_halves_hold_on_every_aspect() {
                                 sides: sides.clone(),
                                 ..RingLayout::whole()
                             };
-                            crate::flow::place::halves::TRACKS.with(|count| count.set(0));
+                            let before = tracks_so_far();
                             let (run, placed, trace) =
                                 frame_with(text, *points, shape, &fit, &layout, outward);
-                            let tracks = crate::flow::place::halves::TRACKS.with(std::cell::Cell::get);
+                            let tracks = tracks_so_far() - before;
                             most_tracks = most_tracks.max(tracks);
                             if tracks > MOST_TRACKS {
                                 faults.push(format!("{what}: {tracks} lines tracked"));
@@ -1799,5 +1811,43 @@ pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines()
             "{fit:?}: every position finite"
         );
         assert!(trace.unheld.is_empty(), "{fit:?}: nothing reported unheld");
+    }
+}
+
+#[test]
+fn test_flow_halves_a_side_that_would_touch_is_left_out() {
+    do_flow_halves_a_side_that_would_touch_is_left_out();
+}
+
+/// A side ornament whose copies would touch the text, or fold back
+/// across themselves round a thin tip, is left out of its break and
+/// reported (ruling R35.2): the quatrain laid inward round a 600 × 12
+/// ellipse with `"·"` sides, at span ½, where each tip's arc wraps the
+/// tip inside an outline thinner than its two lines. No two inks touch,
+/// text or ornament. Precondition: the trace reports a break left
+/// without its ornament. Control: with every arc kept, copies touch.
+pub fn do_flow_halves_a_side_that_would_touch_is_left_out() {
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
+    let layout = RingLayout {
+        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+        sides: Some(("·".to_owned(), Rgba::opaque(9, 9, 9))),
+        ..RingLayout::whole()
+    };
+    let (run, placed, trace) = frame_with(QUATRAIN, 18.0, &shape, &FIT, &layout, false);
+    assert!(
+        !trace.unheld.sides.is_empty(),
+        "precondition: a break is left without its ornament ({:?})",
+        trace.unheld
+    );
+    let boxes: Vec<(Vec2, Vec2)> = inks(&run, &placed).into_iter().flatten().collect();
+    for (i, a) in boxes.iter().enumerate() {
+        for b in &boxes[i + 1..] {
+            assert!(
+                gap(*a, *b) > 0.0,
+                "two inks touch at {:?} and {:?}",
+                center(*a),
+                center(*b)
+            );
+        }
     }
 }

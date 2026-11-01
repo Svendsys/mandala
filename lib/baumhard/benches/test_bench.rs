@@ -2388,6 +2388,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_one_word_line_keeps_its_neighbor_whole", |b| {
         b.iter(do_flow_halves_a_one_word_line_keeps_its_neighbor_whole)
     });
+    c.bench_function("flow_halves_a_side_that_would_touch_is_left_out", |b| {
+        b.iter(do_flow_halves_a_side_that_would_touch_is_left_out)
+    });
     c.bench_function("flow_halves_the_break_holds_at_the_span_laid", |b| {
         b.iter(do_flow_halves_the_break_holds_at_the_span_laid)
     });
