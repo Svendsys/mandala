@@ -13,6 +13,14 @@
 //! `lib/baumhard/CONVENTIONS.md` — read them before touching this
 //! crate.
 
+// CONVENTIONS.md's no-unsafe rule, held by the compiler rather than by
+// review. It also closes the raw-pointer route around the document's
+// privacy (ruling R39 on #238): a `*mut` handed out of `document/`
+// cannot be dereferenced in this crate, and `util::document_surface`
+// refuses one in any signature or type that reaches past `document/`,
+// crates downstream included. The counting allocator's `unsafe` lives
+// in `cap`, outside the crate.
+#![forbid(unsafe_code)]
 // CODE_CONVENTIONS §9 closes with "Bare `unwrap()` outside tests is
 // a bug", and this is the half of that rule an editor can tell you
 // about while you type. `util::unwrap_posture` is the other half —

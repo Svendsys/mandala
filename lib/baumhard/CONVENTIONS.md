@@ -366,9 +366,11 @@ worst target.
   `ApplyOperation::apply_ref`, which clones only on the arms that
   consume the payload — `Noop` and `Delete` must never deep-copy a
   `GlyphMatrix` just to discard it.
-- **`unsafe` is forbidden.** There is no `unsafe` block anywhere in
-  Baumhard today; keep it that way. New `unsafe` is a roadmap-scale
-  decision and needs a benchmark plus a review. `unsafe` for lifetime
+- **`unsafe` is forbidden**, by the compiler: `#![forbid(unsafe_code)]`
+  sits on the crate root (`src/lib.rs`), so there is no `unsafe` block
+  anywhere in Baumhard and none can be added beside it. Lifting the
+  lint for new `unsafe` is a roadmap-scale decision and needs a
+  benchmark plus a review. `unsafe` for lifetime
   laundering, raw pointer arithmetic, or "I know better than the
   borrow checker" is never acceptable.
 - **Every user-visible primitive has a criterion bench.** New
