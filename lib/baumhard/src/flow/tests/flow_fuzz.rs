@@ -156,7 +156,7 @@ pub(crate) fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames
 /// (rulings R45.1, R47.2): each frame's budget and its overshoot past it
 /// (`frame_work_steps`), the most its work may take.
 #[derive(Default)]
-struct InputWork {
+pub(crate) struct InputWork {
     frames: usize,
     steps: usize,
 }
@@ -167,7 +167,7 @@ impl InputWork {
     /// `frame_work_steps`. The engine scales a frame's budget by its
     /// text's glyphs once cut, never more than the run has, and spends
     /// no more than its budget and its overshoot: properties.
-    fn frame(
+    pub(crate) fn frame(
         &mut self,
         run: &ShapedRun,
         ornament: Option<&ShapedRun>,

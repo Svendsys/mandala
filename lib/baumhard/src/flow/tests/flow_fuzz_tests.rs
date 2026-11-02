@@ -1384,7 +1384,7 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
 /// 14.95 s; 151 take 466,014, 15.05 s.
 ///
 /// Control: flow_raw's three frames an input, as before R45, red — three
-/// floor frames take 1,202,904 steps, 38.85 s.
+/// floor frames take 1,206,315 steps, 38.96 s.
 ///
 /// [`RAW_FRAMES`]: crate::flow::tests::flow_fuzz::RAW_FRAMES
 /// [`STRUCTURED_FRAMES`]: crate::flow::tests::flow_fuzz::STRUCTURED_FRAMES
@@ -1489,6 +1489,38 @@ fn test_the_raw_harness_draws_every_frame_fit() {
             "the finding {name} draws a Fit frame first"
         );
     }
+}
+
+/// R47.2's property: a frame that takes more than its budget and the
+/// overshoot its weights allow (`frame_work_steps`) fails, as does one
+/// the engine budgets more than its glyphs give.
+///
+/// Control: with the property never failing, red.
+#[test]
+fn test_the_flow_properties_find_a_frame_past_its_work() {
+    use crate::flow::place::halves::frame_work_steps;
+    use crate::flow::place::Trace;
+    use crate::flow::tests::flow_fuzz::InputWork;
+    let flow = style(16.0);
+    let run = with_fonts(|fs| real_run("plain text", &flow, fs));
+    let most = frame_work_steps(&run, None, false);
+    let mut trace = Trace {
+        spent: most,
+        ..Trace::default()
+    };
+    assert!(
+        InputWork::default()
+            .frame(&run, None, false, &trace, "a frame")
+            .is_ok(),
+        "precondition: a frame that takes its budget and its overshoot holds"
+    );
+    trace.spent = most + 1;
+    assert!(
+        InputWork::default()
+            .frame(&run, None, false, &trace, "a frame")
+            .is_err(),
+        "a frame past its budget and its overshoot fails"
+    );
 }
 
 /// R45.1's property: an input whose frames may take more than one input
