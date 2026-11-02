@@ -359,9 +359,9 @@ the parity trajectory (or why none is owed):
 
 ## Common tasks
 
-- **Run tests**: `./test.sh` runs `cargo test --workspace` — all five
-  members, `mandala`, `baumhard`, `mandala_derive`, `maptool` and
-  `mandalactl` — prints a test count, then type-checks the benchmark targets
+- **Run tests**: `./test.sh` runs `cargo test --workspace` — all six
+  members, `mandala`, `baumhard`, `mandala_derive`, `maptool`,
+  `mandalactl` and the generated `workspace-hack` (below) — prints a test count, then type-checks the benchmark targets
   (`cargo check --workspace --benches`, which runs no benchmark) and
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
   cross-platform drift can pass a green run. **With one caveat about
@@ -511,6 +511,17 @@ the parity trajectory (or why none is owed):
   regression test and fixed where it lives, never by weakening a check;
   a sub-issue that adds or changes an untrusted-input surface ships its
   target in the same PR (TEST_CONVENTIONS §T14).
+- **Change a dependency**: a version shared by two members goes in the
+  root `[workspace.dependencies]` (`baumhard::util::manifests` holds
+  that rule). Then regenerate the workspace-hack — `cargo hakari
+  generate` and `cargo hakari manage-deps`, from `cargo install
+  cargo-hakari --locked` — and commit what changes:
+  `crates/workspace-hack` is the crate every member depends on so that
+  every cargo command builds each shared crate with one feature set
+  (`.config/hakari.toml`, #284), and CI's `hakari` job fails while it
+  is stale. A `cargo update` that puts a crate on the lockfile at a
+  second version fails `baumhard::util::lock_duplicates` until the
+  duplicate is undone or listed there with its reason.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
 - **Drive the running app over IPC** (native): launch with

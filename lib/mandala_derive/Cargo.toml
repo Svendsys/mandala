@@ -15,28 +15,26 @@ proc-macro = true
 #
 # Asking for less is not the same as compiling against less, and it is
 # worth being exact about that here rather than believing the
-# comfortable version. Cargo unifies features per *resolved package
-# node*, not per declaring manifest, so what this crate compiles
-# against is the union of what every dependent of that node asked for.
-# In a workspace-wide build — which is what `./test.sh` now runs —
-# `syn`'s proc-macro-graph node carries
-# `full,extra-traits,visit,...`, put there by `strum_macros`,
-# `wasm-bindgen-backend` and friends, and mandala_derive gets that
-# node. `cargo tree -p mandala_derive` in isolation shows default-only,
-# but that is single-package resolution, not a build anyone runs.
+# comfortable version. This crate depends on the workspace-hack
+# (`.config/hakari.toml`, #284), as every member does, and through it
+# on `syn` with the union of every feature any member asks for —
+# baumhard's `full` and `visit` among them — on the proc-macro graph as
+# well as the target one. So what it compiles against is that union,
+# in every build, `cargo build -p mandala_derive` included; that is
+# what lets one build of syn serve every command.
 #
 # What inheriting featureless does buy is the structural half: a
 # member can add `features` on top of the shared entry without editing
 # the shared entry, which is how baumhard's dev-dependency asks for
-# `full` (see `lib/baumhard/Cargo.toml`). Under resolver 2 that
-# dev-dependency lands on the *target*-graph `syn` node, a different
-# node from the proc-macro one above — which is the only sense in
-# which the two asks are independent.
+# `full` (see `lib/baumhard/Cargo.toml`), and the ask stays where it is
+# used, for `cargo hakari generate` to read.
 syn.workspace = true
 quote = "1.0.47"
 # Hoisted to `[workspace.dependencies]` when baumhard's tests grew a
 # second declaration of it (§13). Nothing here needs `span-locations`
-# — that ask is baumhard's and, under resolver 2, lands on a
-# different `proc-macro2` node than the one this crate compiles
-# against.
+# — that ask is baumhard's — though this crate compiles against it all
+# the same, through the workspace-hack, like `syn`'s `full` above.
 proc-macro2.workspace = true
+# One feature set for every shared dependency, whatever a command
+# selects (`.config/hakari.toml`, #284).
+workspace-hack.workspace = true

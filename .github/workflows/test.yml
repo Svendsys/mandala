@@ -73,6 +73,57 @@ jobs:
           MANDALA_REQUIRE_GPU: "1"
         run: ./test.sh --lint
 
+  # The workspace-hack (`crates/workspace-hack`, `.config/hakari.toml`,
+  # #284) is current. It names, as a dependency of every member, each
+  # third-party crate whose feature set would otherwise differ from one
+  # cargo command to the next, with the union of those sets; that is
+  # what keeps `cargo doc`, `cargo test -p <member>` and the rest from
+  # building a second copy of those crates in the same `target/`. It is
+  # generated from the members' manifests, so a manifest edit can leave
+  # it stale with nothing failing to build — the second copies come
+  # back, silently. Hence this job:
+  #
+  # - `generate --diff` fails when regenerating would change the
+  #   workspace-hack's manifest;
+  # - `manage-deps --dry-run` fails when a member does not depend on
+  #   it (`./test.sh` also checks this one, in
+  #   `baumhard::util::manifests`, where cargo-hakari need not be
+  #   installed).
+  #
+  # No build: both read `cargo metadata` and nothing else.
+  hakari:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup show
+
+      # Installed into a root of its own and cached by version, as
+      # `fuzz.yml` does with cargo-fuzz.
+      - name: Cache cargo-hakari
+        id: cargo-hakari
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo-hakari
+          key: cargo-hakari-0.9.39-${{ runner.os }}
+
+      - name: Install cargo-hakari
+        if: steps.cargo-hakari.outputs.cache-hit != 'true'
+        run: cargo install cargo-hakari --version 0.9.39 --locked --root ~/.cargo-hakari
+
+      - name: Put cargo-hakari on the path
+        run: echo "$HOME/.cargo-hakari/bin" >> "$GITHUB_PATH"
+
+      - name: The workspace-hack is current
+        run: cargo hakari generate --diff
+
+      - name: Every member depends on the workspace-hack
+        run: cargo hakari manage-deps --dry-run
+
   # The Windows named-pipe transport for `--ipc` (#169) and everything
   # above it that compiles there. Its own job because the code it holds
   # is `cfg(windows)`: a Linux run compiles none of it, and the Linux

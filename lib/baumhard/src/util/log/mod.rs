@@ -210,11 +210,19 @@ mod tests {
     /// which is precisely how the level could drift back apart after
     /// `[workspace.dependencies]` made the shared declaration
     /// singular.
+    ///
+    /// The section `cargo hakari` generates in the workspace-hack is
+    /// left out: its `log = ` lines are not a declaration anyone makes
+    /// but a copy of the union of every member's, the root table's
+    /// level included, written back by `cargo hakari generate` (#284).
+    /// A hand-written line in that manifest, outside the section, is
+    /// still read.
     fn log_dependency_lines() -> Vec<(String, String)> {
         let mut found = Vec::new();
         for manifest in crate::util::manifests::member_manifests() {
             let text = std::fs::read_to_string(repo_path(&manifest))
                 .unwrap_or_else(|e| panic!("{manifest} must be readable: {e}"));
+            let text = crate::util::manifests::without_hakari_section(&text);
             found.extend(
                 text.lines()
                     .filter(|line| line.trim_start().starts_with("log = "))

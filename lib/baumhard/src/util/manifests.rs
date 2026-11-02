@@ -34,10 +34,22 @@
 //! that gap gets closed rather than discovered.
 //!
 //! **The member list is read, not restated.** [`member_manifests`]
-//! parses `[workspace] members` out of the root manifest, so a fifth
+//! parses `[workspace] members` out of the root manifest, so a new
 //! crate is covered the day it is added — the failure mode
 //! `test.sh`'s hand-written `-p` list demonstrated for as long as
 //! `mandala_derive` existed.
+//!
+//! **One member is generated, and is held to other rules.**
+//! `crates/workspace-hack` (#284) is written by `cargo hakari
+//! generate`: a version range for each third-party crate whose features
+//! it unifies, `serde = { version = "1", ... }` beside the root table's
+//! `serde = "1.0.229"`. Those are not versions a member asks for —
+//! cargo resolves each range to the version `Cargo.lock` already holds,
+//! and CI's `hakari` job is what keeps the section current — so
+//! [`workspace_manifests`] leaves it out of the three rules, and the
+//! tests below hold the exclusion as narrow as it is meant to be:
+//! exactly one member is generated, it declares nothing outside the
+//! section `cargo hakari` owns, and every other member depends on it.
 //!
 //! Test-only and native-only: it reads files off the filesystem, and
 //! nothing in a shipped build has any business parsing manifests.
@@ -201,14 +213,47 @@ pub(crate) fn member_manifests() -> Vec<String> {
     manifests
 }
 
-/// Parse every manifest in the workspace.
+/// The line `cargo hakari` opens the section it owns with, in the
+/// manifest of the crate it generates.
+pub(crate) const HAKARI_SECTION_START: &str = "### BEGIN HAKARI SECTION";
+
+/// The line it closes that section with.
+pub(crate) const HAKARI_SECTION_END: &str = "### END HAKARI SECTION";
+
+/// Whether a manifest is the one `cargo hakari` generates: it holds the
+/// section `cargo hakari` owns.
+pub(crate) fn is_generated(text: &str) -> bool {
+    text.lines().any(|line| line.trim() == HAKARI_SECTION_START)
+}
+
+/// `text` with the section `cargo hakari` owns cut out, markers
+/// included: the part of a generated manifest written by hand.
+pub(crate) fn without_hakari_section(text: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        match line.trim() {
+            HAKARI_SECTION_START => inside = true,
+            HAKARI_SECTION_END => inside = false,
+            _ if !inside => {
+                out.push_str(line);
+                out.push('\n');
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Parse every hand-written manifest in the workspace: every member's
+/// but the one `cargo hakari` generates (see the module docs).
 pub(crate) fn workspace_manifests() -> Vec<Manifest> {
     member_manifests()
         .into_iter()
-        .map(|path| {
+        .filter_map(|path| {
             let text = std::fs::read_to_string(repo_path(&path))
                 .unwrap_or_else(|e| panic!("{path} must be readable: {e}"));
-            parse(&path, &text)
+            (!is_generated(&text)).then(|| parse(&path, &text))
         })
         .collect()
 }
@@ -1210,6 +1255,7 @@ name = "test_bench"
             "lib/mandala_derive/Cargo.toml",
             "crates/maptool/Cargo.toml",
             "crates/mandalactl/Cargo.toml",
+            "crates/workspace-hack/Cargo.toml",
         ] {
             assert!(
                 manifests.iter().any(|m| m == expected),
@@ -1230,11 +1276,11 @@ name = "test_bench"
     /// trade: manifest edits in this workspace are rare and are
     /// exactly what these tests exist to look at.
     const DECLARATIONS_PER_MANIFEST: [(&str, usize); 5] = [
-        ("Cargo.toml", 28),
-        ("crates/mandalactl/Cargo.toml", 7),
-        ("crates/maptool/Cargo.toml", 4),
+        ("Cargo.toml", 29),
+        ("crates/mandalactl/Cargo.toml", 8),
+        ("crates/maptool/Cargo.toml", 5),
         ("lib/baumhard/Cargo.toml", 29),
-        ("lib/mandala_derive/Cargo.toml", 3),
+        ("lib/mandala_derive/Cargo.toml", 4),
     ];
 
     /// A parse that found nothing would make every rule below vacuous.
@@ -1333,6 +1379,96 @@ name = "test_bench"
             unresolved.is_empty(),
             "these members inherit a dependency the root \
              `[workspace.dependencies]` table does not declare: {unresolved:#?}"
+        );
+    }
+
+    /// The generated member's exclusion is exactly as wide as it is
+    /// meant to be. Exactly one member is generated, and it is the
+    /// workspace-hack: a second manifest that grew a hakari section
+    /// would drop out of every rule above without a word. Its
+    /// hand-written part declares no dependency, so nothing can be
+    /// added outside the generated section and skip the rules on the
+    /// generated one's ticket. And its generated part is read — the
+    /// parser understands every shape `cargo hakari` writes (the
+    /// `[target.<triple>.dependencies]` tables, the `syn-<hash> = {
+    /// package = "syn", ... }` renames) — so the exemption is from the
+    /// rules, not from the reader.
+    #[test]
+    fn test_only_the_workspace_hack_is_generated_and_it_is_read() {
+        let generated: Vec<(String, String)> = member_manifests()
+            .into_iter()
+            .map(|path| {
+                let text = std::fs::read_to_string(repo_path(&path))
+                    .unwrap_or_else(|e| panic!("{path} must be readable: {e}"));
+                (path, text)
+            })
+            .filter(|(_, text)| is_generated(text))
+            .collect();
+        let paths: Vec<&str> = generated.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["crates/workspace-hack/Cargo.toml"],
+            "exactly one member may be generated by `cargo hakari`, and it is the \
+             workspace-hack; every other member is held to the rules above"
+        );
+        let (path, text) = &generated[0];
+        let by_hand = parse(path, &without_hakari_section(text));
+        assert!(
+            by_hand.deps.is_empty(),
+            "{path} declares dependencies outside the section `cargo hakari` owns, \
+             which no rule here reads: {:?}",
+            by_hand.deps
+        );
+        let whole = parse(path, text);
+        assert!(
+            whole
+                .deps
+                .iter()
+                .any(|dep| dep.crate_name() == "syn" && dep.name != "syn"),
+            "precondition: the generated section is read, renames included; found {:?}",
+            whole.deps.iter().map(Dep::crate_name).collect::<Vec<_>>()
+        );
+
+        // Negative controls: a hand-written manifest is not generated,
+        // and a declaration added outside the generated section is one
+        // the cut leaves for the check above to find.
+        assert!(!is_generated("[dependencies]\nserde = \"1\"\n"));
+        let planted = format!("{text}\n[dev-dependencies]\nserde = \"1\"\n");
+        assert_eq!(parse(path, &without_hakari_section(&planted)).deps.len(), 1);
+    }
+
+    /// Every hand-written member depends on the workspace-hack, through
+    /// the root table. A member without it compiles its dependencies
+    /// with whatever features its own command selects, which is the
+    /// second build #284 removed. CI's `hakari` job checks the same
+    /// thing with `cargo hakari manage-deps --dry-run`; this holds it in
+    /// `./test.sh`, where cargo-hakari need not be installed.
+    #[test]
+    fn test_every_member_depends_on_the_workspace_hack() {
+        let manifests = workspace_manifests();
+        assert_eq!(
+            manifests.len(),
+            5,
+            "precondition: the hand-written members are read"
+        );
+        let missing: Vec<&str> = manifests
+            .iter()
+            .filter(|m| {
+                !m.member_deps()
+                    .any(|dep| dep.crate_name() == "workspace-hack" && dep.inherits_workspace)
+            })
+            .map(|m| m.path.as_str())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these members do not depend on `workspace-hack.workspace = true`, so their \
+             dependencies build with another feature set: {missing:?}. Run `cargo hakari \
+             manage-deps` (`.config/hakari.toml`)."
+        );
+        let shared = workspace_table(&manifests);
+        assert!(
+            shared.contains("workspace-hack"),
+            "the root table declares it once"
         );
     }
 }

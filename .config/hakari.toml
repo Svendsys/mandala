@@ -1,0 +1,50 @@
+# `cargo hakari` settings (#284): the generator behind
+# `crates/workspace-hack`, the one crate every workspace member depends
+# on so that every cargo command builds each third-party crate with one
+# feature set.
+#
+# Why it exists: cargo resolves features for the packages and targets a
+# command selects, so `cargo doc --workspace` (no dev-dependencies),
+# `cargo test -p baumhard` (one member) and `cargo check --target
+# wasm32-unknown-unknown` each settle on a different feature set for
+# some shared crate. A crate with another feature set is another build of
+# it, and of everything that depends on it, beside the first in the same
+# `target/`. The workspace-hack names the union of those feature sets as
+# a dependency of every member, so they all agree.
+#
+# After a change to any member's dependencies, regenerate and commit:
+#
+#     cargo hakari generate
+#     cargo hakari manage-deps
+#
+# CI's `hakari` job (`.github/workflows/test.yml`) fails when either would
+# change a file, so the union cannot drift from the manifests silently.
+# Install with `cargo install cargo-hakari --locked`.
+#
+# Reference: https://docs.rs/cargo-hakari/latest/cargo_hakari/config
+
+hakari-package = "workspace-hack"
+
+# Format version for hakari's output. Version 4 requires cargo-hakari
+# 0.9.22 or above.
+dep-format-version = "4"
+
+# The resolver the workspace uses: the root package is edition 2021,
+# which means resolver 2.
+resolver = "2"
+
+# The platforms whose feature sets are unified. Each is one the
+# workspace is built for: Linux (every local run and the `test` job),
+# the browser build (`./test.sh`'s wasm32 legs, `trunk`), and Windows
+# (the `windows-ipc` job). A platform left out still builds; its
+# platform-specific crates are simply not unified.
+platforms = [
+    "x86_64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+    "x86_64-pc-windows-msvc",
+]
+
+# Members write `workspace-hack.workspace = true`, and the version lives
+# once in the root `[workspace.dependencies]`, as every other dependency
+# two members share does (`baumhard::util::manifests`).
+workspace-hack-line-style = "workspace-dotted"

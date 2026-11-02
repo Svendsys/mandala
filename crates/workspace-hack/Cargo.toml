@@ -1,0 +1,120 @@
+# The workspace's feature unifier (#284). Every member depends on this
+# crate, and this crate depends on each third-party crate whose feature
+# set would otherwise differ from one cargo command to the next, with
+# the union of those feature sets — so `cargo test`, `cargo doc`,
+# `cargo clippy` and `cargo test -p <member>` all compile each such
+# crate once, with one feature set, instead of once per command. It has
+# no code of its own and nothing calls into it.
+#
+# The section between the HAKARI markers is generated: do not edit it
+# by hand. After a change to any member's dependencies, run
+#
+#     cargo hakari generate
+#     cargo hakari manage-deps
+#
+# and commit what changes; CI's `hakari` job fails while either would
+# change a file. The settings are `.config/hakari.toml`.
+
+[package]
+name = "workspace-hack"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "workspace-hack package, managed by hakari"
+publish = false
+
+# The parts of the file between the BEGIN HAKARI SECTION and END HAKARI SECTION comments
+# are managed by hakari.
+
+### BEGIN HAKARI SECTION
+[dependencies]
+half = { version = "2", default-features = false, features = ["num-traits"] }
+num-traits = { version = "0.2", features = ["libm"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = { version = "1" }
+regex = { version = "1" }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-syntax = { version = "0.8" }
+serde = { version = "1", features = ["alloc", "derive"] }
+serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
+serde_json = { version = "1", features = ["raw_value"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["full", "visit"] }
+ttf-parser = { version = "0.25", features = ["no-std-float"] }
+
+[build-dependencies]
+half = { version = "2", default-features = false, features = ["num-traits"] }
+num-traits = { version = "0.2", features = ["libm"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = { version = "1" }
+regex = { version = "1" }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-syntax = { version = "0.8" }
+serde = { version = "1", features = ["alloc", "derive"] }
+serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
+serde_json = { version = "1", features = ["raw_value"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["full", "visit"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["full"] }
+ttf-parser = { version = "0.25", features = ["no-std-float"] }
+
+[target.x86_64-unknown-linux-gnu.dependencies]
+bitflags = { version = "2", default-features = false, features = ["std"] }
+bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "min_const_generics"] }
+libc = { version = "0.2" }
+linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+log = { version = "0.4", default-features = false, features = ["kv", "release_max_level_warn", "std"] }
+memchr = { version = "2" }
+once_cell = { version = "1" }
+rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+thiserror = { version = "2" }
+ttf-parser = { version = "0.25", default-features = false, features = ["gvar-alloc"] }
+
+[target.x86_64-unknown-linux-gnu.build-dependencies]
+bitflags = { version = "2", default-features = false, features = ["std"] }
+bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "min_const_generics"] }
+libc = { version = "0.2" }
+linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+log = { version = "0.4", default-features = false, features = ["kv", "release_max_level_warn", "std"] }
+memchr = { version = "2" }
+once_cell = { version = "1" }
+rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+thiserror = { version = "2" }
+ttf-parser = { version = "0.25", default-features = false, features = ["gvar-alloc"] }
+
+[target.wasm32-unknown-unknown.dependencies]
+crossbeam-utils = { version = "0.8" }
+getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
+js-sys = { version = "0.3" }
+once_cell = { version = "1", default-features = false, features = ["std"] }
+slab = { version = "0.4" }
+slotmap = { version = "1" }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", default-features = false, features = ["extra-traits", "visit-mut"] }
+wasm-bindgen = { version = "0.2" }
+web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "AngleInstancedArrays", "Blob", "BlobPropertyBag", "CanvasRenderingContext2d", "CloseEvent", "CssStyleDeclaration", "Document", "DomException", "DomRect", "ExtBlendMinmax", "ExtColorBufferFloat", "ExtColorBufferHalfFloat", "ExtDisjointTimerQuery", "ExtFragDepth", "ExtSRgb", "ExtShaderTextureLod", "ExtTextureFilterAnisotropic", "FocusEvent", "HtmlCanvasElement", "HtmlImageElement", "HtmlVideoElement", "ImageBitmap", "ImageBitmapOptions", "ImageBitmapRenderingContext", "ImageData", "IntersectionObserver", "IntersectionObserverEntry", "KeyboardEvent", "Location", "MediaQueryList", "MessageChannel", "MessageEvent", "MessagePort", "Navigator", "NodeList", "OesElementIndexUint", "OesStandardDerivatives", "OesTextureFloat", "OesTextureFloatLinear", "OesTextureHalfFloat", "OesTextureHalfFloatLinear", "OesVertexArrayObject", "OffscreenCanvas", "OrientationLockType", "OrientationType", "OvrMultiview2", "PageTransitionEvent", "Performance", "PermissionState", "PermissionStatus", "Permissions", "PointerEvent", "PremultiplyAlpha", "ResizeObserver", "ResizeObserverBoxOptions", "ResizeObserverEntry", "ResizeObserverOptions", "ResizeObserverSize", "Response", "Screen", "ScreenOrientation", "Storage", "Url", "VideoFrame", "VisibilityState", "WebGl2RenderingContext", "WebGlActiveInfo", "WebGlBuffer", "WebGlFramebuffer", "WebGlProgram", "WebGlQuery", "WebGlRenderbuffer", "WebGlRenderingContext", "WebGlSampler", "WebGlShader", "WebGlShaderPrecisionFormat", "WebGlSync", "WebGlTexture", "WebGlTransformFeedback", "WebGlUniformLocation", "WebGlVertexArrayObject", "WebSocket", "WebglColorBufferFloat", "WebglCompressedTextureAstc", "WebglCompressedTextureEtc", "WebglCompressedTextureEtc1", "WebglCompressedTexturePvrtc", "WebglCompressedTextureS3tc", "WebglCompressedTextureS3tcSrgb", "WebglDebugRendererInfo", "WebglDebugShaders", "WebglDepthTexture", "WebglDrawBuffers", "WebglLoseContext", "WheelEvent", "Window", "Worker", "WorkerGlobalScope", "WorkerNavigator", "console"] }
+
+[target.wasm32-unknown-unknown.build-dependencies]
+crossbeam-utils = { version = "0.8" }
+getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
+js-sys = { version = "0.3" }
+once_cell = { version = "1", default-features = false, features = ["std"] }
+slab = { version = "0.4" }
+slotmap = { version = "1" }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", default-features = false, features = ["extra-traits", "visit-mut"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", default-features = false, features = ["visit-mut"] }
+wasm-bindgen = { version = "0.2" }
+web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "AngleInstancedArrays", "Blob", "BlobPropertyBag", "CanvasRenderingContext2d", "CloseEvent", "CssStyleDeclaration", "Document", "DomException", "DomRect", "ExtBlendMinmax", "ExtColorBufferFloat", "ExtColorBufferHalfFloat", "ExtDisjointTimerQuery", "ExtFragDepth", "ExtSRgb", "ExtShaderTextureLod", "ExtTextureFilterAnisotropic", "FocusEvent", "HtmlCanvasElement", "HtmlImageElement", "HtmlVideoElement", "ImageBitmap", "ImageBitmapOptions", "ImageBitmapRenderingContext", "ImageData", "IntersectionObserver", "IntersectionObserverEntry", "KeyboardEvent", "Location", "MediaQueryList", "MessageChannel", "MessageEvent", "MessagePort", "Navigator", "NodeList", "OesElementIndexUint", "OesStandardDerivatives", "OesTextureFloat", "OesTextureFloatLinear", "OesTextureHalfFloat", "OesTextureHalfFloatLinear", "OesVertexArrayObject", "OffscreenCanvas", "OrientationLockType", "OrientationType", "OvrMultiview2", "PageTransitionEvent", "Performance", "PermissionState", "PermissionStatus", "Permissions", "PointerEvent", "PremultiplyAlpha", "ResizeObserver", "ResizeObserverBoxOptions", "ResizeObserverEntry", "ResizeObserverOptions", "ResizeObserverSize", "Response", "Screen", "ScreenOrientation", "Storage", "Url", "VideoFrame", "VisibilityState", "WebGl2RenderingContext", "WebGlActiveInfo", "WebGlBuffer", "WebGlFramebuffer", "WebGlProgram", "WebGlQuery", "WebGlRenderbuffer", "WebGlRenderingContext", "WebGlSampler", "WebGlShader", "WebGlShaderPrecisionFormat", "WebGlSync", "WebGlTexture", "WebGlTransformFeedback", "WebGlUniformLocation", "WebGlVertexArrayObject", "WebSocket", "WebglColorBufferFloat", "WebglCompressedTextureAstc", "WebglCompressedTextureEtc", "WebglCompressedTextureEtc1", "WebglCompressedTexturePvrtc", "WebglCompressedTextureS3tc", "WebglCompressedTextureS3tcSrgb", "WebglDebugRendererInfo", "WebglDebugShaders", "WebglDepthTexture", "WebglDrawBuffers", "WebglLoseContext", "WheelEvent", "Window", "Worker", "WorkerGlobalScope", "WorkerNavigator", "console"] }
+
+[target.x86_64-pc-windows-msvc.dependencies]
+log = { version = "0.4", default-features = false, features = ["kv", "release_max_level_warn", "std"] }
+smallvec = { version = "1", default-features = false, features = ["union"] }
+thiserror = { version = "2" }
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Graphics_Gdi", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+
+[target.x86_64-pc-windows-msvc.build-dependencies]
+log = { version = "0.4", default-features = false, features = ["kv", "release_max_level_warn", "std"] }
+smallvec = { version = "1", default-features = false, features = ["union"] }
+thiserror = { version = "2" }
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Graphics_Gdi", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+
+### END HAKARI SECTION

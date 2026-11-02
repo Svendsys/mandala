@@ -8,6 +8,9 @@ license.workspace = true
 baumhard = { path = "../../lib/baumhard" }
 regex = "1.13.1"
 serde_json.workspace = true
+# One feature set for every shared dependency, whatever a command
+# selects (`.config/hakari.toml`, #284).
+workspace-hack.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -61,7 +61,6 @@ rustc-hash.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 ordered-float = {version = "5.5.0", features = ["serde"]}
-derivative = "2.2.0"
 # The loader's unknown-key capture. serde reports a key no field
 # matches by handing its value to `deserialize_ignored_any`, and
 # nothing in `serde` itself says *where* that happened; this wraps a
@@ -76,6 +75,9 @@ serde_ignored = "0.1.14"
 # (`nodes[3].frame.rings[0].spans[2].color`). `document::format` is the
 # only consumer, so it stays out of `[workspace.dependencies]` per §13.
 serde_path_to_error = "0.1.20"
+# One feature set for every shared dependency, whatever a command
+# selects (`.config/hakari.toml`, #284).
+workspace-hack.workspace = true
 
 # `env_logger` is load-bearing, not a leftover — and it is the native
 # half of a matched pair with `console_log` below. `util::log::init()`
@@ -137,12 +139,12 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 #
 # `features` on a workspace dependency is additive, so this asks for
 # `full` on top of the default set the root table declares, without
-# editing the shared entry. Under resolver 2 it lands on the
-# *target*-graph `syn` node; the proc-macro-graph node `mandala_derive`
-# compiles against is a separate one, which has `full` on it anyway
-# from `strum_macros` and `wasm-bindgen-backend`. Asking for less there
-# does not mean compiling against less — see
-# `lib/mandala_derive/Cargo.toml`.
+# editing the shared entry. What is compiled is another matter: the
+# workspace-hack (`.config/hakari.toml`, #284) carries `full` and
+# `visit` to every build of syn 3, the proc-macro graph's included, so
+# that one build serves both — see `lib/mandala_derive/Cargo.toml`.
+# This entry is still where the ask is made, and what `cargo hakari
+# generate` reads it from.
 # `visit` is for `util::source_scan::section_growths_in`, which walks
 # fn bodies as syntax rather than as lines, so a rustfmt-wrapped
 # `node.sections\n    .push(` chain is the same growth as the one-line
@@ -156,10 +158,10 @@ syn = { workspace = true, features = ["full", "visit"] }
 # `Span::start()` answers line 0 and the excision would blank the
 # wrong rows in silence.
 #
-# Additive on the shared entry, like `syn`'s `full` above, and landing
-# on the target-graph node for the same resolver-2 reason: the derive
-# macros the workspace expands go through a different `proc-macro2`
-# and do not pay for this.
+# Additive on the shared entry, like `syn`'s `full` above, and carried
+# to every build of proc-macro2 by the workspace-hack for the same
+# reason: the derive macros the workspace expands compile against the
+# same proc-macro2 build as these tests.
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 # The allocator `tests/format_memory.rs` measures a load's peak heap
 # with: it wraps the system allocator and counts, so the test can derive
