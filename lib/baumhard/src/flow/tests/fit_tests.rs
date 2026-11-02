@@ -393,13 +393,6 @@ pub fn do_flow_cut_keeps_the_reading_start() {
     assert_eq!(kept, vec![4, 2, 0]);
 }
 
-/// Hitting the glyph ceiling stops a placement and says so, even when it
-/// stops inside a copy: three-glyph clusters never land exactly on
-/// `MAX_PLACED_GLYPHS` (2¹⁶ is not a multiple of 3), so the copy that
-/// would pass it is left out whole, and the run reports `truncated`
-/// although fewer glyphs than the ceiling were placed. Plain `#[test]`:
-/// the enumeration is the runtime (lib/baumhard/CONVENTIONS.md §B8,
-/// class 3).
 /// The glyph ceiling is 65,536 a placement, the owner's choice (ruling
 /// R41): a `Repeat` of one-glyph clusters along a line long enough for
 /// more places exactly that many, and says it was cut. Plain `#[test]`:
@@ -414,6 +407,13 @@ fn test_flow_the_glyph_ceiling_is_65536_a_placement() {
     assert!(placed.truncated, "the ceiling stopped the placement");
 }
 
+/// Hitting the glyph ceiling stops a placement and says so, even when it
+/// stops inside a copy: three-glyph clusters never land exactly on
+/// `MAX_PLACED_GLYPHS` (2¹⁶ is not a multiple of 3), so the copy that
+/// would pass it is left out whole, and the run reports `truncated`
+/// although fewer glyphs than the ceiling were placed. Plain `#[test]`:
+/// the enumeration is the runtime (lib/baumhard/CONVENTIONS.md §B8,
+/// class 3).
 #[test]
 fn test_flow_repeat_reports_the_glyph_ceiling() {
     let run = clustered(&[(0.5, true), (0.25, false), (0.25, false)], 2.0);

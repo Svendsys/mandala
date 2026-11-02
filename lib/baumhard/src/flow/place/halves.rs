@@ -234,6 +234,21 @@ const SEED_SHARE: f32 = 0.9;
 /// 30411a6e it was 2^21, and the worst real frame took 306,098.
 pub(crate) const TRACK_BUDGET: usize = 400_000;
 
+/// The glyph steps a frame's tracking may take a glyph of its text, past
+/// [`TRACK_BUDGET`] (ruling R44.2): ten times the most any frame of the
+/// aspect sweep takes a glyph, rounded up. A frame's work grows with its
+/// text, so a fixed count would cut real text past some length — a
+/// 2,000-word frame took more than 400,000 — where this bounds the work
+/// a glyph, and the glyph cap ([`MAX_PLACED_GLYPHS`]) bounds the glyphs.
+pub(crate) const STEPS_PER_GLYPH: usize = 3_000;
+
+/// A frame's work budget, in glyph steps, for a text of `glyphs`
+/// glyphs: [`TRACK_BUDGET`], or [`STEPS_PER_GLYPH`] a glyph where that
+/// is more. At most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
+pub(crate) fn frame_budget(glyphs: usize) -> usize {
+    TRACK_BUDGET.max(STEPS_PER_GLYPH.saturating_mul(glyphs.min(MAX_PLACED_GLYPHS)))
+}
+
 /// How far apart the outward normals of two lines' end inks at a
 /// junction must turn, as a cosine, for the two to be lines stacked
 /// across a thin outline rather than lines meeting there (ruling R35.1):
@@ -447,6 +462,10 @@ thread_local! {
     /// whether or not its clearance was then grown.
     #[cfg(test)]
     pub(crate) static BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test seam (#294, ruling R44.2): a frame budget to lay with in
+    /// place of [`frame_budget`]'s, so a test can spend one.
+    #[cfg(test)]
+    pub(crate) static BUDGET_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 /// One line laid with one tracking gap ([`track`]).
@@ -465,6 +484,9 @@ struct Tracked {
     centers: Option<(f32, f32)>,
     /// Each inked cluster's ink box, in text order.
     boxes: Vec<InkBox>,
+    /// How many of [`glyphs`](Self::glyphs) come before each box's: where
+    /// the line is cut to keep only the inks before it.
+    marks: Vec<usize>,
 }
 
 /// An ink as a frame line's pairwise rule sets it ([`pair`]).
@@ -555,6 +577,7 @@ fn track(
         ends,
         centers,
         boxes: lay.boxes,
+        marks: lay.marks,
     }
 }
 
@@ -566,8 +589,9 @@ struct InkLay<'w> {
     walk: &'w PathWalk<'w>,
     glyphs: &'w [GlyphMetrics],
     out: Vec<PlacedGlyph>,
-    /// Each ink's box, in order.
+    /// Each ink's box, in order, and how many glyphs come before it.
     boxes: Vec<InkBox>,
+    marks: Vec<usize>,
     first: Option<Set>,
     last: Option<Set>,
     /// The inks before the last, nearest first.
@@ -591,6 +615,7 @@ impl<'w> InkLay<'w> {
             glyphs,
             out: Vec::new(),
             boxes: Vec::new(),
+            marks: Vec::new(),
             first: None,
             last: None,
             earlier: [None; EARLIER],
@@ -655,14 +680,16 @@ impl<'w> InkLay<'w> {
                 // and past touching, at no gap — moved on to the nearest
                 // center the rule finds that far from the one it is too
                 // near: a letter is never nearer than its gap to any
-                // letter but its neighbors (rulings R34, R38.1).
+                // letter but its neighbors (rulings R34, R38.1). Near is
+                // what `pair` would move: short of its acceptance, so a
+                // round never solves for the center it already has.
                 let clear = g.max(2.0 * TOUCH);
                 for _ in 0..EARLIER {
                     let near = |e: &Set| {
                         ((set.at - e.at).abs() - (set.half + e.half))
                             .max(Vec2::ZERO)
                             .length()
-                            < clear
+                            < clear - NEARER
                     };
                     let Some(e) = self.earlier.iter().flatten().find(|e| near(e)).copied() else {
                         break;
@@ -692,6 +719,7 @@ impl<'w> InkLay<'w> {
             }
         };
         let corner = set.at - (ink.min + ink.max) * 0.5 - Vec2::new(0.0, walk.baseline);
+        self.marks.push(self.out.len());
         for index in cluster.glyphs.clone() {
             self.out.push(PlacedGlyph {
                 glyph: index as u32,
@@ -978,9 +1006,10 @@ struct Line {
 struct Layout<'a> {
     halves: &'a Halves,
     outward: bool,
-    /// The glyph steps this frame's tracking has taken
-    /// ([`TRACK_BUDGET`]).
+    /// The glyph steps this frame's tracking has taken, and the most it
+    /// may take ([`frame_budget`]).
     spent: Cell<usize>,
+    budget: Cell<usize>,
 }
 
 /// The lines [`Layout::lay`] has laid in one clearance search.
@@ -1011,6 +1040,7 @@ impl<'a> Layout<'a> {
             halves,
             outward,
             spent: Cell::new(0),
+            budget: Cell::new(TRACK_BUDGET),
         }
     }
 }
@@ -1032,7 +1062,7 @@ impl Layout<'_> {
 
     /// Whether the frame's tracking has taken its [`TRACK_BUDGET`].
     fn spent_all(&self) -> bool {
-        self.spent.get() >= TRACK_BUDGET
+        self.spent.get() >= self.budget.get()
     }
 
     /// The walk a line on half `k` is tracked along.
@@ -1093,6 +1123,7 @@ impl Layout<'_> {
             resolved(CENTER_TOLERANCE, apex),
             resolved(CENTER_TOLERANCE, apex),
             CENTER_ROUNDS,
+            &|| self.spent_all(),
         );
         Some(Prepared {
             half: k,
@@ -1143,6 +1174,9 @@ impl Layout<'_> {
             let mut last: Option<(f32, f32)> = None;
             let mut next = hi - long;
             for _ in 0..SLIDE_ROUNDS {
+                if self.spent_all() {
+                    break;
+                }
                 na = next;
                 long = reach(na);
                 let miss = na + long - hi;
@@ -1239,6 +1273,7 @@ impl Layout<'_> {
                 // The last gap moved by the part's change in length,
                 // shared among the gaps, as on a straight path.
                 warm.map(|(long, gap)| gap + ((sb - sa) - long) / steps.max(1) as f32),
+                &|| self.spent_all(),
             );
             if gap < p.natural_gap - GAP_TOLERANCE {
                 // A part its line fits at its font's gap is not one that
@@ -1438,6 +1473,9 @@ struct SideOrnament<'a> {
     walk: PathWalk<'a>,
     glyphs: &'a [GlyphMetrics],
     clusters: Vec<Cluster>,
+    /// The frame's glyph steps, which its lays count against (ruling
+    /// R44.3).
+    spent: &'a Cell<usize>,
 }
 
 impl<'a> SideOrnament<'a> {
@@ -1452,7 +1490,14 @@ impl<'a> SideOrnament<'a> {
             },
             glyphs: &run.glyphs,
             clusters: clusters_of(&run.glyphs, range),
+            spent: &layout.spent,
         }
+    }
+
+    /// Count `copies` copies laid against the frame's glyph steps.
+    fn count(&self, copies: usize) {
+        let steps = copies.saturating_mul(self.clusters.len().max(1));
+        self.spent.set(self.spent.get().saturating_add(steps));
     }
 
     /// The arc of this side between two text inks, `None` without an
@@ -1537,6 +1582,7 @@ impl<'s> SideArc<'s> {
                 lay.cluster(cluster, gap);
             }
         }
+        self.side.count(n);
         let end = self.end_of(&lay);
         (lay, end)
     }
@@ -1559,36 +1605,83 @@ impl<'s> SideArc<'s> {
 
     /// The widest gap at which `n` copies fit with every gap and both
     /// joins equal, to [`SIDE_PRECISION`], `None` when not even the
-    /// floor's does.
+    /// floor's does: where the last copy's ink is the gap from `to`'s.
+    /// That room falls with the gap by about its gaps' count a point —
+    /// one before each ink of every copy, and the join to `to` — bent only
+    /// by the path, so it is solved as a line's tracking is (ruling
+    /// R44.3, [`solve_tracking`]): the straight path's root from the
+    /// floor's room, aimed a hair past it, widened until it brackets the
+    /// root, and closed by [`falsi`]. A copy past `to`'s center reads as
+    /// past the end.
+    ///
+    /// Cost: a lay of `n` copies at the floor, one more per widening, and
+    /// [`falsi`]'s, at most [`SIDE_ROUNDS`].
     fn solve(&self, n: usize) -> Option<f32> {
-        let (mut low, mut high) = (self.floor, self.floor + (self.cb - self.ca).max(0.0));
-        if !self.fits(n, low) {
+        let room = |gap: f32| {
+            let (_, (end, at)) = self.lay(n, gap);
+            let v = if at < self.cb {
+                end - gap
+            } else {
+                -(gap + (at - self.cb))
+            };
+            (if v.is_nan() { f32::NEG_INFINITY } else { v }, ())
+        };
+        let (v0, _) = room(self.floor);
+        if !(v0 >= 0.0) {
             return None;
         }
-        for _ in 0..SIDE_ROUNDS {
-            let mid = low.midpoint(high);
-            if !(high - low).gt(&resolved(SIDE_PRECISION, mid)) || !(mid.gt(&low) && mid.lt(&high)) {
+        let inked = self.side.clusters.iter().filter(|c| !c.blank).count().max(1);
+        let gaps = (n * inked + 1) as f32;
+        // As precise as the copies' inks are set: each to within the
+        // pairwise rule's tolerance, as a line's end is ([`line_tolerance`]).
+        let tolerance = resolved(SIDE_PRECISION, self.cb).max(gaps * INK_TOLERANCE);
+        if v0 <= tolerance {
+            return Some(self.floor);
+        }
+        // A fill's work is bounded by its rounds, and counted.
+        let stop = || false;
+        let mut low = (self.floor, v0, ());
+        let mut g = self.floor + v0 / gaps * (1.0 + 1e-3) + f32::MIN_POSITIVE;
+        for _ in 0..TRACK_DOUBLINGS {
+            if !g.is_finite() {
                 break;
             }
-            if self.fits(n, mid) {
-                low = mid;
-            } else {
-                high = mid;
+            let (v, _) = room(g);
+            if v <= 0.0 {
+                if -v <= tolerance {
+                    return Some(low.0);
+                }
+                let (gap, _) = falsi(
+                    room,
+                    low,
+                    (g, v, ()),
+                    tolerance,
+                    tolerance / gaps,
+                    SIDE_ROUNDS,
+                    &stop,
+                );
+                return Some(gap);
             }
+            if v <= tolerance {
+                return Some(g);
+            }
+            low = (g, v, ());
+            g = (g + v / gaps * (1.0 + 1e-3)).max(g * 1.125);
         }
-        Some(low)
+        Some(low.0)
     }
 
     /// How many copies fit at `target` (at least the floor) in a row
     /// from `from`, to [`MAX_SIDE_COPIES`].
-    fn count_at(&self, target: f32) -> usize {
+    fn count_at(&self, target: f32, most: usize) -> usize {
         let gap = target.max(self.floor);
         let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
         let mut count = 0;
-        while count < MAX_SIDE_COPIES {
+        while count < most.min(MAX_SIDE_COPIES) {
             for cluster in &self.side.clusters {
                 lay.cluster(cluster, gap);
             }
+            self.side.count(1);
             let (end, at) = self.end_of(&lay);
             if at < self.cb && end >= gap {
                 count += 1;
@@ -1617,7 +1710,7 @@ impl<'s> SideArc<'s> {
         if most == 0 {
             return;
         }
-        let at_target = self.count_at(target);
+        let at_target = self.count_at(target, most);
         let mut best: Option<(usize, f32)> = None;
         for n in at_target.clamp(1, most)..=(at_target + 1).clamp(1, most) {
             let Some(gap) = self.solve(n) else { continue };
@@ -2035,6 +2128,58 @@ fn overlapping(lines: &[Line]) -> bool {
     false
 }
 
+/// `lines` cut to the longest run of their inks, the first line's then
+/// the second's, of which no two touch ([`overlapping`]), and the halves
+/// of the lines cut: the cheapest cut that leaves no ink touching, for a
+/// frame whose work budget is spent before its last resorts held it
+/// apart (rulings R38.1, R44.2). A line cut to no ink is left out.
+///
+/// Cost: a bisection of [`overlapping`]s over the frame's inks.
+fn untouched(lines: &[Line]) -> (Vec<Line>, Vec<usize>) {
+    let total: usize = lines.iter().map(|l| l.tracked.boxes.len()).sum();
+    let cut_to = |m: usize| {
+        let mut left = m;
+        let mut out = Vec::new();
+        for line in lines {
+            if left == 0 {
+                break;
+            }
+            let keep = left.min(line.tracked.boxes.len());
+            left -= keep;
+            let mut line = line.clone();
+            if keep < line.tracked.boxes.len() {
+                line.tracked.glyphs.truncate(line.tracked.marks[keep]);
+                line.tracked.boxes.truncate(keep);
+                line.tracked.marks.truncate(keep);
+            }
+            out.push(line);
+        }
+        out
+    };
+    // Apart with no ink, touching with all; the longest run apart lies
+    // between.
+    let (mut apart, mut over) = (0, total);
+    while over - apart > 1 {
+        let mid = apart + (over - apart) / 2;
+        if overlapping(&cut_to(mid)) {
+            over = mid;
+        } else {
+            apart = mid;
+        }
+    }
+    let kept = cut_to(apart);
+    let cut = lines
+        .iter()
+        .enumerate()
+        .filter(|(k, l)| {
+            kept.get(*k)
+                .is_none_or(|c| c.tracked.boxes.len() < l.tracked.boxes.len())
+        })
+        .map(|(_, l)| l.half)
+        .collect();
+    (kept, cut)
+}
+
 /// One end of a bracket [`falsi`] closes: where, the function's value
 /// there, and what the function made there.
 type End<T> = (f32, f32, T);
@@ -2066,12 +2211,18 @@ fn falsi<T>(
     tolerance: f32,
     width: f32,
     rounds: usize,
+    stop: &dyn Fn() -> bool,
 ) -> (f32, T) {
     // The values the line is drawn through: an end's own, halved while
     // the other end moves and it does not.
     let (mut at_low, mut at_high) = (low.1, high.1);
     let mut kept: Option<bool> = None;
     for _ in 0..rounds {
+        // The frame's work budget spent: the bracket as it stands
+        // (ruling R44.2).
+        if stop() {
+            break;
+        }
         let mid = low.0.midpoint(high.0);
         if !(mid > low.0 && mid < high.0) || high.0 - low.0 <= width {
             break;
@@ -2159,6 +2310,7 @@ fn solve_tracking(
     steps: usize,
     end: f32,
     warm: Option<f32>,
+    stop: &dyn Fn() -> bool,
 ) -> (f32, Tracked) {
     let per_gap = steps.max(1) as f32;
     // The bracket closes no finer than the line's precision spread over
@@ -2209,6 +2361,7 @@ fn solve_tracking(
                     tolerance,
                     width,
                     TRACK_ROUNDS,
+                    stop,
                 );
             }
         }
@@ -2222,7 +2375,7 @@ fn solve_tracking(
     let mut low = (0.0_f32, at_zero.short, at_zero);
     let mut g = aim(low.1 / per_gap);
     for round in 0..TRACK_DOUBLINGS {
-        if !g.is_finite() {
+        if !g.is_finite() || stop() {
             break;
         }
         let tracked = track(g);
@@ -2241,6 +2394,7 @@ fn solve_tracking(
                 tolerance,
                 width,
                 TRACK_ROUNDS,
+                stop,
             );
         }
         if value <= tolerance {
@@ -2393,7 +2547,7 @@ impl Layout<'_> {
         // `fits` holds for no clusters and fails for all of them; the
         // longest prefix it holds for lies between.
         let (mut held, mut over) = (0, n);
-        while over - held > 1 {
+        while over - held > 1 && !self.spent_all() {
             let mid = held + (over - held) / 2;
             if fits(mid) {
                 held = mid;
@@ -2689,10 +2843,31 @@ pub(super) fn place_halves(
         };
         let fsys: &mut FontSystem = fs;
         let drawn = inked(&drawn, fsys);
+        // The glyphs the text may still place (ruling R44.1): a frame's
+        // text and its sides together place at most `MAX_PLACED_GLYPHS`,
+        // so a text longer is cut at a cluster, its end left out.
+        let mut left = MAX_PLACED_GLYPHS;
         let prepared: Vec<Prepared> = specs
             .iter()
             .filter_map(|(k, range, cut)| {
-                let clusters = clusters_of(&drawn.glyphs, range.clone());
+                let mut clusters = clusters_of(&drawn.glyphs, range.clone());
+                let mut cut = *cut;
+                let mut placed = 0;
+                let fits = clusters
+                    .iter()
+                    .take_while(|c| {
+                        placed += c.glyphs.len();
+                        placed <= left
+                    })
+                    .count();
+                if fits < clusters.len() {
+                    clusters.truncate(fits);
+                    let end = trimmed(&clusters).len();
+                    clusters.truncate(end);
+                    cut = true;
+                }
+                left -= clusters.iter().map(|c| c.glyphs.len()).sum::<usize>();
+                let cut = &cut;
                 // A `Once` or `Spread` line its whole half cannot hold at
                 // its font's gap is cut to what that holds before it is
                 // prepared or any clearance is grown: a clearance only
@@ -2740,6 +2915,18 @@ pub(super) fn place_halves(
             overlap,
         })
     };
+    // The frame's budget scales with its text, cut to the glyph cap
+    // (rulings R44.1, R44.2).
+    let glyphs = specs
+        .iter()
+        .map(|(_, range, _)| range.len())
+        .sum::<usize>()
+        .min(MAX_PLACED_GLYPHS);
+    lay.budget.set(frame_budget(glyphs));
+    #[cfg(test)]
+    if let Some(budget) = BUDGET_OVERRIDE.with(Cell::get) {
+        lay.budget.set(budget);
+    }
     let zero: Clear = [[0.0; 2]; 2];
     let Some(mut built) = build(1.0, zero, false, fs) else {
         unreachable!("only a cheap build is refused")
@@ -2859,6 +3046,18 @@ pub(super) fn place_halves(
             truncated = true;
         }
     }
+    // A frame whose budget was spent while two of its inks still touch is
+    // cut to the inks that touch nothing (rulings R38.1, R44.2): never
+    // overlap wins over never cut, and a spent budget is no exception.
+    if overlap {
+        let (kept, halves_cut) = untouched(&lines);
+        lines = kept;
+        prepared.truncate(lines.len());
+        cut_apart.extend(halves_cut);
+        met = [0, 1].map(|j| lay.met(&lines, side_of, j).0);
+        overlap = overlapping(&lines);
+        truncated = true;
+    }
     let mut unheld = unheld_of(&lines, met, overlap);
 
     let mut text = Vec::new();
@@ -2925,6 +3124,8 @@ pub(super) fn place_halves(
         trace.cut_apart = cut_apart;
         trace.clear = clear;
         trace.spent = lay.spent.get();
+        trace.budget = lay.budget.get();
+        trace.glyphs = glyphs;
     }
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;
@@ -2971,6 +3172,7 @@ pub(crate) fn end_seam(
         ends: Some((ink, ink)),
         centers: Some((set, set)),
         boxes: vec![ink],
+        marks: vec![0],
     };
     let normal = lay.normals(half, &tracked, (set, set))[0];
     (normal, retreats(&halves.paths[half], (set, end))[1])

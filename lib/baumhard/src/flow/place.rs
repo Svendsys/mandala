@@ -601,8 +601,12 @@ pub(crate) struct Trace {
     /// it: never `NaN`.
     pub(crate) clear: [[f32; 2]; 2],
     /// For a text frame, the glyph steps its tracking took in all, what
-    /// [`TRACK_BUDGET`](halves::TRACK_BUDGET) bounds.
+    /// its budget bounds (`halves::frame_budget`).
     pub(crate) spent: usize,
+    /// For a text frame, its budget, and the glyphs of its text it was
+    /// scaled by (ruling R44.2).
+    pub(crate) budget: usize,
+    pub(crate) glyphs: usize,
 }
 
 /// What a text frame's last resorts — a `Fit` frame's shrink, then the

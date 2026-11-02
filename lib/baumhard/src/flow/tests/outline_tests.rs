@@ -633,7 +633,55 @@ pub fn do_flow_path_measures_past_the_root_of_the_largest_f32() {
 /// searches. (No `do_*` twin: it reads test counters.)
 #[test]
 fn test_flow_path_walks_forward_without_searching() {
-    use crate::flow::path::{PATH_LOOKUPS, PATH_SEARCHES};
+    use crate::flow::path::{at_or_below_seam, PATH_LOOKUPS, PATH_SEARCHES};
+    // The cursor's search against the search it stands for (ruling
+    // R44.7): `partition_point` on the raw table, for tables with runs of
+    // equal values, from a cursor anywhere, for lookups that walk
+    // forward, jump back — as a chord either side of an ink does — and
+    // land at random, so both ways the search gallops are taken.
+    let mut seed = 0x9e37_79b9_u32;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    let (mut backward, mut forward) = (0, 0);
+    for len in [1usize, 2, 3, 17, 300, 4096] {
+        let mut table = Vec::with_capacity(len);
+        let mut v = 0.0_f32;
+        for _ in 0..len {
+            // A step of none now and then: equal distances.
+            v += (next() % 4) as f32 * 0.5;
+            table.push(v);
+        }
+        let top = v + 2.0;
+        let mut cursor = (next() as usize) % len;
+        for k in 0..2_000 {
+            let s = match k % 3 {
+                0 => table[cursor.min(len - 1)] + 0.25,
+                1 => table[cursor.min(len - 1)] - (next() % 64) as f32,
+                _ => (next() % 10_000) as f32 / 10_000.0 * (top + 2.0) - 1.0,
+            };
+            let want = table.partition_point(|&d| d <= s).saturating_sub(1);
+            let (got, moved) = at_or_below_seam(&table, s, cursor);
+            assert_eq!(
+                got, want,
+                "a table of {len} from cursor {cursor} at {s}: {got}, a search finds {want}"
+            );
+            assert_eq!(moved, got, "the cursor is left where the lookup fell");
+            if got < cursor {
+                backward += 1;
+            } else if got > cursor + 1 {
+                forward += 1;
+            }
+            cursor = got;
+        }
+    }
+    assert!(
+        backward > 100 && forward > 100,
+        "precondition: lookups gallop both ways ({backward} back, {forward} on)"
+    );
     let curve = Curve::Cubic(
         Vec2::new(0.0, 0.0),
         Vec2::new(300.0, -400.0),

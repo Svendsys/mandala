@@ -984,6 +984,9 @@ pub struct SweepWork {
     pub lookups: usize,
     /// The most path lookups one glyph step of a line took.
     pub most_step: usize,
+    /// The most glyph steps a frame took a glyph of its text, rounded up
+    /// (ruling R44.2).
+    pub most_per_glyph: usize,
 }
 
 /// The lines this thread has tracked (`halves::TRACKS`, a test
@@ -1160,6 +1163,8 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                 (work.most_spent, work.worst) = (trace.spent, what.clone());
                             }
                             work.steps += trace.spent;
+                            work.most_per_glyph =
+                                work.most_per_glyph.max(trace.spent.div_ceil(trace.glyphs.max(1)));
                             work.lookups += lookups_so_far() - looked;
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
                                 shrunk += 1;
@@ -2544,3 +2549,211 @@ pub fn do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
         "an end at the bottom-right corner draws back along {retreat:?}, not up the right side"
     );
 }
+
+/// `n` words of five letters and a space each, `5 n` glyphs.
+#[cfg(test)]
+fn words(n: usize) -> String {
+    "word ".repeat(n)
+}
+
+/// R44.1: a frame's text is held to `MAX_PLACED_GLYPHS`, cut at a
+/// cluster and reported: 14,000 words, 70,000 glyphs, `Once` at 16 pt
+/// round a 300,000 ellipse, which its half would hold whole.
+///
+/// Control: with the cut removed, 69,998 glyphs are placed, untruncated.
+/// (No `do_*` twin: it lays a frame for a minute in a debug build.)
+#[cfg(test)]
+#[test]
+fn test_flow_halves_a_frames_text_is_held_to_the_glyph_cap() {
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(300_000.0)), Shape::Ellipse);
+    let (_, placed, trace) = frame_with(
+        &words(14_000),
+        16.0,
+        &shape,
+        &FitMode::Once { filler: None },
+        &RingLayout::default(),
+        true,
+    );
+    assert!(
+        placed.glyphs.len() <= crate::flow::MAX_PLACED_GLYPHS && placed.truncated,
+        "{} glyphs placed, truncated {}, at most {} and reported",
+        placed.glyphs.len(),
+        placed.truncated,
+        crate::flow::MAX_PLACED_GLYPHS
+    );
+    assert!(!trace.unheld.overlap, "no two inks touch ({:?})", trace.unheld);
+}
+
+/// R44.2: a long text's frame is laid within a budget that grows with
+/// it, and nothing it leaves touches: 2,000 words at 16 pt, `Once`,
+/// round a 40,000 ellipse meets both junctions, and round a 20,000 one
+/// it holds or reports a cut — never two inks touching.
+///
+/// Control: with the budget fixed at 400,000 again, the 40,000 frame
+/// leaves a junction unmet. (No `do_*` twin: it reads its trace's work.)
+#[cfg(test)]
+#[test]
+fn test_flow_halves_a_long_texts_frame_is_laid_within_its_budget() {
+    for (side, meets) in [(40_000.0, true), (20_000.0, false)] {
+        let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(side)), Shape::Ellipse);
+        let (_, placed, trace) = frame_with(
+            &words(2_000),
+            16.0,
+            &shape,
+            &FitMode::Once { filler: None },
+            &RingLayout::default(),
+            true,
+        );
+        let what = format!(
+            "2,000 words round a {side} ellipse ({} of {} glyph steps)",
+            trace.spent, trace.budget
+        );
+        assert!(
+            !trace.unheld.overlap,
+            "{what}: two inks touch ({:?})",
+            trace.unheld
+        );
+        if meets {
+            assert!(
+                trace.unheld.is_empty() && !placed.truncated,
+                "{what}: {:?}",
+                trace.unheld
+            );
+        } else {
+            assert!(
+                trace.unheld.is_empty() || placed.truncated,
+                "{what}: {:?} uncut",
+                trace.unheld
+            );
+        }
+    }
+}
+
+/// R44.2: the budget is read before every lay, so a frame that spends it
+/// overshoots it by no more than a lay of each line — a few `track`s, a
+/// glyph step each glyph — and is left with no two inks touching: the
+/// quatrain round the 600 × 12 rectangle, `Once` at span ½, with budgets
+/// of 1, 1,000 and 10,000 glyph steps.
+///
+/// Control: with the budget read only between clearance rounds, as at
+/// 30411a6e, the overshoot passes the bound. (No `do_*` twin: it sets a
+/// test seam.)
+#[cfg(test)]
+#[test]
+fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
+    use crate::flow::place::halves::BUDGET_OVERRIDE;
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let layout = RingLayout {
+        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+        ..RingLayout::whole()
+    };
+    for budget in [1, 1_000, 10_000] {
+        BUDGET_OVERRIDE.with(|b| b.set(Some(budget)));
+        let (_, _, trace) = frame_with(
+            QUATRAIN,
+            22.0,
+            &shape,
+            &FitMode::Once { filler: None },
+            &layout,
+            true,
+        );
+        BUDGET_OVERRIDE.with(|b| b.set(None));
+        let lay = OVERSHOOT_TRACKS * trace.glyphs;
+        assert!(
+            trace.spent >= budget,
+            "precondition: the budget of {budget} is spent ({})",
+            trace.spent
+        );
+        assert!(
+            trace.spent <= budget + lay,
+            "a budget of {budget}: {} glyph steps, at most {} past it",
+            trace.spent,
+            lay
+        );
+        assert!(
+            !trace.unheld.overlap,
+            "a budget of {budget}: two inks touch ({:?})",
+            trace.unheld
+        );
+    }
+}
+
+/// How many `track`s of every glyph a frame may take past its spent
+/// budget ([`test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most`]):
+/// a lay of each line — the slide's and the solve's probe that notices
+/// the budget is spent, and the check at the font's gap — and the look
+/// at whether its lines fit.
+#[cfg(test)]
+const OVERSHOOT_TRACKS: usize = 8;
+
+/// R44.2: a frame's budget is 3,000 glyph steps a glyph of its text, at
+/// least 400,000, ten times the most a frame of the aspect sweep takes a
+/// glyph (286) rounded up; and the sweep stays under a tenth of it.
+/// Control: with the sweep's most a glyph past 300, red. (No `do_*` twin:
+/// it reads test counters.)
+#[cfg(test)]
+#[test]
+fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
+    use crate::flow::place::halves::{frame_budget, STEPS_PER_GLYPH};
+    assert_eq!(STEPS_PER_GLYPH, 3_000, "a frame's budget a glyph");
+    assert_eq!(frame_budget(10), 400_000, "a short frame's budget");
+    assert_eq!(frame_budget(1_000), 3_000_000, "a long frame's budget");
+    assert_eq!(
+        frame_budget(usize::MAX),
+        3_000 * crate::flow::MAX_PLACED_GLYPHS,
+        "the budget's ceiling"
+    );
+    let work = the_sweep();
+    assert!(
+        work.most_per_glyph > 0 && work.most_per_glyph * 10 <= STEPS_PER_GLYPH,
+        "the aspect sweep: {} glyph steps a glyph at most, a tenth of the budget a glyph is {}",
+        work.most_per_glyph,
+        STEPS_PER_GLYPH / 10
+    );
+}
+
+/// R44.3: filling a frame's sides is bounded work, counted against its
+/// budget: the reviewer's case, a 200-byte ornament at span natural round
+/// a 200,000 ellipse, which took 51,294,015 path lookups when each fill
+/// bisected its gap in 30 lays of every copy.
+///
+/// Control: with the gap bisected again, past the bound. (No `do_*` twin:
+/// it reads test counters.)
+#[cfg(test)]
+#[test]
+fn test_flow_halves_a_long_side_ornament_is_filled_in_few_lays() {
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(200_000.0)), Shape::Ellipse);
+    let layout = RingLayout {
+        span: LineSpan::NATURAL,
+        sides: Some(("x".repeat(200), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    let looked = lookups_so_far();
+    let (_, placed, trace) = frame_with(
+        "To see a World in a Grain of Sand",
+        16.0,
+        &shape,
+        &FitMode::Once { filler: None },
+        &layout,
+        true,
+    );
+    let lookups = lookups_so_far() - looked;
+    assert!(
+        trace.lines.len() == 2 && placed.glyphs.len() > 300,
+        "precondition: the sides are laid ({} glyphs)",
+        placed.glyphs.len()
+    );
+    assert!(
+        lookups <= SIDE_FILL_LOOKUPS,
+        "{lookups} path lookups, at most {SIDE_FILL_LOOKUPS}"
+    );
+}
+
+/// The most path lookups [`test_flow_halves_a_long_side_ornament_is_filled_in_few_lays`]'s frame may take.
+#[cfg(test)]
+const SIDE_FILL_LOOKUPS: usize = 0;

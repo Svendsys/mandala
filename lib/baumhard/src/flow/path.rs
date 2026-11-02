@@ -115,6 +115,15 @@ fn at_or_below(sorted: &[f32], s: f32, cursor: &Cell<usize>) -> usize {
     found
 }
 
+/// Test seam (#294, ruling R44.7): [`at_or_below`] on `sorted` from a
+/// cursor at `hint` — what a path's lookup searches its stretches' starts
+/// and a table's distances with — and where it leaves the cursor.
+pub(crate) fn at_or_below_seam(sorted: &[f32], s: f32, hint: usize) -> (usize, usize) {
+    let cursor = Cell::new(hint);
+    let found = at_or_below(sorted, s, &cursor);
+    (found, cursor.get())
+}
+
 /// [`at_or_below`]'s search from `hint`: the bracket round the last index
 /// at or below `s` doubled from `hint` the way it lies, then searched —
 /// the predicate `d <= s` is monotone in an ascending slice, so this is
