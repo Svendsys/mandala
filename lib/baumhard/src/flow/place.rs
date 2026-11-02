@@ -621,8 +621,9 @@ pub(crate) struct Unheld {
     pub(crate) junctions: Vec<usize>,
     /// Whether two of the lines' inks still touch.
     pub(crate) overlap: bool,
-    /// The junctions whose break was left without its side ornament,
-    /// whose copies would have touched the text.
+    /// The junctions whose break was left without its side ornament:
+    /// its copies would have touched the text, or the frame's work budget
+    /// was spent before they were laid (rulings R44.2, R47.2).
     pub(crate) sides: Vec<usize>,
 }
 

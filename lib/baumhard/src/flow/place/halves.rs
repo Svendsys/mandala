@@ -268,6 +268,10 @@ pub(crate) const STEPS_PER_GLYPH: usize = 3_000;
 /// is more. At most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
 pub(crate) fn frame_budget(glyphs: usize) -> usize {
     #[cfg(test)]
+    if let Some(budget) = BUDGET_OVERRIDE.with(Cell::get) {
+        return budget;
+    }
+    #[cfg(test)]
     let floor = FLOOR_OVERRIDE.with(Cell::get).unwrap_or(TRACK_BUDGET);
     #[cfg(not(test))]
     let floor = TRACK_BUDGET;
@@ -672,7 +676,8 @@ thread_local! {
     #[cfg(test)]
     pub(crate) static BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test seam (#294, ruling R44.2): a frame budget to lay with in
-    /// place of [`frame_budget`]'s, so a test can spend one.
+    /// place of [`frame_budget`]'s — R27's sizing pass included, which
+    /// lays under the same budget — so a test can spend one.
     #[cfg(test)]
     pub(crate) static BUDGET_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     /// Test seam (#294, rulings R44.1, R44.2): the least budget a frame
@@ -685,8 +690,24 @@ thread_local! {
     /// short text.
     #[cfg(test)]
     pub(crate) static CAP_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-    /// Test counter (#294, ruling R44.3): the pairs of boxes [`touching`]
-    /// has weighed on this thread.
+    /// Test counter (#294, ruling R46.1): the times R27's fit has
+    /// reshaped a frame's text on this thread (`lines::fit_reshape`).
+    #[cfg(test)]
+    pub(crate) static FIT_RESHAPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294, ruling R47.2): the glyph steps frames on this
+    /// thread have taken while their budget was already spent
+    /// ([`Work::spent_all`]), but for [`untouched`]'s, which run within
+    /// the share of the budget held back for it: what a frame does past
+    /// its budget once it has read that it is spent.
+    #[cfg(test)]
+    pub(crate) static PAST_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294, ruling R46.1): the most glyph steps one
+    /// [`untouched`] has taken on this thread, and the inks it was given.
+    #[cfg(test)]
+    pub(crate) static UNTOUCHED_TAKEN: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (#294, rulings R44.3, R46.1): the pairs of boxes
+    /// [`touching`] has looked at on this thread, each a [`box_gap`]
+    /// weighed or a pair it passed over.
     #[cfg(test)]
     pub(crate) static BOXES_WEIGHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -1261,6 +1282,10 @@ pub(super) struct Work {
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
+    /// Whether [`untouched`] is running, within the share held back for
+    /// it: its steps are not past the budget ([`PAST_BUDGET`]).
+    #[cfg(test)]
+    reserved: Cell<bool>,
 }
 
 impl Work {
@@ -1271,6 +1296,8 @@ impl Work {
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
+            #[cfg(test)]
+            reserved: Cell::new(false),
         };
         work.scale(glyphs);
         work
@@ -1278,6 +1305,10 @@ impl Work {
 
     /// Count `steps` glyph steps taken.
     pub(super) fn take(&self, steps: usize) {
+        #[cfg(test)]
+        if self.spent_all() && !self.reserved.get() {
+            PAST_BUDGET.with(|past| past.set(past.get().saturating_add(steps)));
+        }
         self.spent.set(self.spent.get().saturating_add(steps));
     }
 
@@ -1870,20 +1901,27 @@ impl<'s> SideArc<'s> {
 
     /// `n` copies laid at `gap` by the pairwise rule ([`InkLay`]): the
     /// first ink `gap` from `from`'s, each next ink `gap` from the last, a
-    /// space owing its advance and `gap` more. Returns the lay, and how far
-    /// the last ink is from `to` and where along the path its center lies.
+    /// space owing its advance and `gap` more. Returns the lay, how far
+    /// the last ink is from `to` and where along the path its center lies,
+    /// and whether all `n` copies were laid: the frame's budget is read
+    /// before each copy after the first (rulings R44.2, R47.2), the
+    /// first's read by the caller, and a lay that finds it spent stops.
     ///
     /// Cost: a [`PathWalk::ink_point`] or a few a glyph.
-    fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32)) {
+    fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32), bool) {
         let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
-        for _ in 0..n {
+        for k in 0..n {
+            if k > 0 && self.side.work.spent_all() {
+                let end = self.end_of(&lay);
+                return (lay, end, false);
+            }
             for cluster in &self.side.clusters {
                 lay.cluster(cluster, gap);
             }
+            self.side.count(1);
         }
-        self.side.count(n);
         let end = self.end_of(&lay);
-        (lay, end)
+        (lay, end, true)
     }
 
     /// How far the last ink `lay` set is from `to`, and where along the
@@ -1898,8 +1936,8 @@ impl<'s> SideArc<'s> {
     /// `to`'s and its ink at least `gap` from `to`'s. A miss that is not
     /// a number does not fit.
     fn fits(&self, n: usize, gap: f32) -> bool {
-        let (_, (end, at)) = self.lay(n, gap);
-        at < self.cb && end >= gap
+        let (_, (end, at), whole) = self.lay(n, gap);
+        whole && at < self.cb && end >= gap
     }
 
     /// How much room `n` copies laid by `lay` leave: how far the last
@@ -1926,14 +1964,19 @@ impl<'s> SideArc<'s> {
     /// copies that fit the room they leave and how many glyphs they
     /// place. Copies are laid in a row, each set on from the last, so the
     /// first `k` of any row are `k` copies laid on their own: this one lay
-    /// tells every copy count's room at the floor (ruling R44.3).
+    /// tells every copy count's room at the floor (ruling R44.3). `None`
+    /// when the frame's budget is spent before the row is laid: the
+    /// budget is read before each copy (rulings R44.2, R47.2).
     ///
     /// Cost: one lay of the copies that fit and the one that does not.
-    fn floor_row(&self, most: usize) -> (Vec<PlacedGlyph>, Vec<(f32, usize)>) {
+    fn floor_row(&self, most: usize) -> Option<(Vec<PlacedGlyph>, Vec<(f32, usize)>)> {
         let gap = self.floor;
         let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
         let mut rooms = Vec::new();
         while rooms.len() < most.min(MAX_SIDE_COPIES) {
+            if self.side.work.spent_all() {
+                return None;
+            }
             for cluster in &self.side.clusters {
                 lay.cluster(cluster, gap);
             }
@@ -1944,7 +1987,7 @@ impl<'s> SideArc<'s> {
             }
             rooms.push((room, lay.out.len()));
         }
-        (lay.out, rooms)
+        Some((lay.out, rooms))
     }
 
     /// How many gaps `n` copies have: one before each ink of every copy,
@@ -1991,7 +2034,13 @@ impl<'s> SideArc<'s> {
         // hair narrower than their gaps, as a line's end a hair past its
         // part's is laid, but copies that touch the text are no answer.
         let room = |gap: f32| {
-            let (lay, _) = self.lay(n, gap);
+            let (lay, _, whole) = self.lay(n, gap);
+            // A lay the frame's spent budget stopped is no answer: read as
+            // past every gap, and the search, reading the budget spent,
+            // keeps the widest gap found to fit.
+            if !whole {
+                return (f32::NEG_INFINITY, lay.out);
+            }
             let v = self.room_of(&lay, gap);
             let (end, at) = self.end_of(&lay);
             let v = if v >= 0.0 {
@@ -2037,7 +2086,9 @@ impl<'s> SideArc<'s> {
     /// [`MAX_SIDE_COPIES`] or as many as `budget` glyphs hold — weighing
     /// the most that fit at the target and one more, whose gap is
     /// narrower — every gap and both joins equal. Nothing when not even
-    /// one copy fits, or the budget holds none.
+    /// one copy fits, or the budget holds none. Nothing, and `false`, when
+    /// the frame's work budget is spent before the floor's row is laid
+    /// (rulings R44.2, R47.2): the arc is left empty.
     ///
     /// The two counts weighed are those whose gaps bracket the target:
     /// guessed from the floor's row by the straight path, then moved a
@@ -2047,7 +2098,7 @@ impl<'s> SideArc<'s> {
     /// Cost (ruling R44.3): the floor's row, and two solves where the
     /// guess holds — a lay of every copy each widening and each of
     /// [`falsi`]'s rounds, the copies chosen kept as laid.
-    fn fill(&self, target: f32, budget: usize, out: &mut Vec<PlacedGlyph>) {
+    fn fill(&self, target: f32, budget: usize, out: &mut Vec<PlacedGlyph>) -> bool {
         let per_copy = self
             .side
             .clusters
@@ -2057,12 +2108,14 @@ impl<'s> SideArc<'s> {
             .max(1);
         let most = MAX_SIDE_COPIES.min(budget / per_copy);
         if most == 0 {
-            return;
+            return true;
         }
-        let (row, rooms) = self.floor_row(most);
+        let Some((row, rooms)) = self.floor_row(most) else {
+            return false;
+        };
         let fit = rooms.len();
         if fit == 0 {
-            return;
+            return true;
         }
         let mut solved: Vec<Option<(f32, Vec<PlacedGlyph>)>> = vec![None; fit + 1];
         let mut solve = |n: usize| -> f32 {
@@ -2100,6 +2153,7 @@ impl<'s> SideArc<'s> {
         if let Some((_, glyphs)) = solved[best.0].take() {
             out.extend(glyphs);
         }
+        true
     }
 }
 
@@ -2495,17 +2549,45 @@ fn overlapping(lines: &[Line], work: &Work) -> bool {
 
 /// Whether two of `boxes` touch — no more than [`TOUCH`] apart
 /// ([`box_gap`]) — but for the pairs `exempt` excuses, each box known by
-/// its key. A sweep along the axis the boxes spread further on: sorted
-/// by where each starts along it, a box is weighed only against those
-/// that start before it ends, past which none can be within [`TOUCH`].
-/// A box that is not a number ends its scan.
+/// its key ([`touch_scan`]): each box and each pair of them looked at
+/// counted against `work` (ruling R46.1).
+fn touching<K: Copy>(boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool, work: &Work) -> bool {
+    let mut looked = 0;
+    let touches = touch_scan(&boxes, &exempt, &mut looked);
+    #[cfg(test)]
+    BOXES_WEIGHED.with(|count| count.set(count.get() + looked));
+    work.take(weighing_steps(boxes.len().saturating_add(looked)));
+    touches
+}
+
+/// How much wider than the widest box and [`TOUCH`] a cell of
+/// [`touch_scan`]'s grid is: enough that rounding a box's corner to its
+/// cell never puts two boxes that touch two cells apart.
+const CELL_MARGIN: f64 = 1.0 + 1.0 / (1u64 << 20) as f64;
+
+/// Whether two of `boxes` touch, as [`touching`] asks, the pairs of them
+/// looked at added to `looked`.
 ///
-/// Cost: a sort, and a [`box_gap`] for each pair that overlaps along the
-/// axis — round a ring, the few inks either side of each — where
-/// weighing every pair was quadratic in the inks (a side ornament's
-/// tens of thousands of copies' inks, ruling R44.3).
-fn touching<K: Copy>(mut boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool, work: &Work) -> bool {
-    work.take(weighing_steps(boxes.len()));
+/// The pairs weighed are a sweep's: sorted by where each box starts along
+/// the axis the boxes spread further on, ties in their order, a box is
+/// weighed against each after it that starts no further than [`TOUCH`]
+/// past where it ends, a box that is not a number ending the scan. Of
+/// those pairs only the ones that can touch are looked at. Boxes whose
+/// corners are numbers are bucketed by their least corner in a grid whose
+/// cells are as wide as the widest box and [`TOUCH`] and as tall as the
+/// tallest and [`TOUCH`] ([`CELL_MARGIN`]): two that touch lie in one
+/// cell or in neighboring ones. A box with a corner that is not a number,
+/// which [`box_gap`] can read as touching anything, is weighed as the
+/// sweep weighs it: against each box its scan reaches, and each box whose
+/// scan reaches it.
+///
+/// Cost: a sort, and a look at each pair of boxes in neighboring cells:
+/// round any outline, the few inks either side of each. A sweep along one
+/// axis looked at every pair that shared some of its width, quadratic in
+/// a side ornament's copies down a straight side (R44.3's 200-byte
+/// ornament round a sharp square, some 5,000 pairs a glyph). A box that
+/// is not a number adds the boxes its scan reaches.
+fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, looked: &mut usize) -> bool {
     let spread = |axis: usize| {
         let (lo, hi) = boxes
             .iter()
@@ -2517,20 +2599,93 @@ fn touching<K: Copy>(mut boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool,
         hi - lo
     };
     let axis = if spread(1) > spread(0) { 1 } else { 0 };
-    boxes.sort_by(|a, b| a.1 .0[axis].total_cmp(&b.1 .0[axis]));
-    for (n, (k, a)) in boxes.iter().enumerate() {
-        for (l, b) in &boxes[n + 1..] {
-            // Every box after starts no sooner; one that is not a number
-            // ends the scan.
-            if !b.0[axis].le(&(a.1[axis] + TOUCH)) {
+    let start = |i: usize| boxes[i].1 .0[axis];
+    // Whether the sweep weighs box `i` with `j`, after it — `j` starting
+    // no further than `TOUCH` past where `i` ends — and the two touch.
+    let weigh = |i: usize, j: usize| {
+        let ((k, a), (l, b)) = (boxes[i], boxes[j]);
+        b.0[axis].le(&(a.1[axis] + TOUCH)) && !exempt(k, l) && box_gap(a, b) <= TOUCH
+    };
+    let regular = |i: usize| boxes[i].1 .0.is_finite() && boxes[i].1 .1.is_finite();
+
+    // The boxes not numbers, weighed as the sweep weighs them.
+    if !(0..boxes.len()).all(regular) {
+        let mut order: Vec<usize> = (0..boxes.len()).collect();
+        order.sort_by(|&i, &j| start(i).total_cmp(&start(j)));
+        let odd: Vec<usize> = (0..order.len()).filter(|&at| !regular(order[at])).collect();
+        for (at, &i) in order.iter().enumerate() {
+            let reach = boxes[i].1 .1[axis] + TOUCH;
+            // A box that is a number: the odd boxes its scan reaches, the
+            // boxes after it starting in order until one starts past
+            // `reach` — so the odd ones in order until one does.
+            let after: Box<dyn Iterator<Item = usize>> = if regular(i) {
+                Box::new(odd[odd.partition_point(|&o| o <= at)..].iter().map(|&o| order[o]))
+            } else {
+                Box::new(order[at + 1..].iter().copied())
+            };
+            for j in after {
+                *looked += 1;
+                if !start(j).le(&reach) {
+                    break;
+                }
+                if weigh(i, j) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // The boxes that are numbers, by cell: sorted by column, then row.
+    let size = [0, 1].map(|d| {
+        let widest = (0..boxes.len())
+            .filter(|&i| regular(i))
+            .map(|i| boxes[i].1 .1[d] - boxes[i].1 .0[d])
+            .fold(0.0_f32, f32::max);
+        (f64::from(widest) + f64::from(TOUCH)) * CELL_MARGIN
+    });
+    // A cell past `i64`'s range is its end's, shared by every box there.
+    let cell_of = |i: usize| {
+        let corner = boxes[i].1 .0;
+        let at = |d: usize| (f64::from(corner[d]) / size[d]).floor() as i64;
+        (at(0), at(1))
+    };
+    let mut cells: Vec<((i64, i64), usize)> = (0..boxes.len())
+        .filter(|&i| regular(i))
+        .map(|i| (cell_of(i), i))
+        .collect();
+    cells.sort_unstable();
+    // Which of a pair the sweep weighs first.
+    let pair = |i: usize, j: usize| match start(i).total_cmp(&start(j)).then(i.cmp(&j)) {
+        Ordering::Less => weigh(i, j),
+        _ => weigh(j, i),
+    };
+    // Each pair once: a box with the boxes after it in its cell and the
+    // cell above, then with the three cells of the next column beside.
+    let mut next = 0;
+    for (n, &((column, row), i)) in cells.iter().enumerate() {
+        let above = row.saturating_add(1);
+        for &((c, r), j) in &cells[n + 1..] {
+            if c != column || r > above {
                 break;
             }
-            if exempt(*k, *l) {
-                continue;
+            *looked += 1;
+            if pair(i, j) {
+                return true;
             }
-            #[cfg(test)]
-            BOXES_WEIGHED.with(|count| count.set(count.get() + 1));
-            if box_gap(*a, *b) <= TOUCH {
+        }
+        let Some(beside) = column.checked_add(1) else {
+            continue;
+        };
+        let from = (beside, row.saturating_sub(1));
+        while next < cells.len() && cells[next].0 < from {
+            next += 1;
+        }
+        for &((c, r), j) in &cells[next..] {
+            if c != beside || r > above {
+                break;
+            }
+            *looked += 1;
+            if pair(i, j) {
                 return true;
             }
         }
@@ -2547,6 +2702,8 @@ fn touching<K: Copy>(mut boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool,
 /// Cost: a bisection of [`overlapping`]s over the frame's inks.
 fn untouched(lines: &[Line], work: &Work) -> (Vec<Line>, Vec<usize>) {
     let total: usize = lines.iter().map(|l| l.tracked.boxes.len()).sum();
+    #[cfg(test)]
+    let (spent, reserved) = (work.spent.get(), work.reserved.replace(true));
     let cut_to = |m: usize| {
         let mut left = m;
         let mut out = Vec::new();
@@ -2580,6 +2737,16 @@ fn untouched(lines: &[Line], work: &Work) -> (Vec<Line>, Vec<usize>) {
         }
     }
     let kept = cut_to(apart);
+    #[cfg(test)]
+    {
+        work.reserved.set(reserved);
+        let taken = work.spent.get() - spent;
+        UNTOUCHED_TAKEN.with(|most| {
+            if taken > most.get().0 {
+                most.set((taken, total));
+            }
+        });
+    }
     let cut = lines
         .iter()
         .enumerate()
@@ -3398,10 +3565,6 @@ pub(super) fn place_halves(
         .sum::<usize>()
         .min(glyph_cap());
     lay.work.scale(glyphs);
-    #[cfg(test)]
-    if let Some(budget) = BUDGET_OVERRIDE.with(Cell::get) {
-        lay.work.budget.set(budget);
-    }
     let zero: Clear = [[0.0; 2]; 2];
     let Some(mut built) = build(1.0, zero, false, fs) else {
         unreachable!("only a cheap build is refused")
@@ -3416,7 +3579,7 @@ pub(super) fn place_halves(
     // Each probe looks first at whether its lines fit their halves less
     // a clearance seeded from the last size held, and grows that
     // clearance only if they do (ruling R35.3).
-    if let (false, FitMode::Fit { min, .. }) = (built.holds(), fit) {
+    if let (false, false, FitMode::Fit { min, .. }) = (built.holds(), lay.spent_all(), fit) {
         let fitted_size = base.glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
         let declared = run.glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
         let floor = if fitted_size > 0.0 && declared > 0.0 {
@@ -3555,7 +3718,12 @@ pub(super) fn place_halves(
             let budget = glyph_cap().saturating_sub(text.len() + sides.len());
             if let Some(arc) = side.arc(from, to) {
                 let before = sides.len();
-                arc.fill(target, budget, &mut sides);
+                // An arc the frame's budget is spent before is left
+                // empty, and reported (rulings R44.2, R47.2).
+                if !arc.fill(target, budget, &mut sides) {
+                    unheld.sides.extend((0..2).filter(|&j| at[j]));
+                    continue;
+                }
                 // An arc whose copies would touch the text, the copies
                 // already laid, or one another but for neighbors — round
                 // an outline thinner than its lines, inward, where an arc
@@ -3624,6 +3792,18 @@ pub(super) fn place_halves(
     glyphs.extend(sides);
     let placed = PlacedRun { glyphs, truncated };
     (changed.then(|| uninked(drawn)), placed)
+}
+
+/// Test seam (#294, ruling R46.1): whether a frame's work, its budget
+/// scaled by `glyphs` glyphs and then set to `budget`, reads as spent once
+/// it has taken `steps` glyph steps.
+#[cfg(test)]
+pub(crate) fn spent_seam(glyphs: usize, budget: usize, steps: usize) -> bool {
+    let work = Work::new(glyphs);
+    work.budget.set(budget);
+    work.spent.set(0);
+    work.take(steps);
+    work.spent_all()
 }
 
 /// Test seam (#291, ruling R32): where along `outline`'s first half the
@@ -3731,10 +3911,10 @@ pub(crate) fn side_solve_seam(
         ((p, p), s)
     };
     let arc = side.arc(point(ja), point(jb))?;
-    let (row, rooms) = arc.floor_row(n);
+    let (row, rooms) = arc.floor_row(n)?;
     let &(room, len) = rooms.get(n.checked_sub(1)?)?;
     let (gap, _) = arc.solve(n, room, row[..len].to_vec());
-    let (_, (end, at)) = arc.lay(n, gap);
+    let (_, (end, at), _) = arc.lay(n, gap);
     Some((gap, at >= arc.cb || end.is_nan() || end <= TOUCH))
 }
 

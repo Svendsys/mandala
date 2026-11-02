@@ -21,7 +21,7 @@ use crate::font::fonts::glyph_outline_ink;
 use crate::font::{FontSystem, SwashCache};
 
 /// The README's Blake quatrain.
-const QUATRAIN: &str = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower, \
+pub(crate) const QUATRAIN: &str = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower, \
      Hold Infinity in the palm of your hand, And Eternity in an hour. ";
 
 /// The psalm the README sets inside it.
@@ -94,7 +94,7 @@ fn frame(text: &str, points: f32, outline: &Outline, layout: &RingLayout) -> (Sh
 
 /// `text` at `points` laid round `outline` as a frame with `fit` and
 /// `layout`, outward or inward.
-fn frame_with(
+pub(crate) fn frame_with(
     text: &str,
     points: f32,
     outline: &Outline,
@@ -2592,7 +2592,7 @@ fn words(n: usize) -> String {
 /// Run `f` with a halves test seam set to `value`, and the seam cleared
 /// again after, whether or not `f` panics.
 #[cfg(test)]
-fn with_seam<R>(
+pub(crate) fn with_seam<R>(
     seam: &'static std::thread::LocalKey<std::cell::Cell<Option<usize>>>,
     value: usize,
     f: impl FnOnce() -> R,
@@ -2930,64 +2930,114 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 
 /// R44.3: filling a frame's sides is work in proportion to what it
 /// places, counted against its budget: the reviewer's case, a 200-byte
-/// ornament at span natural round a 200,000 ellipse, whose two arcs place
-/// some 65,000 glyphs, takes at most [`SIDE_LOOKUPS_A_GLYPH`] path
-/// lookups a glyph placed (78; 51,294,015 in all,
-/// 784 a glyph, at dd04a8f5, when each fill bisected its gap in 30 lays
-/// of every copy), and weighs at most [`PAIRS_A_BOX`] pairs of boxes a
-/// glyph for touching (4.2; every pair, some two billion, at dd04a8f5).
+/// ornament at span natural round a 200,000 ellipse, and the same round a
+/// 200,000 sharp square (review 5739829769).
+///
+/// With a budget that holds it (a floor of 2,000,000, the test seam;
+/// some 720,000 and 1,256,000 glyph steps), each fills both arcs, some
+/// 65,000 glyphs, in at most [`SIDE_LOOKUPS_A_GLYPH`] path lookups a glyph
+/// placed (128 round the ellipse, 146 round the square; 784 at dd04a8f5,
+/// when each fill bisected its gap in 30 lays of every copy), and looks at most at
+/// [`PAIRS_A_BOX`] pairs of boxes a glyph for touching (some 3; every
+/// pair, some two billion, at dd04a8f5; round the square 5,272 a glyph at
+/// 1f1b3f8e, when a sweep along one axis weighed every copy down a
+/// straight side against every other).
+///
+/// At its own budget, 400,000, each fills its first arc until the budget
+/// is spent, leaves its second unfilled and reported, and takes no more
+/// past its budget than `overshoot_steps` (rulings R44.2, R47.2).
 ///
 /// Controls: with the gap bisected in 30 lays again, past the lookups'
-/// bound; with every pair of boxes weighed, past the pairs'. (No `do_*`
-/// twin: it reads test counters.)
-#[test]
-fn test_flow_halves_a_long_side_ornament_is_filled_in_few_lays() {
-    use crate::flow::place::halves::BOXES_WEIGHED;
-    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(200_000.0)), Shape::Ellipse);
+/// bound; with the sweep along one axis again, past the pairs' round the
+/// square; with a side's lay unread past its first copy, past the
+/// overshoot. (No `do_*` twin: it reads test counters.)
+fn a_long_side_ornament(shape: Shape, what: &str) {
+    use crate::flow::place::halves::{overshoot_steps, BOXES_WEIGHED, FLOOR_OVERRIDE, PAST_BUDGET};
+    use crate::flow::tests::flow_fuzz::ornament_run;
+    use crate::flow::tests::support::style;
+    let text = "To see a World in a Grain of Sand";
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(200_000.0)), shape);
     let layout = RingLayout {
         span: LineSpan::NATURAL,
         sides: Some(("x".repeat(200), Rgba::opaque(0, 0, 0))),
         ..RingLayout::whole()
     };
+    let lay = || frame_with(text, 16.0, &shape, &FitMode::Once { filler: None }, &layout, true);
+
     let looked = lookups_so_far();
     let weighed = BOXES_WEIGHED.with(std::cell::Cell::get);
-    let (_, placed, trace) = frame_with(
-        "To see a World in a Grain of Sand",
-        16.0,
-        &shape,
-        &FitMode::Once { filler: None },
-        &layout,
-        true,
-    );
+    let (_, placed, trace) = with_seam(&FLOOR_OVERRIDE, 2_000_000, lay);
     let lookups = lookups_so_far() - looked;
     let pairs = BOXES_WEIGHED.with(std::cell::Cell::get) - weighed;
     let glyphs = placed.glyphs.len();
     assert!(
         trace.lines.len() == 2 && glyphs > 60_000 && trace.unheld.sides.is_empty(),
-        "precondition: both arcs are filled ({glyphs} glyphs, {:?})",
+        "precondition, {what}: both arcs are filled ({glyphs} glyphs, {:?})",
         trace.unheld
     );
     assert!(
         lookups <= SIDE_LOOKUPS_A_GLYPH * glyphs,
-        "{lookups} path lookups for {glyphs} glyphs, {:.1} a glyph, at most {SIDE_LOOKUPS_A_GLYPH}",
+        "{what}: {lookups} path lookups for {glyphs} glyphs, {:.1} a glyph, at most {SIDE_LOOKUPS_A_GLYPH}",
         lookups as f64 / glyphs as f64
     );
     assert!(
         pairs <= PAIRS_A_BOX * glyphs,
-        "{pairs} pairs of boxes weighed for {glyphs} glyphs, at most {PAIRS_A_BOX} a glyph"
+        "{what}: {pairs} pairs of boxes looked at for {glyphs} glyphs, {:.1} a glyph, at most {PAIRS_A_BOX}",
+        pairs as f64 / glyphs as f64
+    );
+
+    let flow = style(16.0);
+    let allowed = with_fonts(|fs| {
+        let ornament = ornament_run(&layout, &flow, 1.0, fs);
+        overshoot_steps(&real_run(text, &flow, fs), ornament.as_ref(), false)
+    });
+    PAST_BUDGET.with(|past| past.set(0));
+    let (_, placed, trace) = lay();
+    let past = PAST_BUDGET.with(std::cell::Cell::get);
+    assert!(
+        placed.glyphs.len() > 30_000 && trace.unheld.sides == [1],
+        "precondition, {what}: at its own budget the first arc is filled and the second reported ({} glyphs, {:?})",
+        placed.glyphs.len(),
+        trace.unheld
+    );
+    assert!(
+        past <= allowed && trace.spent <= trace.budget + allowed,
+        "{what}: {past} glyph steps past a spent budget, {} in all against {}, at most {allowed} past it",
+        trace.spent,
+        trace.budget
     );
 }
 
-/// The most path lookups [`test_flow_halves_a_long_side_ornament_is_filled_in_few_lays`]'s
-/// frame may take a glyph it places: a few lays of each copy at a dozen
-/// lookups a glyph, its lays counted against the frame's budget, with a
-/// margin past the 78 it takes.
-#[cfg(test)]
-const SIDE_LOOKUPS_A_GLYPH: usize = 100;
+/// [`a_long_side_ornament`] round the ellipse.
+#[test]
+fn test_flow_halves_a_long_side_ornament_is_filled_in_few_lays() {
+    a_long_side_ornament(Shape::Ellipse, "ellipse");
+}
 
-/// The most pairs of boxes the same frame may weigh for touching a glyph
-/// it places: the few inks either side of each along the sweep's axis,
-/// with a margin past the 4.2 it weighs.
+/// [`a_long_side_ornament`] round the sharp square.
+#[test]
+fn test_flow_halves_a_long_side_ornament_round_a_sharp_square_is_filled_in_few_lays() {
+    a_long_side_ornament(
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+        "sharp square",
+    );
+}
+
+/// The most path lookups [`a_long_side_ornament`]'s frames may take a
+/// glyph they place, both arcs filled: a few lays of each copy at a dozen
+/// lookups a glyph, with a margin past the 128 (ellipse) and 146 (sharp
+/// square) they take. (At 1f1b3f8e the ellipse's frame took 78 at its own
+/// budget, where its second arc's floor row was laid, unread, after the
+/// budget was spent and its gap never solved; with each copy's gap solved
+/// by bisection, 784.)
+#[cfg(test)]
+const SIDE_LOOKUPS_A_GLYPH: usize = 200;
+
+/// The most pairs of boxes the same frames may look at for touching a
+/// glyph they place: the few inks either side of each, in the cells of
+/// the grid round it, with a margin past the some 3 they look at.
 #[cfg(test)]
 const PAIRS_A_BOX: usize = 10;
 

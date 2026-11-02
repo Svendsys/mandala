@@ -594,6 +594,8 @@ fn fit_reshape(
     work: &Work,
 ) -> Option<ShapedRun> {
     let shaped = |scale: f32, fs: &mut FontSystemWriteGuard| {
+        #[cfg(test)]
+        super::halves::FIT_RESHAPES.with(|count| count.set(count.get() + 1));
         let reshaped = reshape(run, scale, None, fs);
         work.shaped(&reshaped);
         reshaped
