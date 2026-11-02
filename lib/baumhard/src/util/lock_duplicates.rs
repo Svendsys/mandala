@@ -31,7 +31,7 @@
 //!   images, which `src/` never reads — so one duplicate build less is
 //!   the better trade for now.
 //!   **If a flate2 advisory lands, or a path starts decoding, drop the
-//!   pin and list `miniz_oxide` 0.8/0.9 here with that reason; do not
+//!   pin and list miniz_oxide 0.8 and 0.9 here with that reason; do not
 //!   re-pin.** The skrifa pin gives swash the skrifa cosmic-text
 //!   already uses instead of the newest its range allows; the demo
 //!   maps render to the same pixels on either (#284).
