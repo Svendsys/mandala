@@ -127,7 +127,7 @@ pub const INPUT_WORK_MICROS: u64 = FUZZ_TIMEOUT_SECONDS * 1_000_000 / 4 * 3;
 /// sweep of 2,600 seeded structured inputs drew, each input run three
 /// times in one process. The most of any frame's time over its counted
 /// steps was 21.53 µs, a small frame on its first, cold run; frames of
-/// tens of thousands of steps took 7.8 to 12 µs. The machine's load
+/// 10,000 steps or more took 1.3 to 8.9 µs a step. The machine's load
 /// average was 1 to 2. #294's PR body has the table.
 pub const ASAN_STEP_NANOS: u64 = 32_300;
 
