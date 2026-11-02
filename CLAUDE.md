@@ -467,9 +467,19 @@ the parity trajectory (or why none is owed):
   target. The wasm probe's nested build
   (`lib/baumhard/tests/wasm_font_lock.rs`) is its own workspace, so
   none of this reaches it; its generated manifest sets
-  `debug = false`. `fuzz/` is its own workspace too and is left as it
-  was: it builds `release`, whose `debug = 1` is what a crash's stack
-  trace is read from, and `./test.sh` never builds it.
+  `debug = false`. Its *output* goes to the workspace's own
+  `target/` (the directory cargo built the test in), not to a private
+  `target/wasm_font_lock/target` as it did before #285, so most of
+  the host-side compiles the workspace's own builds already made
+  (chiefly `./test.sh`'s wasm32 check and clippy legs) are not stored
+  twice; a handful stay the probe's own. Only the three staged source
+  files stay under `target/wasm_font_lock_<hash>/` (a hash of the
+  workspace root, so checkouts sharing one target directory do not
+  share them). TEST_CONVENTIONS §T9 says why a shared directory
+  cannot let the probe pass on a stale artifact. `fuzz/` is its own
+  workspace too and is left as it was: it builds `release`, whose
+  `debug = 1` is what a crash's stack trace is read from, and
+  `./test.sh` never builds it.
   `baumhard::util::build_profiles` holds the root manifest's half to
   the file, and fails on any other `profile.dev*` or `profile.test`
   table that sets `debug`.
