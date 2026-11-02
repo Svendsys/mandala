@@ -79,11 +79,11 @@ const RING_MARGIN: f32 = 6.0;
 
 /// What a map projects to: its runs, the canvas they cover, and what
 /// was placed and lost on the way.
-struct Projected {
+pub(super) struct Projected {
     /// Every run, in draw order: sections, rings, then paths.
-    runs: Vec<GlyphRunData>,
+    pub(super) runs: Vec<GlyphRunData>,
     /// The canvas the nodes and their rings cover, `(min, max)`.
-    bounds: (Vec2, Vec2),
+    pub(super) bounds: (Vec2, Vec2),
     /// How many rings and paths were placed.
     rings: usize,
     paths: usize,
@@ -92,7 +92,7 @@ struct Projected {
     /// What each run is, in `runs`' order: `section N.k`, `frame N.k`
     /// (a ring of text), `ring N.k` (a `repeat` ring) or `path N>M`, by
     /// node id and place.
-    labels: Vec<String>,
+    pub(super) labels: Vec<String>,
 }
 
 /// A node as drawn: its outline, and how far past it its outermost
@@ -107,7 +107,7 @@ struct Drawn {
 }
 
 /// Run `f` under the font guard, released before the result returns.
-fn with_fonts<R>(f: impl FnOnce(&mut FontSystemWriteGuard) -> R) -> R {
+pub(super) fn with_fonts<R>(f: impl FnOnce(&mut FontSystemWriteGuard) -> R) -> R {
     fonts::init();
     let mut fs = acquire_font_system_write("app::tests_gpu_demo_maps");
     f(&mut fs)
@@ -235,7 +235,7 @@ fn opacity_of(doc: &Document, node: NodeId) -> f32 {
 
 /// Project `doc`: every node's sections and frame, then every
 /// connector and line link.
-fn project(doc: &Document, fs: &mut FontSystemWriteGuard) -> Projected {
+pub(super) fn project(doc: &Document, fs: &mut FontSystemWriteGuard) -> Projected {
     let tree = doc.tree();
     let mut out = Projected {
         runs: Vec::new(),
@@ -408,7 +408,7 @@ fn project(doc: &Document, fs: &mut FontSystemWriteGuard) -> Projected {
 }
 
 /// The demo maps, by name, sorted.
-fn demo_maps() -> Vec<(String, PathBuf)> {
+pub(super) fn demo_maps() -> Vec<(String, PathBuf)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEMOS);
     let mut maps: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{} must be readable: {e}", dir.display()))
@@ -427,7 +427,7 @@ fn demo_maps() -> Vec<(String, PathBuf)> {
 }
 
 /// A camera on `bounds`, as large as `FILL` of the frame holds it.
-fn camera_on(bounds: (Vec2, Vec2)) -> Camera2D {
+pub(super) fn camera_on(bounds: (Vec2, Vec2)) -> Camera2D {
     let size = bounds.1 - bounds.0;
     let mut camera = Camera2D::new(SIZE.0, SIZE.1);
     camera.position = 0.5 * (bounds.0 + bounds.1);
