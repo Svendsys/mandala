@@ -73,7 +73,7 @@ pub(crate) fn append_value_sorted<T, K: Ord>(
     value: T,
     key_of: impl Fn(&T) -> K,
 ) -> NodeId {
-    let last = arena.get(parent).and_then(|node| node.last_child());
+    let last = parent.last_child(arena);
     let prev = last_slot_for(arena, last, &key_of(&value), &key_of);
     insert_value_at(arena, parent, value, prev)
 }
@@ -106,7 +106,7 @@ pub(crate) fn slot<T, K: Ord>(
     at: Placement,
     key_of: impl Fn(&T) -> K,
 ) -> Result<Option<NodeId>, TreeError> {
-    let Some(parent_node) = arena.get(parent) else {
+    let Some(parent_node) = arena.node(parent) else {
         return Err(TreeError::StaleNode(parent));
     };
     match at {
@@ -114,7 +114,7 @@ pub(crate) fn slot<T, K: Ord>(
         Placement::First => {
             let mut cursor = parent_node.first_child();
             while let Some(id) = cursor {
-                let node = &arena[id];
+                let node = arena.at(id);
                 if key_of(node.get()) >= *key {
                     return Ok(node.previous_sibling());
                 }
@@ -124,7 +124,7 @@ pub(crate) fn slot<T, K: Ord>(
         }
         Placement::Before(sibling) => {
             check_sibling(arena, parent, sibling, key, &key_of)?;
-            Ok(arena[sibling].previous_sibling())
+            Ok(arena.at(sibling).previous_sibling())
         }
         Placement::After(sibling) => {
             check_sibling(arena, parent, sibling, key, &key_of)?;
@@ -143,7 +143,7 @@ fn check_sibling<T, K: Ord>(
     key: &K,
     key_of: &impl Fn(&T) -> K,
 ) -> Result<(), TreeError> {
-    let Some(node) = arena.get(sibling) else {
+    let Some(node) = arena.node(sibling) else {
         return Err(TreeError::StaleNode(sibling));
     };
     if node.parent() != Some(parent) {
@@ -176,7 +176,7 @@ pub(crate) fn reposition_slot<T, K: Ord>(
     node: NodeId,
     key_of: impl Fn(&T) -> K,
 ) -> Option<Option<NodeId>> {
-    let current = arena.get(node)?;
+    let current = arena.node(node)?;
     current.parent()?;
     let key = key_of(current.get());
 
@@ -185,7 +185,7 @@ pub(crate) fn reposition_slot<T, K: Ord>(
     let mut back = current.previous_sibling();
     let mut moved_back = false;
     while let Some(id) = back {
-        let sibling = &arena[id];
+        let sibling = arena.at(id);
         if key_of(sibling.get()) <= key {
             break;
         }
@@ -201,7 +201,7 @@ pub(crate) fn reposition_slot<T, K: Ord>(
     let mut last_passed = None;
     let mut forward = current.next_sibling();
     while let Some(id) = forward {
-        let sibling = &arena[id];
+        let sibling = arena.at(id);
         if key_of(sibling.get()) > key {
             break;
         }
@@ -228,7 +228,7 @@ pub(crate) fn last_slot<T, K: Ord>(
     node: NodeId,
     key_of: impl Fn(&T) -> K,
 ) -> Option<NodeId> {
-    let (Some(parent_node), Some(moved)) = (arena.get(parent), arena.get(node)) else {
+    let (Some(parent_node), Some(moved)) = (arena.node(parent), arena.node(node)) else {
         return None;
     };
     last_slot_for(arena, parent_node.last_child(), &key_of(moved.get()), &key_of)
@@ -247,7 +247,7 @@ fn last_slot_for<T, K: Ord>(
 ) -> Option<NodeId> {
     let mut cursor = last;
     while let Some(id) = cursor {
-        let sibling = &arena[id];
+        let sibling = arena.at(id);
         if key_of(sibling.get()) <= *key {
             return Some(id);
         }

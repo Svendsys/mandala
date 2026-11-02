@@ -228,9 +228,9 @@ pub fn do_subtree_aabb_deep_chain_propagates_to_root() {
     let mut node = tree.root();
     loop {
         let aabb = tree.subtree_aabb(node);
-        if tree.arena().get(node).unwrap().first_child().is_some() {
+        if tree.arena().node(node).unwrap().first_child().is_some() {
             assert_eq!(aabb, Some(leaf_aabb));
-            node = tree.arena().get(node).unwrap().first_child().unwrap();
+            node = tree.arena().node(node).unwrap().first_child().unwrap();
         } else {
             assert_eq!(aabb, Some(leaf_aabb));
             break;

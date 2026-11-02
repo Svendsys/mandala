@@ -423,7 +423,7 @@ fn apply_op<E: TreeElement>(
             if arena.get(*to).is_none() {
                 return Err(TreeError::StaleNode(*to));
             }
-            let from = arena[target].parent();
+            let from = arena.at(target).parent();
             if from == Some(*to) {
                 // A move within its own row: the parent stays, so
                 // nothing can cycle and nothing needs climbing.
@@ -466,7 +466,7 @@ fn apply_op<E: TreeElement>(
             siblings::attach_at(arena, *to, target, prev);
         }
         StructOp::Split { at } => {
-            let node = &arena[target];
+            let node = arena.at(target);
             let Some(parent) = node.parent() else {
                 return Err(TreeError::Unsplittable(target));
             };
@@ -485,12 +485,12 @@ fn apply_op<E: TreeElement>(
             journal.record_created(arena, second);
         }
         StructOp::Merge => {
-            let node = &arena[target];
+            let node = arena.at(target);
             let Some(next) = node.next_sibling() else {
                 return Err(TreeError::Unmergeable(target));
             };
             let element = node.get();
-            let absorbed = &arena[next];
+            let absorbed = arena.at(next);
             let key = element.key();
             if absorbed.get().key() != key || absorbed.first_child().is_some() {
                 return Err(TreeError::Unmergeable(target));

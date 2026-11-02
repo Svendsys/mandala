@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use baumhard::arena::tests::deep_tests::*;
+use baumhard::arena::tests::in_place_tests::*;
+use baumhard::arena::tests::layout_tests::*;
 use baumhard::arena::tests::model_tests::*;
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::document::tests::bounds_tests::*;
@@ -3206,6 +3208,23 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("arena_deep_chain_structural_operations", |b| {
         b.iter(do_arena_deep_chain_structural_operations)
+    });
+    // Includes building the fixture; `arena_every_operation_in_place`
+    // below times the operations alone.
+    c.bench_function("arena_operations_in_place", |b| {
+        b.iter(do_arena_operations_in_place)
+    });
+    // A handful of `size_of`s compared with constants: the row is near
+    // zero by design, and is here because §B8 gives every body one.
+    c.bench_function("arena_slot_and_id_sizes", |b| b.iter(do_arena_slot_and_id_sizes));
+    // Every structural operation and walk in an arena with room for
+    // them (V1-A7, #301), the fixture built outside the timed body.
+    c.bench_function("arena_every_operation_in_place", |b| {
+        b.iter_batched(
+            in_place_fixture,
+            |mut fixture| every_operation_in_place(&mut fixture),
+            criterion::BatchSize::LargeInput,
+        )
     });
     // arena_utils //
     c.bench_function("arena_utils_clone", |b| b.iter(do_clone));

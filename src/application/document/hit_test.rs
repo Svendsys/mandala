@@ -103,7 +103,7 @@ pub fn hit_test_target(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<HitTa
             mind_id = Some(id.to_string());
             break;
         }
-        match tree.tree.arena().get(probe).and_then(|n| n.parent()) {
+        match probe.parent(tree.tree.arena()) {
             Some(p) => probe = p,
             None => break,
         }
@@ -713,9 +713,9 @@ pub fn apply_node_resize_to_tree(
         // position was already written above via `set_position`,
         // so we walk children directly rather than calling the
         // sibling helper that would re-shift the container.
-        let mut child = tree.tree.arena().get(container_id).and_then(|n| n.first_child());
+        let mut child = container_id.first_child(tree.tree.arena());
         while let Some(cid) = child {
-            child = tree.tree.arena().get(cid).and_then(|n| n.next_sibling());
+            child = cid.next_sibling(tree.tree.arena());
             let is_section = tree
                 .tree
                 .arena()
@@ -792,9 +792,9 @@ fn walk_drag_node_and_sections(
             p.push((elem.unique_id(), (pos.x, pos.y)));
         }
     });
-    let mut child = tree.arena().get(node_id).and_then(|n| n.first_child());
+    let mut child = node_id.first_child(tree.arena());
     while let Some(cid) = child {
-        child = tree.arena().get(cid).and_then(|n| n.next_sibling());
+        child = cid.next_sibling(tree.arena());
         let is_section = tree
             .arena()
             .get(cid)
@@ -857,10 +857,10 @@ fn walk_drag_subtree(
             }
         });
         let mark = frontier.len();
-        let mut child = tree.arena().get(id).and_then(|n| n.first_child());
+        let mut child = id.first_child(tree.arena());
         while let Some(cid) = child {
             frontier.push(cid);
-            child = tree.arena().get(cid).and_then(|n| n.next_sibling());
+            child = cid.next_sibling(tree.arena());
         }
         frontier[mark..].reverse();
     }

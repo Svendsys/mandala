@@ -178,6 +178,22 @@ alias another node. Every walk iterates — `children` (both ways),
 `Debug` and `Drop` of an arena are those of its flat `Vec`, so depth
 costs none of them call stack (§20 rule 11).
 
+The links are compact (V1-A7, #301): a link is a bare 4-byte slot
+number, which the arena wrote and which is live by construction, so it
+carries no generation and is never checked against one. A generation
+is checked where an id **enters** the arena — `get`, `node`, `at`,
+indexing, `get_mut`, and each `NodeId` method's `self` and arguments —
+once per id per call; a walk checks its start and then follows links.
+For the same reason a node's links are read through its id
+(`id.parent(arena)`) or through a `NodeRef` (`arena.node(id)`,
+`arena.at(id)`), which hand each link back as a `NodeId` with its
+slot's generation, never from a bare `Node`. A `NodeId` is 8 bytes on
+every target, a slot of a document element 24 bytes beyond the
+element, and an arena holds at most `MAX_SLOTS` (`u32::MAX - 1`)
+slots; `arena::tests::layout_tests` pins the sizes on both targets.
+No structural operation allocates (`tests/arena_alloc.rs`), and the
+loader makes the arena's room for every node before it builds.
+
 Structure changes through `NodeId`: `detach`, `remove_subtree`, the
 O(1) value inserts that create a node (`append_value`,
 `prepend_value`, `insert_after_value`, `insert_before_value`), and two

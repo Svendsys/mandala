@@ -115,7 +115,7 @@ pub(super) fn addresses(
     // at the top of a subtree the journal took out — the parent the
     // journal recorded.
     let parent_of = |id: NodeId| -> Option<NodeId> {
-        arena.get(id)?.parent().or_else(|| {
+        arena.node(id)?.parent().or_else(|| {
             journal
                 .and_then(|journal| journal.parents(id))
                 .and_then(|(before, _)| before)
@@ -133,7 +133,7 @@ pub(super) fn addresses(
         steps::count();
         match &reader {
             Some(reader) => reader.prev(tree, parent, id),
-            None => arena.get(id)?.previous_sibling(),
+            None => arena.node(id)?.previous_sibling(),
         }
     };
     // The rank of every sibling this call has walked through, and the

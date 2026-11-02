@@ -132,7 +132,7 @@ impl At {
     /// Where `node` stands in `arena` now, or `None` for a node with
     /// no parent: the root, or the top of a detached subtree. O(1).
     fn of<E>(arena: &Arena<E>, node: NodeId) -> Option<At> {
-        let current = arena.get(node)?;
+        let current = arena.node(node)?;
         Some(At {
             parent: current.parent()?,
             prev: current.previous_sibling(),
@@ -317,7 +317,7 @@ impl<E: TreeElement> JournalBuilder<E> {
         let MapEntry::Vacant(slot) = self.index.entry(node) else {
             return;
         };
-        let Some(current) = arena.get(node) else {
+        let Some(current) = arena.node(node) else {
             return;
         };
         let at = current.parent().map(|parent| At {
@@ -377,7 +377,7 @@ impl<E: TreeElement> JournalBuilder<E> {
                 );
             }
         }
-        if let Some(next) = arena.get(node).and_then(|n| n.next_sibling()) {
+        if let Some(next) = node.next_sibling(arena) {
             self.displace(next, Some(node));
         }
     }
@@ -388,8 +388,8 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// attach is about to change. Call before the attach.
     pub(in crate::engine) fn note_attach(&mut self, arena: &Arena<E>, parent: NodeId, prev: Option<NodeId>) {
         let follower = match prev {
-            Some(prev) => arena.get(prev).and_then(|n| n.next_sibling()),
-            None => arena.get(parent).and_then(|n| n.first_child()),
+            Some(prev) => prev.next_sibling(arena),
+            None => parent.first_child(arena),
         };
         if let Some(follower) = follower {
             self.displace(follower, prev);
@@ -877,16 +877,16 @@ impl<E: TreeElement> RowsBefore<'_, E> {
     pub fn prev(&self, tree: &Tree<E>, parent: NodeId, node: NodeId) -> Option<NodeId> {
         let arena = &tree.arena;
         if self.journal.side.get() == Side::Before {
-            return arena.get(node)?.previous_sibling();
+            return arena.node(node)?.previous_sibling();
         }
         if self.moved.contains(&node) {
             return self.recorded.get(&node).copied().flatten();
         }
-        let mut kept = arena.get(node)?.previous_sibling();
+        let mut kept = arena.node(node)?.previous_sibling();
         while let Some(moved) = kept.filter(|sibling| self.moved.contains(sibling)) {
             #[cfg(test)]
             tests_support::count_row_step();
-            kept = arena.get(moved).and_then(|sibling| sibling.previous_sibling());
+            kept = moved.previous_sibling(arena);
         }
         // Every moved node is placed once; the budget keeps a run finite
         // whatever the entries say.
@@ -948,7 +948,7 @@ impl<E> Presence<'_, E> {
     fn parent_before(&self, id: NodeId) -> Option<NodeId> {
         match self.before_parent.get(&id) {
             Some(&parent) => parent,
-            None => self.arena.get(id).and_then(|n| n.parent()),
+            None => id.parent(self.arena),
         }
     }
 
@@ -964,7 +964,7 @@ impl<E> Presence<'_, E> {
             node,
             |id| match before_parent.get(&id) {
                 Some(&parent) => parent,
-                None => arena.get(id).and_then(|n| n.parent()),
+                None => id.parent(arena),
             },
         )
     }
@@ -978,7 +978,7 @@ impl<E> Presence<'_, E> {
             &mut self.after,
             &mut self.chain,
             node,
-            |id| arena.get(id).and_then(|n| n.parent()),
+            |id| id.parent(arena),
         )
     }
 
@@ -1033,7 +1033,7 @@ impl<E> Presence<'_, E> {
             #[cfg(test)]
             tests_support::count_presence_step();
             cursor = match side {
-                Side::After => self.arena.get(id).and_then(|n| n.parent()),
+                Side::After => id.parent(self.arena),
                 Side::Before => self.parent_before(id),
             };
         }
@@ -1472,7 +1472,7 @@ impl<E: TreeElement> Journal<E> {
         };
         let mut freed = false;
         for &node in held {
-            let detached = tree.arena.get(node).is_some_and(|n| n.parent().is_none());
+            let detached = tree.arena.node(node).is_some_and(|n| n.parent().is_none());
             if detached && node != tree.root() {
                 for member in node.descendants(&tree.arena) {
                     tree.detached.remove(&member);
@@ -1547,7 +1547,7 @@ impl<E: TreeElement> Journal<E> {
     fn validate(&self, tree: &Tree<E>) -> Result<(), TreeError> {
         let arena = &tree.arena;
         for entry in &self.entries {
-            let Some(node) = arena.get(entry.node) else {
+            let Some(node) = arena.node(entry.node) else {
                 return Err(TreeError::StaleNode(entry.node));
             };
             let Some(position) = entry.position else {
@@ -1571,7 +1571,7 @@ impl<E: TreeElement> Journal<E> {
                     return Err(TreeError::StaleNode(at.parent));
                 }
                 if let Some(prev) = at.prev {
-                    let Some(sibling) = arena.get(prev) else {
+                    let Some(sibling) = arena.node(prev) else {
                         return Err(TreeError::StaleNode(prev));
                     };
                     if !self.is_out(prev) && sibling.parent() != Some(at.parent) {

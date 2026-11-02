@@ -40,7 +40,7 @@
 //! stays allocated, out of the tree, until its journal is
 //! [discarded](crate::engine::journal::Journal::discard).
 
-use crate::arena::{Arena, ChildrenOf, Descendants, Node, NodeId};
+use crate::arena::{Arena, ChildrenOf, Descendants, Node, NodeId, NodeRef};
 use crate::engine::anchor::{apply_anchored, Anchors};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::{move_among_siblings, JournalBuilder};
@@ -308,6 +308,20 @@ impl<E: TreeElement> Tree<E> {
         self.arena.get(id)
     }
 
+    /// Make room for at least `additional` more elements, so that many
+    /// go in without the arena's `Vec` of slots growing: what a builder
+    /// that knows its element count calls before it builds
+    /// ([`Arena::reserve`]). At most one allocation.
+    pub fn reserve(&mut self, additional: usize) {
+        self.arena.reserve(additional);
+    }
+
+    /// The arena node at `id` read with its links ([`NodeRef`]), or
+    /// `None` if it has been removed. O(1), one generation check.
+    pub fn node(&self, id: NodeId) -> Option<NodeRef<'_, E>> {
+        self.arena.node(id)
+    }
+
     /// Whether `id` names a node **in the tree**: in the arena, and with
     /// [`Self::root`] among its ancestors (or the root itself). A
     /// removed node and a reused slot under an old generation answer `false`,
@@ -489,7 +503,7 @@ impl<E: TreeElement> Tree<E> {
         let before = element.key();
         let out = f(element);
         let rekeyed = element.key() != before;
-        let parent = self.arena[id].parent();
+        let parent = self.arena.at(id).parent();
         if let (true, Some(parent)) = (rekeyed, parent) {
             if let Some(prev) = siblings::reposition_slot(&self.arena, id, E::key) {
                 move_among_siblings(&mut self.arena, parent, id, prev, journal);
@@ -817,7 +831,7 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
 /// closure handed to an iterator that feeds it its own last result
 /// (`successors`, `from_fn`, `repeat_with`, `scan`, the folds,
 /// `reduce`); or inside a `for` body or any closure that reassigns a
-/// cursor the read names (`h = p` beside `arena[h].parent()`, as a
+/// cursor the read names (`h = p` beside `arena.at(h).parent()`, as a
 /// `map_while` or `for_each` over a captured cursor does). That is a
 /// heuristic over spellings: a climb by recursion is caught instead by
 /// the deep tests, whose chains overflow the stack on one, and a climb

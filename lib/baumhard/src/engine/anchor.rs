@@ -142,7 +142,7 @@ fn resolve<E: TreeElement>(
     match anchors {
         Anchors::Nodes(_) => given.iter().copied().filter(of_root_kind).collect(),
         Anchors::ParentOf(_) => {
-            let parents: FxHashSet<NodeId> = given.iter().filter_map(|&id| arena[id].parent()).collect();
+            let parents: FxHashSet<NodeId> = given.iter().filter_map(|&id| arena.at(id).parent()).collect();
             parents.into_iter().filter(of_root_kind).collect()
         }
         Anchors::SiblingsOf(_) => {
@@ -153,7 +153,7 @@ fn resolve<E: TreeElement>(
             // parent.
             let mut given_per_parent: FxHashMap<NodeId, usize> = FxHashMap::default();
             for &id in given {
-                if let Some(parent) = arena[id].parent() {
+                if let Some(parent) = arena.at(id).parent() {
                     let count = given_per_parent.entry(parent).or_insert(0);
                     if of_root_kind(&id) {
                         *count += 1;
@@ -207,7 +207,7 @@ fn in_tree_order<E: TreeElement>(tree: &Tree<E>, anchors: &[NodeId], drop_nested
     let arena = tree.arena();
     let mut edges: Vec<(NodeId, NodeId)> = members
         .members()
-        .filter_map(|id| arena[id].parent().map(|parent| (parent, id)))
+        .filter_map(|id| arena.at(id).parent().map(|parent| (parent, id)))
         .collect();
     let ties = TiePositions::default();
     edges.sort_unstable_by(|a, b| {

@@ -139,7 +139,9 @@ pub enum LoadErrorKind {
     },
     /// The map holds more elements than
     /// [`MAX_ELEMENTS`](crate::document::format::MAX_ELEMENTS) allows on
-    /// this target: the other half of the memory budget
+    /// this target, or than the arena holds on any
+    /// ([`ARENA_MAX_ELEMENTS`](crate::document::format::ARENA_MAX_ELEMENTS)):
+    /// the other half of the memory budget
     /// [`TooLarge`](Self::TooLarge) bounds by bytes. Counted as the
     /// elements are built, and raised at the one past the bound, before
     /// it is appended.
@@ -337,7 +339,7 @@ impl fmt::Display for LoadErrorKind {
             ),
             LoadErrorKind::TooManyElements { max } => write!(
                 f,
-                "map holds more than {max} elements, the most this build can hold in memory: \
+                "map holds more than {max} elements, the most this build holds: \
                  refusing to load it"
             ),
             LoadErrorKind::ByteOrderMark => f.write_str(

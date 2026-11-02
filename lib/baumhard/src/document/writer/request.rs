@@ -137,7 +137,7 @@ impl Document {
         let arena = tree.arena();
         let root = tree.root();
         let detached =
-            |id: &NodeId| *id != root && arena.get(*id).is_some_and(|node| node.parent().is_none());
+            |id: &NodeId| *id != root && arena.node(*id).is_some_and(|node| node.parent().is_none());
         let tops: Vec<NodeId> = builder.recorded_nodes().filter(detached).collect();
         if tops.is_empty() {
             return Ok(builder);

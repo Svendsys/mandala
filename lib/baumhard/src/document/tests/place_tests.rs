@@ -107,7 +107,12 @@ fn test_the_unit_a_place_takes_is_one_rule_for_files_and_edits() {
                     });
                 }
                 DocKind::Frame => {
-                    let frame = builder.tree().arena()[ring].parent().expect("the ring's frame");
+                    let frame = builder
+                        .tree()
+                        .arena()
+                        .at(ring)
+                        .parent()
+                        .expect("the ring's frame");
                     builder.set(
                         frame,
                         DocElement::Frame(FrameData {

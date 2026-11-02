@@ -286,7 +286,7 @@ fn element(tree: &Tree<DocElement>, id: NodeId) -> Option<&DocElement> {
 
 /// The parent of `id`. O(1).
 fn parent(tree: &Tree<DocElement>, id: NodeId) -> Option<NodeId> {
-    tree.get(id)?.parent()
+    tree.node(id)?.parent()
 }
 
 /// One resolution's view of the inputs every tier shares — the theme,

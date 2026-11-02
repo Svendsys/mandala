@@ -919,9 +919,8 @@ fn placed_size(tree: &Tree<DocElement>, id: NodeId, element: &DocElement) -> Res
         return Ok(());
     };
     let kind = element.kind();
-    let parent = tree
-        .get(id)
-        .and_then(|n| n.parent())
+    let parent = id
+        .parent(tree.arena())
         .and_then(|p| tree.get(p))
         .map(|n| n.get().kind());
     if !sizes_its_own_text(kind, parent) {

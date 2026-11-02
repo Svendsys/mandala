@@ -30,6 +30,32 @@
 //! reused, so no generation is ever handed out twice and no id can ever
 //! alias another node, however often a slot is recycled.
 //!
+//! # Compact links (V1-A7, #301)
+//!
+//! A link is a bare slot number, a `NonZeroU32`, not a `NodeId`: a
+//! node's five links take 20 bytes on every target. A link written by
+//! the arena names a live node by construction — both ends of every
+//! link change together, and a node is unlinked before its slot is
+//! freed — so a link carries no generation and is never checked
+//! against one. The generation is checked where an id **enters** the
+//! arena: [`Arena::get`](crate::arena::Arena::get), indexing,
+//! [`Arena::get_mut`](crate::arena::Arena::get_mut), and every
+//! [`NodeId`](crate::arena::NodeId) method's `self` and arguments —
+//! once each per call. A link leaves the arena as a `NodeId` again
+//! carrying its slot's current generation, read beside the link. For
+//! that reason a node's links are read through `NodeId`
+//! (`id.parent(&arena)`), never from a bare
+//! [`Node`](crate::arena::Node), which has no arena to read a
+//! generation from. A [`NodeRef`](crate::arena::NodeRef)
+//! ([`Arena::node`](crate::arena::Arena::node),
+//! [`Arena::at`](crate::arena::Arena::at)) reads a node's value and
+//! all its links behind one check.
+//!
+//! An arena holds at most [`MAX_SLOTS`](crate::arena::MAX_SLOTS) slots,
+//! `u32::MAX - 1`, so that every slot number fits a link; the slot past
+//! them is refused with a panic naming the bound, never a slot number
+//! that wraps.
+//!
 //! # Inserting an existing node
 //!
 //! A node created by the insert (`append_value`, `prepend_value`,
@@ -64,6 +90,15 @@
 //! checked inserts are the climbs, and they are O(depth) by what they
 //! answer.
 //!
+//! # Allocation
+//!
+//! The arena's one allocation is its `Vec` of slots. No structural
+//! operation allocates, and neither does any iterator; a value insert
+//! does only when no slot is free and the `Vec` is full.
+//! [`Arena::with_capacity`](crate::arena::Arena::with_capacity) and
+//! [`Arena::reserve`](crate::arena::Arena::reserve) make that room up
+//! front, for a caller that knows how many nodes are coming.
+//!
 //! No `unsafe` (the crate forbids it, CONVENTIONS §B7).
 
 #[cfg(test)]
@@ -74,21 +109,33 @@ mod link;
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 pub mod tests;
 
-pub use iter::{Ancestors, ChildrenOf, Descendants, NodeEdge, Traverse};
+pub use iter::{Ancestors, ChildrenOf, Descendants, LiveNodes, NodeEdge, Traverse};
 
 use std::fmt;
-use std::num::NonZeroUsize;
+use std::num::NonZeroU32;
 use std::ops::Index;
+
+/// The most slots an [`Arena`] holds — its live nodes and its free and
+/// retired slots together: `u32::MAX - 1`. Every slot number, counted
+/// from 1, then fits the `NonZeroU32` a link is, with `u32::MAX` itself
+/// never used. A new node that would need one more slot panics (see
+/// [`Arena::new_node`]).
+pub const MAX_SLOTS: usize = (u32::MAX - 1) as usize;
+
+/// A link: the slot number, counted from 1, of a node the arena has
+/// linked to — live by construction, so carrying no generation.
+type Link = NonZeroU32;
 
 /// A node's identity in an [`Arena`]: its slot and the slot's
 /// generation when the node was created (see the module docs). `Copy`,
-/// and ordered by slot, then generation, so ids of an arena that has
-/// removed nothing order as their nodes were created.
+/// 8 bytes on every target, and ordered by slot, then generation, so
+/// ids of an arena that has removed nothing order as their nodes were
+/// created.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId {
     /// The slot, counted from 1 so that `Option<NodeId>` is no larger
     /// than a `NodeId`.
-    index1: NonZeroUsize,
+    slot: Link,
     /// The slot's generation when this node was created.
     generation: u32,
 }
@@ -96,37 +143,46 @@ pub struct NodeId {
 impl NodeId {
     /// The slot's index in the arena's `Vec`.
     fn index0(self) -> usize {
-        self.index1.get() - 1
+        index0(self.slot)
     }
 }
 
 /// The slot number, counted from 1 — what a refusal names a node by.
 impl fmt::Display for NodeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.index1)
+        write!(f, "{}", self.slot)
     }
 }
 
 /// `NodeId(slot@generation)`, the slot counted from 1.
 impl fmt::Debug for NodeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NodeId({}@{})", self.index1, self.generation)
+        write!(f, "NodeId({}@{})", self.slot, self.generation)
     }
 }
 
 /// One node of an [`Arena`]: its value and its links. Borrowed only
-/// shared, through [`Arena::get`] or by indexing, so its links are
-/// read-only to every caller — a node is moved through [`NodeId`]'s
-/// structural operations, which keep both ends of every link in step,
-/// and its value is changed through [`Arena::get_mut`]. Not `Clone`:
-/// a node's links mean something only in the slot it sits in.
+/// shared, through [`Arena::get`] or by indexing, and what it gives is
+/// its value: its links are slot numbers that mean something only
+/// beside the arena's generations, so they are read through
+/// [`NodeId`]'s methods (`id.parent(&arena)`) or a [`NodeRef`]
+/// ([`Arena::node`]), which hand each back as a `NodeId`. A node is
+/// moved through [`NodeId`]'s structural operations, which keep both
+/// ends of every link in step, and its value is changed through
+/// [`Arena::get_mut`]. Not `Clone`: a node's links mean something only
+/// in the slot it sits in.
 #[derive(PartialEq, Eq, Debug)]
 pub struct Node<T> {
-    parent: Option<NodeId>,
-    previous_sibling: Option<NodeId>,
-    next_sibling: Option<NodeId>,
-    first_child: Option<NodeId>,
-    last_child: Option<NodeId>,
+    /// The slot's generation, which is this node's. Kept here, beside
+    /// the five 4-byte links, rather than in the [`Slot`]: the six fill
+    /// 24 bytes, so a slot of a value aligned to 8 spends no padding
+    /// on its generation.
+    generation: u32,
+    parent: Option<Link>,
+    previous_sibling: Option<Link>,
+    next_sibling: Option<Link>,
+    first_child: Option<Link>,
+    last_child: Option<Link>,
     data: T,
 }
 
@@ -136,40 +192,15 @@ impl<T> Node<T> {
         &self.data
     }
 
-    /// The node's parent, `None` for the top of a tree or a detached
-    /// node. O(1).
-    pub fn parent(&self) -> Option<NodeId> {
-        self.parent
-    }
-
-    /// The node's first child. O(1).
-    pub fn first_child(&self) -> Option<NodeId> {
-        self.first_child
-    }
-
-    /// The node's last child. O(1).
-    pub fn last_child(&self) -> Option<NodeId> {
-        self.last_child
-    }
-
-    /// The sibling before this node. O(1).
-    pub fn previous_sibling(&self) -> Option<NodeId> {
-        self.previous_sibling
-    }
-
-    /// The sibling after this node. O(1).
-    pub fn next_sibling(&self) -> Option<NodeId> {
-        self.next_sibling
-    }
-
     /// Whether this node hangs in nothing: no parent and no sibling.
     fn is_detached(&self) -> bool {
         self.parent.is_none() && self.previous_sibling.is_none() && self.next_sibling.is_none()
     }
 
-    /// A node holding `data`, linked to nothing.
-    fn new(data: T) -> Self {
+    /// A node holding `data` at `generation`, linked to nothing.
+    fn new(generation: u32, data: T) -> Self {
         Node {
+            generation,
             parent: None,
             previous_sibling: None,
             next_sibling: None,
@@ -180,23 +211,97 @@ impl<T> Node<T> {
     }
 }
 
-/// What a slot holds.
+/// A live node read beside its arena: its id, its value, and its links
+/// as [`NodeId`]s. From [`Arena::node`], which checks the id's
+/// generation once; every link read here follows a link the arena
+/// wrote, reading the far slot's generation and checking none. `Copy`:
+/// two references and an id.
+pub struct NodeRef<'a, T> {
+    arena: &'a Arena<T>,
+    node: &'a Node<T>,
+    id: NodeId,
+}
+
+/// Not derived: a derive would ask `T: Clone`. O(1).
+impl<T> Clone for NodeRef<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for NodeRef<'_, T> {}
+
+impl<'a, T> NodeRef<'a, T> {
+    /// The node's id. O(1).
+    pub fn id(self) -> NodeId {
+        self.id
+    }
+
+    /// The node's value. O(1).
+    pub fn get(self) -> &'a T {
+        &self.node.data
+    }
+
+    /// The node's parent, `None` for the top of a tree or a detached
+    /// node. O(1).
+    pub fn parent(self) -> Option<NodeId> {
+        self.node.parent.map(|link| self.arena.id_of(link))
+    }
+
+    /// The node's first child. O(1).
+    pub fn first_child(self) -> Option<NodeId> {
+        self.node.first_child.map(|link| self.arena.id_of(link))
+    }
+
+    /// The node's last child. O(1).
+    pub fn last_child(self) -> Option<NodeId> {
+        self.node.last_child.map(|link| self.arena.id_of(link))
+    }
+
+    /// The sibling before this node. O(1).
+    pub fn previous_sibling(self) -> Option<NodeId> {
+        self.node.previous_sibling.map(|link| self.arena.id_of(link))
+    }
+
+    /// The sibling after this node. O(1).
+    pub fn next_sibling(self) -> Option<NodeId> {
+        self.node.next_sibling.map(|link| self.arena.id_of(link))
+    }
+}
+
+/// What a slot holds, with its generation: the live node's (in the
+/// [`Node`]), or for a free slot the generation the next node to take
+/// it will have.
 #[derive(PartialEq, Eq, Debug)]
 enum SlotEntry<T> {
     /// A node.
     Live(Node<T>),
-    /// Nothing; the next free slot, oldest first, when this one is on
-    /// the free list.
-    Free(Option<usize>),
+    /// Nothing.
+    Free {
+        /// The generation the next node in this slot will have; for a
+        /// retired slot, the last one it had.
+        generation: u32,
+        /// The slot number of the next free slot, oldest first, when
+        /// this one is on the free list.
+        next: Option<Link>,
+    },
 }
 
-/// One slot of an [`Arena`]: what it holds, and its generation — the
-/// live node's, or for a free slot the generation the next node to
-/// take it will have.
+/// One slot of an [`Arena`]: what it holds. Its size is pinned on both
+/// targets (`arena::tests::layout_tests`).
 #[derive(PartialEq, Eq, Debug)]
 struct Slot<T> {
-    generation: u32,
     entry: SlotEntry<T>,
+}
+
+impl<T> Slot<T> {
+    /// The slot's generation, live or free.
+    fn generation(&self) -> u32 {
+        match &self.entry {
+            SlotEntry::Live(node) => node.generation,
+            SlotEntry::Free { generation, .. } => *generation,
+        }
+    }
 }
 
 /// A copy of the slot, links and all — which is why a whole arena
@@ -205,6 +310,7 @@ impl<T: Clone> Clone for Slot<T> {
     fn clone(&self) -> Self {
         let entry = match &self.entry {
             SlotEntry::Live(node) => SlotEntry::Live(Node {
+                generation: node.generation,
                 parent: node.parent,
                 previous_sibling: node.previous_sibling,
                 next_sibling: node.next_sibling,
@@ -212,12 +318,12 @@ impl<T: Clone> Clone for Slot<T> {
                 last_child: node.last_child,
                 data: node.data.clone(),
             }),
-            SlotEntry::Free(next) => SlotEntry::Free(*next),
+            SlotEntry::Free { generation, next } => SlotEntry::Free {
+                generation: *generation,
+                next: *next,
+            },
         };
-        Slot {
-            generation: self.generation,
-            entry,
-        }
+        Slot { entry }
     }
 }
 
@@ -286,9 +392,9 @@ impl std::error::Error for ArenaError {}
 pub struct Arena<T> {
     slots: Vec<Slot<T>>,
     /// The oldest free slot: the next a new node takes.
-    first_free: Option<usize>,
+    first_free: Option<Link>,
     /// The newest free slot: where a freed slot joins the list.
-    last_free: Option<usize>,
+    last_free: Option<Link>,
     /// How many slots hold a node.
     live: usize,
 }
@@ -310,43 +416,94 @@ impl<T> Arena<T> {
         }
     }
 
+    /// An empty arena with room for at least `capacity` nodes before
+    /// its `Vec` of slots grows. Allocates that room, once, up front.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Arena {
+            slots: Vec::with_capacity(capacity),
+            first_free: None,
+            last_free: None,
+            live: 0,
+        }
+    }
+
+    /// Make room for at least `additional` more slots than the arena
+    /// holds, so that many new nodes go in without the `Vec` of slots
+    /// growing — free slots are reused first, so it may be more room
+    /// than they need. At most one allocation, of the whole new room;
+    /// none when there is room already.
+    pub fn reserve(&mut self, additional: usize) {
+        self.slots.reserve(additional);
+    }
+
+    /// How many slots the arena has room for before its `Vec` of slots
+    /// grows. O(1).
+    pub fn capacity(&self) -> usize {
+        self.slots.capacity()
+    }
+
     /// A new detached node holding `data`, and its id. It takes the
     /// oldest free slot, or a new one at the end. O(1) amortized: a
-    /// `Vec` push when no slot is free.
+    /// `Vec` push when no slot is free, which allocates only when the
+    /// `Vec` is full.
+    ///
+    /// **Panics** when no slot is free and the arena already holds
+    /// [`MAX_SLOTS`] slots.
+    #[track_caller]
     pub fn new_node(&mut self, data: T) -> NodeId {
-        self.live += 1;
-        if let Some(index0) = self.first_free {
-            let slot = &mut self.slots[index0];
-            if let SlotEntry::Free(next) = slot.entry {
-                slot.entry = SlotEntry::Live(Node::new(data));
+        if let Some(link) = self.first_free {
+            let slot = &mut self.slots[index0(link)];
+            if let SlotEntry::Free { generation, next } = slot.entry {
+                slot.entry = SlotEntry::Live(Node::new(generation, data));
                 self.first_free = next;
                 if next.is_none() {
                     self.last_free = None;
                 }
+                self.live += 1;
                 return NodeId {
-                    index1: one_based(index0),
-                    generation: slot.generation,
+                    slot: link,
+                    generation,
                 };
             }
         }
+        let link = next_slot(self.slots.len());
         self.slots.push(Slot {
-            generation: 0,
-            entry: SlotEntry::Live(Node::new(data)),
+            entry: SlotEntry::Live(Node::new(0, data)),
         });
+        self.live += 1;
         NodeId {
-            index1: one_based(self.slots.len() - 1),
+            slot: link,
             generation: 0,
         }
     }
 
-    /// The node `id` names, or `None` when it is stale. O(1).
+    /// The node `id` names, or `None` when it is stale. O(1): the one
+    /// generation check of the id.
     pub fn get(&self, id: NodeId) -> Option<&Node<T>> {
-        match self.slots.get(id.index0()) {
-            Some(Slot {
-                generation,
-                entry: SlotEntry::Live(node),
-            }) if *generation == id.generation => Some(node),
-            _ => None,
+        self.resolve(id)
+    }
+
+    /// The node `id` names, read with its links, or `None` when it is
+    /// stale. O(1): the one generation check of the id; the
+    /// [`NodeRef`]'s link reads check nothing more.
+    pub fn node(&self, id: NodeId) -> Option<NodeRef<'_, T>> {
+        self.resolve(id).map(|node| NodeRef {
+            arena: self,
+            node,
+            id,
+        })
+    }
+
+    /// [`Self::node`] for an id that must be live: indexing's read, with
+    /// the links. O(1), one generation check.
+    ///
+    /// **Panics** when `id` is stale, as indexing does.
+    #[track_caller]
+    pub fn at(&self, id: NodeId) -> NodeRef<'_, T> {
+        NodeRef {
+            arena: self,
+            node: self.expect(id),
+            id,
         }
     }
 
@@ -354,19 +511,7 @@ impl<T> Arena<T> {
     /// stale. The value only: the node's links are not reachable
     /// mutably outside the arena. O(1).
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut T> {
-        self.live_node_mut(id).map(|node| &mut node.data)
-    }
-
-    /// The node `id` names, mutably, or `None` when it is stale. Private:
-    /// a link written through it must be written at both its ends.
-    fn live_node_mut(&mut self, id: NodeId) -> Option<&mut Node<T>> {
-        match self.slots.get_mut(id.index0()) {
-            Some(Slot {
-                generation,
-                entry: SlotEntry::Live(node),
-            }) if *generation == id.generation => Some(node),
-            _ => None,
-        }
+        self.resolve_mut(id).map(|node| &mut node.data)
     }
 
     /// How many slots the arena holds: its live nodes and its free and
@@ -383,22 +528,11 @@ impl<T> Arena<T> {
 
     /// Every node of the arena with its id, in slot order — the order
     /// nodes were created in, for an arena that has freed nothing. In a
-    /// tree or detached alike; free and retired slots are skipped.
-    /// O(slots) to run to the end; no allocation.
-    pub fn iter(&self) -> impl Iterator<Item = (NodeId, &Node<T>)> + '_ {
-        self.slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index0, slot)| match &slot.entry {
-                SlotEntry::Live(node) => Some((
-                    NodeId {
-                        index1: one_based(index0),
-                        generation: slot.generation,
-                    },
-                    node,
-                )),
-                SlotEntry::Free(_) => None,
-            })
+    /// tree or detached alike; free and retired slots are skipped. Its
+    /// length is known exactly ([`Arena::live_count`]). O(slots) to run
+    /// to the end; no allocation.
+    pub fn iter(&self) -> LiveNodes<'_, T> {
+        LiveNodes::new(self)
     }
 
     /// Whether the arena holds no slot at all. O(1).
@@ -406,57 +540,112 @@ impl<T> Arena<T> {
         self.slots.is_empty()
     }
 
-    /// Free `id`'s slot: drop its value, and move the slot to its next
-    /// generation and onto the free list — or, at the last generation,
-    /// retire it. The caller has unlinked the node. A stale `id` is
-    /// ignored.
-    fn free(&mut self, id: NodeId) {
-        let Some(slot) = self.slots.get_mut(id.index0()) else {
-            return;
-        };
-        if slot.generation != id.generation || !matches!(slot.entry, SlotEntry::Live(_)) {
-            return;
+    /// The node `id` names, or `None` when it is stale: **the**
+    /// generation check, which every id from outside goes through once
+    /// (counted in test builds).
+    fn resolve(&self, id: NodeId) -> Option<&Node<T>> {
+        #[cfg(test)]
+        tests_support::count_generation_check();
+        match self.slots.get(id.index0()) {
+            Some(Slot {
+                entry: SlotEntry::Live(node),
+            }) if node.generation == id.generation => Some(node),
+            _ => None,
         }
-        slot.entry = SlotEntry::Free(None);
-        self.live -= 1;
-        if slot.generation == u32::MAX {
-            // Retired: a further generation would repeat one already
-            // handed out, so the slot is never reused.
-            return;
+    }
+
+    /// [`Self::resolve`], mutably. Private: a link written through it
+    /// must be written at both its ends.
+    fn resolve_mut(&mut self, id: NodeId) -> Option<&mut Node<T>> {
+        #[cfg(test)]
+        tests_support::count_generation_check();
+        match self.slots.get_mut(id.index0()) {
+            Some(Slot {
+                entry: SlotEntry::Live(node),
+            }) if node.generation == id.generation => Some(node),
+            _ => None,
         }
-        slot.generation += 1;
-        let index0 = id.index0();
-        match self.last_free {
-            Some(last) => {
-                if let Some(Slot {
-                    entry: SlotEntry::Free(next),
-                    ..
-                }) = self.slots.get_mut(last)
-                {
-                    *next = Some(index0);
-                }
-            }
-            None => self.first_free = Some(index0),
-        }
-        self.last_free = Some(index0);
     }
 
     /// The live node `id` names; panics naming it when it is stale.
     #[track_caller]
-    fn node(&self, id: NodeId) -> &Node<T> {
-        match self.get(id) {
+    fn expect(&self, id: NodeId) -> &Node<T> {
+        match self.resolve(id) {
             Some(node) => node,
             None => stale(id),
         }
     }
 
-    /// The live node `id` names, mutably; panics naming it when it is
-    /// stale.
-    #[track_caller]
-    fn node_mut(&mut self, id: NodeId) -> &mut Node<T> {
-        match self.live_node_mut(id) {
-            Some(node) => node,
-            None => stale(id),
+    /// The node at the far end of a link the arena wrote, its generation
+    /// beside its links: one bounds-checked read of the slot and one
+    /// match of what it holds, which a link always finds live — no
+    /// generation is compared (counted in test builds).
+    fn linked(&self, link: Link) -> &Node<T> {
+        #[cfg(test)]
+        tests_support::count_slot_read();
+        match &self.slots[index0(link)].entry {
+            SlotEntry::Live(node) => node,
+            SlotEntry::Free { .. } => dangling(link),
+        }
+    }
+
+    /// [`Self::linked`], mutably.
+    fn linked_mut(&mut self, link: Link) -> &mut Node<T> {
+        #[cfg(test)]
+        tests_support::count_slot_read();
+        match &mut self.slots[index0(link)].entry {
+            SlotEntry::Live(node) => node,
+            SlotEntry::Free { .. } => dangling(link),
+        }
+    }
+
+    /// The id of the node at the far end of a link the arena wrote: the
+    /// link and its node's generation, read beside it.
+    fn id_of(&self, link: Link) -> NodeId {
+        NodeId {
+            slot: link,
+            generation: self.linked(link).generation,
+        }
+    }
+
+    /// Free the slot `link` names: drop its value, and move the slot to
+    /// its next generation and onto the free list — or, at the last
+    /// generation, retire it. The caller has checked the id the link
+    /// came from and unlinked the node.
+    fn free_link(&mut self, link: Link) {
+        let slot = &mut self.slots[index0(link)];
+        let generation = slot.generation();
+        self.live -= 1;
+        if generation == u32::MAX {
+            // Retired: a further generation would repeat one already
+            // handed out, so the slot is never reused.
+            slot.entry = SlotEntry::Free {
+                generation,
+                next: None,
+            };
+            return;
+        }
+        slot.entry = SlotEntry::Free {
+            generation: generation + 1,
+            next: None,
+        };
+        match self.last_free {
+            Some(last) => {
+                if let SlotEntry::Free { next, .. } = &mut self.slots[index0(last)].entry {
+                    *next = Some(link);
+                }
+            }
+            None => self.first_free = Some(link),
+        }
+        self.last_free = Some(link);
+    }
+
+    /// Free `id`'s slot, as [`Self::free_link`] does; a stale `id` is
+    /// ignored. The caller has unlinked the node.
+    #[cfg(test)]
+    fn free(&mut self, id: NodeId) {
+        if self.resolve(id).is_some() {
+            self.free_link(id.slot);
         }
     }
 
@@ -464,21 +653,42 @@ impl<T> Arena<T> {
     /// generation without recycling a slot four billion times.
     #[cfg(test)]
     fn set_next_generation(&mut self, index0: usize, generation: u32) {
-        self.slots[index0].generation = generation;
+        match &mut self.slots[index0].entry {
+            SlotEntry::Live(node) => node.generation = generation,
+            SlotEntry::Free { generation: next, .. } => *next = generation,
+        }
     }
 }
 
-/// `index0 + 1` as a slot number. A `Vec` of nodes — never zero-sized,
-/// since each carries its links — cannot hold `usize::MAX` of them, so
-/// the sum cannot wrap.
-fn one_based(index0: usize) -> NonZeroUsize {
-    NonZeroUsize::new(index0.wrapping_add(1)).expect("a Vec of nodes never holds usize::MAX slots")
+/// The slot's index in the arena's `Vec`.
+fn index0(link: Link) -> usize {
+    link.get() as usize - 1
+}
+
+/// The slot number of a new slot pushed after `len` slots: `len + 1`.
+/// **Panics** when the arena already holds [`MAX_SLOTS`] slots, naming
+/// the bound, rather than handing out a slot number that wraps.
+#[track_caller]
+fn next_slot(len: usize) -> Link {
+    match u32::try_from(len) {
+        Ok(len) if (len as usize) < MAX_SLOTS => {
+            Link::new(len + 1).expect("a slot number past a u32 length is never zero")
+        }
+        _ => panic!("arena: full: an arena holds at most MAX_SLOTS ({MAX_SLOTS}) slots"),
+    }
 }
 
 /// The panic of indexing with a stale id.
 #[track_caller]
 fn stale(id: NodeId) -> ! {
     panic!("arena: node {id:?} is not in the arena (removed, or its slot reused since)")
+}
+
+/// A link the arena wrote names a free slot: a broken invariant of this
+/// module, never a caller's mistake.
+#[track_caller]
+fn dangling(link: Link) -> ! {
+    panic!("arena: a link names slot {link}, which is free: a link was left behind when its node was freed")
 }
 
 /// The node `id` names. **Panics** when `id` is stale — a removed
@@ -489,20 +699,30 @@ impl<T> Index<NodeId> for Arena<T> {
 
     #[track_caller]
     fn index(&self, id: NodeId) -> &Node<T> {
-        self.node(id)
+        self.expect(id)
     }
 }
 
-/// What the tests read of the arena's inserts of existing nodes: how
-/// many nodes they have gone through on this thread — one for each node
-/// a same-row re-attach links, and for a checked insert one plus every
-/// node its cycle check climbs through. Compiled for tests only.
+/// What the tests read of the arena's work, counted on this thread:
+///
+/// - **insert steps**: how many nodes the inserts of an existing node
+///   have gone through — one for each node a same-row re-attach links,
+///   and for a checked insert one plus every node its cycle check
+///   climbs through;
+/// - **generation checks**: how many ids from outside the arena have
+///   been checked against their slot's generation;
+/// - **slot reads**: how many links have been followed to the slot
+///   they name.
+///
+/// Compiled for tests only.
 #[cfg(test)]
 pub(crate) mod tests_support {
     use std::cell::Cell;
 
     thread_local! {
         static INSERT_STEPS: Cell<usize> = const { Cell::new(0) };
+        static GENERATION_CHECKS: Cell<usize> = const { Cell::new(0) };
+        static SLOT_READS: Cell<usize> = const { Cell::new(0) };
     }
 
     /// `steps` more nodes gone through by an insert of an existing node.
@@ -514,5 +734,26 @@ pub(crate) mod tests_support {
     /// gone through so far.
     pub(crate) fn insert_steps() -> usize {
         INSERT_STEPS.with(Cell::get)
+    }
+
+    /// One more id checked against its slot's generation.
+    pub(super) fn count_generation_check() {
+        GENERATION_CHECKS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The ids checked against their slot's generation on this thread so
+    /// far.
+    pub(crate) fn generation_checks() -> usize {
+        GENERATION_CHECKS.with(Cell::get)
+    }
+
+    /// One more link followed to its slot.
+    pub(super) fn count_slot_read() {
+        SLOT_READS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The links followed to their slot on this thread so far.
+    pub(crate) fn slot_reads() -> usize {
+        SLOT_READS.with(Cell::get)
     }
 }
