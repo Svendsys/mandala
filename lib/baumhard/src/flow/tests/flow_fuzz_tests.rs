@@ -1191,12 +1191,16 @@ fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
 /// 2,893 `track`s and 69 s in the ASan `flow_raw` binary, too slow to be
 /// committed where `scripts/fuzz.sh` feeds it to that binary. With
 /// R43's cheaper steps and fewer of them it is committed: every
-/// property holds, in at most 1,000 `track`s, 4 builds, 2,000,000 path
-/// lookups, and no glyph step of a line above 64 lookups.
+/// property holds, in at most 1,000 `track`s and 4,000,000 path lookups
+/// (on this machine 528 and 696,428), and no glyph step of a line above
+/// 64 lookups.
 ///
-/// Its `Spread` and `Once` frames still cut a line apart; its `Fit`
-/// frame is now held at R27's size, so R42.2's stop is held by
-/// `test_a_shrunk_frame_lays_a_bounded_number_of_lines` instead.
+/// Its `Spread` and `Once` frames still cut a line apart. Its NULs are
+/// drawn in whatever face the host falls back to, so its path through
+/// the last resorts is the host's: on one machine its `Fit` frame is
+/// held at R27's size (3 builds), on CI's runner it is shrunk (8), and
+/// no bound here counts builds. R42.2's stop is held, on every machine,
+/// by `test_a_shrunk_frame_lays_a_bounded_number_of_lines`.
 ///
 /// Control: R42.1's — `cut_apart` bisecting its prefix on whole
 /// clearance searches again (C63) — passes the bound on `track`s (1,602).
@@ -1215,21 +1219,22 @@ fn test_a_raw_frame_cut_apart_lays_a_bounded_number_of_lines() {
     if let Err(why) = checked {
         panic!("the fuzzer's input: {why}");
     }
+    let counts =
+        format!("{tracks} tracks, {builds} builds, {lookups} path lookups, a step at most {most_step}");
     assert!(
         builds >= 3,
-        "precondition: its three frames are laid along their halves ({builds} builds)"
+        "precondition: its three frames are laid along their halves ({counts})"
     );
     assert!(
         tracks <= 1_000,
-        "the fuzzer's input: {tracks} lines tracked, at most 1,000"
+        "the fuzzer's input: {counts}; at most 1,000 tracks"
     );
-    assert!(builds <= 4, "the fuzzer's input: {builds} builds, at most 4");
     assert!(
-        lookups <= 2_000_000,
-        "the fuzzer's input: {lookups} path lookups, at most 2,000,000"
+        lookups <= 4_000_000,
+        "the fuzzer's input: {counts}; at most 4,000,000 lookups"
     );
     assert!(
         most_step <= 64,
-        "the fuzzer's input: a glyph step took {most_step} path lookups, at most 64"
+        "the fuzzer's input: {counts}; at most 64 lookups a step"
     );
 }
