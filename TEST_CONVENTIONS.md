@@ -388,6 +388,39 @@ we test for non-native targets.
   template if another wasm-only runtime hazard needs pinning: keep the
   probe tiny, and judge pass or fail by the panic *message*, because a
   wasm trap carries no cause of its own.
+  **It builds in the workspace's own target directory, and may not
+  pass on a stale artifact.** The probe's nested `cargo build` writes
+  to `<target>/` itself (the directory cargo built the test in, taken
+  from `CARGO_TARGET_TMPDIR`'s parent) rather than to a private tree
+  of its own, which it did until #285 and which cost a second copy of
+  the host side of the build (proc macros, build scripts). Most of
+  those units are ones the workspace's own builds already made,
+  chiefly `./test.sh`'s wasm32 check and clippy legs; a handful stay
+  the probe's own because their hash differs under its workspace root
+  or features. What keeps the shared directory from being a way to
+  pass on a stale artifact is cargo's own bookkeeping, not anything
+  the test adds, and it works differently for the two kinds of file.
+  The dependency units are named by a hash of package, features,
+  profile, target and flags, so another configuration builds *beside*
+  the probe's units and is never mistaken for them. The probe's own
+  `.wasm` is not: a cdylib's name carries no hash, and it is kept
+  current by its fingerprint, which any change of source, dependency
+  or flags dirties, so it is relinked before it runs. The test
+  asserts the build succeeded before it reads the path, so a failed
+  build cannot leave an old module to be judged, and the staging
+  directory and the probe crate's name carry a hash of the workspace
+  root, so two checkouts sharing one target directory never relink
+  each other's module. The control is to break the subject with a
+  warm directory — a build of the good source already in `target/` —
+  and see the probe go red, then restore it and see it go green again
+  with the same module: a probe that passed on the earlier artifact
+  would stay green through the first step. What the shared directory
+  does *not* save: the wasm32 legs of `./test.sh --lint` (clippy,
+  doc, check) write `.rmeta` files only, which a build for execution
+  cannot reuse, so the probe's wasm32 dependency compiles remain its
+  own. And it shares the build-directory lock with every other cargo
+  on that `target/` (rust-analyzer, another terminal), so it can wait
+  for them; that is a wait, not a hang.
   It needs the wasm32 target and `node`, and **skips with a note when
   either is missing**, so a green local run without them proves nothing
   about the browser — the same caveat as `test.sh`'s wasm32 gate. CI
@@ -454,6 +487,26 @@ re-litigate them without a strong reason.
   zero-warning baseline (#134). A hard-gate failure prints a
   `FAILED:` line inline and the run exits non-zero at the end, after
   every gate has reported.
+- **The test profile is lean (#283).** `cargo test` builds with the
+  `test` profile, which inherits `[profile.dev]` in the root
+  `Cargo.toml`: our own crates carry `line-tables-only` debug info
+  and every dependency carries none. A failing test's
+  `RUST_BACKTRACE=1` backtrace (`./test.sh` sets it) therefore still
+  prints `file:line` for each frame in our code; a frame inside a
+  dependency has its function name and no line table of its own. A
+  debugger keeps line breakpoints and stepping in our crates; what
+  is gone is variables and types, and in a dependency it has only
+  symbol names, so it steps over those frames. To inspect variables
+  in a test, build it with the opt-in profile that restores full
+  debug info on every crate: `cargo test --profile dev-debug
+  <pattern>` (output under `target/dev-debug/`, apart from the lean
+  `target/debug/`). The arrangement is pinned by the module
+  `baumhard::util::build_profiles`, whose fixture controls break it
+  one line at a time and plant each way of turning debug info back on.
+  The font-lock probe of §T9 builds from its own workspace (a
+  generated manifest, so none of this reaches it) and carries its own
+  `debug = false`; its output goes to the same `target/` directory
+  (§T9), under `target/wasm32-unknown-unknown/debug/`.
 - `./test.sh --bench` — also runs the benchmarks after tests pass, by
   calling `./bench.sh` rather than repeating its invocation.
   Maintainers only: `AGENTS.md` forbids automated agents this flag,
