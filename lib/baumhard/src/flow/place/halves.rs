@@ -1728,7 +1728,7 @@ impl<'s> SideArc<'s> {
             }
             self.side.count(1);
             let room = self.room_of(&lay, gap);
-            if !(room >= 0.0) {
+            if room.is_nan() || room < 0.0 {
                 break;
             }
             rooms.push((room, lay.out.len()));
@@ -1785,7 +1785,7 @@ impl<'s> SideArc<'s> {
             let (end, at) = self.end_of(&lay);
             let v = if v >= 0.0 {
                 v.max(f32::MIN_POSITIVE)
-            } else if at >= self.cb || !(end > TOUCH) {
+            } else if at >= self.cb || end.is_nan() || end <= TOUCH {
                 v.min(-2.0 * tolerance)
             } else {
                 v
@@ -3477,7 +3477,7 @@ pub(crate) fn side_solve_seam(
     let &(room, len) = rooms.get(n.checked_sub(1)?)?;
     let (gap, _) = arc.solve(n, room, row[..len].to_vec());
     let (_, (end, at)) = arc.lay(n, gap);
-    Some((gap, at >= arc.cb || !(end > TOUCH)))
+    Some((gap, at >= arc.cb || end.is_nan() || end <= TOUCH))
 }
 
 /// Test seam (#291, ruling R34): the part of `outline`'s half `half` a

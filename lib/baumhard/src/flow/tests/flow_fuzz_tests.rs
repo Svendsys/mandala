@@ -1327,8 +1327,8 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
     );
     let flow = style(16.0);
     let (long, short) = with_fonts(|fs| {
-        let long = framed(&["word ".repeat(400)], &[flow.clone()], 1.0, fs);
-        let short = framed(&["word ".repeat(20)], &[flow.clone()], 1.0, fs);
+        let long = framed(&["word ".repeat(400)], std::slice::from_ref(&flow), 1.0, fs);
+        let short = framed(&["word ".repeat(20)], std::slice::from_ref(&flow), 1.0, fs);
         let glyphs = |texts: &[String], fs: &mut crate::font::fonts::FontSystemWriteGuard| {
             real_run(&texts[0], &flow, fs).glyphs.len()
         };

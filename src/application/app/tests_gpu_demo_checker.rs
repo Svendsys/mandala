@@ -252,7 +252,7 @@ fn test_demo_maps_hold_the_readable_structure() {
             for (junction, p, q) in [("top-left", a, b), ("bottom-right", c, d)] {
                 junctions += 1;
                 let ratio = p.gap(&q) / word;
-                if !(ratio >= JUNCTION_WORD_GAPS) {
+                if ratio.is_nan() || ratio < JUNCTION_WORD_GAPS {
                     faults.push(format!(
                         "{name} {label} {junction} junction: ends {:.1}px apart, ×{ratio:.2} the lines' mean word gap {:.1}px",
                         p.gap(&q) * zoom,
@@ -280,7 +280,7 @@ fn test_demo_maps_hold_the_readable_structure() {
                 arcs += 1;
                 let mut spaced: Vec<f32> = arc.windows(2).map(|w| w[0].gap(&w[1])).collect();
                 spaced.extend([near(head), near(tail)]);
-                if !(spread(&spaced) <= EVEN) {
+                if spread(&spaced).is_nan() || spread(&spaced) > EVEN {
                     faults.push(format!(
                         "{name} {label} sides round junction {k}: {} inks, gaps and joins {:?}px, ×{:.2} apart",
                         arc.len(),

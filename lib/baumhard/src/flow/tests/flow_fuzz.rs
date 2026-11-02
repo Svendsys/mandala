@@ -24,7 +24,8 @@
 //!   [`MAX_PLACED_GLYPHS`](crate::flow::MAX_PLACED_GLYPHS).
 //! - **A frame's inks never touch** (rulings R38.1, R44.2), whatever
 //!   its layout — span, sides and spacing drawn too (ruling R44.4) —
-//!   and its text is held to [`MAX_FRAME_GLYPHS`], what one frame lays
+//!   and its text is held to
+//!   [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS), what one frame lays
 //!   inside the fuzz timeout.
 //! - **A box is a box:** its size is finite, non-negative, at least the
 //!   usable part of the minimum asked for, and one glyph-span entry per
@@ -135,7 +136,7 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
     // and their layout, drawn from the same bytes read as choices
     // (ruling R44.4): an input of zeros, as most raw findings are, lays
     // them over their whole halves with no sides.
-    let framed = framed(&[text.to_string()], &[style.clone()], 1.0, &mut fs);
+    let framed = framed(&[text.to_string()], std::slice::from_ref(&style), 1.0, &mut fs);
     let frame_spans = [FlowSpan {
         text: &framed[0],
         style: &style,
