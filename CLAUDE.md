@@ -446,6 +446,29 @@ the parity trajectory (or why none is owed):
 - **Dev-profile build**: `./debug_build.sh [flags]` is `./build.sh
   --debug` with every other flag forwarded — the shorthand for the
   build run most often while iterating.
+- **Debug info in the dev and test profiles** (#283): `[profile.dev]`
+  builds our own crates with `debug = "line-tables-only"` and every
+  dependency with none (`[profile.dev.package."*"]`), and `test`
+  inherits it, so `./test.sh` panics still print `file:line`
+  backtraces under `RUST_BACKTRACE=1`, and a worktree's `target/`
+  after a clean `./test.sh --lint` is 3.0 GB where full debug info
+  left 6.2 GB. The price is the debugger: variable inspection and
+  step-into work in none of our crates and in no dependency, and a
+  backtrace frame inside a dependency names its function but carries
+  no line table of its own. **For a debugging session use `--profile dev-debug`**
+  (`cargo test --profile dev-debug <pattern>`,
+  `cargo build --profile dev-debug`): it inherits `dev` and restores
+  full debug info on every crate, into its own `target/dev-debug/`
+  beside the lean `target/debug/`, so neither evicts the other.
+  `split-debuginfo` is deliberately unset: `unpacked` is a compile
+  error on Windows, and a profile cannot be conditional on the target.
+  The wasm probe's nested build (`lib/baumhard/tests/wasm_font_lock.rs`)
+  is its own workspace, so none of this reaches it; its generated
+  manifest sets `debug = false`. `fuzz/` is its own workspace too and
+  is left as it was: it builds `release`, whose `debug = 1` is what a
+  crash's stack trace is read from, and `./test.sh` never builds it.
+  `baumhard::util::build_profiles` holds the root manifest's half to
+  the file.
 - **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
   `cargo test -p mandala <pattern>`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or

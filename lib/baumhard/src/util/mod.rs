@@ -12,6 +12,12 @@ pub mod arena_utils;
 /// Test-only and native-only for the same reasons `source_scan` is.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod bench_surface;
+/// The root manifest's debug-info profiles (#283) — lean `dev`, the
+/// opt-in `dev-debug`, and no `split-debuginfo` anywhere (a compile
+/// error on Windows) — held against the file. Test-only and
+/// native-only for the same reasons `manifests` is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod build_profiles;
 /// Core `Color` type and channel-wise arithmetic.
 pub mod color;
 /// Hex ↔ RGB ↔ HSV plus theme-variable resolution.

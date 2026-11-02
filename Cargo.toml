@@ -123,6 +123,64 @@ tempfile = "3.27.0"
 # ask for.
 syn = "3.0.9"
 
+# Debug information in the dev and test profiles (#283).
+#
+# Cargo's default for `dev` is full debug info (`debug = 2`) on every
+# crate, and `test` inherits it, so one `./test.sh --lint` left 6.2 GB
+# in `target/` (3.0 GB with this change) and every parallel worktree
+# held its own copy. Most of it was DWARF for code nobody steps
+# through: the dependency libraries (wgpu, naga, ash, ...) and the
+# same crates copied again into each linked test binary.
+#
+# - Our own crates (the workspace members) keep `line-tables-only`:
+#   a panic's `RUST_BACKTRACE=1` backtrace still prints `file:line`
+#   for every frame, which is what a test failure needs. What is lost
+#   is variable inspection and step-into in a debugger.
+# - Every dependency builds with no debug info at all. A backtrace
+#   frame inside one still names its function, but carries no line
+#   table of its own.
+# - `dev-debug` is the opt-in for a debugger session: full debug info
+#   everywhere, in its own `target/dev-debug/`, so it never evicts the
+#   lean build. `cargo test --profile dev-debug`,
+#   `cargo build --profile dev-debug`.
+#
+# `[profile.test]` is deliberately not written: cargo's `test` profile
+# inherits from `dev` by default, and a table that says only
+# `inherits = "dev"` would restate that. `bench` inherits from
+# `release`, which this leaves alone. `baumhard::util::build_profiles`
+# pins all of this.
+#
+# **`split-debuginfo` is deliberately not set.** `"unpacked"` is a
+# hard error on Windows, MSVC and GNU alike (`error:
+# -Csplit-debuginfo=unpacked is unstable on this platform`), so it in
+# `[profile.dev]` would fail the `windows-ipc` job at its first
+# compile, and cargo has no target-conditional profile to scope it to
+# Linux. It is also close to moot here: with the dependencies carrying
+# nothing, the only debug info left to move out of a linked binary is
+# our own crates' line tables.
+#
+# A package override is not inherited into a profile's top-level
+# setting: `dev-debug` inherits `dev`'s `package."*"` table (debug off),
+# and a package table beats the profile's own `debug`, so `dev-debug`
+# repeats the table with full debug info. Without that line it would
+# be full debug info for our crates and none for the dependencies.
+#
+# The wasm32 font-lock probe's nested build is its own workspace, so
+# none of this reaches it; its generated manifest carries the same
+# setting (`lib/baumhard/tests/wasm_font_lock.rs`).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.dev-debug]
+inherits = "dev"
+debug = true
+
+[profile.dev-debug.package."*"]
+debug = true
+
 # The profile `./build.sh --fat` selects, and the reason that flag
 # exists: `release` keeps `codegen-units = 16` and thin-local LTO so
 # incremental release builds stay tolerable during development, which
