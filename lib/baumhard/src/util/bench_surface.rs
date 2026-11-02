@@ -390,6 +390,41 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frame_places_at_most_65536_glyphs",
+            Unconverted,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_text_is_cut_to_the_cap_at_a_cluster",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_text_is_held_to_the_glyph_cap",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_long_side_ornament_is_filled_in_few_lays",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_long_texts_frame_is_laid_within_its_budget",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_a_glyph_step_of_the_sweep_takes_few_path_lookups",
             CannotCompileIntoTheLibrary,
         ),

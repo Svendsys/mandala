@@ -156,7 +156,8 @@ const CLEAR_ROUNDS: usize = 16;
 /// The most copies of a side ornament one junction holds.
 const MAX_SIDE_COPIES: usize = 256;
 
-/// The most rounds of bisection a side arc's gap is solved in.
+/// The most probes a side arc's gap is solved in past its bracket
+/// ([`falsi`], ruling R44.3).
 const SIDE_ROUNDS: usize = 30;
 
 /// How narrow a side arc's gap is solved, in points, where the path's
@@ -246,7 +247,21 @@ pub(crate) const STEPS_PER_GLYPH: usize = 3_000;
 /// glyphs: [`TRACK_BUDGET`], or [`STEPS_PER_GLYPH`] a glyph where that
 /// is more. At most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
 pub(crate) fn frame_budget(glyphs: usize) -> usize {
-    TRACK_BUDGET.max(STEPS_PER_GLYPH.saturating_mul(glyphs.min(MAX_PLACED_GLYPHS)))
+    #[cfg(test)]
+    let floor = FLOOR_OVERRIDE.with(Cell::get).unwrap_or(TRACK_BUDGET);
+    #[cfg(not(test))]
+    let floor = TRACK_BUDGET;
+    floor.max(STEPS_PER_GLYPH.saturating_mul(glyphs.min(MAX_PLACED_GLYPHS)))
+}
+
+/// The most glyphs a frame places, its text and its sides together
+/// ([`MAX_PLACED_GLYPHS`], ruling R44.1).
+fn glyph_cap() -> usize {
+    #[cfg(test)]
+    if let Some(cap) = CAP_OVERRIDE.with(Cell::get) {
+        return cap;
+    }
+    MAX_PLACED_GLYPHS
 }
 
 /// How far apart the outward normals of two lines' end inks at a
@@ -466,6 +481,20 @@ thread_local! {
     /// place of [`frame_budget`]'s, so a test can spend one.
     #[cfg(test)]
     pub(crate) static BUDGET_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test seam (#294, rulings R44.1, R44.2): the least budget a frame
+    /// lays with in place of [`TRACK_BUDGET`], so a test can put a long
+    /// text's pressure on a shorter one.
+    #[cfg(test)]
+    pub(crate) static FLOOR_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test seam (#294, ruling R44.1): the glyphs a frame may place in
+    /// place of [`MAX_PLACED_GLYPHS`], so a test can reach the cap with a
+    /// short text.
+    #[cfg(test)]
+    pub(crate) static CAP_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#294, ruling R44.3): the pairs of boxes [`touching`]
+    /// has weighed on this thread.
+    #[cfg(test)]
+    pub(crate) static BOXES_WEIGHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// One line laid with one tracking gap ([`track`]).
@@ -1006,10 +1035,51 @@ struct Line {
 struct Layout<'a> {
     halves: &'a Halves,
     outward: bool,
-    /// The glyph steps this frame's tracking has taken, and the most it
-    /// may take ([`frame_budget`]).
+    /// The work the frame has taken, and the most it may take.
+    work: Work,
+}
+
+/// A frame's work (ruling R44.2): the glyph steps its tracking and its
+/// side lays have taken, the glyphs its budget is scaled by, and the most
+/// it may take ([`frame_budget`]).
+struct Work {
     spent: Cell<usize>,
+    glyphs: Cell<usize>,
     budget: Cell<usize>,
+    /// Whether the budget is set from outside (a test's
+    /// `BUDGET_OVERRIDE`), so the frame's glyphs leave it as it is.
+    fixed: Cell<bool>,
+}
+
+impl Work {
+    fn new() -> Self {
+        Work {
+            spent: Cell::new(0),
+            glyphs: Cell::new(0),
+            budget: Cell::new(TRACK_BUDGET),
+            fixed: Cell::new(false),
+        }
+    }
+
+    /// Count `steps` glyph steps taken.
+    fn take(&self, steps: usize) {
+        self.spent.set(self.spent.get().saturating_add(steps));
+    }
+
+    /// Whether the frame has taken its budget.
+    fn spent_all(&self) -> bool {
+        self.spent.get() >= self.budget.get()
+    }
+
+    /// Scale the budget by `more` glyphs the frame may place besides
+    /// those it is scaled by already: a side's copies, once its arc
+    /// tells how many fit (ruling R44.3).
+    fn place(&self, more: usize) {
+        self.glyphs.set(self.glyphs.get().saturating_add(more));
+        if !self.fixed.get() {
+            self.budget.set(frame_budget(self.glyphs.get()));
+        }
+    }
 }
 
 /// The lines [`Layout::lay`] has laid in one clearance search.
@@ -1039,14 +1109,13 @@ impl<'a> Layout<'a> {
         Layout {
             halves,
             outward,
-            spent: Cell::new(0),
-            budget: Cell::new(TRACK_BUDGET),
+            work: Work::new(),
         }
     }
 }
 
 impl Layout<'_> {
-    /// [`track`], counted against the frame's [`TRACK_BUDGET`].
+    /// [`track`], counted against the frame's budget ([`Work`]).
     fn track(
         &self,
         walk: &PathWalk<'_>,
@@ -1055,14 +1124,13 @@ impl Layout<'_> {
         part: (f32, f32),
         g: f32,
     ) -> Tracked {
-        self.spent
-            .set(self.spent.get().saturating_add(clusters.len().max(1)));
+        self.work.take(clusters.len().max(1));
         track(walk, glyphs, clusters, part, g)
     }
 
-    /// Whether the frame's tracking has taken its [`TRACK_BUDGET`].
+    /// Whether the frame has taken its budget ([`Work`]).
     fn spent_all(&self) -> bool {
-        self.spent.get() >= self.budget.get()
+        self.work.spent_all()
     }
 
     /// The walk a line on half `k` is tracked along.
@@ -1473,9 +1541,9 @@ struct SideOrnament<'a> {
     walk: PathWalk<'a>,
     glyphs: &'a [GlyphMetrics],
     clusters: Vec<Cluster>,
-    /// The frame's glyph steps, which its lays count against (ruling
+    /// The frame's work, which its lays count against (rulings R44.2,
     /// R44.3).
-    spent: &'a Cell<usize>,
+    work: &'a Work,
 }
 
 impl<'a> SideOrnament<'a> {
@@ -1490,14 +1558,13 @@ impl<'a> SideOrnament<'a> {
             },
             glyphs: &run.glyphs,
             clusters: clusters_of(&run.glyphs, range),
-            spent: &layout.spent,
+            work: &layout.work,
         }
     }
 
     /// Count `copies` copies laid against the frame's glyph steps.
     fn count(&self, copies: usize) {
-        let steps = copies.saturating_mul(self.clusters.len().max(1));
-        self.spent.set(self.spent.get().saturating_add(steps));
+        self.work.take(copies.saturating_mul(self.clusters.len().max(1)));
     }
 
     /// The arc of this side between two text inks, `None` without an
@@ -1603,93 +1670,134 @@ impl<'s> SideArc<'s> {
         at < self.cb && end >= gap
     }
 
-    /// The widest gap at which `n` copies fit with every gap and both
-    /// joins equal, to [`SIDE_PRECISION`], `None` when not even the
-    /// floor's does: where the last copy's ink is the gap from `to`'s.
-    /// That room falls with the gap by about its gaps' count a point —
-    /// one before each ink of every copy, and the join to `to` — bent only
-    /// by the path, so it is solved as a line's tracking is (ruling
-    /// R44.3, [`solve_tracking`]): the straight path's root from the
-    /// floor's room, aimed a hair past it, widened until it brackets the
-    /// root, and closed by [`falsi`]. A copy past `to`'s center reads as
-    /// past the end.
-    ///
-    /// Cost: a lay of `n` copies at the floor, one more per widening, and
-    /// [`falsi`]'s, at most [`SIDE_ROUNDS`].
-    fn solve(&self, n: usize) -> Option<f32> {
-        let room = |gap: f32| {
-            let (_, (end, at)) = self.lay(n, gap);
-            let v = if at < self.cb {
-                end - gap
-            } else {
-                -(gap + (at - self.cb))
-            };
-            (if v.is_nan() { f32::NEG_INFINITY } else { v }, ())
+    /// How much room `n` copies laid by `lay` leave: how far the last
+    /// ink is from `to`'s past the gap — at least none where they fit
+    /// ([`fits`](Self::fits)) — or, its center past `to`'s, as far past
+    /// as that and the gap, a negative. A room that is not a number is
+    /// none at all.
+    fn room_of(&self, lay: &InkLay<'_>, gap: f32) -> f32 {
+        let (end, at) = self.end_of(lay);
+        let v = if at < self.cb {
+            end - gap
+        } else {
+            -(gap + (at - self.cb))
         };
-        let (v0, _) = room(self.floor);
-        if !(v0 >= 0.0) {
-            return None;
+        if v.is_nan() {
+            f32::NEG_INFINITY
+        } else {
+            v
         }
+    }
+
+    /// Copies laid at the floor's gap, one after another, up to `most` or
+    /// the first that does not fit: what they place, and for each `k`
+    /// copies that fit the room they leave and how many glyphs they
+    /// place. Copies are laid in a row, each set on from the last, so the
+    /// first `k` of any row are `k` copies laid on their own: this one lay
+    /// tells every copy count's room at the floor (ruling R44.3).
+    ///
+    /// Cost: one lay of the copies that fit and the one that does not.
+    fn floor_row(&self, most: usize) -> (Vec<PlacedGlyph>, Vec<(f32, usize)>) {
+        let gap = self.floor;
+        let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
+        let mut rooms = Vec::new();
+        while rooms.len() < most.min(MAX_SIDE_COPIES) {
+            for cluster in &self.side.clusters {
+                lay.cluster(cluster, gap);
+            }
+            self.side.count(1);
+            let room = self.room_of(&lay, gap);
+            if !(room >= 0.0) {
+                break;
+            }
+            rooms.push((room, lay.out.len()));
+        }
+        (lay.out, rooms)
+    }
+
+    /// How many gaps `n` copies have: one before each ink of every copy,
+    /// and the join to `to`.
+    fn gaps(&self, n: usize) -> f32 {
         let inked = self.side.clusters.iter().filter(|c| !c.blank).count().max(1);
-        let gaps = (n * inked + 1) as f32;
+        (n * inked + 1) as f32
+    }
+
+    /// The gap at which `n` copies would fill the arc were its path
+    /// straight, from the room `room` they leave at the floor: the room
+    /// shared among their gaps.
+    fn straight(&self, n: usize, room: f32) -> f32 {
+        self.floor + room / self.gaps(n)
+    }
+
+    /// The widest gap at which `n` copies fit with every gap and both
+    /// joins equal, to [`SIDE_PRECISION`], and the copies laid at it,
+    /// given the room `at_floor` they leave at the floor and what they
+    /// place there ([`floor_row`](Self::floor_row)): where the last copy's
+    /// ink is the gap from `to`'s. That room falls with the gap by about
+    /// its gaps' count a point — one before each ink of every copy, and
+    /// the join to `to` — bent only by the path, so it is solved as a
+    /// line's tracking is (ruling R44.3, [`solve_tracking`]): the straight
+    /// path's root ([`straight`](Self::straight)), aimed a hair past it,
+    /// widened until it brackets the root, and closed by [`falsi`]. A copy
+    /// past `to`'s center reads as past the end. The frame's budget spent,
+    /// the widest gap found to fit so far.
+    ///
+    /// Cost: a lay of `n` copies a widening, and [`falsi`]'s, at most
+    /// [`SIDE_ROUNDS`]; none at all where the floor is the answer.
+    fn solve(&self, n: usize, at_floor: f32, floor_out: Vec<PlacedGlyph>) -> (f32, Vec<PlacedGlyph>) {
+        let gaps = self.gaps(n);
         // As precise as the copies' inks are set: each to within the
         // pairwise rule's tolerance, as a line's end is ([`line_tolerance`]).
         let tolerance = resolved(SIDE_PRECISION, self.cb).max(gaps * INK_TOLERANCE);
-        if v0 <= tolerance {
-            return Some(self.floor);
+        if at_floor <= tolerance {
+            return (self.floor, floor_out);
         }
-        // A fill's work is bounded by its rounds, and counted.
-        let stop = || false;
-        let mut low = (self.floor, v0, ());
-        let mut g = self.floor + v0 / gaps * (1.0 + 1e-3) + f32::MIN_POSITIVE;
+        // A room of none fits, and reads as positive to `falsi`. A miss
+        // whose last ink touches `to`'s, or is set past its center, reads
+        // as at least twice the tolerance short, so `falsi` never takes it
+        // for the answer: copies a hair short of `to` close with a join a
+        // hair narrower than their gaps, as a line's end a hair past its
+        // part's is laid, but copies that touch the text are no answer.
+        let room = |gap: f32| {
+            let (lay, _) = self.lay(n, gap);
+            let v = self.room_of(&lay, gap);
+            let (end, at) = self.end_of(&lay);
+            let v = if v >= 0.0 {
+                v.max(f32::MIN_POSITIVE)
+            } else if at >= self.cb || !(end > TOUCH) {
+                v.min(-2.0 * tolerance)
+            } else {
+                v
+            };
+            (v, lay.out)
+        };
+        let stop = || self.side.work.spent_all();
+        let mut low = (self.floor, at_floor, floor_out);
+        let mut g = self.straight(n, at_floor) + (at_floor / gaps) * 1e-3 + f32::MIN_POSITIVE;
         for _ in 0..TRACK_DOUBLINGS {
-            if !g.is_finite() {
+            if !g.is_finite() || stop() {
                 break;
             }
-            let (v, _) = room(g);
-            if v <= 0.0 {
-                if -v <= tolerance {
-                    return Some(low.0);
-                }
-                let (gap, _) = falsi(
+            let (v, out) = room(g);
+            if v < 0.0 {
+                return falsi(
                     room,
                     low,
-                    (g, v, ()),
+                    (g, v, out),
                     tolerance,
                     tolerance / gaps,
                     SIDE_ROUNDS,
                     &stop,
                 );
-                return Some(gap);
             }
             if v <= tolerance {
-                return Some(g);
+                return (g, out);
             }
-            low = (g, v, ());
-            g = (g + v / gaps * (1.0 + 1e-3)).max(g * 1.125);
+            let next = (g + v / gaps * (1.0 + 1e-3)).max(g * 1.125);
+            low = (g, v, out);
+            g = next;
         }
-        Some(low.0)
-    }
-
-    /// How many copies fit at `target` (at least the floor) in a row
-    /// from `from`, to [`MAX_SIDE_COPIES`].
-    fn count_at(&self, target: f32, most: usize) -> usize {
-        let gap = target.max(self.floor);
-        let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
-        let mut count = 0;
-        while count < most.min(MAX_SIDE_COPIES) {
-            for cluster in &self.side.clusters {
-                lay.cluster(cluster, gap);
-            }
-            self.side.count(1);
-            let (end, at) = self.end_of(&lay);
-            if at < self.cb && end >= gap {
-                count += 1;
-            } else {
-                break;
-            }
-        }
-        count
+        (low.0, low.2)
     }
 
     /// Fill the arc (ruling R33.1): the whole number of copies whose
@@ -1698,6 +1806,15 @@ impl<'s> SideArc<'s> {
     /// the most that fit at the target and one more, whose gap is
     /// narrower — every gap and both joins equal. Nothing when not even
     /// one copy fits, or the budget holds none.
+    ///
+    /// The two counts weighed are those whose gaps bracket the target:
+    /// guessed from the floor's row by the straight path, then moved a
+    /// count at a time until the gaps solved bracket it, so a guess the
+    /// path's bend puts off by one costs a solve, never the answer.
+    ///
+    /// Cost (ruling R44.3): the floor's row, and two solves where the
+    /// guess holds — a lay of every copy each widening and each of
+    /// [`falsi`]'s rounds, the copies chosen kept as laid.
     fn fill(&self, target: f32, budget: usize, out: &mut Vec<PlacedGlyph>) {
         let per_copy = self
             .side
@@ -1710,19 +1827,49 @@ impl<'s> SideArc<'s> {
         if most == 0 {
             return;
         }
-        let at_target = self.count_at(target, most);
-        let mut best: Option<(usize, f32)> = None;
-        for n in at_target.clamp(1, most)..=(at_target + 1).clamp(1, most) {
-            let Some(gap) = self.solve(n) else { continue };
-            if best.is_none_or(|(_, g)| (gap - target).abs() < (g - target).abs()) {
-                best = Some((n, gap));
+        let (row, rooms) = self.floor_row(most);
+        let fit = rooms.len();
+        if fit == 0 {
+            return;
+        }
+        // The copies that fit place glyphs the frame's budget is scaled
+        // by, as its text's are (ruling R44.2).
+        self.side.work.place(rooms[fit - 1].1);
+        let mut solved: Vec<Option<(f32, Vec<PlacedGlyph>)>> = vec![None; fit + 1];
+        let mut solve = |n: usize| -> f32 {
+            if solved[n].is_none() {
+                let (room, len) = rooms[n - 1];
+                solved[n] = Some(self.solve(n, room, row[..len].to_vec()));
+            }
+            solved[n].as_ref().map_or(self.floor, |s| s.0)
+        };
+        // The most copies that fit at the target, by the straight path: the
+        // count whose gap is the last at or past it.
+        let guess = (1..=fit)
+            .take_while(|&k| self.straight(k, rooms[k - 1].0) >= target)
+            .count()
+            .clamp(1, fit);
+        let mut n = guess;
+        // Down while `n` copies do not reach the target, up while one more
+        // still does: the pair whose gaps bracket it, or an end. A spent
+        // budget leaves the guess as it stands, its gaps solved no wider
+        // than found to fit.
+        let spent = || self.side.work.spent_all();
+        while n > 1 && solve(n) < target && !spent() {
+            n -= 1;
+        }
+        while n < fit && solve(n + 1) >= target && !spent() {
+            n += 1;
+        }
+        let mut best = (n, solve(n));
+        if n < fit {
+            let wider = solve(n + 1);
+            if (wider - target).abs() < (best.1 - target).abs() {
+                best = (n + 1, wider);
             }
         }
-        if best.is_none() {
-            best = self.solve(1).map(|gap| (1, gap));
-        }
-        if let Some((n, gap)) = best {
-            out.extend(self.lay(n, gap).0.out);
+        if let Some((_, glyphs)) = solved[best.0].take() {
+            out.extend(glyphs);
         }
     }
 }
@@ -2059,6 +2206,11 @@ impl Layout<'_> {
             let backtracks = if foreseen { 0 } else { backtracks };
             let mut scale = 1.0;
             for _ in 0..=backtracks {
+                // The frame's budget spent: the round not taken, the lines
+                // as the last round laid them (ruling R44.2).
+                if self.spent_all() {
+                    break;
+                }
                 let mut next = clear;
                 for k in 0..2 {
                     for j in 0..2 {
@@ -2104,22 +2256,50 @@ struct Cleared {
 /// Cost: O(n log n) in the lines' inks, and a pair per two that share
 /// some of their width.
 fn overlapping(lines: &[Line]) -> bool {
-    let mut boxes: Vec<(usize, usize, InkBox)> = lines
+    let boxes = lines
         .iter()
         .enumerate()
-        .flat_map(|(k, l)| l.tracked.boxes.iter().enumerate().map(move |(i, b)| (k, i, *b)))
+        .flat_map(|(k, l)| l.tracked.boxes.iter().enumerate().map(move |(i, b)| ((k, i), *b)))
         .collect();
-    boxes.sort_by(|a, b| a.2 .0.x.total_cmp(&b.2 .0.x));
-    for (n, (k, i, a)) in boxes.iter().enumerate() {
-        for (l, j, b) in &boxes[n + 1..] {
+    touching(boxes, |(k, i), (l, j)| k == l && i.abs_diff(j) <= 1)
+}
+
+/// Whether two of `boxes` touch — no more than [`TOUCH`] apart
+/// ([`box_gap`]) — but for the pairs `exempt` excuses, each box known by
+/// its key. A sweep along the axis the boxes spread further on: sorted
+/// by where each starts along it, a box is weighed only against those
+/// that start before it ends, past which none can be within [`TOUCH`].
+/// A box that is not a number ends its scan.
+///
+/// Cost: a sort, and a [`box_gap`] for each pair that overlaps along the
+/// axis — round a ring, the few inks either side of each — where
+/// weighing every pair was quadratic in the inks (a side ornament's
+/// tens of thousands of copies' inks, ruling R44.3).
+fn touching<K: Copy>(mut boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool) -> bool {
+    let spread = |axis: usize| {
+        let (lo, hi) = boxes
+            .iter()
+            .map(|(_, b)| b.0[axis])
+            .filter(|v| v.is_finite())
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                (lo.min(v), hi.max(v))
+            });
+        hi - lo
+    };
+    let axis = if spread(1) > spread(0) { 1 } else { 0 };
+    boxes.sort_by(|a, b| a.1 .0[axis].total_cmp(&b.1 .0[axis]));
+    for (n, (k, a)) in boxes.iter().enumerate() {
+        for (l, b) in &boxes[n + 1..] {
             // Every box after starts no sooner; one that is not a number
             // ends the scan.
-            if !b.0.x.le(&(a.1.x + TOUCH)) {
+            if !b.0[axis].le(&(a.1[axis] + TOUCH)) {
                 break;
             }
-            if k == l && i.abs_diff(*j) <= 1 {
+            if exempt(*k, *l) {
                 continue;
             }
+            #[cfg(test)]
+            BOXES_WEIGHED.with(|count| count.set(count.get() + 1));
             if box_gap(*a, *b) <= TOUCH {
                 return true;
             }
@@ -2711,6 +2891,41 @@ fn trimmed(clusters: &[Cluster]) -> &[Cluster] {
     &clusters[..end]
 }
 
+/// `clusters` cut to the glyphs `left` still holds, at a cluster — a
+/// cluster's glyphs are placed together or not at all — its end's blanks
+/// left out with what follows them, and `left` less what is kept: a
+/// frame's text held to [`MAX_PLACED_GLYPHS`] (ruling R44.1). Returns
+/// what is kept, and whether anything was cut.
+fn to_cap(mut clusters: Vec<Cluster>, left: &mut usize) -> (Vec<Cluster>, bool) {
+    let mut placed = 0;
+    let fits = clusters
+        .iter()
+        .take_while(|c| {
+            placed += c.glyphs.len();
+            placed <= *left
+        })
+        .count();
+    let cut = fits < clusters.len();
+    if cut {
+        clusters.truncate(fits);
+        let end = trimmed(&clusters).len();
+        clusters.truncate(end);
+    }
+    *left -= clusters.iter().map(|c| c.glyphs.len()).sum::<usize>();
+    (clusters, cut)
+}
+
+/// Test seam (#294, ruling R44.1): `run`'s glyphs `range` cut to `left`
+/// glyphs at a cluster ([`to_cap`]): the glyphs kept, as a range of the
+/// run's, whether it was cut, and the glyphs left after.
+#[cfg(test)]
+pub(crate) fn to_cap_seam(run: &ShapedRun, range: Range<usize>, left: usize) -> (Range<usize>, bool, usize) {
+    let mut left = left;
+    let (kept, cut) = to_cap(clusters_of(&run.glyphs, range.clone()), &mut left);
+    let end = kept.last().map_or(range.start, |c| c.glyphs.end);
+    (range.start..end, cut, left)
+}
+
 /// Place `run` as a text frame around `outline` (rulings R27, R32, R33,
 /// R33.1, R34): its two lines laid at `layout.span` along the diagonal
 /// halves, each junction a break, `layout.sides` closing what the lines
@@ -2846,28 +3061,12 @@ pub(super) fn place_halves(
         // The glyphs the text may still place (ruling R44.1): a frame's
         // text and its sides together place at most `MAX_PLACED_GLYPHS`,
         // so a text longer is cut at a cluster, its end left out.
-        let mut left = MAX_PLACED_GLYPHS;
+        let mut left = glyph_cap();
         let prepared: Vec<Prepared> = specs
             .iter()
             .filter_map(|(k, range, cut)| {
-                let mut clusters = clusters_of(&drawn.glyphs, range.clone());
-                let mut cut = *cut;
-                let mut placed = 0;
-                let fits = clusters
-                    .iter()
-                    .take_while(|c| {
-                        placed += c.glyphs.len();
-                        placed <= left
-                    })
-                    .count();
-                if fits < clusters.len() {
-                    clusters.truncate(fits);
-                    let end = trimmed(&clusters).len();
-                    clusters.truncate(end);
-                    cut = true;
-                }
-                left -= clusters.iter().map(|c| c.glyphs.len()).sum::<usize>();
-                let cut = &cut;
+                let (clusters, capped) = to_cap(clusters_of(&drawn.glyphs, range.clone()), &mut left);
+                let cut = &(*cut || capped);
                 // A `Once` or `Spread` line its whole half cannot hold at
                 // its font's gap is cut to what that holds before it is
                 // prepared or any clearance is grown: a clearance only
@@ -2921,11 +3120,12 @@ pub(super) fn place_halves(
         .iter()
         .map(|(_, range, _)| range.len())
         .sum::<usize>()
-        .min(MAX_PLACED_GLYPHS);
-    lay.budget.set(frame_budget(glyphs));
+        .min(glyph_cap());
+    lay.work.place(glyphs);
     #[cfg(test)]
     if let Some(budget) = BUDGET_OVERRIDE.with(Cell::get) {
-        lay.budget.set(budget);
+        lay.work.budget.set(budget);
+        lay.work.fixed.set(true);
     }
     let zero: Clear = [[0.0; 2]; 2];
     let Some(mut built) = build(1.0, zero, false, fs) else {
@@ -3077,7 +3277,7 @@ pub(super) fn place_halves(
             .flat_map(|l| l.tracked.boxes.iter().copied())
             .collect();
         for (at, from, to) in side_arcs(&lines, halves.length) {
-            let budget = MAX_PLACED_GLYPHS.saturating_sub(text.len() + sides.len());
+            let budget = glyph_cap().saturating_sub(text.len() + sides.len());
             if let Some(arc) = side.arc(from, to) {
                 let before = sides.len();
                 arc.fill(target, budget, &mut sides);
@@ -3094,9 +3294,22 @@ pub(super) fn place_halves(
                     .iter()
                     .filter_map(|g| glyph_box(&drawn, g))
                     .collect();
-                let touches = boxes.iter().enumerate().any(|(i, b)| {
-                    text_boxes.iter().chain(&laid).any(|t| box_gap(*b, *t) <= TOUCH)
-                        || boxes.iter().skip(i + 2).any(|c| box_gap(*b, *c) <= TOUCH)
+                // Keyed by which they are — the text's, the copies already
+                // laid, this arc's — and where among them.
+                let keyed = text_boxes
+                    .iter()
+                    .map(|b| (0, *b))
+                    .chain(laid.iter().map(|b| (1, *b)))
+                    .enumerate()
+                    .map(|(i, (from, b))| ((from, i), b))
+                    .chain(boxes.iter().enumerate().map(|(i, b)| ((2, i), *b)))
+                    .collect();
+                let touches = touching(keyed, |(a, i), (b, j)| {
+                    if a == 2 && b == 2 {
+                        i.abs_diff(j) <= 1
+                    } else {
+                        a != 2 && b != 2
+                    }
                 });
                 if touches {
                     sides.truncate(before);
@@ -3123,9 +3336,9 @@ pub(super) fn place_halves(
         trace.unheld = unheld;
         trace.cut_apart = cut_apart;
         trace.clear = clear;
-        trace.spent = lay.spent.get();
-        trace.budget = lay.budget.get();
-        trace.glyphs = glyphs;
+        trace.spent = lay.work.spent.get();
+        trace.budget = lay.work.budget.get();
+        trace.glyphs = lay.work.glyphs.get();
     }
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;
