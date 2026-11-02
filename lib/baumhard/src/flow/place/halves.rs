@@ -326,10 +326,23 @@ pub(crate) const INK_GLYPH_STEPS: usize = 6;
 /// rounded up.
 pub(crate) const INK_FACE_STEPS: usize = 104;
 
-/// Ink boxes one glyph step weighs where two inks are looked at for a
-/// touch ([`touching`]): some 0.4 µs a box, the sort and the sweep, so
-/// 16 µs ÷ 0.4 µs = 40 boxes, rounded down to 32.
+/// Ink boxes and pairs of them one glyph step weighs where two inks are
+/// looked at for a touch in [`touch_scan`]'s sweep ([`touching`]): some
+/// 0.4 µs a box, the sort and the sweep, so 16 µs ÷ 0.4 µs = 40 boxes,
+/// rounded down to 32. Measured again at R48 (review 5739829769), each
+/// box and each pair the sweep looks at a unit, on the flow_structured
+/// target's ASan build over its seeds, the committed findings and the
+/// heavy seeds, three runs, beside the sweep before it in the same
+/// binary: at most 0.42 µs a unit over the calls of 256 units or more
+/// (the sweep before, 0.50), at a load average of 2 to 6.
 pub(crate) const BOXES_A_STEP: usize = 32;
+
+// Past [`touch_scan`]'s sweep, in its strips, a box or a pair looked at
+// took at most 2.97 µs over the calls of 256 units or more, measured as
+// [`BOXES_A_STEP`] is with the strips forced on: 16 µs ÷ 2.97 µs = 5.4,
+// some six times what `BOXES_A_STEP` counts. Counting it so takes a large
+// side arc's touch check past the overshoot a spent budget allows; which
+// gives way is pending a ruling on #294 (R48 worker's report).
 
 /// Clusters one glyph step walks in R27's arithmetic lays
 /// (`lines::Lines`): some 1.3 µs a cluster along a path, so 16 µs ÷
@@ -2558,20 +2571,40 @@ fn overlapping(lines: &[Line], work: &Work) -> bool {
 /// Whether two of `boxes` touch — no more than [`TOUCH`] apart
 /// ([`box_gap`]) — but for the pairs `exempt` excuses, each box known by
 /// its key ([`touch_scan`]): each box and each pair of them looked at
-/// counted against `work` (ruling R46.1).
+/// counted against `work` (ruling R46.1), [`BOXES_A_STEP`] a step.
 fn touching<K: Copy>(boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool, work: &Work) -> bool {
-    let mut looked = 0;
+    let mut looked = Looked::default();
     let touches = touch_scan(&boxes, &exempt, &mut looked);
     #[cfg(test)]
-    BOXES_WEIGHED.with(|count| count.set(count.get() + looked));
-    work.take(weighing_steps(boxes.len().saturating_add(looked)));
+    BOXES_WEIGHED.with(|count| count.set(count.get() + looked.swept + looked.stripped));
+    // The strips' looks at the sweep's weight, though they cost more a
+    // look under ASan (see `BOXES_A_STEP`): pending a ruling on #294.
+    work.take(weighing_steps(
+        boxes
+            .len()
+            .saturating_add(looked.swept)
+            .saturating_add(looked.stripped),
+    ));
     touches
 }
 
-/// How much wider than the widest box and [`TOUCH`] a cell of
-/// [`touch_scan`]'s grid is: enough that rounding a box's corner to its
-/// cell never puts two boxes that touch two cells apart.
+/// How many pairs a box [`touch_scan`]'s sweep looks at, on the mean,
+/// before it lays its boxes in strips instead: round a ring it looks at
+/// some 0.25.
+const SWEEP_PAIRS: usize = 2;
+
+/// How much taller than the tallest box and [`TOUCH`] a strip of
+/// [`touch_scan`]'s is: enough that rounding a box's corner to its strip
+/// never puts two boxes that touch two strips apart.
 const CELL_MARGIN: f64 = 1.0 + 1.0 / (1u64 << 20) as f64;
+
+/// The pairs of boxes [`touch_scan`] has looked at: in its sweep, and
+/// past it, in its strips or for a box that is not a number.
+#[derive(Default)]
+struct Looked {
+    swept: usize,
+    stripped: usize,
+}
 
 /// Whether two of `boxes` touch, as [`touching`] asks, the pairs of them
 /// looked at added to `looked`.
@@ -2579,23 +2612,30 @@ const CELL_MARGIN: f64 = 1.0 + 1.0 / (1u64 << 20) as f64;
 /// The pairs weighed are a sweep's: sorted by where each box starts along
 /// the axis the boxes spread further on, ties in their order, a box is
 /// weighed against each after it that starts no further than [`TOUCH`]
-/// past where it ends, a box that is not a number ending the scan. Of
-/// those pairs only the ones that can touch are looked at. Boxes whose
-/// corners are numbers are bucketed by their least corner in a grid whose
-/// cells are as wide as the widest box and [`TOUCH`] and as tall as the
-/// tallest and [`TOUCH`] ([`CELL_MARGIN`]): two that touch lie in one
-/// cell or in neighboring ones. A box with a corner that is not a number,
+/// past where it ends, a box that is not a number ending the scan. Round
+/// a ring those are the few inks either side of each, and the sweep is
+/// the answer. Where it looks at more than [`SWEEP_PAIRS`] pairs a box —
+/// boxes stacked across the axis, a side ornament's copies down a
+/// straight side — it stops, and of its pairs only the ones that can
+/// touch are looked at. Boxes whose
+/// corners are numbers are bucketed by their least corner across the
+/// axis into strips as tall as the tallest box and [`TOUCH`]
+/// ([`CELL_MARGIN`]), so two that touch lie in one strip or in two
+/// beside each other, and the sweep runs within each strip and over
+/// each two beside each other. A box with a corner that is not a number,
 /// which [`box_gap`] can read as touching anything, is weighed as the
 /// sweep weighs it: against each box its scan reaches, and each box whose
 /// scan reaches it.
 ///
-/// Cost: a sort, and a look at each pair of boxes in neighboring cells:
-/// round any outline, the few inks either side of each. A sweep along one
-/// axis looked at every pair that shared some of its width, quadratic in
-/// a side ornament's copies down a straight side (R44.3's 200-byte
+/// Cost: a sort, and [`SWEEP_PAIRS`] looks a box at most before a look at
+/// each pair of boxes in one strip or two beside each other that share
+/// some of their width along the axis: round any outline, the few inks
+/// either side of each. The sweep alone looked at every pair that shared
+/// some of its width, which down a straight side across the axis is
+/// every pair: quadratic in a side ornament's copies (R44.3's 200-byte
 /// ornament round a sharp square, some 5,000 pairs a glyph). A box that
 /// is not a number adds the boxes its scan reaches.
-fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, looked: &mut usize) -> bool {
+fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, looked: &mut Looked) -> bool {
     let spread = |axis: usize| {
         let (lo, hi) = boxes
             .iter()
@@ -2615,24 +2655,57 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
         b.0[axis].le(&(a.1[axis] + TOUCH)) && !exempt(k, l) && box_gap(a, b) <= TOUCH
     };
     let regular = |i: usize| boxes[i].1 .0.is_finite() && boxes[i].1 .1.is_finite();
+    let mut order: Vec<usize> = (0..boxes.len()).collect();
+    order.sort_by(|&i, &j| start(i).total_cmp(&start(j)));
+
+    // The sweep itself, while it looks at a few pairs a box: round a ring,
+    // the few inks either side of each along the axis.
+    let most = boxes.len().saturating_add(1).saturating_mul(SWEEP_PAIRS);
+    let mut swept = 0;
+    let whole = 'sweep: {
+        for (at, &i) in order.iter().enumerate() {
+            let reach = boxes[i].1 .1[axis] + TOUCH;
+            for &j in &order[at + 1..] {
+                swept += 1;
+                if swept > most {
+                    break 'sweep false;
+                }
+                if !start(j).le(&reach) {
+                    break;
+                }
+                if weigh(i, j) {
+                    looked.swept += swept;
+                    return true;
+                }
+            }
+        }
+        true
+    };
+    looked.swept += swept;
+    if whole {
+        return false;
+    }
 
     // The boxes not numbers, weighed as the sweep weighs them.
     if !(0..boxes.len()).all(regular) {
-        let mut order: Vec<usize> = (0..boxes.len()).collect();
-        order.sort_by(|&i, &j| start(i).total_cmp(&start(j)));
         let odd: Vec<usize> = (0..order.len()).filter(|&at| !regular(order[at])).collect();
+        let mut next = 0;
         for (at, &i) in order.iter().enumerate() {
+            while next < odd.len() && odd[next] <= at {
+                next += 1;
+            }
             let reach = boxes[i].1 .1[axis] + TOUCH;
-            // A box that is a number: the odd boxes its scan reaches, the
-            // boxes after it starting in order until one starts past
-            // `reach` — so the odd ones in order until one does.
-            let after: Box<dyn Iterator<Item = usize>> = if regular(i) {
-                Box::new(odd[odd.partition_point(|&o| o <= at)..].iter().map(|&o| order[o]))
+            // A box that is a number: the odd boxes its scan reaches — the
+            // boxes after it start in order until one starts past `reach`,
+            // so the odd ones do. A box not a number: every box it reaches.
+            let after: &[usize] = if regular(i) {
+                &odd[next..]
             } else {
-                Box::new(order[at + 1..].iter().copied())
+                &order[at + 1..]
             };
-            for j in after {
-                *looked += 1;
+            for &k in after {
+                let j = if regular(i) { order[k] } else { k };
+                looked.stripped += 1;
                 if !start(j).le(&reach) {
                     break;
                 }
@@ -2643,62 +2716,93 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
         }
     }
 
-    // The boxes that are numbers, by cell: sorted by column, then row.
-    let size = [0, 1].map(|d| {
-        let widest = (0..boxes.len())
+    // The boxes that are numbers, in strips across the sweep's axis: by
+    // strip, then in the sweep's order.
+    let across = 1 - axis;
+    let height = {
+        let tallest = (0..boxes.len())
             .filter(|&i| regular(i))
-            .map(|i| boxes[i].1 .1[d] - boxes[i].1 .0[d])
+            .map(|i| boxes[i].1 .1[across] - boxes[i].1 .0[across])
             .fold(0.0_f32, f32::max);
-        (f64::from(widest) + f64::from(TOUCH)) * CELL_MARGIN
-    });
-    // A cell past `i64`'s range is its end's, shared by every box there.
-    let cell_of = |i: usize| {
-        let corner = boxes[i].1 .0;
-        let at = |d: usize| (f64::from(corner[d]) / size[d]).floor() as i64;
-        (at(0), at(1))
+        (f64::from(tallest) + f64::from(TOUCH)) * CELL_MARGIN
     };
-    let mut cells: Vec<((i64, i64), usize)> = (0..boxes.len())
+    let mut order: Vec<Swept> = (0..boxes.len())
         .filter(|&i| regular(i))
-        .map(|i| (cell_of(i), i))
+        .map(|i| {
+            let (min, max) = boxes[i].1;
+            Swept {
+                // A strip past `i64`'s range is its end's, shared by every
+                // box there.
+                strip: (f64::from(min[across]) / height).floor() as i64,
+                start: min[axis],
+                reach: max[axis] + TOUCH,
+                i,
+            }
+        })
         .collect();
-    cells.sort_unstable();
-    // Which of a pair the sweep weighs first.
-    let pair = |i: usize, j: usize| match start(i).total_cmp(&start(j)).then(i.cmp(&j)) {
-        Ordering::Less => weigh(i, j),
-        _ => weigh(j, i),
+    order.sort_unstable_by(|a, b| a.strip.cmp(&b.strip).then_with(|| a.before(b)));
+    // `a` weighed against `after`, the boxes after it in the sweep's order,
+    // while they start within its reach.
+    let mut scan = |a: &Swept, after: &[Swept]| {
+        for b in after {
+            looked.stripped += 1;
+            if !b.start.le(&a.reach) {
+                return false;
+            }
+            let ((k, p), (l, q)) = (boxes[a.i], boxes[b.i]);
+            if !exempt(k, l) && box_gap(p, q) <= TOUCH {
+                return true;
+            }
+        }
+        false
     };
-    // Each pair once: a box with the boxes after it in its cell and the
-    // cell above, then with the three cells of the next column beside.
-    let mut next = 0;
-    for (n, &((column, row), i)) in cells.iter().enumerate() {
-        let above = row.saturating_add(1);
-        for &((c, r), j) in &cells[n + 1..] {
-            if c != column || r > above {
-                break;
+    let mut at = 0;
+    while at < order.len() {
+        let strip = order[at].strip;
+        let end = at + order[at..].iter().take_while(|e| e.strip == strip).count();
+        let next = strip.checked_add(1);
+        let next_end = end + order[end..].iter().take_while(|e| Some(e.strip) == next).count();
+        let (here, beside) = (&order[at..end], &order[end..next_end]);
+        // Within the strip, and with the strip beside it: each box with
+        // those after it in the sweep's order.
+        let mut first = 0;
+        for (n, a) in here.iter().enumerate() {
+            while first < beside.len() && beside[first].before(a) == Ordering::Less {
+                first += 1;
             }
-            *looked += 1;
-            if pair(i, j) {
+            if scan(a, &here[n + 1..]) || scan(a, &beside[first..]) {
                 return true;
             }
         }
-        let Some(beside) = column.checked_add(1) else {
-            continue;
-        };
-        let from = (beside, row.saturating_sub(1));
-        while next < cells.len() && cells[next].0 < from {
-            next += 1;
-        }
-        for &((c, r), j) in &cells[next..] {
-            if c != beside || r > above {
-                break;
+        let mut first = 0;
+        for b in beside {
+            while first < here.len() && here[first].before(b) == Ordering::Less {
+                first += 1;
             }
-            *looked += 1;
-            if pair(i, j) {
+            if scan(b, &here[first..]) {
                 return true;
             }
         }
+        at = end;
     }
     false
+}
+
+/// A box as [`touch_scan`]'s strips sweep it: its strip, where it starts
+/// along the sweep's axis and how far past that it reaches, [`TOUCH`]
+/// beyond its end, and which box it is.
+struct Swept {
+    strip: i64,
+    start: f32,
+    reach: f32,
+    i: usize,
+}
+
+impl Swept {
+    /// The sweep's order: by where each box starts, ties in their order.
+    fn before(&self, other: &Swept) -> Ordering {
+        self.start.total_cmp(&other.start).then(self.i.cmp(&other.i))
+    }
 }
 
 /// `lines` cut to the longest run of their inks, the first line's then
