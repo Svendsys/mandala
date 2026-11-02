@@ -464,7 +464,8 @@ re-litigate them without a strong reason.
 ## §T11 Running the suite
 
 - `./test.sh` — full suite across every workspace member —
-  `mandala`, `baumhard`, `mandala_derive`, `maptool`, `mandalactl` — then a test
+  `mandala`, `baumhard`, `mandala_derive`, `maptool`, `mandalactl`, and
+  the generated `workspace-hack`, which has no tests (#284) — then a test
   count, then the bench-target type-check and the wasm32 type-check
   gate. Read that order literally: the count prints where the
   *suite* ends, not where the run does, so a `== N tests passed ==`
@@ -523,8 +524,9 @@ re-litigate them without a strong reason.
   `cargo test -p mandala <pattern>`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or
   `cargo test -p mandalactl` — targeted subset while iterating.
-  `--lib` selects a library target, so it belongs only to the three
-  members that have one, baumhard, mandala_derive and mandalactl;
+  `--lib` selects a library target, so it belongs only to the four
+  members that have one, baumhard, mandala_derive, mandalactl and the
+  generated `workspace-hack` (an empty `src/lib.rs`, and no tests);
   `mandala` and `maptool` are binary crates, where
   adding it narrows nothing and exits 101 with `no library targets
   found in package 'mandala'` before a test runs. Both this document

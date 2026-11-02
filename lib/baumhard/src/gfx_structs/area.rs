@@ -22,7 +22,6 @@ use crate::util::color::FloatRgba;
 use crate::util::geometry::clockwise_rotation_around_pivot;
 use crate::util::grapheme_chad;
 use crate::util::ordered_vec2::OrderedVec2;
-use derivative::Derivative;
 use glam::f32::Vec2;
 use log::warn;
 
@@ -107,8 +106,7 @@ use std::hash::{Hash, Hasher};
 /// ~1:1 onto the shaped buffer the renderer re-derives after any
 /// modification. The translation is deliberately cheap — mutation
 /// drives renderer rebuilds, so mutations stay light.
-#[derive(Derivative, Serialize, Deserialize, Clone, Debug)]
-#[derivative(Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GlyphArea {
     /// UTF-8 text laid out in this region.
     pub text: String,
@@ -204,9 +202,48 @@ pub struct GlyphArea {
     pub zoom_visibility: ZoomVisibility,
     /// Click-sensitive extents. Ignored for `PartialEq` because
     /// hit-boxes are scene-builder output, not persistent identity.
-    #[derivative(PartialEq = "ignore")]
     pub hitbox: HitBox,
 }
+
+/// Every field but `hitbox`, which is scene-builder output rather than
+/// identity. Written out rather than derived: the destructuring names
+/// every field, so a field added to `GlyphArea` does not compile here
+/// until it is either compared or ignored by name — the renderer's
+/// overlay cache rests on `==` seeing every field it should
+/// (`renderer::scene_shape_cache`).
+impl PartialEq for GlyphArea {
+    fn eq(&self, other: &Self) -> bool {
+        let GlyphArea {
+            text,
+            scale,
+            line_height,
+            position,
+            render_bounds,
+            regions,
+            background_color,
+            background_padding,
+            align_center,
+            outline,
+            shape,
+            zoom_visibility,
+            hitbox: _,
+        } = self;
+        *text == other.text
+            && *scale == other.scale
+            && *line_height == other.line_height
+            && *position == other.position
+            && *render_bounds == other.render_bounds
+            && *regions == other.regions
+            && *background_color == other.background_color
+            && *background_padding == other.background_padding
+            && *align_center == other.align_center
+            && *outline == other.outline
+            && *shape == other.shape
+            && *zoom_visibility == other.zoom_visibility
+    }
+}
+
+impl Eq for GlyphArea {}
 
 impl Hash for GlyphArea {
     fn hash<H: Hasher>(&self, state: &mut H) {

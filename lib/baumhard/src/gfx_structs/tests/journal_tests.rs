@@ -188,8 +188,9 @@ fn assert_each_variation_changes_state(kind: &str, base: &GfxElement, variations
 /// model and of a void is not the same state. A clone, and a copy with
 /// one more event subscriber, are the same state: subscribers are
 /// callbacks, not state. For a recolor and a hit box `==` says the two
-/// are equal, which is why a journal cannot close on it. Two variants
-/// never compare the same.
+/// are equal, which is why a journal cannot close on it — for a model's
+/// hit box as for an area's, since both `PartialEq` impls are written
+/// out and ignore it by name. Two variants never compare the same.
 pub fn do_gfx_same_state_compares_every_state_field() {
     let base = rich_area();
     assert!(base.same_state(&base.clone()));
@@ -214,6 +215,17 @@ pub fn do_gfx_same_state_compares_every_state_field() {
     let model = GfxElement::new_model_non_indexed_with_id(GlyphModel::new(), 1, 7);
     assert!(model.same_state(&model.clone()));
     assert_each_variation_changes_state("model", &model, MODEL_VARIATIONS);
+    let (_, vary) = MODEL_VARIATIONS
+        .iter()
+        .find(|(field, _)| *field == "hitbox")
+        .unwrap();
+    let mut varied = model.clone();
+    vary(&mut varied);
+    assert!(
+        varied == model,
+        "`==` cannot see a change of a model's `hitbox` — `GlyphModel`'s `PartialEq` \
+         ignores it, as `GlyphArea`'s does"
+    );
 
     let void = GfxElement::new_void_with_id(1, 7);
     assert!(void.same_state(&GfxElement::new_void_with_id(1, 7)));

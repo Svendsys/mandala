@@ -359,9 +359,9 @@ the parity trajectory (or why none is owed):
 
 ## Common tasks
 
-- **Run tests**: `./test.sh` runs `cargo test --workspace` — all five
-  members, `mandala`, `baumhard`, `mandala_derive`, `maptool` and
-  `mandalactl` — prints a test count, then type-checks the benchmark targets
+- **Run tests**: `./test.sh` runs `cargo test --workspace` — all six
+  members, `mandala`, `baumhard`, `mandala_derive`, `maptool`,
+  `mandalactl` and the generated `workspace-hack` (below) — prints a test count, then type-checks the benchmark targets
   (`cargo check --workspace --benches`, which runs no benchmark) and
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
   cross-platform drift can pass a green run. **With one caveat about
@@ -408,7 +408,9 @@ the parity trajectory (or why none is owed):
   browser half of the app — its lints and its intra-doc links alike —
   is invisible. The wasm32 clippy leg is `--workspace` so baumhard is
   covered too, minus `--all-targets` (criterion and rayon refuse to
-  build for wasm32); the host doc leg is `--workspace` with private
+  build for wasm32) and minus the generated `workspace-hack`, which is
+  native only (`--exclude workspace-hack`, as on the wasm32 check; see
+  "Change a dependency" below); the host doc leg is `--workspace` with private
   items, while the wasm32 doc leg narrows to `-p mandala`, because
   baumhard cannot be documented standalone for wasm32 — its `rand` →
   `getrandom` edge needs the `wasm_js` feature that only the root
@@ -487,8 +489,9 @@ the parity trajectory (or why none is owed):
   `cargo test -p mandala <pattern>`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or
   `cargo test -p mandalactl`. `--lib` narrows to a library target, so
-  it belongs only to the three members that have one — baumhard,
-  mandala_derive and mandalactl (a `src/lib.rs` beside its binary).
+  it belongs only to the four members that have one — baumhard,
+  mandala_derive, mandalactl (a `src/lib.rs` beside its binary) and the
+  generated `workspace-hack` (an empty `src/lib.rs`, and no tests).
   `mandala` and `maptool` are binary crates, where adding it narrows nothing and
   exits 101 with `no library targets found in package 'mandala'`
   before a test runs (#148).
@@ -511,6 +514,17 @@ the parity trajectory (or why none is owed):
   regression test and fixed where it lives, never by weakening a check;
   a sub-issue that adds or changes an untrusted-input surface ships its
   target in the same PR (TEST_CONVENTIONS §T14).
+- **Change a dependency**: a version shared by two members goes in the
+  root `[workspace.dependencies]` (`baumhard::util::manifests` holds
+  that rule). Then regenerate the workspace-hack — `cargo hakari
+  generate` and `cargo hakari manage-deps`, from `cargo install
+  cargo-hakari --locked` — and commit what changes:
+  `crates/workspace-hack` is the crate every member depends on so that
+  every cargo command builds each shared crate with one feature set
+  (`.config/hakari.toml`, #284), and CI's `hakari` job fails while it
+  is stale. A `cargo update` that puts a crate on the lockfile at a
+  second version fails `baumhard::util::lock_duplicates` until the
+  duplicate is undone or listed there with its reason.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
 - **Drive the running app over IPC** (native): launch with

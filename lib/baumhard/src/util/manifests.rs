@@ -34,10 +34,22 @@
 //! that gap gets closed rather than discovered.
 //!
 //! **The member list is read, not restated.** [`member_manifests`]
-//! parses `[workspace] members` out of the root manifest, so a fifth
+//! parses `[workspace] members` out of the root manifest, so a new
 //! crate is covered the day it is added — the failure mode
 //! `test.sh`'s hand-written `-p` list demonstrated for as long as
 //! `mandala_derive` existed.
+//!
+//! **One member is generated, and is held to other rules.**
+//! `crates/workspace-hack` (#284) is written by `cargo hakari
+//! generate`: a version range for each third-party crate whose features
+//! it unifies, `serde = { version = "1", ... }` beside the root table's
+//! `serde = "1.0.229"`. Those are not versions a member asks for —
+//! cargo resolves each range to the version `Cargo.lock` already holds,
+//! and CI's `hakari` job is what keeps the section current — so
+//! [`workspace_manifests`] leaves it out of the three rules, and the
+//! tests below hold the exclusion as narrow as it is meant to be:
+//! exactly one member is generated, it declares nothing outside the
+//! section `cargo hakari` owns, and every other member depends on it.
 //!
 //! Test-only and native-only: it reads files off the filesystem, and
 //! nothing in a shipped build has any business parsing manifests.
@@ -201,14 +213,47 @@ pub(crate) fn member_manifests() -> Vec<String> {
     manifests
 }
 
-/// Parse every manifest in the workspace.
+/// The line `cargo hakari` opens the section it owns with, in the
+/// manifest of the crate it generates.
+pub(crate) const HAKARI_SECTION_START: &str = "### BEGIN HAKARI SECTION";
+
+/// The line it closes that section with.
+pub(crate) const HAKARI_SECTION_END: &str = "### END HAKARI SECTION";
+
+/// Whether a manifest is the one `cargo hakari` generates: it holds the
+/// section `cargo hakari` owns.
+pub(crate) fn is_generated(text: &str) -> bool {
+    text.lines().any(|line| line.trim() == HAKARI_SECTION_START)
+}
+
+/// `text` with the section `cargo hakari` owns cut out, markers
+/// included: the part of a generated manifest written by hand.
+pub(crate) fn without_hakari_section(text: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        match line.trim() {
+            HAKARI_SECTION_START => inside = true,
+            HAKARI_SECTION_END => inside = false,
+            _ if !inside => {
+                out.push_str(line);
+                out.push('\n');
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Parse every hand-written manifest in the workspace: every member's
+/// but the one `cargo hakari` generates (see the module docs).
 pub(crate) fn workspace_manifests() -> Vec<Manifest> {
     member_manifests()
         .into_iter()
-        .map(|path| {
+        .filter_map(|path| {
             let text = std::fs::read_to_string(repo_path(&path))
                 .unwrap_or_else(|e| panic!("{path} must be readable: {e}"));
-            parse(&path, &text)
+            (!is_generated(&text)).then(|| parse(&path, &text))
         })
         .collect()
 }
@@ -1210,6 +1255,7 @@ name = "test_bench"
             "lib/mandala_derive/Cargo.toml",
             "crates/maptool/Cargo.toml",
             "crates/mandalactl/Cargo.toml",
+            "crates/workspace-hack/Cargo.toml",
         ] {
             assert!(
                 manifests.iter().any(|m| m == expected),
@@ -1230,9 +1276,9 @@ name = "test_bench"
     /// trade: manifest edits in this workspace are rare and are
     /// exactly what these tests exist to look at.
     const DECLARATIONS_PER_MANIFEST: [(&str, usize); 5] = [
-        ("Cargo.toml", 28),
-        ("crates/mandalactl/Cargo.toml", 7),
-        ("crates/maptool/Cargo.toml", 4),
+        ("Cargo.toml", 29),
+        ("crates/mandalactl/Cargo.toml", 8),
+        ("crates/maptool/Cargo.toml", 5),
         ("lib/baumhard/Cargo.toml", 29),
         ("lib/mandala_derive/Cargo.toml", 3),
     ];
@@ -1333,6 +1379,344 @@ name = "test_bench"
             unresolved.is_empty(),
             "these members inherit a dependency the root \
              `[workspace.dependencies]` table does not declare: {unresolved:#?}"
+        );
+    }
+
+    /// The generated member's exclusion is exactly as wide as it is
+    /// meant to be. Exactly one member is generated, and it is the
+    /// workspace-hack: a second manifest that grew a hakari section
+    /// would drop out of every rule above without a word. Its
+    /// hand-written part declares no dependency, so nothing can be
+    /// added outside the generated section and skip the rules on the
+    /// generated one's ticket. And its generated part is read — the
+    /// parser understands every shape `cargo hakari` writes (the
+    /// `[target.<triple>.dependencies]` tables, the `syn-<hash> = {
+    /// package = "syn", ... }` renames) — so the exemption is from the
+    /// rules, not from the reader.
+    #[test]
+    fn test_only_the_workspace_hack_is_generated_and_it_is_read() {
+        let generated: Vec<(String, String)> = member_manifests()
+            .into_iter()
+            .map(|path| {
+                let text = std::fs::read_to_string(repo_path(&path))
+                    .unwrap_or_else(|e| panic!("{path} must be readable: {e}"));
+                (path, text)
+            })
+            .filter(|(_, text)| is_generated(text))
+            .collect();
+        let paths: Vec<&str> = generated.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["crates/workspace-hack/Cargo.toml"],
+            "exactly one member may be generated by `cargo hakari`, and it is the \
+             workspace-hack; every other member is held to the rules above"
+        );
+        let (path, text) = &generated[0];
+        let by_hand = parse(path, &without_hakari_section(text));
+        assert!(
+            by_hand.deps.is_empty(),
+            "{path} declares dependencies outside the section `cargo hakari` owns, \
+             which no rule here reads: {:?}",
+            by_hand.deps
+        );
+        let whole = parse(path, text);
+        assert!(
+            whole
+                .deps
+                .iter()
+                .any(|dep| dep.crate_name() == "syn" && dep.name != "syn"),
+            "precondition: the generated section is read, renames included; found {:?}",
+            whole.deps.iter().map(Dep::crate_name).collect::<Vec<_>>()
+        );
+
+        // Negative controls: a hand-written manifest is not generated,
+        // and a declaration added outside the generated section is one
+        // the cut leaves for the check above to find.
+        assert!(!is_generated("[dependencies]\nserde = \"1\"\n"));
+        let planted = format!("{text}\n[dev-dependencies]\nserde = \"1\"\n");
+        assert_eq!(parse(path, &without_hakari_section(&planted)).deps.len(), 1);
+    }
+
+    /// The table every member's workspace-hack dependency sits in: the
+    /// native one, so that nothing compiled for wasm32 depends on it
+    /// (the root manifest's `workspace-hack` entry says why).
+    const WORKSPACE_HACK_TABLE: &str = "target.'cfg(not(target_arch = \"wasm32\"))'.dependencies";
+
+    /// Each manifest that does not depend on the workspace-hack through
+    /// the root table from [`WORKSPACE_HACK_TABLE`], by path.
+    fn members_off_the_hack(manifests: &[Manifest]) -> Vec<&str> {
+        manifests
+            .iter()
+            .filter(|m| {
+                !m.member_deps().any(|dep| {
+                    dep.crate_name() == "workspace-hack"
+                        && dep.inherits_workspace
+                        && dep.table == Table::Member(WORKSPACE_HACK_TABLE.to_string())
+                })
+            })
+            .map(|m| m.path.as_str())
+            .collect()
+    }
+
+    /// Every `workspace-hack` declaration in a table other than
+    /// [`WORKSPACE_HACK_TABLE`], as `path: [table]`. A line in
+    /// `[dependencies]` brings the union into the browser build, one in
+    /// `[build-dependencies]` into the host graph of every build, and
+    /// either does so beside a correct native line just as well as in
+    /// place of it — which is why this is a check of its own, not part
+    /// of [`members_off_the_hack`].
+    fn misplaced_hack_lines(manifests: &[Manifest]) -> Vec<String> {
+        let native = Table::Member(WORKSPACE_HACK_TABLE.to_string());
+        manifests
+            .iter()
+            .flat_map(|m| {
+                m.member_deps()
+                    .filter(|dep| dep.crate_name() == "workspace-hack" && dep.table != native)
+                    .map(move |dep| match &dep.table {
+                        Table::Member(table) => format!("{}: [{table}]", m.path),
+                        Table::Workspace => format!("{}: [workspace.dependencies]", m.path),
+                    })
+            })
+            .collect()
+    }
+
+    /// Each `cargo` invocation in `script` (its `\`-continued lines
+    /// joined) that builds for wasm32 across the whole workspace without
+    /// `--exclude workspace-hack`, as `test.sh:<line>: <invocation>`.
+    /// `--workspace` selects the workspace-hack itself, which would
+    /// compile the union for the browser (the root manifest's
+    /// `workspace-hack` entry measured it), and nothing else would fail.
+    fn wasm32_legs_selecting_the_hack(script: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut joined = String::new();
+        let mut start = 0;
+        for (index, line) in script.lines().enumerate() {
+            if joined.is_empty() {
+                start = index + 1;
+            }
+            let trimmed = line.trim();
+            match trimmed.strip_suffix('\\') {
+                Some(head) => {
+                    joined.push_str(head);
+                    joined.push(' ');
+                    continue;
+                }
+                None => joined.push_str(trimmed),
+            }
+            let invocation = std::mem::take(&mut joined);
+            let words: Vec<&str> = invocation.split_whitespace().collect();
+            let is_cargo = words.contains(&"cargo");
+            let wasm32 = invocation.contains("wasm32-unknown-unknown");
+            let whole = words.contains(&"--workspace") || words.contains(&"--all");
+            let excluded = words
+                .windows(2)
+                .any(|w| w[0] == "--exclude" && w[1] == "workspace-hack");
+            if is_cargo && wasm32 && whole && !excluded && !trimmed.starts_with('#') {
+                found.push(format!("test.sh:{start}: {invocation}"));
+            }
+        }
+        found
+    }
+
+    /// The members `.config/hakari.toml` keeps off the workspace-hack:
+    /// its `[final-excludes]` table's `workspace-members` list, by
+    /// package name.
+    fn excluded_members(config: &str) -> BTreeSet<String> {
+        let mut in_table = false;
+        for line in config.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_table = line == "[final-excludes]";
+                continue;
+            }
+            if let Some(list) = in_table
+                .then(|| line.strip_prefix("workspace-members = ["))
+                .flatten()
+            {
+                return list
+                    .trim_end_matches(']')
+                    .split(',')
+                    .map(|name| name.trim().trim_matches('"').to_string())
+                    .filter(|name| !name.is_empty())
+                    .collect();
+            }
+        }
+        BTreeSet::new()
+    }
+
+    /// The `[package] name` of a manifest's text.
+    fn package_of(text: &str) -> String {
+        let mut in_package = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_package = line == "[package]";
+                continue;
+            }
+            if let Some(name) = in_package.then(|| line.strip_prefix("name = ")).flatten() {
+                return name.trim_matches('"').to_string();
+            }
+        }
+        panic!("a member manifest names its package")
+    }
+
+    /// Every hand-written member but the ones `.config/hakari.toml`
+    /// excludes depends on the workspace-hack, through the root table,
+    /// from its native table; the excluded ones do not depend on it at
+    /// all. A member without it compiles its dependencies with whatever
+    /// features its own command selects, which is the second build #284
+    /// removed; one with it in `[dependencies]` makes the wasm32
+    /// font-lock probe compile the union for the browser, and the
+    /// excluded proc macro would put it in every browser build's host
+    /// graph. CI's `hakari` job checks the first half with `cargo hakari
+    /// manage-deps --dry-run`, which would also write the line into
+    /// `[dependencies]`; this holds all of it in `./test.sh`, where
+    /// cargo-hakari need not be installed.
+    #[test]
+    fn test_every_member_depends_on_the_workspace_hack() {
+        let manifests = workspace_manifests();
+        assert_eq!(
+            manifests.len(),
+            5,
+            "precondition: the hand-written members are read"
+        );
+        let config = std::fs::read_to_string(repo_path(".config/hakari.toml"))
+            .expect(".config/hakari.toml must be readable");
+        let excluded = excluded_members(&config);
+        assert_eq!(
+            excluded.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["mandala_derive"],
+            "precondition: the exclusions are read"
+        );
+        let (kept, left_out): (Vec<Manifest>, Vec<Manifest>) = manifests.iter().cloned().partition(|m| {
+            let text = std::fs::read_to_string(repo_path(&m.path))
+                .unwrap_or_else(|e| panic!("{} must be readable: {e}", m.path));
+            !excluded.contains(&package_of(&text))
+        });
+        let missing = members_off_the_hack(&kept);
+        assert!(
+            missing.is_empty(),
+            "these members do not write `workspace-hack.workspace = true` under \
+             `[{WORKSPACE_HACK_TABLE}]`, so their dependencies build with another \
+             feature set, or the browser build compiles the union: {missing:?}. \
+             `cargo hakari manage-deps` adds the line to `[dependencies]`; move it \
+             (`.config/hakari.toml`)."
+        );
+        let misplaced = misplaced_hack_lines(&manifests);
+        assert!(
+            misplaced.is_empty(),
+            "these members declare `workspace-hack` in a table other than \
+             `[{WORKSPACE_HACK_TABLE}]`: {misplaced:?}. A line in `[dependencies]` puts the \
+             union into the browser build, one in `[build-dependencies]` into every build's \
+             host graph, beside a correct native line as much as without one. Delete it."
+        );
+        let on_it: Vec<&str> = left_out
+            .iter()
+            .filter(|m| m.member_deps().any(|dep| dep.crate_name() == "workspace-hack"))
+            .map(|m| m.path.as_str())
+            .collect();
+        assert!(
+            on_it.is_empty(),
+            "these members are in `.config/hakari.toml`'s `[final-excludes]` and still \
+             depend on the workspace-hack: {on_it:?}"
+        );
+        assert_eq!(
+            excluded_members("[final-excludes]\nworkspace-members = [\"a\", \"b\"]\n").len(),
+            2,
+            "control: a list of two is read as two"
+        );
+        assert!(
+            excluded_members("[other]\nworkspace-members = [\"a\"]\n").is_empty(),
+            "control: the list is read from `[final-excludes]` alone"
+        );
+
+        // Negative controls: the line in `[dependencies]`, and no line.
+        let in_dependencies = parse(
+            "control/Cargo.toml",
+            "[dependencies]\nworkspace-hack.workspace = true\n",
+        );
+        let without = parse("control/Cargo.toml", "[dependencies]\nserde = \"1\"\n");
+        let native = parse(
+            "control/Cargo.toml",
+            &format!("[{WORKSPACE_HACK_TABLE}]\nworkspace-hack.workspace = true\n"),
+        );
+        let both = parse(
+            "both/Cargo.toml",
+            &format!(
+                "[dependencies]\nworkspace-hack.workspace = true\n\
+                 [{WORKSPACE_HACK_TABLE}]\nworkspace-hack.workspace = true\n"
+            ),
+        );
+        let build = parse(
+            "build/Cargo.toml",
+            &format!(
+                "[build-dependencies]\nworkspace-hack.workspace = true\n\
+                 [{WORKSPACE_HACK_TABLE}]\nworkspace-hack.workspace = true\n"
+            ),
+        );
+        let controls = [in_dependencies, without, native, both, build];
+        assert_eq!(
+            members_off_the_hack(&controls),
+            ["control/Cargo.toml", "control/Cargo.toml"],
+            "control: only the native table's line counts"
+        );
+        assert_eq!(
+            misplaced_hack_lines(&controls),
+            [
+                "control/Cargo.toml: [dependencies]",
+                "both/Cargo.toml: [dependencies]",
+                "build/Cargo.toml: [build-dependencies]",
+            ],
+            "control: a line outside the native table is reported, beside a native one too"
+        );
+        let shared = workspace_table(&manifests);
+        assert!(
+            shared.contains("workspace-hack"),
+            "the root table declares it once"
+        );
+    }
+
+    /// `./test.sh`'s wasm32 legs that select the whole workspace leave
+    /// the workspace-hack out (`--exclude workspace-hack`). Without the
+    /// flag the gate stays green while the browser legs compile the
+    /// hack's crates again, which #284 measured and removed; nothing
+    /// else would notice.
+    #[test]
+    fn test_the_wasm32_legs_exclude_the_workspace_hack() {
+        let script = std::fs::read_to_string(repo_path("test.sh")).expect("test.sh must be readable");
+        let guarded = script
+            .lines()
+            .filter(|line| {
+                line.contains("wasm32-unknown-unknown") && line.contains("--exclude workspace-hack")
+            })
+            .count();
+        assert!(
+            guarded >= 2,
+            "precondition: test.sh's wasm32 clippy and check legs are found ({guarded})"
+        );
+        let selecting = wasm32_legs_selecting_the_hack(&script);
+        assert!(
+            selecting.is_empty(),
+            "these wasm32 legs select the whole workspace, the workspace-hack included, so \
+             they compile its union for the browser: {selecting:?}. Add `--exclude \
+             workspace-hack` (`.config/hakari.toml`)."
+        );
+
+        // Negative control: the real script with the flag dropped from
+        // every leg reports each of them, and a wrapped invocation is
+        // read whole.
+        let dropped = script.replace(" --exclude workspace-hack", "");
+        assert_ne!(dropped, script, "precondition: the control edits the text");
+        assert_eq!(
+            wasm32_legs_selecting_the_hack(&dropped).len(),
+            guarded,
+            "control: each leg without the flag is reported"
+        );
+        let wrapped = "  cargo check --workspace \\\n    --target wasm32-unknown-unknown\n";
+        assert_eq!(wasm32_legs_selecting_the_hack(wrapped).len(), 1);
+        assert!(
+            wasm32_legs_selecting_the_hack("  cargo check -p mandala --target wasm32-unknown-unknown\n")
+                .is_empty()
         );
     }
 }

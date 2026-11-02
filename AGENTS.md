@@ -12,9 +12,10 @@ That means: no `cargo bench`, no `./bench.sh`, and no `./test.sh
 --bench`. There is no task in this repository that requires an agent to
 execute a benchmark, and they are expensive on shared hardware.
 
-`./test.sh` is the gate. It runs the full suite across all five
+`./test.sh` is the gate. It runs the full suite across all six
 workspace members — `mandala`, `baumhard`, `mandala_derive`, `maptool`,
-`mandalactl` — then type-checks the benchmark targets and `wasm32-unknown-unknown`, so
+`mandalactl`, and the generated `workspace-hack`, which has no tests —
+then type-checks the benchmark targets and `wasm32-unknown-unknown`, so
 neither a drifted `do_*()` nor cross-platform drift can pass a green run.
 
 Three consequences worth spelling out, because each has been reached for

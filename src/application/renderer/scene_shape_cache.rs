@@ -100,22 +100,21 @@
 //! `pos` from it — the same fix `Renderer::patch_drag_positions`
 //! carries on the mindmap path.
 //!
-//! `GlyphArea`'s `PartialEq` is derived, so a field added to the
-//! area joins the comparison by default rather than by anyone
-//! remembering to wire it in. "By default" and not "always": the
-//! derive is `derivative`'s, and a field carrying
-//! `#[derivative(PartialEq = "ignore")]` opts back out — exactly
-//! what `hitbox`, the one field skipped today, does. So the
-//! ignore-list is pinned rather than trusted:
+//! `GlyphArea`'s `PartialEq` is written out over an exhaustive
+//! destructuring of the area, so a field added to it does not
+//! compile until it is either compared or ignored by name — nobody
+//! has to remember to wire it in. `hitbox` is the one field ignored
+//! today. Ignoring a field is still one edit away, so the ignore-list
+//! is pinned rather than trusted:
 //! `test_glyph_area_equality_ignores_only_the_hitbox` destructures
 //! `GlyphArea` exhaustively and asserts every other field breaks
 //! `==`, which fails both on a new field nobody classified and on
-//! an `ignore` added to an existing one. `hitbox` itself is on the
-//! ignored side because the shaper never reads it.
+//! an existing one dropped from the comparison. `hitbox` itself is on
+//! the ignored side because the shaper never reads it.
 //!
 //! ## The one place `==` is not enough
 //!
-//! `GlyphArea`'s derived equality bottoms out, for the `regions`
+//! `GlyphArea`'s equality bottoms out, for the `regions`
 //! field, in `BTreeSet` equality over `ColorFontRegion` — whose own
 //! `Eq` is *set identity by range*, ignoring the font and color
 //! pins. So `area_a == area_b` is true for two areas whose spans
@@ -384,10 +383,10 @@ impl ShapedSceneElement {
     /// Takes `&mut self` for an allocation-free comparison, and
     /// leaves `self` exactly as it found it: the recorded position is
     /// aligned to the live one for the length of one `==`, so that
-    /// the derived equality — which a new `GlyphArea` field joins by
-    /// default — answers "is anything *but* the position different?"
-    /// without a clone of the area or a hand-written field list that
-    /// a new field would silently miss.
+    /// `GlyphArea`'s equality — which a new `GlyphArea` field cannot
+    /// compile without joining or being ignored by name — answers "is
+    /// anything *but* the position different?" without a clone of the
+    /// area or a field list here that a new field would silently miss.
     ///
     /// # Costs
     ///

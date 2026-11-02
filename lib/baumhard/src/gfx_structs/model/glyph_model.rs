@@ -12,7 +12,6 @@ use crate::core::primitives::ApplyOperation;
 use crate::gfx_structs::util::hitbox::HitBox;
 use crate::util::geometry;
 use crate::util::ordered_vec2::OrderedVec2;
-use derivative::Derivative;
 use glam::Vec2;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
@@ -20,8 +19,7 @@ use serde::{Deserialize, Serialize};
 /// Renderable glyph content for one tree node: a stacked matrix of
 /// lines plus its placement metadata. Scene builders emit one per
 /// model-bearing node.
-#[derive(Derivative, Serialize, Deserialize, Debug, Clone)]
-#[derivative(PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GlyphModel {
     /// The stacked glyph lines rendered by this model.
     pub glyph_matrix: GlyphMatrix,
@@ -35,9 +33,26 @@ pub struct GlyphModel {
     pub position: OrderedVec2,
     /// Click-sensitive rectangles populated by the scene builder.
     /// Ignored for `PartialEq` — it's derived data, not identity.
-    #[derivative(PartialEq = "ignore")]
     pub hitbox: HitBox,
 }
+
+/// Every field but `hitbox`, which the scene builder derives from the
+/// rest. Written out rather than derived: the destructuring names every
+/// field, so a field added to `GlyphModel` does not compile here until
+/// it is either compared or ignored by name.
+impl PartialEq for GlyphModel {
+    fn eq(&self, other: &Self) -> bool {
+        let GlyphModel {
+            glyph_matrix,
+            layer,
+            position,
+            hitbox: _,
+        } = self;
+        *glyph_matrix == other.glyph_matrix && *layer == other.layer && *position == other.position
+    }
+}
+
+impl Eq for GlyphModel {}
 
 impl GlyphModel {
     /// Empty model at origin with layer 0. O(1); no allocation
