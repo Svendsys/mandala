@@ -454,6 +454,24 @@ re-litigate them without a strong reason.
   zero-warning baseline (#134). A hard-gate failure prints a
   `FAILED:` line inline and the run exits non-zero at the end, after
   every gate has reported.
+- **The test profile is lean (#283).** `cargo test` builds with the
+  `test` profile, which inherits `[profile.dev]` in the root
+  `Cargo.toml`: our own crates carry `line-tables-only` debug info
+  and every dependency carries none. A failing test's
+  `RUST_BACKTRACE=1` backtrace (`./test.sh` sets it) therefore still
+  prints `file:line` for each frame in our code; a frame inside a
+  dependency has its function name and no line table of its own. A
+  debugger keeps line breakpoints and stepping in our crates; what
+  is gone is variables and types, and in a dependency it has only
+  symbol names, so it steps over those frames. To inspect variables
+  in a test, build it with the opt-in profile that restores full
+  debug info on every crate: `cargo test --profile dev-debug
+  <pattern>` (output under `target/dev-debug/`, apart from the lean
+  `target/debug/`). The arrangement is pinned by the module
+  `baumhard::util::build_profiles`, whose fixture controls break it
+  one line at a time and plant each way of turning debug info back on.
+  The font-lock probe of §T9 builds in its own workspace and carries
+  its own `debug = false`.
 - `./test.sh --bench` — also runs the benchmarks after tests pass, by
   calling `./bench.sh` rather than repeating its invocation.
   Maintainers only: `AGENTS.md` forbids automated agents this flag,

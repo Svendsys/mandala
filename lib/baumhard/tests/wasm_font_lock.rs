@@ -147,6 +147,15 @@ fn test_font_lock_helpers_run_on_wasm32() {
     // `getrandom`'s `wasm_js` feature is the same ask the root
     // manifest makes: without it baumhard's `rand` edge has no backend
     // on wasm32 and the build fails.
+    //
+    // That workspace boundary also keeps the root manifest's `[profile.dev]`
+    // from reaching this build (cargo reads profiles from the
+    // workspace root only), so the lean setting is written into the
+    // manifest too (#283): `debug = false`, for the probe and
+    // baumhard both. The module's debug info is most of its size on
+    // disk, and nothing reads it: the test judges the module by what
+    // it prints and by its panic messages, and a wasm trap has no
+    // host stack for a line table to symbolize.
     let manifest = format!(
         "[package]\n\
          name = \"{PROBE_CRATE}\"\n\
@@ -161,7 +170,10 @@ fn test_font_lock_helpers_run_on_wasm32() {
          baumhard = {{ path = {baumhard:?} }}\n\
          getrandom = {{ version = \"0.4.2\", features = [\"wasm_js\"] }}\n\
          \n\
-         [workspace]\n",
+         [workspace]\n\
+         \n\
+         [profile.dev]\n\
+         debug = false\n",
         baumhard = root.join("lib/baumhard").display().to_string(),
     );
     write_if_changed(&stage.join("Cargo.toml"), manifest.as_bytes());
