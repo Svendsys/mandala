@@ -3026,6 +3026,11 @@ fn a_long_side_ornament(shape: Shape, what: &str) {
     let pairs = BOXES_WEIGHED.with(std::cell::Cell::get) - weighed;
     let glyphs = placed.glyphs.len();
     assert!(
+        pairs <= PAIRS_A_BOX * glyphs,
+        "{what}: {pairs} pairs of boxes looked at for {glyphs} glyphs, {:.1} a glyph, at most {PAIRS_A_BOX}",
+        pairs as f64 / glyphs as f64
+    );
+    assert!(
         trace.lines.len() == 2 && glyphs > 60_000 && trace.unheld.sides.is_empty(),
         "precondition, {what}: both arcs are filled ({glyphs} glyphs, {:?})",
         trace.unheld
@@ -3034,11 +3039,6 @@ fn a_long_side_ornament(shape: Shape, what: &str) {
         lookups <= SIDE_LOOKUPS_A_GLYPH * glyphs,
         "{what}: {lookups} path lookups for {glyphs} glyphs, {:.1} a glyph, at most {SIDE_LOOKUPS_A_GLYPH}",
         lookups as f64 / glyphs as f64
-    );
-    assert!(
-        pairs <= PAIRS_A_BOX * glyphs,
-        "{what}: {pairs} pairs of boxes looked at for {glyphs} glyphs, {:.1} a glyph, at most {PAIRS_A_BOX}",
-        pairs as f64 / glyphs as f64
     );
 
     let flow = style(16.0);

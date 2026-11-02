@@ -1973,7 +1973,7 @@ struct SideArc<'s> {
     /// `ca`.
     ca: f32,
     cb: f32,
-    /// Whether a lay or a solve of the arc stopped because the frame
+    /// Whether a search of the arc stopped because the frame
     /// could not afford more (ruling R48.2).
     stopped: Cell<bool>,
 }
@@ -2008,29 +2008,23 @@ impl<'s> SideArc<'s> {
 
     /// `n` copies laid at `gap` by the pairwise rule ([`InkLay`]): the
     /// first ink `gap` from `from`'s, each next ink `gap` from the last, a
-    /// space owing its advance and `gap` more. Returns the lay, how far
-    /// the last ink is from `to` and where along the path its center lies,
-    /// and whether all `n` copies were laid: before each copy after the
-    /// first the frame must afford the copies and their touch check
-    /// ([`SideOrnament::affords`], rulings R47.2, R48.2), the first's
-    /// read by the caller, and a lay that finds it cannot stops.
+    /// space owing its advance and `gap` more. Returns the lay, and how far
+    /// the last ink is from `to` and where along the path its center lies.
+    /// The frame's budget is the caller's to read: a search reads before
+    /// each lay whether the frame can afford `n` copies and their check
+    /// ([`SideOrnament::affords`]).
     ///
     /// Cost: a [`PathWalk::ink_point`] or a few a glyph.
-    fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32), bool) {
+    fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32)) {
         let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
-        for k in 0..n {
-            if k > 0 && !self.side.affords(k + 1) {
-                self.stopped.set(true);
-                let end = self.end_of(&lay);
-                return (lay, end, false);
-            }
+        for _ in 0..n {
             for cluster in &self.side.clusters {
                 lay.cluster(cluster, gap);
             }
-            self.side.count(1);
         }
+        self.side.count(n);
         let end = self.end_of(&lay);
-        (lay, end, true)
+        (lay, end)
     }
 
     /// How far the last ink `lay` set is from `to`, and where along the
@@ -2045,8 +2039,8 @@ impl<'s> SideArc<'s> {
     /// `to`'s and its ink at least `gap` from `to`'s. A miss that is not
     /// a number does not fit.
     fn fits(&self, n: usize, gap: f32) -> bool {
-        let (_, (end, at), whole) = self.lay(n, gap);
-        whole && at < self.cb && end >= gap
+        let (_, (end, at)) = self.lay(n, gap);
+        at < self.cb && end >= gap
     }
 
     /// How much room `n` copies laid by `lay` leave: how far the last
@@ -2147,13 +2141,7 @@ impl<'s> SideArc<'s> {
         // hair narrower than their gaps, as a line's end a hair past its
         // part's is laid, but copies that touch the text are no answer.
         let room = |gap: f32| {
-            let (lay, _, whole) = self.lay(n, gap);
-            // A lay the frame's spent budget stopped is no answer: read as
-            // past every gap, and the search, reading the budget spent,
-            // keeps the widest gap found to fit.
-            if !whole {
-                return (f32::NEG_INFINITY, lay.out);
-            }
+            let (lay, _) = self.lay(n, gap);
             let v = self.room_of(&lay, gap);
             let (end, at) = self.end_of(&lay);
             let v = if v >= 0.0 {
@@ -4155,7 +4143,7 @@ pub(crate) fn side_solve_seam(
     let (row, rooms) = arc.floor_row(n)?;
     let &(room, len) = rooms.get(n.checked_sub(1)?)?;
     let (gap, _, _) = arc.solve(n, room, row[..len].to_vec());
-    let (_, (end, at), _) = arc.lay(n, gap);
+    let (_, (end, at)) = arc.lay(n, gap);
     Some((gap, at >= arc.cb || end.is_nan() || end <= TOUCH))
 }
 
