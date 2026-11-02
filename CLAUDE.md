@@ -489,8 +489,9 @@ the parity trajectory (or why none is owed):
   `cargo test -p mandala <pattern>`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or
   `cargo test -p mandalactl`. `--lib` narrows to a library target, so
-  it belongs only to the three members that have one — baumhard,
-  mandala_derive and mandalactl (a `src/lib.rs` beside its binary).
+  it belongs only to the four members that have one — baumhard,
+  mandala_derive, mandalactl (a `src/lib.rs` beside its binary) and the
+  generated `workspace-hack` (an empty `src/lib.rs`, and no tests).
   `mandala` and `maptool` are binary crates, where adding it narrows nothing and
   exits 101 with `no library targets found in package 'mandala'`
   before a test runs (#148).

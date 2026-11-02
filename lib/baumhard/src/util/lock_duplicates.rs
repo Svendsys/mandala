@@ -20,6 +20,21 @@
 //!   moves to `miniz_oxide 0.9` while `png 0.18.1` asks for 0.8. Each
 //!   is a crate on the lockfile at two versions that this table does
 //!   not list.
+//!
+//!   The `flate2` pin is a downgrade, and it gives something up: 1.1.10
+//!   also fixed an infinite loop writing gzip headers and footers
+//!   (flate2 #547), rejects an incomplete deflate stream at EOF instead
+//!   of reading it as a clean end (flate2 #556), and rejects oversized
+//!   gzip extra fields (flate2 #553). None is on a path this workspace
+//!   runs today — png's `ZlibEncoder` only writes, and the one
+//!   `ZlibDecoder` (tiff, under arboard on macOS) decodes clipboard
+//!   images, which `src/` never reads — so one duplicate build less is
+//!   the better trade for now.
+//!   **If a flate2 advisory lands, or a path starts decoding, drop the
+//!   pin and list `miniz_oxide` 0.8/0.9 here with that reason; do not
+//!   re-pin.** The skrifa pin gives swash the skrifa cosmic-text
+//!   already uses instead of the newest its range allows; the demo
+//!   maps render to the same pixels on either (#284).
 //! - **A duplicate goes away.** A bump that removes one leaves a row
 //!   here stating a reason for something that no longer happens; the
 //!   row goes with it, so the table stays the list of what is.
