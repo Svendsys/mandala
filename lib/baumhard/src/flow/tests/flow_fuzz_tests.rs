@@ -11,7 +11,8 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::document::values::{FontSize, Rgba, Weight};
 use crate::flow::tests::flow_fuzz::{
-    check_box, check_flow_bytes, check_flow_generated, check_flow_structured, check_placement, check_run,
+    check_box, check_flow_bytes, check_flow_bytes_in_every_fit, check_flow_generated,
+    check_flow_structured_as_found, check_placement, check_run,
 };
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{shape_box, shape_run, FlowSpan, PlacedGlyph, PlacedRun, FILLER_SPAN};
@@ -40,8 +41,11 @@ fn test_hostile_strings_hold_every_flow_property() {
         "\u{FE0F}\u{20E3}",
     ] {
         check_flow_bytes(text.as_bytes()).unwrap_or_else(|why| panic!("{text:?}: {why}"));
+        check_flow_bytes_in_every_fit(text.as_bytes())
+            .unwrap_or_else(|why| panic!("{text:?}, in every fit: {why}"));
     }
     check_flow_bytes(&[0xFF, 0xC0, b'a', 0x80]).unwrap();
+    check_flow_bytes_in_every_fit(&[0xFF, 0xC0, b'a', 0x80]).unwrap();
 }
 
 #[test]
@@ -727,7 +731,7 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
     use crate::document::values::{Direction, Edge, FitMode, StartPoint};
     use crate::flow::{place_on_closed, Outline, Rect, RingLayout};
     let found = include_bytes!("fuzz_findings/spread_gap_past_the_largest_f32");
-    if let Err(why) = check_flow_structured(found) {
+    if let Err(why) = check_flow_structured_as_found(found) {
         panic!("the fuzzer's input: {why}");
     }
     let plain = style(16.0);
@@ -811,7 +815,7 @@ fn test_a_repeat_along_a_curve_as_long_as_an_f32_walks_each_glyph_thrice_at_most
         for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
             counter.with(|count| count.set(0));
         }
-        if let Err(why) = check_flow_structured(found) {
+        if let Err(why) = check_flow_structured_as_found(found) {
             panic!("{what}: {why}");
         }
         let [steps, placed, lookups] =
@@ -926,7 +930,7 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
     for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
         counter.with(|count| count.set(0));
     }
-    if let Err(why) = check_flow_structured(found) {
+    if let Err(why) = check_flow_structured_as_found(found) {
         panic!("the fuzzer's input: {why}");
     }
     let [steps, placed, lookups] =
@@ -946,7 +950,9 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
 /// The phase-2 review's flow_raw finding on #294 (a slow unit, 20.75 s
 /// against `-timeout=20` under the fuzz build): 26 bytes, mostly
 /// U+FFFD read lossily, which `check_flow_bytes` lays as a `Fit` frame
-/// round its 120 × 40 rounded rectangle. Its first build left a line
+/// round its 120 × 40 rounded rectangle (the mode it draws, ruling R45.1;
+/// it replays through `check_flow_bytes_in_every_fit`, as it was found,
+/// with a `Spread` and a `Once` frame besides). Its first build left a line
 /// pressed, so the shrink ran: `SHRINK_ROUNDS` probes, each a whole
 /// clearance search from nothing with its backtracks — 15 builds and
 /// 17,720 `track`s for that frame, 22,016 for the input. A probe now
@@ -998,7 +1004,7 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
     };
     let review = include_bytes!("fuzz_findings/fit_frame_shrunk_by_whole_clearance_searches");
     let (tracks, _) = counted(&mut || {
-        if let Err(why) = check_flow_bytes(review) {
+        if let Err(why) = check_flow_bytes_in_every_fit(review) {
             panic!("the review's input: {why}");
         }
     });
@@ -1061,7 +1067,8 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
 /// The 300 s flow_raw run's finding on #294 (base64 `bnAgZXRhaWx4dA==`,
 /// "np etailxt"): "around a rectangle: its natural length fits, and it
 /// was cut". `check_flow_bytes` lays it as a `Fit` frame round its
-/// 120 × 40 rounded rectangle, "np" on the first half and "etailxt" on
+/// 120 × 40 rounded rectangle (the mode it draws, ruling R45.1; it
+/// replays through `check_flow_bytes_in_every_fit`, as it was found), "np" on the first half and "etailxt" on
 /// the second. At span whole "np" is stretched over its whole half, so
 /// its letter gap, and the break of two of them owed at the top-left
 /// junction, was some 200 points; the round that grew that junction's
@@ -1092,7 +1099,7 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
 #[test]
 fn test_a_frame_whose_other_line_can_give_the_clearance_is_not_cut() {
     let found = include_bytes!("fuzz_findings/fit_frame_pressed_by_a_clearance_its_other_line_could_give");
-    if let Err(why) = check_flow_bytes(found) {
+    if let Err(why) = check_flow_bytes_in_every_fit(found) {
         panic!("the fuzzer's input: {why}");
     }
 }
@@ -1105,18 +1112,20 @@ fn test_a_frame_whose_other_line_can_give_the_clearance_is_not_cut() {
 /// them that are not neighbors meet. The properties excused a reported
 /// cut only inward; a line of tall inks round a tight bend cannot be
 /// held apart outward either, so a reported cut is excused on both
-/// sides. Each input replays under the pinned face.
+/// sides. Each input replays under the pinned face; the raw one through
+/// `check_flow_bytes_in_every_fit`, in every frame it was found among
+/// (ruling R45.1: the harness now draws one, `Fit`, for it).
 ///
 /// Control: with the excuse narrowed to inward frames again, the raw
 /// input, laid outward, fails.
 #[test]
 fn test_a_frame_cut_apart_outward_is_owed_no_longer() {
     let raw = include_bytes!("fuzz_findings/raw_frame_cut_apart_round_a_tight_bend");
-    if let Err(why) = check_flow_bytes(raw) {
+    if let Err(why) = check_flow_bytes_in_every_fit(raw) {
         panic!("the raw input: {why}");
     }
     let structured = include_bytes!("fuzz_findings/structured_frame_cut_apart_outward");
-    if let Err(why) = check_flow_structured(structured) {
+    if let Err(why) = check_flow_structured_as_found(structured) {
         panic!("the structured input: {why}");
     }
 }
@@ -1153,7 +1162,7 @@ fn test_a_frame_whose_clearances_pass_its_half_places_finitely() {
             )[..],
         ),
     ] {
-        if let Err(why) = check_flow_structured(found) {
+        if let Err(why) = check_flow_structured_as_found(found) {
             panic!("the input found {name}: {why}");
         }
     }
@@ -1175,16 +1184,18 @@ fn test_a_frame_whose_clearances_pass_its_half_places_finitely() {
 #[test]
 fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
     let found = include_bytes!("fuzz_findings/structured_frame_round_an_outline_whose_width_is_not_a_number");
-    if let Err(why) = check_flow_structured(found) {
+    if let Err(why) = check_flow_structured_as_found(found) {
         panic!("the fuzzer's input: {why}");
     }
 }
 
 /// The 300 s flow_raw run's timeout at 8baf8e6e (ruling R42; input sha1
-/// 08d8dfda…, 420 bytes, about 400 NULs read as text), which
-/// `check_flow_bytes` lays as three frames round its 120 × 40 rounded
-/// rectangle — `Spread`, `Fit` and `Once` — of lines of 164 and 255
-/// clusters that touch at R27's size. Its work was 11,488 `track`s, 16
+/// 08d8dfda…, 420 bytes, about 400 NULs read as text), which the harness
+/// laid as three frames round its 120 × 40 rounded rectangle — `Spread`,
+/// `Fit` and `Once` — of lines of 164 and 255 clusters that touch at
+/// R27's size. Since ruling R45.1 the harness lays one frame an input,
+/// `Fit` for this one, and the replay lays all three
+/// (`check_flow_bytes_in_every_fit`), as it was found. Its work was 11,488 `track`s, 16
 /// builds and 378,758,104 path lookups: `cut_apart` ran a whole clearance
 /// search per bisection probe, the `Fit` shrink bisected to a scale of
 /// 0.99995, and a glyph step took some 220 lookups. With R42 it took
@@ -1198,7 +1209,12 @@ fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
 /// 64 lookups. Since R44.2 the harness lays a frame from the first
 /// [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS)
 /// glyphs of its text, what one frame lays inside the fuzz timeout: 247
-/// `track`s and 340,712 lookups on the second machine.
+/// `track`s and 340,712 lookups on the second machine. Since ruling
+/// R46.3 the harness lays a frame from what its work fits inside the
+/// timeout, at most 150 glyphs; the replay lays its text as it was found,
+/// cut to 210 characters, 209 glyphs, at R44's 320
+/// ([`FOUND_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::FOUND_FRAME_GLYPHS)),
+/// so its frames are as they were.
 ///
 /// Its NULs are drawn in whatever face the host falls back to, so its
 /// path through the last resorts is the host's: on one machine its
@@ -1220,7 +1236,7 @@ fn test_a_raw_frame_cut_apart_lays_a_bounded_number_of_lines() {
     for counter in [&TRACKS, &BUILDS, &PATH_LOOKUPS, &MOST_STEP_LOOKUPS] {
         counter.with(|count| count.set(0));
     }
-    let checked = check_flow_bytes(found);
+    let checked = check_flow_bytes_in_every_fit(found);
     let [tracks, builds, lookups, most_step] = [&TRACKS, &BUILDS, &PATH_LOOKUPS, &MOST_STEP_LOOKUPS]
         .map(|counter| counter.with(std::cell::Cell::get));
     if let Err(why) = checked {
@@ -1307,37 +1323,190 @@ fn test_the_flow_properties_find_a_frame_whose_inks_touch() {
     );
 }
 
-/// R44.2: a fuzzed frame's text is held to what one frame lays inside
-/// the targets' 20 s timeout: [`MAX_FRAME_GLYPHS`] glyphs, whose budget
-/// at some 19 µs a glyph step under the ASan fuzz build is at most a
-/// million steps — 19 s — and a longer text is laid from its first
-/// glyphs, a shorter one whole.
+/// R44.2, R46.3: a fuzzed frame's text is held to what its frame lays
+/// inside the timeout ([`fits_in_time`]): a long text of one face is laid
+/// from its first [`MAX_FRAME_GLYPHS`] glyphs or fewer, a short one
+/// whole, and a text of glyphs no face holds, which the shaper searches
+/// every face for, is cut shorter still, to what its frame's work fits.
 ///
-/// Control: with no text cut, the long text's 2,000 glyphs, red.
+/// Controls: with no text cut, the long text's 2,000 glyphs, red; with
+/// the cut by glyphs alone, as at R44, the heavy text's frame past its
+/// share of the input's work, red.
 ///
 /// [`MAX_FRAME_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS
+/// [`fits_in_time`]: crate::flow::tests::flow_fuzz::fits_in_time
 #[test]
 fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
-    use crate::flow::place::halves::frame_budget;
-    use crate::flow::tests::flow_fuzz::{framed, MAX_FRAME_GLYPHS};
-    assert!(
-        frame_budget(MAX_FRAME_GLYPHS) <= 1_000_000,
-        "a fuzzed frame's budget: {} glyph steps",
-        frame_budget(MAX_FRAME_GLYPHS)
-    );
+    use crate::flow::place::halves::frame_work_steps;
+    use crate::flow::tests::flow_fuzz::{fits_in_time, frame_steps, framed, MAX_FRAME_GLYPHS};
     let flow = style(16.0);
-    let (long, short) = with_fonts(|fs| {
-        let long = framed(&["word ".repeat(400)], std::slice::from_ref(&flow), 1.0, fs);
-        let short = framed(&["word ".repeat(20)], std::slice::from_ref(&flow), 1.0, fs);
-        let glyphs = |texts: &[String], fs: &mut crate::font::fonts::FontSystemWriteGuard| {
-            real_run(&texts[0], &flow, fs).glyphs.len()
+    let fits = |run: &crate::flow::ShapedRun| fits_in_time(run, None, 1);
+    // A private-use code point no face here holds (`.notdef`).
+    let heavy_text = "\u{10FFFD}".repeat(60);
+    let (long, short, heavy) = with_fonts(|fs| {
+        let cut = |text: String, fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+            let kept = framed(&[text], std::slice::from_ref(&flow), 1.0, fs, &fits);
+            let run = real_run(&kept[0], &flow, fs);
+            (run.glyphs.len(), frame_work_steps(&run, None, true), kept)
         };
-        ((glyphs(&long, fs), long), (glyphs(&short, fs), short))
+        (
+            cut("word ".repeat(400), fs),
+            cut("word ".repeat(20), fs),
+            cut(heavy_text.clone(), fs),
+        )
     });
     assert!(
         long.0 <= MAX_FRAME_GLYPHS && long.0 > MAX_FRAME_GLYPHS / 4,
         "the long text is laid from its first glyphs: {}",
         long.0
     );
-    assert_eq!(short.1, ["word ".repeat(20)], "a short text is laid whole");
+    assert_eq!(short.2, ["word ".repeat(20)], "a short text is laid whole");
+    assert!(
+        heavy.2[0].chars().count() < 60 && heavy.1 <= frame_steps(1),
+        "the heavy text is cut to what its frame's work fits: {} of 60 characters, {} glyph steps of {}",
+        heavy.2[0].chars().count(),
+        heavy.1,
+        frame_steps(1)
+    );
+}
+
+/// R45.2, R46.3: each flow harness's worst input fits in
+/// [`INPUT_WORK_MICROS`], three quarters of the `-timeout` that
+/// `scripts/fuzz.sh` gives every input: its frames — [`RAW_FRAMES`] or
+/// [`STRUCTURED_FRAMES`] — each laid to its whole budget and past it by
+/// the most the weights allow (`frame_work_steps`), at
+/// [`ASAN_STEP_NANOS`] a counted step. The cut ([`fits_in_time`]) holds
+/// each frame to its share of [`INPUT_STEPS`]; what is computed here is
+/// that a frame at the floor of its budget fits that share at all — no
+/// cut can make a frame lighter than its budget's floor — and that
+/// [`MAX_FRAME_GLYPHS`] is the most glyphs of the lightest text, one
+/// face, with a short side ornament, that fit: 150, 462,949 glyph steps,
+/// 14.95 s; 151 take 466,014, 15.05 s.
+///
+/// Control: flow_raw's three frames an input, as before R45, red — three
+/// floor frames take 1,202,904 steps, 38.85 s.
+///
+/// [`RAW_FRAMES`]: crate::flow::tests::flow_fuzz::RAW_FRAMES
+/// [`STRUCTURED_FRAMES`]: crate::flow::tests::flow_fuzz::STRUCTURED_FRAMES
+/// [`MAX_FRAME_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS
+/// [`ASAN_STEP_NANOS`]: crate::flow::tests::flow_fuzz::ASAN_STEP_NANOS
+/// [`INPUT_WORK_MICROS`]: crate::flow::tests::flow_fuzz::INPUT_WORK_MICROS
+/// [`INPUT_STEPS`]: crate::flow::tests::flow_fuzz::INPUT_STEPS
+/// [`fits_in_time`]: crate::flow::tests::flow_fuzz::fits_in_time
+#[test]
+fn test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout() {
+    use crate::flow::place::halves::frame_work_steps;
+    use crate::flow::tests::flow_fuzz::{
+        frame_steps, ASAN_STEP_NANOS, FUZZ_TIMEOUT_SECONDS, INPUT_STEPS, INPUT_WORK_MICROS, MAX_FRAME_GLYPHS,
+        RAW_FRAMES, STRUCTURED_FRAMES,
+    };
+    use crate::util::doc_fixtures::repo_path;
+    let script = std::fs::read_to_string(repo_path("scripts/fuzz.sh")).unwrap();
+    assert!(
+        script.contains(&format!("  -timeout={FUZZ_TIMEOUT_SECONDS} \\\n")),
+        "scripts/fuzz.sh runs every target with -timeout={FUZZ_TIMEOUT_SECONDS}"
+    );
+    assert_eq!(
+        INPUT_WORK_MICROS, 15_000_000,
+        "an input's frames may take 15 s, three quarters of the timeout"
+    );
+    let seconds = |steps: usize| steps as f64 * ASAN_STEP_NANOS as f64 / 1e9;
+    assert!(
+        INPUT_STEPS as u64 * ASAN_STEP_NANOS <= INPUT_WORK_MICROS * 1_000,
+        "{INPUT_STEPS} glyph steps take {:.2} s",
+        seconds(INPUT_STEPS)
+    );
+    let flow = style(16.0);
+    let (floor, light, past) = with_fonts(|fs| {
+        let ornament = real_run("─═─═", &flow, fs);
+        let empty = real_run("", &flow, fs);
+        let at = |glyphs: usize, fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+            frame_work_steps(&real_run(&"a".repeat(glyphs), &flow, fs), Some(&ornament), true)
+        };
+        (
+            frame_work_steps(&empty, Some(&ornament), true),
+            at(MAX_FRAME_GLYPHS, fs),
+            at(MAX_FRAME_GLYPHS + 1, fs),
+        )
+    });
+    for (target, frames) in [("flow_raw", RAW_FRAMES), ("flow_structured", STRUCTURED_FRAMES)] {
+        assert!(
+            frames * floor <= INPUT_STEPS,
+            "{target}: {frames} frames at the floor of their budget take {} glyph steps, {:.2} s, past the {:.2} s an input may take",
+            frames * floor,
+            seconds(frames * floor),
+            seconds(INPUT_STEPS)
+        );
+    }
+    assert!(
+        light <= frame_steps(1) && past > frame_steps(1),
+        "{MAX_FRAME_GLYPHS} glyphs of the lightest text take {light} glyph steps, {:.2} s, and one more {past}, {:.2} s: the most that fit {} is the cap",
+        seconds(light),
+        seconds(past),
+        frame_steps(1)
+    );
+}
+
+/// R45.1: flow_raw draws its frame's fit mode from its input, so every
+/// mode a frame tracks its halves in is laid by some input, and an input
+/// whose choices run out before it — every committed raw finding — draws
+/// `Fit`, the mode they were found in.
+///
+/// Control: with the mode fixed at `Fit`, red.
+#[test]
+fn test_the_raw_harness_draws_every_frame_fit() {
+    use crate::document::values::FitMode;
+    use crate::flow::tests::flow_fuzz::{raw_frame_fits, RAW_FRAMES};
+    assert!(
+        matches!(raw_frame_fits(&[])[..], [FitMode::Fit { .. }, ..]),
+        "an input with no choices left draws Fit first"
+    );
+    let mut drawn = [false; 3];
+    for byte in 0..=u8::MAX {
+        let fits = raw_frame_fits(&[byte; 64]);
+        assert_eq!(fits.len(), RAW_FRAMES, "{RAW_FRAMES} frames an input");
+        for fit in fits {
+            drawn[match fit {
+                FitMode::Fit { .. } => 0,
+                FitMode::Spread => 1,
+                _ => 2,
+            }] = true;
+        }
+    }
+    assert_eq!(drawn, [true; 3], "Fit, Spread and Once are each drawn");
+    for name in [
+        "fit_frame_pressed_by_a_clearance_its_other_line_could_give",
+        "fit_frame_shrunk_by_whole_clearance_searches",
+        "raw_frame_cut_apart_by_whole_clearance_searches",
+        "raw_frame_cut_apart_round_a_tight_bend",
+    ] {
+        let found = std::fs::read(
+            crate::util::doc_fixtures::repo_path("lib/baumhard/src/flow/tests/fuzz_findings").join(name),
+        )
+        .unwrap();
+        assert!(
+            matches!(raw_frame_fits(&found)[..], [FitMode::Fit { .. }, ..]),
+            "the finding {name} draws a Fit frame first"
+        );
+    }
+}
+
+/// R45.1's property: an input whose frames may take more than one input
+/// may inside the timeout fails — flow_raw's three frames at their
+/// least budget, 1,200,000 glyph steps, as the harness laid an input
+/// before R45 — and the harness itself lays none such.
+///
+/// Control: with the property never failing, red.
+#[test]
+fn test_the_flow_properties_find_an_input_past_the_timeout() {
+    use crate::flow::tests::flow_fuzz::{check_raw, frame_fits};
+    assert!(
+        check_flow_bytes(b"plain text").is_ok(),
+        "precondition: one frame an input fits"
+    );
+    let three = check_raw(b"plain text", &frame_fits(), true);
+    assert!(
+        three.as_ref().is_err_and(|why| why.contains("past the")),
+        "three frames an input fail: {three:?}"
+    );
 }

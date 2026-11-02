@@ -381,7 +381,12 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
     let Some(ornament) = ornament else {
         return alone;
     };
-    let x = SHAPE_CALL_STEPS + SHAPE_GLYPH_STEPS + SHAPE_FACE_STEPS + INK_CALL_STEPS + INK_GLYPH_STEPS + INK_FACE_STEPS;
+    let x = SHAPE_CALL_STEPS
+        + SHAPE_GLYPH_STEPS
+        + SHAPE_FACE_STEPS
+        + INK_CALL_STEPS
+        + INK_GLYPH_STEPS
+        + INK_FACE_STEPS;
     let beside = shaping_steps(ornament).saturating_add(inking_steps(ornament));
     alone
         .saturating_add(shaping_steps(text))
@@ -1333,7 +1338,11 @@ struct Search {
 
 impl<'a> Layout<'a> {
     fn new(halves: &'a Halves, outward: bool, work: Work) -> Self {
-        Layout { halves, outward, work }
+        Layout {
+            halves,
+            outward,
+            work,
+        }
     }
 }
 
@@ -3030,7 +3039,10 @@ impl Layout<'_> {
         // of its inks touch.
         let looks_apart = |k: usize| {
             let (_, frame) = frame_of(k);
-            !overlapping(&self.lay(run, &frame, held, span, &mut LayMemo::default()), &self.work)
+            !overlapping(
+                &self.lay(run, &frame, held, span, &mut LayMemo::default()),
+                &self.work,
+            )
         };
         // Apart with none of the line's clusters, touching with all of
         // them; the longest prefix apart lies between.
@@ -3212,7 +3224,16 @@ pub(super) fn place_halves(
     // R27's placement, laid in full only for a frame that keeps it.
     let keep_r27 = |trace: Option<&mut Trace>, fs: &mut FontSystemWriteGuard, work: &Work| {
         let mut natural_trace = Trace::default();
-        let placed = place_lines_in(run, outline, fit, outward, flow, fs, Some(&mut natural_trace), work);
+        let placed = place_lines_in(
+            run,
+            outline,
+            fit,
+            outward,
+            flow,
+            fs,
+            Some(&mut natural_trace),
+            work,
+        );
         if let Some(trace) = trace {
             *trace = natural_trace;
             trace.spent = work.spent.get();
@@ -3226,7 +3247,16 @@ pub(super) fn place_halves(
     // again). A `Once` or `Spread` frame parts its lines itself, below.
     let mut natural_trace = Trace::default();
     let (fitted, natural) = if sized {
-        frame_lines(run, outline, fit, outward, flow, fs, Some(&mut natural_trace), &work)
+        frame_lines(
+            run,
+            outline,
+            fit,
+            outward,
+            flow,
+            fs,
+            Some(&mut natural_trace),
+            &work,
+        )
     } else {
         (
             None,

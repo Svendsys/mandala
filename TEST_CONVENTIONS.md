@@ -805,11 +805,28 @@ inputs, and bounds every input: `-timeout`, `-rss_limit_mb` and a
 `-max_len` per surface. It exits non-zero on a finding and leaves the
 input in `fuzz/artifacts/<target>/`. Where the engine's own bound on an
 input's work lies past the timeout, the harness bounds what it
-generates instead, never the engine: a text frame's work is bounded by
-its budget, 3,000 glyph steps a glyph of its text (ruling R44.2), some
-19 µs a step under the ASan build, so the flow targets lay a frame from
-at most `MAX_FRAME_GLYPHS` (320) glyphs of their text — 960,000 steps,
-some 18 s laid to the whole budget — and a real map's frame places
+generates instead, never the engine (rulings R44.2, R45, R46, R47). A
+text frame's work — its tracking, shaping, inking and the rest, each
+counted at a weight measured in one tracking step's time (R46.1) — is
+bounded by its budget, `max(400,000, 3,000 × glyphs)` steps, and by
+what its weights allow past it, one build's shaping and inking and a
+lay of each line (`frame_work_steps`, R47.2). A counted step costs at
+most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
+1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
+An input's worst case is the sum of its frames' work at that cost, and
+it is held to `INPUT_WORK_MICROS`, 15 s, three quarters of the 20 s
+`-timeout`: 464,396 steps. Two frames at the 400,000-step floor alone
+take 25.8 s, so each flow target lays one frame an input
+(`RAW_FRAMES`, `STRUCTURED_FRAMES`; flow_raw draws the frame's fit mode
+from its input), its text cut until the frame's work fits
+(`fits_in_time`): at most `MAX_FRAME_GLYPHS` (150) glyphs of a text in
+one face, 462,949 steps, 14.95 s, and fewer of a text the shaper must
+search every face for. `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
+computes it from those constants, and every input holds its own frames
+to it. A committed finding replays as it was found: a raw one in every
+frame it was found among (`check_flow_bytes_in_every_fit`), each its
+text cut as at R44 (`FOUND_FRAME_GLYPHS`, 320), and a structured one
+likewise (`check_flow_structured_as_found`). A real map's frame places
 its whole text. Running a fuzzer is not
 benchmarking — CLAUDE.md §6 still holds, and a run is never cited as a
 performance number.

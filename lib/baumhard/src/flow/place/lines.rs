@@ -459,7 +459,10 @@ fn lay_lines(
                 }
                 under
             };
-            (fit_reshape(run, &lines, &halves, outward, scale, low, fs, work), None)
+            (
+                fit_reshape(run, &lines, &halves, outward, scale, low, fs, work),
+                None,
+            )
         }
         FitMode::Once { filler: Some(filler) } => {
             let filled = reshape(run, 1.0, Some((filler, flow)), fs);
@@ -579,6 +582,7 @@ pub(crate) fn line_partition(
 ///
 /// Cost: one reshape when the prediction holds, and per further round a
 /// reshape and a lay of each line.
+#[allow(clippy::too_many_arguments)] // R27's fit, and the frame's work (ruling R46.1).
 fn fit_reshape(
     run: &ShapedRun,
     lines: &[Range<usize>; 2],

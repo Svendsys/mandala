@@ -24,9 +24,15 @@
 //!   [`MAX_PLACED_GLYPHS`](crate::flow::MAX_PLACED_GLYPHS).
 //! - **A frame's inks never touch** (rulings R38.1, R44.2), whatever
 //!   its layout — span, sides and spacing drawn too (ruling R44.4) —
-//!   and its text is held to
-//!   [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS), what one frame lays
-//!   inside the fuzz timeout.
+//!   and its text is cut to what it lays inside the timeout
+//!   ([`fits_in_time`](crate::flow::tests::flow_fuzz::fits_in_time)).
+//! - **An input's frames fit in the fuzz timeout** (rulings R45.1,
+//!   R46, R47.2): each target lays one frame an input, whose budget is at
+//!   most what the harness counts for it and whose work is at most that
+//!   budget and the overshoot its weights allow (`frame_work_steps`), and
+//!   the frames' work together is at most
+//!   [`INPUT_STEPS`](crate::flow::tests::flow_fuzz::INPUT_STEPS), three
+//!   quarters of the timeout at the ASan build's cost a counted step.
 //! - **A box is a box:** its size is finite, non-negative, at least the
 //!   usable part of the minimum asked for, and one glyph-span entry per
 //!   laid-out glyph.
@@ -45,6 +51,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
+use crate::flow::place::halves::{frame_budget, frame_work_steps};
 use crate::flow::place::{frame_halves, place_on_closed_traced, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
@@ -60,16 +67,170 @@ use crate::util::tests::choices::Choices;
 /// shapes in milliseconds.
 pub const MAX_SPAN_CHARS: u32 = 64;
 
-/// The most glyphs a frame's text is shaped to here (ruling R44.2): a
-/// frame's work is bounded by its budget, 3,000 glyph steps a glyph of
-/// its text and at least 400,000 (`frame_budget`), and a glyph step
-/// takes some 19 µs under the ASan fuzz build, so a frame of 320 glyphs
-/// laid to its whole budget, 960,000 steps, takes some 18 s, inside the
-/// targets' 20 s timeout. A longer text's frame is laid from as much of
-/// it as shapes to this many glyphs: the engine places the whole of a
-/// real text, bounded by its glyphs; a fuzz input is held to what one
-/// frame can lay inside the timeout.
-pub const MAX_FRAME_GLYPHS: usize = 320;
+/// The most glyphs a frame's text is shaped to here (rulings R44.2,
+/// R45.1, R46.3): the most a frame of the lightest text — one face, no
+/// glyph that no face holds, a short side ornament — may hold and still
+/// be laid, to the whole of its budget and its overshoot past it
+/// (`frame_work_steps`), within [`INPUT_STEPS`]: 150 glyphs, 3,000 glyph
+/// steps each of budget and some 65 more of shaping, inking and lays,
+/// 462,949 steps, 14.95 s at [`ASAN_STEP_NANOS`] a step.
+/// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
+/// holds it to that: the most, and no more. A heavier text — glyphs in
+/// many faces, or in none, which the shaper searches every face for —
+/// is cut further ([`framed`]). A longer text's frame is laid from as
+/// much of it as fits: the engine places the whole of a real text,
+/// bounded by its glyphs; a fuzz input is held to what it can lay
+/// inside the timeout.
+pub const MAX_FRAME_GLYPHS: usize = 150;
+
+/// The most glyphs a frame's text was shaped to when the committed flow
+/// findings were found (ruling R44.2): what their replays lay, so that
+/// each still exercises the frame it was found in
+/// ([`check_flow_bytes_in_every_fit`], [`check_flow_structured_as_found`]).
+pub const FOUND_FRAME_GLYPHS: usize = 320;
+
+/// The frames flow_raw lays an input round its rectangle, each in a fit
+/// mode that tracks its halves ([`raw_frame_fits`]; ruling R45.1). One:
+/// a frame's budget is at least 400,000 glyph steps whatever its text
+/// (`TRACK_BUDGET`), so two frames may take 800,000 steps, 25.8 s at
+/// [`ASAN_STEP_NANOS`] a step, past [`INPUT_WORK_MICROS`] however few
+/// glyphs they share — and three, as before R45, 38.8 s. Its `Repeat`
+/// round the rectangle tracks no halves, and is laid besides.
+pub const RAW_FRAMES: usize = 1;
+
+/// The frames flow_structured lays an input: one, round its outline,
+/// when it draws an outline at all and a fit mode other than `Repeat`.
+pub const STRUCTURED_FRAMES: usize = 1;
+
+/// `scripts/fuzz.sh`'s `-timeout`, in seconds: the longest one input
+/// may run before libFuzzer reports it as a finding.
+pub const FUZZ_TIMEOUT_SECONDS: u64 = 20;
+
+/// The most one input's frames may take under the ASan fuzz build, in
+/// microseconds: three quarters of [`FUZZ_TIMEOUT_SECONDS`], 15 s
+/// (ruling R45.1). The quarter left is for the work no frame counts —
+/// shaping the text and cutting it ([`framed`]), the box, the `Repeat`
+/// and the placements along a curve and at a point — and for a machine
+/// busy with something else.
+pub const INPUT_WORK_MICROS: u64 = FUZZ_TIMEOUT_SECONDS * 1_000_000 / 4 * 3;
+
+/// What a counted glyph step of a frame's work costs under the ASan fuzz
+/// build, in nanoseconds: the cost frame budgets are turned into time by
+/// (rulings R45.2, R46.2) — the most measured, 21.53 µs, times 1.5.
+///
+/// Measured at e301e041, with the engine's accounting of rulings R46 and
+/// R47, on the flow targets built by `scripts/fuzz.sh` (`cargo fuzz
+/// build`: ASan, debug assertions, the pinned nightly): each frame's
+/// `place_on_closed_traced` call timed, and its `Trace::spent` printed,
+/// by a temporary instrumentation of the harness, never committed, over
+/// every committed flow finding and seed and the heaviest frames a
+/// sweep of 2,600 seeded structured inputs drew, each input run three
+/// times in one process. The most of any frame's time over its counted
+/// steps was 21.53 µs, a small frame on its first, cold run; frames of
+/// tens of thousands of steps took 7.8 to 12 µs. The machine's load
+/// average was 1 to 2. #294's PR body has the table.
+pub const ASAN_STEP_NANOS: u64 = 32_300;
+
+/// The glyph steps one input's frames may take, all together:
+/// [`INPUT_WORK_MICROS`] at [`ASAN_STEP_NANOS`] a step.
+pub const INPUT_STEPS: usize = (INPUT_WORK_MICROS * 1_000 / ASAN_STEP_NANOS) as usize;
+
+/// The glyph steps one frame of an input may take, its budget and its
+/// overshoot together: an even share of [`INPUT_STEPS`] among `frames`
+/// frames.
+pub const fn frame_steps(frames: usize) -> usize {
+    INPUT_STEPS / frames
+}
+
+/// Whether a frame's text shaped as `run`, its sides as `ornament`, is
+/// one the harnesses lay (rulings R45.1, R46.3): at most
+/// [`MAX_FRAME_GLYPHS`] glyphs, and laid to the whole of its budget and
+/// past it (`frame_work_steps`, a `Fit` frame's as the most) within its
+/// share of [`INPUT_STEPS`] among `frames` frames.
+pub(crate) fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize) -> bool {
+    run.glyphs.len() <= MAX_FRAME_GLYPHS
+        && frame_work_steps(run, ornament, true) <= frame_steps(frames.max(1))
+}
+
+/// The work an input's frames may take, counted as they are laid
+/// (rulings R45.1, R47.2): each frame's budget and its overshoot past it
+/// (`frame_work_steps`), the most its work may take.
+#[derive(Default)]
+struct InputWork {
+    frames: usize,
+    steps: usize,
+}
+
+impl InputWork {
+    /// Count a frame of `run` (sides shaped as `ornament`, a `Fit` frame
+    /// `sized`), laid with `trace`: the most it may take,
+    /// `frame_work_steps`. The engine scales a frame's budget by its
+    /// text's glyphs once cut, never more than the run has, and spends
+    /// no more than its budget and its overshoot: properties.
+    fn frame(
+        &mut self,
+        run: &ShapedRun,
+        ornament: Option<&ShapedRun>,
+        sized: bool,
+        trace: &Trace,
+        what: &str,
+    ) -> Result<(), String> {
+        let budget = frame_budget(run.glyphs.len());
+        let most = frame_work_steps(run, ornament, sized);
+        if trace.budget > budget {
+            return Err(format!(
+                "{what}: a frame budgeted {} glyph steps, past the {budget} its {} glyphs give",
+                trace.budget,
+                run.glyphs.len()
+            ));
+        }
+        if trace.spent > most {
+            return Err(format!(
+                "{what}: a frame took {} glyph steps, past its budget of {} and its overshoot, {most} in all",
+                trace.spent, trace.budget
+            ));
+        }
+        self.frames += 1;
+        self.steps += most;
+        Ok(())
+    }
+
+    /// Whether the input's frames, laid to their whole budgets and past
+    /// them, fit in [`INPUT_STEPS`]: what holds the harness to the
+    /// timeout on every input, as
+    /// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
+    /// holds its constants.
+    fn within_the_timeout(&self) -> Result<(), String> {
+        if self.steps > INPUT_STEPS {
+            return Err(format!(
+                "an input's {} frames may take {} glyph steps, past the {INPUT_STEPS} one input may take",
+                self.frames, self.steps
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The ornament of a ring's `sides`, shaped alone in `style` at `scale`:
+/// what its frame's shaping and inking are counted from
+/// (`frame_work_steps`). `None` without sides.
+pub(crate) fn ornament_run(
+    layout: &RingLayout,
+    style: &ResolvedText,
+    scale: f32,
+    fs: &mut FontSystemWriteGuard,
+) -> Option<ShapedRun> {
+    let (ornament, _) = layout.sides.as_ref()?;
+    Some(shape_run(
+        &[FlowSpan {
+            text: ornament,
+            style,
+            link: None,
+        }],
+        scale,
+        fs,
+    ))
+}
 
 /// The most characters a fuzzed side ornament holds: a short one,
 /// every copy of it laid many times round each junction.
@@ -113,7 +274,61 @@ const INTERESTING: [char; 28] = [
 /// Every property of `bytes` read as text (lossily: a raw input need
 /// not be UTF-8), shaped as one span in each layout: the flow_raw
 /// target's whole body.
+///
+/// It lays [`RAW_FRAMES`] frames round its rectangle, in fit modes drawn
+/// from the bytes ([`raw_frame_fits`]), so that the input's work is held
+/// inside the fuzz timeout (ruling R45.1); a `Repeat` round the
+/// rectangle, which tracks no halves, and all four modes along its line
+/// are laid whatever it draws. [`check_flow_bytes_in_every_fit`] lays
+/// all three frames, as a finding's replay does.
 pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
+    let fits = raw_frame_fits(bytes);
+    check_raw(bytes, &fits, true)
+}
+
+/// [`check_flow_bytes`] with a frame in every fit mode a frame tracks
+/// its halves in — `Fit`, `Spread` and `Once` — as the flow_raw target
+/// laid every input before ruling R45, its text cut as it was when the
+/// committed findings were found ([`FOUND_FRAME_GLYPHS`]): what a
+/// committed raw finding replays through, so that it still exercises
+/// every frame it was found in. It is not held to the per-input work
+/// bound, which is the fuzz timeout's, and a test has none.
+pub fn check_flow_bytes_in_every_fit(bytes: &[u8]) -> Result<(), String> {
+    check_raw(bytes, &frame_fits(), false)
+}
+
+/// The fit modes a flow_raw frame is laid in, in the order
+/// [`raw_frame_fits`] draws them: every one of them tracks its halves
+/// (`place_halves`), so each is budgeted (`frame_budget`).
+pub(crate) fn frame_fits() -> [FitMode; 3] {
+    [
+        FitMode::Fit { min: 0.5, max: 2.0 },
+        FitMode::Spread,
+        FitMode::Once {
+            filler: Some("·".to_string()),
+        },
+    ]
+}
+
+/// The [`RAW_FRAMES`] fit modes flow_raw lays `bytes`' frames in
+/// (ruling R45.1): read as choices after the ring's layout
+/// ([`ring_layout`]), the first of them is any of [`frame_fits`], and
+/// the rest follow it in turn. An input whose choices run out before it
+/// — every committed raw finding but the ones that spell a layout —
+/// draws `Fit`, the mode most of them were found in.
+pub(crate) fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
+    let mut choices = Choices::new(bytes);
+    ring_layout(&mut choices);
+    let fits = frame_fits();
+    let first = choices.below(fits.len() as u32) as usize;
+    (0..RAW_FRAMES)
+        .map(|k| fits[(first + k) % fits.len()].clone())
+        .collect()
+}
+
+/// [`check_flow_bytes`]'s body, its frames laid in `fits`, held to the
+/// per-input work bound with `bounded`.
+pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result<(), String> {
     let text = String::from_utf8_lossy(bytes);
     let style = plain_style();
     let spans = [FlowSpan {
@@ -132,26 +347,30 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
         edge: Edge::Top,
         at: 0.0,
     };
-    // The frames' text, held to what one frame lays inside the timeout,
-    // and their layout, drawn from the same bytes read as choices
+    // The frames' layout, drawn from the same bytes read as choices
     // (ruling R44.4): an input of zeros, as most raw findings are, lays
-    // them over their whole halves with no sides.
-    let framed = framed(&[text.to_string()], std::slice::from_ref(&style), 1.0, &mut fs);
+    // them over their whole halves with no sides. Their text, held to
+    // what its frames lay inside the timeout (rulings R45.1, R46.3) — or,
+    // replaying a finding, to what a frame laid when it was found.
+    let layout = ring_layout(&mut Choices::new(bytes));
+    let ornament = ornament_run(&layout, &style, 1.0, &mut fs);
+    let fits_in_time = |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), fits.len());
+    let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
+    let framed = framed(
+        &[text.to_string()],
+        std::slice::from_ref(&style),
+        1.0,
+        &mut fs,
+        if bounded { &fits_in_time } else { &as_found },
+    );
     let frame_spans = [FlowSpan {
         text: &framed[0],
         style: &style,
         link: None,
     }];
     let frame_run = shape_run(&frame_spans, 1.0, &mut fs);
-    let layout = ring_layout(&mut Choices::new(bytes));
-    for fit in [
-        FitMode::Repeat,
-        FitMode::Spread,
-        FitMode::Fit { min: 0.5, max: 2.0 },
-        FitMode::Once {
-            filler: Some("·".to_string()),
-        },
-    ] {
+    let mut work = InputWork::default();
+    for fit in std::iter::once(&FitMode::Repeat).chain(fits) {
         let path = outline(
             rect,
             Shape::Rectangle {
@@ -164,19 +383,28 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
             &path,
             start,
             Direction::Clockwise,
-            &fit,
+            fit,
             &layout,
             true,
             &style,
             &mut fs,
             Some(&mut trace),
         );
+        if !matches!(fit, FitMode::Repeat) {
+            let sized = matches!(fit, FitMode::Fit { .. });
+            work.frame(&frame_run, ornament.as_ref(), sized, &trace, "around a rectangle")?;
+        }
         // A line cut so that no two inks touch, and reported so, is owed
         // no longer (ruling R38.1); a frame its sides leave unheld is
         // reported (ruling R35.2).
-        let whole = owes_whole(&frame_run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
+        let whole = owes_whole(&frame_run, fit, frame_room(&path)) && trace.cut_apart.is_empty();
         apart(&trace, "around a rectangle")?;
         check_placed(&frame_spans, &frame_run, placed, whole, "around a rectangle")?;
+    }
+    if bounded {
+        work.within_the_timeout()?;
+    }
+    for fit in std::iter::once(FitMode::Repeat).chain(frame_fits()) {
         let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
         let placed = place_on_open(&run, &curve, &fit, 1.0, &style, &mut fs);
         check_placed(
@@ -196,8 +424,26 @@ pub fn check_flow_structured(bytes: &[u8]) -> Result<(), String> {
     check_flow_generated(&mut Choices::new(bytes))
 }
 
+/// [`check_flow_structured`] with a frame's text held to what a frame
+/// laid when the committed flow findings were found
+/// ([`FOUND_FRAME_GLYPHS`]) rather than to what it lays inside the fuzz
+/// timeout (rulings R45.1, R46.3): what a committed structured finding
+/// replays through, so that it still exercises the frame it was found
+/// in. It is not held to the per-input work bound, which is the fuzz
+/// timeout's, and a test has none.
+pub fn check_flow_structured_as_found(bytes: &[u8]) -> Result<(), String> {
+    check_generated(&mut Choices::new(bytes), false)
+}
+
 /// [`check_flow_structured`] for choices from any source.
 pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
+    check_generated(choices, true)
+}
+
+/// [`check_flow_generated`]'s body, a frame's text held to what it lays
+/// inside the fuzz timeout with `bounded`, and to what it laid when the
+/// findings were found without.
+fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), String> {
     fonts::init();
     let faces = faces();
     let count = choices.below(4) as usize;
@@ -285,7 +531,20 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                     // finding before R44.4 — lays as it did: over whole
                     // halves, no sides.
                     let layout = ring_layout(choices);
-                    let framed = framed(&texts, &styles, scale, &mut fs);
+                    // The frame's text, held to what its frame lays inside
+                    // the timeout (rulings R45.1, R46.3) — or, replaying a
+                    // finding, to what a frame laid when it was found.
+                    let ornament = ornament_run(&layout, &flow, scale, &mut fs);
+                    let fits_in_time =
+                        |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES);
+                    let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
+                    let framed = framed(
+                        &texts,
+                        &styles,
+                        scale,
+                        &mut fs,
+                        if bounded { &fits_in_time } else { &as_found },
+                    );
                     let frame_spans: Vec<FlowSpan<'_>> = framed
                         .iter()
                         .zip(&styles)
@@ -320,6 +579,12 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                     // bend — cuts the line that cannot be held and says so
                     // (ruling R38.1): what it cut is no longer owed.
                     let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
+                    let mut work = InputWork::default();
+                    let sized = matches!(fit, FitMode::Fit { .. });
+                    work.frame(&run, ornament.as_ref(), sized, &trace, "around an outline")?;
+                    if bounded {
+                        work.within_the_timeout()?;
+                    }
                     apart(&trace, "around an outline")?;
                     check_placed(&spans, &run, placed, whole, "around an outline")
                 }
@@ -452,9 +717,11 @@ pub(crate) fn ring_layout(choices: &mut Choices<'_>) -> RingLayout {
 }
 
 /// `texts`, in `styles`, at `scale`, each cut to the same share of its
-/// characters — halved until their run has at most [`MAX_FRAME_GLYPHS`]
-/// glyphs — what a frame lays here (ruling R44.2). Texts whose run has
-/// that few already are returned whole.
+/// characters — halved until their run `fits`: what a frame lays here
+/// (rulings R44.2, R45.1, R46.3). The harnesses' rule: at most
+/// [`MAX_FRAME_GLYPHS`] glyphs, and its frames' work, laid to their
+/// budgets and past them, within [`INPUT_STEPS`]. Texts whose run fits
+/// already are returned whole; with no characters left, the empty texts.
 ///
 /// Cost: a shaping of the texts, and one more each halving.
 pub(crate) fn framed(
@@ -462,6 +729,7 @@ pub(crate) fn framed(
     styles: &[ResolvedText],
     scale: f32,
     fs: &mut FontSystemWriteGuard,
+    fits: &dyn Fn(&ShapedRun) -> bool,
 ) -> Vec<String> {
     let mut share = usize::MAX;
     loop {
@@ -487,7 +755,7 @@ pub(crate) fn framed(
                 link: None,
             })
             .collect();
-        if share == 0 || shape_run(&spans, scale, fs).glyphs.len() <= MAX_FRAME_GLYPHS {
+        if share == 0 || fits(&shape_run(&spans, scale, fs)) {
             return cut;
         }
         share = if share == usize::MAX { 512 } else { share / 2 };

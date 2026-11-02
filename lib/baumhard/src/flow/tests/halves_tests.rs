@@ -2803,7 +2803,8 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         });
         // A `Once` frame with no sides, laid at its size: its builds
         // reshape nothing, so a build past the budget is its inking alone.
-        let past = FRAME_STEPS + inking_steps(&run) + OVERSHOOT_TRACKS * (run.glyphs.len() + TRACK_CALL_STEPS);
+        let past =
+            FRAME_STEPS + inking_steps(&run) + OVERSHOOT_TRACKS * (run.glyphs.len() + TRACK_CALL_STEPS);
         assert!(
             past <= overshoot_steps(&run, None, false),
             "precondition: the frame's overshoot is within the general bound"
@@ -2826,7 +2827,6 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         );
     }
 }
-
 
 /// R46.2: a frame's `Trace::spent` counts all its work — every shaping
 /// and inking it does and every `track` it lays, each at its weight —
@@ -2855,8 +2855,18 @@ fn test_flow_halves_a_frames_shaping_inking_and_tracking_are_all_counted() {
         ..RingLayout::whole()
     };
     for (what, fit, layout, outward) in [
-        ("Fit inward", FitMode::Fit { min: 0.5, max: 2.0 }, RingLayout::whole(), false),
-        ("Once outward with sides", FitMode::Once { filler: None }, sided, true),
+        (
+            "Fit inward",
+            FitMode::Fit { min: 0.5, max: 2.0 },
+            RingLayout::whole(),
+            false,
+        ),
+        (
+            "Once outward with sides",
+            FitMode::Once { filler: None },
+            sided,
+            true,
+        ),
     ] {
         let flow = style(22.0);
         // Shaped before the counters are reset: the frame's own work only.

@@ -66,13 +66,18 @@ fi
 
 # The longest input each surface is fed. The raw loader's must hold the
 # largest committed seed (a deep chain with a link on every node); a
-# structured input is choices, four bytes each. A flow target lays a
-# text frame from at most MAX_FRAME_GLYPHS (320) glyphs of its text,
-# whatever its length here (flow_fuzz.rs; ruling R44.2): a frame's
-# budget is 3,000 glyph steps a glyph, some 19 µs a step under ASan,
-# so 320 glyphs laid to the whole budget take some 18 s of -timeout=20. Every input this script
-# feeds a target fits its ceiling, which
-# `test_every_fuzz_input_fits_its_targets_max_len` holds.
+# structured input is choices, four bytes each. A flow target's length
+# does not bound its work (flow_fuzz.rs; rulings R44.2, R45-R47): a
+# frame's budget is max(400,000, 3,000 × glyphs) steps of all its work,
+# overshot by one build's shaping and inking and a lay of each line, at
+# most 32.3 µs a step under ASan (ASAN_STEP_NANOS), and an input's
+# frames together may take 15 s, three quarters of -timeout=20: 464,396
+# steps. Two frames at the floor are 25.8 s, so a flow target lays one
+# frame an input, its text cut until that frame's work fits: at most
+# MAX_FRAME_GLYPHS (150) glyphs in one face, 462,949 steps, 14.95 s.
+# Every input this script feeds a target
+# fits its ceiling, which `test_every_fuzz_input_fits_its_targets_max_len`
+# holds.
 case "$TARGET" in
   load_raw) MAX_LEN=65536 ;;
   load_structured) MAX_LEN=65536 ;;
