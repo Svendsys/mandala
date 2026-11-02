@@ -865,7 +865,7 @@ fn the_sweep() -> &'static SweepWork {
 /// stacked across an outline thinner than they are, each lay some 20
 /// `track`s chasing a tolerance finer than its floats or its letters
 /// resolve. The worst now, the quatrain outward round the 600 × 12
-/// rectangle, `Once` at span ½, takes 36,670.
+/// rectangle, `Once` at span ½, takes 36,748, its sides' lays counted (ruling R44.3).
 pub const SWEEP_MOST_STEPS: usize = 50_000;
 
 /// The most path lookups a glyph step of a frame may take on the mean,

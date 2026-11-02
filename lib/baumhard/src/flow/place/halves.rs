@@ -83,9 +83,18 @@
 //! overlap wins over never cut); and what is left unheld even so is
 //! reported in the trace ([`Unheld`]), never silent.
 //! Every last resort is
-//! bounded in work (ruling R35.3): a shrink's probe looks first whether
-//! its lines fit at all, and a frame's tracking takes at most
-//! [`TRACK_BUDGET`] glyph steps.
+//! bounded in work (rulings R35.3, R44.2): a shrink's probe looks first
+//! whether its lines fit at all, and a frame's budget,
+//! [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at least
+//! [`TRACK_BUDGET`] ([`frame_budget`]), is read before every lay — in
+//! each tracking solve, slide, shrink, cut and backtrack — and its sides'
+//! lays count against it, so a frame overshoots it by at most a lay of
+//! each line. A frame whose budget runs out while two of its inks still
+//! touch keeps the longest run of its inks that touch nothing, and says
+//! it was cut ([`Trace::cut_apart`]). A frame's text is cut to
+//! [`MAX_PLACED_GLYPHS`] at a cluster before its lines are prepared
+//! (ruling R44.1), its sides placing no more than the cap leaves, so the
+//! budget is at most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
 //!
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most
@@ -221,17 +230,18 @@ const SHRINK_LEAST_STEP_PT: f32 = 0.25;
 /// the rest of the way, from below.
 const SEED_SHARE: f32 = 0.9;
 
-/// The most glyph steps a frame's tracking may take in all, each glyph
-/// a [`track`] lays counting one (ruling R35.3): the bound on its last
-/// resorts' work. A frame that reaches it keeps the best it has laid —
-/// the largest size its shrink found clean, the cuts made so far — and
-/// its trace reports what is left unheld.
+/// The least glyph steps a frame's work may take in all, each glyph a
+/// [`track`] or a side's lay sets counting one (rulings R35.3, R44.2):
+/// the floor of its budget ([`frame_budget`]), which scales with its text
+/// past it. A frame that reaches its budget keeps the best it has laid —
+/// the largest size its shrink found clean, the cuts made so far, its
+/// inks cut to those that touch nothing — and its trace reports what is
+/// left unheld.
 ///
 /// Ten times the most any real frame takes (rulings R42.3, R43.3): the
-/// aspect sweep's worst, 36,670 glyph steps — the quatrain outward round
-/// the 600 × 12 rectangle, `Once` at span ½ — rounded up to 40,000; the
-/// demo maps' frames take under 2,400, and no test's frame more than the
-/// sweep's. It cuts only pathological inputs, never real text. At
+/// aspect sweep's worst, 36,748 glyph steps — the quatrain outward round
+/// the 600 × 12 rectangle, `Once` at span ½, its sides' lays counted —
+/// rounded up to 40,000; the demo maps' frames take under 2,400. At
 /// 30411a6e it was 2^21, and the worst real frame took 306,098.
 pub(crate) const TRACK_BUDGET: usize = 400_000;
 
@@ -2961,10 +2971,14 @@ pub(crate) fn to_cap_seam(run: &ShapedRun, range: Range<usize>, left: usize) -> 
 /// [`SHRINK_ROUNDS`] probes, each one [`track`] a line and, where they
 /// fit, a clearance search; a cut a bisection of [`track`]s more and the
 /// clearance again, [`CUT_ROUNDS`] times at most; a cut apart a
-/// bisection of clearance searches per line; a side arc a bisection of
-/// lays per copy count weighed. In all,
-/// at most [`TRACK_BUDGET`] glyph steps of tracking, and a few searches'
-/// worth past it.
+/// bisection of clearance searches per line; a side arc a lay of its
+/// copies at the floor, and a few lays per copy count weighed
+/// ([`falsi`]); every touch check a sweep. In all, at most the frame's
+/// budget of glyph steps ([`frame_budget`]: [`STEPS_PER_GLYPH`] a glyph
+/// of its text cut to [`MAX_PLACED_GLYPHS`], at least [`TRACK_BUDGET`]),
+/// read before every lay, its sides' lays counted, and a lay of each
+/// line past it at most; then, where two inks still touch, a bisection
+/// of overlap checks over its inks ([`untouched`]).
 #[allow(clippy::too_many_arguments)] // `place_on_closed`'s, and the trace.
 pub(super) fn place_halves(
     run: &ShapedRun,

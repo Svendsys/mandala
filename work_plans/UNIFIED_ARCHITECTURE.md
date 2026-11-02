@@ -811,11 +811,18 @@ line (cosmic-text gives each glyph's advance), then placed:
      than from nothing, halving a round that would press a line once at
      most; the size held is kept rather than built again. A clearance
      search lays each line once for each part of its half it tries.
-     And a frame's tracking takes at most `TRACK_BUDGET` glyph steps in
-     all — 400,000, ten times the most the aspect sweep's worst frame
-     takes (ruling R43.3) — one that reaches it keeps the best it has
-     laid, and its trace reports what is left unheld. A glyph step takes
-     a path lookup or a few, 64 at most (ruling R43.1).
+     And a frame's work takes at most its budget of glyph steps:
+     `STEPS_PER_GLYPH` (3,000, ten times the most a glyph of the aspect
+     sweep's frames takes) a glyph of its text, cut at a cluster to
+     `MAX_PLACED_GLYPHS`, and at least `TRACK_BUDGET` (400,000, ten
+     times the sweep's worst frame; ruling R44.2, amending R43.3), so at
+     most 3,000 × 65,536 — a bound per glyph, not a limit on a text's
+     length. The budget is read before every lay, its sides' lays count
+     against it (ruling R44.3), and a frame overshoots it by a lay of
+     each line at most; one that reaches it keeps the best it has laid,
+     cut to the inks that touch nothing where two still touch, and its
+     trace reports what is left unheld. A glyph step takes a path lookup
+     or a few, 64 at most (ruling R43.1).
    - **A `once` filler** is not drawn by the frame: round a frame it
      plays the part `sides` does, so the resolver gives it to the
      frame as its `sides` when `sides` is unset all the way down (ruling

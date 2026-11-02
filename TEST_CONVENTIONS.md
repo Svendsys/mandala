@@ -803,7 +803,14 @@ The script builds on the pinned nightly (rustup installs it on first
 use), runs over the generated corpus, the seeds and the surface's own
 inputs, and bounds every input: `-timeout`, `-rss_limit_mb` and a
 `-max_len` per surface. It exits non-zero on a finding and leaves the
-input in `fuzz/artifacts/<target>/`. Running a fuzzer is not
+input in `fuzz/artifacts/<target>/`. Where the engine's own bound on an
+input's work lies past the timeout, the harness bounds what it
+generates instead, never the engine: a text frame's work is bounded by
+its budget, 3,000 glyph steps a glyph of its text (ruling R44.2), some
+19 µs a step under the ASan build, so the flow targets lay a frame from
+at most `MAX_FRAME_GLYPHS` (320) glyphs of their text — 960,000 steps,
+some 18 s laid to the whole budget — and a real map's frame places
+its whole text. Running a fuzzer is not
 benchmarking — CLAUDE.md §6 still holds, and a run is never cited as a
 performance number.
 
