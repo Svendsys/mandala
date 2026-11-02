@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use baumhard::arena::NodeId;
 use baumhard::document::element::{DocElement, DocKind};
 use baumhard::document::format::load;
 use baumhard::document::ids::Document;
@@ -50,7 +51,6 @@ use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
 use baumhard::gfx_structs::tree::GfxTree;
 use glam::Vec2;
-use indextree::NodeId;
 
 use super::gpu_harness::headless_app;
 use super::run_native_init::InitState;
@@ -438,8 +438,12 @@ pub(super) fn camera_on(bounds: (Vec2, Vec2)) -> Camera2D {
 fn show(init: &mut InitState, runs: Vec<GlyphRunData>) {
     let mut tree: GfxTree = GfxTree::new_non_indexed();
     for (i, run) in runs.into_iter().enumerate() {
-        tree.insert_child(tree.root, GfxElement::new_run(run, 0, 9_000 + i), Placement::Last)
-            .expect("a child of the root");
+        tree.insert_child(
+            tree.root(),
+            GfxElement::new_run(run, 0, 9_000 + i),
+            Placement::Last,
+        )
+        .expect("a child of the root");
     }
     init.app_scene
         .register_canvas(CanvasRole::SectionFrames, tree, Vec2::ZERO);

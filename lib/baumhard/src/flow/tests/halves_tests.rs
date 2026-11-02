@@ -2345,13 +2345,13 @@ pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
 /// placement made. `Repeat` rings take no glyph step and are left out.
 #[cfg(test)]
 fn demo_map_frames() -> Vec<(String, usize, usize)> {
+    use crate::arena::NodeId;
     use crate::document::element::{DocElement, DocKind};
     use crate::document::format::load;
     use crate::document::ids::Document;
     use crate::document::resolve::{resolve_frame, resolve_node, resolve_ring, resolve_text, ResolvedText};
     use crate::document::values::{Align, FontSize};
     use crate::flow::{offset, ring_offset, shape_box, shape_run, FlowSpan};
-    use indextree::NodeId;
 
     let children = |doc: &Document, id: NodeId, kind: DocKind| -> Vec<NodeId> {
         doc.children(id)

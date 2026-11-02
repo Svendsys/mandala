@@ -1129,7 +1129,7 @@ pub fn do_document_resolve_ring_sides_var_records_the_theme() {
     set(&mut builder, ColorRef::Var(VarId(0)));
     let (color, reads) = theme_reads(&builder);
     assert!(reads > 0, "a variable records the theme read");
-    let theme = builder.tree().arena().iter().find_map(|n| match n.get() {
+    let theme = builder.tree().arena().iter().find_map(|(_, n)| match n.get() {
         DocElement::Theme(t) => Some(t.clone()),
         _ => None,
     });
