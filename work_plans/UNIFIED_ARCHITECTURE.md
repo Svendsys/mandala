@@ -822,8 +822,11 @@ line (cosmic-text gives each glyph's advance), then placed:
      kind weighted to about one `track` step's time (ruling R46.1): its
      tracking and side lays, its shaping and inking, its touch checks
      and R27's walks. The budget is read before every lay, build and
-     reshape and before each copy of a side ornament (an arc it is spent
-     before is left empty and reported), `untouched` runs within it, and
+     reshape and before each copy of a side ornament, which is laid only
+     while the frame can afford it and its arc's touch check after, at
+     `TOUCH_LOOKS_A_BOX` looks a box (an arc it cannot afford is left
+     empty, or keeps the copies it has where their gaps are equal, and is
+     reported; ruling R48.2), `untouched` runs within it, and
      a frame overshoots it by `overshoot_steps` at most (ruling R47.2):
      what runs before it is first read — the frame's setup, R27's first
      reshape and one build's shaping and inking — a lay of each line,

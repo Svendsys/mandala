@@ -91,9 +91,12 @@
 //! R27's walks, each weighted to about one tracking step's time — and is
 //! read before every lay, build and reshape — in each tracking solve,
 //! slide, shrink (its floor build too), cut and backtrack, R27's fit and
-//! a `Once` filler's copies — and before each copy of a side ornament:
-//! an arc whose frame has spent its budget before its copies are laid is
-//! left empty and reported ([`Unheld`]). So a frame overshoots its budget
+//! a `Once` filler's copies — and before each copy of a side ornament,
+//! which is laid only while the frame can afford it and the touch check
+//! of the arc after ([`check_steps`], at [`TOUCH_LOOKS_A_BOX`] looks a
+//! box): an arc it cannot afford is left empty, or keeps the copies it
+//! has where they hold the equal-gap rule, and is reported ([`Unheld`]).
+//! So a frame overshoots its budget
 //! by at most [`overshoot_steps`] (ruling R47.2): what runs before the
 //! budget is first read — its setup, R27's first reshape and one build's
 //! shaping and inking — the lay of each line that finds it spent, and
@@ -337,12 +340,35 @@ pub(crate) const INK_FACE_STEPS: usize = 104;
 /// (the sweep before, 0.50), at a load average of 2 to 6.
 pub(crate) const BOXES_A_STEP: usize = 32;
 
-// Past [`touch_scan`]'s sweep, in its strips, a box or a pair looked at
-// took at most 2.97 µs over the calls of 256 units or more, measured as
-// [`BOXES_A_STEP`] is with the strips forced on: 16 µs ÷ 2.97 µs = 5.4,
-// some six times what `BOXES_A_STEP` counts. Counting it so takes a large
-// side arc's touch check past the overshoot a spent budget allows; which
-// gives way is pending a ruling on #294 (R48 worker's report).
+/// Ink boxes and pairs of them one glyph step weighs past
+/// [`touch_scan`]'s sweep, in its strips or for a box that is not a
+/// number (ruling R48.1): at most 2.97 µs a box or a look over the calls
+/// of 256 units or more, measured as [`BOXES_A_STEP`] is with the strips
+/// forced on, so 16 µs ÷ 2.97 µs = 5.4, rounded down to 4.
+pub(crate) const STRIPPED_A_STEP: usize = 4;
+
+/// The most pairs a touch check looks at a box it is given (ruling
+/// R48.2): twice the most any check made over the aspect sweep, the
+/// budget grids, the demo maps' frames and every committed flow fuzz
+/// finding. What a side arc holds back for its check rests on it
+/// ([`check_steps`]), and with it [`overshoot_steps`]; the flow fuzz
+/// property fails a frame whose check looks at more.
+pub(crate) const TOUCH_LOOKS_A_BOX: usize = TOUCH_LOOKS_MEASURED * 2;
+
+/// The most pairs a touch check looked at a box, rounded up, over the
+/// frames [`TOUCH_LOOKS_A_BOX`] names (pinned by
+/// `test_flow_halves_a_touch_check_looks_at_few_pairs_a_box`).
+pub(crate) const TOUCH_LOOKS_MEASURED: usize = 6;
+
+/// The most glyph steps a touch check of `boxes` boxes counts while it
+/// looks at no more than [`TOUCH_LOOKS_A_BOX`] pairs a box (ruling
+/// R48.2): its sweep, [`SWEEP_PAIRS`] looks a box at most, and past it
+/// its strips, each at its weight.
+pub(crate) fn check_steps(boxes: usize) -> usize {
+    let swept = boxes.saturating_add(boxes.saturating_add(1).saturating_mul(SWEEP_PAIRS));
+    let stripped = boxes.saturating_add(boxes.saturating_mul(TOUCH_LOOKS_A_BOX));
+    weighing_steps(swept).saturating_add(stripped.div_ceil(STRIPPED_A_STEP))
+}
 
 /// Clusters one glyph step walks in R27's arithmetic lays
 /// (`lines::Lines`): some 1.3 µs a cluster along a path, so 16 µs ÷
@@ -427,7 +453,11 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// fall within. A budget is read before each build, each reshape of
 /// R27's fit, each lay and each copy of a side ornament, so no more than
 /// one of each runs past it; [`untouched`] runs within the budget, which
-/// holds its share back.
+/// holds its share back, and so does a side arc's touch check, held back
+/// before each copy ([`check_steps`], ruling R48.2). That rests on one
+/// assumption: that no touch check looks at more than
+/// [`TOUCH_LOOKS_A_BOX`] pairs a box, which the flow fuzz property holds
+/// every frame to.
 pub(crate) fn overshoot_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
     let r27 = if sized { shaping_steps(text) } else { 0 };
     FRAME_STEPS
@@ -711,6 +741,10 @@ thread_local! {
     /// short text.
     #[cfg(test)]
     pub(crate) static CAP_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#294, ruling R48.2): the most pairs a touch check on
+    /// this thread has looked at a box, as its looks and its boxes.
+    #[cfg(test)]
+    pub(crate) static MOST_LOOKS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// Test counter (#294, ruling R46.1): the times R27's fit has
     /// reshaped a frame's text on this thread (`lines::fit_reshape`).
     #[cfg(test)]
@@ -1303,6 +1337,9 @@ pub(super) struct Work {
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
+    /// The most pairs a touch check of the frame looked at a box: its
+    /// looks and its boxes (ruling R48.2).
+    looks: Cell<(usize, usize)>,
     /// Whether [`untouched`] is running, within the share held back for
     /// it: its steps are not past the budget ([`PAST_BUDGET`]).
     #[cfg(test)]
@@ -1317,6 +1354,7 @@ impl Work {
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
+            looks: Cell::new((0, 0)),
             #[cfg(test)]
             reserved: Cell::new(false),
         };
@@ -1341,6 +1379,31 @@ impl Work {
     /// Count inking `run` (ruling R46.1).
     fn inked(&self, run: &ShapedRun) {
         self.take(inking_steps(run));
+    }
+
+    /// Note a touch check that looked at `looks` pairs of `boxes` boxes.
+    fn looked(&self, looks: usize, boxes: usize) {
+        #[cfg(test)]
+        MOST_LOOKS.with(|most| {
+            let (m, of) = most.get();
+            if looks.saturating_mul(of.max(1)) > m.saturating_mul(boxes.max(1)) {
+                most.set((looks, boxes));
+            }
+        });
+        let (most, of) = self.looks.get();
+        if looks.saturating_mul(of.max(1)) > most.saturating_mul(boxes.max(1)) {
+            self.looks.set((looks, boxes));
+        }
+    }
+
+    /// Whether the frame can still take `steps` glyph steps within its
+    /// budget, less what is held back for [`untouched`] (ruling R48.2).
+    fn affords(&self, steps: usize) -> bool {
+        self.spent
+            .get()
+            .saturating_add(self.reserve.get())
+            .saturating_add(steps)
+            <= self.budget.get()
     }
 
     /// Count walking `clusters` clusters in R27's arithmetic.
@@ -1828,6 +1891,11 @@ struct SideOrnament<'a> {
     /// The frame's work, which its lays count against (rulings R44.2,
     /// R44.3).
     work: &'a Work,
+    /// The ink boxes the touch check of the arc being laid weighs besides
+    /// its own copies: the text's and the copies already laid.
+    base: Cell<usize>,
+    /// The glyphs of one copy, each an ink box at most.
+    per_copy: usize,
 }
 
 impl<'a> SideOrnament<'a> {
@@ -1841,9 +1909,23 @@ impl<'a> SideOrnament<'a> {
                 ..line_walk(&layout.halves.paths[0], run, layout.outward)
             },
             glyphs: &run.glyphs,
+            per_copy: range.len(),
             clusters: clusters_of(&run.glyphs, range),
             work: &layout.work,
+            base: Cell::new(0),
         }
+    }
+
+    /// Whether the frame can afford `copies` copies of the arc being laid
+    /// and the touch check of them after (ruling R48.2): the check's glyph
+    /// steps at [`TOUCH_LOOKS_A_BOX`] looks a box ([`check_steps`]) held
+    /// back from what the budget has left.
+    fn affords(&self, copies: usize) -> bool {
+        let boxes = self
+            .base
+            .get()
+            .saturating_add(copies.saturating_mul(self.per_copy));
+        self.work.affords(check_steps(boxes))
     }
 
     /// Count `copies` copies laid against the frame's glyph steps.
@@ -1891,6 +1973,9 @@ struct SideArc<'s> {
     /// `ca`.
     ca: f32,
     cb: f32,
+    /// Whether a lay or a solve of the arc stopped because the frame
+    /// could not afford more (ruling R48.2).
+    stopped: Cell<bool>,
 }
 
 impl<'s> SideArc<'s> {
@@ -1917,6 +2002,7 @@ impl<'s> SideArc<'s> {
             floor: side.arc_floor()?,
             ca,
             cb,
+            stopped: Cell::new(false),
         })
     }
 
@@ -1924,15 +2010,17 @@ impl<'s> SideArc<'s> {
     /// first ink `gap` from `from`'s, each next ink `gap` from the last, a
     /// space owing its advance and `gap` more. Returns the lay, how far
     /// the last ink is from `to` and where along the path its center lies,
-    /// and whether all `n` copies were laid: the frame's budget is read
-    /// before each copy after the first (rulings R44.2, R47.2), the
-    /// first's read by the caller, and a lay that finds it spent stops.
+    /// and whether all `n` copies were laid: before each copy after the
+    /// first the frame must afford the copies and their touch check
+    /// ([`SideOrnament::affords`], rulings R47.2, R48.2), the first's
+    /// read by the caller, and a lay that finds it cannot stops.
     ///
     /// Cost: a [`PathWalk::ink_point`] or a few a glyph.
     fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32), bool) {
         let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
         for k in 0..n {
-            if k > 0 && self.side.work.spent_all() {
+            if k > 0 && !self.side.affords(k + 1) {
+                self.stopped.set(true);
                 let end = self.end_of(&lay);
                 return (lay, end, false);
             }
@@ -1986,8 +2074,9 @@ impl<'s> SideArc<'s> {
     /// place. Copies are laid in a row, each set on from the last, so the
     /// first `k` of any row are `k` copies laid on their own: this one lay
     /// tells every copy count's room at the floor (ruling R44.3). `None`
-    /// when the frame's budget is spent before the row is laid: the
-    /// budget is read before each copy (rulings R44.2, R47.2).
+    /// when the frame cannot afford the row: before each copy it must
+    /// afford the copies and their touch check ([`SideOrnament::affords`],
+    /// rulings R47.2, R48.2).
     ///
     /// Cost: one lay of the copies that fit and the one that does not.
     fn floor_row(&self, most: usize) -> Option<(Vec<PlacedGlyph>, Vec<(f32, usize)>)> {
@@ -1995,7 +2084,7 @@ impl<'s> SideArc<'s> {
         let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
         let mut rooms = Vec::new();
         while rooms.len() < most.min(MAX_SIDE_COPIES) {
-            if self.side.work.spent_all() {
+            if !self.side.affords(rooms.len() + 1) {
                 return None;
             }
             for cluster in &self.side.clusters {
@@ -2040,14 +2129,17 @@ impl<'s> SideArc<'s> {
     ///
     /// Cost: a lay of `n` copies a widening, and [`falsi`]'s, at most
     /// [`SIDE_ROUNDS`]; none at all where the floor is the answer.
-    fn solve(&self, n: usize, at_floor: f32, floor_out: Vec<PlacedGlyph>) -> (f32, Vec<PlacedGlyph>) {
+    fn solve(&self, n: usize, at_floor: f32, floor_out: Vec<PlacedGlyph>) -> (f32, Vec<PlacedGlyph>, bool) {
         let gaps = self.gaps(n);
         // As precise as the copies' inks are set: each to within the
         // pairwise rule's tolerance, as a line's end is ([`line_tolerance`]).
         let tolerance = resolved(SIDE_PRECISION, self.cb).max(gaps * INK_TOLERANCE);
         if at_floor <= tolerance {
-            return (self.floor, floor_out);
+            return (self.floor, floor_out, true);
         }
+        // Each probe's gap and how far it misses, so that the answer is
+        // known to hold the equal-gap rule or not.
+        let probes: std::cell::RefCell<Vec<(f32, f32)>> = std::cell::RefCell::new(Vec::new());
         // A room of none fits, and reads as positive to `falsi`. A miss
         // whose last ink touches `to`'s, or is set past its center, reads
         // as at least twice the tolerance short, so `falsi` never takes it
@@ -2071,9 +2163,18 @@ impl<'s> SideArc<'s> {
             } else {
                 v
             };
+            probes.borrow_mut().push((gap, v));
             (v, lay.out)
         };
-        let stop = || self.side.work.spent_all();
+        // The frame cannot afford `n` copies and their touch check: the
+        // search stops (ruling R48.2).
+        let stop = || {
+            let stopped = !self.side.affords(n);
+            if stopped {
+                self.stopped.set(true);
+            }
+            stopped
+        };
         let mut low = (self.floor, at_floor, floor_out);
         let mut g = self.straight(n, at_floor) + (at_floor / gaps) * 1e-3 + f32::MIN_POSITIVE;
         for _ in 0..TRACK_DOUBLINGS {
@@ -2082,7 +2183,7 @@ impl<'s> SideArc<'s> {
             }
             let (v, out) = room(g);
             if v < 0.0 {
-                return falsi(
+                let (gap, out) = falsi(
                     room,
                     low,
                     (g, v, out),
@@ -2091,15 +2192,20 @@ impl<'s> SideArc<'s> {
                     SIDE_ROUNDS,
                     &stop,
                 );
+                let exact = probes
+                    .borrow()
+                    .iter()
+                    .any(|&(at, v)| at.to_bits() == gap.to_bits() && v.abs() <= tolerance);
+                return (gap, out, exact);
             }
             if v <= tolerance {
-                return (g, out);
+                return (g, out, true);
             }
             let next = (g + v / gaps * (1.0 + 1e-3)).max(g * 1.125);
             low = (g, v, out);
             g = next;
         }
-        (low.0, low.2)
+        (low.0, low.2, false)
     }
 
     /// Fill the arc (ruling R33.1): the whole number of copies whose
@@ -2108,8 +2214,10 @@ impl<'s> SideArc<'s> {
     /// the most that fit at the target and one more, whose gap is
     /// narrower — every gap and both joins equal. Nothing when not even
     /// one copy fits, or the budget holds none. Nothing, and `false`, when
-    /// the frame's work budget is spent before the floor's row is laid
-    /// (rulings R44.2, R47.2): the arc is left empty.
+    /// the frame cannot afford the copies and their touch check
+    /// ([`SideOrnament::affords`], rulings R47.2, R48.2): before the
+    /// floor's row is laid, or before its search ends, where the copies
+    /// it has do not hold the equal-gap rule. The arc is left empty.
     ///
     /// The two counts weighed are those whose gaps bracket the target:
     /// guessed from the floor's row by the straight path, then moved a
@@ -2138,7 +2246,7 @@ impl<'s> SideArc<'s> {
         if fit == 0 {
             return true;
         }
-        let mut solved: Vec<Option<(f32, Vec<PlacedGlyph>)>> = vec![None; fit + 1];
+        let mut solved: Vec<Option<(f32, Vec<PlacedGlyph>, bool)>> = vec![None; fit + 1];
         let mut solve = |n: usize| -> f32 {
             if solved[n].is_none() {
                 let (room, len) = rooms[n - 1];
@@ -2154,14 +2262,20 @@ impl<'s> SideArc<'s> {
             .clamp(1, fit);
         let mut n = guess;
         // Down while `n` copies do not reach the target, up while one more
-        // still does: the pair whose gaps bracket it, or an end. A spent
-        // budget leaves the guess as it stands, its gaps solved no wider
-        // than found to fit.
-        let spent = || self.side.work.spent_all();
-        while n > 1 && solve(n) < target && !spent() {
+        // still does: the pair whose gaps bracket it, or an end. A frame
+        // that cannot afford `k` copies and their check stops the search
+        // where it stands (ruling R48.2).
+        let short = |k: usize| {
+            let short = !self.side.affords(k);
+            if short {
+                self.stopped.set(true);
+            }
+            short
+        };
+        while n > 1 && solve(n) < target && !short(n) {
             n -= 1;
         }
-        while n < fit && solve(n + 1) >= target && !spent() {
+        while n < fit && solve(n + 1) >= target && !short(n + 1) {
             n += 1;
         }
         let mut best = (n, solve(n));
@@ -2171,10 +2285,17 @@ impl<'s> SideArc<'s> {
                 best = (n + 1, wider);
             }
         }
-        if let Some((_, glyphs)) = solved[best.0].take() {
-            out.extend(glyphs);
+        // A search the frame could not afford to finish keeps its copies
+        // only where they hold the equal-gap rule; else the arc is left
+        // empty, and reported (ruling R48.2).
+        match solved[best.0].take() {
+            Some((_, _, false)) if self.stopped.get() => false,
+            Some((_, glyphs, _)) => {
+                out.extend(glyphs);
+                true
+            }
+            None => true,
         }
-        true
     }
 }
 
@@ -2571,20 +2692,23 @@ fn overlapping(lines: &[Line], work: &Work) -> bool {
 /// Whether two of `boxes` touch — no more than [`TOUCH`] apart
 /// ([`box_gap`]) — but for the pairs `exempt` excuses, each box known by
 /// its key ([`touch_scan`]): each box and each pair of them looked at
-/// counted against `work` (ruling R46.1), [`BOXES_A_STEP`] a step.
+/// counted against `work` (rulings R46.1, R48.1), [`BOXES_A_STEP`] a
+/// step in its sweep and [`STRIPPED_A_STEP`] past it.
 fn touching<K: Copy>(boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool, work: &Work) -> bool {
     let mut looked = Looked::default();
     let touches = touch_scan(&boxes, &exempt, &mut looked);
     #[cfg(test)]
     BOXES_WEIGHED.with(|count| count.set(count.get() + looked.swept + looked.stripped));
-    // The strips' looks at the sweep's weight, though they cost more a
-    // look under ASan (see `BOXES_A_STEP`): pending a ruling on #294.
-    work.take(weighing_steps(
-        boxes
-            .len()
-            .saturating_add(looked.swept)
-            .saturating_add(looked.stripped),
-    ));
+    work.take(weighing_steps(boxes.len().saturating_add(looked.swept)));
+    if looked.stripped > 0 {
+        work.take(
+            boxes
+                .len()
+                .saturating_add(looked.stripped)
+                .div_ceil(STRIPPED_A_STEP),
+        );
+    }
+    work.looked(looked.swept.saturating_add(looked.stripped), boxes.len());
     touches
 }
 
@@ -3520,6 +3644,7 @@ pub(super) fn place_halves(
             trace.spent = work.spent.get();
             trace.budget = work.budget.get();
             trace.glyphs = work.glyphs.get();
+            trace.looks = work.looks.get();
         }
         placed
     };
@@ -3832,8 +3957,9 @@ pub(super) fn place_halves(
             let budget = glyph_cap().saturating_sub(text.len() + sides.len());
             if let Some(arc) = side.arc(from, to) {
                 let before = sides.len();
-                // An arc the frame's budget is spent before is left
-                // empty, and reported (rulings R44.2, R47.2).
+                side.base.set(text_boxes.len().saturating_add(before));
+                // An arc the frame cannot afford to lay and check is left
+                // empty, and reported (rulings R47.2, R48.2).
                 if !arc.fill(target, budget, &mut sides) {
                     unheld.sides.extend((0..2).filter(|&j| at[j]));
                     continue;
@@ -3900,6 +4026,7 @@ pub(super) fn place_halves(
         trace.spent = lay.work.spent.get();
         trace.budget = lay.work.budget.get();
         trace.glyphs = lay.work.glyphs.get();
+        trace.looks = lay.work.looks.get();
     }
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;
@@ -4027,7 +4154,7 @@ pub(crate) fn side_solve_seam(
     let arc = side.arc(point(ja), point(jb))?;
     let (row, rooms) = arc.floor_row(n)?;
     let &(room, len) = rooms.get(n.checked_sub(1)?)?;
-    let (gap, _) = arc.solve(n, room, row[..len].to_vec());
+    let (gap, _, _) = arc.solve(n, room, row[..len].to_vec());
     let (_, (end, at), _) = arc.lay(n, gap);
     Some((gap, at >= arc.cb || end.is_nan() || end <= TOUCH))
 }

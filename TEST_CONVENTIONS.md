@@ -812,9 +812,12 @@ bounded by its budget, `max(400,000, 3,000 × glyphs)` steps, and by
 what its weights allow past it, one build's shaping and inking and a
 lay of each line (`frame_work_steps`, R47.2): the budget is read before
 each build, reshape and lay, and before each copy of a side ornament,
-so once it is spent nothing runs that the overshoot does not count
-(the `PAST_BUDGET` grid in `flow/tests/budget_tests.rs` holds every
-fit mode, span, kind of sides and direction to it). A counted step costs at
+which also holds back the cost of its arc's touch check at
+`TOUCH_LOOKS_A_BOX` looks a box (R48.2), so once it is spent nothing
+runs that the overshoot does not count (the `PAST_BUDGET` grid in
+`flow/tests/budget_tests.rs` holds every fit mode, span, kind of sides
+and direction to it). Every flow fuzz frame is held to that bound on
+looks a box too, so a geometry that breaks it is a finding. A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
 1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
 An input's worst case is the sum of its frames' work at that cost, and

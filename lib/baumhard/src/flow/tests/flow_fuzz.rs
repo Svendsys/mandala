@@ -51,7 +51,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
-use crate::flow::place::halves::{frame_budget, frame_work_steps};
+use crate::flow::place::halves::{frame_budget, frame_work_steps, TOUCH_LOOKS_A_BOX};
 use crate::flow::place::{frame_halves, place_on_closed_traced, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
@@ -176,8 +176,10 @@ impl InputWork {
     /// Count a frame of `run` (sides shaped as `ornament`, a `Fit` frame
     /// `sized`), laid with `trace`: the most it may take,
     /// `frame_work_steps`. The engine scales a frame's budget by its
-    /// text's glyphs once cut, never more than the run has, and spends
-    /// no more than its budget and its overshoot: properties.
+    /// text's glyphs once cut, never more than the run has, spends no
+    /// more than its budget and its overshoot, and no touch check of it
+    /// looks at more than `TOUCH_LOOKS_A_BOX` pairs a box, which that
+    /// overshoot rests on (ruling R48.2): properties.
     pub(crate) fn frame(
         &mut self,
         run: &ShapedRun,
@@ -188,6 +190,12 @@ impl InputWork {
     ) -> Result<(), String> {
         let budget = frame_budget(run.glyphs.len());
         let most = frame_work_steps(run, ornament, sized);
+        if trace.looks.0 > TOUCH_LOOKS_A_BOX.saturating_mul(trace.looks.1) {
+            return Err(format!(
+                "{what}: a touch check looked at {} pairs of {} boxes, past {TOUCH_LOOKS_A_BOX} a box (ruling R48.2)",
+                trace.looks.0, trace.looks.1
+            ));
+        }
         if trace.budget > budget {
             return Err(format!(
                 "{what}: a frame budgeted {} glyph steps, past the {budget} its {} glyphs give",

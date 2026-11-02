@@ -853,7 +853,7 @@ fn test_flow_halves_hold_on_every_aspect() {
 /// The aspect sweep's work, from one run of it shared by the tests that
 /// read it: the sweep counts on the thread that runs it.
 #[cfg(test)]
-fn the_sweep() -> &'static SweepWork {
+pub(crate) fn the_sweep() -> &'static SweepWork {
     static SWEEP: std::sync::OnceLock<SweepWork> = std::sync::OnceLock::new();
     SWEEP.get_or_init(do_flow_halves_hold_on_every_aspect)
 }
@@ -1000,6 +1000,9 @@ pub struct SweepWork {
     /// The most glyph steps a frame took a glyph of its text, rounded up
     /// (ruling R44.2).
     pub most_per_glyph: usize,
+    /// The most pairs a frame's touch check looked at a box: its looks
+    /// and its boxes (`Trace::looks`, ruling R48.2).
+    pub most_looks: (usize, usize),
     /// The rounds a letter was moved clear of an ink before its neighbor,
     /// and of them the rounds that left it where it was (ruling R44.7).
     pub earlier: (usize, usize),
@@ -1193,6 +1196,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                             work.steps += trace.spent;
                             work.most_per_glyph =
                                 work.most_per_glyph.max(trace.spent.div_ceil(trace.glyphs.max(1)));
+                            work.most_looks = more_looks(work.most_looks, trace.looks);
                             work.lookups += lookups_so_far() - looked;
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
                                 shrunk += 1;
@@ -2357,7 +2361,7 @@ pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
 /// each took: its trace's glyph steps, and the path lookups its
 /// placement made. `Repeat` rings take no glyph step and are left out.
 #[cfg(test)]
-fn demo_map_frames() -> Vec<(String, usize, usize)> {
+pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, (usize, usize))> {
     use crate::arena::NodeId;
     use crate::document::element::{DocElement, DocKind};
     use crate::document::format::load;
@@ -2488,6 +2492,7 @@ fn demo_map_frames() -> Vec<(String, usize, usize)> {
                             format!("{name} node {} ring {k}", data.ident.0),
                             trace.spent,
                             lookups,
+                            trace.looks,
                         ));
                     }
                 }
@@ -2495,6 +2500,52 @@ fn demo_map_frames() -> Vec<(String, usize, usize)> {
         }
     }
     out
+}
+
+/// Of two touch checks' looks and boxes, the one that looked at more
+/// pairs a box.
+pub(crate) fn more_looks(a: (usize, usize), b: (usize, usize)) -> (usize, usize) {
+    if b.0 * a.1.max(1) > a.0 * b.1.max(1) {
+        b
+    } else {
+        a
+    }
+}
+
+/// R48.2: no touch check of the aspect sweep's frames or the demo maps'
+/// looks at more than `TOUCH_LOOKS_MEASURED` pairs a box, and
+/// `TOUCH_LOOKS_A_BOX`, what a side arc holds back for its check, is
+/// twice that: the most measured, 5.41 (552 looks over 102 boxes, a check
+/// whose sweep ran past `SWEEP_PAIRS` and laid its boxes in strips),
+/// rounded up to 6. The budget grids hold their frames to the bound
+/// (`flow::tests::budget_tests`), and the flow fuzz property every
+/// committed finding and fuzzed frame.
+///
+/// Control: with the measured bound at 5, red. (No `do_*` twin: it reads
+/// the sweep's traces.)
+#[test]
+fn test_flow_halves_a_touch_check_looks_at_few_pairs_a_box() {
+    use crate::flow::place::halves::{TOUCH_LOOKS_A_BOX, TOUCH_LOOKS_MEASURED};
+    let mut most = the_sweep().most_looks;
+    for (_, _, _, looks) in demo_map_frames() {
+        most = more_looks(most, looks);
+    }
+    let (looks, boxes) = most;
+    assert!(
+        looks > 0 && boxes > 0,
+        "precondition: the frames' touch checks are traced ({looks} looks over {boxes} boxes)"
+    );
+    assert!(
+        looks <= TOUCH_LOOKS_MEASURED * boxes,
+        "a touch check looked at {looks} pairs of {boxes} boxes, {:.2} a box, past the {TOUCH_LOOKS_MEASURED} measured (TOUCH_LOOKS_A_BOX, {TOUCH_LOOKS_A_BOX}, is ×{:.2} it)",
+        looks as f64 / boxes as f64,
+        TOUCH_LOOKS_A_BOX as f64 * boxes as f64 / looks as f64
+    );
+    assert_eq!(
+        TOUCH_LOOKS_A_BOX,
+        2 * TOUCH_LOOKS_MEASURED,
+        "twice the most measured"
+    );
 }
 
 /// R43.1 on the README's demo maps: their frames' glyph steps take at
@@ -2514,11 +2565,11 @@ fn test_flow_halves_a_glyph_step_of_the_demo_maps_takes_few_path_lookups() {
     let frames = demo_map_frames();
     let most_step = most_step_lookups(0);
     assert!(
-        frames.len() >= 5 && frames.iter().all(|(_, spent, _)| *spent > 0),
+        frames.len() >= 5 && frames.iter().all(|(_, spent, _, _)| *spent > 0),
         "precondition: the four demo maps' five frames are laid and counted: {frames:?}"
     );
-    let steps: usize = frames.iter().map(|(_, spent, _)| spent).sum();
-    let lookups: usize = frames.iter().map(|(_, _, lookups)| lookups).sum();
+    let steps: usize = frames.iter().map(|(_, spent, _, _)| spent).sum();
+    let lookups: usize = frames.iter().map(|(_, _, lookups, _)| lookups).sum();
     assert!(
         lookups <= MEAN_STEP_LOOKUPS * steps,
         "the demo maps' frames: {lookups} path lookups for {steps} glyph steps, {:.1} a step, at most {MEAN_STEP_LOOKUPS}: {frames:?}",
@@ -2528,7 +2579,7 @@ fn test_flow_halves_a_glyph_step_of_the_demo_maps_takes_few_path_lookups() {
         most_step <= MOST_STEP_LOOKUPS,
         "the demo maps' frames: a glyph step took {most_step} path lookups, at most {MOST_STEP_LOOKUPS}"
     );
-    for (what, spent, _) in &frames {
+    for (what, spent, _, _) in &frames {
         assert!(
             *spent <= SWEEP_MOST_STEPS,
             "{what}: {spent} glyph steps, at most {SWEEP_MOST_STEPS}"
@@ -2943,9 +2994,12 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 /// 1f1b3f8e, when a sweep along one axis weighed every copy down a
 /// straight side against every other).
 ///
-/// At its own budget, 400,000, each fills its first arc until the budget
-/// is spent, leaves its second unfilled and reported, and takes no more
-/// past its budget than `overshoot_steps` (rulings R44.2, R47.2).
+/// At its own budget, 400,000, neither can afford its arcs and the touch
+/// check of them (some 34,000 copies each, the check held back at
+/// `TOUCH_LOOKS_A_BOX` looks a box): each lays its text whole, leaves both
+/// arcs empty and reported — a frame loses its sides before its text
+/// (ruling R48.3) — and takes no more past its budget than
+/// `overshoot_steps` (rulings R44.2, R47.2, R48.2).
 ///
 /// Controls: with the gap bisected in 30 lays again, past the lookups'
 /// bound; with the sweep along one axis again, past the pairs' round the
@@ -2996,8 +3050,10 @@ fn a_long_side_ornament(shape: Shape, what: &str) {
     let (_, placed, trace) = lay();
     let past = PAST_BUDGET.with(std::cell::Cell::get);
     assert!(
-        placed.glyphs.len() > 30_000 && trace.unheld.sides == [1],
-        "precondition, {what}: at its own budget the first arc is filled and the second reported ({} glyphs, {:?})",
+        placed.glyphs.len() >= text.chars().filter(|c| !c.is_whitespace()).count()
+            && trace.unheld.sides == [0, 1]
+            && !placed.truncated,
+        "{what}: at its own budget, which cannot hold the check of either arc, the text is laid whole and both arcs are left empty and reported ({} glyphs, {:?})",
         placed.glyphs.len(),
         trace.unheld
     );

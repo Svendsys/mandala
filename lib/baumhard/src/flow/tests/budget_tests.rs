@@ -9,7 +9,8 @@ use glam::Vec2;
 
 use crate::document::values::{FitMode, LineSpan, Percent, Rgba, Shape};
 use crate::flow::place::halves::{
-    overshoot_steps, spent_seam, untouched_steps, BUDGET_OVERRIDE, PAST_BUDGET, UNTOUCHED_TAKEN,
+    overshoot_steps, spent_seam, untouched_steps, BUDGET_OVERRIDE, PAST_BUDGET, TOUCH_LOOKS_A_BOX,
+    UNTOUCHED_TAKEN,
 };
 use crate::flow::tests::flow_fuzz::ornament_run;
 use crate::flow::tests::halves_tests::{frame_with, with_seam, QUATRAIN};
@@ -58,6 +59,9 @@ struct Past {
     overlap: bool,
     /// The most glyph steps an `untouched` of it took, and its estimate.
     untouched: (usize, usize),
+    /// The most pairs one of its touch checks looked at a box: its looks
+    /// and its boxes.
+    looks: (usize, usize),
 }
 
 /// The quatrain laid round `shape` in every fit mode, at each of `spans`,
@@ -115,6 +119,7 @@ fn grid(
                                 let (taken, inks) = UNTOUCHED_TAKEN.with(std::cell::Cell::get);
                                 (taken, untouched_steps(inks))
                             },
+                            looks: trace.looks,
                         });
                     }
                 }
@@ -126,8 +131,9 @@ fn grid(
 
 /// Hold every frame of the grid round `shape` to R47.2's bound: no more
 /// than `overshoot_steps` taken once its budget is spent, no more in all
-/// than its budget and that, no two inks touching, and an `untouched`
-/// within its share of the budget (R46.1). A small outline is
+/// than its budget and that, no two inks touching, an `untouched` within
+/// its share of the budget (R46.1), and no touch check looking at more
+/// than `TOUCH_LOOKS_A_BOX` pairs a box (R48.2). A small outline is
 /// laid at every span with no sides, a short ornament and a long one, at
 /// each of [`BUDGETS`]; a large one at span natural with the long
 /// ornament, at each of [`LARGE_BUDGETS`].
@@ -155,19 +161,23 @@ fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
     };
     let spent = frames.iter().filter(|f| f.past > 0).count();
     assert!(
-        spent * 2 >= frames.len(),
-        "precondition, {name}: most frames work past a spent budget ({spent} of {})",
+        spent * 4 >= frames.len(),
+        "precondition, {name}: a quarter of the frames or more work past a spent budget ({spent} of {})",
         frames.len()
     );
     let over: Vec<String> = frames
         .iter()
         .filter(|f| {
-            f.past > f.allowed || f.spent > f.held + f.allowed || f.overlap || f.untouched.0 > f.untouched.1
+            f.past > f.allowed
+                || f.spent > f.held + f.allowed
+                || f.overlap
+                || f.untouched.0 > f.untouched.1
+                || f.looks.0 > TOUCH_LOOKS_A_BOX * f.looks.1
         })
         .map(|f| {
             format!(
-                "{}: {} past the budget, {} in all, against {} past {} (overlap {}); `untouched` took {} of its {}",
-                f.what, f.past, f.spent, f.allowed, f.held, f.overlap, f.untouched.0, f.untouched.1
+                "{}: {} past the budget, {} in all, against {} past {} (overlap {}); `untouched` took {} of its {}; a touch check looked at {} pairs of {} boxes",
+                f.what, f.past, f.spent, f.allowed, f.held, f.overlap, f.untouched.0, f.untouched.1, f.looks.0, f.looks.1
             )
         })
         .collect();
