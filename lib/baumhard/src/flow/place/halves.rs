@@ -2073,7 +2073,7 @@ impl<'s> SideArc<'s> {
     /// rulings R47.2, R48.2).
     ///
     /// Cost: one lay of the copies that fit and the one that does not.
-    fn floor_row(&self, most: usize) -> Option<(Vec<PlacedGlyph>, Vec<(f32, usize)>)> {
+    fn floor_row(&self, most: usize) -> Option<FloorRow> {
         let gap = self.floor;
         let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap).after(self.start);
         let mut rooms = Vec::new();
@@ -2286,6 +2286,11 @@ impl<'s> SideArc<'s> {
         }
     }
 }
+
+/// A side arc's copies laid at the floor's gap ([`SideArc::floor_row`]):
+/// what they place, and for each count of them that fits the room it
+/// leaves and the glyphs it places.
+type FloorRow = (Vec<PlacedGlyph>, Vec<(f32, usize)>);
 
 /// A text ink a side arc runs from or to ([`side_arcs`]): its box, and
 /// where along the first half's path it is set.

@@ -370,6 +370,16 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_long_side_ornament_round_a_sharp_square_is_filled_in_few_lays",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_touch_check_looks_at_few_pairs_a_box",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_hold_on_every_aspect",
             CannotCompileIntoTheLibrary,
         ),
