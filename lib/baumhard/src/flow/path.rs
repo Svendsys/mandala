@@ -89,10 +89,15 @@ enum Stretch {
 /// `s`, or 0 when none is: `partition_point(|d| d <= s) − 1`, saturating.
 /// `cursor`, the index the last lookup found, is tried first, and the
 /// one after it: a walk goes forward a sample at a time, so each lookup
-/// of a walk is found there, and only a jump searches — the same index
-/// either way, so a lookup answers what a search would.
+/// of a walk is found there. A lookup a few samples off — the chord a
+/// frame's ink is pushed off along, either side of where it is set — is
+/// found by galloping from the cursor, the bracket doubled each probe and
+/// then searched; only a jump goes far. The same index every way, so a
+/// lookup answers what a search would (ruling R43: walk the arc table
+/// with a cursor everywhere).
 ///
-/// Cost: O(1) at the cursor or the next index; else a binary search.
+/// Cost: O(1) at the cursor or the next index; else O(log d) for an
+/// index `d` samples from the cursor.
 fn at_or_below(sorted: &[f32], s: f32, cursor: &Cell<usize>) -> usize {
     let holds = |i: usize| sorted[i] <= s;
     let is_last = |i: usize| i < sorted.len() && holds(i) && (i + 1 == sorted.len() || !holds(i + 1));
@@ -104,10 +109,55 @@ fn at_or_below(sorted: &[f32], s: f32, cursor: &Cell<usize>) -> usize {
     } else {
         #[cfg(test)]
         PATH_SEARCHES.with(|count| count.set(count.get() + 1));
-        sorted.partition_point(|&d| d <= s).saturating_sub(1)
+        gallop(sorted, s, hint)
     };
     cursor.set(found);
     found
+}
+
+/// [`at_or_below`]'s search from `hint`: the bracket round the last index
+/// at or below `s` doubled from `hint` the way it lies, then searched —
+/// the predicate `d <= s` is monotone in an ascending slice, so this is
+/// `partition_point(|d| d <= s) − 1`, saturating, found nearer.
+///
+/// Cost: O(log d) for an answer `d` from `hint`.
+fn gallop(sorted: &[f32], s: f32, hint: usize) -> usize {
+    let n = sorted.len();
+    if n == 0 {
+        return 0;
+    }
+    let holds = |i: usize| sorted[i] <= s;
+    let hint = hint.min(n - 1);
+    // `low` holds (or is the slice's start) and `high` does not (or is
+    // its end): the answer's partition point lies in `low..=high`.
+    let (low, high) = if holds(hint) {
+        let (mut low, mut step) = (hint, 1usize);
+        loop {
+            let probe = low.saturating_add(step);
+            if probe >= n {
+                break (low, n);
+            }
+            if !holds(probe) {
+                break (low, probe);
+            }
+            low = probe;
+            step = step.saturating_mul(2);
+        }
+    } else {
+        let (mut high, mut step) = (hint, 1usize);
+        loop {
+            if high == 0 {
+                break (0, 0);
+            }
+            let probe = high.saturating_sub(step);
+            if holds(probe) {
+                break (probe, high);
+            }
+            high = probe;
+            step = step.saturating_mul(2);
+        }
+    };
+    (low + sorted[low..high].partition_point(|&d| d <= s)).saturating_sub(1)
 }
 
 impl Stretch {
@@ -435,7 +485,9 @@ impl ArcPath {
             return 0.0;
         }
         let step = self.length / NEAREST_SAMPLES as f32;
-        let distance = |s: f32| self.at(s).0.distance_squared(p);
+        // Not squared: on an outline some 10³⁷ across every squared
+        // distance is infinite, and the first sample was taken for all.
+        let distance = |s: f32| length_of(self.at(s).0 - p);
         let mut best = (f32::INFINITY, 0.0_f32);
         for k in 0..=NEAREST_SAMPLES {
             let s = step * k as f32;
@@ -469,6 +521,173 @@ impl ArcPath {
         } else {
             found
         }
+    }
+
+    /// Where along the path the point `p` lies, for a point of the
+    /// outline the path was built from — one its own geometry answers,
+    /// such as a support point ([`Outline::support`]) — found from each
+    /// stretch's geometry: its projection on a side, its angle on a
+    /// corner or a circle, its parameter on an ellipse's table, held to
+    /// the stretch's ends; of the stretches, the one it lies nearest,
+    /// ties to the first. At no path lookup, where
+    /// [`nearest`](Self::nearest) samples the whole path (ruling R43).
+    /// `None` where a stretch has no such form — a Bézier's table — or
+    /// `p` is not finite, for `nearest` to answer instead; `0.0` for an
+    /// empty path, as `nearest` answers.
+    ///
+    /// Cost: O(stretches), and a binary search of an ellipse's table.
+    pub(crate) fn locate(&self, p: Vec2) -> Option<f32> {
+        if !p.is_finite() {
+            return None;
+        }
+        if self.stretches.is_empty() {
+            return Some(0.0);
+        }
+        let tau = std::f32::consts::TAU;
+        let mut best: Option<(f32, f32)> = None;
+        for (stretch, &start) in self.stretches.iter().zip(&self.starts) {
+            let (local, at) = match stretch {
+                Stretch::Line { from, dir, len } => {
+                    let t = (p - *from).dot(*dir).clamp(0.0, *len);
+                    (t, *from + *dir * t)
+                }
+                Stretch::Arc {
+                    center,
+                    radius,
+                    angle,
+                    turn,
+                    len,
+                } => {
+                    let a = (p.y - center.y).atan2(p.x - center.x);
+                    let swept = ((a - angle) * turn).rem_euclid(tau) * radius;
+                    // Past the arc's end: its nearer end.
+                    let t = if swept <= *len {
+                        swept
+                    } else if tau * radius - swept < swept - len {
+                        0.0
+                    } else {
+                        *len
+                    };
+                    (t, stretch.at(t).0)
+                }
+                Stretch::Table {
+                    param: Param::Ellipse { center, radii },
+                    params,
+                    distances,
+                    ..
+                } => {
+                    let (Some(&first), Some(&last)) = (params.first(), params.last()) else {
+                        continue;
+                    };
+                    let rising = last >= first;
+                    let phi = ((p.y - center.y) / radii.y).atan2((p.x - center.x) / radii.x);
+                    // The parameter's turn the table walks.
+                    let sign = if rising { 1.0 } else { -1.0 };
+                    let phi = first + ((phi - first) * sign).rem_euclid(tau) * sign;
+                    let below = |t: f32| if rising { t <= phi } else { t >= phi };
+                    let i = params
+                        .partition_point(|&t| below(t))
+                        .saturating_sub(1)
+                        .min(params.len().saturating_sub(2));
+                    let (t0, t1) = (params[i], params[(i + 1).min(params.len() - 1)]);
+                    let (d0, d1) = (distances[i], distances[(i + 1).min(distances.len() - 1)]);
+                    let frac = if t1 != t0 {
+                        ((phi - t0) / (t1 - t0)).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let local = d0 + (d1 - d0) * frac;
+                    let point = Param::Ellipse {
+                        center: *center,
+                        radii: *radii,
+                    }
+                    .point(t0 + (t1 - t0) * frac);
+                    (local, point)
+                }
+                Stretch::Table { .. } => return None,
+            };
+            // Measured so that an outline some 10³⁷ across, whose squared
+            // distances pass every `f32`, still tells near from far.
+            let d = length_of(at - p);
+            if best.is_none_or(|(near, _)| d < near) {
+                best = Some((d, start + local));
+            }
+        }
+        best.map(|(_, s)| s)
+    }
+
+    /// Where along the path within `reach` of `guess` the point nearest
+    /// `p` lies: [`NEAR_SAMPLES`] samples across `guess ± reach`, then a
+    /// golden-section search between the best sample's neighbors, each of
+    /// its rounds one lookup, until the bracket is within [`NEAR_WIDTH`].
+    /// On a closed path the result is in `0.0..length`; on an open one
+    /// within its ends. What a point set near `guess` is looked for with
+    /// — a text ink set at `guess` along a convex outline and pushed off
+    /// it by no more than its own half size, whose nearest point is
+    /// within its diagonal of where it is set — at a cost that is the
+    /// ink's, not the path's: [`nearest`](Self::nearest) samples the
+    /// whole path (ruling R43). `guess`, held to the path, where `reach`
+    /// is not a positive number or the path is empty; `0.0` where `guess`
+    /// is not a number either.
+    ///
+    /// Cost: [`NEAR_SAMPLES`] `+ 1` path lookups and [`NEAR_ROUNDS`] more
+    /// at most.
+    pub(crate) fn nearest_near(&self, p: Vec2, guess: f32, reach: f32) -> f32 {
+        let closed = self.winding != 0.0;
+        let held = |s: f32| {
+            if closed {
+                s.rem_euclid(self.length)
+            } else {
+                s.clamp(0.0, self.length)
+            }
+        };
+        if !guess.is_finite() {
+            return 0.0;
+        }
+        // A length or a reach that is not a positive number is none.
+        let positive = |v: f32| v.partial_cmp(&0.0) == Some(std::cmp::Ordering::Greater);
+        if self.stretches.is_empty() || !positive(self.length) || !positive(reach) || !reach.is_finite() {
+            return if self.stretches.is_empty() {
+                0.0
+            } else {
+                held(guess)
+            };
+        }
+        let distance = |s: f32| length_of(self.at(s).0 - p);
+        let step = 2.0 * reach / NEAR_SAMPLES as f32;
+        let from = guess - reach;
+        let mut best = (f32::INFINITY, guess);
+        for k in 0..=NEAR_SAMPLES {
+            let s = from + step * k as f32;
+            let d = distance(s);
+            if d < best.0 {
+                best = (d, s);
+            }
+        }
+        let (mut low, mut high) = (best.1 - step, best.1 + step);
+        if !closed {
+            (low, high) = (low.max(0.0), high.min(self.length));
+        }
+        // Golden section, the inner point the round keeps reused.
+        let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
+        let mut a = high - ratio * (high - low);
+        let mut b = low + ratio * (high - low);
+        let (mut da, mut db) = (distance(a), distance(b));
+        for _ in 0..NEAR_ROUNDS {
+            if !(high - low).gt(&NEAR_WIDTH) {
+                break;
+            }
+            if da <= db {
+                (high, b, db) = (b, a, da);
+                a = high - ratio * (high - low);
+                da = distance(a);
+            } else {
+                (low, a, da) = (a, b, db);
+                b = low + ratio * (high - low);
+                db = distance(b);
+            }
+        }
+        held(low.midpoint(high))
     }
 
     /// The outward unit normal beside `tangent`, for a closed path: the
@@ -521,6 +740,20 @@ pub(crate) const NEAREST_SAMPLES: usize = 2048;
 /// its best sample with: a bracket of two samples closes by a factor of
 /// about 10⁷.
 pub(crate) const NEAREST_ROUNDS: usize = 34;
+
+/// How many samples [`ArcPath::nearest_near`] takes across its reach.
+pub(crate) const NEAR_SAMPLES: usize = 8;
+
+/// The most rounds of golden-section search [`ArcPath::nearest_near`]
+/// refines its best sample with, one lookup each: a bracket of two
+/// samples closes by a factor of about 10⁷.
+pub(crate) const NEAR_ROUNDS: usize = 34;
+
+/// How narrow [`ArcPath::nearest_near`] closes its bracket, by arc
+/// length: a thousandth of a point turns an outline's normal there by
+/// a thousandth of its curvature, nothing a junction's 135° test or an
+/// arc's ends can tell.
+pub(crate) const NEAR_WIDTH: f32 = 1e-3;
 
 /// A table walking `param` from `from` to `to`, its samples close
 /// enough that no neighbors are more than `spacing` apart, given that the

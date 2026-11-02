@@ -13,7 +13,7 @@ use glam::Vec2;
 use crate::document::resolve::{ResolvedRing, ResolvedSides};
 use crate::document::values::{Direction, Edge, FitMode, LineSpan, Percent, Rgba, Shape, StartPoint};
 use crate::flow::path::ArcPath;
-use crate::flow::place::halves::{halves_seam, room_seam, side_floor_seam, track_seam};
+use crate::flow::place::halves::{end_seam, halves_seam, room_seam, side_floor_seam, track_seam};
 use crate::flow::place::{place_lines, place_on_closed_traced, Trace, INK_TOLERANCE, MIN_TABLE_SPACING};
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{outline, Outline, PlacedGlyph, PlacedRun, Rect, RingLayout, ShapedRun, FILLER_SPAN};
@@ -847,7 +847,143 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
 
 #[test]
 fn test_flow_halves_hold_on_every_aspect() {
-    do_flow_halves_hold_on_every_aspect();
+    the_sweep();
+}
+
+/// The aspect sweep's work, from one run of it shared by the tests that
+/// read it: the sweep counts on the thread that runs it.
+#[cfg(test)]
+fn the_sweep() -> &'static SweepWork {
+    static SWEEP: std::sync::OnceLock<SweepWork> = std::sync::OnceLock::new();
+    SWEEP.get_or_init(do_flow_halves_hold_on_every_aspect)
+}
+
+/// The most glyph steps one frame of the aspect sweep may take (ruling
+/// R43.2): the worst real frame took 306,098 at 30411a6e — the
+/// quatrain inward round the 50:1 ellipse, `Fit` at span ½, re-laid
+/// round after round of a clearance that could not part two inks
+/// stacked across an outline thinner than they are, each lay some 20
+/// `track`s chasing a tolerance finer than its floats or its letters
+/// resolve. The worst now, the quatrain outward round the 600 × 12
+/// rectangle, `Once` at span ½, takes 36,670.
+pub const SWEEP_MOST_STEPS: usize = 50_000;
+
+/// The most path lookups a glyph step of a frame may take on the mean,
+/// over the aspect sweep's placements and the demo maps' frames, every
+/// lookup of the placement counted (ruling R43.1): 220 at 30411a6e.
+pub const MEAN_STEP_LOOKUPS: usize = 24;
+
+/// The most path lookups any one glyph step of a frame's line may take
+/// (ruling R43.1): `halves::PAIR_ROUNDS` inks tried, three lookups each.
+pub const MOST_STEP_LOOKUPS: usize = 64;
+
+/// R43.2: no frame of the aspect sweep takes more than
+/// [`SWEEP_MOST_STEPS`] glyph steps (`Trace::spent`).
+///
+/// Controls: with ends that overlap short by the boxes' distance alone,
+/// not their overlap's depth too, the worst frame takes 67,730; with a
+/// line's end held to `SHORT_TOLERANCE` however its letters are set,
+/// 62,264. (No `do_*` twin: it reads test counters.)
+#[test]
+fn test_flow_halves_no_frame_of_the_sweep_takes_more_than_50000_glyph_steps() {
+    let work = the_sweep();
+    assert!(
+        work.frames > 300,
+        "precondition: the sweep lays its frames ({})",
+        work.frames
+    );
+    assert!(
+        work.most_spent <= SWEEP_MOST_STEPS,
+        "the aspect sweep's worst frame, {}, took {} glyph steps, at most {SWEEP_MOST_STEPS}",
+        work.worst,
+        work.most_spent
+    );
+}
+
+/// R43.3: the sweep's worst frame stays under a tenth of the frame's
+/// [`TRACK_BUDGET`]: the budget cuts only pathological inputs, never
+/// real text.
+///
+/// Controls: with the budget a tenth of what it is, red; with a
+/// junction's step never aimed by what its last round gave, the worst
+/// frame takes 42,219; with a line's lay never warm-started from its
+/// last, 41,734. (No `do_*` twin: it reads test counters.)
+#[test]
+fn test_flow_halves_the_sweeps_worst_frame_takes_under_a_tenth_of_the_budget() {
+    use crate::flow::place::halves::TRACK_BUDGET;
+    let work = the_sweep();
+    assert!(
+        work.most_spent > 0,
+        "precondition: the sweep's frames are counted"
+    );
+    assert!(
+        work.most_spent * 10 < TRACK_BUDGET,
+        "the aspect sweep's worst frame took {} glyph steps, a tenth of the budget is {}",
+        work.most_spent,
+        TRACK_BUDGET / 10
+    );
+}
+
+/// R43.3: a frame's tracking budget is 400,000 glyph steps, ten times
+/// the aspect sweep's worst frame rounded up — not the 2^21 it was while
+/// a real frame took 306,098 — so that a pathological input's frame,
+/// laid to the budget at a glyph step's cost, finishes well inside the
+/// fuzzers' 20 s timeout. Control: with the budget 2^21 again, red.
+/// (No `do_*` twin: a constant has nothing to benchmark.)
+#[test]
+fn test_flow_halves_a_frames_track_budget_is_400000_glyph_steps() {
+    use crate::flow::place::halves::TRACK_BUDGET;
+    assert_eq!(TRACK_BUDGET, 400_000, "a frame's tracking budget, in glyph steps");
+}
+
+/// R43.1: over the aspect sweep's placements a glyph step takes at most
+/// [`MEAN_STEP_LOOKUPS`] path lookups on the mean — every lookup the
+/// placement makes counted, R27's sizing, the junctions' normals and
+/// the side arcs included — and no glyph step of a line more than
+/// [`MOST_STEP_LOOKUPS`].
+///
+/// Controls: with a junction's normals and a side arc's ends found by
+/// sampling the whole outline (`ArcPath::nearest`), 25.9 lookups a step;
+/// with a letter allowed 64 inks tried, a step takes 192. (No `do_*`
+/// twin: it reads test counters.)
+#[test]
+fn test_flow_halves_a_glyph_step_of_the_sweep_takes_few_path_lookups() {
+    let work = the_sweep();
+    assert!(
+        work.steps > 0 && work.most_step > 0,
+        "precondition: the sweep's steps are counted"
+    );
+    assert!(
+        work.lookups <= MEAN_STEP_LOOKUPS * work.steps,
+        "the aspect sweep: {} path lookups for {} glyph steps, {:.1} a step, at most {MEAN_STEP_LOOKUPS}",
+        work.lookups,
+        work.steps,
+        work.lookups as f64 / work.steps as f64
+    );
+    assert!(
+        work.most_step <= MOST_STEP_LOOKUPS,
+        "the aspect sweep: a glyph step took {} path lookups, at most {MOST_STEP_LOOKUPS}",
+        work.most_step
+    );
+}
+
+/// The aspect sweep's work, counted by its test counters: zero in a
+/// build that is not a test's.
+#[derive(Debug, Default)]
+pub struct SweepWork {
+    /// How many frames it laid.
+    pub frames: usize,
+    /// The most lines one frame tracked.
+    pub most_tracks: usize,
+    /// The most glyph steps one frame took (`Trace::spent`), and which.
+    pub most_spent: usize,
+    pub worst: String,
+    /// The glyph steps its frames took, and the path lookups their
+    /// placements made, in all.
+    pub steps: usize,
+    pub lookups: usize,
+    /// The most path lookups one glyph step of a line took.
+    pub most_step: usize,
 }
 
 /// The lines this thread has tracked (`halves::TRACKS`, a test
@@ -858,6 +994,28 @@ fn tracks_so_far() -> usize {
     return crate::flow::place::halves::TRACKS.with(std::cell::Cell::get);
     #[cfg(not(test))]
     0
+}
+
+/// The path lookups this thread has made (`path::PATH_LOOKUPS`, a test
+/// counter): none counted in a build that is not a test's.
+pub(crate) fn lookups_so_far() -> usize {
+    #[cfg(test)]
+    return crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    0
+}
+
+/// The most path lookups one glyph step of a frame's line has taken on
+/// this thread (`halves::MOST_STEP_LOOKUPS`, a test counter), and set it
+/// back to `to`: none in a build that is not a test's.
+pub(crate) fn most_step_lookups(to: usize) -> usize {
+    #[cfg(test)]
+    return crate::flow::place::halves::MOST_STEP_LOOKUPS.with(|most| most.replace(to));
+    #[cfg(not(test))]
+    {
+        let _ = to;
+        0
+    }
 }
 
 /// The halves' guarantees hold from a circle to an outline fifty times
@@ -877,11 +1035,12 @@ fn tracks_so_far() -> usize {
 /// frame laid inward whose two lines' inks are together taller than the
 /// outline may, and the rest must hold. Only such a frame may have a
 /// line cut apart (ruling R38.1), and some here are.
-pub fn do_flow_halves_hold_on_every_aspect() {
+pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
     /// The most lines a frame here may track (rulings R35.3, R38.3): the
-    /// most any does is 6,164, the Ecclesiastes text shrunk inward round
-    /// the 50:1 ellipse (10,534 before the shrink stopped at a useful
-    /// precision, ruling R42.2; 17,031 when a line's gap was bisected).
+    /// most any does is 598 (6,164 at 30411a6e, 10,534 before the shrink
+    /// stopped at a useful precision, ruling R42.2; 17,031 when a line's
+    /// gap was bisected). Ruling R43's bounds, in glyph steps and path
+    /// lookups, are the sweep's tests below ([`SWEEP_MOST_STEPS`]).
     const MOST_TRACKS: usize = 12_000;
     // Opt-in: the sweep's tallies, for reading the counts this test's
     // bounds are set from.
@@ -930,9 +1089,11 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     // The most lines one frame here tracks: its work, bounded (ruling
     // R35.3).
     let mut most_tracks = 0;
-    // The most glyph steps a frame here takes (`Trace::spent`, what
-    // `TRACK_BUDGET` bounds), reported with the tallies.
-    let mut most_spent = 0;
+    // The work the frames here take (ruling R43): the most glyph steps
+    // one frame takes (`Trace::spent`, what `TRACK_BUDGET` bounds), and
+    // the glyph steps and path lookups in all.
+    let mut work = SweepWork::default();
+    most_step_lookups(0);
     let size = |run: &ShapedRun| {
         run.glyphs
             .iter()
@@ -986,6 +1147,7 @@ pub fn do_flow_halves_hold_on_every_aspect() {
                                 ..RingLayout::whole()
                             };
                             let before = tracks_so_far();
+                            let looked = lookups_so_far();
                             let (run, placed, trace) =
                                 frame_with(text, *points, shape, &fit, &layout, outward);
                             let tracks = tracks_so_far() - before;
@@ -993,7 +1155,12 @@ pub fn do_flow_halves_hold_on_every_aspect() {
                             if tracks > MOST_TRACKS {
                                 faults.push(format!("{what}: {tracks} lines tracked"));
                             }
-                            most_spent = most_spent.max(trace.spent);
+                            work.frames += 1;
+                            if trace.spent > work.most_spent {
+                                (work.most_spent, work.worst) = (trace.spent, what.clone());
+                            }
+                            work.steps += trace.spent;
+                            work.lookups += lookups_so_far() - looked;
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
                                 shrunk += 1;
                             }
@@ -1144,9 +1311,11 @@ pub fn do_flow_halves_hold_on_every_aspect() {
             }
         }
     }
+    work.most_tracks = most_tracks;
+    work.most_step = most_step_lookups(0);
     if report {
         eprintln!(
-            "the aspect sweep: shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks} most glyph steps {most_spent}\n{}",
+            "the aspect sweep: shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks} {work:?}\n{}",
             faults.join("\n")
         );
     }
@@ -1162,6 +1331,7 @@ pub fn do_flow_halves_hold_on_every_aspect() {
     // And the inward frames round outlines too thin for their two lines
     // are cut apart (ruling R38.1).
     assert!(apart > 0, "precondition: a frame here is cut apart");
+    work
 }
 
 #[test]
@@ -1914,7 +2084,7 @@ fn test_flow_halves_a_side_that_would_touch_is_left_out() {
 /// A side ornament whose copies would touch the text, or fold back
 /// across themselves round a thin tip, is left out of its break and
 /// reported (ruling R35.2): the quatrain laid inward round a 600 × 12
-/// ellipse with `"·"` sides, at span ½, where each tip's arc wraps the
+/// ellipse with `"✦"` sides, at span ½, where each tip's arc wraps the
 /// tip inside an outline thinner than its two lines. No two inks touch,
 /// text or ornament. Precondition: the trace reports a break left
 /// without its ornament. Control: with every arc kept, copies touch.
@@ -1922,7 +2092,7 @@ pub fn do_flow_halves_a_side_that_would_touch_is_left_out() {
     let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
     let layout = RingLayout {
         span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
-        sides: Some(("·".to_owned(), Rgba::opaque(9, 9, 9))),
+        sides: Some(("✦".to_owned(), Rgba::opaque(9, 9, 9))),
         ..RingLayout::whole()
     };
     let (run, placed, trace) = frame_with(QUATRAIN, 18.0, &shape, &FIT, &layout, false);
@@ -1951,17 +2121,29 @@ fn test_flow_halves_a_frame_its_lines_can_hold_is_not_shrunk() {
 
 /// A frame whose lines can be held at R27's size is held there, not
 /// shrunk (rulings R34, R38.1): the README quatrain, at 18 pt, `Fit`,
-/// at span whole, round outlines its two lines fill. Drawn back to part
+/// at span whole, ½ and natural, round outlines its two lines fill. Drawn back to part
 /// a junction, a line with no slack left would be pressed while the
 /// other line has room to give, and a pressed line sends the frame to
 /// its shrink; so each line is drawn back no further than its slack, the
 /// rest handed to the other line (outward, the 10:1 and 50:1 ellipses
-/// and the 50:1 pill). And each round's step is damped by how much the
-/// drawing back eases the break wanted, so it does not overshoot into a
-/// press the clearance never needed (inward, the 10:1 rectangle).
+/// and the 50:1 pill). (Each round's step was also damped by how much
+/// the drawing back eases the break wanted, which once decided the
+/// inward 10:1 rectangle; since a junction's later steps are aimed by
+/// what its last round gave (ruling R43), the damping guides only its
+/// first, and no row here needs it.)
+///
+/// A line its re-solve leaves below its font's gap by no more than the
+/// line's precision — each letter set to within the pairwise rule's
+/// tolerance (ruling R43) — is laid at its font's gap, not pressed: the
+/// 10:1 ellipse's line, at its font's gap at whole, is laid again at ½.
+/// And a letter round a sharp corner inward is held clear of the
+/// letters before its neighbor, else two of them touch (the 10:1
+/// rectangle).
 ///
 /// Control: with the slack cap removed the outward frames shrink; with
-/// the step undamped the inward one does.
+/// the font's-gap check held
+/// to the slide's tolerance the 10:1 ellipse shrinks at ½; with a letter
+/// held clear of its neighbor alone the 10:1 rectangle does.
 pub fn do_flow_halves_a_frame_its_lines_can_hold_is_not_shrunk() {
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     let size = |run: &ShapedRun| {
@@ -2002,18 +2184,29 @@ pub fn do_flow_halves_a_frame_its_lines_can_hold_is_not_shrunk() {
             let (rescaled, _) = place_lines(&run, &shape, &FIT, true, &flow, fs, None);
             size(&rescaled.unwrap_or(run))
         });
-        let (run, placed, trace) = frame_with(QUATRAIN, 18.0, &shape, &FIT, &RingLayout::whole(), outward);
-        assert_eq!(trace.lines.len(), 2, "precondition: {name}: two lines");
-        assert!(
-            !placed.truncated && trace.unheld.is_empty(),
-            "{name}: held whole ({:?})",
-            trace.unheld
-        );
-        assert!(
-            (size(&run) - sized).abs() < 1e-3,
-            "{name}: shrunk to {} from R27's {sized}",
-            size(&run)
-        );
+        for span in [
+            LineSpan::WHOLE,
+            LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+            LineSpan::NATURAL,
+        ] {
+            let layout = RingLayout {
+                span,
+                ..RingLayout::whole()
+            };
+            let (run, placed, trace) = frame_with(QUATRAIN, 18.0, &shape, &FIT, &layout, outward);
+            let name = format!("{name} at span {}", span.get());
+            assert_eq!(trace.lines.len(), 2, "precondition: {name}: two lines");
+            assert!(
+                !placed.truncated && trace.unheld.is_empty(),
+                "{name}: held whole ({:?})",
+                trace.unheld
+            );
+            assert!(
+                (size(&run) - sized).abs() < 1e-3,
+                "{name}: shrunk to {} from R27's {sized}",
+                size(&run)
+            );
+        }
     }
 }
 
@@ -2117,4 +2310,237 @@ pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
             }
         }
     }
+}
+
+/// The README's demo maps' frames, laid as the demo maps' render path
+/// lays them (`src/application/app/tests_gpu_demo_maps.rs`: every node a
+/// box as large as its minimum size and its sections, each ring of its
+/// frame on the outline offset past the rings inside it), and the work
+/// each took: its trace's glyph steps, and the path lookups its
+/// placement made. `Repeat` rings take no glyph step and are left out.
+#[cfg(test)]
+fn demo_map_frames() -> Vec<(String, usize, usize)> {
+    use crate::document::element::{DocElement, DocKind};
+    use crate::document::format::load;
+    use crate::document::ids::Document;
+    use crate::document::resolve::{resolve_frame, resolve_node, resolve_ring, resolve_text, ResolvedText};
+    use crate::document::values::{Align, FontSize};
+    use crate::flow::{offset, ring_offset, shape_box, shape_run, FlowSpan};
+    use indextree::NodeId;
+
+    let children = |doc: &Document, id: NodeId, kind: DocKind| -> Vec<NodeId> {
+        doc.children(id)
+            .filter(|&c| doc.get(c).is_some_and(|e| e.kind() == kind))
+            .collect()
+    };
+    let points = |mut style: ResolvedText, side: f32| {
+        if let FontSize::Rel(fraction) = style.size {
+            style.size = FontSize::Pt(fraction * side);
+        }
+        style
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../maps/demos");
+    let mut maps: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", dir.display()))
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.to_string_lossy().ends_with(".mandala.json"))
+        .collect();
+    maps.sort();
+    let mut out = Vec::new();
+    for path in maps {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
+        let tree = doc.tree();
+        let mut nodes = Vec::new();
+        let mut stack = vec![doc.root()];
+        while let Some(id) = stack.pop() {
+            if doc.get(id).is_some_and(|e| e.kind() == DocKind::Node) {
+                nodes.push(id);
+            }
+            stack.extend(doc.children(id));
+        }
+        for node in nodes {
+            let Some(DocElement::Node(data)) = doc.get(node) else {
+                continue;
+            };
+            let spans_of = |owner: NodeId, side: f32| -> Vec<(String, ResolvedText)> {
+                children(&doc, owner, DocKind::Span)
+                    .into_iter()
+                    .filter_map(|span| match doc.get(span) {
+                        Some(DocElement::Span(s)) => {
+                            Some((s.text.clone(), points(resolve_text(tree, span, &mut ()), side)))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let origin = data.position;
+            let (mut min, mut max) = (origin, origin + data.min_size.unwrap_or(Vec2::ZERO));
+            for section in children(&doc, node, DocKind::Section) {
+                let Some(DocElement::Section(s)) = doc.get(section) else {
+                    continue;
+                };
+                let spans = spans_of(section, 0.0);
+                let size = with_fonts(|fs| {
+                    let flow: Vec<FlowSpan<'_>> = spans
+                        .iter()
+                        .map(|(text, style)| FlowSpan {
+                            text,
+                            style,
+                            link: None,
+                        })
+                        .collect();
+                    shape_box(&flow, s.min_size, s.align.unwrap_or(Align::Left), fs).size
+                });
+                let at = origin + s.offset;
+                min = min.min(at);
+                max = max.max(at + size);
+            }
+            let rect = Rect::new(min, max - min);
+            let base = outline(rect, resolve_node(tree, node, &mut ()).shape);
+            for frame in children(&doc, node, DocKind::Frame) {
+                let f = resolve_frame(tree, frame, &mut ());
+                if !f.visible {
+                    continue;
+                }
+                let side = rect.size.x.min(rect.size.y);
+                let mut heights: Vec<f32> = Vec::new();
+                for (k, ring) in children(&doc, frame, DocKind::Ring).into_iter().enumerate() {
+                    let spans = spans_of(ring, side);
+                    if spans.is_empty() {
+                        continue;
+                    }
+                    let path = offset(&base, ring_offset(f.inset, f.gap, &heights));
+                    let style = points(resolve_text(tree, ring, &mut ()), side);
+                    let resolved = resolve_ring(tree, ring, &mut ());
+                    let mut trace = Trace::default();
+                    let looked = lookups_so_far();
+                    let height = with_fonts(|fs| {
+                        let flow: Vec<FlowSpan<'_>> = spans
+                            .iter()
+                            .map(|(text, style)| FlowSpan {
+                                text,
+                                style,
+                                link: None,
+                            })
+                            .collect();
+                        let shaped = shape_run(&flow, 1.0, fs);
+                        let (rescaled, _) = place_on_closed_traced(
+                            &shaped,
+                            &path,
+                            f.start,
+                            f.direction,
+                            &resolved.fit,
+                            &RingLayout::of(&resolved),
+                            true,
+                            &style,
+                            fs,
+                            Some(&mut trace),
+                        );
+                        rescaled.unwrap_or(shaped).line_height
+                    });
+                    let lookups = lookups_so_far() - looked;
+                    heights.push(height);
+                    if !matches!(resolved.fit, FitMode::Repeat) {
+                        out.push((
+                            format!("{name} node {} ring {k}", data.ident.0),
+                            trace.spent,
+                            lookups,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// R43.1 on the README's demo maps: their frames' glyph steps take at
+/// most [`MEAN_STEP_LOOKUPS`] path lookups on the mean, every lookup of
+/// each frame's placement counted, and none of a line more than
+/// [`MOST_STEP_LOOKUPS`]; and no frame takes more than
+/// [`SWEEP_MOST_STEPS`] glyph steps.
+///
+/// Controls: with the frame's pairwise rule solved by the ring's turns
+/// again (`PathWalk::ink_gap_at`), 158.3 lookups a step; with a
+/// junction's normals and a side arc's ends found by sampling the whole
+/// outline (`ArcPath::nearest`), 56.4; with the halves' junctions and
+/// apexes found so too, 26.1. (No `do_*` twin: it reads test counters.)
+#[test]
+fn test_flow_halves_a_glyph_step_of_the_demo_maps_takes_few_path_lookups() {
+    most_step_lookups(0);
+    let frames = demo_map_frames();
+    let most_step = most_step_lookups(0);
+    assert!(
+        frames.len() >= 5 && frames.iter().all(|(_, spent, _)| *spent > 0),
+        "precondition: the four demo maps' five frames are laid and counted: {frames:?}"
+    );
+    let steps: usize = frames.iter().map(|(_, spent, _)| spent).sum();
+    let lookups: usize = frames.iter().map(|(_, _, lookups)| lookups).sum();
+    assert!(
+        lookups <= MEAN_STEP_LOOKUPS * steps,
+        "the demo maps' frames: {lookups} path lookups for {steps} glyph steps, {:.1} a step, at most {MEAN_STEP_LOOKUPS}: {frames:?}",
+        lookups as f64 / steps as f64
+    );
+    assert!(
+        most_step <= MOST_STEP_LOOKUPS,
+        "the demo maps' frames: a glyph step took {most_step} path lookups, at most {MOST_STEP_LOOKUPS}"
+    );
+    for (what, spent, _) in &frames {
+        assert!(
+            *spent <= SWEEP_MOST_STEPS,
+            "{what}: {spent} glyph steps, at most {SWEEP_MOST_STEPS}"
+        );
+    }
+    if std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some() {
+        eprintln!("the demo maps' frames: {steps} glyph steps, {lookups} lookups, most a step {most_step}: {frames:?}");
+    }
+}
+
+#[test]
+fn test_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
+    do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it();
+}
+
+/// A line's ends at a sharp corner (ruling R43), round a 600 × 60
+/// rectangle with no radius. An end ink pushed round the corner off the
+/// end of a side — here past the bottom-left corner, on the second half,
+/// which runs down the left side from its middle — lies nearest the
+/// corner, where the outline has no one normal: it faces the way from
+/// the corner to it, not the bottom side's way, which the 135° test
+/// would read as a line stacked across the outline from one on the top.
+/// And a part ending at a corner — the first half's at the bottom-right
+/// one, down the right side — draws back up the side before it, not
+/// along the bottom after it, which reads as drawing back parting
+/// nothing. Each expectation is the geometry's, worked here by hand.
+///
+/// Controls: with the normal always the outline's at the nearest point,
+/// the end faces a side's way, `(-1, 0)`; with the retreat taken from
+/// the tangent at the end itself, it runs along the bottom.
+pub fn do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 60.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    // The second half from (0, 30) down: the corner (0, 60) is 30 along.
+    let ink = (Vec2::new(-12.0, 58.0), Vec2::new(-2.0, 68.0));
+    let (normal, _) = end_seam(&shape, 1, ink, 30.0, 630.0);
+    let away = Vec2::new(-7.0, 3.0).normalize();
+    assert!(
+        normal.distance(away) < 1e-3,
+        "an end ink past the bottom-left corner faces {normal:?}, not the way from the corner to it, {away:?}"
+    );
+    // The first half from (0, 30) up: over the top, then down the right
+    // side to the corner (600, 60), 690 along.
+    let (_, retreat) = end_seam(&shape, 0, ink, 300.0, 690.0);
+    assert!(
+        retreat.distance(Vec2::new(0.0, -1.0)) < 1e-3,
+        "an end at the bottom-right corner draws back along {retreat:?}, not up the right side"
+    );
 }

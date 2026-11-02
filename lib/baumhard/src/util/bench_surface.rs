@@ -369,6 +369,36 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             CannotCompileIntoTheLibrary,
         ),
         (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_hold_on_every_aspect",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_no_frame_of_the_sweep_takes_more_than_50000_glyph_steps",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_the_sweeps_worst_frame_takes_under_a_tenth_of_the_budget",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_track_budget_is_400000_glyph_steps",
+            Unconverted,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_glyph_step_of_the_sweep_takes_few_path_lookups",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_glyph_step_of_the_demo_maps_takes_few_path_lookups",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "gfx_structs/tests/shape_tests.rs",
             "test_from_style_string_log_routing_is_pinned",
             CannotCompileIntoTheLibrary,

@@ -907,8 +907,20 @@ impl PathWalk<'_> {
     /// outline, and the push turns with the chord through a sharp corner
     /// rather than jumping.
     fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {
+        self.ink_point(c, ink).0
+    }
+
+    /// [`ink_at`](Self::ink_at), and the direction the ink moves in as
+    /// `c` grows: the chord it is pushed off along, or on a path it is
+    /// not pushed off, the direction of travel at `c`. What a frame's
+    /// pairwise rule models the next step with, at no lookup more
+    /// (ruling R43).
+    ///
+    /// Cost: one path lookup; three where the ink is pushed outward.
+    fn ink_point(&self, c: f32, ink: Ink) -> (Vec2, Vec2) {
         let size = ink.max - ink.min;
         let (mut center, tangent) = self.path.at(c);
+        let mut moves = tangent;
         if self.outward {
             let reach = 0.5 * size.length();
             let dir = if reach > 0.0 {
@@ -917,8 +929,9 @@ impl PathWalk<'_> {
                 tangent
             };
             center += support(self.path.outward(dir), self.push.unwrap_or(size * 0.5));
+            moves = dir;
         }
-        center
+        (center, moves)
     }
 
     /// Walk a cluster of `body` from `s`, `trail` remembering an

@@ -146,6 +146,11 @@ struct Lines<'a> {
     lines: [Range<usize>; 2],
     halves: &'a [(ArcPath, Range<f32>); 2],
     outward: bool,
+    /// Whether a line is laid where R27 lays it — centered on its span,
+    /// or spread over it — or only from its span's start: what a frame
+    /// laid along its halves reads of R27 is its size, its parting and
+    /// its cuts, none of which the centering moves ([`frame_lines`]).
+    centered: bool,
 }
 
 impl Lines<'_> {
@@ -199,7 +204,9 @@ impl Lines<'_> {
             };
             return (span.start, end, cut || laid == Laid::Capped);
         }
-        let (start, gap) = if spread && line.len() > 1 {
+        let (start, gap) = if !self.centered {
+            (span.start, gap)
+        } else if spread && line.len() > 1 {
             let guess = (span.end - natural) / (line.len() - 1) as f32;
             let gap = solve_gap(|g| self.reach(k, span.start, g) - span.end, span.end, guess);
             (span.start, gap)
@@ -208,7 +215,12 @@ impl Lines<'_> {
         };
         let laid = walk.lay(&self.run.glyphs, line, start, gap, out);
         let cut = laid == Laid::Capped;
-        (start, self.reach(k, start, gap), cut)
+        let end = if self.centered {
+            self.reach(k, start, gap)
+        } else {
+            start
+        };
+        (start, end, cut)
     }
 
     /// Where line `k` starts laid with `gap` so that it is centered on
@@ -337,6 +349,42 @@ pub(crate) fn place_lines(
     fs: &mut FontSystemWriteGuard,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
+    lay_lines(run, outline, fit, outward, flow, fs, trace, true)
+}
+
+/// [`place_lines`] as a frame laid along its halves reads it (rulings
+/// R34, R43): its size, how it parts the text and where it cuts it, its
+/// lines laid from their spans' starts rather than centered or spread —
+/// where each glyph of them is placed is R27's only, and the halves lay
+/// them again. The placement's glyphs, lines, cuts and truncation, and
+/// the run it returns, are [`place_lines`]'s; only positions differ.
+///
+/// Cost: [`place_lines`]'s but the centering and spreading.
+pub(crate) fn frame_lines(
+    run: &ShapedRun,
+    outline: &Outline,
+    fit: &FitMode,
+    outward: bool,
+    flow: &ResolvedText,
+    fs: &mut FontSystemWriteGuard,
+    trace: Option<&mut Trace>,
+) -> (Option<ShapedRun>, PlacedRun) {
+    lay_lines(run, outline, fit, outward, flow, fs, trace, false)
+}
+
+/// [`place_lines`], each line centered or spread as R27 lays it, or not
+/// ([`Lines::centered`]).
+#[allow(clippy::too_many_arguments)] // `place_lines`', and the choice.
+fn lay_lines(
+    run: &ShapedRun,
+    outline: &Outline,
+    fit: &FitMode,
+    outward: bool,
+    flow: &ResolvedText,
+    fs: &mut FontSystemWriteGuard,
+    trace: Option<&mut Trace>,
+    centered: bool,
+) -> (Option<ShapedRun>, PlacedRun) {
     let halves = frame_halves(outline, table_spacing(run, fit, flow));
     // A level line fits its span when its advances fit the span's width
     // (ruling R28): the parting balances against that.
@@ -353,6 +401,7 @@ pub(crate) fn place_lines(
         lines: lines.clone(),
         halves: &halves,
         outward,
+        centered,
     };
     let (placed_run, filler) = match fit {
         FitMode::Fit { min, max } => {
@@ -406,6 +455,7 @@ pub(crate) fn place_lines(
         lines,
         halves: &halves,
         outward,
+        centered,
     };
     if matches!(fit, FitMode::Fit { .. }) && !(laid.fits(0) && laid.fits(1)) {
         laid.lines = laid.fill_top();
@@ -512,6 +562,7 @@ fn fit_reshape(
             lines: lines.clone(),
             halves,
             outward,
+            centered: true,
         };
         // The longer of the lines' lengths over its span's room.
         let overrun = (0..2)

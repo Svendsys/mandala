@@ -962,14 +962,23 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
 /// The shrink itself is held by a frame that reaches it on every
 /// machine: the README quatrain in the pinned face (`FACE`, so no host
 /// face draws a glyph of it, ruling R30) round the aspect sweep's
-/// 600 × 12 rectangle, outward. The raw target's own style is
+/// 600 × 12 rectangle, inward, where its two lines' inks are together
+/// taller than the outline. (Outward it once shrank too; since a letter
+/// round a sharp corner is held clear of the letters before its
+/// neighbor, and a junction's end draws back along the path before it
+/// (ruling R43), it is held at R27's size there.) The raw target's own style is
 /// `AppFont::Any`, drawn in whatever face the host falls back to, so a
 /// raw input's path through the last resorts is the host's: the seed
 /// `flow_raw/controls_and_tabs`, which this test once held here, shrank
 /// on one machine and not on CI's.
 ///
+/// The shrink stops once its bracket is within 1% of the scale held, or
+/// spans under a quarter point (ruling R42.2): the quatrain takes 8
+/// builds, at most 10.
+///
 /// Control: with the tracking bisected, the review's input passes its
-/// bound (1,943 `track`s). The line memo, the cheap look, the seeded
+/// bound (1,943 `track`s). With the shrink bisected to its full
+/// precision (C64), the quatrain takes 14 builds. The line memo, the cheap look, the seeded
 /// clearance and the probe's single halving no longer move either count
 /// past its bound on their own: each is a refinement no claim here rests
 /// on.
@@ -1027,7 +1036,7 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
                 Direction::Clockwise,
                 &fit,
                 &RingLayout::whole(),
-                true,
+                false,
                 &flow,
                 fs,
             );
@@ -1044,6 +1053,9 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
         tracks <= 2_000,
         "the shrunk quatrain: {tracks} lines tracked, at most 2,000"
     );
+    // The shrink stops at a useful precision (ruling R42.2): 8 builds;
+    // bisected to its full precision, 14.
+    assert!(builds <= 10, "the shrunk quatrain: {builds} builds, at most 10");
 }
 
 /// The 300 s flow_raw run's finding on #294 (base64 `bnAgZXRhaWx4dA==`,
@@ -1166,4 +1178,58 @@ fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
     if let Err(why) = check_flow_structured(found) {
         panic!("the fuzzer's input: {why}");
     }
+}
+
+/// The 300 s flow_raw run's timeout at 8baf8e6e (ruling R42; input sha1
+/// 08d8dfda…, 420 bytes, about 400 NULs read as text), which
+/// `check_flow_bytes` lays as three frames round its 120 × 40 rounded
+/// rectangle — `Spread`, `Fit` and `Once` — of lines of 164 and 255
+/// clusters that touch at R27's size. Its work was 11,488 `track`s, 16
+/// builds and 378,758,104 path lookups: `cut_apart` ran a whole clearance
+/// search per bisection probe, the `Fit` shrink bisected to a scale of
+/// 0.99995, and a glyph step took some 220 lookups. With R42 it took
+/// 2,893 `track`s and 69 s in the ASan `flow_raw` binary, too slow to be
+/// committed where `scripts/fuzz.sh` feeds it to that binary. With
+/// R43's cheaper steps and fewer of them it is committed: every
+/// property holds, in at most 1,000 `track`s, 4 builds, 2,000,000 path
+/// lookups, and no glyph step of a line above 64 lookups.
+///
+/// Its `Spread` and `Once` frames still cut a line apart; its `Fit`
+/// frame is now held at R27's size, so R42.2's stop is held by
+/// `test_a_shrunk_frame_lays_a_bounded_number_of_lines` instead.
+///
+/// Control: R42.1's — `cut_apart` bisecting its prefix on whole
+/// clearance searches again (C63) — passes the bound on `track`s (1,602).
+/// With a letter allowed 64 inks tried, a glyph step takes 192 lookups.
+#[test]
+fn test_a_raw_frame_cut_apart_lays_a_bounded_number_of_lines() {
+    use crate::flow::path::PATH_LOOKUPS;
+    use crate::flow::place::halves::{BUILDS, MOST_STEP_LOOKUPS, TRACKS};
+    let found = include_bytes!("fuzz_findings/raw_frame_cut_apart_by_whole_clearance_searches");
+    for counter in [&TRACKS, &BUILDS, &PATH_LOOKUPS, &MOST_STEP_LOOKUPS] {
+        counter.with(|count| count.set(0));
+    }
+    let checked = check_flow_bytes(found);
+    let [tracks, builds, lookups, most_step] = [&TRACKS, &BUILDS, &PATH_LOOKUPS, &MOST_STEP_LOOKUPS]
+        .map(|counter| counter.with(std::cell::Cell::get));
+    if let Err(why) = checked {
+        panic!("the fuzzer's input: {why}");
+    }
+    assert!(
+        builds >= 3,
+        "precondition: its three frames are laid along their halves ({builds} builds)"
+    );
+    assert!(
+        tracks <= 1_000,
+        "the fuzzer's input: {tracks} lines tracked, at most 1,000"
+    );
+    assert!(builds <= 4, "the fuzzer's input: {builds} builds, at most 4");
+    assert!(
+        lookups <= 2_000_000,
+        "the fuzzer's input: {lookups} path lookups, at most 2,000,000"
+    );
+    assert!(
+        most_step <= 64,
+        "the fuzzer's input: a glyph step took {most_step} path lookups, at most 64"
+    );
 }
