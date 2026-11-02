@@ -147,7 +147,7 @@ pub const fn frame_steps(frames: usize) -> usize {
 /// [`MAX_FRAME_GLYPHS`] glyphs, and laid to the whole of its budget and
 /// past it (`frame_work_steps`, a `Fit` frame's as the most) within its
 /// share of [`INPUT_STEPS`] among `frames` frames.
-pub(crate) fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize) -> bool {
+pub fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize) -> bool {
     run.glyphs.len() <= MAX_FRAME_GLYPHS
         && frame_work_steps(run, ornament, true) <= frame_steps(frames.max(1))
 }
@@ -300,7 +300,7 @@ pub fn check_flow_bytes_in_every_fit(bytes: &[u8]) -> Result<(), String> {
 /// The fit modes a flow_raw frame is laid in, in the order
 /// [`raw_frame_fits`] draws them: every one of them tracks its halves
 /// (`place_halves`), so each is budgeted (`frame_budget`).
-pub(crate) fn frame_fits() -> [FitMode; 3] {
+pub fn frame_fits() -> [FitMode; 3] {
     [
         FitMode::Fit { min: 0.5, max: 2.0 },
         FitMode::Spread,
@@ -316,7 +316,7 @@ pub(crate) fn frame_fits() -> [FitMode; 3] {
 /// the rest follow it in turn. An input whose choices run out before it
 /// — every committed raw finding but the ones that spell a layout —
 /// draws `Fit`, the mode most of them were found in.
-pub(crate) fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
+pub fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
     let mut choices = Choices::new(bytes);
     ring_layout(&mut choices);
     let fits = frame_fits();
@@ -686,7 +686,7 @@ fn text(choices: &mut Choices<'_>) -> String {
 /// ring's spacing, none or any value
 /// [`check_non_negative`](bounds::check_non_negative) passes. Zero
 /// choices draw [`RingLayout::whole`].
-pub(crate) fn ring_layout(choices: &mut Choices<'_>) -> RingLayout {
+pub fn ring_layout(choices: &mut Choices<'_>) -> RingLayout {
     let span = match choices.below(3) {
         0 => LineSpan::WHOLE,
         1 => LineSpan::NATURAL,
@@ -724,7 +724,7 @@ pub(crate) fn ring_layout(choices: &mut Choices<'_>) -> RingLayout {
 /// already are returned whole; with no characters left, the empty texts.
 ///
 /// Cost: a shaping of the texts, and one more each halving.
-pub(crate) fn framed(
+pub fn framed(
     texts: &[String],
     styles: &[ResolvedText],
     scale: f32,
