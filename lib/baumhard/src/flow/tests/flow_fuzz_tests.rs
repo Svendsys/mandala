@@ -1192,9 +1192,13 @@ fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
 /// committed where `scripts/fuzz.sh` feeds it to that binary. With
 /// R43's cheaper steps and fewer of them it is committed: every
 /// property holds, in at most 1,500 `track`s and 4,000,000 path lookups
-/// (528 and 696,428 on one machine, 856 and 935,189 on another: the
-/// bounds are kept well clear of every host's count, ruling R44.5), and
-/// no glyph step of a line above 64 lookups.
+/// (528 and 696,428 on one machine, 856 and 935,189 on another, while
+/// its frames laid all 420 glyphs; the bounds are kept well clear of
+/// every host's count, ruling R44.5), and no glyph step of a line above
+/// 64 lookups. Since R44.2 the harness lays a frame from the first
+/// [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS)
+/// glyphs of its text, what one frame lays inside the fuzz timeout: 247
+/// `track`s and 340,712 lookups on the second machine.
 ///
 /// Its NULs are drawn in whatever face the host falls back to, so its
 /// path through the last resorts is the host's: on one machine its
@@ -1240,4 +1244,100 @@ fn test_a_raw_frame_cut_apart_lays_a_bounded_number_of_lines() {
         most_step <= 64,
         "the fuzzer's input: {counts}; at most 64 lookups a step"
     );
+}
+
+/// R44.4: the flow fuzzers place frames in every layout a document can
+/// give a ring, not only the built-in: drawn from choices, a ring's
+/// lines span natural, whole and unit fractions of their halves, its
+/// sides are none or a short ornament, and its spacing none or some —
+/// and choices of zero, an input that ends before them, draw the
+/// built-in, so every finding before them replays as it did.
+///
+/// Control: with every ring drawn the built-in, as before R44.4, red.
+#[test]
+fn test_the_flow_fuzzers_draw_every_ring_layout() {
+    use crate::document::values::LineSpan;
+    use crate::flow::tests::flow_fuzz::ring_layout;
+    use crate::flow::RingLayout;
+    assert_eq!(
+        ring_layout(&mut Choices::new(&[])),
+        RingLayout::whole(),
+        "zero choices draw the built-in"
+    );
+    let (mut natural, mut whole, mut fraction, mut sides, mut spacing) = (0, 0, 0, 0, 0);
+    for seed in 0..200 {
+        let layout = ring_layout(&mut Choices::seeded(seed));
+        if layout.span == LineSpan::NATURAL {
+            natural += 1;
+        } else if layout.span == LineSpan::WHOLE {
+            whole += 1;
+        } else {
+            fraction += 1;
+        }
+        sides += usize::from(layout.sides.is_some());
+        spacing += usize::from(layout.spacing > 0.0);
+    }
+    let drawn = format!(
+        "{natural} natural, {whole} whole, {fraction} fractions, {sides} with sides, {spacing} with spacing"
+    );
+    assert!(
+        natural > 0 && whole > 0 && fraction > 0 && sides > 0 && spacing > 0,
+        "200 layouts drawn: {drawn}"
+    );
+}
+
+/// R44.2's property: a frame two of whose inks touch fails, whatever its
+/// budget did — never overlap wins over never cut, and a frame that
+/// cannot hold its inks apart cuts them and says so.
+///
+/// Control: with the property never failing, red.
+#[test]
+fn test_the_flow_properties_find_a_frame_whose_inks_touch() {
+    use crate::flow::place::Trace;
+    use crate::flow::tests::flow_fuzz::apart;
+    let mut trace = Trace::default();
+    assert!(
+        apart(&trace, "a frame apart").is_ok(),
+        "precondition: a frame apart holds"
+    );
+    trace.unheld.overlap = true;
+    assert!(
+        apart(&trace, "a frame touching").is_err(),
+        "a frame two of whose inks touch fails"
+    );
+}
+
+/// R44.2: a fuzzed frame's text is held to what one frame lays inside
+/// the targets' 20 s timeout: [`MAX_FRAME_GLYPHS`] glyphs, whose budget
+/// at some 19 µs a glyph step under the ASan fuzz build is at most a
+/// million steps — 19 s — and a longer text is laid from its first
+/// glyphs, a shorter one whole.
+///
+/// Control: with no text cut, the long text's 2,000 glyphs, red.
+///
+/// [`MAX_FRAME_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS
+#[test]
+fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
+    use crate::flow::place::halves::frame_budget;
+    use crate::flow::tests::flow_fuzz::{framed, MAX_FRAME_GLYPHS};
+    assert!(
+        frame_budget(MAX_FRAME_GLYPHS) <= 1_000_000,
+        "a fuzzed frame's budget: {} glyph steps",
+        frame_budget(MAX_FRAME_GLYPHS)
+    );
+    let flow = style(16.0);
+    let (long, short) = with_fonts(|fs| {
+        let long = framed(&["word ".repeat(400)], &[flow.clone()], 1.0, fs);
+        let short = framed(&["word ".repeat(20)], &[flow.clone()], 1.0, fs);
+        let glyphs = |texts: &[String], fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+            real_run(&texts[0], &flow, fs).glyphs.len()
+        };
+        ((glyphs(&long, fs), long), (glyphs(&short, fs), short))
+    });
+    assert!(
+        long.0 <= MAX_FRAME_GLYPHS && long.0 > MAX_FRAME_GLYPHS / 4,
+        "the long text is laid from its first glyphs: {}",
+        long.0
+    );
+    assert_eq!(short.1, ["word ".repeat(20)], "a short text is laid whole");
 }

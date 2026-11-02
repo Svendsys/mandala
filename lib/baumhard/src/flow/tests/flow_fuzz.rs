@@ -22,6 +22,10 @@
 //!   position is finite whatever the path, every placed glyph names a
 //!   glyph of the run it refers to, and no placement holds more than
 //!   [`MAX_PLACED_GLYPHS`](crate::flow::MAX_PLACED_GLYPHS).
+//! - **A frame's inks never touch** (rulings R38.1, R44.2), whatever
+//!   its layout — span, sides and spacing drawn too (ruling R44.4) —
+//!   and its text is held to [`MAX_FRAME_GLYPHS`], what one frame lays
+//!   inside the fuzz timeout.
 //! - **A box is a box:** its size is finite, non-negative, at least the
 //!   usable part of the minimum asked for, and one glyph-span entry per
 //!   laid-out glyph.
@@ -38,20 +42,37 @@ use glam::Vec2;
 use crate::document::bounds;
 use crate::document::resolve::ResolvedText;
 use crate::document::values::{
-    Align, Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, StartPoint, Weight,
+    Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
 use crate::flow::place::{frame_halves, place_on_closed_traced, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
     PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
 };
-use crate::font::fonts::{self, acquire_font_system_write, AppFont, COMPILED_FONT_ID_MAP};
+use crate::font::fonts::{
+    self, acquire_font_system_write, AppFont, FontSystemWriteGuard, COMPILED_FONT_ID_MAP,
+};
 use crate::util::tests::choices::Choices;
 
 /// The most characters a structured span holds: enough for a cut, a
 /// repeat and a fit to have something to do, few enough that one input
 /// shapes in milliseconds.
 pub const MAX_SPAN_CHARS: u32 = 64;
+
+/// The most glyphs a frame's text is shaped to here (ruling R44.2): a
+/// frame's work is bounded by its budget, 3,000 glyph steps a glyph of
+/// its text and at least 400,000 (`frame_budget`), and a glyph step
+/// takes some 19 µs under the ASan fuzz build, so a frame of 320 glyphs
+/// laid to its whole budget, 960,000 steps, takes some 18 s, inside the
+/// targets' 20 s timeout. A longer text's frame is laid from as much of
+/// it as shapes to this many glyphs: the engine places the whole of a
+/// real text, bounded by its glyphs; a fuzz input is held to what one
+/// frame can lay inside the timeout.
+pub const MAX_FRAME_GLYPHS: usize = 320;
+
+/// The most characters a fuzzed side ornament holds: a short one,
+/// every copy of it laid many times round each junction.
+const MAX_ORNAMENT_CHARS: u32 = 4;
 
 /// Characters a structured span draws from besides any code point:
 /// combining marks, ZWJ sequences, variation selectors, regional
@@ -110,6 +131,18 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
         edge: Edge::Top,
         at: 0.0,
     };
+    // The frames' text, held to what one frame lays inside the timeout,
+    // and their layout, drawn from the same bytes read as choices
+    // (ruling R44.4): an input of zeros, as most raw findings are, lays
+    // them over their whole halves with no sides.
+    let framed = framed(&[text.to_string()], &[style.clone()], 1.0, &mut fs);
+    let frame_spans = [FlowSpan {
+        text: &framed[0],
+        style: &style,
+        link: None,
+    }];
+    let frame_run = shape_run(&frame_spans, 1.0, &mut fs);
+    let layout = ring_layout(&mut Choices::new(bytes));
     for fit in [
         FitMode::Repeat,
         FitMode::Spread,
@@ -126,21 +159,23 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
         );
         let mut trace = Trace::default();
         let placed = place_on_closed_traced(
-            &run,
+            &frame_run,
             &path,
             start,
             Direction::Clockwise,
             &fit,
-            &RingLayout::whole(),
+            &layout,
             true,
             &style,
             &mut fs,
             Some(&mut trace),
         );
         // A line cut so that no two inks touch, and reported so, is owed
-        // no longer (ruling R38.1).
-        let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
-        check_placed(&spans, &run, placed, whole, "around a rectangle")?;
+        // no longer (ruling R38.1); a frame its sides leave unheld is
+        // reported (ruling R35.2).
+        let whole = owes_whole(&frame_run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
+        apart(&trace, "around a rectangle")?;
+        check_placed(&frame_spans, &frame_run, placed, whole, "around a rectangle")?;
         let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
         let placed = place_on_open(&run, &curve, &fit, 1.0, &style, &mut fs);
         check_placed(
@@ -245,6 +280,26 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                     let direction = *choices.pick(&[Direction::Clockwise, Direction::CounterClockwise]);
                     let fit = fit(choices, &texts);
                     let outward = choices.one_in(2);
+                    // Drawn last, so an input that ends before them — every
+                    // finding before R44.4 — lays as it did: over whole
+                    // halves, no sides.
+                    let layout = ring_layout(choices);
+                    let framed = framed(&texts, &styles, scale, &mut fs);
+                    let frame_spans: Vec<FlowSpan<'_>> = framed
+                        .iter()
+                        .zip(&styles)
+                        .map(|(text, style)| FlowSpan {
+                            text,
+                            style,
+                            link: None,
+                        })
+                        .collect();
+                    let run = if framed == texts {
+                        run
+                    } else {
+                        shape_run(&frame_spans, scale, &mut fs)
+                    };
+                    let spans = frame_spans;
                     let mut trace = Trace::default();
                     let placed = place_on_closed_traced(
                         &run,
@@ -252,7 +307,7 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                         start,
                         direction,
                         &fit,
-                        &RingLayout::whole(),
+                        &layout,
                         outward,
                         &flow,
                         &mut fs,
@@ -264,6 +319,7 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
                     // bend — cuts the line that cannot be held and says so
                     // (ruling R38.1): what it cut is no longer owed.
                     let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
+                    apart(&trace, "around an outline")?;
                     check_placed(&spans, &run, placed, whole, "around an outline")
                 }
                 2 => {
@@ -355,6 +411,86 @@ fn text(choices: &mut Choices<'_>) -> String {
             }
         })
         .collect()
+}
+
+/// A ring's layout a document can hold, from choices (ruling R44.4):
+/// its lines' span natural, whole or a unit fraction from ½ to ⅛; its
+/// sides none, or a short ornament from the structured alphabet that
+/// [`check_ornament`](bounds::check_ornament) passes; and a repeat
+/// ring's spacing, none or any value
+/// [`check_non_negative`](bounds::check_non_negative) passes. Zero
+/// choices draw [`RingLayout::whole`].
+pub(crate) fn ring_layout(choices: &mut Choices<'_>) -> RingLayout {
+    let span = match choices.below(3) {
+        0 => LineSpan::WHOLE,
+        1 => LineSpan::NATURAL,
+        _ => LineSpan::new(1.0 / (2 + choices.below(7)) as f32).unwrap_or(LineSpan::WHOLE),
+    };
+    let sides = if choices.one_in(2) {
+        let ornament: String = (0..1 + choices.below(MAX_ORNAMENT_CHARS))
+            .map(|_| {
+                if choices.one_in(8) {
+                    char::from_u32(choices.below(0x11_0000)).unwrap_or('\u{FFFD}')
+                } else {
+                    *choices.pick(&INTERESTING)
+                }
+            })
+            .collect();
+        bounds::check_ornament(&ornament)
+            .ok()
+            .map(|ornament| (ornament.to_owned(), Rgba::new(255, 255, 255, 255)))
+    } else {
+        None
+    };
+    let spacing = if choices.one_in(2) {
+        bounds::check_non_negative(any_f32(choices)).unwrap_or(0.0)
+    } else {
+        0.0
+    };
+    RingLayout { span, sides, spacing }
+}
+
+/// `texts`, in `styles`, at `scale`, each cut to the same share of its
+/// characters — halved until their run has at most [`MAX_FRAME_GLYPHS`]
+/// glyphs — what a frame lays here (ruling R44.2). Texts whose run has
+/// that few already are returned whole.
+///
+/// Cost: a shaping of the texts, and one more each halving.
+pub(crate) fn framed(
+    texts: &[String],
+    styles: &[ResolvedText],
+    scale: f32,
+    fs: &mut FontSystemWriteGuard,
+) -> Vec<String> {
+    let mut share = usize::MAX;
+    loop {
+        let cut: Vec<String> = texts
+            .iter()
+            .map(|text| {
+                let chars = text.chars().count();
+                text.chars()
+                    .take(if share == usize::MAX {
+                        chars
+                    } else {
+                        chars * share / 1024
+                    })
+                    .collect()
+            })
+            .collect();
+        let spans: Vec<FlowSpan<'_>> = cut
+            .iter()
+            .zip(styles)
+            .map(|(text, style)| FlowSpan {
+                text,
+                style,
+                link: None,
+            })
+            .collect();
+        if share == 0 || shape_run(&spans, scale, fs).glyphs.len() <= MAX_FRAME_GLYPHS {
+            return cut;
+        }
+        share = if share == usize::MAX { 512 } else { share / 2 };
+    }
 }
 
 /// A number: plain, or any `f32` at all.
@@ -479,6 +615,16 @@ fn check_placed(
         None => run,
     };
     check_placement(refers_to, &placed, whole, what)
+}
+
+/// No two of a frame's inks touch (rulings R38.1, R44.2): never overlap
+/// wins over never cut, a spent budget included. What its junctions and
+/// sides leave unheld is reported in the trace, never silent.
+pub(crate) fn apart(trace: &Trace, what: &str) -> Result<(), String> {
+    if trace.unheld.overlap {
+        return Err(format!("{what}: two inks touch ({:?})", trace.unheld));
+    }
+    Ok(())
 }
 
 /// The run's natural length, every cluster as long as the longer of its
