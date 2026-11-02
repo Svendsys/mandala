@@ -1491,6 +1491,23 @@ fn test_the_raw_harness_draws_every_frame_fit() {
     }
 }
 
+/// The flow_raw finding of the R48 fuzz run: NULs, a DEL and a line
+/// break, whose control characters' glyphs are given inks zero wide and
+/// line tall, laid a third of a point apart round the rectangle. Each was
+/// once weighed against every other in the touch check's strips: 4,315
+/// looks over 95 boxes, past `TOUCH_LOOKS_A_BOX` (12) a box. A box with
+/// no ink is left out of the check now (ruling R49.2), and the replay —
+/// held to the bound by the fuzz property — passes.
+///
+/// Control: with every box taken as inked, red.
+#[test]
+fn test_flow_raw_finding_a_touch_check_past_its_looks_a_box() {
+    let found = include_bytes!("fuzz_findings/raw_frame_touch_check_past_its_looks_a_box");
+    if let Err(why) = check_flow_bytes_in_every_fit(found) {
+        panic!("{why}");
+    }
+}
+
 /// The R45 check, as review 5739829769 found it broken: every committed
 /// raw finding was found before ruling R44.4, laid over whole halves with
 /// no sides, but its bytes are text, not zeros, and draw another layout
