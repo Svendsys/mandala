@@ -43,36 +43,61 @@
 //! missing prerequisite into a failure instead.
 //!
 //! **How it builds.** `probe.rs` is copied into a staging crate under
-//! `target/wasm_font_lock/` (three small files: a generated manifest,
-//! the probe, the workspace's `Cargo.lock`), and built for wasm32 from
-//! there. That compiles the dependency graph the app ships and needs no
-//! second lockfile in the repository to go stale. The first run
-//! compiles baumhard for wasm32 from scratch, which takes a couple of
-//! minutes; later runs are incremental.
+//! `<target>/wasm_font_lock_<hash>/` (three small files: a generated
+//! manifest, the probe, the workspace's `Cargo.lock`), and built for
+//! wasm32 from there. That compiles the dependency graph the app ships
+//! and needs no second lockfile in the repository to go stale. The
+//! first run compiles baumhard for wasm32 from scratch, which takes a
+//! couple of minutes; later runs are incremental. `<hash>` is a short
+//! hash of the workspace root, carried by the staging directory and by
+//! the probe crate's name (`probe_names`), so two checkouts that share
+//! one target directory each get their own staged manifest and their
+//! own `.wasm` instead of rewriting each other's between a write and a
+//! build, or between a build and the run.
 //!
 //! **Where it builds: the workspace's own target directory** (#285),
-//! not a private one. The build output goes to `<target>/` itself, so
-//! the probe's host-side artifacts (proc macros and build scripts,
-//! about a fifth of what the private directory held) are the very
-//! files `cargo test` built for the workspace, and the wasm32 output
-//! sits in the `wasm32-unknown-unknown/` tree beside the clippy, doc
-//! and check legs'. Sharing the directory shares no *decision*:
-//! cargo names every unit's output by a hash of the package, its
-//! features, its profile, its target and its flags, and decides
-//! whether it is up to date from a fingerprint of the unit's source
-//! files, so a unit built for another feature set or profile lands
-//! beside the probe's rather than being mistaken for it, and an edit
-//! to baumhard (or to `probe.rs`, or to the manifest below) is
-//! recompiled before the module is run — which is what lets this test
-//! fail on a broken subject at all, and what the private directory
-//! relied on in exactly the same way. The staging crate's name is
-//! unique in the workspace, so its module cannot collide with a
-//! workspace member's output. What does *not* share: the check-only
-//! wasm32 artifacts of `./test.sh`'s clippy, doc and check legs are
+//! not a private one. `<target>` is the directory cargo built this
+//! test in: `env!("CARGO_TARGET_TMPDIR")` is `<target>/tmp`, so its
+//! parent is the directory cargo actually used, whether it came from
+//! `$CARGO_TARGET_DIR` (relative or not), `build.target-dir`,
+//! `CARGO_BUILD_TARGET_DIR`, `--target-dir`, or a wrapper that sets
+//! its own, as `cargo llvm-cov` does for its instrumented build. The
+//! build output goes to `<target>/` itself, so most of the probe's
+//! host-side artifacts (proc macros and build scripts, about a fifth
+//! of what the private directory held) are files the workspace's own
+//! builds already made: `./test.sh`'s wasm32 check and clippy legs
+//! build the host side in full even though their wasm32 output is
+//! metadata only, and `cargo test` made some of the same. A handful
+//! stay the probe's own, because their hash differs under the probe's
+//! workspace root or features (baumhard's build script among them).
+//! The wasm32 output sits in the `wasm32-unknown-unknown/` tree beside
+//! the clippy, doc and check legs'.
+//!
+//! Sharing the directory shares no *decision*, and the module this
+//! test runs is kept current by two different mechanisms. The
+//! dependency units are named by a hash of package, features, profile,
+//! target and flags, so a unit built for another configuration lands
+//! beside the probe's rather than being mistaken for it. The probe's
+//! own `.wasm` is not: a cdylib's file name carries no hash, so
+//! it has one fingerprint however it is configured, and that
+//! fingerprint, which any change of source, dependency or flags
+//! dirties, is what relinks it before it runs. Either way an edit to
+//! baumhard (or to `probe.rs`, or to the manifest below) is recompiled
+//! before the module is run, which is what lets this test fail on a
+//! broken subject at all, and what the private directory relied on in
+//! exactly the same way; the build's success is asserted before the
+//! path is read, so a failed build cannot leave an old file to be
+//! judged. What does *not* share: the check-only wasm32 artifacts are
 //! `.rmeta` files with no object code, which a build for execution
 //! cannot reuse, so the wasm32 dependency compiles stay the probe's
-//! own. (`CARGO_TARGET_DIR`, which `./test.sh --coverage` points at its
-//! own directory, is honored, as it was.)
+//! own.
+//!
+//! **A new wait.** The nested build now takes the same build-directory
+//! lock as every other cargo process on this `target/` (rust-analyzer's
+//! check, another terminal), so it can sit at "Blocking waiting for
+//! file lock on build directory" until they finish. That is a wait,
+//! not a hang. It cannot wait on its own parent: cargo releases the
+//! build lock before it runs a test binary.
 
 use baumhard::document::tests::format_memory_shapes::{check_pins, derive, Measured};
 use std::fs;
@@ -82,7 +107,8 @@ use std::process::Command;
 /// Set to make a missing prerequisite a failure rather than a skip.
 const REQUIRE_ENV: &str = "MANDALA_REQUIRE_WASM_PROBE";
 const TARGET: &str = "wasm32-unknown-unknown";
-const PROBE_CRATE: &str = "wasm_font_lock_probe";
+const PROBE_CRATE_PREFIX: &str = "wasm_font_lock_probe";
+const STAGING_PREFIX: &str = "wasm_font_lock";
 
 /// Environment the probe's nested `cargo build` must not inherit from
 /// this test process; see where it is removed.
@@ -105,18 +131,35 @@ fn workspace_root() -> PathBuf {
 }
 
 /// The workspace's build output directory, which the probe's build
-/// shares (see the module docs): `$CARGO_TARGET_DIR`, else `target/`.
-fn target_dir(root: &Path) -> PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"))
+/// shares (see the module docs): the parent of cargo's own
+/// `CARGO_TARGET_TMPDIR` for this test, so it is the directory cargo
+/// really used and nothing here re-derives cargo's configuration.
+fn target_dir() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .parent()
+        .expect("CARGO_TARGET_TMPDIR is <target dir>/tmp")
+        .to_path_buf()
 }
 
-/// Where staging happens: inside the target directory, so `cargo clean`
-/// removes it and it is already git-ignored. Only the three staged
-/// files live here; the build output does not.
-fn staging_dir(target: &Path) -> PathBuf {
-    target.join("wasm_font_lock")
+/// FNV-1a, 64 bit. Written out here rather than taken from
+/// `DefaultHasher`, which promises no stable output across toolchains:
+/// the names it feeds should not change under a toolchain bump.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x100000001b3)
+    })
+}
+
+/// The staging directory's name and the probe crate's name for one
+/// workspace root: each carries a short hash of the root, so two
+/// checkouts sharing one target directory never share a staged manifest
+/// or a `.wasm` (see the module docs).
+fn probe_names(root: &Path) -> (String, String) {
+    let hash = format!("{:08x}", fnv1a(root.to_string_lossy().as_bytes()) >> 32);
+    (
+        format!("{STAGING_PREFIX}_{hash}"),
+        format!("{PROBE_CRATE_PREFIX}_{hash}"),
+    )
 }
 
 /// A missing prerequisite: skip with a note, or fail when CI demands
@@ -170,8 +213,12 @@ fn test_font_lock_helpers_run_on_wasm32() {
 
     let root = workspace_root();
     let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wasm_font_lock");
-    let target = target_dir(&root);
-    let stage = staging_dir(&target);
+    let target = target_dir();
+    let (stage_name, probe_crate) = probe_names(&root);
+    // Inside the target directory, so `cargo clean` removes it and it
+    // is already git-ignored. Only the three staged files live here;
+    // the build output does not.
+    let stage = target.join(stage_name);
     fs::create_dir_all(&stage).expect("the staging directory must be creatable");
 
     // The staging crate. `[workspace]` keeps cargo from adopting it
@@ -190,7 +237,7 @@ fn test_font_lock_helpers_run_on_wasm32() {
     // host stack for a line table to symbolize.
     let manifest = format!(
         "[package]\n\
-         name = \"{PROBE_CRATE}\"\n\
+         name = \"{probe_crate}\"\n\
          version = \"0.0.0\"\n\
          edition = \"2021\"\n\
          \n\
@@ -244,7 +291,7 @@ fn test_font_lock_helpers_run_on_wasm32() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    let wasm = target.join(format!("{TARGET}/debug/{PROBE_CRATE}.wasm"));
+    let wasm = target.join(format!("{TARGET}/debug/{probe_crate}.wasm"));
     assert!(
         wasm.is_file(),
         "the build succeeded but {} is missing",
@@ -279,4 +326,25 @@ fn test_font_lock_helpers_run_on_wasm32() {
     if let Err(why) = check_pins(&measured) {
         panic!("{why}\n{report}");
     }
+}
+
+/// Two checkouts that share one target directory get different staging
+/// directories and different probe crates, and one checkout gets the
+/// same ones every run (a name that changed per run would leave a
+/// fresh staging directory and a fresh `.wasm` behind each time).
+/// The negative control: a `probe_names` that ignored its root would
+/// fail the first assertion.
+#[test]
+fn test_two_workspace_roots_get_different_probe_names() {
+    let a = probe_names(Path::new("/work/checkout-a"));
+    let b = probe_names(Path::new("/work/checkout-b"));
+    assert_ne!(a.0, b.0, "the staging directory must differ per root");
+    assert_ne!(
+        a.1, b.1,
+        "the probe crate (and so its .wasm) must differ per root"
+    );
+    assert_eq!(a, probe_names(Path::new("/work/checkout-a")));
+    assert!(a.0.starts_with(STAGING_PREFIX) && a.1.starts_with(PROBE_CRATE_PREFIX));
+    // A valid crate name: cargo refuses anything else.
+    assert!(a.1.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
 }
