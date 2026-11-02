@@ -270,13 +270,16 @@ fn last_slot_for<T, K: Ord>(
 /// is the one `node` left is this function's callers' to guarantee,
 /// since a detached node no longer names it; every other precondition
 /// the arena checks in O(1) — a stale id, a node still attached, a
-/// `prev` under another parent — and refuses. A refusal is logged and
-/// leaves the node detached rather than aborting the caller (an
-/// interactive path, CODE_CONVENTIONS §9).
+/// `prev` under another parent, the node as its own parent — and
+/// refuses. No caller can be refused, so a refusal is an engine bug: a
+/// debug build stops on it, and a release build logs it and leaves the
+/// node detached rather than aborting the caller (an interactive path,
+/// CODE_CONVENTIONS §9).
 ///
 /// Cost: O(1), however deep `parent` sits.
 pub(crate) fn reattach_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
     if let Err(e) = node.reattach_in_row(parent, prev, arena) {
+        debug_assert!(false, "engine invariant: a same-row re-attach was refused: {e}");
         log::error!("engine: could not re-attach node {node} in the row of {parent}: {e}");
     }
 }
@@ -299,8 +302,9 @@ pub(crate) fn reattach_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: Nod
 ///
 /// The checked insert refuses only a stale node or a cycle, neither of
 /// which a detached node placed by a command that checked for one can
-/// be; a refusal is logged and leaves the node detached rather than
-/// aborting the caller (an interactive path, CODE_CONVENTIONS §9).
+/// be. A refusal is therefore an engine bug: a debug build stops on
+/// it, and a release build logs it and leaves the node detached rather
+/// than aborting the caller (an interactive path, CODE_CONVENTIONS §9).
 ///
 /// Cost: the arena's cycle check, a climb from `parent` to the top —
 /// O(depth), the price a real re-parent pays once per node moved.
@@ -312,6 +316,7 @@ pub(crate) fn attach_at<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, p
         None => parent.checked_prepend(node, arena),
     };
     if let Err(e) = attached {
+        debug_assert!(false, "engine invariant: a re-parenting attach was refused: {e}");
         log::error!("engine: could not attach node {node} under {parent}: {e}");
     }
 }

@@ -5,23 +5,30 @@
 //! [`MutatorTree`](crate::engine::tree::MutatorTree), and through them
 //! the document and the glyph trees.
 //!
-//! An [`Arena<T>`](crate::arena::Arena) holds nodes in one `Vec`; a [`NodeId`](crate::arena::NodeId) names a node
-//! by its slot and the slot's **generation**. Each node links to its
-//! parent, its first and last child and its previous and next sibling,
-//! so every one-step move, every child iteration and every structural
-//! edit of one node is O(1) and none of them allocates beyond the slot.
+//! An [`Arena<T>`](crate::arena::Arena) holds nodes in one `Vec`; a
+//! [`NodeId`](crate::arena::NodeId) names a node by its slot and the
+//! slot's **generation**. Each node links to its parent, its first and
+//! last child and its previous and next sibling, so every one-step
+//! move, every child iteration and every structural edit of one node is
+//! O(1) and none of them allocates beyond the slot. The links are the
+//! arena's alone: a node's value can be borrowed mutably
+//! ([`Arena::get_mut`](crate::arena::Arena::get_mut)), the node itself
+//! never, so no code outside this module can rewrite a link.
 //!
 //! # Generational ids
 //!
 //! Removing a node frees its slot for a later node, and moves the slot
-//! to its next generation. A [`NodeId`](crate::arena::NodeId) matches its slot only while the
-//! generation it was handed out with is the slot's, so an id kept past
-//! its node's removal is **stale**: [`Arena::get`](crate::arena::Arena::get) answers `None` for
-//! it, [`NodeId::is_removed`](crate::arena::NodeId::is_removed) `true`, and indexing with it panics
-//! naming the id — it never silently reads the node that took the slot
-//! since. A slot whose generation has reached `u32::MAX` is retired
-//! rather than reused, so no generation is ever handed out twice and no
-//! id can ever alias another node, however often a slot is recycled.
+//! to its next generation. A [`NodeId`](crate::arena::NodeId) matches
+//! its slot only while the generation it was handed out with is the
+//! slot's, so an id kept past its node's removal is **stale**:
+//! [`Arena::get`](crate::arena::Arena::get) answers `None` for it,
+//! [`NodeId::is_removed`](crate::arena::NodeId::is_removed) `true`, a
+//! structural operation refuses it (`ArenaError::Stale`), and indexing
+//! with it panics naming the id — it never silently reads the node that
+//! took the slot since. Free slots are reused oldest first. A slot
+//! whose generation has reached `u32::MAX` is retired rather than
+//! reused, so no generation is ever handed out twice and no id can ever
+//! alias another node, however often a slot is recycled.
 //!
 //! # Inserting an existing node
 //!
@@ -30,8 +37,10 @@
 //! and goes in in O(1). A node that already exists is moved:
 //!
 //! - **under another parent** by the checked inserts
-//!   ([`NodeId::checked_append`](crate::arena::NodeId::checked_append), [`NodeId::checked_prepend`](crate::arena::NodeId::checked_prepend),
-//!   [`NodeId::checked_insert_after`](crate::arena::NodeId::checked_insert_after), [`NodeId::checked_insert_before`](crate::arena::NodeId::checked_insert_before)),
+//!   ([`checked_append`](crate::arena::NodeId::checked_append),
+//!   [`checked_prepend`](crate::arena::NodeId::checked_prepend),
+//!   [`checked_insert_after`](crate::arena::NodeId::checked_insert_after),
+//!   [`checked_insert_before`](crate::arena::NodeId::checked_insert_before)),
 //!   which refuse to put a node under itself or under one of its own
 //!   descendants. Telling that is a climb from the destination to the
 //!   top of its tree, O(depth), paid **once per moved subtree**, never
@@ -46,10 +55,14 @@
 //!
 //! Nothing here recurses, and nothing spends work per node that grows
 //! with the depth (design §20 rule 11): the iterators carry their
-//! position, [`NodeId::remove_subtree`](crate::arena::NodeId::remove_subtree) frees a subtree with a cursor,
-//! and `Clone`, `Drop`, `PartialEq` and `Debug` of an arena are those
-//! of its flat `Vec` of slots. [`NodeId::ancestors`](crate::arena::NodeId::ancestors) and the checked
-//! inserts are the climbs, and they are O(depth) by what they answer.
+//! position,
+//! [`NodeId::remove_subtree`](crate::arena::NodeId::remove_subtree)
+//! frees a subtree with a cursor — each node after its subtree, the
+//! node itself last — and `Clone`, `Drop`, `PartialEq` and `Debug` of
+//! an arena are those of its flat `Vec` of slots.
+//! [`NodeId::ancestors`](crate::arena::NodeId::ancestors) and the
+//! checked inserts are the climbs, and they are O(depth) by what they
+//! answer.
 //!
 //! No `unsafe` (the crate forbids it, CONVENTIONS §B7).
 
@@ -65,7 +78,7 @@ pub use iter::{Ancestors, ChildrenOf, Descendants, NodeEdge, Traverse};
 
 use std::fmt;
 use std::num::NonZeroUsize;
-use std::ops::{Index, IndexMut};
+use std::ops::Index;
 
 /// A node's identity in an [`Arena`]: its slot and the slot's
 /// generation when the node was created (see the module docs). `Copy`,
@@ -101,11 +114,13 @@ impl fmt::Debug for NodeId {
     }
 }
 
-/// One node of an [`Arena`]: its value and its links. Borrowed through
-/// [`Arena::get`] or by indexing; its links are read-only — a node is
-/// moved through [`NodeId`]'s structural operations, which keep both
-/// ends of every link in step.
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// One node of an [`Arena`]: its value and its links. Borrowed only
+/// shared, through [`Arena::get`] or by indexing, so its links are
+/// read-only to every caller — a node is moved through [`NodeId`]'s
+/// structural operations, which keep both ends of every link in step,
+/// and its value is changed through [`Arena::get_mut`]. Not `Clone`:
+/// a node's links mean something only in the slot it sits in.
+#[derive(PartialEq, Eq, Debug)]
 pub struct Node<T> {
     parent: Option<NodeId>,
     previous_sibling: Option<NodeId>,
@@ -119,11 +134,6 @@ impl<T> Node<T> {
     /// The node's value. O(1).
     pub fn get(&self) -> &T {
         &self.data
-    }
-
-    /// The node's value, mutably. O(1).
-    pub fn get_mut(&mut self) -> &mut T {
-        &mut self.data
     }
 
     /// The node's parent, `None` for the top of a tree or a detached
@@ -171,7 +181,7 @@ impl<T> Node<T> {
 }
 
 /// What a slot holds.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 enum SlotEntry<T> {
     /// A node.
     Live(Node<T>),
@@ -183,10 +193,32 @@ enum SlotEntry<T> {
 /// One slot of an [`Arena`]: what it holds, and its generation — the
 /// live node's, or for a free slot the generation the next node to
 /// take it will have.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Slot<T> {
     generation: u32,
     entry: SlotEntry<T>,
+}
+
+/// A copy of the slot, links and all — which is why a whole arena
+/// clones and a lone [`Node`] does not. O(1) beyond the value's clone.
+impl<T: Clone> Clone for Slot<T> {
+    fn clone(&self) -> Self {
+        let entry = match &self.entry {
+            SlotEntry::Live(node) => SlotEntry::Live(Node {
+                parent: node.parent,
+                previous_sibling: node.previous_sibling,
+                next_sibling: node.next_sibling,
+                first_child: node.first_child,
+                last_child: node.last_child,
+                data: node.data.clone(),
+            }),
+            SlotEntry::Free(next) => SlotEntry::Free(*next),
+        };
+        Slot {
+            generation: self.generation,
+            entry,
+        }
+    }
 }
 
 /// Why a structural operation on an [`Arena`] was refused. Every
@@ -318,9 +350,16 @@ impl<T> Arena<T> {
         }
     }
 
-    /// The node `id` names, mutably, or `None` when it is stale. Only
-    /// its value can be changed through it. O(1).
-    pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node<T>> {
+    /// The value of the node `id` names, mutably, or `None` when it is
+    /// stale. The value only: the node's links are not reachable
+    /// mutably outside the arena. O(1).
+    pub fn get_mut(&mut self, id: NodeId) -> Option<&mut T> {
+        self.live_node_mut(id).map(|node| &mut node.data)
+    }
+
+    /// The node `id` names, mutably, or `None` when it is stale. Private:
+    /// a link written through it must be written at both its ends.
+    fn live_node_mut(&mut self, id: NodeId) -> Option<&mut Node<T>> {
         match self.slots.get_mut(id.index0()) {
             Some(Slot {
                 generation,
@@ -415,7 +454,7 @@ impl<T> Arena<T> {
     /// stale.
     #[track_caller]
     fn node_mut(&mut self, id: NodeId) -> &mut Node<T> {
-        match self.get_mut(id) {
+        match self.live_node_mut(id) {
             Some(node) => node,
             None => stale(id),
         }
@@ -451,14 +490,6 @@ impl<T> Index<NodeId> for Arena<T> {
     #[track_caller]
     fn index(&self, id: NodeId) -> &Node<T> {
         self.node(id)
-    }
-}
-
-/// The node `id` names, mutably; panics as [`Index`] does.
-impl<T> IndexMut<NodeId> for Arena<T> {
-    #[track_caller]
-    fn index_mut(&mut self, id: NodeId) -> &mut Node<T> {
-        self.node_mut(id)
     }
 }
 

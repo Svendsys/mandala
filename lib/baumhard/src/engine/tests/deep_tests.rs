@@ -527,10 +527,14 @@ fn test_engine_deep_journal_close_climbs_each_element_once() {
 /// arena's inserts of existing nodes: one step for each node a
 /// same-row re-attach links, and for a checked insert one plus every
 /// node its cycle check climbs through — so a checked insert put back
-/// on this path costs the depth per row, `WIDE_DEEP²` in all.
+/// on this path costs the depth per row, `WIDE_DEEP²` in all. And
+/// counted in the engine's own climb, `tree::climb`, which nothing on
+/// this path needs: no node changes parent, so a climb through it
+/// planted per re-attach costs the depth per row too.
 #[test]
 fn test_same_row_rearrangement_is_linear_in_depth() {
     use crate::arena::tests_support::insert_steps;
+    use crate::engine::tree::tests_support::climb_steps;
     const WIDE_DEEP: usize = 5_000;
     let mut tree = Tree::new_non_indexed();
     let mut at = tree.root();
@@ -540,7 +544,7 @@ fn test_same_row_rearrangement_is_linear_in_depth() {
         at = next;
     }
     let root = tree.root();
-    let before = insert_steps();
+    let (before, climbs) = (insert_steps(), climb_steps());
     let mut builder = JournalBuilder::new();
     // Every element goes to channel 2: in each row the chain element,
     // on 0, and the leaf, on 1, are both re-keyed, so the settle
@@ -552,11 +556,16 @@ fn test_same_row_rearrangement_is_linear_in_depth() {
     journal.revert(&mut tree).unwrap();
     journal.replay(&mut tree).unwrap();
     let steps = insert_steps() - before;
+    let climbed = climb_steps() - climbs;
     assert_eq!(tree.check_sorted(), Ok(()), "precondition: the rows are sorted");
     assert!(steps > 0, "precondition: rows were re-arranged");
     assert!(
         steps <= 16 * WIDE_DEEP,
         "{steps} insert steps to re-arrange {WIDE_DEEP} rows on one chain"
+    );
+    assert_eq!(
+        climbed, 0,
+        "climb steps to re-arrange {WIDE_DEEP} rows on one chain"
     );
 }
 

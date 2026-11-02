@@ -76,7 +76,7 @@ impl NodeId {
     /// siblings close the gap. A detached node or a stale id is left as
     /// it is. O(1).
     pub fn detach<T>(self, arena: &mut Arena<T>) {
-        let Some(node) = arena.get_mut(self) else {
+        let Some(node) = arena.live_node_mut(self) else {
             return;
         };
         let (parent, previous, next) = (node.parent, node.previous_sibling, node.next_sibling);
@@ -84,18 +84,18 @@ impl NodeId {
         node.previous_sibling = None;
         node.next_sibling = None;
         match previous {
-            Some(previous) => arena[previous].next_sibling = next,
+            Some(previous) => arena.node_mut(previous).next_sibling = next,
             None => {
                 if let Some(parent) = parent {
-                    arena[parent].first_child = next;
+                    arena.node_mut(parent).first_child = next;
                 }
             }
         }
         match next {
-            Some(next) => arena[next].previous_sibling = previous,
+            Some(next) => arena.node_mut(next).previous_sibling = previous,
             None => {
                 if let Some(parent) = parent {
-                    arena[parent].last_child = previous;
+                    arena.node_mut(parent).last_child = previous;
                 }
             }
         }
@@ -133,13 +133,13 @@ impl NodeId {
             let Some(parent) = parent else {
                 break;
             };
-            let row = &mut arena[parent];
+            let row = arena.node_mut(parent);
             row.first_child = next;
             if next.is_none() {
                 row.last_child = None;
             }
             if let Some(next) = next {
-                arena[next].previous_sibling = None;
+                arena.node_mut(next).previous_sibling = None;
             }
             arena.free(cursor);
             cursor = next.unwrap_or(parent);
@@ -273,10 +273,13 @@ impl NodeId {
     /// could hang a node below itself. The engine's one caller is
     /// `engine::siblings::reattach_in_row`.
     ///
-    /// Errors (nothing changes), each O(1) to tell:
-    /// [`ArenaError::Stale`] for a stale id, [`ArenaError::Attached`]
-    /// for a node that still hangs in a row, [`ArenaError::NotAChild`]
-    /// for a `previous` that is not a child of `parent`.
+    /// Errors (nothing changes), each O(1) to tell, the first that
+    /// applies: [`ArenaError::Stale`] for a stale `self`;
+    /// [`ArenaError::Attached`] for a node that still hangs in a row;
+    /// `Stale` for a stale `parent`; [`ArenaError::Cycle`] for `parent`
+    /// being the node itself; `Stale` for a stale `previous`;
+    /// [`ArenaError::NotAChild`] for a `previous` that is not a child of
+    /// `parent`.
     ///
     /// Cost: O(1), however deep `parent` sits.
     pub(crate) fn reattach_in_row<T>(
@@ -290,6 +293,10 @@ impl NodeId {
             return Err(ArenaError::Attached(self));
         }
         let parent_node = arena.get(parent).ok_or(ArenaError::Stale(parent))?;
+        if parent == self {
+            // A node never left itself: the one cycle telling costs O(1).
+            return Err(ArenaError::Cycle { node: self, to: self });
+        }
         let next = match previous {
             Some(previous) => {
                 let sibling = arena.get(previous).ok_or(ArenaError::Stale(previous))?;
@@ -381,17 +388,17 @@ fn link<T>(
     next: Option<NodeId>,
 ) {
     {
-        let node = &mut arena[new];
+        let node = arena.node_mut(new);
         node.parent = Some(parent);
         node.previous_sibling = previous;
         node.next_sibling = next;
     }
     match previous {
-        Some(previous) => arena[previous].next_sibling = Some(new),
-        None => arena[parent].first_child = Some(new),
+        Some(previous) => arena.node_mut(previous).next_sibling = Some(new),
+        None => arena.node_mut(parent).first_child = Some(new),
     }
     match next {
-        Some(next) => arena[next].previous_sibling = Some(new),
-        None => arena[parent].last_child = Some(new),
+        Some(next) => arena.node_mut(next).previous_sibling = Some(new),
+        None => arena.node_mut(parent).last_child = Some(new),
     }
 }

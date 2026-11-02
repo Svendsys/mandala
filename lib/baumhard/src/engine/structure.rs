@@ -479,7 +479,7 @@ fn apply_op<E: TreeElement>(
                 return Err(TreeError::PlacementCrossesKey);
             }
             journal.record(arena, target);
-            *arena[target].get_mut() = first;
+            set(arena, target, first);
             journal.note_attach(arena, parent, Some(target));
             let second = siblings::insert_value_at(arena, parent, second, Some(target));
             journal.record_created(arena, second);
@@ -502,11 +502,18 @@ fn apply_op<E: TreeElement>(
                 return Err(TreeError::PlacementCrossesKey);
             }
             journal.record(arena, target);
-            *arena[target].get_mut() = merged;
+            set(arena, target, merged);
             detach(arena, detached, next, journal, removed);
         }
     }
     Ok(())
+}
+
+/// Overwrite the element at `node`, which the walk reached in the tree.
+fn set<E>(arena: &mut Arena<E>, node: NodeId, value: E) {
+    if let Some(element) = arena.get_mut(node) {
+        *element = value;
+    }
 }
 
 /// Detach `node` and its subtree from the tree, recorded in `journal`;

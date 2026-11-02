@@ -483,14 +483,13 @@ impl<E: TreeElement> Tree<E> {
             journal.begin(self);
             journal.record(&self.arena, id);
         }
-        let Some(node) = self.arena.get_mut(id) else {
+        let Some(element) = self.arena.get_mut(id) else {
             return Err(TreeError::StaleNode(id));
         };
-        let element = node.get_mut();
         let before = element.key();
         let out = f(element);
         let rekeyed = element.key() != before;
-        let parent = node.parent();
+        let parent = self.arena[id].parent();
         if let (true, Some(parent)) = (rekeyed, parent) {
             if let Some(prev) = siblings::reposition_slot(&self.arena, id, E::key) {
                 move_among_siblings(&mut self.arena, parent, id, prev, journal);

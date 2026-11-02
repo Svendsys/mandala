@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The arena on a chain [`ARENA_DEPTH`](crate::arena::tests::deep_tests::ARENA_DEPTH) levels deep (design §20 rule 11):
-//! every walk, every structural operation and every trait an owned
-//! arena carries — `Clone`, `PartialEq`, `Debug`, `Drop` — runs on a
-//! default test thread and, through `tests/wasm_font_lock.rs`, on
-//! wasm32's default stack in a debug build, where anything that
-//! recursed once per level would overflow.
+//! The arena on a chain
+//! [`ARENA_DEPTH`](crate::arena::tests::deep_tests::ARENA_DEPTH) levels
+//! deep (design §20 rule 11): every walk, every structural operation
+//! and every trait an owned arena carries — `Clone`, `PartialEq`,
+//! `Debug`, `Drop` — runs on a default test thread and, through
+//! `tests/wasm_font_lock.rs`, on wasm32's default stack in a debug
+//! build, where anything that recursed once per level would overflow.
 
 use crate::arena::{Arena, NodeEdge, NodeId};
 use std::fmt::Write;
@@ -78,7 +79,7 @@ pub fn do_arena_deep_chain_owned_traits() {
     let (arena, ids) = arena_chain(ARENA_DEPTH);
     let mut copy = arena.clone();
     assert!(copy == arena, "a clone is equal");
-    *copy[ids[ARENA_DEPTH - 1]].get_mut() += 1;
+    *copy.get_mut(ids[ARENA_DEPTH - 1]).expect("the leaf is live") += 1;
     assert!(copy != arena, "a changed leaf is not");
     let mut written = Count(0);
     write!(written, "{arena:?}").expect("a counting writer does not fail");

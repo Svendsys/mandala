@@ -428,7 +428,7 @@ pub fn do_journal_of_an_apply_that_changes_nothing_is_empty() {
         let mut changing = mutators.clone();
         let root = changing.root();
         let root_key = changing.arena[root].get().key();
-        *changing.arena[root].get_mut() = Mutator::new(TestMutation::Add(1), root_key);
+        *changing.arena.get_mut(root).unwrap() = Mutator::new(TestMutation::Add(1), root_key);
         let mut tree = control_tree;
         let before = snapshot(&tree);
         let mut builder = JournalBuilder::new();

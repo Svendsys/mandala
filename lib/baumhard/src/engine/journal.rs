@@ -1677,7 +1677,7 @@ impl<E: Interpolable> Journal<E> {
 /// Overwrite the element at `node`, which the caller has validated.
 fn write<E>(arena: &mut Arena<E>, node: NodeId, value: E) {
     if let Some(slot) = arena.get_mut(node) {
-        *slot.get_mut() = value;
+        *slot = value;
     }
 }
 

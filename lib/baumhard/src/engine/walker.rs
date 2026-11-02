@@ -1043,11 +1043,11 @@ fn apply_recorded<E: TreeElement>(
     if let Some(journal) = rec.journal.as_deref_mut() {
         journal.record(&tree.arena, target_id);
     }
-    let node = get_target_mut(&mut tree.arena, target_id);
-    let before = node.get().key();
-    f(node.get_mut());
-    if node.get().key() != before {
-        if let Some(parent) = node.parent() {
+    let element = get_target_mut(&mut tree.arena, target_id);
+    let before = element.key();
+    f(element);
+    if element.key() != before {
+        if let Some(parent) = tree.arena[target_id].parent() {
             rec.rekeyed.push((parent, target_id));
         }
     }
@@ -1086,9 +1086,9 @@ fn get_target<E: TreeElement>(arena: &Arena<E>, id: NodeId) -> &Node<E> {
         .expect("walker invariant: target NodeId must belong to tree.arena")
 }
 
-/// [`get_target`], mutably.
+/// [`get_target`]'s element, mutably.
 #[inline]
-fn get_target_mut<E: TreeElement>(arena: &mut Arena<E>, id: NodeId) -> &mut Node<E> {
+fn get_target_mut<E: TreeElement>(arena: &mut Arena<E>, id: NodeId) -> &mut E {
     arena
         .get_mut(id)
         .expect("walker invariant: target NodeId must belong to tree.arena")

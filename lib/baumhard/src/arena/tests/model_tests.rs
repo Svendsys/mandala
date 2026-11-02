@@ -17,6 +17,7 @@
 use crate::arena::{Arena, ArenaError, NodeEdge, NodeId};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
+use std::collections::VecDeque;
 
 /// How many seeds [`do_arena_matches_a_reference_model`] runs.
 const SEEDS: u64 = 24;
@@ -33,10 +34,19 @@ struct Model {
 
 /// The reference: every node ever created, by handle (creation order);
 /// `None` once removed. `ids[h]` is the arena's id for handle `h`.
+///
+/// It models the slots too, as the arena documents them: `free` holds
+/// the freed slots oldest first — the order a removal frees them in,
+/// each node after its subtree, the node itself last — and
+/// `generations` each slot's next generation; a slot freed at
+/// `u32::MAX` is retired and never joins `free`. Every new node must
+/// take the head of `free`, or a new slot at the end when it is empty.
 #[derive(Default)]
 struct Reference {
     nodes: Vec<Option<Model>>,
     ids: Vec<NodeId>,
+    free: VecDeque<usize>,
+    generations: Vec<u32>,
 }
 
 impl Reference {
@@ -44,6 +54,44 @@ impl Reference {
         (0..self.nodes.len())
             .filter(|&h| self.nodes[h].is_some())
             .collect()
+    }
+
+    fn removed(&self) -> Vec<usize> {
+        (0..self.nodes.len())
+            .filter(|&h| self.nodes[h].is_none())
+            .collect()
+    }
+
+    /// The slot of handle `h`'s id, counted from 0.
+    fn slot(&self, h: usize) -> usize {
+        let one_based: usize = self.ids[h].to_string().parse().expect("a slot number");
+        one_based - 1
+    }
+
+    /// The arena handed out `new` for a node holding `value`: it must
+    /// be the slot at the head of `free` at its next generation, or a
+    /// new slot at the end — and an id never handed out before.
+    fn created(&mut self, new: NodeId, value: u32, done: &mut Done) -> usize {
+        assert!(
+            !self.ids.contains(&new),
+            "a new node's id {new:?} repeats an id handed out before"
+        );
+        let slot = match self.free.pop_front() {
+            Some(slot) => {
+                done.reused += 1;
+                slot
+            }
+            None => {
+                self.generations.push(0);
+                self.generations.len() - 1
+            }
+        };
+        assert_eq!(
+            format!("{new:?}"),
+            format!("NodeId({}@{})", slot + 1, self.generations[slot]),
+            "a new node takes the oldest free slot, at its next generation"
+        );
+        self.create(new, value)
     }
 
     fn node(&self, h: usize) -> &Model {
@@ -124,8 +172,26 @@ impl Reference {
 
     fn remove_subtree(&mut self, h: usize) {
         self.detach(h);
-        for gone in self.descendants(h) {
+        // Post-order, children first to last: each node after its
+        // subtree, `h` last.
+        let mut order = Vec::new();
+        let mut stack = vec![(h, false)];
+        while let Some((next, closing)) = stack.pop() {
+            if closing {
+                order.push(next);
+                continue;
+            }
+            stack.push((next, true));
+            stack.extend(self.node(next).children.iter().rev().map(|&c| (c, false)));
+        }
+        for gone in order {
             self.nodes[gone] = None;
+            let slot = self.slot(gone);
+            if self.generations[slot] == u32::MAX {
+                continue;
+            }
+            self.generations[slot] += 1;
+            self.free.push_back(slot);
         }
     }
 
@@ -165,6 +231,21 @@ fn check(context: &str, arena: &Arena<u32>, model: &Reference, full: bool) -> us
             id.parent(arena),
             node.parent(),
             "{context}: NodeId::parent of {id:?}"
+        );
+        assert_eq!(
+            (
+                id.first_child(arena),
+                id.last_child(arena),
+                id.previous_sibling(arena),
+                id.next_sibling(arena)
+            ),
+            (
+                node.first_child(),
+                node.last_child(),
+                node.previous_sibling(),
+                node.next_sibling()
+            ),
+            "{context}: the NodeId forms of {id:?}'s links"
         );
         let children: Vec<NodeId> = m.children.iter().map(|&c| model.ids[c]).collect();
         assert_eq!(
@@ -240,57 +321,57 @@ struct Done {
     removed: usize,
     no_parent_refused: usize,
     reattach_refused: usize,
+    stale_refused: usize,
+    stale_ignored: usize,
 }
 
-/// Pick a live handle at random.
-fn pick(rng: &mut StdRng, live: &[usize]) -> usize {
-    live[rng.random_range(0..live.len())]
+/// Pick a handle at random from `handles`.
+fn pick(rng: &mut StdRng, handles: &[usize]) -> usize {
+    handles[rng.random_range(0..handles.len())]
 }
 
 /// Run one operation, chosen at random, on both the arena and the model.
+/// Now and then `h` or `other` is a removed handle, whose id is stale:
+/// the operation must then refuse it as documented, or ignore it, and
+/// leave the arena as it was.
 fn step(rng: &mut StdRng, arena: &mut Arena<u32>, model: &mut Reference, done: &mut Done) {
     let live = model.live();
+    let gone = model.removed();
     let value = rng.random_range(0..1_000_000);
     if live.is_empty() {
         let id = arena.new_node(value);
-        model.create(id, value);
+        model.created(id, value, done);
         return;
     }
-    let h = pick(rng, &live);
-    let id = model.ids[h];
-    let other = pick(rng, &live);
-    let other_id = model.ids[other];
-    let freed_slots: Vec<String> = model
-        .nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| n.is_none())
-        .map(|(g, _)| model.ids[g].to_string())
-        .collect();
-    let mut created = |model: &mut Reference, new: NodeId| {
-        assert!(
-            !model.ids.contains(&new),
-            "a new node's id {new:?} repeats an id handed out before"
-        );
-        if freed_slots.contains(&new.to_string()) {
-            done.reused += 1;
+    let choose = |rng: &mut StdRng| {
+        if !gone.is_empty() && rng.random_bool(0.12) {
+            pick(rng, &gone)
+        } else {
+            pick(rng, &live)
         }
-        model.create(new, value)
     };
+    let h = choose(rng);
+    let other = choose(rng);
+    let (id, other_id) = (model.ids[h], model.ids[other]);
+    let (h_stale, other_stale) = (model.nodes[h].is_none(), model.nodes[other].is_none());
+    if h_stale || other_stale {
+        stale_step(rng, arena, model, done, h, other);
+        return;
+    }
     match rng.random_range(0..13) {
         0 => {
             let new = arena.new_node(value);
-            created(model, new);
+            model.created(new, value, done);
         }
         1 => {
             let new = id.append_value(value, arena);
-            let n = created(model, new);
+            let n = model.created(new, value, done);
             let at = model.node(h).children.len();
             model.attach(n, h, at);
         }
         2 => {
             let new = id.prepend_value(value, arena);
-            let n = created(model, new);
+            let n = model.created(new, value, done);
             model.attach(n, h, 0);
         }
         3 | 4 => {
@@ -304,7 +385,7 @@ fn step(rng: &mut StdRng, arena: &mut Arena<u32>, model: &mut Reference, done: &
                 id.insert_before_value(value, arena)
             };
             let at = model.position(h) + usize::from(after);
-            let n = created(model, new);
+            let n = model.created(new, value, done);
             model.attach(n, parent, at);
         }
         5 => {
@@ -395,29 +476,125 @@ fn step(rng: &mut StdRng, arena: &mut Arena<u32>, model: &mut Reference, done: &
             done.reattached += 1;
         }
         _ => {
-            // The same-row re-attach's O(1) refusals: a node still in a
-            // row; and, for a detached node, a previous sibling that is
+            // The same-row re-attach's O(1) refusals, none of which
+            // changes anything: a node still in a row; for a detached
+            // node, itself as its parent, and a previous sibling that is
             // not under the parent named.
+            let before = arena.clone();
             if let Some(parent) = model.node(h).parent {
                 let result = id.reattach_in_row(model.ids[parent], None, arena);
                 assert_eq!(result, Err(ArenaError::Attached(id)));
+            } else if rng.random_bool(0.3) {
+                let result = id.reattach_in_row(id, None, arena);
+                assert_eq!(
+                    result,
+                    Err(ArenaError::Cycle { node: id, to: id }),
+                    "a node as its own parent"
+                );
             } else {
                 // `h` itself qualifies, so there is always one.
                 let Some(&elsewhere) = live.iter().find(|&&y| model.node(y).parent != Some(other)) else {
                     return;
                 };
                 let result = id.reattach_in_row(other_id, Some(model.ids[elsewhere]), arena);
-                assert_eq!(
-                    result,
-                    Err(ArenaError::NotAChild {
+                let expected = if other == h {
+                    ArenaError::Cycle { node: id, to: id }
+                } else {
+                    ArenaError::NotAChild {
                         parent: other_id,
-                        node: model.ids[elsewhere]
-                    })
-                );
+                        node: model.ids[elsewhere],
+                    }
+                };
+                assert_eq!(result, Err(expected));
             }
+            assert!(*arena == before, "a refused re-attach changed the arena");
             done.reattach_refused += 1;
         }
     }
+}
+
+/// One operation with a stale `h` or `other`: the documented refusal,
+/// in the documented order (the node the method is called on first,
+/// then the one it is handed), or for `detach` and `remove_subtree` on
+/// a stale id nothing at all — and the arena as it was.
+fn stale_step(
+    rng: &mut StdRng,
+    arena: &mut Arena<u32>,
+    model: &Reference,
+    done: &mut Done,
+    h: usize,
+    other: usize,
+) {
+    let (id, other_id) = (model.ids[h], model.ids[other]);
+    let (h_stale, other_stale) = (model.nodes[h].is_none(), model.nodes[other].is_none());
+    let before = arena.clone();
+    let first_stale = if h_stale { id } else { other_id };
+    match rng.random_range(0..8) {
+        0 if h_stale => {
+            id.detach(arena);
+            done.stale_ignored += 1;
+        }
+        1 if h_stale => {
+            id.remove_subtree(arena);
+            done.stale_ignored += 1;
+        }
+        0..=2 => {
+            assert_eq!(
+                id.checked_append(other_id, arena),
+                Err(ArenaError::Stale(first_stale))
+            );
+            done.stale_refused += 1;
+        }
+        3 => {
+            assert_eq!(
+                id.checked_prepend(other_id, arena),
+                Err(ArenaError::Stale(first_stale))
+            );
+            done.stale_refused += 1;
+        }
+        4 => {
+            assert_eq!(
+                id.checked_insert_after(other_id, arena),
+                Err(ArenaError::Stale(first_stale))
+            );
+            done.stale_refused += 1;
+        }
+        5 => {
+            assert_eq!(
+                id.checked_insert_before(other_id, arena),
+                Err(ArenaError::Stale(first_stale))
+            );
+            done.stale_refused += 1;
+        }
+        _ => {
+            // The re-attach: a stale node, else (for a detached node) a
+            // stale parent or a stale previous sibling.
+            let result = if h_stale {
+                id.reattach_in_row(other_id, None, arena)
+            } else if model.node(h).parent.is_some() {
+                return;
+            } else if rng.random_bool(0.5) {
+                id.reattach_in_row(other_id, None, arena)
+            } else {
+                let Some(parent) = model.live().into_iter().find(|&p| p != h) else {
+                    return;
+                };
+                let result = id.reattach_in_row(model.ids[parent], Some(other_id), arena);
+                assert_eq!(
+                    result,
+                    Err(ArenaError::Stale(other_id)),
+                    "a stale previous sibling"
+                );
+                assert!(*arena == before, "a refused operation changed the arena");
+                done.stale_refused += 1;
+                return;
+            };
+            assert_eq!(result, Err(ArenaError::Stale(first_stale)));
+            done.stale_refused += 1;
+        }
+    }
+    assert!(*arena == before, "an operation on a stale id changed the arena");
+    let _ = other_stale;
 }
 
 #[test]
@@ -429,14 +606,17 @@ fn test_arena_matches_a_reference_model() {
 /// the model (`Reference`), held together after every operation
 /// (`check`); every few operations the descendants and traversal of
 /// every node too. Preconditions: each kind of operation ran, refused
-/// cycles included, and freed slots were reused — so the stale-id
-/// checks were made against slots that hold another node.
+/// cycles included, freed slots were reused — so the stale-id checks
+/// were made against slots that hold another node — and stale ids were
+/// handed to every operation that takes one.
 pub fn do_arena_matches_a_reference_model() {
     let mut done = Done::default();
     for seed in 0..SEEDS {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut arena = Arena::new();
         let mut model = Reference::default();
+        let first = arena.new_node(0);
+        model.created(first, 0, &mut done);
         for i in 0..STEPS {
             step(&mut rng, &mut arena, &mut model, &mut done);
             done.stale_checked += check(&format!("seed {seed} step {i}"), &arena, &model, i % 50 == 0);
@@ -460,6 +640,8 @@ pub fn do_arena_matches_a_reference_model() {
         ("removals", done.removed),
         ("sibling inserts refused for no parent", done.no_parent_refused),
         ("same-row re-attaches refused", done.reattach_refused),
+        ("stale ids refused", done.stale_refused),
+        ("stale ids ignored", done.stale_ignored),
     ] {
         assert!(count > 0, "precondition: the sweep made {what} ({done:?})");
     }
