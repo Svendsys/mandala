@@ -425,6 +425,21 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_letter_never_spends_a_round_where_it_stands",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_sides_gap_is_solved_to_copies_that_fit",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_a_glyph_step_of_the_sweep_takes_few_path_lookups",
             CannotCompileIntoTheLibrary,
         ),

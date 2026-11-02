@@ -726,7 +726,18 @@ impl<'w> InkLay<'w> {
                     if rounds == 0 {
                         break;
                     }
+                    #[cfg(test)]
+                    let was = set.center;
                     set = pair(walk, e, half, set.center, clear, ink, &mut rounds);
+                    #[cfg(test)]
+                    EARLIER_ROUNDS.with(|count| {
+                        let (moved, idle) = count.get();
+                        count.set(if set.center == was {
+                            (moved, idle + 1)
+                        } else {
+                            (moved + 1, idle)
+                        });
+                    });
                 }
                 let taken = (set.center - before.center) / straight;
                 self.ratio = if taken.is_finite() {
@@ -777,6 +788,11 @@ thread_local! {
     /// [`MOST_STEP_LOOKUPS`] is the most of.
     #[cfg(test)]
     pub(crate) static STEP_LOOKUPS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (#294, ruling R44.7): the rounds a letter has been
+    /// moved clear of an ink before its neighbor ([`EARLIER`]) on this
+    /// thread, and of them the rounds that left it where it was.
+    #[cfg(test)]
+    pub(crate) static EARLIER_ROUNDS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// Test counter (#294, ruling R43): one glyph step of [`track`] taken,
@@ -1040,15 +1056,12 @@ struct Layout<'a> {
 }
 
 /// A frame's work (ruling R44.2): the glyph steps its tracking and its
-/// side lays have taken, the glyphs its budget is scaled by, and the most
-/// it may take ([`frame_budget`]).
+/// side lays have taken, the glyphs of its text its budget is scaled by,
+/// and the most it may take ([`frame_budget`]).
 struct Work {
     spent: Cell<usize>,
     glyphs: Cell<usize>,
     budget: Cell<usize>,
-    /// Whether the budget is set from outside (a test's
-    /// `BUDGET_OVERRIDE`), so the frame's glyphs leave it as it is.
-    fixed: Cell<bool>,
 }
 
 impl Work {
@@ -1057,7 +1070,6 @@ impl Work {
             spent: Cell::new(0),
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
-            fixed: Cell::new(false),
         }
     }
 
@@ -1071,14 +1083,13 @@ impl Work {
         self.spent.get() >= self.budget.get()
     }
 
-    /// Scale the budget by `more` glyphs the frame may place besides
-    /// those it is scaled by already: a side's copies, once its arc
-    /// tells how many fit (ruling R44.3).
-    fn place(&self, more: usize) {
-        self.glyphs.set(self.glyphs.get().saturating_add(more));
-        if !self.fixed.get() {
-            self.budget.set(frame_budget(self.glyphs.get()));
-        }
+    /// Scale the budget by the frame's text, `glyphs` glyphs once cut to
+    /// the glyph cap (ruling R44.2): its sides' lays count against it,
+    /// and scale it not (ruling R44.3), so a frame's work is bounded by
+    /// its text alone.
+    fn scale(&self, glyphs: usize) {
+        self.glyphs.set(glyphs);
+        self.budget.set(frame_budget(glyphs));
     }
 }
 
@@ -1832,9 +1843,6 @@ impl<'s> SideArc<'s> {
         if fit == 0 {
             return;
         }
-        // The copies that fit place glyphs the frame's budget is scaled
-        // by, as its text's are (ruling R44.2).
-        self.side.work.place(rooms[fit - 1].1);
         let mut solved: Vec<Option<(f32, Vec<PlacedGlyph>)>> = vec![None; fit + 1];
         let mut solve = |n: usize| -> f32 {
             if solved[n].is_none() {
@@ -3121,11 +3129,10 @@ pub(super) fn place_halves(
         .map(|(_, range, _)| range.len())
         .sum::<usize>()
         .min(glyph_cap());
-    lay.work.place(glyphs);
+    lay.work.scale(glyphs);
     #[cfg(test)]
     if let Some(budget) = BUDGET_OVERRIDE.with(Cell::get) {
         lay.work.budget.set(budget);
-        lay.work.fixed.set(true);
     }
     let zero: Clear = [[0.0; 2]; 2];
     let Some(mut built) = build(1.0, zero, false, fs) else {
@@ -3421,6 +3428,42 @@ pub(crate) fn side_floor_seam(
     let glyphs = arc.lay(n, arc.floor).0.out;
     let floor = arc.floor;
     Some((uninked(drawn), glyphs, floor))
+}
+
+/// Test seam (#294, ruling R44.3): `n` copies of `ornament` solved for
+/// their equal gap ([`SideArc::solve`]) along the arc
+/// [`side_floor_seam`] lays them on, between `outline`'s first half's
+/// junctions, from the floor's row: the gap, and whether the copies laid
+/// at it touch the junction's ink or pass its center. `None` when `n`
+/// copies do not fit at the floor.
+#[cfg(test)]
+pub(crate) fn side_solve_seam(
+    run: &ShapedRun,
+    outline: &Outline,
+    ornament: &str,
+    n: usize,
+    flow: &ResolvedText,
+    fs: &mut FontSystemWriteGuard,
+) -> Option<(f32, bool)> {
+    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let lay = Layout::new(&halves, true);
+    let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
+    let (with, range) = side_run(run, &sides, flow, fs)?;
+    let fsys: &mut FontSystem = fs;
+    let drawn = inked(&with, fsys);
+    let (size, _) = letters_of(&clusters_of(&drawn.glyphs, 0..range.start))?;
+    let side = SideOrnament::new(&lay, &drawn, range, size);
+    let (ja, jb) = halves.junctions[0];
+    let point = |s: f32| {
+        let p = halves.paths[0].at(s).0;
+        ((p, p), s)
+    };
+    let arc = side.arc(point(ja), point(jb))?;
+    let (row, rooms) = arc.floor_row(n);
+    let &(room, len) = rooms.get(n.checked_sub(1)?)?;
+    let (gap, _) = arc.solve(n, room, row[..len].to_vec());
+    let (_, (end, at)) = arc.lay(n, gap);
+    Some((gap, at >= arc.cb || !(end > TOUCH)))
 }
 
 /// Test seam (#291, ruling R34): the part of `outline`'s half `half` a

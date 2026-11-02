@@ -1191,20 +1191,23 @@ fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
 /// 2,893 `track`s and 69 s in the ASan `flow_raw` binary, too slow to be
 /// committed where `scripts/fuzz.sh` feeds it to that binary. With
 /// R43's cheaper steps and fewer of them it is committed: every
-/// property holds, in at most 1,000 `track`s and 4,000,000 path lookups
-/// (on this machine 528 and 696,428), and no glyph step of a line above
-/// 64 lookups.
+/// property holds, in at most 1,500 `track`s and 4,000,000 path lookups
+/// (528 and 696,428 on one machine, 856 and 935,189 on another: the
+/// bounds are kept well clear of every host's count, ruling R44.5), and
+/// no glyph step of a line above 64 lookups.
 ///
-/// Its `Spread` and `Once` frames still cut a line apart. Its NULs are
-/// drawn in whatever face the host falls back to, so its path through
-/// the last resorts is the host's: on one machine its `Fit` frame is
-/// held at R27's size (3 builds), on CI's runner it is shrunk (8), and
-/// no bound here counts builds. R42.2's stop is held, on every machine,
-/// by `test_a_shrunk_frame_lays_a_bounded_number_of_lines`.
+/// Its NULs are drawn in whatever face the host falls back to, so its
+/// path through the last resorts is the host's: on one machine its
+/// `Spread` and `Once` frames cut a line apart and its `Fit` frame is
+/// held at R27's size (3 builds), on another nothing is cut apart, on
+/// CI's runner the `Fit` frame is shrunk (8 builds), and no bound here
+/// counts builds or cuts. R42.1's bisection of `cut_apart` (C63) is held
+/// on every host, in the pinned face, by
+/// `test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines`;
+/// R42.2's stop by `test_a_shrunk_frame_lays_a_bounded_number_of_lines`.
 ///
-/// Control: R42.1's — `cut_apart` bisecting its prefix on whole
-/// clearance searches again (C63) — passes the bound on `track`s (1,602).
-/// With a letter allowed 64 inks tried, a glyph step takes 192 lookups.
+/// Control: with a letter allowed 64 inks tried, a glyph step takes 192
+/// lookups.
 #[test]
 fn test_a_raw_frame_cut_apart_lays_a_bounded_number_of_lines() {
     use crate::flow::path::PATH_LOOKUPS;
@@ -1226,8 +1229,8 @@ fn test_a_raw_frame_cut_apart_lays_a_bounded_number_of_lines() {
         "precondition: its three frames are laid along their halves ({counts})"
     );
     assert!(
-        tracks <= 1_000,
-        "the fuzzer's input: {counts}; at most 1,000 tracks"
+        tracks <= 1_500,
+        "the fuzzer's input: {counts}; at most 1,500 tracks"
     );
     assert!(
         lookups <= 4_000_000,

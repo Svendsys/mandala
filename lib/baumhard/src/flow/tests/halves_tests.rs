@@ -987,6 +987,9 @@ pub struct SweepWork {
     /// The most glyph steps a frame took a glyph of its text, rounded up
     /// (ruling R44.2).
     pub most_per_glyph: usize,
+    /// The rounds a letter was moved clear of an ink before its neighbor,
+    /// and of them the rounds that left it where it was (ruling R44.7).
+    pub earlier: (usize, usize),
 }
 
 /// The lines this thread has tracked (`halves::TRACKS`, a test
@@ -1006,6 +1009,17 @@ pub(crate) fn lookups_so_far() -> usize {
     return crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get);
     #[cfg(not(test))]
     0
+}
+
+/// The rounds this thread's letters have been moved clear of an ink
+/// before their neighbor, and of them the rounds that left a letter where
+/// it was (`halves::EARLIER_ROUNDS`, a test counter): none in a build that
+/// is not a test's.
+pub(crate) fn earlier_rounds() -> (usize, usize) {
+    #[cfg(test)]
+    return crate::flow::place::halves::EARLIER_ROUNDS.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    (0, 0)
 }
 
 /// The most path lookups one glyph step of a frame's line has taken on
@@ -1097,6 +1111,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
     // the glyph steps and path lookups in all.
     let mut work = SweepWork::default();
     most_step_lookups(0);
+    let earlier_before = earlier_rounds();
     let size = |run: &ShapedRun| {
         run.glyphs
             .iter()
@@ -1318,6 +1333,11 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
     }
     work.most_tracks = most_tracks;
     work.most_step = most_step_lookups(0);
+    let earlier_after = earlier_rounds();
+    work.earlier = (
+        earlier_after.0 - earlier_before.0,
+        earlier_after.1 - earlier_before.1,
+    );
     if report {
         eprintln!(
             "the aspect sweep: shrunk {shrunk} cut {cut} reported {reported} apart {apart} most tracks {most_tracks} {work:?}\n{}",
@@ -2598,9 +2618,9 @@ fn test_flow_halves_a_frame_places_at_most_65536_glyphs() {
 /// end is left with dropped, and what is cut said: three-glyph clusters
 /// and a space, held to 5, 6 and 7 glyphs, and one held whole.
 ///
-/// Control: with the cut taken at the glyph, not the cluster, held to 5
-/// it keeps 5 glyphs — a cluster split — and is red. (No `do_*` twin:
-/// it reads a test seam.)
+/// Controls: with a cluster kept whenever it starts within the cap, held
+/// to 5 it keeps 7 glyphs, red; with the cut removed, held to 5 it keeps
+/// all 11, red. (No `do_*` twin: it reads a test seam.)
 #[test]
 fn test_flow_halves_a_frames_text_is_cut_to_the_cap_at_a_cluster() {
     use crate::flow::place::halves::to_cap_seam;
@@ -2813,10 +2833,10 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 /// places, counted against its budget: the reviewer's case, a 200-byte
 /// ornament at span natural round a 200,000 ellipse, whose two arcs place
 /// some 65,000 glyphs, takes at most [`SIDE_LOOKUPS_A_GLYPH`] path
-/// lookups a glyph placed — it took 51,294,015 lookups in all at
-/// dd04a8f5, when each fill bisected its gap in 30 lays of every copy —
-/// and weighs at most [`PAIRS_A_BOX`] pairs of boxes a glyph for touching,
-/// where it weighed every pair (some two billion, most of its time).
+/// lookups a glyph placed (78; 51,294,015 in all,
+/// 784 a glyph, at dd04a8f5, when each fill bisected its gap in 30 lays
+/// of every copy), and weighs at most [`PAIRS_A_BOX`] pairs of boxes a
+/// glyph for touching (4.2; every pair, some two billion, at dd04a8f5).
 ///
 /// Controls: with the gap bisected in 30 lays again, past the lookups'
 /// bound; with every pair of boxes weighed, past the pairs'. (No `do_*`
@@ -2860,12 +2880,125 @@ fn test_flow_halves_a_long_side_ornament_is_filled_in_few_lays() {
 }
 
 /// The most path lookups [`test_flow_halves_a_long_side_ornament_is_filled_in_few_lays`]'s
-/// frame may take a glyph it places: some ten lays of each copy at a
-/// dozen lookups a glyph, with a margin.
+/// frame may take a glyph it places: a few lays of each copy at a dozen
+/// lookups a glyph, its lays counted against the frame's budget, with a
+/// margin past the 78 it takes.
 #[cfg(test)]
-const SIDE_LOOKUPS_A_GLYPH: usize = 150;
+const SIDE_LOOKUPS_A_GLYPH: usize = 100;
 
 /// The most pairs of boxes the same frame may weigh for touching a glyph
-/// it places.
+/// it places: the few inks either side of each along the sweep's axis,
+/// with a margin past the 4.2 it weighs.
 #[cfg(test)]
-const PAIRS_A_BOX: usize = 20;
+const PAIRS_A_BOX: usize = 10;
+
+/// R44.5 (C63, held on every host): the quatrain at 22 pt inward round
+/// the 600 × 12 sharp rectangle, `Once` at span ½ — the sweep's frame the
+/// bisection of whole clearance searches was caught on — in the pinned
+/// face, so its path through the last resorts is every host's. Its two
+/// lines face each other across the outline, and the later is cut apart
+/// (`Trace::cut_apart`); the cut takes at most [`CUT_APART_TRACKS`]
+/// `track`s.
+///
+/// Control: `cut_apart` bisecting its prefix on whole clearance searches
+/// again (C63), past the bound. (No `do_*` twin: it reads test counters.)
+#[test]
+fn test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines() {
+    use crate::flow::place::halves::TRACKS;
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let layout = RingLayout {
+        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+        ..RingLayout::whole()
+    };
+    let before = TRACKS.with(std::cell::Cell::get);
+    let (_, _, trace) = frame_with(
+        QUATRAIN,
+        22.0,
+        &shape,
+        &FitMode::Once { filler: None },
+        &layout,
+        false,
+    );
+    let tracks = TRACKS.with(std::cell::Cell::get) - before;
+    assert!(
+        !trace.cut_apart.is_empty(),
+        "precondition: a line is cut apart ({tracks} tracks, {:?})",
+        trace.unheld
+    );
+    assert!(
+        tracks <= CUT_APART_TRACKS,
+        "the frame cut apart takes {tracks} tracks, at most {CUT_APART_TRACKS}"
+    );
+}
+
+/// The most `track`s [`test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines`]'s
+/// frame may take.
+#[cfg(test)]
+const CUT_APART_TRACKS: usize = 700;
+
+/// R44.7: a letter moved clear of an ink before its neighbor is moved
+/// only when the pairwise rule would move it — nearer than the gap less
+/// what the rule accepts — so no such round over the aspect sweep leaves
+/// a letter where it was, and three lookups for nothing.
+///
+/// Control: with an ink nearer than the gap itself moved from, as before
+/// R44.7, rounds that leave the letter where it was. (No `do_*` twin: it
+/// reads test counters.)
+#[test]
+fn test_flow_halves_a_letter_never_spends_a_round_where_it_stands() {
+    let (moved, idle) = the_sweep().earlier;
+    assert!(
+        moved > 0,
+        "precondition: the sweep moves letters clear of earlier inks"
+    );
+    assert_eq!(
+        idle,
+        0,
+        "{idle} of {} rounds left a letter where it was",
+        moved + idle
+    );
+}
+
+/// R44.3: a side's equal gap is solved to copies that leave the text's
+/// ink clear: the room copies leave falls with their gap until the last
+/// one's ink meets the text's, then drops to none — the two inks touching
+/// — or past it, so a probe there is read as a miss however near, never
+/// taken for the answer, where copies a hair short of their room close
+/// with a join a hair narrower than their gaps, as a line's end a hair
+/// past its part's is laid. A 20-byte ornament between a 20,000
+/// ellipse's first half's junctions, every count of copies from 160 to
+/// the most that fit at the floor, some 175.
+///
+/// Control: with a touching miss read at its own room, which a solve
+/// within its tolerance takes, 170 copies touch. (No `do_*` twin: it
+/// reads a test seam.)
+#[test]
+fn test_flow_halves_a_sides_gap_is_solved_to_copies_that_fit() {
+    use crate::flow::place::halves::side_solve_seam;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(20_000.0)), Shape::Ellipse);
+    let flow = style(16.0);
+    let ornament = "x".repeat(20);
+    let solved: Vec<(usize, f32, bool)> = with_fonts(|fs| {
+        let run = real_run(QUATRAIN, &flow, fs);
+        (160..=180)
+            .filter_map(|n| {
+                side_solve_seam(&run, &shape, &ornament, n, &flow, fs).map(|(gap, touches)| (n, gap, touches))
+            })
+            .collect()
+    });
+    assert!(
+        solved.len() > 10,
+        "precondition: the counts fit at the floor ({})",
+        solved.len()
+    );
+    let touching: Vec<_> = solved.iter().filter(|(_, _, touches)| *touches).collect();
+    assert!(
+        touching.is_empty(),
+        "solved to copies that touch the text's ink: {touching:?}"
+    );
+}
