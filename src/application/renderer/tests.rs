@@ -1227,18 +1227,20 @@ type NamedAreaMutation = (&'static str, fn(&mut GlyphArea));
 ///
 /// The overlay cache's module header rests on "a field added to the
 /// area joins the comparison without anyone remembering to wire it
-/// in". That is only true for a field *not* marked
-/// `#[derivative(PartialEq = "ignore")]`, and the struct already
-/// carries one such marking — so the sentence needs a guard rather
-/// than trust. This is it, in two halves:
+/// in". `GlyphArea`'s hand-written `PartialEq` destructures the area
+/// exhaustively, so a new field cannot compile there unclassified —
+/// but classifying it as ignored, or moving one of today's fields to
+/// the ignored side, is a one-line edit there, and the struct already
+/// ignores one field. So the sentence needs a guard rather than
+/// trust. This is it, in two halves:
 ///
 /// - the exhaustive destructuring has no `..` rest pattern, so a
 ///   field added to `GlyphArea` fails to compile here until someone
 ///   names it and decides which list it belongs on;
 /// - every field named on the equality-visible side is then mutated
-///   in isolation and asserted to break `==`, so an `ignore` added
-///   to one of today's fields fails rather than quietly widening the
-///   cache's blind spot.
+///   in isolation and asserted to break `==`, so a field dropped from
+///   the comparison fails rather than quietly widening the cache's
+///   blind spot.
 ///
 /// Three of those fields — `background_color`, `background_padding`
 /// and `align_center` — are read by the shaper (or by the fill the
@@ -1285,7 +1287,7 @@ fn test_glyph_area_equality_ignores_only_the_hitbox() {
     // One mutation per equality-visible field, each applied to a
     // fresh clone of the fixture so the fields stay independent.
     // `regions` is perturbed by its *span set* rather than by a
-    // color: derived equality bottoms out in `BTreeSet` identity by
+    // color: the area's equality bottoms out in `BTreeSet` identity by
     // range and is deliberately blind to a recolor — the module
     // header's "The one place `==` is not enough", which
     // `ColorFontRegions::same_content` answers separately.

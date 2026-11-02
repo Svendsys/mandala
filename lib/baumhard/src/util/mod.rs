@@ -64,6 +64,12 @@ pub mod geometry;
 /// Grapheme-cluster aware text primitives — reach for these from
 /// the app crate rather than byte-indexing a `String` (§B3).
 pub mod grapheme_chad;
+/// Every crate `Cargo.lock` holds at two versions, each with the reason
+/// it stays (#284), held against the lockfile so a `cargo update` cannot
+/// bring a removed one back unnoticed. Test-only and native-only for the
+/// same reasons `manifests` is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod lock_duplicates;
 /// Logger initialization — `init()` selects the right backend per
 /// target. Macro callsites keep using `log::warn!` etc. directly,
 /// since `log` is the universal Rust facade. On native, `capture`

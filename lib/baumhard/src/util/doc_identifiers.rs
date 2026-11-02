@@ -347,9 +347,6 @@ const KNOWN_DERIVES: &[&str] = &[
     "IntoStaticStr",
     "Display",
     "VariantNames",
-    // `derivative`'s umbrella derive; the traits it implements are
-    // listed in its own `#[derivative(…)]` attribute, read alongside.
-    "Derivative",
 ];
 
 /// One source file, read and parsed once, for both the index and the
@@ -898,10 +895,7 @@ impl WorkspaceIndex {
         self.types.insert(name.to_string());
         self.parsed_types.insert(name.to_string());
         self.declared.insert(name.to_string());
-        for derived in derived_traits(attrs, "derive")
-            .into_iter()
-            .chain(derived_traits(attrs, "derivative"))
-        {
+        for derived in derived_traits(attrs) {
             if KNOWN_DERIVES.contains(&derived.as_str()) {
                 self.implements
                     .entry(name.to_string())
@@ -922,19 +916,14 @@ impl WorkspaceIndex {
     }
 }
 
-/// The trait names a `#[<attribute>(…)]` on `attrs` lists, by their
-/// last path segment (`serde::Serialize` is `Serialize`), for
-/// `derive` and for `derivative`, whose entries may carry an `=
-/// "option"` that is read past.
-fn derived_traits(attrs: &[Attribute], attribute: &str) -> Vec<String> {
+/// The trait names the `#[derive(…)]` attributes on `attrs` list, by
+/// their last path segment (`serde::Serialize` is `Serialize`).
+fn derived_traits(attrs: &[Attribute]) -> Vec<String> {
     let mut out = Vec::new();
-    for attr in attrs.iter().filter(|attr| attr.path().is_ident(attribute)) {
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("derive")) {
         let _ = attr.parse_nested_meta(|meta| {
             if let Some(last) = meta.path.segments.last() {
                 out.push(last.ident.to_string());
-            }
-            if meta.input.peek(syn::Token![=]) {
-                let _: syn::Expr = meta.value()?.parse()?;
             }
             Ok(())
         });
@@ -1140,12 +1129,10 @@ fn can_continue_derive(line: &str) -> bool {
     !line.contains(['{', '}', ';'])
 }
 
-/// Whether a line opens a `#[derive(…)]` or `#[derivative(…)]`
-/// attribute, closed on this line or a later one.
+/// Whether a line opens a `#[derive(…)]` attribute, closed on this
+/// line or a later one.
 fn is_derive_opening(line: &str) -> bool {
-    ["#[derive(", "#[derivative("]
-        .iter()
-        .any(|prefix| line.starts_with(prefix))
+    line.starts_with("#[derive(")
 }
 
 /// `line` with every `'{'`, `'}'`, `b'{'` and `b'}'` char literal
@@ -1159,14 +1146,11 @@ fn without_brace_char_literals(line: &str) -> String {
     out
 }
 
-/// The traits a `#[derive(…)]` or `#[derivative(…)]` attribute lists,
-/// by their last path segment and with a `derivative` entry's `= "…"`
-/// option read past; `None` for any other line. A wrapped attribute is
-/// gathered onto one line before it is read here.
+/// The traits a `#[derive(…)]` attribute lists, by their last path
+/// segment; `None` for any other line. A wrapped attribute is gathered
+/// onto one line before it is read here.
 fn derive_line(line: &str) -> Option<Vec<String>> {
-    let inner = ["#[derive(", "#[derivative("]
-        .iter()
-        .find_map(|prefix| line.strip_prefix(prefix))?;
+    let inner = line.strip_prefix("#[derive(")?;
     let inner = inner.rsplit_once(")]").map_or(inner, |(inner, _)| inner);
     Some(
         inner
@@ -2295,16 +2279,15 @@ struct Bare;
         );
         assert_eq!(scan.resolved.get("c.rs"), Some(&3));
 
-        // strum's `EnumIter` supplies `iter`; `derivative` lists the
-        // traits it implements in its own attribute, options included.
+        // strum's `EnumIter` supplies `iter`, and a path-qualified
+        // derive names its trait by the last segment.
         let derived = "\
 /// `Kind::iter`, `Area::eq` and `Area::fmt`; `Kind::eq` is nobody's.
 #[derive(EnumIter)]
 enum Kind {
     A,
 }
-#[derive(Derivative)]
-#[derivative(PartialEq, Debug = \"transparent\")]
+#[derive(std::cmp::PartialEq, core::fmt::Debug)]
 struct Area;
 ";
         let scan = scan_sources(&[("d.rs", derived)]);
@@ -2467,10 +2450,6 @@ struct Host;
             derive_line("#[derive(Clone, strum::EnumIter)]"),
             Some(vec!["Clone".into(), "EnumIter".into()])
         );
-        assert_eq!(
-            derive_line("#[derivative(PartialEq, Debug = \"transparent\")]"),
-            Some(vec!["PartialEq".into(), "Debug".into()])
-        );
         assert_eq!(derive_line("#[cfg(test)]"), None);
         assert!(declares_a_parameter("pub $field: Vec<u8>,"));
         assert!(declares_a_parameter("fn $method(&self) {}"));
@@ -2573,7 +2552,6 @@ fn user() {{}}
             "control: a trait the wrapped list does not name is not granted"
         );
         assert!(is_derive_opening("#[derive("));
-        assert!(is_derive_opening("#[derivative(Debug)]"));
         assert!(!is_derive_opening("#[cfg(test)]"));
     }
 

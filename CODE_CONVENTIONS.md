@@ -356,7 +356,8 @@ first-class deployments. The lowest-spec target sets the budget.
   status" section naming the reason. "I'll add WASM later" is not a
   contract this repo recognizes. What enforces it: `./test.sh`'s WASM
   gate, which is `cargo check --target wasm32-unknown-unknown
-  --workspace` and is the check to reach for while iterating;
+  --workspace --exclude workspace-hack` (the generated feature unifier
+  is native only, #284) and is the check to reach for while iterating;
   `./build.sh`, which always builds both legs in full; and CI
   (`.github/workflows/test.yml`), which runs `./test.sh`.
 
@@ -600,12 +601,16 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `#[cfg(test)] mod x;` files and `#![cfg(test)]` files dropped,
   baumhard's ungated `pub mod tests;` trees and `benches/` dropped
   by path — and fails `./test.sh` naming `file:line`. Beside it,
-  six of the seven cargo targets carry
-  `#![warn(clippy::unwrap_used)]` with
-  `#![cfg_attr(test, allow(...))]`, so the same rule reaches an
-  editor while the code is being written. The seventh is the
-  criterion bench root, which is test code by §T2.2 and which the
-  scan drops by path. **Count the targets, not the libraries:**
+  ten of the eleven cargo targets that are not integration tests
+  carry `#![warn(clippy::unwrap_used)]` (with
+  `#![cfg_attr(test, allow(...))]` where the target has tests), so
+  the same rule reaches an editor while the code is being written.
+  The eleventh is the criterion bench root, which is test code by
+  §T2.2 and which the scan drops by path. Two of the ten hold no code
+  at all — the lib and build script of `crates/workspace-hack`, the
+  generated feature unifier (#284) — and carry the attribute so the
+  sentence stays true of whatever lands there. **Count the targets,
+  not the libraries:**
   `lib/baumhard/src/bin/generate_stress_map.rs` and
   `lib/baumhard/build.rs` are each a crate root of their own, and
   the attribute in `lib.rs` reaches neither — a planted `unwrap()`
