@@ -293,21 +293,7 @@ pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), Load
 fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadError> {
     check_text_cap_against(json, limits.bytes)?;
     let index = index::index(json)?;
-    let header = header(&index)?;
-    let mut builder = Builder::begin(&header, Keep::Document, limits.elements)
-        .map_err(|error| placed(error, &index, None))?;
-    // One entry per node, made once: the map does not grow, and so never
-    // holds its old table and its new one at the same time. No more than
-    // the element bound, which a list of more nodes reaches first.
-    let reserve = limits.elements.map_or(index.nodes.len(), |max| {
-        index.nodes.len().min(usize::try_from(max).unwrap_or(usize::MAX))
-    });
-    builder.idents.reserve(reserve);
-    // The arena too: one slot per node, made once beside the root, so
-    // the nodes go in without the arena doubling and holding its old
-    // slots and its new ones at once. A node's rows are counted only as
-    // it is read, so they grow it from there.
-    builder.tree.reserve(reserve);
+    let mut builder = begin_build(&index, limits)?;
     for (i, extent) in index.nodes.iter().enumerate() {
         let dto: NodeDto = index::parse_extent(index.text, extent, &[Seg::Key("nodes"), Seg::Index(i)])
             .map_err(|error| LoadError {
@@ -325,6 +311,44 @@ fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadErr
             .map_err(|error| placed(error, &index, Some((i, &dto))))?;
     }
     builder.finish().map_err(|error| placed(error, &index, None))
+}
+
+/// The fewest bytes of text a node that loads is written in: the
+/// shortest node, `{"id":1,"position":[0,0]}` — both keys are required,
+/// an id is at least 1 and a position two numbers, and the text has no
+/// whitespace. Entries of `nodes` are separated by commas besides, so a
+/// text of `n` bytes holds at most `n / MIN_NODE_TEXT` nodes that load.
+/// `test_the_shortest_node_that_loads_is_min_node_text_bytes` pins it.
+pub const MIN_NODE_TEXT: usize = 25;
+
+/// How many nodes a load makes room for before it builds — in the ident
+/// map and in the arena — when `nodes` holds `entries` entries of a
+/// text `text` bytes long: one per entry, but no more than the element
+/// bound allows ([`element_bound`]) and no more than the text could hold
+/// as nodes that load ([`MIN_NODE_TEXT`]). So a damaged or hostile list
+/// of tiny entries, refused at its first, never asks for more room than
+/// a valid map of its length would need. O(1).
+pub(crate) fn node_reservation(entries: usize, text: usize, limits: Limits) -> usize {
+    let bound = usize::try_from(element_bound(limits.elements)).unwrap_or(usize::MAX);
+    entries.min(bound).min(text / MIN_NODE_TEXT)
+}
+
+/// Phase 3's start: the header read, and a builder holding the map's
+/// root, with room made for the nodes ([`node_reservation`]).
+fn begin_build(index: &MapIndex<'_>, limits: Limits) -> Result<Builder, LoadError> {
+    let header = header(index)?;
+    let mut builder = Builder::begin(&header, Keep::Document, limits.elements)
+        .map_err(|error| placed(error, index, None))?;
+    // One entry per node, made once: the map does not grow, and so never
+    // holds its old table and its new one at the same time.
+    let reserve = node_reservation(index.nodes.len(), index.text.len(), limits);
+    builder.idents.reserve(reserve);
+    // The arena too: one slot per node, made once beside the root, so
+    // the nodes go in without the arena doubling and holding its old
+    // slots and its new ones at once. A node's rows are counted only as
+    // it is read, so they grow it from there.
+    builder.tree.reserve(reserve);
+    Ok(builder)
 }
 
 /// The header's top-level values, each parsed from its extent in the

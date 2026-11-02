@@ -204,11 +204,12 @@ impl<T> Iterator for Descendants<'_, T> {
     }
 
     /// At least one while a node's start is next, at most every live
-    /// node.
+    /// node while the walk has any edge left, and none once it is done.
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self.traverse.next {
             Some(Edge::Start(_)) => (1, Some(self.traverse.arena.live)),
-            _ => (0, Some(self.traverse.arena.live)),
+            Some(Edge::End(_)) => (0, Some(self.traverse.arena.live)),
+            None => (0, Some(0)),
         }
     }
 }

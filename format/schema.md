@@ -829,8 +829,8 @@ would have had in the file.
 | Limit | Value |
 |---|---|
 | The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, 230,087,533 bytes, before it is parsed (`TooLarge`). |
-| Elements | Unbounded on native. On wasm32 a map may become at most `MAX_ELEMENTS`, 2,796,202 elements, each verb, edit and presentation counting as one; the one past it is refused, before it is built, at its path (`TooManyElements`). |
-| Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 7 + elements × 576` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
+| Elements | On native, at most 4,294,967,294 (`u32::MAX - 1`, the arena's slot count). On wasm32 a map may become at most `MAX_ELEMENTS`, 3,355,443 elements. Each verb, edit and presentation counts as one; the one past either bound is refused, before it is built, at its path (`TooManyElements`). |
+| Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 7 + elements × 480` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
 | The tree's depth | **None.** Every walk is iterative. |
 | The number of nodes | None beyond the ids there are and, on wasm32, the element bound above. |
 | A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |

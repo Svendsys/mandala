@@ -365,6 +365,33 @@ fn test_the_iterators_size_hints_bound_what_they_yield() {
     );
     assert_eq!(gone.children(&arena).size_hint(), (0, Some(0)), "a stale id's");
     assert_eq!(top.traverse(&arena).size_hint(), (1, Some(2 * live)));
+    assert_eq!(
+        f.ancestors(&arena).size_hint(),
+        (1, Some(live)),
+        "ancestors, a node to come"
+    );
+    assert_eq!(
+        gone.ancestors(&arena).size_hint(),
+        (0, Some(0)),
+        "a stale id's ancestors"
+    );
+    assert_eq!(
+        top.descendants(&arena).size_hint(),
+        (1, Some(live)),
+        "descendants, a start to come"
+    );
+    let mut below = f.descendants(&arena);
+    below.next();
+    assert_eq!(
+        below.size_hint(),
+        (0, Some(live)),
+        "descendants, only an end to come"
+    );
+    assert_eq!(
+        gone.descendants(&arena).size_hint(),
+        (0, Some(0)),
+        "a stale id's descendants"
+    );
 
     let mut nodes = arena.iter();
     for left in (0..=live).rev() {

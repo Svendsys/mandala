@@ -339,7 +339,7 @@ impl fmt::Display for LoadErrorKind {
             ),
             LoadErrorKind::TooManyElements { max } => write!(
                 f,
-                "map holds more than {max} elements, the most this build can hold in memory: \
+                "map holds more than {max} elements, the most this build holds: \
                  refusing to load it"
             ),
             LoadErrorKind::ByteOrderMark => f.write_str(

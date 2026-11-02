@@ -826,7 +826,10 @@ mod arena_bound_tests {
     use super::{Builder, Keep};
     use crate::document::format::dto::MapHeaderDto;
     use crate::document::format::error::LoadErrorKind;
-    use crate::document::format::{element_bound, ARENA_MAX_ELEMENTS};
+    use crate::document::format::{
+        begin_build, element_bound, index, load, node_reservation, Limits, ARENA_MAX_ELEMENTS, LIMITS,
+        MIN_NODE_TEXT,
+    };
 
     /// With no target bound — native's — the arena's capacity is the
     /// bound: the element that fills the arena is counted, and the one
@@ -868,5 +871,70 @@ mod arena_bound_tests {
         assert_eq!(element_bound(None), ARENA_MAX_ELEMENTS);
         assert_eq!(element_bound(Some(10)), 10);
         assert_eq!(element_bound(Some(u64::MAX)), ARENA_MAX_ELEMENTS);
+    }
+
+    /// A map of one `node`.
+    fn map_of(node: &str) -> String {
+        format!(r#"{{"format":1,"name":"m","nodes":[{node}]}}"#)
+    }
+
+    /// The shortest node that loads is [`MIN_NODE_TEXT`] bytes: it
+    /// loads, and leaving out either key or writing the position
+    /// shorter is refused — the id is one digit and the text has no
+    /// whitespace already.
+    #[test]
+    fn test_the_shortest_node_that_loads_is_min_node_text_bytes() {
+        let shortest = r#"{"id":1,"position":[0,0]}"#;
+        assert_eq!(shortest.len(), MIN_NODE_TEXT);
+        assert!(load(&map_of(shortest)).is_ok(), "the shortest node loads");
+        for shorter in [
+            r#"{"position":[0,0]}"#,
+            r#"{"id":1}"#,
+            r#"{"id":1,"position":[0]}"#,
+        ] {
+            assert!(
+                load(&map_of(shorter)).is_err(),
+                "{shorter}, shorter, must not load"
+            );
+        }
+    }
+
+    /// A list of a million `0`s, refused at its first entry, makes no
+    /// more room than its text could hold as nodes that load: the
+    /// arena's room is the text's length over [`MIN_NODE_TEXT`] beside
+    /// the header's elements, not a slot per entry.
+    #[test]
+    fn test_a_list_of_tiny_entries_reserves_no_more_than_its_text_holds() {
+        let text = map_of(&vec!["0"; 1_000_000].join(","));
+        let index = index::index(&text).expect("the text indexes");
+        assert_eq!(index.nodes.len(), 1_000_000, "precondition: a million entries");
+        let error = load(&text).expect_err("an entry of 0 is no node");
+        assert_eq!(error.path, "nodes[0]", "precondition: refused at its first entry");
+
+        let builder = begin_build(&index, LIMITS).expect("the header builds");
+        let arena = builder.tree.arena();
+        let cap = text.len() / MIN_NODE_TEXT;
+        assert!(cap < 100_000, "precondition: the text holds {cap} nodes at most");
+        assert!(
+            arena.capacity() >= cap,
+            "precondition: the room was made ({})",
+            arena.capacity()
+        );
+        assert!(
+            arena.capacity() <= arena.len() + cap,
+            "{} slots of room for {} entries, past the {cap} the text could hold",
+            arena.capacity(),
+            index.nodes.len()
+        );
+        assert_eq!(node_reservation(1_000_000, text.len(), LIMITS), cap);
+        let bounded = Limits {
+            bytes: None,
+            elements: Some(10),
+        };
+        assert_eq!(
+            node_reservation(1_000_000, text.len(), bounded),
+            10,
+            "the element bound caps the room too"
+        );
     }
 }
