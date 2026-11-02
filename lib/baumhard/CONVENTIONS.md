@@ -193,6 +193,14 @@ its slot. The arena is what makes Baumhard fast; treat it with respect.
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if
   you can.
+- **Read a node once, then its links.** A link is a bare slot number
+  (V1-A7, #301), so a node's links are read through its id
+  (`id.parent(arena)`) or a `NodeRef`. Each id read checks its
+  generation; where code reads a node's value and several of its
+  links, it takes one `NodeRef` (`arena.node(id)`, or `arena.at(id)`
+  where the id must be live, which panics as indexing does) and reads
+  them all from it, so the id is checked once. The walker's
+  `get_target` and `get_mutator` are the exemplars.
 - **Node access is O(1) via `NodeId`.** 
   If you find yourself linear-scanning the arena to find a node, you have lost a `NodeId`
   somewhere up the call stack. Find it and thread it through.

@@ -111,7 +111,8 @@ pub const MAX_MAP_BYTES: Option<u64> = Some(WASM32_MAX_MAP_BYTES);
 /// builder counts each element as it appends it and refuses the one past
 /// the bound with
 /// [`TooManyElements`](LoadErrorKind::TooManyElements), before it is
-/// built.
+/// built. Beside it, every target holds a map to the arena's capacity,
+/// [`ARENA_MAX_ELEMENTS`], which on native is the only element bound.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_ELEMENTS: Option<u64> = None;
 
@@ -144,7 +145,10 @@ pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 7;
 /// nodes and held by one — at the load's peak and at the save's, and
 /// rounded up to 16 bytes. It is essentially three arena slots: the
 /// arena's old buffer and its new one, twice the size, while it doubles.
-pub const WASM32_BYTES_PER_ELEMENT: u64 = 576;
+/// 480 since V1-A7 (#301) compacted the slot — 124 bytes for a
+/// document element on wasm32, from 144 — measured by the probe at
+/// 479.99 (empty sections and empty rings on one node); 576 before.
+pub const WASM32_BYTES_PER_ELEMENT: u64 = 480;
 
 /// wasm32's ceiling on a map's text: half of [`WASM32_MEMORY_BUDGET`]
 /// over [`WASM32_BYTES_PER_TEXT_BYTE`].
@@ -161,6 +165,25 @@ pub const WASM32_MAX_MAP_BYTES: u64 = WASM32_MEMORY_BUDGET / 2 / WASM32_BYTES_PE
 /// [`WASM32_MEMORY_BUDGET`] over [`WASM32_BYTES_PER_ELEMENT`]. See
 /// [`WASM32_MAX_MAP_BYTES`] for the model.
 pub const WASM32_MAX_ELEMENTS: u64 = WASM32_MEMORY_BUDGET / 2 / WASM32_BYTES_PER_ELEMENT;
+
+/// The most elements a load builds on **any** target, whatever
+/// [`MAX_ELEMENTS`] says: the arena's slot count
+/// ([`MAX_SLOTS`](crate::arena::MAX_SLOTS), `u32::MAX - 1`), since every
+/// element of the tree takes one arena slot (V1-A7, #301). On wasm32
+/// [`MAX_ELEMENTS`] is far below it. On native, where [`MAX_ELEMENTS`]
+/// is `None`, it is what refuses a map past the arena's capacity, with
+/// [`TooManyElements`](LoadErrorKind::TooManyElements), where the
+/// arena would otherwise panic: a load never panics. Definitions count
+/// toward it as they do toward [`MAX_ELEMENTS`], so it refuses a few
+/// elements before the arena is full, never after.
+pub const ARENA_MAX_ELEMENTS: u64 = crate::arena::MAX_SLOTS as u64;
+
+/// The bound a load counts its elements against: `max`, the target's
+/// [`MAX_ELEMENTS`] when it is lower, and [`ARENA_MAX_ELEMENTS`]
+/// otherwise — on native, always.
+pub(crate) fn element_bound(max: Option<u64>) -> u64 {
+    max.map_or(ARENA_MAX_ELEMENTS, |max| max.min(ARENA_MAX_ELEMENTS))
+}
 
 /// The two ceilings a load and a save are held to on this target.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -280,6 +303,11 @@ fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadErr
         index.nodes.len().min(usize::try_from(max).unwrap_or(usize::MAX))
     });
     builder.idents.reserve(reserve);
+    // The arena too: one slot per node, made once beside the root, so
+    // the nodes go in without the arena doubling and holding its old
+    // slots and its new ones at once. A node's rows are counted only as
+    // it is read, so they grow it from there.
+    builder.tree.reserve(reserve);
     for (i, extent) in index.nodes.iter().enumerate() {
         let dto: NodeDto = index::parse_extent(index.text, extent, &[Seg::Key("nodes"), Seg::Index(i)])
             .map_err(|error| LoadError {

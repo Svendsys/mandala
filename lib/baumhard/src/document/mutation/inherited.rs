@@ -309,7 +309,7 @@ pub(crate) fn inherit(element: &DocElement, parent: &DocInherited) -> DocInherit
 /// it but the defaults (§20 rule 11). One `Vec` as long as the fold.
 pub fn inherited_seed(tree: &Tree<DocElement>, node: NodeId) -> DocInherited {
     let outside = DocInherited::outside(defaults(tree).map(|(_, d)| d));
-    match tree.get(node).and_then(|n| n.parent()) {
+    match node.parent(tree.arena()) {
         Some(parent) => state_of(tree, parent, &outside),
         None => outside,
     }
@@ -329,7 +329,7 @@ fn state_of(tree: &Tree<DocElement>, id: NodeId, outside: &DocInherited) -> DocI
         if element.kind() == DocKind::Node {
             break;
         }
-        at = arena[current].parent();
+        at = arena.at(current).parent();
     }
     chain
         .iter()

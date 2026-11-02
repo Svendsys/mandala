@@ -53,7 +53,7 @@ pub type SnapshotRow = (NodeId, Option<NodeId>, TestElement);
 pub fn snapshot(tree: &Tree<TestElement>) -> Vec<SnapshotRow> {
     tree.descendants()
         .map(|id| {
-            let node = &tree.arena()[id];
+            let node = tree.arena().at(id);
             (id, node.parent(), node.get().clone())
         })
         .collect()
@@ -346,7 +346,7 @@ pub fn random_mutator_tree(
     if rng.random_bool(0.8) {
         let node = named[rng.random_range(0..named.len())];
         let target = match anchors {
-            Anchors::ParentOf(_) => tree.arena()[node].parent().unwrap_or(node),
+            Anchors::ParentOf(_) => tree.arena().at(node).parent().unwrap_or(node),
             _ => node,
         };
         key.kind = tree.arena()[target].get().kind;
@@ -591,7 +591,7 @@ fn structural_call(
                 _ if rng.random_bool(0.02) => tree.root(),
                 _ => pick(rng, pool),
             };
-            removed_from.extend(arena[target].parent());
+            removed_from.extend(arena.at(target).parent());
             (target, StructOp::Remove)
         }
         Intent::Move if created.len() >= 2 && rng.random_bool(0.8) => {
@@ -647,9 +647,9 @@ fn structural_call(
                 .iter()
                 .copied()
                 .filter(|&id| {
-                    arena[id].next_sibling().is_some_and(|next| {
+                    arena.at(id).next_sibling().is_some_and(|next| {
                         arena[next].get().key() == arena[id].get().key()
-                            && arena[next].first_child().is_none()
+                            && arena.at(next).first_child().is_none()
                     })
                 })
                 .collect();

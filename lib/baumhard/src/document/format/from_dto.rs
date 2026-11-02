@@ -495,17 +495,19 @@ impl Builder {
     }
 
     /// Count `more` elements, or definitions, against
-    /// [`Self::max_elements`]: past it is
-    /// [`TooManyElements`](LoadErrorKind::TooManyElements) at the current
-    /// path, before anything is built.
+    /// [`Self::max_elements`] and the arena's capacity
+    /// ([`ARENA_MAX_ELEMENTS`](super::ARENA_MAX_ELEMENTS)): past either
+    /// is [`TooManyElements`](LoadErrorKind::TooManyElements) at the
+    /// current path, before anything is built.
     pub(super) fn count(&mut self, more: usize) -> LoadResult<()> {
         self.elements = self
             .elements
             .saturating_add(u64::try_from(more).unwrap_or(u64::MAX));
-        match self.max_elements.filter(|max| self.elements > *max) {
-            Some(max) => Err(self.error(LoadErrorKind::TooManyElements { max })),
-            None => Ok(()),
+        let max = super::element_bound(self.max_elements);
+        if self.elements > max {
+            return Err(self.error(LoadErrorKind::TooManyElements { max }));
         }
+        Ok(())
     }
 
     /// Under [`Keep::OneNode`], free `id` and everything under it.
@@ -814,4 +816,57 @@ pub(super) fn sorted_names<T>(entries: &[(String, T)]) -> Vec<&(String, T)> {
     let mut sorted: Vec<&(String, T)> = entries.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     sorted
+}
+
+/// The arena's capacity as a load's element bound (V1-A7, #301). Inline
+/// because it drives [`Builder::count`], which the format's tests trees
+/// cannot reach, at a count no map in a test could be built to.
+#[cfg(test)]
+mod arena_bound_tests {
+    use super::{Builder, Keep};
+    use crate::document::format::dto::MapHeaderDto;
+    use crate::document::format::error::LoadErrorKind;
+    use crate::document::format::{element_bound, ARENA_MAX_ELEMENTS};
+
+    /// With no target bound — native's — the arena's capacity is the
+    /// bound: the element that fills the arena is counted, and the one
+    /// past it is refused with `TooManyElements` naming the capacity,
+    /// where the arena itself would panic.
+    #[test]
+    fn test_a_load_past_the_arenas_capacity_is_refused_not_a_panic() {
+        let header = MapHeaderDto {
+            format: 1,
+            name: String::new(),
+            theme: None,
+            palettes: Default::default(),
+            defaults: None,
+            edits: Vec::new(),
+            presentations: Vec::new(),
+            verbs: Vec::new(),
+        };
+        let mut builder = Builder::begin(&header, Keep::Document, None).expect("an empty header builds");
+        builder.elements = ARENA_MAX_ELEMENTS - 1;
+        assert!(
+            builder.count(1).is_ok(),
+            "precondition: the element that fills the arena is counted"
+        );
+        let refused = builder
+            .count(1)
+            .expect_err("one past the arena's capacity is refused");
+        assert_eq!(
+            refused.kind,
+            LoadErrorKind::TooManyElements {
+                max: ARENA_MAX_ELEMENTS
+            }
+        );
+    }
+
+    /// The bound is the lower of the target's and the arena's.
+    #[test]
+    fn test_the_element_bound_is_the_lower_of_the_targets_and_the_arenas() {
+        assert_eq!(ARENA_MAX_ELEMENTS, u64::from(u32::MAX) - 1);
+        assert_eq!(element_bound(None), ARENA_MAX_ELEMENTS);
+        assert_eq!(element_bound(Some(10)), 10);
+        assert_eq!(element_bound(Some(u64::MAX)), ARENA_MAX_ELEMENTS);
+    }
 }

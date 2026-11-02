@@ -255,7 +255,7 @@ pub fn validate_row<'a>(
 /// Cost: one pass over `id`'s children and one over the kinds; no
 /// allocation.
 pub fn validate_shape(tree: &Tree<DocElement>, id: NodeId) -> Result<(), ShapeError> {
-    let Some(node) = tree.get(id) else {
+    let Some(node) = tree.node(id) else {
         return Err(ShapeError::StaleNode(id));
     };
     let under_node = node

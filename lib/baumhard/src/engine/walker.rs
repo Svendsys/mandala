@@ -92,7 +92,7 @@
 //! sorted-children invariant is restored at its end; everything else in
 //! this module is internal to the engine.
 
-use crate::arena::{Arena, Node, NodeId};
+use crate::arena::{Arena, NodeId, NodeRef};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::key::BranchKey;
@@ -341,14 +341,14 @@ impl<'j, E: TreeElement> Walk<'j, E> {
         // was not.
         rekeyed.retain(|&(_, child)| {
             arena
-                .get(child)
+                .node(child)
                 .is_some_and(|n| n.previous_sibling().is_some() || n.next_sibling().is_some())
         });
         // `retain` visits every record once, in order: the first record
         // of a child detaches it, and a later one finds it detached and
         // drops out.
         rekeyed.retain(|&(parent, child)| {
-            if arena.get(child).and_then(|n| n.parent()) == Some(parent) {
+            if child.parent(arena) == Some(parent) {
                 if let Some(journal) = journal.as_deref_mut() {
                     journal.note_detach(arena, child);
                 }
@@ -804,13 +804,13 @@ impl<E: TreeElement, M: Mutation<E>> Driver<'_, '_, E, M> {
         let mut cursor = mutator;
         while let Some(m) = cursor {
             excess_mutator += 1;
-            cursor = self.mutator_tree.arena.get(m).and_then(|n| n.next_sibling());
+            cursor = m.next_sibling(&self.mutator_tree.arena);
         }
         let mut excess_target: usize = 0;
         let mut cursor = target;
         while let Some(t) = cursor {
             excess_target += 1;
-            cursor = tree.arena.get(t).and_then(|n| n.next_sibling());
+            cursor = t.next_sibling(&tree.arena);
         }
         if excess_mutator > 0 || excess_target > 0 {
             debug!(
@@ -1047,7 +1047,7 @@ fn apply_recorded<E: TreeElement>(
     let before = element.key();
     f(element);
     if element.key() != before {
-        if let Some(parent) = tree.arena[target_id].parent() {
+        if let Some(parent) = tree.arena.at(target_id).parent() {
             rec.rekeyed.push((parent, target_id));
         }
     }
@@ -1070,9 +1070,9 @@ fn apply_recorded<E: TreeElement>(
 fn get_mutator<E: TreeElement, M: Mutation<E>>(
     arena: &Arena<Mutator<E, M>>,
     id: NodeId,
-) -> &Node<Mutator<E, M>> {
+) -> NodeRef<'_, Mutator<E, M>> {
     arena
-        .get(id)
+        .node(id)
         .expect("walker invariant: mutator NodeId must belong to mutator_tree.arena")
 }
 
@@ -1080,9 +1080,9 @@ fn get_mutator<E: TreeElement, M: Mutation<E>>(
 /// invariant rationale. Same precondition: `id` must originate from
 /// the target tree's arena.
 #[inline]
-fn get_target<E: TreeElement>(arena: &Arena<E>, id: NodeId) -> &Node<E> {
+fn get_target<E: TreeElement>(arena: &Arena<E>, id: NodeId) -> NodeRef<'_, E> {
     arena
-        .get(id)
+        .node(id)
         .expect("walker invariant: target NodeId must belong to tree.arena")
 }
 
@@ -1180,13 +1180,13 @@ fn state_above<E: TreeElement>(
     parent_state: &E::Inherited,
 ) -> E::Inherited {
     let mut path: Vec<NodeId> = Vec::new();
-    let mut cursor = tree.arena.get(descendant).and_then(|n| n.parent());
+    let mut cursor = descendant.parent(&tree.arena);
     while let Some(id) = cursor {
         path.push(id);
         if id == ancestor {
             break;
         }
-        cursor = tree.arena.get(id).and_then(|n| n.parent());
+        cursor = id.parent(&tree.arena);
     }
     let mut state = parent_state.clone();
     for id in path.iter().rev() {

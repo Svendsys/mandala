@@ -312,3 +312,34 @@ fn test_every_element_of_a_loaded_map_has_had_its_row_checked() {
     }
     assert!(total > 150, "precondition: {total} elements across the corpus");
 }
+
+/// A load makes the arena's room for every node once, before it builds
+/// (V1-A7, #301): a map of 1,000 top-level nodes — each one element,
+/// with no connector and no row — leaves the arena holding exactly the
+/// elements an empty map holds plus the 1,000, in exactly that many
+/// slots of room. Grown one push at a time instead, the arena's `Vec`
+/// would double its way to 1,024.
+#[test]
+fn test_a_load_reserves_one_arena_slot_per_node_before_it_builds() {
+    let empty = load(r#"{"format":1,"name":"m","nodes":[]}"#).expect("an empty map loads");
+    let header = empty.tree().arena().live_count();
+    let text = crate::document::tests::format_memory_shapes::element_text("tops", 1_000);
+    let doc = load(&text).expect("1,000 top-level nodes load");
+    let arena = doc.tree().arena();
+    assert_eq!(
+        arena.live_count(),
+        header + 1_000,
+        "precondition: the empty map's elements and one per node"
+    );
+    assert_eq!(arena.len(), arena.live_count(), "precondition: no slot freed");
+    assert!(
+        !arena.len().is_power_of_two(),
+        "precondition: {} slots is no size a doubling reaches",
+        arena.len()
+    );
+    assert_eq!(
+        arena.capacity(),
+        arena.len(),
+        "the arena was made room for once, at the node count"
+    );
+}

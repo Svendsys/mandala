@@ -177,7 +177,7 @@ fn tops_climbing(
                 expected: "a node",
             });
         }
-        let mut at = arena[node].parent();
+        let mut at = arena.at(node).parent();
         let nested = loop {
             let Some(ancestor) = at else {
                 break false;
@@ -190,7 +190,7 @@ fn tops_climbing(
             }
             climb.push(ancestor);
             *climbed += 1;
-            at = arena[ancestor].parent();
+            at = arena.at(ancestor).parent();
         };
         for ancestor in climb.drain(..) {
             under_given.insert(ancestor, nested);

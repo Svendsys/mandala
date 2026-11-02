@@ -139,7 +139,9 @@ pub enum LoadErrorKind {
     },
     /// The map holds more elements than
     /// [`MAX_ELEMENTS`](crate::document::format::MAX_ELEMENTS) allows on
-    /// this target: the other half of the memory budget
+    /// this target, or than the arena holds on any
+    /// ([`ARENA_MAX_ELEMENTS`](crate::document::format::ARENA_MAX_ELEMENTS)):
+    /// the other half of the memory budget
     /// [`TooLarge`](Self::TooLarge) bounds by bytes. Counted as the
     /// elements are built, and raised at the one past the bound, before
     /// it is appended.

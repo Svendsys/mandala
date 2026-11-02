@@ -92,7 +92,7 @@ impl EdgeChannelIndex {
     /// `None` for the root and for a node outside the arena.
     fn edge_root(tree: &GfxTree, mut node: NodeId) -> Option<NodeId> {
         loop {
-            let parent = tree.arena().get(node)?.parent()?;
+            let parent = tree.arena().node(node)?.parent()?;
             if parent == tree.root() {
                 return Some(node);
             }

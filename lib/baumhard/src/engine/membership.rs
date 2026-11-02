@@ -60,7 +60,7 @@ impl Membership {
             self.climbed += 1;
             #[cfg(test)]
             tests_support::count_climb();
-            at = arena[node].parent();
+            at = arena.at(node).parent();
         };
         for node in self.climb.drain(..) {
             self.known.insert(node, answer);

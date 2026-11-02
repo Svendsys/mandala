@@ -254,6 +254,17 @@ deep_scenario!(deep_document_deep_chain_resolves_at_the_leaf, baumhard::document
 deep_scenario!(deep_document_deep_chain_through_the_writer, baumhard::document::tests::deep_tests::do_document_deep_chain_through_the_writer);
 deep_scenario!(deep_document_validate_walks_a_deep_insert, baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_insert);
 
+/// The arena's id, link and slot sizes, pinned for wasm32 (V1-A7,
+/// #301): the native test body, run where `usize` is 32 bits, so the
+/// wasm32 pins are measured where they hold. A size that changed
+/// panics naming it.
+#[no_mangle]
+pub extern "C" fn arena_slot_and_id_sizes() -> u32 {
+    install_hook();
+    baumhard::arena::tests::layout_tests::do_arena_slot_and_id_sizes();
+    1
+}
+
 /// R13's acceptance on wasm32's default stack, in a debug build: a map
 /// 100,000 nodes deep through `load`, `validate_subtree`,
 /// `check_savable` and `save`, and back

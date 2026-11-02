@@ -291,9 +291,9 @@ impl Tree<GfxElement> {
             let arena = self.arena();
             if !children_done {
                 pending.push((node_id, true));
-                let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
+                let mut child_opt = node_id.first_child(arena);
                 while let Some(cid) = child_opt {
-                    child_opt = arena.get(cid).and_then(|n| n.next_sibling());
+                    child_opt = cid.next_sibling(arena);
                     pending.push((cid, false));
                 }
                 continue;
@@ -310,12 +310,12 @@ impl Tree<GfxElement> {
             // Merge the children's subtree AABBs, already computed
             // because post-order got to them first.
             let mut combined = own_aabb;
-            let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
+            let mut child_opt = node_id.first_child(arena);
             while let Some(cid) = child_opt {
                 if let Some(&child_aabb) = aabbs.get(&cid) {
                     combined = Some(union_aabb(combined, child_aabb));
                 }
-                child_opt = arena.get(cid).and_then(|n| n.next_sibling());
+                child_opt = cid.next_sibling(arena);
             }
 
             if let Some(aabb) = combined {
@@ -520,9 +520,9 @@ fn bvh_find(
 /// vector (§B7).
 fn push_children_reversed(arena: &Arena<GfxElement>, parent: NodeId, pending: &mut Vec<NodeId>) {
     let start = pending.len();
-    let mut child_opt = arena.get(parent).and_then(|n| n.first_child());
+    let mut child_opt = parent.first_child(arena);
     while let Some(child_id) = child_opt {
-        child_opt = arena.get(child_id).and_then(|n| n.next_sibling());
+        child_opt = child_id.next_sibling(arena);
         pending.push(child_id);
     }
     pending[start..].reverse();
