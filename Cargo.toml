@@ -47,7 +47,6 @@ license = "MPL-2.0"
 # (`crates/mandalactl/src/bridge/mod.rs`).
 getrandom = "0.4.3"
 glam = { version = "0.34.1", features = ["serde"] }
-indextree = { version = "4.9.2", features = ["serde"] }
 # Two members name it, both only on Windows: the app's `--ipc` named-pipe
 # server (`src/application/ipc/transport/pipe.rs`) and `mandalactl`'s
 # client for it (`crates/mandalactl/src/client.rs`). Neither crate has
@@ -194,7 +193,6 @@ serde_json.workspace = true
 log.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
-indextree.workspace = true
 baumhard = {path="./lib/baumhard"}
 mandala_derive = {path="./lib/mandala_derive"}
 # Cross-platform `Instant` — on native re-exports `std::time::Instant`;

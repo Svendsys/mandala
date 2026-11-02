@@ -90,6 +90,7 @@
 //! is quadratic in depth (design §20 rule 11; ruling R16 on #282 notes
 //! this for V1-B7 and V1-C2).
 
+use crate::arena::NodeId;
 use crate::document::defaults::{BuiltInPath, BUILT_IN};
 use crate::document::element::{
     DefaultsData, DocElement, DocKind, FlowStyle, PaletteGroup, TextStyle, ThemeData,
@@ -101,7 +102,6 @@ use crate::document::values::{
 };
 use crate::engine::tree::Tree;
 use crate::font::fonts::AppFont;
-use indextree::NodeId;
 
 /// An input a resolution read. Each names as little as the read
 /// needed, so a change dirties only the resolutions that read what

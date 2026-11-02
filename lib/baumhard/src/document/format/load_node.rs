@@ -16,6 +16,7 @@
 //! (design B.7), so the recursion here is bounded by the schema, never
 //! by the tree.
 
+use crate::arena::NodeId;
 use crate::document::bounds;
 use crate::document::element::{
     CapData, ConnectorData, DocElement, DocKind, FrameData, LabelData, LinkData, NodeData, NodeStyle,
@@ -32,7 +33,6 @@ use crate::document::ids::NodeIdent;
 use crate::document::place::{sizes_its_own_text, Unit};
 use crate::document::values::{Align, Anchor, LinkKind, LinkTarget, PaletteId};
 use glam::Vec2;
-use indextree::NodeId;
 
 /// The anchors a path with none written has.
 const AUTO_ANCHORS: (Anchor, Anchor) = (Anchor::Auto, Anchor::Auto);

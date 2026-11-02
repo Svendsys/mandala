@@ -16,6 +16,7 @@
 //!
 //! Follows the `do_*()` / `test_*()` split (§T2.2).
 
+use crate::arena::NodeId;
 use crate::engine::anchor::Anchors;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::Predicate;
@@ -24,7 +25,6 @@ use crate::engine::tests::test_element::{
 };
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
 use crate::engine::walker::walk_tree;
-use indextree::NodeId;
 use std::cell::Cell;
 
 /// The seed the anchored walks start from, apart from every fixture
@@ -50,7 +50,7 @@ fn only(root: TestMutator) -> MutatorTree<TestElement, TestMutation> {
 /// A root (value 0) holding `parent` (10), holding `child` (100).
 fn chain() -> (Tree<TestElement>, NodeId, NodeId) {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let parent = add(&mut tree, root, TestElement::new(0, 10));
     let child = add(&mut tree, parent, TestElement::new(0, 100));
     (tree, parent, child)
@@ -72,7 +72,7 @@ fn test_apply_at_drops_anchors_nested_in_another() {
 pub fn do_apply_at_drops_anchors_nested_in_another() {
     let (mut tree, parent, child) = chain();
     let mut subtree = only(Mutator::new(TestMutation::Add(1), plain(0)));
-    let mroot = subtree.root;
+    let mroot = subtree.root();
     add_mutator(&mut subtree, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
     assert!(
         subtree.reaches_below_root(),
@@ -124,7 +124,7 @@ fn test_reaches_below_root_reads_the_shape() {
 /// `Void`s does not.
 pub fn do_reaches_below_root_reads_the_shape() {
     let mut voids = only(Mutator::new(TestMutation::Add(1), plain(0)));
-    let mroot = voids.root;
+    let mroot = voids.root();
     let v = add_mutator(&mut voids, mroot, Mutator::new_void(plain(0)));
     add_mutator(&mut voids, v, Mutator::new_void(plain(3)));
     assert!(!voids.reaches_below_root(), "Voids below the root change nothing");
@@ -155,14 +155,14 @@ fn test_apply_at_matches_the_root_by_kind_alone() {
 pub fn do_apply_at_matches_the_root_by_kind_alone() {
     let fixture = || {
         let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-        let root = tree.root;
+        let root = tree.root();
         let anchor = add(&mut tree, root, TestElement::marked(0, 1));
         let below = add(&mut tree, anchor, TestElement::new(0, 2));
         (tree, anchor, below)
     };
     let with_root = |root: TestMutator| {
         let mut mt = only(root);
-        let mroot = mt.root;
+        let mroot = mt.root();
         add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(100), plain(0)));
         mt
     };
@@ -195,12 +195,12 @@ pub fn do_apply_to_anchors_at_the_root() {
     let mt = only(Mutator::new(TestMutation::Add(1), plain(3)));
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 5));
     mt.apply_to(&mut tree, &0);
-    assert_eq!(value(&tree, tree.root), 6);
+    assert_eq!(value(&tree, tree.root()), 6);
 
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 5));
     walk_tree(&mut tree, &mt, &0);
     assert_eq!(
-        value(&tree, tree.root),
+        value(&tree, tree.root()),
         5,
         "the control: a pair walk compares channels"
     );
@@ -223,7 +223,7 @@ struct Family {
 
 fn family() -> Family {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let a = add(&mut tree, root, TestElement::new(0, 1));
     let a1 = add(&mut tree, a, TestElement::new(0, 10));
     let a2 = add(&mut tree, a, TestElement::new(1, 20));
@@ -257,7 +257,7 @@ fn test_parent_of_resolves_to_the_distinct_parents() {
 /// parent and contributes nothing.
 pub fn do_parent_of_resolves_to_the_distinct_parents() {
     let mut f = family();
-    let root = f.tree.root;
+    let root = f.tree.root();
     mark_anchors()
         .apply_at(
             &mut f.tree,
@@ -312,7 +312,7 @@ pub fn do_siblings_of_resolves_to_same_kind_siblings() {
     );
 
     let mut f = family();
-    let root = f.tree.root;
+    let root = f.tree.root();
     mark_anchors()
         .apply_at(&mut f.tree, &Anchors::SiblingsOf(vec![f.b1, root]), ancestors_sum)
         .unwrap();
@@ -337,14 +337,14 @@ fn test_apply_at_decides_nesting_among_anchors_of_the_root_kind() {
 pub fn do_apply_at_decides_nesting_among_anchors_of_the_root_kind() {
     let fixture = |a_element: TestElement| {
         let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-        let root = tree.root;
+        let root = tree.root();
         let a = add(&mut tree, root, a_element);
         let b = add(&mut tree, a, TestElement::new(0, 10));
         let below = add(&mut tree, b, TestElement::new(0, 100));
         (tree, a, b, below)
     };
     let mut reaching = only(Mutator::new(TestMutation::Add(1), plain(0)));
-    let mroot = reaching.root;
+    let mroot = reaching.root();
     add_mutator(&mut reaching, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
 
     for listed_b_first in [false, true] {
@@ -391,7 +391,7 @@ fn test_anchors_are_resolved_once_and_walked_in_tree_order() {
 /// three siblings names each of them twice, and each is seeded once.
 pub fn do_anchors_are_resolved_once_and_walked_in_tree_order() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let high = add(&mut tree, root, TestElement::new(1, 1));
     let first = add(&mut tree, root, TestElement::new(0, 2));
     let second = add(&mut tree, root, TestElement::new(0, 3));
@@ -474,13 +474,13 @@ fn test_a_stale_anchor_applies_nothing() {
 }
 
 /// An anchor that is no longer in the tree — removed, and its slot
-/// reused by a new node, so only indextree's stamp tells them apart —
+/// reused by a new node, so only the arena's generation tells them apart —
 /// is [`TreeError::StaleNode`], and nothing is applied, not even at the
 /// live anchor listed before it; `seed_for` is not called. Each anchor
 /// form refuses it. The control walks the live anchor alone.
 pub fn do_a_stale_anchor_applies_nothing() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let live = add(&mut tree, root, TestElement::new(0, 10));
     let gone = add(&mut tree, root, TestElement::new(1, 20));
     tree.remove_subtree(gone).unwrap();
@@ -527,7 +527,7 @@ fn test_apply_at_moves_an_anchor_whose_key_it_changed() {
 /// among its siblings once the walk is over, as any walk does.
 pub fn do_apply_at_moves_an_anchor_whose_key_it_changed() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let first = add(&mut tree, root, TestElement::new(0, 1));
     add(&mut tree, root, TestElement::new(1, 2));
     add(&mut tree, root, TestElement::new(2, 3));

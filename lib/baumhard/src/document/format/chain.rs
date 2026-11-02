@@ -26,11 +26,11 @@
 //! the tree is deep, and closing is a loop. Each node is closed once, so
 //! all of the closing together is O(nodes).
 
+use crate::arena::NodeId;
 use crate::document::bounds::{self, BoundError};
 use crate::document::format::dto::NodeDto;
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, Seg, CHAIN_SHOWN};
 use crate::document::format::from_dto::{Builder, ChainEntry, Keep, LoadResult, PlacedNode};
-use indextree::NodeId;
 
 impl Builder {
     /// Place the node `dto`, listed at `index`, in the tree, and build

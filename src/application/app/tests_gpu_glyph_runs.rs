@@ -105,8 +105,12 @@ fn path_run(run: Arc<ShapedRun>, placed: PlacedRun, opacity: f32) -> GlyphRunDat
 fn show(init: &mut InitState, runs: Vec<GlyphRunData>) {
     let mut tree: GfxTree = GfxTree::new_non_indexed();
     for (i, run) in runs.into_iter().enumerate() {
-        tree.insert_child(tree.root, GfxElement::new_run(run, 0, 9_000 + i), Placement::Last)
-            .expect("a child of the root");
+        tree.insert_child(
+            tree.root(),
+            GfxElement::new_run(run, 0, 9_000 + i),
+            Placement::Last,
+        )
+        .expect("a child of the root");
     }
     init.app_scene
         .register_canvas(CanvasRole::SectionFrames, tree, Vec2::ZERO);

@@ -6,6 +6,7 @@
 //! `Document::validate_subtree` judges every row of a subtree before it
 //! is inserted.
 
+use crate::arena::NodeId;
 use crate::document::element::{
     ConnectorData, DocElement, DocKind, FrameData, LinkData, MapData, PortalEndData, SectionData, SpanData,
     TextStyle,
@@ -24,7 +25,6 @@ use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::{MutatorTree, TreeError};
 use crate::util::grapheme_chad::count_grapheme_clusters;
-use indextree::NodeId;
 
 /// Four grapheme clusters: `a`, a family emoji of five code points
 /// joined by zero-width joiners, an `e` carrying two combining marks,

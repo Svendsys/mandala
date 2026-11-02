@@ -349,8 +349,9 @@ a sibling list it is changing. Removal **detaches** rather than
 frees: the subtree stays in the arena, owned by the journal entry,
 so undo re-attaches the same `NodeId`s and every reference to them
 stays valid. The arena slot is freed when the journal entry leaves
-the history. indextree 4.9's per-slot stamps make any stale `NodeId`
-detectable.
+the history. The arena's per-slot generations (V1-A6, #290) make any
+stale `NodeId` detectable: a removed node's id never reads the node
+that takes its slot.
 
 ### §4.5 Journals
 

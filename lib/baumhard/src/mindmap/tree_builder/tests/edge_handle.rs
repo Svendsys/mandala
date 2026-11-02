@@ -27,7 +27,7 @@ fn handle_tree_adds_every_handle_at_the_end_of_its_row() {
     assert_eq!(handles.len(), 16, "precondition: two full handle sets");
 
     let tree = build_handle_tree(&handles);
-    let row: Vec<_> = tree.root.children(tree.arena()).collect();
+    let row: Vec<_> = tree.root().children(tree.arena()).collect();
     assert_eq!(row.len(), 16);
     for pair in row.windows(2) {
         assert!(
@@ -116,8 +116,8 @@ fn edge_handle_mutator_round_trip_matches_full_rebuild() {
     mutator.apply_to(&mut tree_a, &());
 
     let expected = build_handle_tree(&set_b);
-    let actual_leaves: Vec<NodeId> = tree_a.root.children(tree_a.arena()).collect();
-    let expected_leaves: Vec<NodeId> = expected.root.children(expected.arena()).collect();
+    let actual_leaves: Vec<NodeId> = tree_a.root().children(tree_a.arena()).collect();
+    let expected_leaves: Vec<NodeId> = expected.root().children(expected.arena()).collect();
     assert_eq!(actual_leaves.len(), expected_leaves.len());
     for (a, e) in actual_leaves.iter().zip(expected_leaves.iter()) {
         let a_area = tree_a.arena().get(*a).unwrap().get().glyph_area().unwrap();
@@ -189,7 +189,7 @@ fn edge_handle_region_sized_by_grapheme_cluster_count_not_codepoints() {
         font_size_pt: 14.0,
     };
     let tree = build_handle_tree(&[elem]);
-    let handle = tree.root.children(tree.arena()).next().unwrap();
+    let handle = tree.root().children(tree.arena()).next().unwrap();
     let area = tree.arena().get(handle).unwrap().get().glyph_area().unwrap();
     let regions = area.regions.all_regions();
     assert_eq!(regions.len(), 1);

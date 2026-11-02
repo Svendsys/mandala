@@ -4,6 +4,7 @@
 //! out every row, the routing it gives the walker, and the root rule a
 //! document mutator meets.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::mutation::inherited::inherited_seed;
 use crate::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp, SectionOp};
@@ -13,7 +14,6 @@ use crate::engine::element::TreeElement;
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
 use crate::engine::tree::{Placement, Tree};
-use indextree::NodeId;
 
 /// The kinds of `parent`'s children, in sibling order.
 fn row(tree: &Tree<DocElement>, parent: NodeId) -> Vec<DocKind> {
@@ -103,7 +103,7 @@ pub fn do_document_walk_routes_by_kind() {
     let mut tree = builder.tree().clone();
     let before = tree.clone();
     let mut mutators = DocMutatorTree::new();
-    let root = mutators.root;
+    let root = mutators.root();
     mutators
         .insert_child(
             root,
@@ -129,7 +129,7 @@ pub fn do_document_walk_routes_by_kind() {
     // nothing, because a kind mismatch at the root prunes the walk.
     let mut tree = builder.tree().clone();
     let mut mutators = DocMutatorTree::new_with(Mutator::new_void(BranchKey::new(DocKind::Node, 0)));
-    let root = mutators.root;
+    let root = mutators.root();
     mutators
         .insert_child(
             root,

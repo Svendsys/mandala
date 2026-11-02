@@ -16,6 +16,7 @@
 //! [`validate_applied`]; a revert and a replay run on a copy of the
 //! tree, as the composite builders' tests do.
 
+use crate::arena::NodeId;
 use crate::document::element::ConnectorData;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::ids::Document;
@@ -35,7 +36,6 @@ use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::Predicate;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::{Placement, Tree};
-use indextree::NodeId;
 
 /// How deep the chains go: §20 rule 11's chain.
 pub const DEEP: usize = 100_000;
@@ -146,7 +146,7 @@ fn test_document_deep_chain_full_walk() {
 pub fn do_document_deep_chain_full_walk() {
     let mut chain = chain();
     let mut mutator = DocMutatorTree::new_with(Mutator::new_void(BranchKey::new(DocKind::Map, 0)));
-    let mut at = mutator.root;
+    let mut at = mutator.root();
     for _ in 0..DEEP {
         at = mutator
             .insert_child(
@@ -187,7 +187,7 @@ pub fn do_document_deep_chain_repeat_while_to_the_leaf() {
         Instruction::RepeatWhile(Predicate::always_true()),
         BranchKey::new(DocKind::Map, 0),
     ));
-    let root = mutator.root;
+    let root = mutator.root();
     mutator
         .insert_child(
             root,

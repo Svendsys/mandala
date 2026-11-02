@@ -7,6 +7,7 @@
 //! `is_err`, and each sits beside the nearest input that passes, so a
 //! check that refused everything would fail the controls.
 
+use crate::arena::NodeId;
 use crate::document::bounds::{MAX_CANVAS_COORD, MAX_FONT_SIZE_PT};
 use crate::document::element::{
     DefaultsData, DocElement, DocKind, LinkData, SectionData, SpanData, TextStyle,
@@ -33,7 +34,6 @@ use crate::engine::predicate::Predicate;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Placement;
 use glam::Vec2;
-use indextree::NodeId;
 
 /// The example map with one verb defined.
 fn document() -> (Document, Example) {
@@ -52,7 +52,7 @@ fn document() -> (Document, Example) {
 /// path is `[0]`.
 fn below_node(kind: DocKind, mutation: DocMutation) -> DocMutatorTree {
     let mut tree = DocMutatorTree::new_with(Mutator::new_void(BranchKey::new(DocKind::Node, 0)));
-    let root = tree.root;
+    let root = tree.root();
     tree.insert_child(
         root,
         Mutator::new(mutation, BranchKey::new(kind, 0)),
@@ -580,7 +580,7 @@ pub fn do_document_validate_refuses_a_bare_kind_switch() {
     let (doc, _) = document();
     let switch = |kind, removes: &[BranchKey<DocKind>]| {
         let mut tree = at_root(DocKind::Link, DocMutation::Link(LinkOp::SetKind(kind)));
-        let root = tree.root;
+        let root = tree.root();
         for &key in removes {
             tree.insert_child(
                 root,
@@ -633,7 +633,7 @@ pub fn do_document_presentations_change_fields_only() {
         );
     }
     let mut remove = below_node(DocKind::Node, DocMutation::Node(NodeOp::SetHidden(true)));
-    let root = remove.root;
+    let root = remove.root();
     remove
         .insert_child(
             root,
@@ -718,7 +718,7 @@ pub fn do_document_validate_applied_judges_what_the_steps_did() {
         DocKind::Link,
         DocMutation::Link(LinkOp::SetKind(LinkKind::Portal)),
     );
-    let root = switch.root;
+    let root = switch.root();
     for kind in [DocKind::Span, DocKind::CapStart, DocKind::CapEnd, DocKind::Label] {
         switch
             .insert_child(
@@ -1142,7 +1142,7 @@ fn test_document_validate_walks_a_deep_mutator() {
 pub fn do_document_validate_walks_a_deep_mutator() {
     let (doc, _) = document();
     let mut deep = DocMutatorTree::new_with(Mutator::new_void(BranchKey::new(DocKind::Node, 0)));
-    let mut at = deep.root;
+    let mut at = deep.root();
     for _ in 1..DEEP {
         at = deep
             .insert_child(

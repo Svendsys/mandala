@@ -141,7 +141,7 @@ fn linked_chain_text(depth: u32) -> String {
 }
 
 /// Every ancestor step the engine's counted climbs have taken on this
-/// thread: `tree::climb` — the one call of indextree's `ancestors`, which
+/// thread: `tree::climb` — the one call of the arena's `ancestors`, which
 /// `Document::depth` and `owning_node` go through too — and the memoized
 /// climbs of `Membership` and of a journal's close. Test builds only.
 fn climb_steps() -> usize {

@@ -240,7 +240,9 @@ pub fn do_instruction_repeat_while_always_true() {
         0,
         2,
     );
-    let child_a_id = model.insert_child(model.root, child_a, Placement::Last).unwrap();
+    let child_a_id = model
+        .insert_child(model.root(), child_a, Placement::Last)
+        .unwrap();
     let child_b_id = model.insert_child(child_a_id, child_b, Placement::Last).unwrap();
 
     // -- mutator tree: root (Instruction RepeatWhile always_true, ch 0)
@@ -266,7 +268,7 @@ pub fn do_instruction_repeat_while_always_true() {
     );
     let child_mut = child_mutator;
     mutator
-        .insert_child(mutator.root, child_mut, Placement::Last)
+        .insert_child(mutator.root(), child_mut, Placement::Last)
         .unwrap();
 
     // Apply.
@@ -370,7 +372,7 @@ pub fn do_mutator_tree_applies_to_target() {
         0,
         2,
     );
-    let child_id = model.insert_child(model.root, child, Placement::Last).unwrap();
+    let child_id = model.insert_child(model.root(), child, Placement::Last).unwrap();
 
     // -- mutator tree: root (NudgeRight 7.0, ch 0) -> child (position += (0, 11), ch 0)
     let root_mut = GfxMutator::new(GfxMutation::area_command(GlyphAreaCommand::NudgeRight(7.0)), 0);
@@ -384,14 +386,14 @@ pub fn do_mutator_tree_applies_to_target() {
         0,
     );
     mutator
-        .insert_child(mutator.root, child_mut, Placement::Last)
+        .insert_child(mutator.root(), child_mut, Placement::Last)
         .unwrap();
 
     // Apply.
     mutator.apply_to(&mut model, &());
 
     // Root: x should have shifted right by 7.
-    let root = model.arena().get(model.root).unwrap().get();
+    let root = model.arena().get(model.root()).unwrap().get();
     assert!(
         almost_equal(root.position().x, 7.0),
         "root x: expected 7.0, got {}",
@@ -526,8 +528,12 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
         2,
         2,
     );
-    let child_1_id = model.insert_child(model.root, child_1, Placement::Last).unwrap();
-    let child_2_id = model.insert_child(model.root, child_2, Placement::Last).unwrap();
+    let child_1_id = model
+        .insert_child(model.root(), child_1, Placement::Last)
+        .unwrap();
+    let child_2_id = model
+        .insert_child(model.root(), child_2, Placement::Last)
+        .unwrap();
 
     let child_1_before = model.arena().get(child_1_id).unwrap().get().position();
 
@@ -542,10 +548,10 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
         2,
     );
     mutator
-        .insert_child(mutator.root, void_mut, Placement::Last)
+        .insert_child(mutator.root(), void_mut, Placement::Last)
         .unwrap();
     mutator
-        .insert_child(mutator.root, single_mut, Placement::Last)
+        .insert_child(mutator.root(), single_mut, Placement::Last)
         .unwrap();
 
     mutator.apply_to(&mut model, &());

@@ -2904,8 +2904,8 @@ fn tampered_documents_agree(
 ) -> Result<(), String> {
     use crate::document::ids::{get, IdentIndex, NodeIdent};
     let mut tree = doc.tree().clone();
-    let ids: Vec<indextree::NodeId> = tree.descendants().collect();
-    let nodes: Vec<indextree::NodeId> = ids
+    let ids: Vec<crate::arena::NodeId> = tree.descendants().collect();
+    let nodes: Vec<crate::arena::NodeId> = ids
         .iter()
         .copied()
         .filter(|id| matches!(get(&tree, *id), Some(DocElement::Node(_))))

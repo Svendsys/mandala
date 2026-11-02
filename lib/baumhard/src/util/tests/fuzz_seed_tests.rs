@@ -470,7 +470,7 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
     );
     let (direct, closure) = lock_closure(&fuzz, "baumhard", &dev_only).unwrap();
     assert!(
-        direct.iter().any(|(name, _, _)| name == "indextree") && closure.len() >= 50,
+        direct.iter().any(|(name, _, _)| name == "path-slash") && closure.len() >= 50,
         "precondition: baumhard's closure is walked ({} direct, {} in all)",
         direct.len(),
         closure.len()
@@ -486,7 +486,7 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
             .map_or(text.len(), |at| start + 1 + at);
         (start, end)
     };
-    let (start, end) = table(&fuzz, "indextree");
+    let (start, end) = table(&fuzz, "path-slash");
     let deleted = format!("{}{}", &fuzz[..start], &fuzz[end..]);
     assert!(
         lock_drift(&root, &deleted).is_empty(),
@@ -494,13 +494,13 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
     );
     let found = fuzz_lock_problems(&root, &deleted, &dev_only);
     assert!(
-        found.len() == 1 && found[0].contains("`indextree` names 0 locked packages"),
+        found.len() == 1 && found[0].contains("`path-slash` names 0 locked packages"),
         "a deleted table is found: {found:?}"
     );
     // A dependency baumhard gained that the fuzz lockfile never added:
     // its table and its entry in baumhard's list both absent.
     let (start, end) = table(&deleted, "baumhard");
-    let entry = deleted[start..end].replacen(" \"indextree\",\n", "", 1);
+    let entry = deleted[start..end].replacen(" \"path-slash\",\n", "", 1);
     assert_ne!(
         entry,
         deleted[start..end],
@@ -515,7 +515,7 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
     assert!(
         found
             .iter()
-            .any(|problem| problem.starts_with("baumhard depends on indextree")
+            .any(|problem| problem.starts_with("baumhard depends on path-slash")
                 && problem.ends_with("in Cargo.lock alone")),
         "a dependency never added is found: {found:?}"
     );

@@ -21,13 +21,13 @@
 
 use std::collections::HashMap;
 
+#[cfg(test)]
+use baumhard::arena::NodeId;
 use baumhard::gfx_structs::scene::{Scene, SceneEntry, SceneTreeId};
 use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use baumhard::mindmap::scene_cache::EdgeKey;
 use baumhard::mindmap::tree_builder::{EdgeChannelIndex, PortalHit, PortalHitIndex};
 use glam::Vec2;
-#[cfg(test)]
-use indextree::NodeId;
 
 /// The fixed **screen-space** overlay components that the app's
 /// `AppScene` can host. Overlay trees are drawn without the camera
@@ -1054,7 +1054,7 @@ pub(in crate::application) mod tests {
         let id = app.canvas_id(CanvasRole::Portals).expect("portals registered");
         let tree = app.canvas_scene().tree(id).expect("portal tree");
         let mut out = Vec::new();
-        for pair in tree.root.children(tree.arena()) {
+        for pair in tree.root().children(tree.arena()) {
             for endpoint in pair.children(tree.arena()) {
                 for leaf in endpoint.children(tree.arena()) {
                     let area = match tree.arena().get(leaf).and_then(|n| n.get().glyph_area()) {
@@ -1222,7 +1222,7 @@ pub(in crate::application) mod tests {
         let area = GlyphArea::new_with_str("overlay", 1.0, 10.0, position, bounds);
         let element = GfxElement::new_area_non_indexed_with_id(area, 0, 0);
         let leaf = tree
-            .insert_child(tree.root, element, baumhard::engine::tree::Placement::Last)
+            .insert_child(tree.root(), element, baumhard::engine::tree::Placement::Last)
             .unwrap();
         (tree, leaf)
     }

@@ -12,6 +12,7 @@
 //! emoji of five code points and a letter with combining marks where a
 //! `char` count would cut them.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind, SectionData, SpanData, TextStyle};
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::compose::{
@@ -29,7 +30,6 @@ use crate::engine::journal::{Journal, JournalBuilder};
 use crate::engine::membership::Membership;
 use crate::engine::tree::{Tree, TreeError};
 use glam::Vec2;
-use indextree::NodeId;
 
 /// The family emoji: one grapheme cluster of five code points.
 const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";

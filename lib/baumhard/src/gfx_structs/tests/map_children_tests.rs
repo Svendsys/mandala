@@ -13,7 +13,7 @@
 //! Follows the `do_*()` / `test_*()` benchmark-reuse split (§T2.2) so
 //! future criterion benches can reuse the bodies.
 
-use indextree::NodeId;
+use crate::arena::NodeId;
 
 use crate::engine::mutator::Instruction;
 use crate::engine::tree::Placement;
@@ -36,7 +36,7 @@ use crate::gfx_structs::tests::fixtures::{append_area, mk_area};
 fn build_target_with_children(channels: &[usize]) -> (GfxTree, Vec<NodeId>) {
     fonts::init();
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let mut child_ids = Vec::with_capacity(channels.len());
     for (i, ch) in channels.iter().enumerate() {
         let id = append_area(&mut model, root, 100.0, (i as f32) * 10.0, *ch, i + 1);
@@ -63,7 +63,7 @@ fn build_map_children_mutator(
     for (ch, dx) in mutator_channels.iter().zip(nudges.iter()) {
         let m = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(*dx));
         mutator
-            .insert_child(mutator.root, GfxMutator::new(m, *ch), Placement::Last)
+            .insert_child(mutator.root(), GfxMutator::new(m, *ch), Placement::Last)
             .unwrap();
     }
     mutator
@@ -89,8 +89,8 @@ pub fn do_one_to_one_zip_applies_each_child_by_position() {
     // sibling position.
     let (mut tree, child_ids) = build_target_with_children(&[0, 1, 2]);
     let mutator = build_map_children_mutator(None, 0, &[9, 9, 9], &[10.0, 20.0, 30.0]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 110.0, "child 0 got dx=10");
     assert_eq!(position_x(&tree, child_ids[1]), 120.0, "child 1 got dx=20");
@@ -110,8 +110,8 @@ pub fn do_zip_shorter_mutator_than_target() {
     let (mut tree, child_ids) = build_target_with_children(&[0, 0, 0, 0]);
     // Only 2 mutators — indices 0 and 1 should move, 2 and 3 untouched.
     let mutator = build_map_children_mutator(None, 0, &[0, 0], &[5.0, 7.0]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 105.0);
     assert_eq!(position_x(&tree, child_ids[1]), 107.0);
@@ -133,8 +133,8 @@ pub fn do_zip_shorter_target_than_mutator() {
     // 4 mutators, 2 targets — only the first two apply; the remaining
     // two are silently dropped with a debug log.
     let mutator = build_map_children_mutator(None, 0, &[0, 0, 0, 0], &[1.0, 2.0, 3.0, 4.0]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 101.0);
     assert_eq!(position_x(&tree, child_ids[1]), 102.0);
@@ -152,8 +152,8 @@ fn test_zip_empty_mutator_children_is_noop() {
 pub fn do_zip_empty_mutator_children_is_noop() {
     let (mut tree, child_ids) = build_target_with_children(&[0, 0]);
     let mutator = build_map_children_mutator(None, 0, &[], &[]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
     assert_eq!(position_x(&tree, child_ids[0]), 100.0);
     assert_eq!(position_x(&tree, child_ids[1]), 100.0);
 }
@@ -167,8 +167,8 @@ pub fn do_zip_empty_target_children_is_noop() {
     // Target is a leaf — no children to zip against.
     let (mut tree, _) = build_target_with_children(&[]);
     let mutator = build_map_children_mutator(None, 0, &[0, 0], &[1.0, 2.0]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
     // No panic; root untouched.
     assert_eq!(position_x(&tree, root), 0.0);
 }
@@ -181,8 +181,8 @@ fn test_zip_empty_both_sides_is_noop() {
 pub fn do_zip_empty_both_sides_is_noop() {
     let (mut tree, _) = build_target_with_children(&[]);
     let mutator = build_map_children_mutator(None, 0, &[], &[]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
     assert_eq!(position_x(&tree, root), 0.0);
 }
 
@@ -205,7 +205,7 @@ pub fn do_nested_map_children_descends_recursively() {
     //   └─ b
     //      └─ b0
     let mut tree: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let a = append_area(&mut tree, root, 0.0, 0.0, 0, 1);
     let a0 = append_area(&mut tree, a, 0.0, 0.0, 0, 2);
     let a1 = append_area(&mut tree, a, 0.0, 0.0, 0, 3);
@@ -223,7 +223,7 @@ pub fn do_nested_map_children_descends_recursively() {
     // Build a MapChildren child with two leaf Singles nudging x by 1 and 2.
     let inner_a = mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::Instruction {
                 instruction: Instruction::MapChildren,
                 key: 0.into(),
@@ -250,7 +250,7 @@ pub fn do_nested_map_children_descends_recursively() {
     // Build a second MapChildren child with one leaf Single nudging by 7.
     let inner_b = mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::Instruction {
                 instruction: Instruction::MapChildren,
                 key: 0.into(),
@@ -267,7 +267,7 @@ pub fn do_nested_map_children_descends_recursively() {
         )
         .unwrap();
 
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, a0), 1.0);
     assert_eq!(position_x(&tree, a1), 2.0);
@@ -298,8 +298,8 @@ pub fn do_instruction_carrying_mutation_applies_to_current_target() {
         &[0],
         &[3.0],
     );
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, root), 50.0, "attached mutation hit root");
     assert_eq!(position_x(&tree, child_ids[0]), 103.0, "zipped child moved too");
@@ -325,8 +325,8 @@ pub fn do_instruction_mutation_skipped_on_channel_mismatch() {
         &[0],
         &[3.0],
     );
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, root), 0.0, "attached mutation NOT applied");
     assert_eq!(position_x(&tree, child_ids[0]), 103.0, "zip still ran");
@@ -399,8 +399,8 @@ pub fn do_compose_repeat_inside_map_children() {
     // the channel-aligner world, only one mutator child would apply
     // to all; MapChildren pairs them by position.
     let (mut tree, child_ids) = build_target_with_children(&[0, 0, 0]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 10.0);
     assert_eq!(position_x(&tree, child_ids[1]), 20.0);
@@ -423,8 +423,8 @@ pub fn do_map_children_ignores_sibling_channels_when_unequal_counts() {
     // position so both pairs apply.
     let (mut tree, child_ids) = build_target_with_children(&[0, 5]);
     let mutator = build_map_children_mutator(None, 0, &[9, 9], &[4.0, 8.0]);
-    let root = tree.root;
-    walk_tree_from(&mut tree, &mutator, root, mutator.root, &());
+    let root = tree.root();
+    walk_tree_from(&mut tree, &mutator, root, mutator.root(), &());
 
     assert_eq!(position_x(&tree, child_ids[0]), 104.0);
     assert_eq!(position_x(&tree, child_ids[1]), 108.0);

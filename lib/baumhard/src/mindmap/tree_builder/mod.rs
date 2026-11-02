@@ -29,7 +29,7 @@
 
 use std::collections::HashMap;
 
-use indextree::NodeId;
+use crate::arena::NodeId;
 
 use crate::engine::tree::Placement;
 use crate::gfx_structs::element::GfxElement;
@@ -376,9 +376,9 @@ impl MindMapTree {
 mod append_cost_tests {
     /// **The scene build must stay linear in the node count.**
     ///
-    /// indextree's checked inserts (`append`, `insert_after`, …) walk
-    /// the new node's would-be ancestors looking for a cycle before
-    /// every insert. A `.mindmap.json` may declare a linear `parent_id`
+    /// The arena's checked inserts (`checked_append`,
+    /// `checked_insert_after`, …) walk the new node's would-be ancestors
+    /// looking for a cycle before every insert. A `.mindmap.json` may declare a linear `parent_id`
     /// chain — a legal acyclic tree the loader accepts, with no depth
     /// bound anywhere on the load path — so depth equals the node count
     /// and the walk makes `build_mindmap_tree` O(N²).
@@ -396,7 +396,7 @@ mod append_cost_tests {
     /// `push_element` / `push_mutator`, that is through
     /// `insert_child`, whose sorted insert places a value it is handed
     /// — a node that is new, so the ancestor check could never fire.
-    /// This pins that insert to indextree's value-inserting fast paths.
+    /// This pins that insert to the arena's value-inserting fast paths.
     /// It pins the source rather than a duration, because a timing
     /// assertion on a shared runner is a flake, and because the
     /// property that matters is structural.
@@ -445,7 +445,7 @@ mod append_cost_tests {
         let tree = &built.tree;
 
         let mut rows = 0;
-        for parent in tree.root.descendants(tree.arena()) {
+        for parent in tree.root().descendants(tree.arena()) {
             let row: Vec<_> = parent.children(tree.arena()).collect();
             rows += 1;
             for pair in row.windows(2) {
@@ -473,7 +473,7 @@ mod append_cost_tests {
         assert!(
             value_inserts >= 2,
             "precondition: the scan reads the sorted insert's body, which places its node \
-             at the slot it found through indextree's two value-inserting calls, \
+             at the slot it found through the arena's two value-inserting calls, \
              `insert_after_value` and `prepend_value` (found {value_inserts})"
         );
         assert!(

@@ -40,7 +40,7 @@ pub(in crate::application::color_picker_overlay) fn build_color_picker_overlay_t
         // Under the root, which is always in the tree: the insert
         // cannot be refused, and a refusal would leave the cell out
         // rather than abort the overlay.
-        if let Err(e) = tree.insert_child(tree.root, area_element, Placement::Last) {
+        if let Err(e) = tree.insert_child(tree.root(), area_element, Placement::Last) {
             log::error!("color picker: could not add cell {channel}: {e}");
         }
     }

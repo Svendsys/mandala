@@ -14,6 +14,7 @@
 //! Follows the `do_*()` / `test_*()` split (§T2.2): every `do_*` body
 //! has a bench entry in `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use crate::document::bounds::MAX_NODE_IDENT;
 use crate::document::element::{DocElement, DocKind, LinkData};
 use crate::document::format::{load, Limits};
@@ -40,7 +41,6 @@ use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::{Placement, TreeError};
 use glam::Vec2;
-use indextree::NodeId;
 
 /// The span of the example's line link.
 fn line_span(doc: &Document, line: NodeId) -> NodeId {

@@ -17,7 +17,7 @@ fn border_tree_has_one_void_parent_per_framed_node() {
     );
     let tree = build_border_tree(&map, &HashMap::new());
     // Two framed nodes → two per-node Void parents under root.
-    let parents: Vec<NodeId> = tree.root.children(tree.arena()).collect();
+    let parents: Vec<NodeId> = tree.root().children(tree.arena()).collect();
     assert_eq!(parents.len(), 2);
     for parent in parents {
         let element = tree.arena().get(parent).unwrap().get();
@@ -45,7 +45,7 @@ fn border_tree_skips_nodes_with_show_frame_false() {
     map.nodes.get_mut("a").unwrap().style.show_frame = false;
     let tree = build_border_tree(&map, &HashMap::new());
     // Only `b` is framed → one per-node parent.
-    let parents: Vec<NodeId> = tree.root.children(tree.arena()).collect();
+    let parents: Vec<NodeId> = tree.root().children(tree.arena()).collect();
     assert_eq!(parents.len(), 1);
 }
 
@@ -61,7 +61,7 @@ fn border_tree_skips_folded_nodes() {
     map.nodes.get_mut("parent").unwrap().folded = true;
     let tree = build_border_tree(&map, &HashMap::new());
     // Parent itself still frames; child is hidden.
-    let parents: Vec<NodeId> = tree.root.children(tree.arena()).collect();
+    let parents: Vec<NodeId> = tree.root().children(tree.arena()).collect();
     assert_eq!(parents.len(), 1);
 }
 
@@ -78,7 +78,7 @@ fn border_tree_applies_drag_offset() {
     // by the same amount, so checking the TL CORNER's position
     // is the simplest contract: it should land at
     // (node_pos.x + offset.x, ~node_pos.y + offset.y).
-    let parent = tree.root.children(tree.arena()).next().unwrap();
+    let parent = tree.root().children(tree.arena()).next().unwrap();
     // TL corner is the 5th child (channel 5) — index 4 in the
     // order tree-builder emits.
     let tl_run = parent.children(tree.arena()).nth(4).unwrap();
@@ -116,7 +116,7 @@ fn border_tree_resolves_frame_color_through_theme_vars() {
         .insert("--my-frame".into(), "#ff0000".into());
     map.nodes.get_mut("a").unwrap().style.frame_color = "var(--my-frame)".into();
     let tree = build_border_tree(&map, &HashMap::new());
-    let parent = tree.root.children(tree.arena()).next().unwrap();
+    let parent = tree.root().children(tree.arena()).next().unwrap();
     let top_run = parent.children(tree.arena()).next().unwrap();
     let area = tree.arena().get(top_run).unwrap().get().glyph_area().unwrap();
     let region = area.regions.all_regions()[0];
@@ -136,7 +136,7 @@ fn border_tree_run_channels_are_stable_1_to_8() {
     use crate::engine::element::TreeElement;
     let map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
     let tree = build_border_tree(&map, &HashMap::new());
-    let parent = tree.root.children(tree.arena()).next().unwrap();
+    let parent = tree.root().children(tree.arena()).next().unwrap();
     let runs: Vec<_> = parent.children(tree.arena()).collect();
     let channels: Vec<usize> = runs
         .iter()
@@ -165,7 +165,7 @@ fn border_parent_channels_are_sorted_index_based() {
         vec![],
     );
     let tree = build_border_tree(&map, &HashMap::new());
-    let parents: Vec<_> = tree.root.children(tree.arena()).collect();
+    let parents: Vec<_> = tree.root().children(tree.arena()).collect();
     let channels: Vec<usize> = parents
         .iter()
         .map(|id| tree.arena().get(*id).unwrap().get().channel())
@@ -218,8 +218,8 @@ fn border_mutator_round_trip_matches_full_rebuild() {
 
     let expected = build_border_tree(&map, &offsets);
 
-    let actual_parents: Vec<NodeId> = tree_a.root.children(tree_a.arena()).collect();
-    let expected_parents: Vec<NodeId> = expected.root.children(expected.arena()).collect();
+    let actual_parents: Vec<NodeId> = tree_a.root().children(tree_a.arena()).collect();
+    let expected_parents: Vec<NodeId> = expected.root().children(expected.arena()).collect();
     assert_eq!(actual_parents.len(), expected_parents.len());
     // Full-field parity — text / position / bounds / scale /
     // line_height / regions / outline / zoom_visibility — so
@@ -266,7 +266,7 @@ fn border_runs_inherit_owning_node_zoom_visibility() {
         node.max_zoom_to_render = Some(2.5);
     }
     let tree = build_border_tree(&map, &HashMap::new());
-    let parents: Vec<NodeId> = tree.root.children(tree.arena()).collect();
+    let parents: Vec<NodeId> = tree.root().children(tree.arena()).collect();
     assert_eq!(parents.len(), 1, "one framed node → one sub-tree");
     let runs: Vec<NodeId> = parents[0].children(tree.arena()).collect();
     assert_eq!(runs.len(), 8, "border sub-tree has 4 rails + 4 corners = 8 runs");
@@ -285,7 +285,7 @@ fn border_runs_default_to_unbounded_when_node_has_no_window() {
 
     let map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
     let tree = build_border_tree(&map, &HashMap::new());
-    let parents: Vec<NodeId> = tree.root.children(tree.arena()).collect();
+    let parents: Vec<NodeId> = tree.root().children(tree.arena()).collect();
     let runs: Vec<NodeId> = parents[0].children(tree.arena()).collect();
     for run in &runs {
         let area = tree.arena().get(*run).unwrap().get().glyph_area().unwrap();
@@ -361,7 +361,7 @@ fn border_tree_left_column_rows_use_floor_not_ceil() {
     // Walk to the per-node Void parent, then to the LEFT column
     // (channel 3 in the tree-builder convention).
     let mut left_col_text: Option<String> = None;
-    for parent in tree.root.children(tree.arena()) {
+    for parent in tree.root().children(tree.arena()) {
         for run_id in parent.children(tree.arena()) {
             let run = tree.arena().get(run_id).unwrap().get();
             let area = run.glyph_area().unwrap();
@@ -404,7 +404,7 @@ fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
 
     let mut tree: GfxTree = GfxTree::new_non_indexed();
     let parent = tree
-        .insert_child(tree.root, GfxElement::new_void_with_id(0, 0), Placement::Last)
+        .insert_child(tree.root(), GfxElement::new_void_with_id(0, 0), Placement::Last)
         .unwrap();
 
     // 👨‍👩‍👧 — 5 codepoints joined by ZWJ, 1 grapheme cluster.
@@ -476,7 +476,7 @@ fn border_tree_honors_custom_side_pattern() {
     });
 
     let tree = build_border_tree(&map, &HashMap::new());
-    let parent = tree.root.children(tree.arena()).next().unwrap();
+    let parent = tree.root().children(tree.arena()).next().unwrap();
     let runs: Vec<_> = parent.children(tree.arena()).collect();
     // Plan revision 4: 4 rails + 4 corners = 8 runs.
     assert_eq!(runs.len(), 8, "expect 4 rails + 4 corners");
@@ -594,7 +594,7 @@ fn border_mutator_picks_up_pattern_change() {
         .arena()
         .get(
             tree_a
-                .root
+                .root()
                 .children(tree_a.arena())
                 .next()
                 .unwrap()
@@ -612,7 +612,7 @@ fn border_mutator_picks_up_pattern_change() {
         .arena()
         .get(
             expected
-                .root
+                .root()
                 .children(expected.arena())
                 .next()
                 .unwrap()
@@ -696,7 +696,7 @@ fn border_tree_uses_spec_line_height_for_vertical_rails() {
 
     // Build the tree from the same node data the spec came from.
     let tree = build_border_tree_from_nodes(&nodes);
-    let parent = tree.root.children(tree.arena()).next().unwrap();
+    let parent = tree.root().children(tree.arena()).next().unwrap();
     let runs: Vec<_> = parent.children(tree.arena()).collect();
     let left_area = tree.arena().get(runs[2]).unwrap().get().glyph_area().unwrap();
     let right_area = tree.arena().get(runs[3]).unwrap().get().glyph_area().unwrap();
@@ -777,7 +777,7 @@ fn border_tree_honors_palette_cycling() {
     });
 
     let tree = build_border_tree(&map, &HashMap::new());
-    let parent = tree.root.children(tree.arena()).next().unwrap();
+    let parent = tree.root().children(tree.arena()).next().unwrap();
     // Plan revision 4: TL corner is the palette-index-0 entry
     // (top fill starts at palette_offset = 1, after TL).
     // Children order: runs[0..4] = rails, runs[4..8] = corners.

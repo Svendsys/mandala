@@ -2214,7 +2214,7 @@ hidden_items!();
         use crate::document::writer::budget::text_bytes;
 
         const TEXT: &str = "seven b";
-        let somewhere = indextree::Arena::new().new_node(());
+        let somewhere = crate::arena::Arena::new().new_node(());
         let flow = |flow: FlowStyle| PathData {
             flow,
             anchors: (Anchor::Auto, Anchor::Auto),

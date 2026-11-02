@@ -32,6 +32,7 @@
 //! own builder, so a number outside its bound is refused here, at the
 //! same path, as the loader would refuse it.
 
+use crate::arena::NodeId;
 use crate::document::defaults::{FIT_MAX, FIT_MIN};
 use crate::document::element::{
     CapData, DefaultsData, DocElement, DocKind, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData,
@@ -59,7 +60,6 @@ use crate::document::values::{
     PlainColor, Shape, Sides, ZoomWindow,
 };
 use crate::font::fonts::{family_name_of, AppFont};
-use indextree::NodeId;
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::cell::RefCell;

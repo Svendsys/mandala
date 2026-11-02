@@ -12,7 +12,7 @@ fn test_build_tree_scale_1000_node_chain() {
     assert_eq!(result.node_count(), 1000);
     // The spine root is the only root, so the tree's root has one
     // child (the Void -> first chain node).
-    let roots: Vec<_> = result.tree.root.children(result.tree.arena()).collect();
+    let roots: Vec<_> = result.tree.root().children(result.tree.arena()).collect();
     assert_eq!(roots.len(), 1);
     // Every chain node is reachable via the node_map.
     for i in 0..1000 {
@@ -36,7 +36,7 @@ fn test_build_tree_wide_fan_out_500() {
     // count only the immediate children that are themselves
     // node-container arena ids in `node_map`.
     let root_tree_id = result.arena_id_for("root").unwrap();
-    let containers_in_node_map: std::collections::HashSet<indextree::NodeId> =
+    let containers_in_node_map: std::collections::HashSet<crate::arena::NodeId> =
         result.node_ids().map(|(_, id)| id).collect();
     let child_node_count = root_tree_id
         .children(result.tree.arena())
@@ -58,7 +58,7 @@ fn test_build_tree_deep_chain_no_stack_overflow() {
     // (post-section refactor `first_child` may be a section-area
     // rather than the next chain node, so filtering to container
     // ids keeps the depth measurement structural).
-    let containers_in_node_map: std::collections::HashSet<indextree::NodeId> =
+    let containers_in_node_map: std::collections::HashSet<crate::arena::NodeId> =
         result.node_ids().map(|(_, id)| id).collect();
     let mut current = result.arena_id_for("c0").unwrap();
     let mut depth = 1;

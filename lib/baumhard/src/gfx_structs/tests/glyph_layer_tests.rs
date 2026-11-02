@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::arena::NodeId;
 use glam::Vec2;
-use indextree::NodeId;
 
 use crate::core::primitives::{Flag, Flaggable};
 use crate::document::values::{Rgba, ZoomWindow};
@@ -753,7 +753,7 @@ pub fn do_predicates_select_runs_and_fills_by_element_type_and_opacity() {
 /// 50)`–`(130, 90)`) on channel 1.
 fn hit_tree() -> (GfxTree, NodeId, NodeId) {
     let mut tree = GfxTree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let fill = GfxElement::new_fill(
         FillData {
             rect: Rect::new(Vec2::new(0.0, 0.0), Vec2::new(60.0, 40.0)),
@@ -837,7 +837,7 @@ pub fn do_descendant_at_finds_runs_and_fills_by_their_boxes() {
         2,
         3,
     );
-    let root = tree.root;
+    let root = tree.root();
     let big = tree.insert_child(root, big, Placement::Last).unwrap();
     assert_eq!(
         tree.descendant_at(Vec2::new(110.0, 60.0)),
@@ -852,7 +852,7 @@ pub fn do_descendant_at_finds_runs_and_fills_by_their_boxes() {
 
     // Mutating the run moves what is hit: the cache is dropped with it.
     let mut mutators = GfxMutatorTree::new();
-    let mroot = mutators.root;
+    let mroot = mutators.root();
     mutators
         .insert_child(
             mroot,
@@ -893,7 +893,7 @@ pub fn do_descendants_aabb_covers_runs_and_fills() {
         "the fill's corner to the run's"
     );
     let mut empty = GfxTree::new_non_indexed();
-    let root = empty.root;
+    let root = empty.root();
     empty
         .insert_child(
             root,
@@ -934,7 +934,7 @@ fn test_journal_round_trips_a_tree_of_runs_and_fills() {
 /// `replay` the one taken after.
 pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
     let mut tree = GfxTree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let mut ids = Vec::new();
     for (channel, element) in [
         (
@@ -984,7 +984,7 @@ pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
         ..a_fill()
     };
     let mut mutators = GfxMutatorTree::new();
-    let mroot = mutators.root;
+    let mroot = mutators.root();
     for mutator in [
         GfxMutator::new_macro(
             vec![
@@ -1230,7 +1230,7 @@ pub fn do_hostile_authored_values_degrade_without_panicking() {
     );
 
     let mut tree = GfxTree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let fill = GfxElement::new_fill(
         FillData {
             rect: Rect::new(Vec2::ZERO, Vec2::new(10.0, 10.0)),
@@ -1274,7 +1274,7 @@ fn test_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain() {
 /// under wasm32 in debug in the `wasm_font_lock` probe (§20 rule 11).
 pub fn do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain() {
     let mut tree = GfxTree::new_non_indexed();
-    let mut at = tree.root;
+    let mut at = tree.root();
     for _ in 0..DEEP {
         at = tree
             .insert_child(at, GfxElement::new_void(0), Placement::Last)
@@ -1312,7 +1312,7 @@ pub fn do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain() {
         Some((Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0)))
     );
     assert_eq!(
-        tree.subtree_aabb(tree.root),
+        tree.subtree_aabb(tree.root()),
         Some((Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0))),
         "the box reaches the root through every level"
     );

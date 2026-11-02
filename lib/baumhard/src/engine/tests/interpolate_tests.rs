@@ -270,7 +270,7 @@ fn test_write_interpolated_halfway_lerps_value_and_snaps_the_rest() {
 /// and is never written.
 pub fn do_write_interpolated_halfway_lerps_value_and_snaps_the_rest() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let a = add(&mut tree, root, TestElement::new(0, 10));
     let b = add(&mut tree, root, TestElement::new(0, 21));
     let c = add(&mut tree, root, TestElement::new(1, 30));

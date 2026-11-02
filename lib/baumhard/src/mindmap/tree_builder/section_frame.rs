@@ -38,7 +38,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use indextree::NodeId;
+use crate::arena::NodeId;
 
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::tree::GfxTree;
@@ -412,7 +412,7 @@ pub fn build_section_frame_tree(elements: &[SectionFrameElement]) -> GfxTree {
     let mut unique_id: usize = 1;
     for (idx, frame) in elements.iter().enumerate() {
         let parent_channel = idx + 1;
-        let root = tree.root;
+        let root = tree.root();
         let Some(parent_id) = super::push_element(
             &mut tree,
             root,

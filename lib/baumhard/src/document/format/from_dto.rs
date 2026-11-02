@@ -38,6 +38,7 @@
 //! ([`NodeContext`]), which the caller completes with the excerpt and
 //! the position it alone knows.
 
+use crate::arena::NodeId;
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DocElement, DocKind, MapData};
 use crate::document::format::dto::MapHeaderDto;
@@ -54,7 +55,6 @@ use crate::document::writer::Derived;
 use crate::engine::tree::{Placement, Tree};
 use crate::font::fonts::{app_font_by_family, AppFont};
 use glam::Vec2;
-use indextree::NodeId;
 
 /// What every step of the builder returns.
 pub(super) type LoadResult<T> = Result<T, LoadError>;

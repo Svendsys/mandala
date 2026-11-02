@@ -5,10 +5,10 @@
 //! [`same_document`](crate::document::tests::format_support::same_document),
 //! which compares two documents by structure.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind, NodeData};
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::values::LinkKind;
-use indextree::NodeId;
 
 /// The fixture corpus, by name: every key at least once
 /// (`test_the_fixtures_use_every_key_the_format_defines`), every fit,
@@ -88,7 +88,7 @@ pub fn same_document(a: &Document, b: &Document) -> Result<(), String> {
     // it once everything under it is done. Two trees whose edge sequences
     // agree have the same shape, and the walk is linear whatever their
     // depth.
-    use indextree::NodeEdge;
+    use crate::arena::NodeEdge;
     let mut left = a.root().traverse(a.tree().arena());
     let mut right = b.root().traverse(b.tree().arena());
     loop {

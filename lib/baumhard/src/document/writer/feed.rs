@@ -12,13 +12,13 @@
 //! each removed element had, captured when it left; that is what the IPC
 //! event stream reports it by (V1-E2).
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::ids::{owning_node, NodeIdent};
 use crate::document::writer::{ChangeSource, Revision};
 use crate::engine::element::TreeElement;
 use crate::engine::journal::{Journal, Touch};
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 use rustc_hash::FxHashMap;
 
 /// One change the writer made: an apply, a stage, a commit, a cancel,

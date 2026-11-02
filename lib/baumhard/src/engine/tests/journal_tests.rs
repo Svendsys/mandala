@@ -10,6 +10,7 @@
 //! Follows the `do_*()` / `test_*()` split (§T2.2): every `do_*` body
 //! has a bench entry in `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use crate::engine::anchor::Anchors;
 use crate::engine::journal::{Journal, JournalBuilder, Touch};
 use crate::engine::mutator::{Instruction, Mutator};
@@ -22,7 +23,6 @@ use crate::engine::tests::test_element::{
     add, add_mutator, plain, value, TestElement, TestField, TestMutation,
 };
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
-use indextree::NodeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The values of `parent`'s children, in sibling order — the row's
@@ -35,7 +35,7 @@ fn row_values(tree: &Tree<TestElement>, parent: NodeId) -> Vec<i64> {
 /// the order given — each appended at the end of its key's run.
 fn flat_tree(children: &[(usize, i64)]) -> (Tree<TestElement>, Vec<NodeId>) {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let ids = children
         .iter()
         .map(|&(channel, v)| add(&mut tree, root, TestElement::new(channel, v)))
@@ -426,9 +426,9 @@ pub fn do_journal_of_an_apply_that_changes_nothing_is_empty() {
             panic!("a no-op scenario is one walk");
         };
         let mut changing = mutators.clone();
-        let root = changing.root;
+        let root = changing.root();
         let root_key = changing.arena[root].get().key();
-        *changing.arena[root].get_mut() = Mutator::new(TestMutation::Add(1), root_key);
+        *changing.arena.get_mut(root).unwrap() = Mutator::new(TestMutation::Add(1), root_key);
         let mut tree = control_tree;
         let before = snapshot(&tree);
         let mut builder = JournalBuilder::new();
@@ -481,12 +481,12 @@ pub fn do_journal_records_an_element_touched_twice_in_one_walk_once() {
         Instruction::RepeatWhile(predicate),
         plain(0),
     ));
-    let mroot = mt.root;
+    let mroot = mt.root();
     let repeated = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
     add_mutator(&mut mt, repeated, Mutator::new(TestMutation::Add(10), plain(0)));
     add_mutator(&mut mt, repeated, Mutator::new(TestMutation::Add(100), plain(0)));
 
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     mt.apply_at_journaled(&mut tree, &Anchors::Nodes(vec![root]), |_, _| 0, &mut builder)
         .unwrap();
@@ -501,7 +501,7 @@ pub fn do_journal_records_an_element_touched_twice_in_one_walk_once() {
     assert_eq!(journal.before(t[0]).map(|e| e.value), Some(500));
     assert_eq!(journal.after(t[0]).map(|e| e.value), Some(610));
     assert_eq!(
-        journal.before(tree.root),
+        journal.before(tree.root()),
         None,
         "the root was visited, not applied to"
     );
@@ -520,7 +520,7 @@ fn test_journal_restores_the_order_of_siblings_a_walk_rekeyed() {
 /// would not — and `replay` must give `c d a b` again.
 pub fn do_journal_restores_the_order_of_siblings_a_walk_rekeyed() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3), (1, 4)]);
-    let root = tree.root;
+    let root = tree.root();
     // `RepeatWhile(value < 3)` picks `a` and `b` by value.
     let mut predicate = Predicate::new();
     predicate.fields.push((TestField::Value(3), Comparator::less()));
@@ -528,7 +528,7 @@ pub fn do_journal_restores_the_order_of_siblings_a_walk_rekeyed() {
         Instruction::RepeatWhile(predicate),
         plain(0),
     ));
-    let mroot = mt.root;
+    let mroot = mt.root();
     add_mutator(
         &mut mt,
         mroot,
@@ -569,7 +569,7 @@ fn test_journal_restores_an_element_moved_twice_around_another_move() {
 /// the front, giving `A B C E D`. `revert` must give `A B C D E`.
 pub fn do_journal_restores_an_element_moved_twice_around_another_move() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3), (2, 4), (3, 5)]);
-    let root = tree.root;
+    let root = tree.root();
     let (a, d) = (t[0], t[3]);
     let mut builder = JournalBuilder::new();
     tree.update_journaled(a, &mut builder, |e| e.channel = 1).unwrap();
@@ -600,7 +600,7 @@ fn test_journal_restores_an_element_whose_neighbors_moved_before_it_was_recorded
 /// `B A C` or `A C B`, depending on the order.
 pub fn do_journal_restores_an_element_whose_neighbors_moved_before_it_was_recorded() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (1, 3)]);
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     tree.update_journaled(t[0], &mut builder, |e| e.channel = 2)
         .unwrap();
@@ -627,7 +627,7 @@ fn test_journal_restores_an_element_a_walk_moved_a_sibling_in_front_of() {
 /// must give `A B C` — `C` restored behind `A` would give `A C B`.
 pub fn do_journal_restores_an_element_a_walk_moved_a_sibling_in_front_of() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (2, 3)]);
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     root_mutator(TestMutation::SetChannel(1))
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![t[0]]), |_, _| 0, &mut builder)
@@ -661,7 +661,7 @@ fn test_journal_puts_back_an_element_that_followed_a_moved_one() {
 /// it would also be wrong about what changed.
 pub fn do_journal_puts_back_an_element_that_followed_a_moved_one() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3)]);
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     tree.update_journaled(t[0], &mut builder, |e| e.channel = 1)
         .unwrap();
@@ -688,7 +688,7 @@ fn test_journal_of_a_move_there_and_back_is_empty() {
 /// restores it.
 pub fn do_journal_of_a_move_there_and_back_is_empty() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (1, 3)]);
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     tree.update_journaled(t[1], &mut builder, |e| e.channel = 2)
         .unwrap();
@@ -724,13 +724,13 @@ fn test_a_failing_journaled_call_leaves_the_tree_as_the_builder_found_it() {
 /// does the same.
 pub fn do_a_failing_journaled_call_leaves_the_tree_as_the_builder_found_it() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (1, 3)]);
-    let root = tree.root;
+    let root = tree.root();
     let gone = add(&mut tree, root, TestElement::new(2, 9));
     tree.remove_subtree(gone).unwrap();
     let before = snapshot(&tree);
 
     let mut adds = MutatorTree::new();
-    let mroot = adds.root;
+    let mroot = adds.root();
     add_mutator(
         &mut adds,
         mroot,
@@ -783,10 +783,10 @@ fn test_abandon_reverts_everything_the_builder_recorded() {
 /// call — values and sibling order.
 pub fn do_abandon_reverts_everything_the_builder_recorded() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (1, 3)]);
-    let root = tree.root;
+    let root = tree.root();
     let before = snapshot(&tree);
     let mut adds = MutatorTree::new();
-    let mroot = adds.root;
+    let mroot = adds.root();
     add_mutator(&mut adds, mroot, Mutator::new(TestMutation::Add(10), plain(0)));
     add_mutator(&mut adds, mroot, Mutator::new(TestMutation::Add(10), plain(1)));
     let mut builder = JournalBuilder::new();
@@ -886,7 +886,7 @@ pub fn do_revert_refuses_a_tree_the_journal_does_not_fit() {
     let journal = builder.close(&tree);
 
     let mut other = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let other_root = other.root;
+    let other_root = other.root();
     let c = add(&mut other, other_root, TestElement::new(0, 7));
     let d = add(&mut other, c, TestElement::new(0, 8));
     assert_eq!((c, d), (t[0], t[1]), "the other tree reuses the journal's ids");
@@ -913,9 +913,9 @@ fn test_journal_skips_elements_visited_but_not_applied_to() {
 /// the payload-free instruction steers from, not at all.
 pub fn do_journal_skips_elements_visited_but_not_applied_to() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2)]);
-    let root = tree.root;
+    let root = tree.root();
     let mut mt = MutatorTree::new_with(Mutator::new_instruction(Instruction::MapChildren, plain(0)));
-    let mroot = mt.root;
+    let mroot = mt.root();
     add_mutator(&mut mt, mroot, Mutator::new_void(plain(0)));
     add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
     let mut builder = JournalBuilder::new();

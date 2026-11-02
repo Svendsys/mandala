@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use crate::arena::Arena;
 use crate::util::arena_utils::clone_subtree;
-use indextree::Arena;
 
 #[test]
 fn test_clone() {
@@ -108,7 +108,7 @@ fn test_clone_preserves_depth_first_pre_order() {
 
     // Slot order, not traversal order — this is what the recursion
     // fixed and what a breadth-first rewrite would silently change.
-    let by_slot: Vec<usize> = dst.iter().skip(1).map(|n| *n.get()).collect();
+    let by_slot: Vec<usize> = dst.iter().skip(1).map(|(_, n)| *n.get()).collect();
     assert_eq!(
         by_slot, expected,
         "destination slots must be allocated in the source's pre-order"

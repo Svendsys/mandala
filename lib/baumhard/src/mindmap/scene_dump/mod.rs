@@ -55,8 +55,8 @@
 //! filter drops, or a read that asks for no text, costs no
 //! [`displayed_text`](crate::font::attrs::displayed_text) walk.
 
+use crate::arena::NodeId;
 use glam::Vec2;
-use indextree::NodeId;
 use serde::Serialize;
 
 use crate::font::attrs::displayed_text;

@@ -14,9 +14,9 @@
 //! answered, so each ancestor is climbed through once over all the
 //! questions it is asked.
 
+use crate::arena::NodeId;
 use crate::engine::element::TreeElement;
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 use rustc_hash::FxHashMap;
 
 /// A memo of which elements are in a tree. Holds no borrow of the tree:

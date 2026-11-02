@@ -76,7 +76,7 @@ pub fn do_engine_build_resolves_templates_and_runtime_payloads() {
     let mt = build(&node, &IndexContext).expect("the AST builds");
 
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let targets: Vec<_> = [1, 2, 3, 4, 9]
         .iter()
         .map(|&channel| add(&mut tree, root, TestElement::new(channel, 100)))

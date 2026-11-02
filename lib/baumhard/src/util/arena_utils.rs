@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Arena-wide tree copy helpers built on `indextree`.
+//! Arena-wide tree copy helpers built on [`crate::arena`].
 
-use indextree::{Arena, NodeId};
+use crate::arena::{Arena, NodeId};
 
 /// Deep-copy the subtree rooted at `source_node_id`'s children from
 /// `source` into `destination`, appending every cloned node under

@@ -24,9 +24,10 @@
 //! takes in the browser.
 //!
 //! **It also runs the tree walks 100,000 levels deep** — the mutation
-//! validator over a deep mutator tree, and every engine and document
-//! walk over a deep chain (`engine::tests::deep_tests`,
-//! `document::tests::deep_tests`, V1-A5 #282) — because design §20
+//! validator over a deep mutator tree, and every arena, engine and
+//! document walk over a deep chain (`arena::tests::deep_tests`, V1-A6
+//! #290; `engine::tests::deep_tests`, `document::tests::deep_tests`,
+//! V1-A5 #282) — because design §20
 //! rule 11 asks every tree walk to prove, under wasm32 debug, that depth
 //! costs it no call stack, and this is the probe that runs code there.
 //! Beside it, R13's acceptance for the file format: a map 100,000

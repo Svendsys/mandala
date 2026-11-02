@@ -18,6 +18,7 @@
 //! document that breaks the shape rules builds it with
 //! [`DocumentBuilder::build_unchecked`](crate::document::tests::test_support::DocumentBuilder::build_unchecked), which checks only the map row.
 
+use crate::arena::NodeId;
 use crate::document::element::{
     ConnectorData, DefaultsData, DocElement, DocKind, LinkData, MapData, NodeData, NodeStyle, PaletteData,
     PathData, PortalEndData, SectionData, SpanData, ThemeData, Triggers,
@@ -27,7 +28,6 @@ use crate::document::shape::{validate_shape, ShapeError};
 use crate::document::values::{Anchor, LinkKind, PaletteId};
 use crate::engine::tree::{Placement, Tree};
 use glam::Vec2;
-use indextree::NodeId;
 
 /// A node at the origin with nothing set: every style field inherits.
 pub fn node_data(ident: u32) -> NodeData {

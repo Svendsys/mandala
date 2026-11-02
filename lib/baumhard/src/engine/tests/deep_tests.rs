@@ -19,6 +19,7 @@
 //! to the root shows as a count proportional to the square of the
 //! depth, never as a time.
 
+use crate::arena::NodeId;
 use crate::engine::anchor::Anchors;
 use crate::engine::journal::JournalBuilder;
 use crate::engine::mutator::{Instruction, Mutator};
@@ -28,7 +29,6 @@ use crate::engine::tests::test_element::{
     add, add_mutator, inherit_calls, plain, value, TestElement, TestField, TestMutation,
 };
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
-use indextree::NodeId;
 
 /// How deep the survival chains go: §20 rule 11's chain.
 pub const DEEP: usize = 100_000;
@@ -45,7 +45,7 @@ pub const STEPS_DEEP: usize = 20_000;
 /// nothing.
 pub fn chain(depth: usize, leaf: i64) -> (Tree<TestElement>, Vec<NodeId>) {
     let mut tree = Tree::new_non_indexed();
-    let mut at = tree.root;
+    let mut at = tree.root();
     let mut ids = Vec::with_capacity(depth);
     for level in 0..depth {
         let v = if level + 1 == depth { leaf } else { 1 };
@@ -59,7 +59,7 @@ pub fn chain(depth: usize, leaf: i64) -> (Tree<TestElement>, Vec<NodeId>) {
 /// `Void` root: `Add(1)` at every level, and `last` at the bottom.
 fn mirrored(depth: usize, last: TestMutation) -> MutatorTree<TestElement, TestMutation> {
     let mut mutators = MutatorTree::new();
-    let mut at = mutators.root;
+    let mut at = mutators.root();
     for level in 0..depth {
         let mutation = if level + 1 == depth {
             last.clone()
@@ -150,7 +150,7 @@ pub fn do_engine_deep_chain_repeat_while_to_the_leaf() {
         Instruction::RepeatWhile(predicate),
         plain(0),
     ));
-    let repeat = mutators.root;
+    let repeat = mutators.root();
     let repeated = add_mutator(
         &mut mutators,
         repeat,
@@ -212,7 +212,7 @@ pub fn do_engine_deep_chain_anchored_walks() {
     );
 
     let mut reaching = single(TestMutation::Add(1));
-    let below = reaching.root;
+    let below = reaching.root();
     add_mutator(
         &mut reaching,
         below,
@@ -244,7 +244,7 @@ pub fn do_engine_deep_chain_journaled_edit_at_the_leaf() {
     ))
     .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![leaf]), |_, _| 0, &mut builder)
     .unwrap();
-    let root = tree.root;
+    let root = tree.root();
     repeating(TestMutation::Add(1))
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![root]), |_, _| 0, &mut builder)
         .unwrap();
@@ -297,7 +297,7 @@ fn test_engine_deep_chain_moves_whole() {
 /// nothing changed.
 pub fn do_engine_deep_chain_moves_whole() {
     let (mut tree, ids) = chain(DEEP, 1);
-    let root = tree.root;
+    let root = tree.root();
     let top = ids[0];
     let leaf = ids[DEEP - 1];
     let other = add(&mut tree, root, TestElement::new(0, 9));
@@ -393,7 +393,7 @@ fn repeating(mutation: TestMutation) -> MutatorTree<TestElement, TestMutation> {
         Instruction::RepeatWhile(Predicate::always_true()),
         plain(0),
     ));
-    let root = mutators.root;
+    let root = mutators.root();
     add_mutator(&mut mutators, root, Mutator::new(mutation, plain(0)));
     mutators
 }
@@ -428,7 +428,7 @@ pub fn do_engine_deep_walks_inherit_once_per_level() {
     assert_eq!(repeat, STEPS_DEEP, "inherits for a descent {STEPS_DEEP} deep");
 
     let mut zipped = MutatorTree::new();
-    let mut at = zipped.root;
+    let mut at = zipped.root();
     for _ in 0..STEPS_DEEP {
         at = add_mutator(
             &mut zipped,
@@ -495,7 +495,7 @@ fn test_engine_deep_journal_close_climbs_each_element_once() {
     use crate::engine::journal::tests_support::presence_steps;
     let (mut tree, ids) = chain(STEPS_DEEP, 1);
     let leaf = ids[STEPS_DEEP - 1];
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     repeating(TestMutation::Add(1))
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![root]), |_, _| 0, &mut builder)
@@ -523,27 +523,28 @@ fn test_engine_deep_journal_close_climbs_each_element_once() {
 /// whose every row a walk re-arranges, then reverts and replays: each
 /// re-arranged element goes back into the row it left, which cannot
 /// close a cycle, so the insert that puts it there must not climb to
-/// the root (ruling R16 on #282). Counted in the steps of every
-/// same-row insert.
-///
-/// Ignored until V1-A6 (#290) replaces indextree with the engine's own
-/// arena tree, whose same-row insert makes no cycle check: indextree 4.9
-/// has no insert of an existing node without its O(depth) one. It fails
-/// today, by design; it is not counted as passing.
+/// the root (ruling R16 on #282, V1-A6 #290). Counted inside the
+/// arena's inserts of existing nodes: one step for each node a
+/// same-row re-attach links, and for a checked insert one plus every
+/// node its cycle check climbs through — so a checked insert put back
+/// on this path costs the depth per row, `WIDE_DEEP²` in all. And
+/// counted in the engine's own climb, `tree::climb`, which nothing on
+/// this path needs: no node changes parent, so a climb through it
+/// planted per re-attach costs the depth per row too.
 #[test]
-#[ignore = "#290 (V1-A6): same-row re-attach is O(depth) until the engine's own arena tree replaces indextree"]
 fn test_same_row_rearrangement_is_linear_in_depth() {
-    use crate::engine::siblings::tests_support::row_link_steps;
+    use crate::arena::tests_support::insert_steps;
+    use crate::engine::tree::tests_support::climb_steps;
     const WIDE_DEEP: usize = 5_000;
     let mut tree = Tree::new_non_indexed();
-    let mut at = tree.root;
+    let mut at = tree.root();
     for _ in 0..WIDE_DEEP {
         let next = add(&mut tree, at, TestElement::new(0, 1));
         add(&mut tree, at, TestElement::new(1, 1));
         at = next;
     }
-    let root = tree.root;
-    let before = row_link_steps();
+    let root = tree.root();
+    let (before, climbs) = (insert_steps(), climb_steps());
     let mut builder = JournalBuilder::new();
     // Every element goes to channel 2: in each row the chain element,
     // on 0, and the leaf, on 1, are both re-keyed, so the settle
@@ -554,27 +555,32 @@ fn test_same_row_rearrangement_is_linear_in_depth() {
     let journal = builder.close(&tree);
     journal.revert(&mut tree).unwrap();
     journal.replay(&mut tree).unwrap();
-    let steps = row_link_steps() - before;
+    let steps = insert_steps() - before;
+    let climbed = climb_steps() - climbs;
     assert_eq!(tree.check_sorted(), Ok(()), "precondition: the rows are sorted");
     assert!(steps > 0, "precondition: rows were re-arranged");
     assert!(
         steps <= 16 * WIDE_DEEP,
         "{steps} insert steps to re-arrange {WIDE_DEEP} rows on one chain"
     );
+    assert_eq!(
+        climbed, 0,
+        "climb steps to re-arrange {WIDE_DEEP} rows on one chain"
+    );
 }
 
 /// A walk that re-keys every element of a chain — each alone in its row
 /// — settles without re-attaching any of them: an only child is in its
-/// sorted place whatever its key. Counted in same-row insert steps,
-/// which a settle that detached and re-attached each one would spend
-/// as the depth per element, `STEPS_DEEP²/2` in all.
+/// sorted place whatever its key. Counted in the steps of the arena's
+/// inserts of existing nodes, which a settle that detached and
+/// re-attached each one would spend at least once per element.
 #[test]
 fn test_engine_deep_settle_leaves_only_children_in_place() {
-    use crate::engine::siblings::tests_support::row_link_steps;
+    use crate::arena::tests_support::insert_steps;
     let (mut tree, ids) = chain(STEPS_DEEP, 1);
-    let before = row_link_steps();
+    let before = insert_steps();
     repeating(TestMutation::SetChannel(4)).apply_to(&mut tree, &0);
-    let steps = row_link_steps() - before;
+    let steps = insert_steps() - before;
     assert!(
         ids.iter().all(|&id| tree.arena()[id].get().channel == 4),
         "precondition: every element was re-keyed"
@@ -586,9 +592,9 @@ fn test_engine_deep_settle_leaves_only_children_in_place() {
 }
 
 /// The engine and the document model climb, and insert an existing
-/// node, only where they may: indextree's climb in `tree::climb`, its
-/// checked insert behind `siblings::checked_attach` — both counted in
-/// test builds — and a hand-written climb (a parent read in the
+/// node under a new parent, only where they may: the arena's climb in
+/// `tree::climb`, its checked insert in `siblings::attach_at` — both
+/// counted in test builds — and a hand-written climb (a parent read in the
 /// spellings `engine_depth_cost_calls` reads) only in the memoized
 /// `Membership::contains`, `Presence::top` and `resolve`, the walker's
 /// one-off `state_above`, and the document's `tops_climbing`,
@@ -600,8 +606,8 @@ fn test_the_engine_climbs_only_where_it_may() {
     let costs = crate::util::source_scan::engine_depth_cost_calls();
     let unused: Vec<_> = costs.allowed.iter().filter(|(_, &calls)| calls == 0).collect();
     assert!(
-        unused.is_empty() && costs.allowed.len() == 10,
-        "precondition: each of the ten allowed functions makes a call the scan reads; \
+        unused.is_empty() && costs.allowed.len() == 9,
+        "precondition: each of the nine allowed functions makes a call the scan reads; \
          unused: {unused:?}"
     );
     let found = costs.found;
@@ -637,7 +643,7 @@ fn test_engine_deep_commands_and_updates_climb_nothing() {
     use crate::engine::tree::tests_support::climb_steps;
     let (mut tree, ids) = chain(STEPS_DEEP, 1);
     let leaf = ids[STEPS_DEEP - 1];
-    let root = tree.root;
+    let root = tree.root();
     let (climbs, attaches) = (climb_steps(), checked_attaches());
 
     MutatorTree::<TestElement, TestMutation>::new_with(Mutator::new_structure(
@@ -654,7 +660,7 @@ fn test_engine_deep_commands_and_updates_climb_nothing() {
         Instruction::RepeatWhile(Predicate::always_true()),
         plain(0),
     ));
-    let repeat = every.root;
+    let repeat = every.root();
     add_mutator(
         &mut every,
         repeat,

@@ -14,6 +14,7 @@
 //! Plus the fixture helpers the engine tests and the walker bench
 //! build trees with.
 
+use crate::arena::NodeId;
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::interpolate::{Interpolable, Interpolate, Snap};
 use crate::engine::key::BranchKey;
@@ -22,7 +23,6 @@ use crate::engine::mutator::Mutator;
 use crate::engine::predicate::{Comparator, Inspect};
 use crate::engine::tree::{MutatorTree, Placement, Tree};
 use glam::Vec2;
-use indextree::NodeId;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 

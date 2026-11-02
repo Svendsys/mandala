@@ -462,7 +462,7 @@ pub(super) fn build_console_overlay_tree(
         // Under the root, which is always in the tree: the insert
         // cannot be refused, and a refusal would leave the cell out
         // rather than abort the frame.
-        if let Err(e) = tree.insert_child(tree.root, element, Placement::Last) {
+        if let Err(e) = tree.insert_child(tree.root(), element, Placement::Last) {
             log::error!("console overlay: could not add cell {channel}: {e}");
         }
     }
@@ -499,7 +499,7 @@ pub(super) fn build_console_overlay_mutator(
     for (channel, area) in console_overlay_areas(geometry, layout, font_system) {
         let delta = DeltaGlyphArea::full_assign_from(&area);
         let mutator = GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel);
-        if let Err(e) = mt.insert_child(mt.root, mutator, Placement::Last) {
+        if let Err(e) = mt.insert_child(mt.root(), mutator, Placement::Last) {
             log::error!("console overlay: could not add the mutator for cell {channel}: {e}");
         }
     }

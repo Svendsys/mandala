@@ -12,8 +12,8 @@
 //! must compile in non-cfg(test) builds too. Each helper is `pub`
 //! for the same reason.
 
+use crate::arena::NodeId;
 use glam::Vec2;
-use indextree::NodeId;
 
 use crate::engine::tree::Placement;
 use crate::gfx_structs::area::GlyphArea;

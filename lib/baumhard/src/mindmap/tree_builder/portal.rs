@@ -33,8 +33,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::arena::NodeId;
 use glam::Vec2;
-use indextree::NodeId;
 
 use crate::core::primitives::ColorFontRegions;
 use crate::engine::element::TreeElement;
@@ -598,7 +598,7 @@ pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
     let mut unique_id: usize = 1;
 
     for pair in pairs {
-        let root = tree.root;
+        let root = tree.root();
         let Some(pair_root) = super::push_element(
             &mut tree,
             root,
@@ -687,7 +687,7 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
 
     for pair in pairs {
-        let root = mt.root;
+        let root = mt.root();
         let Some(pair_node) = super::push_mutator(&mut mt, root, GfxMutator::new_void(pair.pair_channel))
         else {
             continue;
