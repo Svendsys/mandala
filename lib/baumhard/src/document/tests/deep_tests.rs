@@ -288,8 +288,8 @@ pub fn do_document_deep_chain_moves_whole() {
     revert_and_replay(
         &chain.doc,
         &journal,
-        |tree| tree.get(top).and_then(|n| n.parent()) == Some(holder),
-        |tree| tree.get(top).and_then(|n| n.parent()) == Some(other),
+        |tree| top.parent(tree.arena()) == Some(holder),
+        |tree| top.parent(tree.arena()) == Some(other),
     );
 }
 
@@ -368,8 +368,8 @@ pub fn do_document_deep_subtree_validates_and_inserts() {
     revert_and_replay(
         &chain.doc,
         &journal,
-        |tree| tree.get(inserted).and_then(|n| n.parent()).is_none(),
-        |tree| tree.get(inserted).and_then(|n| n.parent()) == Some(leaf),
+        |tree| inserted.parent(tree.arena()).is_none(),
+        |tree| inserted.parent(tree.arena()) == Some(leaf),
     );
 }
 

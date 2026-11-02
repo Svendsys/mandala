@@ -219,9 +219,15 @@ fn check(context: &str, arena: &Arena<u32>, model: &Reference, full: bool) -> us
             continue;
         };
         let node = arena
-            .get(id)
+            .node(id)
             .unwrap_or_else(|| panic!("{context}: live {id:?} reads nothing"));
         assert_eq!(*node.get(), m.value, "{context}: value of {id:?}");
+        assert_eq!(
+            arena.get(id).map(|n| *n.get()),
+            Some(m.value),
+            "{context}: get of {id:?}"
+        );
+        assert_eq!(node.id(), id, "{context}: the NodeRef of {id:?} names it");
         assert_eq!(
             node.parent(),
             m.parent.map(|p| model.ids[p]),

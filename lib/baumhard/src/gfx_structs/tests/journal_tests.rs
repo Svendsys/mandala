@@ -269,7 +269,7 @@ fn glyph_row() -> (GfxTree, Vec<NodeId>) {
 /// Every node in pre-order, with its parent and element.
 fn snapshot(tree: &GfxTree) -> Vec<(NodeId, Option<NodeId>, GfxElement)> {
     tree.descendants()
-        .map(|id| (id, tree.arena()[id].parent(), tree.arena()[id].get().clone()))
+        .map(|id| (id, tree.arena().at(id).parent(), tree.arena()[id].get().clone()))
         .collect()
 }
 
@@ -487,7 +487,7 @@ pub fn do_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges() {
         tree.arena()[ids[1]].get().key(),
         "the merge target's next sibling has its key"
     );
-    assert!(tree.arena()[ids[1]].first_child().is_none(), "and no children");
+    assert!(tree.arena().at(ids[1]).first_child().is_none(), "and no children");
     let result = command(StructOp::Merge).apply_at_journaled(
         &mut tree,
         &Anchors::Nodes(vec![ids[0]]),

@@ -252,7 +252,9 @@ pub fn do_engine_deep_chain_journaled_edit_at_the_leaf() {
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![leaf]), |_, _| 0, &mut builder)
         .unwrap();
     let journal = builder.close(&tree);
-    let inserted = tree.arena()[leaf]
+    let inserted = tree
+        .arena()
+        .at(leaf)
         .first_child()
         .expect("the insert is below the leaf");
     assert_eq!(value(&tree, leaf), 1 + 5 + 1);
@@ -262,13 +264,13 @@ pub fn do_engine_deep_chain_journaled_edit_at_the_leaf() {
     assert_eq!(value(&tree, leaf), 1, "reverted");
     assert_eq!(tree.arena()[leaf].get().channel, 0, "its key reverted");
     assert_eq!(value(&tree, ids[0]), 1, "the top reverted");
-    assert!(tree.arena()[leaf].first_child().is_none(), "the insert is out");
+    assert!(tree.arena().at(leaf).first_child().is_none(), "the insert is out");
 
     journal.replay(&mut tree).unwrap();
     assert_eq!(value(&tree, leaf), 7, "replayed");
     assert_eq!(tree.arena()[leaf].get().channel, 2);
     assert_eq!(
-        tree.arena()[leaf].first_child(),
+        tree.arena().at(leaf).first_child(),
         Some(inserted),
         "the same insert is back"
     );
@@ -316,17 +318,17 @@ pub fn do_engine_deep_chain_moves_whole() {
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![top]), |_, _| 0, &mut builder)
         .unwrap();
     let journal = builder.close(&tree);
-    assert_eq!(tree.arena()[top].parent(), Some(other), "moved");
+    assert_eq!(tree.arena().at(top).parent(), Some(other), "moved");
     assert_eq!(leaf.ancestors(tree.arena()).count(), DEEP + 2);
     journal.revert(&mut tree).unwrap();
-    assert_eq!(tree.arena()[top].parent(), Some(root), "reverted");
+    assert_eq!(tree.arena().at(top).parent(), Some(root), "reverted");
     journal.replay(&mut tree).unwrap();
-    assert_eq!(tree.arena()[top].parent(), Some(other), "replayed");
+    assert_eq!(tree.arena().at(top).parent(), Some(other), "replayed");
     journal.discard(&mut tree);
 
     let refused = moving(leaf).apply_at(&mut tree, &Anchors::Nodes(vec![top]), |_, _| 0);
     assert_eq!(refused, Err(TreeError::Cycle { node: top, to: leaf }));
-    assert_eq!(tree.arena()[top].parent(), Some(other), "nothing changed");
+    assert_eq!(tree.arena().at(top).parent(), Some(other), "nothing changed");
 }
 
 #[test]
@@ -367,9 +369,13 @@ pub fn do_engine_deep_subtree_inserts_and_is_a_value() {
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![leaf]), |_, _| 0, &mut builder)
         .unwrap();
     let journal = builder.close(&tree);
-    let top = tree.arena()[leaf].first_child().expect("inserted below the leaf");
+    let top = tree
+        .arena()
+        .at(leaf)
+        .first_child()
+        .expect("inserted below the leaf");
     let mut bottom = top;
-    while let Some(next) = tree.arena()[bottom].first_child() {
+    while let Some(next) = tree.arena().at(bottom).first_child() {
         bottom = next;
     }
     assert_eq!(value(&tree, bottom), DEEP as i64, "the whole subtree is in");
@@ -379,9 +385,13 @@ pub fn do_engine_deep_subtree_inserts_and_is_a_value() {
         "every inserted element is touched"
     );
     journal.revert(&mut tree).unwrap();
-    assert!(tree.arena()[leaf].first_child().is_none(), "reverted");
+    assert!(tree.arena().at(leaf).first_child().is_none(), "reverted");
     journal.replay(&mut tree).unwrap();
-    assert_eq!(tree.arena()[leaf].first_child(), Some(top), "replayed, same ids");
+    assert_eq!(
+        tree.arena().at(leaf).first_child(),
+        Some(top),
+        "replayed, same ids"
+    );
     journal.discard(&mut tree);
     drop(insert);
 }

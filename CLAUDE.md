@@ -185,15 +185,18 @@ the parity trajectory (or why none is owed):
   native-only by design: browsers ship their own unresponsive-tab
   dialog; no parity owed.
 - **`MAX_MAP_BYTES` and `MAX_ELEMENTS`**
-  (`lib/baumhard/src/document/format/mod.rs`) — `None` on native;
+  (`lib/baumhard/src/document/format/mod.rs`) — `None` on native,
+  where the arena's slot count is the only element bound
+  (`ARENA_MAX_ELEMENTS`, 4,294,967,294, `u32::MAX - 1`; past it a
+  load is refused with `TooManyElements`, never a panic; V1-A7 #301);
   on wasm32 a two-axis memory budget, because memory is the only
   limit and a map's cost grows both with its text and with the
   elements (and definitions) it becomes, and a short text can
   become many elements. A map's peak while it loads, and while it
-  is then saved, is modeled as `text × 7 + elements × 576` bytes
+  is then saved, is modeled as `text × 7 + elements × 480` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`), and
   each limit takes half of a 3 GiB budget: **230,087,533 bytes of
-  text** (~219 MiB, refused before parsing) and **2,796,202
+  text** (~219 MiB, refused before parsing) and **3,355,443
   elements** (counted as the builder appends them, the one past it
   refused with `TooManyElements`). The two costs are measured, not
   chosen: the densest shape of each kind of content (empty

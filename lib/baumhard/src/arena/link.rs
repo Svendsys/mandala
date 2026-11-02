@@ -7,41 +7,51 @@
 //! row it left. Every operation here is O(1) but the iterators' full
 //! runs, [`NodeId::remove_subtree`] (O(subtree)) and the checked
 //! inserts' cycle check (O(depth of the destination)).
+//!
+//! Each method checks the generation of its `self` and of each id
+//! argument once, on the way in; everything after works on the links
+//! the arena wrote, which are live by construction (see the module docs
+//! of [`crate::arena`]).
 
 use crate::arena::iter::{Ancestors, ChildrenOf, Descendants, Traverse};
-use crate::arena::{Arena, ArenaError, NodeId};
+use crate::arena::{Arena, ArenaError, Link, NodeId};
 
 impl NodeId {
     /// Whether this id names no node of `arena`: its node was removed,
     /// or its slot has been reused since. O(1).
     pub fn is_removed<T>(self, arena: &Arena<T>) -> bool {
-        arena.get(self).is_none()
+        arena.resolve(self).is_none()
     }
 
     /// The node's parent; `None` for the top of a tree, a detached node
     /// or a stale id. O(1).
     pub fn parent<T>(self, arena: &Arena<T>) -> Option<NodeId> {
-        arena.get(self)?.parent
+        arena.resolve(self)?.parent.map(|link| arena.id_of(link))
     }
 
-    /// The node's first child. O(1).
+    /// The node's first child; `None` for a leaf or a stale id. O(1).
     pub fn first_child<T>(self, arena: &Arena<T>) -> Option<NodeId> {
-        arena.get(self)?.first_child
+        arena.resolve(self)?.first_child.map(|link| arena.id_of(link))
     }
 
-    /// The node's last child. O(1).
+    /// The node's last child; `None` for a leaf or a stale id. O(1).
     pub fn last_child<T>(self, arena: &Arena<T>) -> Option<NodeId> {
-        arena.get(self)?.last_child
+        arena.resolve(self)?.last_child.map(|link| arena.id_of(link))
     }
 
-    /// The sibling before the node. O(1).
+    /// The sibling before the node; `None` for the first of its row, a
+    /// node in no row or a stale id. O(1).
     pub fn previous_sibling<T>(self, arena: &Arena<T>) -> Option<NodeId> {
-        arena.get(self)?.previous_sibling
+        arena
+            .resolve(self)?
+            .previous_sibling
+            .map(|link| arena.id_of(link))
     }
 
-    /// The sibling after the node. O(1).
+    /// The sibling after the node; `None` for the last of its row, a
+    /// node in no row or a stale id. O(1).
     pub fn next_sibling<T>(self, arena: &Arena<T>) -> Option<NodeId> {
-        arena.get(self)?.next_sibling
+        arena.resolve(self)?.next_sibling.map(|link| arena.id_of(link))
     }
 
     /// The node's children, first to last (double-ended). Empty for a
@@ -76,28 +86,8 @@ impl NodeId {
     /// siblings close the gap. A detached node or a stale id is left as
     /// it is. O(1).
     pub fn detach<T>(self, arena: &mut Arena<T>) {
-        let Some(node) = arena.live_node_mut(self) else {
-            return;
-        };
-        let (parent, previous, next) = (node.parent, node.previous_sibling, node.next_sibling);
-        node.parent = None;
-        node.previous_sibling = None;
-        node.next_sibling = None;
-        match previous {
-            Some(previous) => arena.node_mut(previous).next_sibling = next,
-            None => {
-                if let Some(parent) = parent {
-                    arena.node_mut(parent).first_child = next;
-                }
-            }
-        }
-        match next {
-            Some(next) => arena.node_mut(next).previous_sibling = previous,
-            None => {
-                if let Some(parent) = parent {
-                    arena.node_mut(parent).last_child = previous;
-                }
-            }
+        if arena.resolve(self).is_some() {
+            unlink(arena, self.slot);
         }
     }
 
@@ -110,21 +100,22 @@ impl NodeId {
     /// join the free list in the order freed — each node after its
     /// subtree, the node itself last.
     pub fn remove_subtree<T>(self, arena: &mut Arena<T>) {
-        if self.is_removed(arena) {
+        if arena.resolve(self).is_none() {
             return;
         }
-        self.detach(arena);
-        let mut cursor = self;
+        let top = self.slot;
+        unlink(arena, top);
+        let mut cursor = top;
         loop {
-            if let Some(child) = arena[cursor].first_child {
+            if let Some(child) = arena.linked(cursor).first_child {
                 cursor = child;
                 continue;
             }
-            if cursor == self {
+            if cursor == top {
                 break;
             }
             let (parent, next) = {
-                let node = &arena[cursor];
+                let node = arena.linked(cursor);
                 (node.parent, node.next_sibling)
             };
             // A leaf below `self`: unlink it from the front of its row
@@ -133,73 +124,73 @@ impl NodeId {
             let Some(parent) = parent else {
                 break;
             };
-            let row = arena.node_mut(parent);
+            let row = arena.linked_mut(parent);
             row.first_child = next;
             if next.is_none() {
                 row.last_child = None;
             }
             if let Some(next) = next {
-                arena.node_mut(next).previous_sibling = None;
+                arena.linked_mut(next).previous_sibling = None;
             }
-            arena.free(cursor);
+            arena.free_link(cursor);
             cursor = next.unwrap_or(parent);
         }
-        arena.free(self);
+        arena.free_link(top);
     }
 
     /// A new node holding `value`, appended as the node's last child.
     /// O(1): the node is new, so nothing is climbed.
     ///
-    /// **Panics** when `self` is stale.
+    /// **Panics** when `self` is stale, or as [`Arena::new_node`] does.
     #[track_caller]
     pub fn append_value<T>(self, value: T, arena: &mut Arena<T>) -> NodeId {
-        let last = arena[self].last_child;
+        let last = arena.expect(self).last_child;
         let new = arena.new_node(value);
-        link(arena, new, self, last, None);
+        attach(arena, new.slot, self.slot, last, None);
         new
     }
 
     /// A new node holding `value`, prepended as the node's first child.
     /// O(1): the node is new, so nothing is climbed.
     ///
-    /// **Panics** when `self` is stale.
+    /// **Panics** when `self` is stale, or as [`Arena::new_node`] does.
     #[track_caller]
     pub fn prepend_value<T>(self, value: T, arena: &mut Arena<T>) -> NodeId {
-        let first = arena[self].first_child;
+        let first = arena.expect(self).first_child;
         let new = arena.new_node(value);
-        link(arena, new, self, None, first);
+        attach(arena, new.slot, self.slot, None, first);
         new
     }
 
     /// A new node holding `value`, inserted as the node's next sibling.
     /// O(1): the node is new, so nothing is climbed.
     ///
-    /// **Panics** when `self` is stale or has no parent: only a node
-    /// under a parent is in a row.
+    /// **Panics** when `self` is stale or has no parent — only a node
+    /// under a parent is in a row — or as [`Arena::new_node`] does.
     #[track_caller]
     pub fn insert_after_value<T>(self, value: T, arena: &mut Arena<T>) -> NodeId {
         let (parent, next) = {
-            let node = &arena[self];
+            let node = arena.expect(self);
             (row_of(self, node.parent), node.next_sibling)
         };
         let new = arena.new_node(value);
-        link(arena, new, parent, Some(self), next);
+        attach(arena, new.slot, parent, Some(self.slot), next);
         new
     }
 
     /// A new node holding `value`, inserted as the node's previous
     /// sibling. O(1): the node is new, so nothing is climbed.
     ///
-    /// **Panics** when `self` is stale or has no parent: only a node
-    /// under a parent is in a row.
+    /// **Panics** when `self` is stale or has no parent — only a node
+    /// under a parent is in a row — or as [`Arena::new_node`] does.
     #[track_caller]
     pub fn insert_before_value<T>(self, value: T, arena: &mut Arena<T>) -> NodeId {
         let (parent, previous) = {
-            let node = &arena[self];
+            let node = arena.expect(self);
             (row_of(self, node.parent), node.previous_sibling)
         };
         let new = arena.new_node(value);
-        link(arena, new, parent, previous, Some(self));
+        attach(arena, new.slot, parent, previous, Some(self.slot));
         new
     }
 
@@ -215,9 +206,9 @@ impl NodeId {
     /// tree — O(depth), once for the whole moved subtree — then O(1).
     pub fn checked_append<T>(self, child: NodeId, arena: &mut Arena<T>) -> Result<(), ArenaError> {
         check_move(arena, self, child)?;
-        child.detach(arena);
-        let last = arena[self].last_child;
-        link(arena, child, self, last, None);
+        unlink(arena, child.slot);
+        let last = arena.linked(self.slot).last_child;
+        attach(arena, child.slot, self.slot, last, None);
         Ok(())
     }
 
@@ -226,9 +217,9 @@ impl NodeId {
     /// [`Self::checked_append`].
     pub fn checked_prepend<T>(self, child: NodeId, arena: &mut Arena<T>) -> Result<(), ArenaError> {
         check_move(arena, self, child)?;
-        child.detach(arena);
-        let first = arena[self].first_child;
-        link(arena, child, self, None, first);
+        unlink(arena, child.slot);
+        let first = arena.linked(self.slot).first_child;
+        attach(arena, child.slot, self.slot, None, first);
         Ok(())
     }
 
@@ -247,9 +238,9 @@ impl NodeId {
     /// O(1).
     pub fn checked_insert_after<T>(self, sibling: NodeId, arena: &mut Arena<T>) -> Result<(), ArenaError> {
         let parent = check_beside(arena, self, sibling)?;
-        sibling.detach(arena);
-        let next = arena[self].next_sibling;
-        link(arena, sibling, parent, Some(self), next);
+        unlink(arena, sibling.slot);
+        let next = arena.linked(self.slot).next_sibling;
+        attach(arena, sibling.slot, parent, Some(self.slot), next);
         Ok(())
     }
 
@@ -258,9 +249,9 @@ impl NodeId {
     /// cost of [`Self::checked_insert_after`].
     pub fn checked_insert_before<T>(self, sibling: NodeId, arena: &mut Arena<T>) -> Result<(), ArenaError> {
         let parent = check_beside(arena, self, sibling)?;
-        sibling.detach(arena);
-        let previous = arena[self].previous_sibling;
-        link(arena, sibling, parent, previous, Some(self));
+        unlink(arena, sibling.slot);
+        let previous = arena.linked(self.slot).previous_sibling;
+        attach(arena, sibling.slot, parent, previous, Some(self.slot));
         Ok(())
     }
 
@@ -288,19 +279,19 @@ impl NodeId {
         previous: Option<NodeId>,
         arena: &mut Arena<T>,
     ) -> Result<(), ArenaError> {
-        let node = arena.get(self).ok_or(ArenaError::Stale(self))?;
+        let node = arena.resolve(self).ok_or(ArenaError::Stale(self))?;
         if !node.is_detached() {
             return Err(ArenaError::Attached(self));
         }
-        let parent_node = arena.get(parent).ok_or(ArenaError::Stale(parent))?;
+        let parent_node = arena.resolve(parent).ok_or(ArenaError::Stale(parent))?;
         if parent == self {
             // A node never left itself: the one cycle telling costs O(1).
             return Err(ArenaError::Cycle { node: self, to: self });
         }
         let next = match previous {
             Some(previous) => {
-                let sibling = arena.get(previous).ok_or(ArenaError::Stale(previous))?;
-                if sibling.parent != Some(parent) {
+                let sibling = arena.resolve(previous).ok_or(ArenaError::Stale(previous))?;
+                if sibling.parent != Some(parent.slot) {
                     return Err(ArenaError::NotAChild {
                         parent,
                         node: previous,
@@ -312,7 +303,7 @@ impl NodeId {
         };
         #[cfg(test)]
         crate::arena::tests_support::count_insert_steps(1);
-        link(arena, self, parent, previous, next);
+        attach(arena, self.slot, parent.slot, previous.map(|id| id.slot), next);
         Ok(())
     }
 }
@@ -320,7 +311,7 @@ impl NodeId {
 /// The parent of a node a sibling is inserted beside. **Panics** when
 /// it has none: a node without a parent is in no row.
 #[track_caller]
-fn row_of(id: NodeId, parent: Option<NodeId>) -> NodeId {
+fn row_of(id: NodeId, parent: Option<Link>) -> Link {
     match parent {
         Some(parent) => parent,
         None => panic!("arena: node {id:?} has no parent, so no row to insert a sibling in"),
@@ -329,24 +320,16 @@ fn row_of(id: NodeId, parent: Option<NodeId>) -> NodeId {
 
 /// Whether the existing node `node` may move to hang below `parent`:
 /// both are live (`parent` checked first), and `node` is neither
-/// `parent` nor above it. The one climb of the arena's inserts, from
-/// `parent` to the top of its tree, counted in test builds.
+/// `parent` nor above it. Each id's generation is checked here, once;
+/// the climb follows links.
 fn check_move<T>(arena: &Arena<T>, parent: NodeId, node: NodeId) -> Result<(), ArenaError> {
-    if arena.get(parent).is_none() {
+    if arena.resolve(parent).is_none() {
         return Err(ArenaError::Stale(parent));
     }
-    if arena.get(node).is_none() {
+    if arena.resolve(node).is_none() {
         return Err(ArenaError::Stale(node));
     }
-    let mut climbed = 0;
-    let cycle = parent.ancestors(arena).any(|above| {
-        climbed += 1;
-        above == node
-    });
-    #[cfg(test)]
-    crate::arena::tests_support::count_insert_steps(1 + climbed);
-    let _ = climbed;
-    if cycle {
+    if climbs_to(arena, parent.slot, node.slot) {
         return Err(ArenaError::Cycle { node, to: parent });
     }
     Ok(())
@@ -357,11 +340,11 @@ fn check_move<T>(arena: &Arena<T>, parent: NodeId, node: NodeId) -> Result<(), A
 /// neither `anchor` itself nor above `anchor`'s parent — and that
 /// parent. See [`NodeId::checked_insert_after`] for the order the
 /// refusals are tried in.
-fn check_beside<T>(arena: &Arena<T>, anchor: NodeId, sibling: NodeId) -> Result<NodeId, ArenaError> {
-    let Some(node) = arena.get(anchor) else {
+fn check_beside<T>(arena: &Arena<T>, anchor: NodeId, sibling: NodeId) -> Result<Link, ArenaError> {
+    let Some(node) = arena.resolve(anchor) else {
         return Err(ArenaError::Stale(anchor));
     };
-    if arena.get(sibling).is_none() {
+    if arena.resolve(sibling).is_none() {
         return Err(ArenaError::Stale(sibling));
     }
     let Some(parent) = node.parent else {
@@ -373,32 +356,82 @@ fn check_beside<T>(arena: &Arena<T>, anchor: NodeId, sibling: NodeId) -> Result<
             to: anchor,
         });
     }
-    check_move(arena, parent, sibling)?;
+    if climbs_to(arena, parent, sibling.slot) {
+        return Err(ArenaError::Cycle {
+            node: sibling,
+            to: arena.id_of(parent),
+        });
+    }
     Ok(parent)
+}
+
+/// Whether `node` is `from` or above it: the one climb of the arena's
+/// inserts, from `from` to the top of its tree or to `node`, whichever
+/// comes first, along links. Counted in test builds: one step for the
+/// insert, and one for every node gone through.
+fn climbs_to<T>(arena: &Arena<T>, from: Link, node: Link) -> bool {
+    let mut climbed = 0;
+    let mut at = Some(from);
+    let mut found = false;
+    while let Some(above) = at {
+        climbed += 1;
+        if above == node {
+            found = true;
+            break;
+        }
+        at = arena.linked(above).parent;
+    }
+    #[cfg(test)]
+    crate::arena::tests_support::count_insert_steps(1 + climbed);
+    let _ = climbed;
+    found
+}
+
+/// Take the node `link` names out of the row it hangs in; its siblings
+/// close the gap. A detached node is left as it is. O(1).
+fn unlink<T>(arena: &mut Arena<T>, link: Link) {
+    let (parent, previous, next) = {
+        let node = arena.linked_mut(link);
+        let around = (node.parent, node.previous_sibling, node.next_sibling);
+        node.parent = None;
+        node.previous_sibling = None;
+        node.next_sibling = None;
+        around
+    };
+    match previous {
+        Some(previous) => arena.linked_mut(previous).next_sibling = next,
+        None => {
+            if let Some(parent) = parent {
+                arena.linked_mut(parent).first_child = next;
+            }
+        }
+    }
+    match next {
+        Some(next) => arena.linked_mut(next).previous_sibling = previous,
+        None => {
+            if let Some(parent) = parent {
+                arena.linked_mut(parent).last_child = previous;
+            }
+        }
+    }
 }
 
 /// Link the detached node `new` — its subtree comes along — under
 /// `parent` between `previous` and `next`, which must be adjacent in
 /// that row (either may be `None`, at an end of it). O(1).
-fn link<T>(
-    arena: &mut Arena<T>,
-    new: NodeId,
-    parent: NodeId,
-    previous: Option<NodeId>,
-    next: Option<NodeId>,
-) {
+fn attach<T>(arena: &mut Arena<T>, new: Link, parent: Link, previous: Option<Link>, next: Option<Link>) {
     {
-        let node = arena.node_mut(new);
+        let node = arena.linked_mut(new);
         node.parent = Some(parent);
         node.previous_sibling = previous;
         node.next_sibling = next;
     }
     match previous {
-        Some(previous) => arena.node_mut(previous).next_sibling = Some(new),
-        None => arena.node_mut(parent).first_child = Some(new),
+        Some(previous) => arena.linked_mut(previous).next_sibling = Some(new),
+        None => arena.linked_mut(parent).first_child = Some(new),
     }
     match next {
-        Some(next) => arena.node_mut(next).previous_sibling = Some(new),
-        None => arena.node_mut(parent).last_child = Some(new),
+        Some(next) => arena.linked_mut(next).previous_sibling = Some(new),
+        None => arena.linked_mut(parent).last_child = Some(new),
     }
 }

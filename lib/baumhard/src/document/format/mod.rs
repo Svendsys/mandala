@@ -111,7 +111,8 @@ pub const MAX_MAP_BYTES: Option<u64> = Some(WASM32_MAX_MAP_BYTES);
 /// builder counts each element as it appends it and refuses the one past
 /// the bound with
 /// [`TooManyElements`](LoadErrorKind::TooManyElements), before it is
-/// built.
+/// built. Beside it, every target holds a map to the arena's capacity,
+/// [`ARENA_MAX_ELEMENTS`], which on native is the only element bound.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_ELEMENTS: Option<u64> = None;
 
@@ -144,7 +145,10 @@ pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 7;
 /// nodes and held by one — at the load's peak and at the save's, and
 /// rounded up to 16 bytes. It is essentially three arena slots: the
 /// arena's old buffer and its new one, twice the size, while it doubles.
-pub const WASM32_BYTES_PER_ELEMENT: u64 = 576;
+/// 480 since V1-A7 (#301) compacted the slot — 124 bytes for a
+/// document element on wasm32, from 144 — measured by the probe at
+/// 479.99 (empty sections and empty rings on one node); 576 before.
+pub const WASM32_BYTES_PER_ELEMENT: u64 = 480;
 
 /// wasm32's ceiling on a map's text: half of [`WASM32_MEMORY_BUDGET`]
 /// over [`WASM32_BYTES_PER_TEXT_BYTE`].
@@ -161,6 +165,25 @@ pub const WASM32_MAX_MAP_BYTES: u64 = WASM32_MEMORY_BUDGET / 2 / WASM32_BYTES_PE
 /// [`WASM32_MEMORY_BUDGET`] over [`WASM32_BYTES_PER_ELEMENT`]. See
 /// [`WASM32_MAX_MAP_BYTES`] for the model.
 pub const WASM32_MAX_ELEMENTS: u64 = WASM32_MEMORY_BUDGET / 2 / WASM32_BYTES_PER_ELEMENT;
+
+/// The most elements a load builds on **any** target, whatever
+/// [`MAX_ELEMENTS`] says: the arena's slot count
+/// ([`MAX_SLOTS`](crate::arena::MAX_SLOTS), `u32::MAX - 1`), since every
+/// element of the tree takes one arena slot (V1-A7, #301). On wasm32
+/// [`MAX_ELEMENTS`] is far below it. On native, where [`MAX_ELEMENTS`]
+/// is `None`, it is what refuses a map past the arena's capacity, with
+/// [`TooManyElements`](LoadErrorKind::TooManyElements), where the
+/// arena would otherwise panic: a load never panics. Definitions count
+/// toward it as they do toward [`MAX_ELEMENTS`], so it refuses a few
+/// elements before the arena is full, never after.
+pub const ARENA_MAX_ELEMENTS: u64 = crate::arena::MAX_SLOTS as u64;
+
+/// The bound a load counts its elements against: `max`, the target's
+/// [`MAX_ELEMENTS`] when it is lower, and [`ARENA_MAX_ELEMENTS`]
+/// otherwise — on native, always.
+pub(crate) fn element_bound(max: Option<u64>) -> u64 {
+    max.map_or(ARENA_MAX_ELEMENTS, |max| max.min(ARENA_MAX_ELEMENTS))
+}
 
 /// The two ceilings a load and a save are held to on this target.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -270,16 +293,7 @@ pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), Load
 fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadError> {
     check_text_cap_against(json, limits.bytes)?;
     let index = index::index(json)?;
-    let header = header(&index)?;
-    let mut builder = Builder::begin(&header, Keep::Document, limits.elements)
-        .map_err(|error| placed(error, &index, None))?;
-    // One entry per node, made once: the map does not grow, and so never
-    // holds its old table and its new one at the same time. No more than
-    // the element bound, which a list of more nodes reaches first.
-    let reserve = limits.elements.map_or(index.nodes.len(), |max| {
-        index.nodes.len().min(usize::try_from(max).unwrap_or(usize::MAX))
-    });
-    builder.idents.reserve(reserve);
+    let mut builder = begin_build(&index, limits)?;
     for (i, extent) in index.nodes.iter().enumerate() {
         let dto: NodeDto = index::parse_extent(index.text, extent, &[Seg::Key("nodes"), Seg::Index(i)])
             .map_err(|error| LoadError {
@@ -297,6 +311,44 @@ fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadErr
             .map_err(|error| placed(error, &index, Some((i, &dto))))?;
     }
     builder.finish().map_err(|error| placed(error, &index, None))
+}
+
+/// The fewest bytes of text a node that loads is written in: the
+/// shortest node, `{"id":1,"position":[0,0]}` — both keys are required,
+/// an id is at least 1 and a position two numbers, and the text has no
+/// whitespace. Entries of `nodes` are separated by commas besides, so a
+/// text of `n` bytes holds at most `n / MIN_NODE_TEXT` nodes that load.
+/// `test_the_shortest_node_that_loads_is_min_node_text_bytes` pins it.
+pub const MIN_NODE_TEXT: usize = 25;
+
+/// How many nodes a load makes room for before it builds — in the ident
+/// map and in the arena — when `nodes` holds `entries` entries of a
+/// text `text` bytes long: one per entry, but no more than the element
+/// bound allows ([`element_bound`]) and no more than the text could hold
+/// as nodes that load ([`MIN_NODE_TEXT`]). So a damaged or hostile list
+/// of tiny entries, refused at its first, never asks for more room than
+/// a valid map of its length would need. O(1).
+pub(crate) fn node_reservation(entries: usize, text: usize, limits: Limits) -> usize {
+    let bound = usize::try_from(element_bound(limits.elements)).unwrap_or(usize::MAX);
+    entries.min(bound).min(text / MIN_NODE_TEXT)
+}
+
+/// Phase 3's start: the header read, and a builder holding the map's
+/// root, with room made for the nodes ([`node_reservation`]).
+fn begin_build(index: &MapIndex<'_>, limits: Limits) -> Result<Builder, LoadError> {
+    let header = header(index)?;
+    let mut builder = Builder::begin(&header, Keep::Document, limits.elements)
+        .map_err(|error| placed(error, index, None))?;
+    // One entry per node, made once: the map does not grow, and so never
+    // holds its old table and its new one at the same time.
+    let reserve = node_reservation(index.nodes.len(), index.text.len(), limits);
+    builder.idents.reserve(reserve);
+    // The arena too: one slot per node, made once beside the root, so
+    // the nodes go in without the arena doubling and holding its old
+    // slots and its new ones at once. A node's rows are counted only as
+    // it is read, so they grow it from there.
+    builder.tree.reserve(reserve);
+    Ok(builder)
 }
 
 /// The header's top-level values, each parsed from its extent in the

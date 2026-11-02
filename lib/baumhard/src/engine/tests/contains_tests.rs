@@ -64,7 +64,7 @@ pub fn do_a_journal_is_not_reverted_under_a_later_one() {
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![p]), |_, _| 0, &mut first)
         .unwrap();
     let j1 = first.close(&tree);
-    let s = tree.arena()[p].first_child().expect("S is under P");
+    let s = tree.arena().at(p).first_child().expect("S is under P");
     let mut second = JournalBuilder::new();
     remove
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![p]), |_, _| 0, &mut second)
@@ -78,7 +78,7 @@ pub fn do_a_journal_is_not_reverted_under_a_later_one() {
     assert_eq!(j1.revert(&mut tree), Err(TreeError::OutOfOrder), "J1 under J2");
     assert!(!tree.contains(s), "nothing changed");
     assert_eq!(
-        tree.arena()[p].first_child(),
+        tree.arena().at(p).first_child(),
         Some(s),
         "S is still under the detached P"
     );
@@ -122,7 +122,7 @@ pub fn do_an_empty_journal_leaves_the_history_restorable() {
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![p]), |_, _| 0, &mut first)
         .unwrap();
     let j0 = first.close(&tree);
-    let s = tree.arena()[p].first_child().expect("S is under P");
+    let s = tree.arena().at(p).first_child().expect("S is under P");
 
     // A builder whose two updates cancel out: it ran calls, and closes
     // empty.
@@ -180,7 +180,7 @@ fn with_s_inserted_under_p() -> (Tree<TestElement>, Journal<TestElement>, [NodeI
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![p]), |_, _| 0, &mut builder)
         .unwrap();
     let j1 = builder.close(&tree);
-    let s = tree.arena()[p].first_child().expect("S is under P");
+    let s = tree.arena().at(p).first_child().expect("S is under P");
     (tree, j1, [p, q, s])
 }
 
@@ -210,7 +210,7 @@ pub fn do_an_unjournaled_structural_change_ends_the_history() {
         "J1 after insert_child"
     );
     assert!(tree.contains(s) && tree.contains(x), "nothing changed");
-    assert_eq!(tree.arena()[x].parent(), Some(s), "X is still under S");
+    assert_eq!(tree.arena().at(x).parent(), Some(s), "X is still under S");
     assert_eq!(j1.replay(&mut tree), Err(TreeError::OutOfOrder), "nor replayed");
     j1.discard(&mut tree);
 
@@ -291,7 +291,7 @@ pub fn do_an_edit_between_one_builders_calls_ends_the_history() {
         "J0 under the edit between B's calls"
     );
     assert!(tree.contains(s) && tree.contains(x), "nothing changed");
-    assert_eq!(tree.arena()[x].parent(), Some(s), "X is still under S");
+    assert_eq!(tree.arena().at(x).parent(), Some(s), "X is still under S");
     jb.replay(&mut tree).unwrap();
     jb.revert(&mut tree).unwrap();
     jb.discard(&mut tree);
@@ -308,7 +308,7 @@ pub fn do_interleaved_builders_end_the_history() {
     insert_one()
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![s]), |_, _| 0, &mut b)
         .unwrap();
-    let x = tree.arena()[s].first_child().expect("X is under S");
+    let x = tree.arena().at(s).first_child().expect("X is under S");
     tree.update_journaled(q, &mut a, |e| e.value += 1).unwrap();
     let ja = a.close(&tree);
     let jb = b.close(&tree);
@@ -324,7 +324,7 @@ pub fn do_interleaved_builders_end_the_history() {
         "B under A's later call"
     );
     assert!(tree.contains(s) && tree.contains(x), "nothing changed");
-    assert_eq!(tree.arena()[x].parent(), Some(s), "X is still under S");
+    assert_eq!(tree.arena().at(x).parent(), Some(s), "X is still under S");
     ja.discard(&mut tree);
     jb.discard(&mut tree);
     j0.discard(&mut tree);
@@ -340,7 +340,7 @@ pub fn do_an_empty_builder_closed_after_another_keeps_its_change() {
     insert_one()
         .apply_at_journaled(&mut tree, &Anchors::Nodes(vec![s]), |_, _| 0, &mut b)
         .unwrap();
-    let x = tree.arena()[s].first_child().expect("X is under S");
+    let x = tree.arena().at(s).first_child().expect("X is under S");
     let jb = b.close(&tree);
     let ja = a.close(&tree);
     assert!(ja.is_empty(), "precondition: A closed empty");

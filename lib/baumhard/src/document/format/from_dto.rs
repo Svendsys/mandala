@@ -495,17 +495,19 @@ impl Builder {
     }
 
     /// Count `more` elements, or definitions, against
-    /// [`Self::max_elements`]: past it is
-    /// [`TooManyElements`](LoadErrorKind::TooManyElements) at the current
-    /// path, before anything is built.
+    /// [`Self::max_elements`] and the arena's capacity
+    /// ([`ARENA_MAX_ELEMENTS`](super::ARENA_MAX_ELEMENTS)): past either
+    /// is [`TooManyElements`](LoadErrorKind::TooManyElements) at the
+    /// current path, before anything is built.
     pub(super) fn count(&mut self, more: usize) -> LoadResult<()> {
         self.elements = self
             .elements
             .saturating_add(u64::try_from(more).unwrap_or(u64::MAX));
-        match self.max_elements.filter(|max| self.elements > *max) {
-            Some(max) => Err(self.error(LoadErrorKind::TooManyElements { max })),
-            None => Ok(()),
+        let max = super::element_bound(self.max_elements);
+        if self.elements > max {
+            return Err(self.error(LoadErrorKind::TooManyElements { max }));
         }
+        Ok(())
     }
 
     /// Under [`Keep::OneNode`], free `id` and everything under it.
@@ -814,4 +816,125 @@ pub(super) fn sorted_names<T>(entries: &[(String, T)]) -> Vec<&(String, T)> {
     let mut sorted: Vec<&(String, T)> = entries.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     sorted
+}
+
+/// The arena's capacity as a load's element bound (V1-A7, #301). Inline
+/// because it drives [`Builder::count`], which the format's tests trees
+/// cannot reach, at a count no map in a test could be built to.
+#[cfg(test)]
+mod arena_bound_tests {
+    use super::{Builder, Keep};
+    use crate::document::format::dto::MapHeaderDto;
+    use crate::document::format::error::LoadErrorKind;
+    use crate::document::format::{
+        begin_build, element_bound, index, load, node_reservation, Limits, ARENA_MAX_ELEMENTS, LIMITS,
+        MIN_NODE_TEXT,
+    };
+
+    /// With no target bound — native's — the arena's capacity is the
+    /// bound: the element that fills the arena is counted, and the one
+    /// past it is refused with `TooManyElements` naming the capacity,
+    /// where the arena itself would panic.
+    #[test]
+    fn test_a_load_past_the_arenas_capacity_is_refused_not_a_panic() {
+        let header = MapHeaderDto {
+            format: 1,
+            name: String::new(),
+            theme: None,
+            palettes: Default::default(),
+            defaults: None,
+            edits: Vec::new(),
+            presentations: Vec::new(),
+            verbs: Vec::new(),
+        };
+        let mut builder = Builder::begin(&header, Keep::Document, None).expect("an empty header builds");
+        builder.elements = ARENA_MAX_ELEMENTS - 1;
+        assert!(
+            builder.count(1).is_ok(),
+            "precondition: the element that fills the arena is counted"
+        );
+        let refused = builder
+            .count(1)
+            .expect_err("one past the arena's capacity is refused");
+        assert_eq!(
+            refused.kind,
+            LoadErrorKind::TooManyElements {
+                max: ARENA_MAX_ELEMENTS
+            }
+        );
+    }
+
+    /// The bound is the lower of the target's and the arena's.
+    #[test]
+    fn test_the_element_bound_is_the_lower_of_the_targets_and_the_arenas() {
+        assert_eq!(ARENA_MAX_ELEMENTS, u64::from(u32::MAX) - 1);
+        assert_eq!(element_bound(None), ARENA_MAX_ELEMENTS);
+        assert_eq!(element_bound(Some(10)), 10);
+        assert_eq!(element_bound(Some(u64::MAX)), ARENA_MAX_ELEMENTS);
+    }
+
+    /// A map of one `node`.
+    fn map_of(node: &str) -> String {
+        format!(r#"{{"format":1,"name":"m","nodes":[{node}]}}"#)
+    }
+
+    /// The shortest node that loads is [`MIN_NODE_TEXT`] bytes: it
+    /// loads, and leaving out either key or writing the position
+    /// shorter is refused — the id is one digit and the text has no
+    /// whitespace already.
+    #[test]
+    fn test_the_shortest_node_that_loads_is_min_node_text_bytes() {
+        let shortest = r#"{"id":1,"position":[0,0]}"#;
+        assert_eq!(shortest.len(), MIN_NODE_TEXT);
+        assert!(load(&map_of(shortest)).is_ok(), "the shortest node loads");
+        for shorter in [
+            r#"{"position":[0,0]}"#,
+            r#"{"id":1}"#,
+            r#"{"id":1,"position":[0]}"#,
+        ] {
+            assert!(
+                load(&map_of(shorter)).is_err(),
+                "{shorter}, shorter, must not load"
+            );
+        }
+    }
+
+    /// A list of a million `0`s, refused at its first entry, makes no
+    /// more room than its text could hold as nodes that load: the
+    /// arena's room is the text's length over [`MIN_NODE_TEXT`] beside
+    /// the header's elements, not a slot per entry.
+    #[test]
+    fn test_a_list_of_tiny_entries_reserves_no_more_than_its_text_holds() {
+        let text = map_of(&vec!["0"; 1_000_000].join(","));
+        let index = index::index(&text).expect("the text indexes");
+        assert_eq!(index.nodes.len(), 1_000_000, "precondition: a million entries");
+        let error = load(&text).expect_err("an entry of 0 is no node");
+        assert_eq!(error.path, "nodes[0]", "precondition: refused at its first entry");
+
+        let builder = begin_build(&index, LIMITS).expect("the header builds");
+        let arena = builder.tree.arena();
+        let cap = text.len() / MIN_NODE_TEXT;
+        assert!(cap < 100_000, "precondition: the text holds {cap} nodes at most");
+        assert!(
+            arena.capacity() >= cap,
+            "precondition: the room was made ({})",
+            arena.capacity()
+        );
+        assert!(
+            arena.capacity() <= arena.len() + cap,
+            "{} slots of room for {} entries, past the {cap} the text could hold",
+            arena.capacity(),
+            index.nodes.len()
+        );
+        assert_eq!(node_reservation(1_000_000, text.len(), LIMITS), cap);
+        let bounded = Limits {
+            bytes: None,
+            elements: Some(10),
+        };
+        assert_eq!(
+            node_reservation(1_000_000, text.len(), bounded),
+            10,
+            "the element bound caps the room too"
+        );
+    }
 }

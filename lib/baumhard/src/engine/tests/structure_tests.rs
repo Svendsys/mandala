@@ -130,7 +130,7 @@ pub fn do_structure_move_under_its_own_subtree_is_a_cycle() {
 
     run(&mut tree, &raising_move(b), vec![a], &mut builder).unwrap();
     assert_eq!(value(&tree, child), 15, "the control's raise applied");
-    assert_eq!(tree.arena()[a].parent(), Some(b), "a moved under b");
+    assert_eq!(tree.arena().at(a).parent(), Some(b), "a moved under b");
     assert_eq!(row(&tree, a), vec![child], "with its subtree");
     assert_eq!(row(&tree, child), vec![grandchild]);
     tree.check_sorted().unwrap();
@@ -231,7 +231,7 @@ pub fn do_structure_a_command_on_a_node_removed_earlier_in_the_walk_fails() {
         &mut JournalBuilder::new(),
     )
     .unwrap();
-    assert_eq!(control.arena()[y].parent(), Some(p));
+    assert_eq!(control.arena().at(y).parent(), Some(p));
 }
 
 #[test]
@@ -1019,7 +1019,7 @@ pub fn do_structure_refuses_a_split_or_merge_that_changes_the_key() {
             .collect()
     };
     assert_eq!(tree.arena()[b].get().key(), tree.arena()[a].get().key());
-    assert!(tree.arena()[b].first_child().is_none());
+    assert!(tree.arena().at(b).first_child().is_none());
     for op in [StructOp::Split { at: () }, StructOp::Merge] {
         let mutators: MutatorTree<SpatialTestElement, TestMutation> =
             MutatorTree::new_with(Mutator::new_structure(op, 0));
@@ -1333,7 +1333,7 @@ pub fn do_structure_journal_names_the_parents_a_node_left_and_took() {
     tree.update_journaled(d, &mut builder, |e| e.channel = 3).unwrap();
     let journal = builder.close(&tree);
     assert_eq!(
-        tree.arena()[b].parent(),
+        tree.arena().at(b).parent(),
         None,
         "the arena no longer links b to root"
     );
@@ -1526,7 +1526,7 @@ pub fn do_journal_rows_before_name_each_siblings_predecessor() {
                 prev,
                 "seed {seed}: the sibling before {node} before the journal"
             );
-            let now = tree.arena().get(node).and_then(|n| n.previous_sibling());
+            let now = node.previous_sibling(tree.arena());
             differed += usize::from(now != prev);
         }
         journal.revert(&mut tree).unwrap();
@@ -1567,7 +1567,7 @@ pub fn do_journal_builder_names_what_it_recorded_and_created() {
         at: Placement::Last,
     });
     run(&mut tree, &insert, vec![a], &mut builder).unwrap();
-    let inserted = tree.arena()[a].last_child().unwrap();
+    let inserted = tree.arena().at(a).last_child().unwrap();
     let below = inserted.children(tree.arena()).next().unwrap();
     run(
         &mut tree,
@@ -1576,7 +1576,7 @@ pub fn do_journal_builder_names_what_it_recorded_and_created() {
         &mut builder,
     )
     .unwrap();
-    let second = tree.arena()[b].next_sibling().unwrap();
+    let second = tree.arena().at(b).next_sibling().unwrap();
     assert_eq!(value(&tree, second), 4, "precondition: the split's second part");
     run(&mut tree, &command(StructOp::Remove), vec![c], &mut builder).unwrap();
     let root = tree.root();

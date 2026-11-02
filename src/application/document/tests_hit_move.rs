@@ -1934,9 +1934,9 @@ fn reference_recursive_walk(
             }
         }
     });
-    let mut child = tree.arena().get(node_id).and_then(|n| n.first_child());
+    let mut child = node_id.first_child(tree.arena());
     while let Some(cid) = child {
-        child = tree.arena().get(cid).and_then(|n| n.next_sibling());
+        child = cid.next_sibling(tree.arena());
         reference_recursive_walk(tree, cid, dx, dy, patches.as_deref_mut());
     }
 }

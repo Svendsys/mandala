@@ -205,14 +205,14 @@ impl PortalHitIndex {
     /// [`PortalHit`]: the [`EdgeKey`]'s three plus the endpoint
     /// id.
     pub fn resolve(&self, tree: &GfxTree, hit: NodeId) -> Option<PortalHit> {
-        let leaf = tree.arena().get(hit)?;
+        let leaf = tree.arena().node(hit)?;
         let part = match leaf.get().channel() {
             ICON_SLOT => PortalPart::Icon,
             TEXT_SLOT => PortalPart::Text,
             _ => return None,
         };
         let endpoint_void_id = leaf.parent()?;
-        let endpoint_void = tree.arena().get(endpoint_void_id)?;
+        let endpoint_void = tree.arena().node(endpoint_void_id)?;
         // Endpoint voids are 1-based by the tree-shape contract:
         // channel 1 is `from_id`, channel 2 is `to_id`.
         let endpoint_idx = endpoint_void.get().channel().checked_sub(1)?;

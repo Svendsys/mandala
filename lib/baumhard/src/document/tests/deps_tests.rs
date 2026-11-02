@@ -324,7 +324,7 @@ fn inputs_of(tree: &Tree<DocElement>, id: NodeId, kinds: &[InputKind]) -> Vec<In
             InputKind::Style => Some(Input::Style(id)),
             InputKind::Placement => Some(Input::Placement(id)),
             InputKind::PaletteBinding => Some(Input::PaletteBinding(id)),
-            InputKind::ParentRow => tree.arena()[id].parent().map(Input::Row),
+            InputKind::ParentRow => tree.arena().at(id).parent().map(Input::Row),
             InputKind::Theme => Some(Input::Theme),
             InputKind::Defaults => Some(Input::Defaults),
             InputKind::Palette => {

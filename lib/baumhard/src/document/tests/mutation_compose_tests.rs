@@ -40,7 +40,7 @@ const MARKED: &str = "e\u{0301}\u{0302}";
 /// its id and parent.
 fn snapshot(tree: &Tree<DocElement>) -> Vec<(NodeId, Option<NodeId>, DocElement)> {
     tree.descendants()
-        .map(|id| (id, tree.arena()[id].parent(), tree.arena()[id].get().clone()))
+        .map(|id| (id, tree.arena().at(id).parent(), tree.arena()[id].get().clone()))
         .collect()
 }
 

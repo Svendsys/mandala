@@ -327,7 +327,7 @@ impl Document {
     /// `id`'s parent; `None` for the root and for an id not in the tree.
     /// O(1).
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
-        self.tree.get(id)?.parent()
+        self.tree.node(id)?.parent()
     }
 
     /// How many [`Node`](DocKind::Node) elements are above `id`: `0`

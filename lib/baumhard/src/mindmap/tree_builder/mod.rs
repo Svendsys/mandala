@@ -367,7 +367,7 @@ impl MindMapTree {
             if let Some(id) = self.mind_id_for_node(node_id) {
                 return Some(id);
             }
-            node_id = self.tree.arena().get(node_id)?.parent()?;
+            node_id = self.tree.arena().node(node_id)?.parent()?;
         }
     }
 }

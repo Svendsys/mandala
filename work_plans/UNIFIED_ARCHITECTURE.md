@@ -938,19 +938,21 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
   `RandomState`, with a warning.
 - **Platform limits.** On wasm32, memory is the only limit, and a map
   costs it on two axes. Its peak while loading and then saving is at
-  most `text × 7 + elements × 576` bytes
+  most `text × 7 + elements × 480` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`, measured
   by the wasm32 probe). Each axis takes half of the 3 GiB
   `WASM32_MEMORY_BUDGET`:
   - `MAX_MAP_BYTES` is `WASM32_MAX_MAP_BYTES`, 230,087,533 bytes. A
     larger text is refused before parsing (`TooLarge`).
-  - `MAX_ELEMENTS` is `WASM32_MAX_ELEMENTS`, 2,796,202. Each verb,
+  - `MAX_ELEMENTS` is `WASM32_MAX_ELEMENTS`, 3,355,443. Each verb,
     edit and presentation counts as one element. The element past the
     limit is refused at its path before it is built
     (`TooManyElements`).
 
-  Both are `None` on native. On wasm32, `check_savable` refuses what
-  that target's load would. The legacy loader
+  Both are `None` on native, where a load's elements are bounded only
+  by the arena's slot count, `ARENA_MAX_ELEMENTS` (4,294,967,294;
+  V1-A7 #301). On wasm32, `check_savable` refuses what that target's
+  load would. The legacy loader
   (`mindmap/loader.rs`) keeps its own 3 GiB `MAX_MAP_BYTES`, and
   `MAX_UNKNOWN_KEYS`, until C3 deletes it. Tree depth has no limit. A
   count that an index addresses (palettes, theme variables and
