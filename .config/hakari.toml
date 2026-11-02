@@ -52,3 +52,14 @@ platforms = [
 # once in the root `[workspace.dependencies]`, as every other dependency
 # two members share does (`baumhard::util::manifests`).
 workspace-hack-line-style = "workspace-dotted"
+
+# Which crates are also unified between the target graph and the host
+# graph (proc macros and build scripts): only those built on both. Two
+# builds of one of those, one per graph, become one when the two feature
+# sets agree — `syn`, `proc-macro2`, `quote`, `memchr`, `ttf-parser`.
+# The default, `replicate-target-on-host` (chosen because
+# `mandala_derive` is a proc macro), would also make every target-only
+# crate in the union a host dependency, which a check-mode command
+# (`clippy`, `doc`) then builds in full for the host beside the metadata
+# it builds for the target.
+unify-target-host = "unify-if-both"

@@ -42,16 +42,8 @@ syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["full", "vi
 ttf-parser = { version = "0.25", features = ["no-std-float"] }
 
 [build-dependencies]
-half = { version = "2", default-features = false, features = ["num-traits"] }
-num-traits = { version = "0.2", features = ["libm"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
-regex = { version = "1" }
-regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
-regex-syntax = { version = "0.8" }
-serde = { version = "1", features = ["alloc", "derive"] }
-serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
-serde_json = { version = "1", features = ["raw_value"] }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["full", "visit"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["full"] }
 ttf-parser = { version = "0.25", features = ["no-std-float"] }
@@ -70,16 +62,7 @@ thiserror = { version = "2" }
 ttf-parser = { version = "0.25", default-features = false, features = ["gvar-alloc"] }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
-bitflags = { version = "2", default-features = false, features = ["std"] }
-bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "min_const_generics"] }
-libc = { version = "0.2" }
-linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
-log = { version = "0.4", default-features = false, features = ["kv", "release_max_level_warn", "std"] }
 memchr = { version = "2" }
-once_cell = { version = "1" }
-rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
-smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
-thiserror = { version = "2" }
 ttf-parser = { version = "0.25", default-features = false, features = ["gvar-alloc"] }
 
 [target.x86_64-pc-windows-msvc.dependencies]
@@ -90,8 +73,6 @@ windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_Fil
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 log = { version = "0.4", default-features = false, features = ["kv", "release_max_level_warn", "std"] }
-smallvec = { version = "1", default-features = false, features = ["union"] }
-thiserror = { version = "2" }
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Graphics_Gdi", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 
 ### END HAKARI SECTION
