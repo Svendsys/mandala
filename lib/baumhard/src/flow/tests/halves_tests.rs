@@ -2951,6 +2951,7 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 /// bound; with the sweep along one axis again, past the pairs' round the
 /// square; with a side's lay unread past its first copy, past the
 /// overshoot. (No `do_*` twin: it reads test counters.)
+#[cfg(test)]
 fn a_long_side_ornament(shape: Shape, what: &str) {
     use crate::flow::place::halves::{overshoot_steps, BOXES_WEIGHED, FLOOR_OVERRIDE, PAST_BUDGET};
     use crate::flow::tests::flow_fuzz::ornament_run;

@@ -820,11 +820,15 @@ line (cosmic-text gives each glyph's advance), then placed:
      R43.3), so at most 3,000 × 65,536 — a bound per glyph, not a limit
      on a text's length. A step is a unit of all of a frame's work, each
      kind weighted to about one `track` step's time (ruling R46.1): its
-     tracking and side lays, its shaping and inking, its touch sweeps
+     tracking and side lays, its shaping and inking, its touch checks
      and R27's walks. The budget is read before every lay, build and
-     reshape, `untouched` runs within it, and a frame overshoots it by
-     one build's shaping and inking and a lay of each line at most
-     (ruling R47.2); one that reaches it keeps the best it has laid,
+     reshape and before each copy of a side ornament (an arc it is spent
+     before is left empty and reported), `untouched` runs within it, and
+     a frame overshoots it by `overshoot_steps` at most (ruling R47.2):
+     what runs before it is first read — the frame's setup, R27's first
+     reshape and one build's shaping and inking — a lay of each line,
+     and the touch checks that end the frame; one that reaches it keeps
+     the best it has laid,
      cut to the inks that touch nothing where two still touch, and its
      trace reports what is left unheld. A glyph step takes a path lookup
      or a few, 64 at most (ruling R43.1).

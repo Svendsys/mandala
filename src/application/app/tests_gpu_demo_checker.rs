@@ -181,6 +181,12 @@ fn spread(values: &[f32]) -> f32 {
     }
 }
 
+/// The junctions the demo maps' two-line frames have, each of which the
+/// checker measures: ten, two in each of five frames. A frame it cannot
+/// read as two lines is skipped, and would otherwise pass unseen (review
+/// 5739829769).
+const DEMO_JUNCTIONS: usize = 10;
+
 /// R44.8: the demo maps hold the checker's structure — every two-line
 /// frame's junctions a break of two word gaps or more, no two elements'
 /// inks overlapping, and every frame's sides even round each junction.
@@ -188,7 +194,9 @@ fn spread(values: &[f32]) -> f32 {
 /// Controls: with a junction's break wanted at one word gap
 /// (`JUNCTION_WORD_GAPS` in the placement halved), red on the
 /// junctions; with a side's copies laid at their floor gap rather than
-/// their solved one, red on the sides.
+/// their solved one, red on the sides; with `lines_of`'s jump threshold
+/// a tenth of its own, so that no frame reads as two lines, red on the
+/// precondition.
 #[test]
 fn test_demo_maps_hold_the_readable_structure() {
     let maps = demo_maps();
@@ -311,8 +319,8 @@ fn test_demo_maps_hold_the_readable_structure() {
         }
     }
     assert!(
-        junctions > 0 && arcs > 0 && elements > 0,
-        "precondition: the maps' frames are checked ({junctions} junctions, {arcs} side arcs, {elements} elements)"
+        junctions >= DEMO_JUNCTIONS && arcs > 0 && elements > 0,
+        "precondition: the maps' frames are checked ({junctions} junctions, at least {DEMO_JUNCTIONS}; {arcs} side arcs, {elements} elements)"
     );
     assert!(
         faults.is_empty(),

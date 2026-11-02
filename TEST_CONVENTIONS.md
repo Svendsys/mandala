@@ -810,7 +810,11 @@ text frame's work — its tracking, shaping, inking and the rest, each
 counted at a weight measured in one tracking step's time (R46.1) — is
 bounded by its budget, `max(400,000, 3,000 × glyphs)` steps, and by
 what its weights allow past it, one build's shaping and inking and a
-lay of each line (`frame_work_steps`, R47.2). A counted step costs at
+lay of each line (`frame_work_steps`, R47.2): the budget is read before
+each build, reshape and lay, and before each copy of a side ornament,
+so once it is spent nothing runs that the overshoot does not count
+(the `PAST_BUDGET` grid in `flow/tests/budget_tests.rs` holds every
+fit mode, span, kind of sides and direction to it). A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
 1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
 An input's worst case is the sum of its frames' work at that cost, and
@@ -823,10 +827,14 @@ from its input), its text cut until the frame's work fits
 one face, 462,949 steps, 14.95 s, and fewer of a text the shaper must
 search every face for. `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
 computes it from those constants, and every input holds its own frames
-to it. A committed finding replays as it was found: a raw one in every
-frame it was found among (`check_flow_bytes_in_every_fit`), each its
-text cut as at R44 (`FOUND_FRAME_GLYPHS`, 320), and a structured one
-likewise (`check_flow_structured_as_found`). A real map's frame places
+to it. A committed finding replays in the frame it was found in: a raw
+one in every fit mode it was found among (`check_flow_bytes_in_every_fit`),
+each its text cut as at R44 (`FOUND_FRAME_GLYPHS`, 320), and a
+structured one likewise (`check_flow_structured_as_found`). Since R44.4
+the fuzzers draw a frame's ring layout from the input, and a finding's
+bytes draw one too, though every committed finding was found over whole
+halves with no sides: a replay lays each frame in both
+`RingLayout::whole()` and the layout its bytes draw (`laid_layouts`). A real map's frame places
 its whole text. Running a fuzzer is not
 benchmarking — CLAUDE.md §6 still holds, and a run is never cited as a
 performance number.

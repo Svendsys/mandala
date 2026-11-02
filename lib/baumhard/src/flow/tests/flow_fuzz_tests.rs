@@ -15,7 +15,7 @@ use crate::flow::tests::flow_fuzz::{
     check_flow_structured_as_found, check_placement, check_run,
 };
 use crate::flow::tests::support::{real_run, style, with_fonts};
-use crate::flow::{shape_box, shape_run, FlowSpan, PlacedGlyph, PlacedRun, FILLER_SPAN};
+use crate::flow::{shape_box, shape_run, FlowSpan, PlacedGlyph, PlacedRun, RingLayout, FILLER_SPAN};
 use crate::font::fonts::AppFont;
 use crate::util::tests::choices::Choices;
 
@@ -1487,6 +1487,45 @@ fn test_the_raw_harness_draws_every_frame_fit() {
         assert!(
             matches!(raw_frame_fits(&found)[..], [FitMode::Fit { .. }, ..]),
             "the finding {name} draws a Fit frame first"
+        );
+    }
+}
+
+/// The R45 check, as review 5739829769 found it broken: every committed
+/// raw finding was found before ruling R44.4, laid over whole halves with
+/// no sides, but its bytes are text, not zeros, and draw another layout
+/// now. A replay lays it in [`RingLayout::whole`] as well as the layout
+/// it draws; the fuzzers lay the layout drawn alone.
+///
+/// Control: with a replay laid in the drawn layout alone, red.
+#[test]
+fn test_a_committed_raw_finding_replays_in_the_layout_it_was_found_in() {
+    use crate::flow::tests::flow_fuzz::{laid_layouts, ring_layout};
+    use crate::util::tests::choices::Choices;
+    for name in [
+        "fit_frame_pressed_by_a_clearance_its_other_line_could_give",
+        "fit_frame_shrunk_by_whole_clearance_searches",
+        "raw_frame_cut_apart_by_whole_clearance_searches",
+        "raw_frame_cut_apart_round_a_tight_bend",
+    ] {
+        let found = std::fs::read(
+            crate::util::doc_fixtures::repo_path("lib/baumhard/src/flow/tests/fuzz_findings").join(name),
+        )
+        .unwrap();
+        let drawn = ring_layout(&mut Choices::new(&found));
+        assert!(
+            drawn != RingLayout::whole(),
+            "precondition: the finding {name} draws a layout of its own ({drawn:?})"
+        );
+        let replayed = laid_layouts(drawn.clone(), false);
+        assert!(
+            replayed.contains(&RingLayout::whole()) && replayed.contains(&drawn),
+            "the finding {name} replays in {replayed:?}: in whole halves, as found, and as drawn"
+        );
+        assert_eq!(
+            laid_layouts(drawn.clone(), true),
+            [drawn],
+            "the fuzzer lays {name}'s drawn layout alone"
         );
     }
 }

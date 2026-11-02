@@ -87,12 +87,17 @@
 //! first whether its lines fit at all, and a frame's budget,
 //! [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at least
 //! [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work — its
-//! tracking and side lays, its shaping and inking, its touch sweeps and
+//! tracking and side lays, its shaping and inking, its touch checks and
 //! R27's walks, each weighted to about one tracking step's time — and is
 //! read before every lay, build and reshape — in each tracking solve,
-//! slide, shrink, cut and backtrack, and R27's fit — so a frame
-//! overshoots it by at most one build's shaping and inking and a lay of
-//! each line ([`overshoot_steps`], ruling R47.2). A frame whose budget
+//! slide, shrink (its floor build too), cut and backtrack, R27's fit and
+//! a `Once` filler's copies — and before each copy of a side ornament:
+//! an arc whose frame has spent its budget before its copies are laid is
+//! left empty and reported ([`Unheld`]). So a frame overshoots its budget
+//! by at most [`overshoot_steps`] (ruling R47.2): what runs before the
+//! budget is first read — its setup, R27's first reshape and one build's
+//! shaping and inking — the lay of each line that finds it spent, and
+//! the touch checks that end the frame. A frame whose budget
 //! runs out while two of its inks still touch keeps the longest run of
 //! its inks that touch nothing ([`untouched`], within a share of the
 //! budget held back for it), and says it was cut ([`Trace::cut_apart`]). A frame's text is cut to
@@ -368,9 +373,11 @@ pub(crate) fn inking_steps(run: &ShapedRun) -> usize {
 
 /// How many [`track`]s of every glyph a frame may take past its spent
 /// budget: a lay of each line — the slide's and the solve's probe that
-/// notices the budget is spent, and the check at the font's gap — and
-/// the look at whether its lines fit (ruling R44.2; pinned by
-/// `test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most`).
+/// notices the budget is spent, and the check at the font's gap — the
+/// look at whether its lines fit, and the touch checks that end the
+/// frame, a step every [`BOXES_A_STEP`] boxes and pairs looked at
+/// (ruling R44.2; pinned by the `PAST_BUDGET` grid,
+/// `flow::tests::budget_tests`).
 pub(crate) const OVERSHOOT_TRACKS: usize = 8;
 
 /// The most glyph steps one build of a frame's text counts in shaping
@@ -403,10 +410,11 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// setup ([`FRAME_STEPS`]) and, for a `Fit` frame (`sized`), R27's
 /// reshape at the size it fits — one build's shaping and inking
 /// ([`build_steps`]), and a lay of each line ([`OVERSHOOT_TRACKS`]
-/// `track`s of every glyph). A budget is read before each build, each
-/// reshape of R27's fit and each lay, so no more than one of each runs
-/// past it; [`untouched`] runs within the budget, which holds its share
-/// back.
+/// `track`s of every glyph), which the touch checks that end the frame
+/// fall within. A budget is read before each build, each reshape of
+/// R27's fit, each lay and each copy of a side ornament, so no more than
+/// one of each runs past it; [`untouched`] runs within the budget, which
+/// holds its share back.
 pub(crate) fn overshoot_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
     let r27 = if sized { shaping_steps(text) } else { 0 };
     FRAME_STEPS
@@ -3362,12 +3370,14 @@ pub(crate) fn to_cap_seam(run: &ShapedRun, range: Range<usize>, left: usize) -> 
 /// clearance again, [`CUT_ROUNDS`] times at most; a cut apart a
 /// bisection of clearance searches per line; a side arc a lay of its
 /// copies at the floor, and a few lays per copy count weighed
-/// ([`falsi`]); every touch check a sweep; a build's shaping and inking.
-/// In all, at most the frame's budget of glyph steps ([`frame_budget`]:
-/// [`STEPS_PER_GLYPH`] a glyph of its text cut to [`MAX_PLACED_GLYPHS`],
-/// at least [`TRACK_BUDGET`]), every kind of work counted at its weight
-/// (ruling R46.1) and the budget read before every lay, build and
-/// reshape, and [`overshoot_steps`] past it at most (ruling R47.2);
+/// ([`falsi`]); every touch check a sort and a look at the pairs of
+/// inks in neighboring cells of a grid ([`touch_scan`]); a build's
+/// shaping and inking. In all, at most the frame's budget of glyph steps
+/// ([`frame_budget`]: [`STEPS_PER_GLYPH`] a glyph of its text cut to
+/// [`MAX_PLACED_GLYPHS`], at least [`TRACK_BUDGET`]), every kind of work
+/// counted at its weight (ruling R46.1) and the budget read before every
+/// lay, build, reshape and side copy, and [`overshoot_steps`] past it at
+/// most (ruling R47.2);
 /// where two inks still touch, a bisection of overlap checks over its
 /// inks ([`untouched`]) runs within the share of the budget held back
 /// for it.

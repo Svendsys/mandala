@@ -109,9 +109,20 @@ pub const FUZZ_TIMEOUT_SECONDS: u64 = 20;
 /// The most one input's frames may take under the ASan fuzz build, in
 /// microseconds: three quarters of [`FUZZ_TIMEOUT_SECONDS`], 15 s
 /// (ruling R45.1). The quarter left is for the work no frame counts —
-/// shaping the text and cutting it ([`framed`]), the box, the `Repeat`
-/// and the placements along a curve and at a point — and for a machine
-/// busy with something else.
+/// shaping the input's text, the box, cutting a frame's text
+/// ([`framed`]), the `Repeat` and the placements along a curve and at a
+/// point — and for a machine busy with something else.
+///
+/// That quarter is not derived from the frames' weights, which would not
+/// fit it: a frame counts each glyph no face holds at
+/// `SHAPE_NOTDEF_STEPS`, 2,200 steps, the cost of a `.notdef` shaped
+/// alone, by which a 4,096-byte raw input of some 1,365 private-use
+/// characters would shape for some 48 s. The shaper's fallback is paid
+/// once a shaped segment rather than once a glyph — some 6 ms, and 0.15
+/// to 0.3 ms a `.notdef` past the first, in a debug build (review
+/// 5739829769) — so such an input shapes in well under a second, and the
+/// weight overcounts a run of `.notdef`s by up to some 30×: safe for a
+/// frame's bound, and #304's to rework.
 pub const INPUT_WORK_MICROS: u64 = FUZZ_TIMEOUT_SECONDS * 1_000_000 / 4 * 3;
 
 /// What a counted glyph step of a frame's work costs under the ASan fuzz
@@ -289,10 +300,14 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
 /// [`check_flow_bytes`] with a frame in every fit mode a frame tracks
 /// its halves in — `Fit`, `Spread` and `Once` — as the flow_raw target
 /// laid every input before ruling R45, its text cut as it was when the
-/// committed findings were found ([`FOUND_FRAME_GLYPHS`]): what a
+/// committed findings were found ([`FOUND_FRAME_GLYPHS`]), and each
+/// frame laid in both [`RingLayout::whole`] — the layout every input
+/// was laid in before ruling R44.4, and every committed raw finding was
+/// found in — and the layout its bytes draw ([`ring_layout`]): what a
 /// committed raw finding replays through, so that it still exercises
-/// every frame it was found in. It is not held to the per-input work
-/// bound, which is the fuzz timeout's, and a test has none.
+/// every frame it was found in, and a finding found since R44.4 the
+/// frame it was found in. It is not held to the per-input work bound,
+/// which is the fuzz timeout's, and a test has none.
 pub fn check_flow_bytes_in_every_fit(bytes: &[u8]) -> Result<(), String> {
     check_raw(bytes, &frame_fits(), false)
 }
@@ -327,7 +342,8 @@ pub fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
 }
 
 /// [`check_flow_bytes`]'s body, its frames laid in `fits`, held to the
-/// per-input work bound with `bounded`.
+/// per-input work bound with `bounded`; without, replaying a finding,
+/// laid in [`RingLayout::whole`] as well as the layout its bytes draw.
 pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result<(), String> {
     let text = String::from_utf8_lossy(bytes);
     let style = plain_style();
@@ -342,33 +358,76 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
     check_box(&spans, &shaped, None)?;
     let run = shape_run(&spans, 1.0, &mut fs);
     check_run(&spans, &run, "the run")?;
+    // The frames' layout, drawn from the same bytes read as choices
+    // (ruling R44.4). A replay lays them over their whole halves with no
+    // sides too, as every input was laid before R44.4: a finding's bytes
+    // are text, not zeros, and draw another layout from the one it was
+    // found in (review 5739829769).
+    let layouts = laid_layouts(ring_layout(&mut Choices::new(bytes)), bounded);
+    for layout in &layouts {
+        frames_round_a_rectangle(&text, &style, layout, fits, bounded, &mut fs)
+            .map_err(|why| format!("{why}, laid {layout:?}"))?;
+    }
+    for fit in std::iter::once(FitMode::Repeat).chain(frame_fits()) {
+        let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
+        let placed = place_on_open(&run, &curve, &fit, 1.0, &style, &mut fs);
+        check_placed(
+            &spans,
+            &run,
+            placed,
+            owes_whole(&run, &fit, curve_room(&curve)),
+            "along a line",
+        )?;
+    }
+    check_placement(&run, &place_at_point(&run, Vec2::ZERO), false, "at a point")
+}
+
+/// The layouts a frame drawn in layout `drawn` is laid in: `drawn`, and
+/// replaying a finding (not `bounded`) [`RingLayout::whole`] before it,
+/// the layout every input was laid in before ruling R44.4 — so that a
+/// committed finding replays in the frame it was found in, whenever it
+/// was found (review 5739829769).
+pub(crate) fn laid_layouts(drawn: RingLayout, bounded: bool) -> Vec<RingLayout> {
+    if bounded || drawn == RingLayout::whole() {
+        vec![drawn]
+    } else {
+        vec![RingLayout::whole(), drawn]
+    }
+}
+
+/// [`check_raw`]'s frames round its rectangle for `text` in `style`,
+/// laid with `layout` in `fits` and a `Repeat` — their text held to what
+/// they lay inside the timeout with `bounded` (rulings R45.1, R46.3), or,
+/// replaying a finding, to what a frame laid when it was found.
+fn frames_round_a_rectangle(
+    text: &str,
+    style: &ResolvedText,
+    layout: &RingLayout,
+    fits: &[FitMode],
+    bounded: bool,
+    fs: &mut FontSystemWriteGuard,
+) -> Result<(), String> {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(120.0, 40.0));
     let start = StartPoint {
         edge: Edge::Top,
         at: 0.0,
     };
-    // The frames' layout, drawn from the same bytes read as choices
-    // (ruling R44.4): an input of zeros, as most raw findings are, lays
-    // them over their whole halves with no sides. Their text, held to
-    // what its frames lay inside the timeout (rulings R45.1, R46.3) — or,
-    // replaying a finding, to what a frame laid when it was found.
-    let layout = ring_layout(&mut Choices::new(bytes));
-    let ornament = ornament_run(&layout, &style, 1.0, &mut fs);
+    let ornament = ornament_run(layout, style, 1.0, fs);
     let fits_in_time = |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), fits.len());
     let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
     let framed = framed(
         &[text.to_string()],
-        std::slice::from_ref(&style),
+        std::slice::from_ref(style),
         1.0,
-        &mut fs,
+        fs,
         if bounded { &fits_in_time } else { &as_found },
     );
     let frame_spans = [FlowSpan {
         text: &framed[0],
-        style: &style,
+        style,
         link: None,
     }];
-    let frame_run = shape_run(&frame_spans, 1.0, &mut fs);
+    let frame_run = shape_run(&frame_spans, 1.0, fs);
     let mut work = InputWork::default();
     for fit in std::iter::once(&FitMode::Repeat).chain(fits) {
         let path = outline(
@@ -384,10 +443,10 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
             start,
             Direction::Clockwise,
             fit,
-            &layout,
+            layout,
             true,
-            &style,
-            &mut fs,
+            style,
+            fs,
             Some(&mut trace),
         );
         if !matches!(fit, FitMode::Repeat) {
@@ -404,18 +463,7 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
     if bounded {
         work.within_the_timeout()?;
     }
-    for fit in std::iter::once(FitMode::Repeat).chain(frame_fits()) {
-        let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
-        let placed = place_on_open(&run, &curve, &fit, 1.0, &style, &mut fs);
-        check_placed(
-            &spans,
-            &run,
-            placed,
-            owes_whole(&run, &fit, curve_room(&curve)),
-            "along a line",
-        )?;
-    }
-    check_placement(&run, &place_at_point(&run, Vec2::ZERO), false, "at a point")
+    Ok(())
 }
 
 /// Every property of the flow `bytes` choose: the flow_structured
@@ -527,66 +575,81 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                     let direction = *choices.pick(&[Direction::Clockwise, Direction::CounterClockwise]);
                     let fit = fit(choices, &texts);
                     let outward = choices.one_in(2);
-                    // Drawn last, so an input that ends before them — every
-                    // finding before R44.4 — lays as it did: over whole
-                    // halves, no sides.
-                    let layout = ring_layout(choices);
-                    // The frame's text, held to what its frame lays inside
-                    // the timeout (rulings R45.1, R46.3) — or, replaying a
-                    // finding, to what a frame laid when it was found.
-                    let ornament = ornament_run(&layout, &flow, scale, &mut fs);
-                    let fits_in_time =
-                        |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES);
-                    let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
-                    let framed = framed(
-                        &texts,
-                        &styles,
-                        scale,
-                        &mut fs,
-                        if bounded { &fits_in_time } else { &as_found },
-                    );
-                    let frame_spans: Vec<FlowSpan<'_>> = framed
-                        .iter()
-                        .zip(&styles)
-                        .map(|(text, style)| FlowSpan {
-                            text,
-                            style,
-                            link: None,
-                        })
-                        .collect();
-                    let run = if framed == texts {
-                        run
-                    } else {
-                        shape_run(&frame_spans, scale, &mut fs)
-                    };
-                    let spans = frame_spans;
-                    let mut trace = Trace::default();
-                    let placed = place_on_closed_traced(
-                        &run,
-                        &path,
-                        start,
-                        direction,
-                        &fit,
-                        &layout,
-                        outward,
-                        &flow,
-                        &mut fs,
-                        Some(&mut trace),
-                    );
-                    // A frame that cannot hold its lines without two inks
-                    // touching — inward round an outline too thin for
-                    // both, or a line of tall inks wrapped round a tight
-                    // bend — cuts the line that cannot be held and says so
-                    // (ruling R38.1): what it cut is no longer owed.
-                    let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
-                    let mut work = InputWork::default();
-                    let sized = matches!(fit, FitMode::Fit { .. });
-                    work.frame(&run, ornament.as_ref(), sized, &trace, "around an outline")?;
-                    if bounded {
-                        work.within_the_timeout()?;
+                    // Drawn last, so an input that ends before them lays
+                    // over whole halves with no sides, as every input did
+                    // before R44.4. A replay lays a finding in that layout
+                    // too, whatever it draws: a finding that runs on past
+                    // its outline draws another layout from the one it was
+                    // found in (review 5739829769).
+                    let layouts = laid_layouts(ring_layout(choices), bounded);
+                    for layout in &layouts {
+                        // The frame's text, held to what its frame lays
+                        // inside the timeout (rulings R45.1, R46.3) — or,
+                        // replaying a finding, to what a frame laid when it
+                        // was found.
+                        let ornament = ornament_run(layout, &flow, scale, &mut fs);
+                        let fits_in_time =
+                            |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES);
+                        let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
+                        let framed = framed(
+                            &texts,
+                            &styles,
+                            scale,
+                            &mut fs,
+                            if bounded { &fits_in_time } else { &as_found },
+                        );
+                        let frame_spans: Vec<FlowSpan<'_>> = framed
+                            .iter()
+                            .zip(&styles)
+                            .map(|(text, style)| FlowSpan {
+                                text,
+                                style,
+                                link: None,
+                            })
+                            .collect();
+                        let run = if framed == texts {
+                            run.clone()
+                        } else {
+                            shape_run(&frame_spans, scale, &mut fs)
+                        };
+                        let mut trace = Trace::default();
+                        let placed = place_on_closed_traced(
+                            &run,
+                            &path,
+                            start,
+                            direction,
+                            &fit,
+                            layout,
+                            outward,
+                            &flow,
+                            &mut fs,
+                            Some(&mut trace),
+                        );
+                        // A frame that cannot hold its lines without two
+                        // inks touching — inward round an outline too thin
+                        // for both, or a line of tall inks wrapped round a
+                        // tight bend — cuts the line that cannot be held
+                        // and says so (ruling R38.1): what it cut is no
+                        // longer owed.
+                        let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
+                        let mut work = InputWork::default();
+                        let sized = matches!(fit, FitMode::Fit { .. });
+                        let checked = work
+                            .frame(&run, ornament.as_ref(), sized, &trace, "around an outline")
+                            .and_then(|()| {
+                                if bounded {
+                                    work.within_the_timeout()
+                                } else {
+                                    Ok(())
+                                }
+                            })
+                            .and_then(|()| apart(&trace, "around an outline"))
+                            .and_then(|()| {
+                                check_placed(&frame_spans, &run, placed, whole, "around an outline")
+                            });
+                        checked.map_err(|why| format!("{why}, laid {layout:?}"))?;
                     }
-                    apart(&trace, "around an outline")?;
-                    check_placed(&spans, &run, placed, whole, "around an outline")
+                    Ok(())
                 }
                 2 => {
                     let points: Vec<Vec2> = (0..choices.below(3)).map(|_| any_vec2(choices)).collect();
