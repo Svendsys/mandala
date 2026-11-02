@@ -222,7 +222,6 @@ dependencies = [
  "derivative",
  "env_logger",
  "glam",
- "indextree",
  "lazy_static",
  "log",
  "ordered-float",
@@ -1255,27 +1254,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indextree"
-version = "4.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3662f57019121dcb767b3d68df6868daf61c8e2ec8205709aea7e75b301a4ecc"
-dependencies = [
- "indextree-macros",
- "serde",
-]
-
-[[package]]
-name = "indextree-macros"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "275f822f43b20b95514c355642157dd8e8214ac62592969e8339d3ebcdacb808"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
-
-[[package]]
 name = "interprocess"
 version = "2.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1547,7 +1525,6 @@ dependencies = [
  "getrandom 0.4.3",
  "glam",
  "glyphon",
- "indextree",
  "interprocess",
  "js-sys",
  "log",

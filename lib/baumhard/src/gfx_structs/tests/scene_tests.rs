@@ -6,6 +6,7 @@
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use crate::engine::tree::Placement;
 use crate::font::fonts;
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
@@ -14,7 +15,6 @@ use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use crate::gfx_structs::scene::{Scene, SceneTreeId};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use glam::Vec2;
-use indextree::NodeId;
 
 /// Build a small tree with one `GlyphArea` of the given AABB,
 /// returning the tree and the id of the single leaf we can hit-test
@@ -24,7 +24,7 @@ fn tree_with_area(position: Vec2, bounds: Vec2, channel: usize) -> (GfxTree, Nod
     let mut tree = GfxTree::new_non_indexed();
     let area = GlyphArea::new_with_str("x", 1.0, 10.0, position, bounds);
     let element = GfxElement::new_area_non_indexed_with_id(area, channel, channel);
-    let leaf = tree.insert_child(tree.root, element, Placement::Last).unwrap();
+    let leaf = tree.insert_child(tree.root(), element, Placement::Last).unwrap();
     (tree, leaf)
 }
 
@@ -38,7 +38,7 @@ fn tree_outer_inner() -> (GfxTree, NodeId, NodeId) {
     let inner = GlyphArea::new_with_str("inner", 1.0, 10.0, Vec2::new(40.0, 40.0), Vec2::new(20.0, 20.0));
     let outer = GfxElement::new_area_non_indexed_with_id(outer, 0, 1);
     let inner = GfxElement::new_area_non_indexed_with_id(inner, 0, 2);
-    let outer_id = tree.insert_child(tree.root, outer, Placement::Last).unwrap();
+    let outer_id = tree.insert_child(tree.root(), outer, Placement::Last).unwrap();
     let inner_id = tree.insert_child(outer_id, inner, Placement::Last).unwrap();
     (tree, outer_id, inner_id)
 }
@@ -196,14 +196,14 @@ pub fn do_scene_component_in_resolves_overlap_by_smallest_area() {
         let big = GfxElement::new_area_non_indexed_with_id(big, 1, 1);
         let small = GfxElement::new_area_non_indexed_with_id(small, 1, 2);
         let small_id = if small_first {
-            let small_id = tree.insert_child(tree.root, small, Placement::Last).unwrap();
-            tree.insert_child(tree.root, big, Placement::Last).unwrap();
+            let small_id = tree.insert_child(tree.root(), small, Placement::Last).unwrap();
+            tree.insert_child(tree.root(), big, Placement::Last).unwrap();
             small_id
         } else {
-            tree.insert_child(tree.root, big, Placement::Last).unwrap();
-            tree.insert_child(tree.root, small, Placement::Last).unwrap()
+            tree.insert_child(tree.root(), big, Placement::Last).unwrap();
+            tree.insert_child(tree.root(), small, Placement::Last).unwrap()
         };
-        let first = tree.root.children(tree.arena()).next().unwrap();
+        let first = tree.root().children(tree.arena()).next().unwrap();
         assert_eq!(
             first == small_id,
             small_first,
@@ -361,7 +361,7 @@ pub fn do_descendants_aabb_cache_invalidated_by_mutator() {
     ]);
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new(GfxMutation::area_delta(area_delta), 1),
             Placement::Last,
         )

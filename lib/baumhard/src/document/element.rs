@@ -23,6 +23,7 @@
 //! enough that cloning it — which a journal does once per touched
 //! element — is cheap.
 
+use crate::arena::NodeId;
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Rgba,
     Shape, StartPoint, VerbId, Weight, ZoomWindow,
@@ -31,7 +32,6 @@ use crate::engine::element::TreeElement;
 use crate::font::fonts::AppFont;
 use crate::util::grapheme_chad::split_off_graphemes;
 use glam::Vec2;
-use indextree::NodeId;
 use serde::{Deserialize, Serialize};
 
 /// What kind of element a [`DocElement`] is: the first half of its

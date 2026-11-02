@@ -101,9 +101,10 @@ concept; "number of grapheme clusters" is, and it is what users see.
 
 ## §B4 Arena and tree discipline
 
-`Tree` wraps an `indextree::Arena` for O(1) child iteration and O(1)
-node access via `NodeId`. The arena is what makes Baumhard fast; treat
-it with respect.
+`Tree` wraps an `arena::Arena` — Baumhard's own (V1-A6, #290) — for
+O(1) child iteration and O(1) node access via `NodeId`, a slot and its
+generation, so the id of a removed node never reads the node that took
+its slot. The arena is what makes Baumhard fast; treat it with respect.
 
 - **Every parent's children are sorted by key.** A node's
   `BranchKey` is its kind and channel, and both `Tree` and
@@ -152,10 +153,10 @@ it with respect.
     where a subtree leaves or re-enters the tree); a question that needs
     the climb itself — which selected element is nested in another —
     goes through a memo that climbs each ancestor once over all of them
-    (`engine::membership::Membership`). The engine calls indextree's
-    climb, `ancestors`, in one function, `tree::climb`, and inserts an
-    existing node in one, `siblings::checked_attach`; test builds count
-    both. Its hand-written climbs are the memoized ones
+    (`engine::membership::Membership`). The engine calls the arena's
+    climb, `ancestors`, in one function, `tree::climb`, and its checked
+    insert of an existing node in one, `siblings::attach_at`; test
+    builds count both. Its hand-written climbs are the memoized ones
     (`Membership::contains`, a journal's `Presence::top` and `resolve`)
     and the walker's `state_above`, which climbs once per anchored
     walk. `test_the_engine_climbs_only_where_it_may` refuses, anywhere
@@ -169,23 +170,25 @@ it with respect.
     spellings, not a proof: a climb by recursion is caught by the deep
     tests' stack instead, and one hidden behind a helper called in a
     loop by neither.
-  - **Insert new nodes by value.** indextree's `*_value` inserts climb
-    nothing; inserting an *existing* node climbs to the root to check
-    for a cycle. A node the engine creates goes in by value
-    (`siblings::insert_value_at`, `append_value_sorted`).
+  - **Insert new nodes by value.** The arena's `*_value` inserts climb
+    nothing; its checked insert of an *existing* node climbs to the
+    root to check for a cycle. A node the engine creates goes in by
+    value (`siblings::insert_value_at`, `append_value_sorted`).
   - **Same-row moves through one function.** A node moved within the
     row it is in — a settle, an `update`, a journal restoring its place
     — goes back through `siblings::reattach_in_row` and nothing else:
     under its own parent it cannot close a cycle, so ruling R16 (#282)
-    holds that insert to O(1). indextree 4.9 has no insert of an
-    existing node without the climb; until the engine's own arena tree
-    replaces it (V1-A6, #290), that call
-    site is the one O(depth) left on the path, and
-    `test_same_row_rearrangement_is_linear_in_depth` (ignored until
-    then) is the test that goes green with the swap. A node moved to
-    **another** parent (`StructOp::Move`, a journal restoring a
-    re-parent) keeps its O(depth) cycle check: the price of refusing a
-    cycle, paid once per node moved, never per node visited.
+    holds that insert to O(1), and it is the arena's unchecked,
+    crate-private `NodeId::reattach_in_row`, which climbs nothing.
+    `test_same_row_rearrangement_is_linear_in_depth` counts its steps
+    inside the arena, and `test_the_same_row_reattach_is_the_unchecked_insert`
+    holds the function to that insert and that insert to the function —
+    unchecked, it would hang a node below itself under any parent but
+    the one it left. A node moved to **another** parent
+    (`StructOp::Move`, a journal restoring a re-parent) keeps its
+    O(depth) cycle check, in `siblings::attach_at`: the price of
+    refusing a cycle, paid once per node moved, never per node
+    visited.
 - **Iterate with `NodeId::children(tree.arena())` and `descendants(tree.arena())`.**
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if

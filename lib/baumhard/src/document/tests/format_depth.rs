@@ -9,12 +9,12 @@
 //! (`lib/baumhard/tests/wasm_font_lock/probe.rs`) runs the same body on
 //! wasm32's default stack, in a debug build, inside node.
 
+use crate::arena::{NodeEdge, NodeId};
 use crate::document::element::DocElement;
 use crate::document::format::{check_savable, load, save};
 use crate::document::ids::Document;
 use crate::document::tests::format_support::same_document;
 use crate::engine::structure::Subtree;
-use indextree::{NodeEdge, NodeId};
 
 /// How deep R13's chain is.
 pub const CHAIN_DEPTH: u32 = 100_000;

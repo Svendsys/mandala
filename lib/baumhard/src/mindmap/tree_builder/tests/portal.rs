@@ -18,7 +18,7 @@ fn portal_tree_emits_two_markers_per_edge() {
     map.edges.push(synthetic_portal_edge("a", "b", "#ff0000"));
 
     let result = build_portal_tree(&map, &HashMap::new(), None, None, None, None, 1.0);
-    let pairs: Vec<NodeId> = result.tree.root.children(result.tree.arena()).collect();
+    let pairs: Vec<NodeId> = result.tree.root().children(result.tree.arena()).collect();
     assert_eq!(pairs.len(), 1);
 
     // New shape: pair → endpoint void → [icon, text]. Two endpoints
@@ -52,7 +52,7 @@ fn portal_tree_skips_edge_with_folded_endpoint() {
     // skipped wholesale because is_hidden_by_fold(child) is true.
     map.edges.push(synthetic_portal_edge("child", "other", "#00ff00"));
     let result = build_portal_tree(&map, &HashMap::new(), None, None, None, None, 1.0);
-    assert_eq!(result.tree.root.children(result.tree.arena()).count(), 0);
+    assert_eq!(result.tree.root().children(result.tree.arena()).count(), 0);
     assert!(result.hit_index.is_empty());
 }
 
@@ -73,7 +73,7 @@ fn portal_tree_skips_line_mode_edges() {
     map.edges.push(line_edge);
 
     let result = build_portal_tree(&map, &HashMap::new(), None, None, None, None, 1.0);
-    assert_eq!(result.tree.root.children(result.tree.arena()).count(), 0);
+    assert_eq!(result.tree.root().children(result.tree.arena()).count(), 0);
     assert!(result.hit_index.is_empty());
 }
 
@@ -95,7 +95,7 @@ fn portal_tree_selection_overrides_color() {
     // GlyphArea carries a color region (the text area is empty
     // when no text is set). Assert the icon color on each endpoint
     // got the cyan override, not the red edge color.
-    let pair = result.tree.root.children(result.tree.arena()).next().unwrap();
+    let pair = result.tree.root().children(result.tree.arena()).next().unwrap();
     for endpoint_void in pair.children(result.tree.arena()) {
         let icon_leaf = endpoint_void.children(result.tree.arena()).next().unwrap();
         let area = result
@@ -200,8 +200,8 @@ fn portal_mutator_round_trip_matches_full_rebuild() {
     // position, bounds, scale, line_height, regions, outline,
     // zoom_visibility) must match.
     // Walk three levels: pair → endpoint voids → [icon, text].
-    let actual_pairs: Vec<NodeId> = tree_a.root.children(tree_a.arena()).collect();
-    let expected_pairs: Vec<NodeId> = expected.root.children(expected.arena()).collect();
+    let actual_pairs: Vec<NodeId> = tree_a.root().children(tree_a.arena()).collect();
+    let expected_pairs: Vec<NodeId> = expected.root().children(expected.arena()).collect();
     assert_eq!(actual_pairs.len(), expected_pairs.len());
     for (a_pair, e_pair) in actual_pairs.iter().zip(expected_pairs.iter()) {
         let a_endpoints: Vec<NodeId> = a_pair.children(tree_a.arena()).collect();
@@ -321,7 +321,7 @@ fn portal_marker_region_sized_by_grapheme_cluster_count_not_codepoints() {
     map.edges.push(edge);
 
     let result = build_portal_tree(&map, &HashMap::new(), None, None, None, None, 1.0);
-    let pair = result.tree.root.children(result.tree.arena()).next().unwrap();
+    let pair = result.tree.root().children(result.tree.arena()).next().unwrap();
     // Descend pair → endpoint void → icon leaf.
     let endpoint_void = pair.children(result.tree.arena()).next().unwrap();
     let icon_leaf = endpoint_void.children(result.tree.arena()).next().unwrap();
@@ -366,7 +366,7 @@ fn portal_tree_text_area_carries_text_color_and_size_overrides() {
     map.edges.push(edge);
 
     let result = build_portal_tree(&map, &HashMap::new(), None, None, None, None, 1.0);
-    let pair = result.tree.root.children(result.tree.arena()).next().unwrap();
+    let pair = result.tree.root().children(result.tree.arena()).next().unwrap();
     // Locate the endpoint void for `a` (the `from_id` side).
     // New shape: pair → endpoint void → [icon, text]; endpoint
     // channel 1 is the from-side per `portal_pair_data`.

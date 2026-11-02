@@ -31,7 +31,7 @@
 
 use std::collections::HashMap;
 
-use indextree::NodeId;
+use crate::arena::NodeId;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Flag, Flaggable, Range};
 use crate::flow::LINE_HEIGHT_FACTOR;
@@ -592,7 +592,7 @@ pub(super) fn build_nodes<'a>(
 ) {
     let mut roots: Vec<&'a MindNode> = index.roots().to_vec();
     roots.sort_by_key(|node| node.channel);
-    let tree_root = tree.root;
+    let tree_root = tree.root();
     let mut placed: Vec<(&'a MindNode, NodeId)> = Vec::new();
     for root in roots {
         if let Some(node_id) = push_container(map, root, tree_root, tree, node_map, id_counter) {

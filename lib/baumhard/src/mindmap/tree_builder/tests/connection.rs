@@ -21,7 +21,7 @@ fn connection_tree_emits_one_void_per_edge_with_glyph_children() {
         zoom_visibility: crate::gfx_structs::zoom_visibility::ZoomVisibility::unbounded(),
     };
     let tree = build_connection_tree(&[elem]);
-    let edge_parents: Vec<NodeId> = tree.root.children(tree.arena()).collect();
+    let edge_parents: Vec<NodeId> = tree.root().children(tree.arena()).collect();
     assert_eq!(edge_parents.len(), 1);
     let glyphs: Vec<NodeId> = edge_parents[0].children(tree.arena()).collect();
     // 1 cap-start + 3 body + 1 cap-end = 5
@@ -48,7 +48,7 @@ fn connection_tree_skips_caps_when_absent() {
         zoom_visibility: crate::gfx_structs::zoom_visibility::ZoomVisibility::unbounded(),
     };
     let tree = build_connection_tree(&[elem]);
-    let edge_parent = tree.root.children(tree.arena()).next().unwrap();
+    let edge_parent = tree.root().children(tree.arena()).next().unwrap();
     assert_eq!(edge_parent.children(tree.arena()).count(), 1);
 }
 #[test]
@@ -143,8 +143,8 @@ fn connection_mutator_round_trip_matches_full_rebuild() {
 
     let expected = build_connection_tree(std::slice::from_ref(&elem_b));
 
-    let actual_edges: Vec<NodeId> = tree_a.root.children(tree_a.arena()).collect();
-    let expected_edges: Vec<NodeId> = expected.root.children(expected.arena()).collect();
+    let actual_edges: Vec<NodeId> = tree_a.root().children(tree_a.arena()).collect();
+    let expected_edges: Vec<NodeId> = expected.root().children(expected.arena()).collect();
     assert_eq!(actual_edges.len(), expected_edges.len());
     for (a_e, e_e) in actual_edges.iter().zip(expected_edges.iter()) {
         let a_glyphs: Vec<NodeId> = a_e.children(tree_a.arena()).collect();
@@ -211,8 +211,8 @@ fn connection_label_mutator_round_trip_handles_text_edit() {
     mutator.mutator.apply_to(&mut tree_a, &());
 
     let expected = build_connection_label_tree(std::slice::from_ref(&elem_b)).tree;
-    let actual_leaves: Vec<NodeId> = tree_a.root.children(tree_a.arena()).collect();
-    let expected_leaves: Vec<NodeId> = expected.root.children(expected.arena()).collect();
+    let actual_leaves: Vec<NodeId> = tree_a.root().children(tree_a.arena()).collect();
+    let expected_leaves: Vec<NodeId> = expected.root().children(expected.arena()).collect();
     assert_eq!(actual_leaves.len(), expected_leaves.len());
     // Full-field parity — see `connection_mutator_round_trip...`
     // for the rationale.
@@ -254,7 +254,7 @@ fn connection_region_sized_by_grapheme_cluster_count_not_codepoints() {
         zoom_visibility: crate::gfx_structs::zoom_visibility::ZoomVisibility::unbounded(),
     };
     let tree = build_connection_tree(&[elem]);
-    let edge_parent = tree.root.children(tree.arena()).next().unwrap();
+    let edge_parent = tree.root().children(tree.arena()).next().unwrap();
     let glyph = edge_parent.children(tree.arena()).next().unwrap();
     let area = tree.arena().get(glyph).unwrap().get().glyph_area().unwrap();
     let regions = area.regions.all_regions();
@@ -286,7 +286,7 @@ fn connection_label_region_sized_by_grapheme_cluster_count_not_codepoints() {
         zoom_visibility: crate::gfx_structs::zoom_visibility::ZoomVisibility::unbounded(),
     };
     let tree = build_connection_label_tree(&[elem]);
-    let label_node = tree.tree.root.children(tree.tree.arena()).next().unwrap();
+    let label_node = tree.tree.root().children(tree.tree.arena()).next().unwrap();
     let area = tree
         .tree
         .arena()

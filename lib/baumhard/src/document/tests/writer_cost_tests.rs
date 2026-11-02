@@ -10,6 +10,7 @@
 //! these are plain tests (TEST_CONVENTIONS §T2.2, a `cfg(test)` sibling
 //! carries no bench row).
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind, LinkData};
 use crate::document::mutation::compose::{create_root, delete, remove_links};
 use crate::document::tests::test_support::{path_data, DocumentBuilder};
@@ -20,7 +21,6 @@ use crate::document::writer::transaction::TransactionKind;
 use crate::document::writer::{ChangeSource, EditRequest};
 use crate::engine::journal::tests_support::row_steps;
 use glam::Vec2;
-use indextree::NodeId;
 
 /// How long the rows are that a change must not read.
 const WIDE: usize = 1_000;

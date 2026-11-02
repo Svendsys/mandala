@@ -6,6 +6,7 @@
 //! positions, sizes and literal colors blending, everything else
 //! snapping, the key never interpolated.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, NodeData};
 use crate::document::tests::test_support::{example, Example};
 use crate::document::values::{ColorRef, FontSize, Rgba, VarId};
@@ -14,7 +15,6 @@ use crate::engine::interpolate::{Interpolable, Snap};
 use crate::engine::journal::{Journal, JournalBuilder};
 use crate::engine::tree::Tree;
 use glam::Vec2;
-use indextree::NodeId;
 
 /// The tree in pre-order: each element with its parent.
 fn snapshot(tree: &Tree<DocElement>) -> Vec<(NodeId, Option<NodeId>, DocElement)> {

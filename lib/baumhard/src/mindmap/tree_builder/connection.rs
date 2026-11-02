@@ -812,7 +812,7 @@ pub fn build_connection_tree(elements: &[ConnectionElement]) -> GfxTree {
 
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
-        let root = tree.root;
+        let root = tree.root();
         let Some(edge_root) = super::push_element(
             &mut tree,
             root,
@@ -850,7 +850,7 @@ pub fn build_connection_mutator_tree(
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
-        let root = mt.root;
+        let root = mt.root();
         let Some(edge_node) = super::push_mutator(&mut mt, root, GfxMutator::new_void(edge_channel)) else {
             continue;
         };

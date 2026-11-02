@@ -29,6 +29,7 @@
 //! `cfg(test)` module of their own; the two single scenarios beside
 //! them are benchmark-reachable bodies.
 
+use crate::arena::NodeId;
 use crate::engine::anchor::Anchors;
 use crate::engine::journal::{Journal, JournalBuilder};
 use crate::engine::key::BranchKey;
@@ -36,7 +37,6 @@ use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tests::test_element::{add, TestElement, TestKind, TestMutation};
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
-use indextree::NodeId;
 
 /// The reviewer's example: J1 inserts S under P, J2 removes P. Undoing
 /// J1 before J2 would detach S, and undoing J2 would then mark S back
@@ -45,7 +45,7 @@ use indextree::NodeId;
 /// changes, and in order both undo and redo exactly.
 pub fn do_a_journal_is_not_reverted_under_a_later_one() {
     let mut tree: Tree<TestElement> = Tree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let p = add(&mut tree, root, TestElement::new(0, 1));
     let insert: MutatorTree<TestElement, TestMutation> = MutatorTree::new_with(Mutator::new_structure(
         StructOp::Insert {
@@ -108,7 +108,7 @@ fn test_a_journal_is_not_reverted_under_a_later_one() {
 /// every undo past it was refused as out of order.
 pub fn do_an_empty_journal_leaves_the_history_restorable() {
     let mut tree: Tree<TestElement> = Tree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let p = add(&mut tree, root, TestElement::new(0, 1));
     let insert: MutatorTree<TestElement, TestMutation> = MutatorTree::new_with(Mutator::new_structure(
         StructOp::Insert {
@@ -165,7 +165,7 @@ fn test_an_empty_journal_leaves_the_history_restorable() {
 /// P: the start of each unjournaled-change case below.
 fn with_s_inserted_under_p() -> (Tree<TestElement>, Journal<TestElement>, [NodeId; 3]) {
     let mut tree: Tree<TestElement> = Tree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let p = add(&mut tree, root, TestElement::new(0, 1));
     let q = add(&mut tree, root, TestElement::new(0, 2));
     let insert: MutatorTree<TestElement, TestMutation> = MutatorTree::new_with(Mutator::new_structure(
@@ -383,6 +383,7 @@ fn test_an_empty_builder_closed_after_another_keeps_its_change() {
 /// `#[test]` fns, with nothing for the library build to compile.
 #[cfg(test)]
 mod sweeps {
+    use crate::arena::NodeId;
     use crate::engine::anchor::Anchors;
     use crate::engine::element::TreeElement;
     use crate::engine::interpolate::Snap;
@@ -395,7 +396,6 @@ mod sweeps {
     use crate::engine::tests::journal_fixtures::{state_above, structural_scenario, StructuralScenario};
     use crate::engine::tests::test_element::{TestElement, TestField, TestKind, TestMutation};
     use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
-    use indextree::NodeId;
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
 
@@ -407,19 +407,13 @@ mod sweeps {
     /// and must answer `false`. Returns how many were checked.
     fn check_contains(context: &str, tree: &Tree<TestElement>, seen: &mut Vec<NodeId>) -> usize {
         let arena = tree.arena();
-        seen.extend(
-            arena
-                .iter()
-                .filter(|n| !n.is_removed())
-                .filter_map(|n| arena.get_node_id(n)),
-        );
+        seen.extend(arena.iter().map(|(id, _)| id));
         seen.sort();
         seen.dedup();
         for &id in seen.iter() {
             // The oracle: in the arena, and the root at the top of its
             // climb. A climb is fine here: this is the answer, not the code.
-            let climbed = arena.get(id).is_some_and(|n| !n.is_removed())
-                && id.ancestors(arena).last() == Some(tree.root);
+            let climbed = arena.get(id).is_some() && id.ancestors(arena).last() == Some(tree.root());
             assert_eq!(tree.contains(id), climbed, "{context}: contains({id:?})");
         }
         seen.len()
@@ -541,7 +535,7 @@ mod sweeps {
                 let mut mutators: MutatorTree<TestElement, TestMutation> = MutatorTree::new_with(
                     Mutator::new_instruction(Instruction::RepeatWhile(predicate(rng)), key),
                 );
-                let root = mutators.root;
+                let root = mutators.root();
                 let command = op(rng, &nodes);
                 let child_key = self::key(rng);
                 mutators
@@ -560,7 +554,7 @@ mod sweeps {
                 let key = tree.arena()[node].get().key();
                 let mut mutators: MutatorTree<TestElement, TestMutation> =
                     MutatorTree::new_with(Mutator::new_void(key));
-                let root = mutators.root;
+                let root = mutators.root();
                 for _ in 0..rng.random_range(1..=4) {
                     let command = op(rng, &nodes);
                     let child_key = self::key(rng);
@@ -734,7 +728,7 @@ mod sweeps {
                     done.checks += check_contains(&format!("seed {seed} final discard"), &tree, &mut seen);
                 }
             }
-            let live = tree.arena().iter().filter(|n| !n.is_removed()).count();
+            let live = tree.arena().live_count();
             assert_eq!(live, tree.descendants().count(), "seed {seed}: a node leaked");
             assert!(
                 tree.detached.is_empty(),

@@ -1357,7 +1357,7 @@ pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
     out
 }
 
-/// Every checked indextree insert in the bodies of the engine's
+/// Every checked arena insert in the bodies of the engine's
 /// `siblings::insert_sorted` and `siblings::insert_value_at` — the
 /// path every new tree node and mutator-tree node goes through, and
 /// the insert it places a new node with — as `(repo-relative file, 1-based
@@ -1365,18 +1365,18 @@ pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
 /// calls the body makes, so a caller can tell an empty finding from a
 /// scan that read nothing.
 ///
-/// `indextree`'s `append`, `prepend`, `insert_after` and
-/// `insert_before` are wrappers over their `checked_*` forms, whose
-/// cycle check is `ancestors(arena).any(..)` — an O(depth) walk, on
-/// every insert. The scene builder inserts once per node and once per
-/// section, and a `.mindmap.json` may declare a linear `parent_id`
-/// chain, which is a legal acyclic tree the loader accepts. Depth then
-/// equals the node count and the build is O(N²).
+/// The arena's inserts of an existing node (`checked_append`,
+/// `checked_prepend`, `checked_insert_after`, `checked_insert_before`)
+/// check for a cycle by climbing from the destination to the top — an
+/// O(depth) walk, on every insert. The scene builder inserts once per
+/// node and once per section, and a `.mindmap.json` may declare a
+/// linear `parent_id` chain, which is a legal acyclic tree the loader
+/// accepts. Depth then equals the node count and the build is O(N²).
 ///
-/// The `*_value` forms are indextree's documented O(1) fast paths.
+/// The `*_value` forms are the arena's O(1) inserts of a new node.
 /// `insert_sorted` places a value it is handed, so the node is new and
 /// detached by construction and the ancestor walk could never fire —
-/// the check is pure cost.
+/// the check would be pure cost.
 pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, usize) {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/siblings.rs");
     let rel = relative_to_repo(&file);
@@ -1407,14 +1407,7 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
         ] {
             value_inserts += code.matches(call).count();
         }
-        let checked = [
-            ".append(",
-            ".prepend(",
-            ".insert_after(",
-            ".insert_before(",
-            "checked_",
-        ];
-        if checked.iter().any(|call| code.contains(call)) {
+        if code.contains("checked_") {
             found.push((rel.clone(), number + 1, code.trim().to_string()));
         }
     }
@@ -1431,10 +1424,10 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
 ///
 /// Two kinds of call are found:
 ///
-/// - **indextree's own climbs**, by line: `ancestors`, and its insert
-///   of an existing node (`checked_*`, and `append` / `prepend` /
-///   `insert_after` / `insert_before` / `reparent`, which wrap them),
-///   which climbs to check for a cycle.
+/// - **the arena's own climbs**, by line: `ancestors`, and its insert
+///   of an existing node under a new parent (`checked_append`,
+///   `checked_prepend`, `checked_insert_after`,
+///   `checked_insert_before`), which climbs to check for a cycle.
 /// - **a hand-written climb**, by syntax: a parent read — a `parent`
 ///   method, or a function or method whose name starts `parent_` —
 ///   in one of the three spellings of walking up a chain of parents
@@ -1453,8 +1446,8 @@ pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, us
 /// helper that reads one parent per call and is called in a loop.
 ///
 /// The engine keeps each in a few places: `tree::climb` (counted in
-/// test builds), and `siblings`' `attach_after` / `attach_first`
-/// behind `checked_attach` (counted) for indextree's; and for
+/// test builds), and `siblings::attach_at` (counted), the one checked
+/// insert, for the arena's; and for
 /// hand-written ones the memoized climbs — `Membership::contains`
 /// (counted), the journal's `Presence::top` (counted) and its
 /// `resolve` — and the walker's `state_above`, the one-off climb an
@@ -1468,11 +1461,7 @@ pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
     /// The trees read: the engine, and the document model built on it
     /// (its format modules included), which walk trees of any depth.
     const SCANNED: &[&str] = &["lib/baumhard/src/engine", "lib/baumhard/src/document"];
-    const ALLOWED: &[(&str, &str)] = &[
-        ("engine/tree.rs", "climb"),
-        ("engine/siblings.rs", "attach_after"),
-        ("engine/siblings.rs", "attach_first"),
-    ];
+    const ALLOWED: &[(&str, &str)] = &[("engine/tree.rs", "climb"), ("engine/siblings.rs", "attach_at")];
     const ALLOWED_PARENT_LOOPS: &[(&str, &str)] = &[
         ("engine/membership.rs", "contains"),
         ("engine/journal.rs", "top"),
@@ -1494,12 +1483,6 @@ pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
         ".checked_insert_before(",
         ".checked_prepend(",
         ".checked_append(",
-        ".checked_reparent(",
-        ".append(",
-        ".prepend(",
-        ".insert_after(",
-        ".insert_before(",
-        ".reparent(",
     ];
     let mut files = Vec::new();
     for root in SCANNED {
@@ -1535,11 +1518,7 @@ pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
                     current_fn = ident;
                 }
             }
-            // A Vec's `append` is not indextree's: only a call handed
-            // an arena is.
-            let calls = CALLS
-                .iter()
-                .any(|call| code.contains(call) && (*call != ".append(" || code.contains("arena")));
+            let calls = CALLS.iter().any(|call| code.contains(call));
             if !calls {
                 continue;
             }
@@ -1561,6 +1540,289 @@ pub(crate) fn engine_depth_cost_calls() -> EngineDepthCosts {
     found.sort();
     found.dedup();
     EngineDepthCosts { found, allowed }
+}
+
+/// What holds the engine's same-row re-attach to the arena's unchecked
+/// insert ([`same_row_reattach_calls`]).
+pub(crate) struct SameRowReattach {
+    /// Each insert that checks for a cycle, or climb, in the body of
+    /// `siblings::reattach_in_row`: `(repo-relative file, 1-based line,
+    /// the line's text)`.
+    pub(crate) checked: Vec<(String, usize, String)>,
+    /// How many calls of the arena's unchecked `reattach_in_row` that
+    /// body makes.
+    pub(crate) unchecked: usize,
+    /// Each `reattach_in_row` the crate's shipped code names outside
+    /// that body that is not the engine function, in the same form.
+    pub(crate) stray: Vec<(String, usize, String)>,
+}
+
+/// The engine's same-row re-attach, read from the source: whether
+/// `siblings::reattach_in_row` — the one function the walker's settle,
+/// `Tree::update` and a journal restoring an element to its row
+/// re-arrange through — inserts through the arena's unchecked
+/// `NodeId::reattach_in_row`, and through nothing that climbs (a
+/// `checked_*` insert, `ancestors`, or the engine's `climb`); and
+/// whether anything else in the crate's shipped code names that
+/// unchecked insert. Ruling R16 on #282 and V1-A6 #290: a node put back
+/// into the row it left cannot close a cycle, so its insert must not
+/// pay the O(depth) check, and an insert that does not check may be
+/// made only where the row is known to be the one the node left.
+///
+/// The scan reads syntax and matches the **identifier**
+/// `reattach_in_row`, whatever spells it: a method call, a path
+/// (`NodeId::reattach_in_row(..)`, a function pointer, a `use .. as`
+/// alias of the type), a token inside a macro's arguments, or an item
+/// of that name. What is the engine function rather than the arena's
+/// method is allowed: its definition in `engine/siblings.rs`, a path
+/// whose qualifier is `siblings` (`siblings::reattach_in_row(..)`, and
+/// its `use`), and a bare call to it inside `engine/siblings.rs`. A
+/// path with a qualified self (`<NodeId>::reattach_in_row`) is never the
+/// engine function, which is a free `fn`; and since `siblings` must be
+/// the module, a `use .. as siblings`, a `type siblings` or a
+/// `mod siblings` anywhere but `engine/mod.rs` is stray in itself. The
+/// arena module is read too: there, the method's definition in
+/// `arena/link.rs` is the one mention allowed, so no wrapper in the
+/// arena can launder the call for the crate.
+///
+/// It is a heuristic over spellings, and the step counts are its other
+/// half: `test_same_row_rearrangement_is_linear_in_depth` counts every
+/// node the arena's inserts of existing nodes go through and every step
+/// of `engine::tree::climb`, so a climb on this path through either
+/// shows there. A climb written by hand past both — a parent read in a
+/// loop — is `test_the_engine_climbs_only_where_it_may`'s to find.
+///
+/// Cost: one read and one `syn` parse of every shipped `.rs` file under
+/// `lib/baumhard/src/`.
+pub(crate) fn same_row_reattach_calls() -> SameRowReattach {
+    let mut files = Vec::new();
+    collect_recursively(&repo_path("lib/baumhard/src"), ".rs", &mut files);
+    files.sort();
+    // Files a `#[cfg(test)] mod x;` names are test code, gated in the
+    // file that declares them.
+    let test_only = test_gated_module_files(&files);
+    let mut out = SameRowReattach {
+        checked: Vec::new(),
+        unchecked: 0,
+        stray: Vec::new(),
+    };
+    for file in files {
+        let rel = relative_to_repo(&file);
+        let in_tests = file.components().any(|c| c.as_os_str() == "tests");
+        if in_tests || test_only.contains(&file) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let source = production_source(&file, &text);
+        let found = reattach_sites(&rel, &source);
+        let lines: Vec<&str> = source.lines().collect();
+        let site = |line: usize| {
+            let code = lines.get(line.wrapping_sub(1)).map_or("", |l| l.trim());
+            (rel.clone(), line, code.to_string())
+        };
+        out.unchecked += found.unchecked;
+        out.checked.extend(found.checked.into_iter().map(site));
+        out.stray.extend(found.stray.into_iter().map(site));
+    }
+    out
+}
+
+/// What [`reattach_sites`] found in one file, by 1-based line.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct ReattachSites {
+    /// Lines in the engine function's body that climb or check.
+    pub(crate) checked: Vec<usize>,
+    /// Calls of the arena's unchecked insert in that body.
+    pub(crate) unchecked: usize,
+    /// Lines that name `reattach_in_row` and are not the engine
+    /// function.
+    pub(crate) stray: Vec<usize>,
+}
+
+/// [`same_row_reattach_calls`] over one file: `rel` is its
+/// repo-relative path, which says whether it is `engine/siblings.rs`,
+/// `engine/mod.rs` or `arena/link.rs`, and `source` its text. Panics
+/// when `source` does not parse.
+pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
+    use syn::visit::{self, Visit};
+
+    const NAME: &str = "reattach_in_row";
+
+    struct Scan {
+        /// The file is `engine/siblings.rs`.
+        siblings: bool,
+        /// The file is `engine/mod.rs`, which declares `mod siblings`.
+        engine_mod: bool,
+        /// The file is `arena/link.rs`, which defines the method.
+        link: bool,
+        in_body: bool,
+        found: ReattachSites,
+    }
+
+    fn line(span: proc_macro2::Span) -> usize {
+        span.start().line
+    }
+
+    /// Whether `tokens` hold the identifier `name` anywhere, groups
+    /// included; the line of the first such token.
+    fn token_line(tokens: &proc_macro2::TokenStream, name: &str) -> Option<usize> {
+        let mut stack = vec![tokens.clone()];
+        while let Some(tokens) = stack.pop() {
+            for token in tokens {
+                match token {
+                    proc_macro2::TokenTree::Ident(ident) if ident == name => return Some(line(ident.span())),
+                    proc_macro2::TokenTree::Group(group) => stack.push(group.stream()),
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    impl Scan {
+        /// A path naming `reattach_in_row`: the engine function when its
+        /// qualifier is `siblings`, or when it is bare inside
+        /// `engine/siblings.rs` — and never with a qualified self
+        /// (`<T>::`); otherwise the arena's method.
+        fn path(&mut self, qself: bool, path: &syn::Path) {
+            let segments: Vec<_> = path.segments.iter().collect();
+            let Some(last) = segments.last() else {
+                return;
+            };
+            if last.ident != NAME {
+                return;
+            }
+            let engine = !qself
+                && match segments.len() {
+                    1 => self.siblings,
+                    n => segments[n - 2].ident == "siblings",
+                };
+            if !engine {
+                self.found.stray.push(line(last.ident.span()));
+            }
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            if item.sig.ident == NAME {
+                if !self.siblings {
+                    self.found.stray.push(line(item.sig.ident.span()));
+                    visit::visit_item_fn(self, item);
+                    return;
+                }
+                let outer = std::mem::replace(&mut self.in_body, true);
+                visit::visit_item_fn(self, item);
+                self.in_body = outer;
+                return;
+            }
+            visit::visit_item_fn(self, item);
+        }
+
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            if item.sig.ident == NAME && !self.link {
+                self.found.stray.push(line(item.sig.ident.span()));
+            }
+            visit::visit_impl_item_fn(self, item);
+        }
+
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            if item.ident == "siblings" {
+                self.found.stray.push(line(item.ident.span()));
+            }
+            visit::visit_item_type(self, item);
+        }
+
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            if item.ident == "siblings" && !self.engine_mod {
+                self.found.stray.push(line(item.ident.span()));
+            }
+            visit::visit_item_mod(self, item);
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            let name = call.method.to_string();
+            if name == NAME {
+                if self.in_body {
+                    self.found.unchecked += 1;
+                } else {
+                    self.found.stray.push(line(call.method.span()));
+                }
+            } else if self.in_body && (name.starts_with("checked_") || name == "ancestors" || name == "climb")
+            {
+                self.found.checked.push(line(call.method.span()));
+            }
+            visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+            if self.in_body {
+                if let Some(last) = path.path.segments.last() {
+                    let name = last.ident.to_string();
+                    if name == "climb" || name == "ancestors" || name.starts_with("checked_") {
+                        self.found.checked.push(line(last.ident.span()));
+                    }
+                }
+            }
+            self.path(path.qself.is_some(), &path.path);
+            visit::visit_expr_path(self, path);
+        }
+
+        fn visit_use_tree(&mut self, tree: &'ast syn::UseTree) {
+            // A `use` of the engine function goes through `siblings`; a
+            // `use` naming `reattach_in_row` any other way is not it.
+            fn walk(tree: &syn::UseTree, through_siblings: bool, out: &mut Vec<usize>) {
+                match tree {
+                    syn::UseTree::Path(p) => walk(&p.tree, p.ident == "siblings", out),
+                    syn::UseTree::Name(n) if n.ident == NAME && !through_siblings => {
+                        out.push(line(n.ident.span()))
+                    }
+                    syn::UseTree::Rename(r) if r.ident == NAME && !through_siblings => {
+                        out.push(line(r.ident.span()))
+                    }
+                    // Only the module may be called `siblings`.
+                    syn::UseTree::Rename(r) if r.rename == "siblings" => out.push(line(r.rename.span())),
+                    syn::UseTree::Group(g) => {
+                        for item in &g.items {
+                            walk(item, through_siblings, out);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            walk(tree, false, &mut self.found.stray);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if let Some(at) = token_line(&mac.tokens, NAME) {
+                self.found.stray.push(at);
+            }
+            if self.in_body {
+                for name in ["climb", "ancestors"] {
+                    if let Some(at) = token_line(&mac.tokens, name) {
+                        self.found.checked.push(at);
+                    }
+                }
+            }
+            visit::visit_macro(self, mac);
+        }
+    }
+
+    let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{rel} must parse as Rust: {e}"));
+    let mut scan = Scan {
+        siblings: rel == "lib/baumhard/src/engine/siblings.rs",
+        engine_mod: rel == "lib/baumhard/src/engine/mod.rs",
+        link: rel == "lib/baumhard/src/arena/link.rs",
+        in_body: false,
+        found: ReattachSites::default(),
+    };
+    scan.visit_file(&parsed);
+    scan.found.checked.sort();
+    scan.found.checked.dedup();
+    scan.found.stray.sort();
+    scan.found.stray.dedup();
+    scan.found
 }
 
 /// What [`engine_depth_cost_calls`] found.
@@ -1774,190 +2036,6 @@ fn parent_reads_in_loops(file: &Path, source: &str) -> Vec<(String, usize)> {
     };
     finder.visit_file(&parsed);
     finder.found
-}
-
-/// Every write to a field named `root` in the workspace's shipped code
-/// — `lib/`, `src/` and `crates/`, minus `tests/` directories, benches,
-/// test-gated modules and test-gated items — outside
-/// `lib/baumhard/src/engine/tree.rs`, as `(repo-relative file, 1-based
-/// line, the line's text)`, plus how many `root` fields the scan read
-/// at all, reads included, so a caller can tell an empty finding from
-/// a scan that read nothing.
-///
-/// A write is any spelling that can change it:
-/// - an assignment to `<expr>.root`, plain or compound;
-/// - a `&mut <expr>.root` — how `std::mem::replace`, `swap` and `take`,
-///   or any function that writes through a reference, reach it — or a
-///   `&raw mut <expr>.root`;
-/// - a struct pattern that binds a `root` field, of whatever type it
-///   names: `let Tree { root, .. } = tree;` matched through a `&mut`
-///   binds a `&mut NodeId`, which `*root = n` then writes, and the
-///   type may be spelled through an alias (`GfxTree`,
-///   `DocMutatorTree`) or a renamed import, which a scan of syntax
-///   cannot resolve. No shipped pattern binds a `root` field today, so
-///   none needs exempting;
-/// - an `addr_of_mut!` whose arguments name `root`: syn does not parse
-///   a macro's arguments, so its tokens are read instead.
-///
-/// The raw-pointer spellings (`&raw mut`, `addr_of_mut!`) can write
-/// only in `unsafe` code, and the workspace has none; baumhard's
-/// `forbid(unsafe_code)` holds that for baumhard, but the scan's other
-/// roots carry no such lint — there it is a convention — so the scan
-/// reads them too.
-/// `Tree::root` is a public field, kept public for its reads; writing
-/// it would move the tree's root without the engine knowing, and the
-/// set behind `Tree::contains` and every journal with it would then
-/// describe another tree. The scan cannot see types, so it refuses a
-/// write to any field of that name: none exists outside the engine
-/// today, and one that is not a `Tree`'s can be renamed or allowed by
-/// name with its reason.
-///
-/// Cost: one read and one `syn` parse of every `.rs` file in those
-/// roots.
-pub(crate) fn root_field_writes() -> (Vec<(String, usize, String)>, usize) {
-    use syn::visit::{self, Visit};
-
-    struct Writes {
-        lines: Vec<usize>,
-        fields: usize,
-    }
-
-    fn is_root_field(expr: &syn::Expr) -> Option<usize> {
-        match expr {
-            syn::Expr::Field(field) => match &field.member {
-                syn::Member::Named(name) if name == "root" => Some(name.span().start().line),
-                _ => None,
-            },
-            syn::Expr::Paren(inner) => is_root_field(&inner.expr),
-            _ => None,
-        }
-    }
-
-    impl<'ast> Visit<'ast> for Writes {
-        fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
-            if matches!(&field.member, syn::Member::Named(name) if name == "root") {
-                self.fields += 1;
-            }
-            visit::visit_expr_field(self, field);
-        }
-
-        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
-            if let Some(line) = is_root_field(&assign.left) {
-                self.lines.push(line);
-            }
-            visit::visit_expr_assign(self, assign);
-        }
-
-        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
-            let compound = matches!(
-                binary.op,
-                syn::BinOp::AddAssign(_)
-                    | syn::BinOp::SubAssign(_)
-                    | syn::BinOp::MulAssign(_)
-                    | syn::BinOp::DivAssign(_)
-                    | syn::BinOp::RemAssign(_)
-                    | syn::BinOp::BitXorAssign(_)
-                    | syn::BinOp::BitAndAssign(_)
-                    | syn::BinOp::BitOrAssign(_)
-                    | syn::BinOp::ShlAssign(_)
-                    | syn::BinOp::ShrAssign(_)
-            );
-            if compound {
-                if let Some(line) = is_root_field(&binary.left) {
-                    self.lines.push(line);
-                }
-            }
-            visit::visit_expr_binary(self, binary);
-        }
-
-        fn visit_expr_raw_addr(&mut self, raw: &'ast syn::ExprRawAddr) {
-            if matches!(raw.mutability, syn::PointerMutability::Mut(_)) {
-                if let Some(line) = is_root_field(&raw.expr) {
-                    self.lines.push(line);
-                }
-            }
-            visit::visit_expr_raw_addr(self, raw);
-        }
-
-        fn visit_pat_struct(&mut self, pattern: &'ast syn::PatStruct) {
-            for field in &pattern.fields {
-                if let syn::Member::Named(name) = &field.member {
-                    if name == "root" {
-                        self.lines.push(name.span().start().line);
-                    }
-                }
-            }
-            visit::visit_pat_struct(self, pattern);
-        }
-
-        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-            let addr_of_mut = mac
-                .path
-                .segments
-                .last()
-                .is_some_and(|segment| segment.ident == "addr_of_mut");
-            let names_root = || {
-                let mut stack = vec![mac.tokens.clone()];
-                while let Some(tokens) = stack.pop() {
-                    for token in tokens {
-                        match token {
-                            proc_macro2::TokenTree::Ident(ident) if ident == "root" => return true,
-                            proc_macro2::TokenTree::Group(group) => stack.push(group.stream()),
-                            _ => {}
-                        }
-                    }
-                }
-                false
-            };
-            if addr_of_mut && names_root() {
-                self.lines.push(mac.path.segments[0].ident.span().start().line);
-            }
-            visit::visit_macro(self, mac);
-        }
-
-        fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
-            if reference.mutability.is_some() {
-                if let Some(line) = is_root_field(&reference.expr) {
-                    self.lines.push(line);
-                }
-            }
-            visit::visit_expr_reference(self, reference);
-        }
-    }
-
-    let sources = workspace_rust_sources();
-    let test_only = test_gated_module_files(&sources);
-    let mut found = Vec::new();
-    let mut fields = 0;
-    for file in sources {
-        let rel = relative_to_repo(&file);
-        let test_path = rel.split('/').any(|part| part == "tests" || part == "benches");
-        if test_path || test_only.contains(&file) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-        let source = production_source(&file, &text);
-        let parsed =
-            syn::parse_file(&source).unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
-        let mut writes = Writes {
-            lines: Vec::new(),
-            fields: 0,
-        };
-        writes.visit_file(&parsed);
-        fields += writes.fields;
-        if rel == "lib/baumhard/src/engine/tree.rs" {
-            continue;
-        }
-        let lines: Vec<&str> = source.lines().collect();
-        for line in writes.lines {
-            let code = lines.get(line - 1).map_or("", |l| l.trim());
-            found.push((rel.clone(), line, code.to_string()));
-        }
-    }
-    found.sort();
-    found.dedup();
-    (found, fields)
 }
 
 #[cfg(test)]
@@ -2347,27 +2425,199 @@ mod tests {
         );
     }
 
-    /// **Only `engine/tree.rs` writes a `root` field** in the workspace's
-    /// shipped code ([`root_field_writes`]). `Tree::root` stays a public
-    /// field for its reads, so this is what keeps a tree's root where
-    /// the engine put it — and with it `Tree::contains` and every
-    /// journal — until the field can be made private.
+    /// **The engine's same-row re-attach climbs nothing, and is the only
+    /// caller of the arena's unchecked insert**
+    /// ([`same_row_reattach_calls`]). The body of
+    /// `siblings::reattach_in_row` inserts through the arena's unchecked
+    /// `reattach_in_row` and through no checked insert or climb; no other
+    /// shipped file of the crate names that unchecked insert, which could
+    /// hang a node below itself under any parent but the one it left.
     #[test]
-    fn test_only_the_engine_tree_writes_a_root_field() {
-        let (found, fields) = root_field_writes();
+    fn test_the_same_row_reattach_is_the_unchecked_insert() {
+        let calls = same_row_reattach_calls();
         assert!(
-            fields > 0,
-            "precondition: the scan reads the workspace's `root` fields, {fields} of them"
+            calls.unchecked >= 1,
+            "precondition: the scan reads the body of siblings::reattach_in_row, which \
+             re-attaches through the arena's unchecked insert (found {})",
+            calls.unchecked
         );
-        assert!(
-            found.is_empty(),
-            "a write to a `root` field outside lib/baumhard/src/engine/tree.rs — `Tree::root` \
-             is written only by the engine:\n{}",
-            found
+        let show = |sites: &[(String, usize, String)]| {
+            sites
                 .iter()
                 .map(|(file, line, code)| format!("  {file}:{line}   {code}"))
                 .collect::<Vec<_>>()
                 .join("\n")
+        };
+        assert!(
+            calls.checked.is_empty(),
+            "the same-row re-attach checks for a cycle or climbs, an O(depth) cost a node \
+             put back into its own row cannot need (ruling R16 on #282):\n{}",
+            show(&calls.checked)
         );
+        assert!(
+            calls.stray.is_empty(),
+            "the arena's unchecked insert named outside siblings::reattach_in_row, where \
+             nothing holds the row to the one the node left:\n{}",
+            show(&calls.stray)
+        );
+    }
+
+    /// [`reattach_sites`] reads every spelling of the unchecked insert,
+    /// and of a climb in the engine function's body — each control of
+    /// the scan, kept in the suite.
+    #[test]
+    fn test_reattach_sites_reads_every_spelling() {
+        const SIBLINGS: &str = "lib/baumhard/src/engine/siblings.rs";
+        const ELSEWHERE: &str = "lib/baumhard/src/engine/structure.rs";
+        let stray = |body: &str| {
+            reattach_sites(ELSEWHERE, &format!("fn f() {{ {body} }}"))
+                .stray
+                .len()
+        };
+        // The arena's method, every way it can be named.
+        assert_eq!(
+            stray("let _ = n.reattach_in_row(p, None, arena);"),
+            1,
+            "a method call"
+        );
+        assert_eq!(
+            stray("let _ = NodeId::reattach_in_row(n, p, None, arena);"),
+            1,
+            "UFCS"
+        );
+        assert_eq!(
+            stray("let _ = crate::arena::NodeId::reattach_in_row(n, p, None, arena);"),
+            1,
+            "UFCS, qualified"
+        );
+        assert_eq!(
+            stray("let f = NodeId::reattach_in_row; let _ = f(n, p, None, arena);"),
+            1,
+            "a fn pointer"
+        );
+        assert_eq!(
+            stray("use crate::arena::NodeId as Id; let _ = Id::reattach_in_row(n, p, None, arena);"),
+            1,
+            "through a `use .. as` alias of the type"
+        );
+        assert_eq!(
+            stray("log::info!(\"{:?}\", n.reattach_in_row(p, None, arena));"),
+            1,
+            "in a macro"
+        );
+        assert_eq!(
+            reattach_sites(ELSEWHERE, "fn reattach_in_row() {}").stray.len(),
+            1,
+            "a function of that name elsewhere"
+        );
+        assert_eq!(
+            reattach_sites(
+                SIBLINGS,
+                "fn f() { let _ = <NodeId>::reattach_in_row(n, p, None, arena); }"
+            )
+            .stray
+            .len(),
+            1,
+            "a qualified self, even in siblings.rs"
+        );
+        assert_eq!(
+            stray(
+                "use crate::arena::NodeId as siblings; let _ = siblings::reattach_in_row(n, p, None, arena);"
+            ),
+            1,
+            "the type renamed `siblings`: the call through it reads as the engine function, so the \
+             rename itself is stray"
+        );
+        assert_eq!(
+            reattach_sites(ELSEWHERE, "type siblings = crate::arena::NodeId;")
+                .stray
+                .len(),
+            1,
+            "a type called `siblings`"
+        );
+        assert_eq!(
+            reattach_sites(ELSEWHERE, "mod siblings {}").stray.len(),
+            1,
+            "a module called `siblings` outside engine/mod.rs"
+        );
+        assert_eq!(
+            reattach_sites("lib/baumhard/src/engine/mod.rs", "mod siblings;")
+                .stray
+                .len(),
+            0,
+            "the engine's own `mod siblings`"
+        );
+        // The arena: the method's definition, and nothing else.
+        const LINK: &str = "lib/baumhard/src/arena/link.rs";
+        let method = "impl NodeId { pub(crate) fn reattach_in_row(self) {} }";
+        assert_eq!(
+            reattach_sites(LINK, method).stray.len(),
+            0,
+            "the method's definition"
+        );
+        assert_eq!(
+            reattach_sites(
+                LINK,
+                &format!("{method} pub(crate) fn put_back(n: NodeId) {{ n.reattach_in_row(); }}")
+            )
+            .stray
+            .len(),
+            1,
+            "a wrapper in the arena"
+        );
+        assert_eq!(
+            reattach_sites("lib/baumhard/src/arena/mod.rs", method)
+                .stray
+                .len(),
+            1,
+            "a definition anywhere but arena/link.rs"
+        );
+        // The engine function, which is allowed.
+        assert_eq!(
+            stray("siblings::reattach_in_row(arena, p, n, None);"),
+            0,
+            "the engine function"
+        );
+        assert_eq!(
+            stray("crate::engine::siblings::reattach_in_row(arena, p, n, None);"),
+            0,
+            "the engine function, qualified"
+        );
+        assert_eq!(
+            reattach_sites(ELSEWHERE, "use crate::engine::siblings::reattach_in_row;")
+                .stray
+                .len(),
+            0,
+            "a `use` of the engine function"
+        );
+        // The engine function's body.
+        let body = |line: &str| {
+            reattach_sites(
+                SIBLINGS,
+                &format!(
+                    "pub(crate) fn reattach_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, \
+                     prev: Option<NodeId>) {{ {line} let _ = node.reattach_in_row(parent, prev, arena); }}"
+                ),
+            )
+        };
+        let clean = body("");
+        assert_eq!(
+            (clean.unchecked, clean.checked.len(), clean.stray.len()),
+            (1, 0, 0),
+            "the shipped shape"
+        );
+        for planted in [
+            "let _ = crate::engine::tree::climb(arena, parent).count();",
+            "let _ = climb(arena, parent).count();",
+            "let _ = parent.ancestors(arena).count();",
+            "let _ = parent.checked_prepend(node, arena);",
+            "let _ = NodeId::checked_prepend(parent, node, arena);",
+        ] {
+            assert_eq!(
+                body(planted).checked.len(),
+                1,
+                "a climb or check planted: {planted}"
+            );
+        }
     }
 }

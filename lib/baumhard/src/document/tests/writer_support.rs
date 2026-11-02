@@ -5,6 +5,7 @@
 //! writer test is held to — the indexes the writer keeps, computed again
 //! from scratch, and the document still savable.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::format::{check_savable, save};
 use crate::document::ids::{Document, NodeIdent};
@@ -16,7 +17,6 @@ use crate::engine::anchor::Anchors;
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
 use glam::Vec2;
-use indextree::NodeId;
 use rustc_hash::FxHashSet;
 
 /// The test builder's example map, built.
@@ -76,11 +76,7 @@ pub(crate) fn ident(doc: &Document, id: NodeId) -> Option<NodeIdent> {
 /// How many arena slots of the document are live, in the tree or held
 /// out of it by a journal: a slot a discard frees stops counting.
 pub(crate) fn live_slots(doc: &Document) -> usize {
-    doc.tree()
-        .arena()
-        .iter()
-        .filter(|node| !node.is_removed())
-        .count()
+    doc.tree().arena().live_count()
 }
 
 /// The children of `id` of `kind`, in sibling order.

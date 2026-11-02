@@ -35,6 +35,7 @@
 //! transaction and stops there, and makes an animated one an entry of
 //! its own before it goes on.
 
+use crate::arena::NodeId;
 use crate::document::element::DocElement;
 use crate::document::ids::Document;
 use crate::document::writer::error::ApplyError;
@@ -43,7 +44,6 @@ use crate::document::writer::upkeep::Direction;
 use crate::document::writer::{ChangeSource, EditRequest, Revision};
 use crate::engine::interpolate::Snap;
 use crate::engine::journal::{Journal, Touch};
-use indextree::NodeId;
 use log::error;
 use std::sync::atomic::{AtomicU64, Ordering};
 

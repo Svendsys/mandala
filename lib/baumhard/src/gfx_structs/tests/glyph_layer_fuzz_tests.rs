@@ -78,7 +78,7 @@ fn test_an_area_moved_to_infinity_has_no_box_and_stretches_no_ancestor() {
     check_glyph_mutations_json(finding).unwrap();
 
     let mut tree = GfxTree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let void = tree
         .insert_child(root, GfxElement::new_void(0), Placement::Last)
         .unwrap();

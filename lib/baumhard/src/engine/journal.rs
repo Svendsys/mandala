@@ -87,11 +87,11 @@
 //! no key comparison. Both validate every node they refer to before
 //! writing anything.
 
+use crate::arena::{Arena, NodeId};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::interpolate::{Interpolable, Snap};
 use crate::engine::siblings;
 use crate::engine::tree::{Tree, TreeError};
-use indextree::{Arena, NodeId};
 use log::error;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
@@ -465,7 +465,7 @@ impl<E: TreeElement> JournalBuilder<E> {
         let mut detached_before = Vec::new();
         let mut detached_after = Vec::new();
         for (recorded, _, after_at) in &read {
-            if recorded.node == tree.root {
+            if recorded.node == tree.root() {
                 continue;
             }
             if recorded.at.is_none() {
@@ -475,7 +475,7 @@ impl<E: TreeElement> JournalBuilder<E> {
                 detached_after.push(recorded.node);
             }
         }
-        let touched = structural_touches(arena, tree.root, &read, &out, &keep);
+        let touched = structural_touches(arena, tree.root(), &read, &out, &keep);
 
         let mut entries = Vec::with_capacity(read.len());
         let mut index = FxHashMap::default();
@@ -1401,11 +1401,10 @@ impl<E: TreeElement> Journal<E> {
     /// neither of the journal's arrangements.
     ///
     /// Invalidates the tree's cache. Cost: one clone per entry; for
-    /// moved elements a detach and a re-attach each: a same-row one for
-    /// an element that keeps its parent (O(1) once the engine's own
-    /// arena tree replaces indextree, V1-A6 #290), and an O(depth) one —
-    /// the cycle check of a
-    /// re-parent — for an element that changes parent, enters or leaves.
+    /// moved elements a detach and a re-attach each: a same-row one,
+    /// O(1), for an element that keeps its parent, and an O(depth) one —
+    /// the cycle check of a re-parent — for an element that changes
+    /// parent, enters or leaves.
     pub fn revert(&self, tree: &mut Tree<E>) -> Result<(), TreeError> {
         self.validate(tree)?;
         self.in_order(tree)?;
@@ -1474,7 +1473,7 @@ impl<E: TreeElement> Journal<E> {
         let mut freed = false;
         for &node in held {
             let detached = tree.arena.get(node).is_some_and(|n| n.parent().is_none());
-            if detached && node != tree.root {
+            if detached && node != tree.root() {
                 for member in node.descendants(&tree.arena) {
                     tree.detached.remove(&member);
                 }
@@ -1678,7 +1677,7 @@ impl<E: Interpolable> Journal<E> {
 /// Overwrite the element at `node`, which the caller has validated.
 fn write<E>(arena: &mut Arena<E>, node: NodeId, value: E) {
     if let Some(slot) = arena.get_mut(node) {
-        *slot.get_mut() = value;
+        *slot = value;
     }
 }
 

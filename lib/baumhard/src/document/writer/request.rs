@@ -29,6 +29,7 @@
 //! builder is abandoned, or the closed journal reverted and discarded,
 //! and the ident counter put back.
 
+use crate::arena::NodeId;
 use crate::document::element::DocElement;
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::compose::remove_links;
@@ -38,7 +39,6 @@ use crate::document::writer::budget::Budget;
 use crate::document::writer::error::ApplyError;
 use crate::engine::journal::{Journal, JournalBuilder, Touch};
 use crate::engine::tree::TreeError;
-use indextree::NodeId;
 use log::error;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;

@@ -218,8 +218,10 @@ pub extern "C" fn deep_mutator_validates() -> u32 {
     1
 }
 
-/// The engine's and the document's walks over a chain 100,000 levels
-/// deep (design §20 rule 11, V1-A5 #282): each export runs one native
+/// The arena's, the engine's and the document's walks over a chain
+/// 100,000 levels deep (design §20 rule 11, V1-A5 #282, V1-A6 #290) —
+/// the arena's owned `Clone`, `PartialEq`, `Debug` and `Drop` among
+/// them: each export runs one native
 /// test body, which panics on any failure. In a debug build on wasm32's
 /// default stack, a walk that recursed once per level would trap here.
 macro_rules! deep_scenario {
@@ -233,6 +235,9 @@ macro_rules! deep_scenario {
     };
 }
 
+deep_scenario!(deep_arena_deep_chain_walks, baumhard::arena::tests::deep_tests::do_arena_deep_chain_walks);
+deep_scenario!(deep_arena_deep_chain_owned_traits, baumhard::arena::tests::deep_tests::do_arena_deep_chain_owned_traits);
+deep_scenario!(deep_arena_deep_chain_structural_operations, baumhard::arena::tests::deep_tests::do_arena_deep_chain_structural_operations);
 deep_scenario!(deep_engine_deep_chain_full_walk, baumhard::engine::tests::deep_tests::do_engine_deep_chain_full_walk);
 deep_scenario!(deep_engine_deep_chain_repeat_while_to_the_leaf, baumhard::engine::tests::deep_tests::do_engine_deep_chain_repeat_while_to_the_leaf);
 deep_scenario!(deep_engine_deep_chain_anchored_walks, baumhard::engine::tests::deep_tests::do_engine_deep_chain_anchored_walks);

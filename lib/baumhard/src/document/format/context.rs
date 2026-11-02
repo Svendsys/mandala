@@ -15,12 +15,12 @@
 //! **Everything here runs on the error path only.** Counting the lines
 //! before an offset is O(offset), which a load that succeeds never pays.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::format::dto::{NodeDto, SpanDto};
 use crate::document::format::error::TextPosition;
 use crate::document::format::rows::{Rows, RowsError};
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 use serde_json::value::RawValue;
 use std::fmt::{self, Write};
 use unicode_segmentation::UnicodeSegmentation;

@@ -13,6 +13,7 @@
 //! Follows the `do_*()` / `test_*()` split (§T2.2): every `do_*` body
 //! has a bench entry in `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use crate::engine::anchor::Anchors;
 use crate::engine::element::TreeElement;
 use crate::engine::interpolate::Snap;
@@ -27,7 +28,6 @@ use crate::engine::tests::test_element::{
 };
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
 use crate::engine::walker::walk_tree_from;
-use indextree::NodeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 type TestMutatorTree = MutatorTree<TestElement, TestMutation>;
@@ -36,7 +36,7 @@ type TestMutatorTree = MutatorTree<TestElement, TestMutation>;
 /// the order given — each appended at the end of its key's run.
 fn flat_tree(children: &[(usize, i64)]) -> (Tree<TestElement>, Vec<NodeId>) {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let ids = children
         .iter()
         .map(|&(channel, v)| add(&mut tree, root, TestElement::new(channel, v)))
@@ -72,7 +72,7 @@ fn row_values(tree: &Tree<TestElement>, parent: NodeId) -> Vec<i64> {
 
 /// How many nodes the arena holds, freed slots not counted.
 fn live_nodes(tree: &Tree<TestElement>) -> usize {
-    tree.arena().iter().filter(|node| !node.is_removed()).count()
+    tree.arena().live_count()
 }
 
 // ── refusals: each leaves the tree as it was ──────────────────────
@@ -100,7 +100,7 @@ pub fn do_structure_move_under_its_own_subtree_is_a_cycle() {
             to,
             at: Placement::Last,
         });
-        let root = mutators.root;
+        let root = mutators.root();
         add_mutator(&mut mutators, root, Mutator::new(TestMutation::Add(5), plain(0)));
         mutators
     };
@@ -123,7 +123,7 @@ pub fn do_structure_move_under_its_own_subtree_is_a_cycle() {
 
     let result = run(&mut tree, &raising_move(a), vec![a], &mut builder);
     assert_eq!(result, Err(TreeError::Cycle { node: a, to: a }));
-    let root = tree.root;
+    let root = tree.root();
     let result = run(&mut tree, &raising_move(b), vec![root], &mut builder);
     assert_eq!(result, Err(TreeError::Cycle { node: root, to: b }));
     assert_eq!(snapshot(&tree), before);
@@ -159,7 +159,7 @@ pub fn do_structure_a_command_on_a_node_removed_earlier_in_the_walk_fails() {
     assert_eq!(snapshot(&tree), before);
 
     let mut nested = command(StructOp::Remove);
-    let root = nested.root;
+    let root = nested.root();
     add_mutator(
         &mut nested,
         root,
@@ -172,7 +172,7 @@ pub fn do_structure_a_command_on_a_node_removed_earlier_in_the_walk_fails() {
     // At the root: remove `p` (channel 0), then move `y` (channel 1),
     // which the merge reaches second, under `p`.
     let mut remove_then_move = MutatorTree::new_with(Mutator::new_void(plain(0)));
-    let root = remove_then_move.root;
+    let root = remove_then_move.root();
     add_mutator(
         &mut remove_then_move,
         root,
@@ -189,7 +189,7 @@ pub fn do_structure_a_command_on_a_node_removed_earlier_in_the_walk_fails() {
             plain(1),
         ),
     );
-    let tree_root = tree.root;
+    let tree_root = tree.root();
     let result = run(&mut tree, &remove_then_move, vec![tree_root], &mut builder);
     assert_eq!(result, Err(TreeError::TargetRemovedEarlier(p)));
     assert_eq!(snapshot(&tree), before);
@@ -212,7 +212,7 @@ pub fn do_structure_a_command_on_a_node_removed_earlier_in_the_walk_fails() {
     .unwrap();
     let mut control = tree.clone();
     let mut move_only = MutatorTree::new_with(Mutator::new_void(plain(0)));
-    let root = move_only.root;
+    let root = move_only.root();
     add_mutator(
         &mut move_only,
         root,
@@ -248,7 +248,7 @@ pub fn do_structure_merge_refuses_a_sibling_with_children() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (1, 30)]);
     let (a, b, c) = (t[0], t[1], t[2]);
     let kid = add(&mut tree, b, TestElement::new(0, 20));
-    let root = tree.root;
+    let root = tree.root();
     let before = snapshot(&tree);
     let mut builder = JournalBuilder::new();
     for target in [a, b, c] {
@@ -279,7 +279,7 @@ pub fn do_structure_refusals_name_what_is_wrong_and_change_nothing() {
     let (mut tree, t) = flat_tree(&[(0, 5), (1, 1)]);
     let (a, b) = (t[0], t[1]);
     let nephew = add(&mut tree, b, TestElement::new(0, 7));
-    let root = tree.root;
+    let root = tree.root();
     let gone = add(&mut tree, root, TestElement::new(2, 9));
     tree.remove_subtree(gone).unwrap();
     let before = snapshot(&tree);
@@ -364,12 +364,12 @@ fn test_structure_commands_run_after_the_walk() {
 /// went would have reached the new child too.
 pub fn do_structure_commands_run_after_the_walk() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2)]);
-    let root = tree.root;
+    let root = tree.root();
     let mut mutators = command(StructOp::Insert {
         subtree: Subtree::leaf(TestElement::new(0, 100)),
         at: Placement::Last,
     });
-    let mroot = mutators.root;
+    let mroot = mutators.root();
     add_mutator(&mut mutators, mroot, Mutator::new(TestMutation::Add(1), plain(0)));
     run(&mut tree, &mutators, vec![root], &mut JournalBuilder::new()).unwrap();
     assert_eq!(row_values(&tree, root), vec![2, 3, 100]);
@@ -394,7 +394,7 @@ fn test_structure_inserts_land_where_their_placement_says() {
 pub fn do_structure_inserts_land_where_their_placement_says() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (1, 3)]);
     let (a, b) = (t[0], t[1]);
-    let root = tree.root;
+    let root = tree.root();
     let insert = |channel, value, at| {
         command(StructOp::Insert {
             subtree: Subtree::leaf(TestElement::new(channel, value)),
@@ -458,7 +458,7 @@ pub fn do_structure_revert_and_replay_put_back_the_same_nodes() {
     let (mut tree, t) = flat_tree(&[(0, 5), (0, 6), (1, 7)]);
     let (a, b, c) = (t[0], t[1], t[2]);
     let kid = add(&mut tree, b, TestElement::new(0, 60));
-    let root = tree.root;
+    let root = tree.root();
     let before = snapshot(&tree);
     let mut builder = JournalBuilder::new();
     let subtree = Subtree {
@@ -528,7 +528,7 @@ pub fn do_structure_split_then_merge_round_trips_a_value() {
     let (mut tree, t) = flat_tree(&[(0, 7), (1, 9)]);
     let a = t[0];
     let kid = add(&mut tree, a, TestElement::new(0, 50));
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     run(
         &mut tree,
@@ -587,7 +587,7 @@ fn test_structure_insert_then_rekey_reverts_and_replays_exactly() {
 pub fn do_structure_insert_then_rekey_reverts_and_replays_exactly() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3)]);
     let (a, b, c) = (t[0], t[1], t[2]);
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     let insert_z = command(StructOp::Insert {
         subtree: Subtree::leaf(TestElement::new(0, 26)),
@@ -621,7 +621,7 @@ fn test_structure_rekey_then_insert_reverts_and_replays_exactly() {
 pub fn do_structure_rekey_then_insert_reverts_and_replays_exactly() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3)]);
     let (a, b, c) = (t[0], t[1], t[2]);
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     tree.update_journaled(a, &mut builder, |e| e.channel = 1).unwrap();
     assert_eq!(row(&tree, root), vec![b, c, a]);
@@ -754,7 +754,7 @@ pub fn do_structure_touched_names_whole_subtrees_in_pre_order() {
         "c's child moved with it"
     );
 
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     run(
         &mut tree,
@@ -845,7 +845,7 @@ pub fn do_structure_discard_stales_a_detached_node_and_keeps_an_attached_one() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2)]);
     let (a, b) = (t[0], t[1]);
     let kid = add(&mut tree, a, TestElement::new(0, 10));
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     run(&mut tree, &command(StructOp::Remove), vec![a], &mut builder).unwrap();
     tree.update_journaled(b, &mut builder, |e| e.value = 20).unwrap();
@@ -890,7 +890,7 @@ pub fn do_structure_discard_frees_by_the_side_last_written() {
     {
         let (mut tree, t) = flat_tree(&[(0, 1), (0, 2)]);
         let r = t[1];
-        let root = tree.root;
+        let root = tree.root();
         let mut builder = JournalBuilder::new();
         let insert = command(StructOp::Insert {
             subtree: Subtree::leaf(TestElement::new(0, 10)),
@@ -933,7 +933,7 @@ fn test_structure_discard_leaves_a_subtree_a_later_journal_removed() {
 /// find it stale. The control: discarding `j2` frees it.
 pub fn do_structure_discard_leaves_a_subtree_a_later_journal_removed() {
     let (mut tree, _) = flat_tree(&[(0, 1)]);
-    let root = tree.root;
+    let root = tree.root();
     let mut builder = JournalBuilder::new();
     let insert = command(StructOp::Insert {
         subtree: Subtree::leaf(TestElement::new(0, 10)),
@@ -1002,7 +1002,7 @@ fn test_structure_refuses_a_split_or_merge_that_changes_the_key() {
 /// it.
 pub fn do_structure_refuses_a_split_or_merge_that_changes_the_key() {
     let mut tree = Tree::new_non_indexed_with(SpatialTestElement::unboxed(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let a = tree
         .insert_child(root, SpatialTestElement::unboxed(0, 1), Placement::Last)
         .unwrap();
@@ -1048,7 +1048,7 @@ fn test_structure_snaps_in_write_interpolated() {
 pub fn do_structure_snaps_in_write_interpolated() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 10)]);
     let (a, b) = (t[0], t[1]);
-    let root = tree.root;
+    let root = tree.root();
     let before = snapshot(&tree);
     let mut builder = JournalBuilder::new();
     run(&mut tree, &command(StructOp::Remove), vec![a], &mut builder).unwrap();
@@ -1090,7 +1090,7 @@ fn test_structure_without_a_journal_is_all_or_nothing_and_frees_what_it_removes(
 pub fn do_structure_without_a_journal_is_all_or_nothing_and_frees_what_it_removes() {
     let (mut tree, t) = flat_tree(&[(0, 1), (1, 2)]);
     let (a, b) = (t[0], t[1]);
-    let root = tree.root;
+    let root = tree.root();
     let before = snapshot(&tree);
     let live = live_nodes(&tree);
     let mut failing = MutatorTree::new_with(Mutator::new_structure(
@@ -1100,7 +1100,7 @@ pub fn do_structure_without_a_journal_is_all_or_nothing_and_frees_what_it_remove
         },
         plain(0),
     ));
-    let mroot = failing.root;
+    let mroot = failing.root();
     add_mutator(&mut failing, mroot, Mutator::new(TestMutation::Add(5), plain(0)));
     add_mutator(
         &mut failing,
@@ -1170,7 +1170,7 @@ fn test_structure_batch_on_a_wide_tree() {
 /// one it closed on.
 pub fn do_structure_batch_on_a_wide_tree() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     for i in 0..64 {
         let element = if i % 2 == 0 {
             TestElement::new(i % 4, 10 + i as i64)
@@ -1313,7 +1313,7 @@ fn test_structure_journal_names_the_parents_a_node_left_and_took() {
 pub fn do_structure_journal_names_the_parents_a_node_left_and_took() {
     let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3), (0, 4), (1, 5), (1, 6), (2, 7)]);
     let (a, b, c, d, p, q, e) = (t[0], t[1], t[2], t[3], t[4], t[5], t[6]);
-    let root = tree.root;
+    let root = tree.root();
     let kid = add(&mut tree, b, TestElement::new(0, 20));
     let x = add(&mut tree, p, TestElement::new(0, 30));
     let mut builder = JournalBuilder::new();
@@ -1432,7 +1432,7 @@ pub fn do_structure_walk_tree_from_refuses_a_node_out_of_the_tree() {
     run(&mut tree, &command(StructOp::Remove), vec![a], &mut builder).unwrap();
     let journal = builder.close(&tree);
     let raise: TestMutatorTree = MutatorTree::new_with(Mutator::new(TestMutation::Add(5), plain(0)));
-    let mroot = raise.root;
+    let mroot = raise.root();
     walk_tree_from(&mut tree, &raise, kid, mroot, &0);
     assert_eq!(value(&tree, kid), 10, "the held child is not changed");
     walk_tree_from(&mut tree, &raise, b, mroot, &0);
@@ -1457,7 +1457,7 @@ fn test_structure_rebuilding_a_row_as_it_stood_before_is_one_pass() {
 pub fn do_structure_rebuilding_a_row_as_it_stood_before_is_one_pass() {
     const SIBLINGS: usize = 4000;
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let ids: Vec<NodeId> = (0..SIBLINGS)
         .map(|i| add(&mut tree, root, TestElement::new(0, i as i64)))
         .collect();
@@ -1579,7 +1579,7 @@ pub fn do_journal_builder_names_what_it_recorded_and_created() {
     let second = tree.arena()[b].next_sibling().unwrap();
     assert_eq!(value(&tree, second), 4, "precondition: the split's second part");
     run(&mut tree, &command(StructOp::Remove), vec![c], &mut builder).unwrap();
-    let root = tree.root;
+    let root = tree.root();
     tree.update_journaled(root, &mut builder, |e| e.value = 1)
         .unwrap();
     run(

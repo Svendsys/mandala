@@ -4,12 +4,12 @@
 //! concrete [`MutatorTree<E, M>`], refusing ASTs that cannot mean
 //! anything with a [`BuildError`] rather than a panic.
 
+use crate::arena::NodeId;
 use crate::engine::element::TreeElement;
 use crate::engine::key::BranchKey;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
 use crate::engine::tree::{MutatorTree, Placement, TreeError};
-use indextree::NodeId;
 use std::fmt;
 
 use super::ast::{ChannelSrc, CountSrc, InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
@@ -98,7 +98,7 @@ where
     }
     let root_mutator = materialize_node(node, ctx, None)?;
     let mut mt = MutatorTree::new_with(root_mutator);
-    let root = mt.root;
+    let root = mt.root();
     for child in node_children(node) {
         append(child, root, &mut mt, ctx, None)?;
     }

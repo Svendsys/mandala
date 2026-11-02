@@ -4,6 +4,7 @@
 //! palettes, the definitions and the defaults — everything a node's
 //! colors and triggers are resolved against, read before any node.
 
+use crate::arena::NodeId;
 use crate::document::bounds;
 use crate::document::element::DocKind;
 use crate::document::element::{
@@ -22,7 +23,6 @@ use crate::document::ids::{Definitions, EditDef, PresentationDef, VerbDef};
 use crate::document::keyed::KeyedSet;
 use crate::document::place::{name_fault, NameFault, Unit};
 use crate::document::values::{Rgba, VerbId};
-use indextree::NodeId;
 
 /// A name and what it names, in a file's object.
 type NameAndValue<'a, T> = (&'a str, &'a T);

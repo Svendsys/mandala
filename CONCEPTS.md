@@ -160,6 +160,41 @@ second ([below](#the-document--document-docelement-dockind)), and
 `util::engine_isolation`'s scan holds the engine to importing nothing
 from `gfx_structs`, `mindmap` or `font`.
 
+### `Arena<T>` and `NodeId`
+
+The storage every tree in Baumhard is made of: nodes in one `Vec`,
+linked to their parent, first and last child and previous and next
+sibling, and named by a `NodeId`.
+
+A tree that is edited in place needs ids that survive the edit, links
+that make every one-step move O(1), and a way to tell an id whose node
+is gone. A `NodeId` is a slot and the slot's **generation**: removing
+a node frees the slot and moves it to its next generation, so the old
+id reads nothing (`Arena::get` answers `None`, indexing with it
+panics naming it) even once another node takes the slot, and a slot at
+its last generation is retired rather than reused — no id can ever
+alias another node. Every walk iterates — `children` (both ways),
+`ancestors`, `descendants`, `traverse` — and `Clone`, `PartialEq`,
+`Debug` and `Drop` of an arena are those of its flat `Vec`, so depth
+costs none of them call stack (§20 rule 11).
+
+Structure changes through `NodeId`: `detach`, `remove_subtree`, the
+O(1) value inserts that create a node (`append_value`,
+`prepend_value`, `insert_after_value`, `insert_before_value`), and two
+ways to move an existing one. Under **another parent** it goes through
+a checked insert (`checked_append`, `checked_prepend`,
+`checked_insert_after`, `checked_insert_before`), which refuses a cycle
+by climbing from the destination to the top — O(depth), once per
+moved subtree. Back into **the row it was detached from** it goes
+through the crate-private `reattach_in_row`, which cannot close a cycle
+and so climbs nothing: O(1) (ruling R16 on #282). The engine calls it
+from one function, `engine::siblings::reattach_in_row`, which
+`test_the_same_row_reattach_is_the_unchecked_insert` holds to it.
+
+Baumhard's own (V1-A6, #290), replacing the `indextree` (gone) crate,
+whose every insert of an existing node made the climb.
+`lib/baumhard/src/arena/`.
+
 ### `Tree<E>`
 
 An arena-backed forest of typed nodes plus the element type's
@@ -196,14 +231,13 @@ structural command detached and a journal still owns; `update`,
 tree keeps the set of its detached nodes, which only the engine writes
 — where a subtree leaves or re-enters the tree, per element of it —
 so a caller can ask it, or update, once per element at no cost that
-grows with depth (§20 rule 11). `root` is a public field for its
-reads, but only `engine/tree.rs` writes it: a root moved behind the
-engine's back would leave `contains` and every journal describing
-another tree, and `test_only_the_engine_tree_writes_a_root_field`
-refuses a write to a `root` field anywhere else in shipped code.
+grows with depth (§20 rule 11). The root is read through `root()`;
+the field is private to `engine/tree.rs`, so the compiler holds every
+other file to reading it — a root moved behind the engine's back would
+leave `contains` and every journal describing another tree.
 
-Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
-`indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,
+Defined in `lib/baumhard/src/engine/tree.rs`. Wraps an
+[`Arena<E>`](#arenat-and-nodeid), read through `arena()`; adds the root,
 `layer: usize`, and `cache: E::Cache` — the element type's
 `TreeCache`, which the walker and every one of those methods
 invalidate. The glyph tree,
@@ -1028,12 +1062,10 @@ cost dominates.
 A re-keyed child is put back into the row it never left through one
 function, `siblings::reattach_in_row`; a child alone in its row is not
 moved at all. Putting a node back under its own parent cannot close a
-cycle, so ruling R16 (#282) requires that insert to cost O(1);
-indextree 4.9 offers none for an existing node (every such insert
-climbs to the root to check for a cycle), so until the engine's own
-arena tree replaces it (V1-A6, #290) the one call site in `siblings`
-is where the O(depth) remains, held by the ignored
-`test_same_row_rearrangement_is_linear_in_depth`.
+cycle, so ruling R16 (#282) requires that insert to cost O(1): it is
+the arena's unchecked same-row re-attach (V1-A6, #290), which climbs
+nothing, and `test_same_row_rearrangement_is_linear_in_depth` counts
+its steps.
 
 ### Journals — `JournalBuilder`, `Journal`, `Touch`
 
@@ -1151,7 +1183,7 @@ not serializable at all.
 
 Depth costs the commands nothing per node (§20 rule 11). Every node a
 command creates — an inserted subtree, the second part of a split —
-goes in through indextree's value inserts, which climb nothing. A
+goes in through the arena's value inserts, which climb nothing. A
 command knows its target is in the tree because the walk reached it
 there; whether an earlier command of the same walk removed it is the
 O(1) `Tree::contains`, which reads the tree's set of detached nodes —
@@ -1162,8 +1194,8 @@ owes is a `Move` to another parent, which checks for a cycle: O(depth),
 once per node the user moves — the price of refusing a cycle, not a
 cost per visited node (ruling R16 on #282). A `Move` within its own row
 owes none, since under its own parent it cannot close a cycle; it goes
-through `siblings::reattach_in_row`, whose indextree insert still
-climbs until V1-A6 (#290) replaces indextree (above). A `Subtree` is as deep as its builder made it, so its
+through `siblings::reattach_in_row`, the arena's O(1) same-row
+re-attach (above). A `Subtree` is as deep as its builder made it, so its
 `Drop`, `Clone`, `PartialEq` and `Debug` are written by hand and
 iterate.
 

@@ -111,7 +111,7 @@ pub fn handle_identity_sequence<E: HandleVisual>(elements: &[E]) -> Vec<usize> {
 /// same kind-derived channel across drag frames.
 pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> GfxTree {
     let mut tree: GfxTree = GfxTree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     for (unique_id, channel, area) in handle_cells(elements) {
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
         super::push_element(&mut tree, root, element_node);
@@ -128,7 +128,7 @@ pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> GfxTree {
 /// fields in place via `DeltaGlyphArea::full_assign_from`.
 pub fn build_handle_mutator_tree<E: HandleVisual>(elements: &[E]) -> GfxMutatorTree {
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
-    let root = mt.root;
+    let root = mt.root();
     for (_, channel, area) in handle_cells(elements) {
         let delta = DeltaGlyphArea::full_assign_from(&area);
         super::push_mutator(

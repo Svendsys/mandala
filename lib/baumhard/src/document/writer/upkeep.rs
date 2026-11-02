@@ -18,12 +18,12 @@
 //! so a nested link or node is never missed, and the cost is the
 //! journal's.
 
+use crate::arena::NodeId;
 use crate::document::element::DocElement;
 use crate::document::ids::{Definitions, Document, IdentIndex, NodeIdent};
 use crate::document::writer::budget::Budget;
 use crate::engine::journal::{Journal, Touch};
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 

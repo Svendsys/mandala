@@ -41,7 +41,7 @@ fn test_insert_child_places_within_the_run_of_its_key() {
 /// order kind first: `(Plain, 0) < (Plain, 1) < (Marked, 0)`.
 pub fn do_insert_child_places_within_the_run_of_its_key() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let insert = |tree: &mut Tree<TestElement>, element: TestElement, at: Placement| {
         let id = tree.insert_child(root, element, at).unwrap();
         assert_eq!(tree.check_sorted(), Ok(()), "sorted after inserting at {at:?}");
@@ -82,7 +82,7 @@ fn test_insert_child_refuses_a_placement_across_keys() {
 /// the tree is [`TreeError::StaleNode`].
 pub fn do_insert_child_refuses_a_placement_across_keys() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let p1 = add(&mut tree, root, TestElement::new(1, 1));
     let m0 = add(&mut tree, root, TestElement::marked(0, 2));
 
@@ -138,7 +138,7 @@ fn test_update_moves_an_element_whose_key_changed() {
 /// the element stays where it is.
 pub fn do_update_moves_an_element_whose_key_changed() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let a = add(&mut tree, root, TestElement::new(0, 1));
     add(&mut tree, root, TestElement::new(1, 2));
     let c = add(&mut tree, root, TestElement::new(1, 3));
@@ -193,7 +193,7 @@ fn test_update_of_a_stale_node_calls_nothing() {
 /// closure is not called. The control updates a live node.
 pub fn do_update_of_a_stale_node_calls_nothing() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let gone = add(&mut tree, root, TestElement::new(0, 1));
     let kept = add(&mut tree, root, TestElement::new(0, 2));
     tree.remove_subtree(gone).unwrap();
@@ -219,7 +219,7 @@ fn test_remove_subtree_frees_the_subtree_and_keeps_the_row() {
 /// node already removed is stale.
 pub fn do_remove_subtree_frees_the_subtree_and_keeps_the_row() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let a = add(&mut tree, root, TestElement::new(0, 1));
     let a_child = add(&mut tree, a, TestElement::new(0, 10));
     add(&mut tree, root, TestElement::new(1, 2));
@@ -242,7 +242,7 @@ pub fn do_remove_subtree_frees_the_subtree_and_keeps_the_row() {
 /// Four `Plain` children on channels 0..=3, values 10, 20, 30, 40.
 fn four() -> Tree<TestElement> {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     for (channel, v) in [(0, 10), (1, 20), (2, 30), (3, 40)] {
         add(&mut tree, root, TestElement::new(channel, v));
     }
@@ -260,9 +260,9 @@ fn test_walk_moves_the_children_whose_key_it_changed() {
 /// the walk changed them.
 pub fn do_walk_moves_the_children_whose_key_it_changed() {
     let mut tree = four();
-    let root = tree.root;
+    let root = tree.root();
     let mut mt = MutatorTree::new();
-    let mroot = mt.root;
+    let mroot = mt.root();
     add_mutator(
         &mut mt,
         mroot,
@@ -291,11 +291,11 @@ fn test_walk_sees_the_row_as_it_was_until_it_ends() {
 /// over instead, and the channel-5 mutator reaches nothing.
 pub fn do_walk_sees_the_row_as_it_was_until_it_ends() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let moved = add(&mut tree, root, TestElement::new(0, 0));
     let stays = add(&mut tree, root, TestElement::new(1, 10));
     let mut mt = MutatorTree::new();
-    let mroot = mt.root;
+    let mroot = mt.root();
     add_mutator(
         &mut mt,
         mroot,
@@ -325,7 +325,7 @@ fn test_every_tree_method_that_changes_it_invalidates_the_cache() {
 /// which changes nothing, marks nothing.
 pub fn do_every_tree_method_that_changes_it_invalidates_the_cache() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let count = |tree: &Tree<TestElement>| tree.cache.invalidations.get();
 
     let before = count(&tree);
@@ -365,23 +365,23 @@ fn test_check_sorted_finds_a_row_out_of_order() {
 /// control is the same row built through `insert_child`.
 pub fn do_check_sorted_finds_a_row_out_of_order() {
     let mut tree = empty();
-    let root = tree.root;
+    let root = tree.root();
     let parent = add(&mut tree, root, TestElement::new(0, 1));
     let high = tree.arena.new_node(TestElement::new(2, 2));
-    parent.append(high, &mut tree.arena);
+    parent.checked_append(high, &mut tree.arena).unwrap();
     let low = tree.arena.new_node(TestElement::new(1, 3));
-    parent.append(low, &mut tree.arena);
+    parent.checked_append(low, &mut tree.arena).unwrap();
     assert_eq!(
         tree.check_sorted(),
         Err(TreeError::Unsorted { parent, child: low })
     );
 
     let mut mt: MutatorTree<TestElement, TestMutation> = MutatorTree::new();
-    let mroot = mt.root;
+    let mroot = mt.root();
     let m_high = mt.arena.new_node(Mutator::new_void(plain(2)));
-    mroot.append(m_high, &mut mt.arena);
+    mroot.checked_append(m_high, &mut mt.arena).unwrap();
     let m_low = mt.arena.new_node(Mutator::new_void(plain(1)));
-    mroot.append(m_low, &mut mt.arena);
+    mroot.checked_append(m_low, &mut mt.arena).unwrap();
     assert_eq!(
         mt.check_sorted(),
         Err(TreeError::Unsorted {
@@ -391,7 +391,7 @@ pub fn do_check_sorted_finds_a_row_out_of_order() {
     );
 
     let mut sorted = empty();
-    let root = sorted.root;
+    let root = sorted.root();
     let parent = add(&mut sorted, root, TestElement::new(0, 1));
     add(&mut sorted, parent, TestElement::new(2, 2));
     add(&mut sorted, parent, TestElement::new(1, 3));

@@ -9,6 +9,7 @@
 //! as it does for every other element type (§B2); this module only adds what
 //! a glyph tree derives.
 
+use crate::arena::{Arena, NodeId};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::tree::{MutatorTree, Tree};
 use crate::gfx_structs::element::GfxElement;
@@ -16,7 +17,6 @@ use crate::gfx_structs::mutator::{GfxMutation, GlyphTreeEventInstance};
 use crate::gfx_structs::util::regions::{RegionIndexer, RegionParams};
 use crate::util::geometry::aabb_contains;
 use glam::Vec2;
-use indextree::{Arena, NodeId};
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -178,7 +178,7 @@ impl Tree<GfxElement> {
         bvh_find(
             self.arena(),
             &self.cache.subtree_aabbs,
-            self.root,
+            self.root(),
             point,
             slack,
             &mut best,
@@ -280,7 +280,7 @@ impl Tree<GfxElement> {
     /// state, and writing them changes no element and invalidates
     /// nothing.
     fn compute_subtree_aabbs(&mut self) {
-        let root = self.root;
+        let root = self.root();
         let mut aabbs = std::mem::take(&mut self.cache.subtree_aabbs);
         aabbs.clear();
         // `false` = this node's children still need queueing;
@@ -329,7 +329,7 @@ impl Tree<GfxElement> {
         let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
         let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
         let mut any = false;
-        for node_id in self.root.descendants(self.arena()) {
+        for node_id in self.root().descendants(self.arena()) {
             let Some(node) = self.arena().get(node_id) else {
                 continue;
             };

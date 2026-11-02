@@ -11,6 +11,7 @@
 //! differ from each other and from `BUILT_IN`, so a tier read in the
 //! wrong order, or read where it must not be, gives another number.
 
+use crate::arena::NodeId;
 use crate::document::element::{DefaultsData, DocElement, DocKind};
 use crate::document::ids::Document;
 use crate::document::mutation::inherited::inherited_seed;
@@ -27,7 +28,6 @@ use crate::engine::journal::JournalBuilder;
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
 use crate::engine::tree::{Placement, Tree};
-use indextree::NodeId;
 
 /// The kinds a `TextOp` reaches.
 const TEXT_KINDS: [DocKind; 8] = [
@@ -199,7 +199,7 @@ pub fn do_document_seed_matches_the_resolver_for_every_kind() {
 /// whose own children mirror theirs together.
 fn mirror(tree: &Tree<DocElement>, kind: DocKind, op: &TextOp) -> DocMutatorTree {
     let mut mutator = DocMutatorTree::new();
-    let root = mutator.root;
+    let root = mutator.root();
     mirror_into(tree, tree.root(), &mut mutator, root, kind, op);
     mutator
 }

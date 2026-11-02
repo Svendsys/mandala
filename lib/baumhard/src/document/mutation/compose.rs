@@ -32,6 +32,7 @@
 //! [`remove_links`](crate::document::mutation::compose::remove_links) for them as a further
 //! step of the same request (#238 §2.4(b)).
 
+use crate::arena::NodeId;
 use crate::document::defaults::DEFAULT_OPACITY;
 use crate::document::element::{
     ConnectorData, DocElement, DocKind, NodeData, NodeStyle, PathData, PortalEndData, SectionData, SpanData,
@@ -50,7 +51,6 @@ use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Placement;
 use crate::util::grapheme_chad::count_grapheme_clusters;
 use glam::Vec2;
-use indextree::NodeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A mutator tree of one `Single` payload on `kind`.
@@ -70,7 +70,7 @@ fn removing(
     mut mutator: DocMutatorTree,
     keys: &[BranchKey<DocKind>],
 ) -> Result<DocMutatorTree, MutationError> {
-    let root = mutator.root;
+    let root = mutator.root();
     for &key in keys {
         mutator.insert_child(
             root,

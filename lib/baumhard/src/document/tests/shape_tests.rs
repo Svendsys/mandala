@@ -5,6 +5,7 @@
 //! to break is valid — the negative control — then breaks it and
 //! expects the error that names the break.
 
+use crate::arena::NodeId;
 use crate::document::element::{
     CapData, DocElement, DocKind, FrameData, LabelData, MapData, PortalEndData, RingData, ThemeData,
 };
@@ -12,7 +13,6 @@ use crate::document::shape::{validate_row, validate_shape, Cardinality, RowError
 use crate::document::tests::test_support::{example, span, DocumentBuilder};
 use crate::document::values::LinkKind;
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 
 /// `validate_shape` at `id` in `builder`'s tree, as the row error it
 /// reports for `id` — it never reports one for another element.

@@ -34,11 +34,11 @@
 //! the connector count it holds, and leaves where it lands to
 //! `validate_shape`.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::values::LinkKind;
 use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 
 /// How many children of one kind a parent may have.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

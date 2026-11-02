@@ -9,6 +9,7 @@
 //! tier under test and expects the next one — the negative control,
 //! which fails if the tier was never the source.
 
+use crate::arena::NodeId;
 use crate::document::defaults::BUILT_IN;
 use crate::document::element::{DefaultsData, DocElement, PaletteData, TextStyle};
 use crate::document::resolve::{
@@ -20,7 +21,6 @@ use crate::document::values::{
     ColorRef, FitMode, FontSize, PaletteField, PaletteId, Percent, PlainColor, Rgba, Shape, VarId, Weight,
 };
 use crate::font::fonts::AppFont;
-use indextree::NodeId;
 
 const RED: Rgba = Rgba::opaque(0xff, 0, 0);
 const GREEN: Rgba = Rgba::opaque(0, 0xff, 0);

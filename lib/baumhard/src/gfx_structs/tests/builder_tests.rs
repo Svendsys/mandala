@@ -100,7 +100,7 @@ pub fn do_repeat_literal_expands_to_consecutive_channels() {
     let ctx = StubCtx::with_areas(5);
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
@@ -130,7 +130,7 @@ pub fn do_repeat_skip_indices_stride_channels() {
     let ctx = StubCtx::with_areas(5);
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
@@ -178,7 +178,7 @@ pub fn do_multiple_sections_concatenate_in_declaration_order() {
     let ctx = StubCtx::with_areas(3);
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
@@ -219,7 +219,7 @@ pub fn do_template_resolves_against_each_iterations_area() {
     };
     let mt = build(&node, &StubCtx::with_areas(2)).unwrap();
     let built: Vec<GfxMutation> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| match mt.arena().get(id).unwrap().get() {
             crate::gfx_structs::mutator::GfxMutator::Single { mutation, .. } => mutation.clone(),
@@ -305,7 +305,7 @@ pub fn do_repeat_runtime_count_consults_context() {
     ctx.runtime_counts.insert("row_count".into(), 3);
     let mt = build(&node, &ctx).unwrap();
     let channels: Vec<usize> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| mt.arena().get(id).unwrap().get().key().channel)
         .collect();
@@ -333,9 +333,9 @@ pub fn do_void_root_with_no_children() {
     };
     let ctx = StubCtx::with_areas(0);
     let mt = build(&node, &ctx).unwrap();
-    let root = mt.arena().get(mt.root).unwrap().get();
+    let root = mt.arena().get(mt.root()).unwrap().get();
     assert!(matches!(root, GfxMutator::Void { key } if key.channel == 42));
-    assert_eq!(mt.root.children(mt.arena()).count(), 0);
+    assert_eq!(mt.root().children(mt.arena()).count(), 0);
 }
 
 #[test]
@@ -356,7 +356,7 @@ pub fn do_single_as_tree_root_with_literal_channel() {
     };
     // No-op context — Single with MutationSrc::None needs nothing.
     let mt = build(&node, &NoRuntime).unwrap();
-    let root = mt.arena().get(mt.root).unwrap().get();
+    let root = mt.arena().get(mt.root()).unwrap().get();
     assert!(
         matches!(root, GfxMutator::Void { key } if key.channel == 7),
         "expected Void on channel 7, got {root:?}"
@@ -417,7 +417,7 @@ pub fn do_mutation_src_runtime_consults_context() {
         ctx.asked_with.borrow().as_slice(),
         &["nudge".to_string(), "per_cell".to_string()]
     );
-    let first = mt.root.children(mt.arena()).next().unwrap();
+    let first = mt.root().children(mt.arena()).next().unwrap();
     match mt.arena().get(first).unwrap().get() {
         GfxMutator::Single { key, mutation } => {
             assert_eq!(key.channel, 5);
@@ -459,7 +459,7 @@ pub fn do_macro_pulls_mutation_list_from_runtime_context() {
         children: vec![],
     };
     let mt = build(&node, &MacroCtx).unwrap();
-    let root = mt.arena().get(mt.root).unwrap().get();
+    let root = mt.arena().get(mt.root()).unwrap().get();
     match root {
         GfxMutator::Macro { key, mutations } => {
             assert_eq!(key.channel, 0);
@@ -501,13 +501,13 @@ pub fn do_instruction_with_children_mirrors_scope_topology() {
         }],
     };
     let mt = build(&node, &ScopeCtx).unwrap();
-    let root = mt.arena().get(mt.root).unwrap().get();
+    let root = mt.arena().get(mt.root()).unwrap().get();
     assert!(matches!(root.variant(), MutatorType::Instruction));
     assert!(
         matches!(root, GfxMutator::Instruction { mutation: None, .. }),
         "MutationSrc::None on an Instruction builds with no payload"
     );
-    let child_ids: Vec<_> = mt.root.children(mt.arena()).collect();
+    let child_ids: Vec<_> = mt.root().children(mt.arena()).collect();
     assert_eq!(child_ids.len(), 1);
     let child = mt.arena().get(child_ids[0]).unwrap().get();
     assert!(matches!(child.variant(), MutatorType::Macro));
@@ -530,7 +530,7 @@ pub fn do_instruction_spec_repeat_while_always_true_materializes_predicate() {
         children: vec![],
     };
     let mt = build(&node, &NoRuntime).unwrap();
-    match mt.arena().get(mt.root).unwrap().get() {
+    match mt.arena().get(mt.root()).unwrap().get() {
         GfxMutator::Instruction {
             instruction: Instruction::RepeatWhile(predicate),
             key,
@@ -562,7 +562,7 @@ pub fn do_instruction_spec_spatial_descend_carries_its_point() {
         children: vec![],
     };
     let mt = build(&node, &NoRuntime).unwrap();
-    match mt.arena().get(mt.root).unwrap().get() {
+    match mt.arena().get(mt.root()).unwrap().get() {
         GfxMutator::Instruction {
             instruction: Instruction::SpatialDescend(point),
             ..
@@ -614,7 +614,7 @@ pub fn do_repeat_template_wrapping_void_threads_iter_channel() {
     }
     let mt = build(&node, &InnerCtx).unwrap();
     // Root Void → 3 wrapper Voids → each wrapper Void has 1 Single child.
-    let wrapper_ids: Vec<_> = mt.root.children(mt.arena()).collect();
+    let wrapper_ids: Vec<_> = mt.root().children(mt.arena()).collect();
     assert_eq!(wrapper_ids.len(), 3);
     for (expected_inner_ch, wrapper_id) in (50..).zip(wrapper_ids.iter()) {
         let wrapper = mt.arena().get(*wrapper_id).unwrap().get();
@@ -831,7 +831,7 @@ pub fn do_spatial_descend_builds_only_for_a_spatial_element() {
     let for_glyph: Node = serde_json::from_str(&src("null")).expect("parse for GfxElement");
     let mt = build(&for_glyph, &NoRuntime).expect("the same AST builds for a spatial element");
     assert!(matches!(
-        mt.arena().get(mt.root).unwrap().get(),
+        mt.arena().get(mt.root()).unwrap().get(),
         GfxMutator::Instruction {
             instruction: Instruction::SpatialDescend(_),
             ..

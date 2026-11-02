@@ -26,13 +26,13 @@
 //! and siblings of different keys are ordered by their keys alone — the
 //! sorted-children invariant.
 
+use crate::arena::{Arena, NodeId};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::membership::Membership;
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
 use crate::engine::walker::{run_walk, walk_anchor};
-use indextree::{Arena, NodeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -98,7 +98,7 @@ where
     // match, no walk); nesting is then decided among those alone, so an
     // anchor of the root's kind is never dropped for an ancestor the
     // root would not apply at.
-    let root_kind = mutator_tree.arena[mutator_tree.root].get().key().kind;
+    let root_kind = mutator_tree.arena[mutator_tree.root()].get().key().kind;
     let mut resolved = resolve(&tree.arena, anchors, &given, root_kind);
 
     if resolved.len() > 1 {

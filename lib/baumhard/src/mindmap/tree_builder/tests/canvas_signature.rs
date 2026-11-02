@@ -58,8 +58,8 @@ use super::fixtures::{sized_node, synthetic_map, synthetic_node, synthetic_porta
 /// is `hitbox`, which both builders leave empty — pinned by
 /// `test_border_and_portal_areas_carry_no_hitbox`.
 fn trees_draw_identically(a: &GfxTree, b: &GfxTree) -> bool {
-    let a_nodes: Vec<_> = a.root.descendants(a.arena()).collect();
-    let b_nodes: Vec<_> = b.root.descendants(b.arena()).collect();
+    let a_nodes: Vec<_> = a.root().descendants(a.arena()).collect();
+    let b_nodes: Vec<_> = b.root().descendants(b.arena()).collect();
     if a_nodes.len() != b_nodes.len() {
         return false;
     }
@@ -1133,7 +1133,7 @@ fn test_border_and_portal_areas_carry_no_hitbox() {
 
     for (role, tree) in [("border", &border_tree), ("portal", &portal_tree)] {
         let mut areas = 0;
-        for id in tree.root.descendants(tree.arena()) {
+        for id in tree.root().descendants(tree.arena()) {
             if let Some(area) = tree.arena().get(id).unwrap().get().glyph_area() {
                 areas += 1;
                 assert!(
