@@ -905,7 +905,11 @@ pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemWriteGua
     let untabbed = untabbed(spans, &families, scale, fs);
     let spans = with_untabbed(spans, &untabbed);
     let assembly = assemble(&spans, &families, scale, Breaks::None);
-    run_from_assembly(assembly, fs)
+    let run = run_from_assembly(assembly, fs);
+    #[cfg(test)]
+    crate::flow::place::halves::SHAPED_STEPS
+        .with(|count| count.set(count.get() + crate::flow::place::halves::shaping_steps(&run)));
+    run
 }
 
 /// Build a run from assembled stretches: shape them on one buffer and
@@ -1033,12 +1037,16 @@ pub(crate) fn reshape(
     }
     let buffer = new_buffer(fs, rich, font_size, line_height, None);
     let glyphs = glyph_metrics(&buffer, &pieces, fs);
-    ShapedRun {
+    let run = ShapedRun {
         buffer: Arc::new(buffer),
         glyphs,
         line_height,
         pieces,
-    }
+    };
+    #[cfg(test)]
+    crate::flow::place::halves::SHAPED_STEPS
+        .with(|count| count.set(count.get() + crate::flow::place::halves::shaping_steps(&run)));
+    run
 }
 
 /// `attrs` with its size and line height times `factor`, clamped to

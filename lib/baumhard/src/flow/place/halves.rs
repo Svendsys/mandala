@@ -83,15 +83,19 @@
 //! overlap wins over never cut); and what is left unheld even so is
 //! reported in the trace ([`Unheld`]), never silent.
 //! Every last resort is
-//! bounded in work (rulings R35.3, R44.2): a shrink's probe looks first
-//! whether its lines fit at all, and a frame's budget,
+//! bounded in work (rulings R35.3, R44.2, R46): a shrink's probe looks
+//! first whether its lines fit at all, and a frame's budget,
 //! [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at least
-//! [`TRACK_BUDGET`] ([`frame_budget`]), is read before every lay — in
-//! each tracking solve, slide, shrink, cut and backtrack — and its sides'
-//! lays count against it, so a frame overshoots it by at most a lay of
-//! each line. A frame whose budget runs out while two of its inks still
-//! touch keeps the longest run of its inks that touch nothing, and says
-//! it was cut ([`Trace::cut_apart`]). A frame's text is cut to
+//! [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work — its
+//! tracking and side lays, its shaping and inking, its touch sweeps and
+//! R27's walks, each weighted to about one tracking step's time — and is
+//! read before every lay, build and reshape — in each tracking solve,
+//! slide, shrink, cut and backtrack, and R27's fit — so a frame
+//! overshoots it by at most one build's shaping and inking and a lay of
+//! each line ([`overshoot_steps`], ruling R47.2). A frame whose budget
+//! runs out while two of its inks still touch keeps the longest run of
+//! its inks that touch nothing ([`untouched`], within a share of the
+//! budget held back for it), and says it was cut ([`Trace::cut_apart`]). A frame's text is cut to
 //! [`MAX_PLACED_GLYPHS`] at a cluster before its lines are prepared
 //! (ruling R44.1), its sides placing no more than the cap leaves, so the
 //! budget is at most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
@@ -110,7 +114,7 @@ use std::ops::Range;
 
 use glam::Vec2;
 
-use super::lines::{frame_lines, line_partition, place_lines};
+use super::lines::{frame_lines, line_partition, place_lines_in};
 use super::*;
 use crate::document::values::{Edge, FontSize};
 use crate::flow::shape::shape_run;
@@ -238,16 +242,22 @@ const SEED_SHARE: f32 = 0.9;
 /// inks cut to those that touch nothing — and its trace reports what is
 /// left unheld.
 ///
-/// Ten times the most any real frame takes (rulings R42.3, R43.3): the
-/// aspect sweep's worst, 36,748 glyph steps — the quatrain outward round
-/// the 600 × 12 rectangle, `Once` at span ½, its sides' lays counted —
-/// rounded up to 40,000; the demo maps' frames take under 2,400. At
-/// 30411a6e it was 2^21, and the worst real frame took 306,098.
+/// Ten times the most any real frame took while a step counted tracking
+/// alone (rulings R42.3, R43.3): the aspect sweep's worst, 36,748 glyph
+/// steps — the quatrain outward round the 600 × 12 rectangle, `Once` at
+/// span ½, its sides' lays counted — rounded up to 40,000; the demo
+/// maps' frames took under 2,400. At 30411a6e it was 2^21, and the
+/// worst real frame took 306,098. Since a step counts all of a frame's
+/// work (ruling R46), the sweep's worst, the quatrain inward round the
+/// 50:1 ellipse, `Fit`, takes 59,468: the budget is unchanged, six times
+/// that (ruling R47.1), so the fuzzers' per-input bound holds (R45).
 pub(crate) const TRACK_BUDGET: usize = 400_000;
 
-/// The glyph steps a frame's tracking may take a glyph of its text, past
+/// The glyph steps a frame's work may take a glyph of its text, past
 /// [`TRACK_BUDGET`] (ruling R44.2): ten times the most any frame of the
-/// aspect sweep takes a glyph, rounded up. A frame's work grows with its
+/// aspect sweep took a glyph, rounded up, while a step counted tracking
+/// alone; five times its 597 since a step counts all of a frame's work
+/// (rulings R46, R47.1). A frame's work grows with its
 /// text, so a fixed count would cut real text past some length — a
 /// 2,000-word frame took more than 400,000 — where this bounds the work
 /// a glyph, and the glyph cap ([`MAX_PLACED_GLYPHS`]) bounds the glyphs.
@@ -262,6 +272,159 @@ pub(crate) fn frame_budget(glyphs: usize) -> usize {
     #[cfg(not(test))]
     let floor = TRACK_BUDGET;
     floor.max(STEPS_PER_GLYPH.saturating_mul(glyphs.min(MAX_PLACED_GLYPHS)))
+}
+
+// What a frame's work is counted as, in glyph steps (rulings R46.1,
+// R47.3). Each weight is the most one unit of that work took under the
+// ASan fuzz build, divided by 16 µs — about the most a glyph step of
+// [`track`] took — and rounded up, so that one counted step takes about
+// the same time whatever work it counts. Measured at e301e041, at a load
+// average of 1 to 2: each call of the work timed by a temporary
+// instrumentation of the engine, never committed, over every committed
+// flow fuzz finding and seed and the heaviest frames a sweep of 2,600
+// seeded structured inputs drew, and an upper envelope fitted to each
+// call's time over its call, its glyphs and its faces (315 shapings,
+// 381 inkings). The PR body of #294 has the table.
+
+/// A [`track`], past its clusters (a step each): its setup, and the
+/// lay's look at its ends round it — 11.5 µs a call ÷ 16 µs, rounded up.
+pub(crate) const TRACK_CALL_STEPS: usize = 1;
+
+/// Shaping a run, or reshaping one (`reshape`, `shape_run` in
+/// `side_run`), a call: 435 µs ÷ 16 µs = 27.2, rounded up.
+pub(crate) const SHAPE_CALL_STEPS: usize = 28;
+
+/// A glyph shaped: 261 µs ÷ 16 µs = 16.3, rounded up.
+pub(crate) const SHAPE_GLYPH_STEPS: usize = 17;
+
+/// A face a shaped run's glyphs were found in: 5.2 ms ÷ 16 µs = 326,
+/// rounded up to 330.
+pub(crate) const SHAPE_FACE_STEPS: usize = 330;
+
+/// A glyph shaped that no face holds (`.notdef`, glyph 0), which sends
+/// the shaper through every face it has: 34.8 ms ÷ 16 µs = 2,173,
+/// rounded up to 2,200. (That cost is a defect of its own, #304.)
+pub(crate) const SHAPE_NOTDEF_STEPS: usize = 2_200;
+
+/// Inking a run ([`inked`], each glyph's outline read uncached), a call:
+/// 1.41 ms ÷ 16 µs = 88.2, rounded up.
+pub(crate) const INK_CALL_STEPS: usize = 89;
+
+/// A glyph inked: 83 µs ÷ 16 µs = 5.2, rounded up.
+pub(crate) const INK_GLYPH_STEPS: usize = 6;
+
+/// A face a run's inked glyphs are drawn in: 1.66 ms ÷ 16 µs = 103.8,
+/// rounded up.
+pub(crate) const INK_FACE_STEPS: usize = 104;
+
+/// Ink boxes one glyph step weighs where two inks are looked at for a
+/// touch ([`touching`]): some 0.4 µs a box, the sort and the sweep, so
+/// 16 µs ÷ 0.4 µs = 40 boxes, rounded down to 32.
+pub(crate) const BOXES_A_STEP: usize = 32;
+
+/// Clusters one glyph step walks in R27's arithmetic lays
+/// (`lines::Lines`): some 1.3 µs a cluster along a path, so 16 µs ÷
+/// 1.3 µs = 12 clusters, rounded down to 8.
+pub(crate) const CLUSTERS_A_STEP: usize = 8;
+
+/// A frame's own setup, past what it counts — its halves' tables, its
+/// partition, its runs cloned — some 1 ms ÷ 16 µs, rounded up.
+pub(crate) const FRAME_STEPS: usize = 64;
+
+/// The distinct faces `run`'s glyphs are drawn in, and how many of its
+/// glyphs no face holds.
+fn faces_and_notdefs(run: &ShapedRun) -> (usize, usize) {
+    let mut faces = Vec::new();
+    let mut notdefs = 0;
+    for glyph in run.layout_glyphs() {
+        notdefs += usize::from(glyph.glyph_id == 0);
+        if !faces.contains(&glyph.font_id) {
+            faces.push(glyph.font_id);
+        }
+    }
+    (faces.len(), notdefs)
+}
+
+/// The glyph steps shaping `run` counts (ruling R46.1).
+pub(crate) fn shaping_steps(run: &ShapedRun) -> usize {
+    let (faces, notdefs) = faces_and_notdefs(run);
+    SHAPE_CALL_STEPS
+        .saturating_add(SHAPE_GLYPH_STEPS.saturating_mul(run.glyphs.len()))
+        .saturating_add(SHAPE_FACE_STEPS.saturating_mul(faces))
+        .saturating_add(SHAPE_NOTDEF_STEPS.saturating_mul(notdefs))
+}
+
+/// The glyph steps inking `run` counts (ruling R46.1).
+pub(crate) fn inking_steps(run: &ShapedRun) -> usize {
+    let (faces, _) = faces_and_notdefs(run);
+    INK_CALL_STEPS
+        .saturating_add(INK_GLYPH_STEPS.saturating_mul(run.glyphs.len()))
+        .saturating_add(INK_FACE_STEPS.saturating_mul(faces))
+}
+
+/// How many [`track`]s of every glyph a frame may take past its spent
+/// budget: a lay of each line — the slide's and the solve's probe that
+/// notices the budget is spent, and the check at the font's gap — and
+/// the look at whether its lines fit (ruling R44.2; pinned by
+/// `test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most`).
+pub(crate) const OVERSHOOT_TRACKS: usize = 8;
+
+/// The most glyph steps one build of a frame's text counts in shaping
+/// and inking (ruling R47.2), for a text shaped as `text` and, with
+/// sides, an ornament shaped alone as `ornament`: the text reshaped at a
+/// size and inked; with sides, the ornament and an `x` shaped and inked
+/// to size it, and shaped and inked again beside the text, which is
+/// shaped again with it (`side_run`). Each run's own faces and
+/// `.notdef`s are counted, as the build counts them.
+pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usize {
+    let alone = shaping_steps(text).saturating_add(inking_steps(text));
+    let Some(ornament) = ornament else {
+        return alone;
+    };
+    let x = SHAPE_CALL_STEPS + SHAPE_GLYPH_STEPS + SHAPE_FACE_STEPS + INK_CALL_STEPS + INK_GLYPH_STEPS + INK_FACE_STEPS;
+    let beside = shaping_steps(ornament).saturating_add(inking_steps(ornament));
+    alone
+        .saturating_add(shaping_steps(text))
+        .saturating_add(x)
+        .saturating_add(beside.saturating_mul(2))
+}
+
+/// The most glyph steps a frame of `text` may take past its budget
+/// (ruling R47.2): what runs before its budget is first read — its own
+/// setup ([`FRAME_STEPS`]) and, for a `Fit` frame (`sized`), R27's
+/// reshape at the size it fits — one build's shaping and inking
+/// ([`build_steps`]), and a lay of each line ([`OVERSHOOT_TRACKS`]
+/// `track`s of every glyph). A budget is read before each build, each
+/// reshape of R27's fit and each lay, so no more than one of each runs
+/// past it; [`untouched`] runs within the budget, which holds its share
+/// back.
+pub(crate) fn overshoot_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
+    let r27 = if sized { shaping_steps(text) } else { 0 };
+    FRAME_STEPS
+        .saturating_add(r27)
+        .saturating_add(build_steps(text, ornament))
+        .saturating_add(OVERSHOOT_TRACKS.saturating_mul(text.glyphs.len() + TRACK_CALL_STEPS))
+}
+
+/// The most glyph steps a frame of `text` may take in all: its budget
+/// ([`frame_budget`]) and the most it may take past it
+/// ([`overshoot_steps`]). What the flow fuzzers hold an input's frames
+/// to, at their cost a step under ASan (ruling R45.1).
+pub(crate) fn frame_work_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
+    frame_budget(text.glyphs.len()).saturating_add(overshoot_steps(text, ornament, sized))
+}
+
+/// The glyph steps a look at `boxes` ink boxes for a touch counts.
+fn weighing_steps(boxes: usize) -> usize {
+    boxes.div_ceil(BOXES_A_STEP).max(1)
+}
+
+/// The glyph steps [`untouched`] may take over `boxes` inks: a
+/// bisection of looks at them, each with its lines cut again — what a
+/// frame's budget holds back for it (ruling R46.1).
+pub(crate) fn untouched_steps(boxes: usize) -> usize {
+    let probes = (usize::BITS - boxes.leading_zeros()) as usize + 1;
+    probes.saturating_mul(2 * weighing_steps(boxes))
 }
 
 /// The most glyphs a frame places, its text and its sides together
@@ -451,6 +614,8 @@ fn middle(b: (Vec2, Vec2)) -> Vec2 {
 ///
 /// Cost: one outline scale per glyph that is not a space.
 fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
+    #[cfg(test)]
+    INKED_STEPS.with(|count| count.set(count.get() + inking_steps(run)));
     let mut out = run.clone();
     let mut cache = SwashCache::new();
     let laid: Vec<_> = run.layout_glyphs().cloned().collect();
@@ -482,6 +647,20 @@ thread_local! {
     /// what a frame's work is counted in.
     #[cfg(test)]
     pub(crate) static TRACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294, ruling R46.2): the glyph steps the weights
+    /// give every shaping on this thread (`shape_run`, `reshape`),
+    /// counted where it is shaped, not where a frame counts it.
+    #[cfg(test)]
+    pub(crate) static SHAPED_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294, ruling R46.2): the glyph steps the weights
+    /// give every inking on this thread ([`inked`]), counted there.
+    #[cfg(test)]
+    pub(crate) static INKED_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#294, ruling R46.2): the glyph steps every [`track`]
+    /// on this thread is worth — its clusters and its call — counted
+    /// there.
+    #[cfg(test)]
+    pub(crate) static TRACKED_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#294): the times a frame's text has been built at a
     /// size on this thread — shaped, inked and its lines prepared —
     /// whether or not its clearance was then grown.
@@ -598,6 +777,8 @@ fn track(
 ) -> Tracked {
     #[cfg(test)]
     TRACKS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    TRACKED_STEPS.with(|count| count.set(count.get() + clusters.len() + TRACK_CALL_STEPS));
     let mut lay = InkLay::new(walk, glyphs, sa, 0.5 * g);
     for cluster in clusters {
         lay.cluster(cluster, g);
@@ -1065,41 +1246,66 @@ struct Layout<'a> {
     work: Work,
 }
 
-/// A frame's work (ruling R44.2): the glyph steps its tracking and its
-/// side lays have taken, the glyphs of its text its budget is scaled by,
-/// and the most it may take ([`frame_budget`]).
-struct Work {
+/// A frame's work (rulings R44.2, R46.1): the glyph steps all its work
+/// has taken — its tracking, its side lays, its shaping and inking, its
+/// looks for a touch, R27's lays — the glyphs of its text its budget is
+/// scaled by, the most it may take ([`frame_budget`]), and what of that
+/// is held back for [`untouched`].
+pub(super) struct Work {
     spent: Cell<usize>,
     glyphs: Cell<usize>,
     budget: Cell<usize>,
+    reserve: Cell<usize>,
 }
 
 impl Work {
-    fn new() -> Self {
-        Work {
-            spent: Cell::new(0),
+    /// A frame's work, nothing taken yet, its budget scaled by `glyphs`.
+    pub(super) fn new(glyphs: usize) -> Self {
+        let work = Work {
+            spent: Cell::new(FRAME_STEPS),
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
-        }
+            reserve: Cell::new(0),
+        };
+        work.scale(glyphs);
+        work
     }
 
     /// Count `steps` glyph steps taken.
-    fn take(&self, steps: usize) {
+    pub(super) fn take(&self, steps: usize) {
         self.spent.set(self.spent.get().saturating_add(steps));
     }
 
-    /// Whether the frame has taken its budget.
-    fn spent_all(&self) -> bool {
-        self.spent.get() >= self.budget.get()
+    /// Count shaping `run` (ruling R46.1).
+    pub(super) fn shaped(&self, run: &ShapedRun) {
+        self.take(shaping_steps(run));
+    }
+
+    /// Count inking `run` (ruling R46.1).
+    fn inked(&self, run: &ShapedRun) {
+        self.take(inking_steps(run));
+    }
+
+    /// Count walking `clusters` clusters in R27's arithmetic.
+    pub(super) fn walked(&self, clusters: usize) {
+        self.take(clusters.div_ceil(CLUSTERS_A_STEP).max(1));
+    }
+
+    /// Whether the frame has taken its budget, less what is held back
+    /// for [`untouched`], which runs within it (ruling R46.1).
+    pub(super) fn spent_all(&self) -> bool {
+        self.spent.get().saturating_add(self.reserve.get()) >= self.budget.get()
     }
 
     /// Scale the budget by the frame's text, `glyphs` glyphs once cut to
     /// the glyph cap (ruling R44.2): its sides' lays count against it,
     /// and scale it not (ruling R44.3), so a frame's work is bounded by
-    /// its text alone.
+    /// its text alone. As much of it as [`untouched`] may take over that
+    /// many inks is held back for it.
     fn scale(&self, glyphs: usize) {
         self.glyphs.set(glyphs);
         self.budget.set(frame_budget(glyphs));
+        self.reserve.set(untouched_steps(glyphs));
     }
 }
 
@@ -1126,12 +1332,8 @@ struct Search {
 }
 
 impl<'a> Layout<'a> {
-    fn new(halves: &'a Halves, outward: bool) -> Self {
-        Layout {
-            halves,
-            outward,
-            work: Work::new(),
-        }
+    fn new(halves: &'a Halves, outward: bool, work: Work) -> Self {
+        Layout { halves, outward, work }
     }
 }
 
@@ -1145,7 +1347,7 @@ impl Layout<'_> {
         part: (f32, f32),
         g: f32,
     ) -> Tracked {
-        self.work.take(clusters.len().max(1));
+        self.work.take(clusters.len() + TRACK_CALL_STEPS);
         track(walk, glyphs, clusters, part, g)
     }
 
@@ -2273,13 +2475,13 @@ struct Cleared {
 ///
 /// Cost: O(n log n) in the lines' inks, and a pair per two that share
 /// some of their width.
-fn overlapping(lines: &[Line]) -> bool {
+fn overlapping(lines: &[Line], work: &Work) -> bool {
     let boxes = lines
         .iter()
         .enumerate()
         .flat_map(|(k, l)| l.tracked.boxes.iter().enumerate().map(move |(i, b)| ((k, i), *b)))
         .collect();
-    touching(boxes, |(k, i), (l, j)| k == l && i.abs_diff(j) <= 1)
+    touching(boxes, |(k, i), (l, j)| k == l && i.abs_diff(j) <= 1, work)
 }
 
 /// Whether two of `boxes` touch — no more than [`TOUCH`] apart
@@ -2293,7 +2495,8 @@ fn overlapping(lines: &[Line]) -> bool {
 /// axis — round a ring, the few inks either side of each — where
 /// weighing every pair was quadratic in the inks (a side ornament's
 /// tens of thousands of copies' inks, ruling R44.3).
-fn touching<K: Copy>(mut boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool) -> bool {
+fn touching<K: Copy>(mut boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool, work: &Work) -> bool {
+    work.take(weighing_steps(boxes.len()));
     let spread = |axis: usize| {
         let (lo, hi) = boxes
             .iter()
@@ -2333,7 +2536,7 @@ fn touching<K: Copy>(mut boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool)
 /// apart (rulings R38.1, R44.2). A line cut to no ink is left out.
 ///
 /// Cost: a bisection of [`overlapping`]s over the frame's inks.
-fn untouched(lines: &[Line]) -> (Vec<Line>, Vec<usize>) {
+fn untouched(lines: &[Line], work: &Work) -> (Vec<Line>, Vec<usize>) {
     let total: usize = lines.iter().map(|l| l.tracked.boxes.len()).sum();
     let cut_to = |m: usize| {
         let mut left = m;
@@ -2359,7 +2562,9 @@ fn untouched(lines: &[Line]) -> (Vec<Line>, Vec<usize>) {
     let (mut apart, mut over) = (0, total);
     while over - apart > 1 {
         let mid = apart + (over - apart) / 2;
-        if overlapping(&cut_to(mid)) {
+        // Each look cuts the lines again: as much work as weighing them.
+        work.take(weighing_steps(mid));
+        if overlapping(&cut_to(mid), work) {
             over = mid;
         } else {
             apart = mid;
@@ -2650,12 +2855,14 @@ fn line_walk<'p>(path: &'p ArcPath, run: &ShapedRun, outward: bool) -> PathWalk<
 /// The frame's side ornament (ruling R33.1): its run (`run` and one
 /// shaped copy of the ornament at the size the x-height cap sets, a line
 /// of its own) and the ornament's glyphs in it. `None` without sides,
-/// or when the ornament shapes to nothing.
+/// or when the ornament shapes to nothing. Its shaping and inking are
+/// counted in `work` (ruling R46.1).
 fn side_run(
     run: &ShapedRun,
     sides: &Option<(String, Rgba)>,
     flow: &ResolvedText,
     fs: &mut FontSystemWriteGuard,
+    work: &Work,
 ) -> Option<(ShapedRun, Range<usize>)> {
     let (content, color) = sides.as_ref()?;
     let size = run
@@ -2681,6 +2888,8 @@ fn side_run(
             1.0,
             fs,
         );
+        work.shaped(&shaped);
+        work.inked(&shaped);
         let fsys: &mut FontSystem = fs;
         inked(&shaped, fsys)
             .glyphs
@@ -2702,6 +2911,7 @@ fn side_run(
     };
     let fsys: &mut FontSystem = fs;
     let with = reshape(run, 1.0, Some((content.as_str(), &style)), fsys);
+    work.shaped(&with);
     let start = with.glyphs.iter().position(|g| g.span == FILLER_SPAN)?;
     let range = start..with.glyphs.len();
     Some((with, range))
@@ -2814,13 +3024,13 @@ impl Layout<'_> {
         let apart = |k: usize| {
             let (line, frame) = frame_of(k);
             let cleared = self.lay_clear(run, &frame, side, span, [[0.0; 2]; 2], BACKTRACKS);
-            (!overlapping(&cleared.lines)).then_some((line, cleared))
+            (!overlapping(&cleared.lines, &self.work)).then_some((line, cleared))
         };
         // That frame laid once against the clearance held: whether no two
         // of its inks touch.
         let looks_apart = |k: usize| {
             let (_, frame) = frame_of(k);
-            !overlapping(&self.lay(run, &frame, held, span, &mut LayMemo::default()))
+            !overlapping(&self.lay(run, &frame, held, span, &mut LayMemo::default()), &self.work)
         };
         // Apart with none of the line's clusters, touching with all of
         // them; the longest prefix apart lies between.
@@ -2973,12 +3183,15 @@ pub(crate) fn to_cap_seam(run: &ShapedRun, range: Range<usize>, left: usize) -> 
 /// clearance again, [`CUT_ROUNDS`] times at most; a cut apart a
 /// bisection of clearance searches per line; a side arc a lay of its
 /// copies at the floor, and a few lays per copy count weighed
-/// ([`falsi`]); every touch check a sweep. In all, at most the frame's
-/// budget of glyph steps ([`frame_budget`]: [`STEPS_PER_GLYPH`] a glyph
-/// of its text cut to [`MAX_PLACED_GLYPHS`], at least [`TRACK_BUDGET`]),
-/// read before every lay, its sides' lays counted, and a lay of each
-/// line past it at most; then, where two inks still touch, a bisection
-/// of overlap checks over its inks ([`untouched`]).
+/// ([`falsi`]); every touch check a sweep; a build's shaping and inking.
+/// In all, at most the frame's budget of glyph steps ([`frame_budget`]:
+/// [`STEPS_PER_GLYPH`] a glyph of its text cut to [`MAX_PLACED_GLYPHS`],
+/// at least [`TRACK_BUDGET`]), every kind of work counted at its weight
+/// (ruling R46.1) and the budget read before every lay, build and
+/// reshape, and [`overshoot_steps`] past it at most (ruling R47.2);
+/// where two inks still touch, a bisection of overlap checks over its
+/// inks ([`untouched`]) runs within the share of the budget held back
+/// for it.
 #[allow(clippy::too_many_arguments)] // `place_on_closed`'s, and the trace.
 pub(super) fn place_halves(
     run: &ShapedRun,
@@ -2992,12 +3205,19 @@ pub(super) fn place_halves(
 ) -> (Option<ShapedRun>, PlacedRun) {
     let span = layout.span.get();
     let sized = matches!(fit, FitMode::Fit { .. });
+    // The frame's work, all of it counted (rulings R44.2, R46.1): its
+    // budget scaled by its text, cut to the glyph cap, until R27 has
+    // parted it, then by the lines it parted.
+    let work = Work::new(run.glyphs.len().min(glyph_cap()));
     // R27's placement, laid in full only for a frame that keeps it.
-    let keep_r27 = |trace: Option<&mut Trace>, fs: &mut FontSystemWriteGuard| {
+    let keep_r27 = |trace: Option<&mut Trace>, fs: &mut FontSystemWriteGuard, work: &Work| {
         let mut natural_trace = Trace::default();
-        let placed = place_lines(run, outline, fit, outward, flow, fs, Some(&mut natural_trace));
+        let placed = place_lines_in(run, outline, fit, outward, flow, fs, Some(&mut natural_trace), work);
         if let Some(trace) = trace {
             *trace = natural_trace;
+            trace.spent = work.spent.get();
+            trace.budget = work.budget.get();
+            trace.glyphs = work.glyphs.get();
         }
         placed
     };
@@ -3006,7 +3226,7 @@ pub(super) fn place_halves(
     // again). A `Once` or `Spread` frame parts its lines itself, below.
     let mut natural_trace = Trace::default();
     let (fitted, natural) = if sized {
-        frame_lines(run, outline, fit, outward, flow, fs, Some(&mut natural_trace))
+        frame_lines(run, outline, fit, outward, flow, fs, Some(&mut natural_trace), &work)
     } else {
         (
             None,
@@ -3017,7 +3237,7 @@ pub(super) fn place_halves(
         )
     };
     if sized && natural_trace.lines.is_empty() {
-        return keep_r27(trace, fs);
+        return keep_r27(trace, fs, &work);
     }
     let halves = Halves::new(outline, table_spacing(run, fit, flow));
     // An outline whose halves cannot be measured — one with a side that
@@ -3030,9 +3250,9 @@ pub(super) fn place_halves(
         (halves.apexes[0], halves.apexes[1]),
     ];
     if !(halves.length.is_finite() && ends.iter().all(|(a, b)| a.is_finite() && b.is_finite())) {
-        return keep_r27(trace, fs);
+        return keep_r27(trace, fs, &work);
     }
-    let lay = Layout::new(&halves, outward);
+    let lay = Layout::new(&halves, outward, work);
 
     // The run the lines are laid from, and each line: its half, its
     // glyphs, and whether R27 cut it.
@@ -3050,6 +3270,7 @@ pub(super) fn place_halves(
             .collect();
         (base, specs)
     } else {
+        lay.work.walked(run.glyphs.len());
         let specs = line_partition(run, outline, fit, flow)
             .into_iter()
             .enumerate()
@@ -3072,12 +3293,15 @@ pub(super) fn place_halves(
             base.clone()
         } else {
             let fsys: &mut FontSystem = fs;
-            reshape(&base, scale, None, fsys)
+            let scaled = reshape(&base, scale, None, fsys);
+            lay.work.shaped(&scaled);
+            scaled
         };
-        let (drawn, side) = match side_run(&scaled, &layout.sides, flow, fs) {
+        let (drawn, side) = match side_run(&scaled, &layout.sides, flow, fs, &lay.work) {
             Some((with, range)) => (with, Some(range)),
             None => (scaled, None),
         };
+        lay.work.inked(&drawn);
         let fsys: &mut FontSystem = fs;
         let drawn = inked(&drawn, fsys);
         // The glyphs the text may still place (ruling R44.1): a frame's
@@ -3125,7 +3349,7 @@ pub(super) fn place_halves(
             seed,
             backtracks,
         );
-        let overlap = overlapping(&cleared.lines);
+        let overlap = overlapping(&cleared.lines, &lay.work);
         Some(Built {
             drawn,
             side,
@@ -3241,7 +3465,7 @@ pub(super) fn place_halves(
         let seed = clear.map(|half| half.map(|c| c * SEED_SHARE));
         let cleared = lay.lay_clear(&drawn, &prepared, side_of, span, seed, BACKTRACKS);
         (lines, clear, met) = (cleared.lines, cleared.clear, cleared.met);
-        overlap = overlapping(&lines);
+        overlap = overlapping(&lines, &lay.work);
     }
     // Two inks that still touch, every line its half holds: an outline
     // too thin to hold the lines apart — inward round a flat outline,
@@ -3271,12 +3495,12 @@ pub(super) fn place_halves(
     // cut to the inks that touch nothing (rulings R38.1, R44.2): never
     // overlap wins over never cut, and a spent budget is no exception.
     if overlap {
-        let (kept, halves_cut) = untouched(&lines);
+        let (kept, halves_cut) = untouched(&lines, &lay.work);
         lines = kept;
         prepared.truncate(lines.len());
         cut_apart.extend(halves_cut);
         met = [0, 1].map(|j| lay.met(&lines, side_of, j).0);
-        overlap = overlapping(&lines);
+        overlap = overlapping(&lines, &lay.work);
         truncated = true;
     }
     let mut unheld = unheld_of(&lines, met, overlap);
@@ -3325,13 +3549,17 @@ pub(super) fn place_halves(
                     .map(|(i, (from, b))| ((from, i), b))
                     .chain(boxes.iter().enumerate().map(|(i, b)| ((2, i), *b)))
                     .collect();
-                let touches = touching(keyed, |(a, i), (b, j)| {
-                    if a == 2 && b == 2 {
-                        i.abs_diff(j) <= 1
-                    } else {
-                        a != 2 && b != 2
-                    }
-                });
+                let touches = touching(
+                    keyed,
+                    |(a, i), (b, j)| {
+                        if a == 2 && b == 2 {
+                            i.abs_diff(j) <= 1
+                        } else {
+                            a != 2 && b != 2
+                        }
+                    },
+                    &lay.work,
+                );
                 if touches {
                     sides.truncate(before);
                     unheld.sides.extend((0..2).filter(|&j| at[j]));
@@ -3399,7 +3627,7 @@ pub(crate) fn end_seam(
     end: f32,
 ) -> (Vec2, Vec2) {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
-    let lay = Layout::new(&halves, true);
+    let lay = Layout::new(&halves, true, Work::new(0));
     let tracked = Tracked {
         glyphs: Vec::new(),
         short: 0.0,
@@ -3426,9 +3654,9 @@ pub(crate) fn side_floor_seam(
     fs: &mut FontSystemWriteGuard,
 ) -> Option<(ShapedRun, Vec<PlacedGlyph>, f32)> {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
-    let lay = Layout::new(&halves, true);
+    let lay = Layout::new(&halves, true, Work::new(0));
     let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
-    let (with, range) = side_run(run, &sides, flow, fs)?;
+    let (with, range) = side_run(run, &sides, flow, fs, &lay.work)?;
     let fsys: &mut FontSystem = fs;
     let drawn = inked(&with, fsys);
     let (size, _) = letters_of(&clusters_of(&drawn.glyphs, 0..range.start))?;
@@ -3460,9 +3688,9 @@ pub(crate) fn side_solve_seam(
     fs: &mut FontSystemWriteGuard,
 ) -> Option<(f32, bool)> {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
-    let lay = Layout::new(&halves, true);
+    let lay = Layout::new(&halves, true, Work::new(0));
     let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
-    let (with, range) = side_run(run, &sides, flow, fs)?;
+    let (with, range) = side_run(run, &sides, flow, fs, &lay.work)?;
     let fsys: &mut FontSystem = fs;
     let drawn = inked(&with, fsys);
     let (size, _) = letters_of(&clusters_of(&drawn.glyphs, 0..range.start))?;
@@ -3485,7 +3713,7 @@ pub(crate) fn side_solve_seam(
 /// junctions — [`Layout::room`], which never inverts.
 pub(crate) fn room_seam(outline: &Outline, half: usize, clear: [f32; 2]) -> ((f32, f32), (f32, f32)) {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
-    let lay = Layout::new(&halves, true);
+    let lay = Layout::new(&halves, true, Work::new(0));
     (lay.room(half, clear), halves.junctions[half])
 }
 

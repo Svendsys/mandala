@@ -375,12 +375,12 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
-            "test_flow_halves_no_frame_of_the_sweep_takes_more_than_50000_glyph_steps",
+            "test_flow_halves_no_frame_of_the_sweep_takes_more_than_66000_glyph_steps",
             CannotCompileIntoTheLibrary,
         ),
         (
             "flow/tests/halves_tests.rs",
-            "test_flow_halves_the_sweeps_worst_frame_takes_under_a_tenth_of_the_budget",
+            "test_flow_halves_the_budget_is_six_times_the_sweeps_worst_frame",
             CannotCompileIntoTheLibrary,
         ),
         (
@@ -396,6 +396,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         (
             "flow/tests/halves_tests.rs",
             "test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_shaping_inking_and_tracking_are_all_counted",
             CannotCompileIntoTheLibrary,
         ),
         (

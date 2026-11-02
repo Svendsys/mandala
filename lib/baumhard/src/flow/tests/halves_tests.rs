@@ -864,9 +864,14 @@ fn the_sweep() -> &'static SweepWork {
 /// round after round of a clearance that could not part two inks
 /// stacked across an outline thinner than they are, each lay some 20
 /// `track`s chasing a tolerance finer than its floats or its letters
-/// resolve. The worst now, the quatrain outward round the 600 × 12
-/// rectangle, `Once` at span ½, takes 36,748, its sides' lays counted (ruling R44.3).
-pub const SWEEP_MOST_STEPS: usize = 50_000;
+/// resolve. At R44 the worst, the quatrain outward round the 600 × 12
+/// rectangle, `Once` at span ½, took 36,748, its sides' lays counted
+/// (ruling R44.3), against a bound of 50,000. Since ruling R46 a step is
+/// a unit of all of a frame's work — its shaping, inking, touch sweeps
+/// and R27's walks besides its tracking — and the worst, the quatrain
+/// inward round the 50:1 ellipse, `Fit`, takes 59,468: the bound is
+/// restated in the new unit, some 10% over that (ruling R47.1).
+pub const SWEEP_MOST_STEPS: usize = 66_000;
 
 /// The most path lookups a glyph step of a frame may take on the mean,
 /// over the aspect sweep's placements and the demo maps' frames, every
@@ -878,14 +883,16 @@ pub const MEAN_STEP_LOOKUPS: usize = 24;
 pub const MOST_STEP_LOOKUPS: usize = 64;
 
 /// R43.2: no frame of the aspect sweep takes more than
-/// [`SWEEP_MOST_STEPS`] glyph steps (`Trace::spent`).
+/// [`SWEEP_MOST_STEPS`] glyph steps (`Trace::spent`, all of a frame's
+/// work counted since ruling R46; the bound restated by R47.1).
 ///
 /// Controls: with ends that overlap short by the boxes' distance alone,
 /// not their overlap's depth too, the worst frame takes 67,730; with a
 /// line's end held to `SHORT_TOLERANCE` however its letters are set,
-/// 62,264. (No `do_*` twin: it reads test counters.)
+/// 62,264 (both at R44, in tracking steps alone). (No `do_*` twin: it
+/// reads test counters.)
 #[test]
-fn test_flow_halves_no_frame_of_the_sweep_takes_more_than_50000_glyph_steps() {
+fn test_flow_halves_no_frame_of_the_sweep_takes_more_than_66000_glyph_steps() {
     let work = the_sweep();
     assert!(
         work.frames > 300,
@@ -894,22 +901,26 @@ fn test_flow_halves_no_frame_of_the_sweep_takes_more_than_50000_glyph_steps() {
     );
     assert!(
         work.most_spent <= SWEEP_MOST_STEPS,
-        "the aspect sweep's worst frame, {}, took {} glyph steps, at most {SWEEP_MOST_STEPS}",
+        "the aspect sweep's worst frame, {}, took {} glyph steps, at most {SWEEP_MOST_STEPS} (the unit counts all of a frame's work since R46)",
         work.worst,
         work.most_spent
     );
 }
 
-/// R43.3: the sweep's worst frame stays under a tenth of the frame's
-/// [`TRACK_BUDGET`]: the budget cuts only pathological inputs, never
-/// real text.
+/// R43.3, as R47.1 restates it: the frame's [`TRACK_BUDGET`] is at
+/// least six times the sweep's worst frame, so the budget cuts only
+/// pathological inputs, never real text. It was ten times while a step
+/// counted tracking alone; since ruling R46 it counts all of a frame's
+/// work, the constant is unchanged (R45's per-input bound rests on it),
+/// and the margin is the one measured: 400,000 over 59,468, ×6.7.
 ///
 /// Controls: with the budget a tenth of what it is, red; with a
 /// junction's step never aimed by what its last round gave, the worst
-/// frame takes 42,219; with a line's lay never warm-started from its
-/// last, 41,734. (No `do_*` twin: it reads test counters.)
+/// frame took 42,219, and with a line's lay never warm-started from its
+/// last 41,734 (at R44, in tracking steps alone). (No `do_*` twin: it
+/// reads test counters.)
 #[test]
-fn test_flow_halves_the_sweeps_worst_frame_takes_under_a_tenth_of_the_budget() {
+fn test_flow_halves_the_budget_is_six_times_the_sweeps_worst_frame() {
     use crate::flow::place::halves::TRACK_BUDGET;
     let work = the_sweep();
     assert!(
@@ -917,15 +928,17 @@ fn test_flow_halves_the_sweeps_worst_frame_takes_under_a_tenth_of_the_budget() {
         "precondition: the sweep's frames are counted"
     );
     assert!(
-        work.most_spent * 10 < TRACK_BUDGET,
-        "the aspect sweep's worst frame took {} glyph steps, a tenth of the budget is {}",
+        work.most_spent * 6 <= TRACK_BUDGET,
+        "the aspect sweep's worst frame took {} glyph steps: the budget's {TRACK_BUDGET} is ×{:.1} that, at least ×6",
         work.most_spent,
-        TRACK_BUDGET / 10
+        TRACK_BUDGET as f64 / work.most_spent as f64
     );
 }
 
-/// R43.3: a frame's tracking budget is 400,000 glyph steps, ten times
-/// the aspect sweep's worst frame rounded up — not the 2^21 it was while
+/// R43.3: a frame's tracking budget is 400,000 glyph steps — ten times
+/// the aspect sweep's worst frame rounded up while a step counted
+/// tracking alone, six times since all of a frame's work is counted
+/// (rulings R46, R47.1) — not the 2^21 it was while
 /// a real frame took 306,098 — so that a pathological input's frame,
 /// laid to the budget at a glyph step's cost, finishes well inside the
 /// fuzzers' 20 s timeout. Control: with the budget 2^21 again, red.
@@ -2748,15 +2761,19 @@ fn test_flow_halves_a_long_texts_frame_is_laid_within_its_budget() {
     }
 }
 
-/// R44.2: the budget is read before every lay, so a frame that spends it
-/// overshoots it by no more than a lay of each line — a few `track`s, a
-/// glyph step each glyph — and is left with no two inks touching: the
-/// quatrain round the 600 × 12 rectangle, `Once` at span ½, with budgets
-/// of 1, 1,000 and 10,000 glyph steps.
+/// R44.2, as R47.2 bounds it: the budget is read before every lay and
+/// every build, so a frame that spends it overshoots it by no more than
+/// a lay of each line — a few `track`s, a glyph step each glyph — and
+/// one build's shaping and inking, and what runs before the budget is
+/// first read (`overshoot_steps`, from the weight constants), and is
+/// left with no two inks touching: the quatrain round the 600 × 12
+/// rectangle, `Once` at span ½, with budgets of 1, 1,000 and 10,000
+/// glyph steps. `untouched` runs within the budget, which holds its
+/// share back: a budget smaller than that share is read as the share.
 ///
-/// Control: with the budget read only between clearance rounds, as at
-/// 30411a6e, the overshoot passes the bound. (No `do_*` twin: it sets a
-/// test seam.)
+/// Controls: with the budget read only between clearance rounds, as at
+/// 30411a6e, the overshoot passes the bound; with the shrink's builds
+/// unread, likewise. (No `do_*` twin: it sets a test seam.)
 #[test]
 fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
     use crate::flow::place::halves::BUDGET_OVERRIDE;
@@ -2770,8 +2787,11 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
         ..RingLayout::whole()
     };
+    use crate::flow::place::halves::{
+        inking_steps, overshoot_steps, untouched_steps, FRAME_STEPS, OVERSHOOT_TRACKS, TRACK_CALL_STEPS,
+    };
     for budget in [1, 1_000, 10_000] {
-        let (_, _, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
+        let (run, _, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
             frame_with(
                 QUATRAIN,
                 22.0,
@@ -2781,17 +2801,23 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
                 true,
             )
         });
-        let lay = OVERSHOOT_TRACKS * trace.glyphs;
+        // A `Once` frame with no sides, laid at its size: its builds
+        // reshape nothing, so a build past the budget is its inking alone.
+        let past = FRAME_STEPS + inking_steps(&run) + OVERSHOOT_TRACKS * (run.glyphs.len() + TRACK_CALL_STEPS);
+        assert!(
+            past <= overshoot_steps(&run, None, false),
+            "precondition: the frame's overshoot is within the general bound"
+        );
+        let held = budget.max(untouched_steps(trace.glyphs));
         assert!(
             trace.spent >= budget,
             "precondition: the budget of {budget} is spent ({})",
             trace.spent
         );
         assert!(
-            trace.spent <= budget + lay,
-            "a budget of {budget}: {} glyph steps, at most {} past it",
+            trace.spent <= held + past,
+            "a budget of {budget}: {} glyph steps, at most {past} past it",
             trace.spent,
-            lay
         );
         assert!(
             !trace.unheld.overlap,
@@ -2801,18 +2827,81 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
     }
 }
 
-/// How many `track`s of every glyph a frame may take past its spent
-/// budget ([`test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most`]):
-/// a lay of each line — the slide's and the solve's probe that notices
-/// the budget is spent, and the check at the font's gap — and the look
-/// at whether its lines fit.
-#[cfg(test)]
-const OVERSHOOT_TRACKS: usize = 8;
+
+/// R46.2: a frame's `Trace::spent` counts all its work — every shaping
+/// and inking it does and every `track` it lays, each at its weight —
+/// held against the weights counted where the work is done (the test
+/// counters `SHAPED_STEPS`, `INKED_STEPS`, `TRACKED_STEPS`), not where
+/// the frame counts it: the quatrain inward round the 600 × 12
+/// rectangle, `Fit`, which R27 sizes and the halves shrink (a reshape
+/// and an inking each build), and outward, `Once` at span ½ with a side
+/// ornament (shaped, sized and inked beside the text).
+///
+/// Controls: with a build's reshape uncounted, red; with its inking
+/// uncounted, red; with `side_run`'s shaping uncounted, red. (No `do_*`
+/// twin: it reads test counters.)
+#[test]
+fn test_flow_halves_a_frames_shaping_inking_and_tracking_are_all_counted() {
+    use crate::flow::place::halves::{BUILDS, INKED_STEPS, SHAPED_STEPS, TRACKED_STEPS};
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let sided = RingLayout {
+        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+        sides: Some(("❧".to_string(), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    for (what, fit, layout, outward) in [
+        ("Fit inward", FitMode::Fit { min: 0.5, max: 2.0 }, RingLayout::whole(), false),
+        ("Once outward with sides", FitMode::Once { filler: None }, sided, true),
+    ] {
+        let flow = style(22.0);
+        // Shaped before the counters are reset: the frame's own work only.
+        let run = with_fonts(|fs| real_run(QUATRAIN, &flow, fs));
+        let mut trace = Trace::default();
+        for counter in [&SHAPED_STEPS, &INKED_STEPS, &TRACKED_STEPS, &BUILDS] {
+            counter.with(|count| count.set(0));
+        }
+        with_fonts(|fs| {
+            place_on_closed_traced(
+                &run,
+                &shape,
+                StartPoint {
+                    edge: Edge::Top,
+                    at: 0.0,
+                },
+                Direction::Clockwise,
+                &fit,
+                &layout,
+                outward,
+                &flow,
+                fs,
+                Some(&mut trace),
+            )
+        });
+        let [shaped, inked, tracked, builds] = [&SHAPED_STEPS, &INKED_STEPS, &TRACKED_STEPS, &BUILDS]
+            .map(|counter| counter.with(std::cell::Cell::get));
+        assert!(
+            shaped > 0 && inked > 0 && tracked > 0,
+            "precondition, {what}: the frame shapes ({shaped}), inks ({inked}) and tracks ({tracked}), in {builds} builds"
+        );
+        assert!(
+            trace.spent >= shaped + inked + tracked,
+            "{what}: {} glyph steps counted, past the {shaped} shaping, {inked} inking and {tracked} tracking it did",
+            trace.spent
+        );
+    }
+}
 
 /// R44.2: a frame's budget is 3,000 glyph steps a glyph of its text, at
-/// least 400,000, ten times the most a frame of the aspect sweep takes a
-/// glyph rounded up; and the sweep stays under a tenth of it.
-/// Control: with the sweep's most a glyph past 300, red. (No `do_*` twin:
+/// least 400,000 — ten times the most a frame of the aspect sweep took
+/// a glyph, rounded up, while a step counted tracking alone — and, as
+/// R47.1 restates it now that a step counts all of a frame's work (R46),
+/// at least five times the sweep's most a glyph: 3,000 over 597, ×5.0.
+/// Control: with the sweep's most a glyph past 600, red. (No `do_*` twin:
 /// it reads test counters.)
 #[test]
 fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
@@ -2822,10 +2911,10 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
     assert_eq!(frame_budget(1_000), 3_000_000, "a long frame's budget");
     let work = the_sweep();
     assert!(
-        work.most_per_glyph > 0 && work.most_per_glyph * 10 <= STEPS_PER_GLYPH,
-        "the aspect sweep: {} glyph steps a glyph at most, a tenth of the budget a glyph is {}",
+        work.most_per_glyph > 0 && work.most_per_glyph * 5 <= STEPS_PER_GLYPH,
+        "the aspect sweep: {} glyph steps a glyph at most: the budget's {STEPS_PER_GLYPH} a glyph is ×{:.1} that, at least ×5",
         work.most_per_glyph,
-        STEPS_PER_GLYPH / 10
+        STEPS_PER_GLYPH as f64 / work.most_per_glyph.max(1) as f64
     );
 }
 

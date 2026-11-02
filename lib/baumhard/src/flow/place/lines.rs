@@ -44,6 +44,7 @@
 //! `start` and `direction` do not apply: a text frame always reads over
 //! the top and then along the bottom.
 
+use super::halves::Work;
 use super::*;
 use crate::document::values::Edge;
 
@@ -139,8 +140,10 @@ fn part(clusters: &[Cluster], spans: [f32; 2]) -> [Range<usize>; 2] {
     best.map_or_else(|| [trim(0..n), n..n], |(_, lines)| lines)
 }
 
-/// What a frame's lines lay: their run and clusters, and how.
+/// What a frame's lines lay: their run and clusters, and how, and the
+/// frame's work their lays are counted in (ruling R46.1).
 struct Lines<'a> {
+    work: &'a Work,
     run: &'a ShapedRun,
     clusters: &'a [Cluster],
     lines: [Range<usize>; 2],
@@ -172,6 +175,7 @@ impl Lines<'_> {
 
     /// Where line `k`'s last step ends laid from `s` with `gap`.
     fn reach(&self, k: usize, s: f32, gap: f32) -> f32 {
+        self.work.walked(self.lines[k].len());
         let walk = self.walk(k);
         let mut at = s;
         let mut end = s;
@@ -197,6 +201,7 @@ impl Lines<'_> {
         let walk = self.walk(k);
         let natural = self.reach(k, span.start, 0.0);
         if natural > walk.limit {
+            self.work.walked(line.len());
             let (laid, cut) = walk.lay_or_cut(&self.run.glyphs, line, span.start, 0.0, out);
             let end = match laid {
                 Laid::Fits(next) => next,
@@ -213,6 +218,7 @@ impl Lines<'_> {
         } else {
             (self.center(k, gap), gap)
         };
+        self.work.walked(line.len());
         let laid = walk.lay(&self.run.glyphs, line, start, gap, out);
         let cut = laid == Laid::Capped;
         let end = if self.centered {
@@ -275,6 +281,7 @@ impl Lines<'_> {
         let Some(first) = clusters.iter().position(|cluster| !cluster.blank) else {
             return self.lines.clone();
         };
+        self.work.walked(n);
         let (path_span, walk) = (&self.halves[0].1, self.walk(0));
         // Where each cluster's step ends, the text laid from `first`.
         let mut ends = vec![f32::INFINITY; n];
@@ -312,6 +319,7 @@ impl Lines<'_> {
     /// Whether every line fits its span with no gap at `scale` times its
     /// size, as a reshape at `scale` will lay it ([`size_factor`]).
     fn fit_at(&self, scale: f32, largest: f32) -> bool {
+        self.work.walked(self.lines[0].len() + self.lines[1].len());
         let h = self.run.line_height * size_factor(largest, scale);
         (0..2).all(|k| {
             let span = &self.halves[k].1;
@@ -349,7 +357,25 @@ pub(crate) fn place_lines(
     fs: &mut FontSystemWriteGuard,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    lay_lines(run, outline, fit, outward, flow, fs, trace, true)
+    let work = Work::new(run.glyphs.len().min(MAX_PLACED_GLYPHS));
+    lay_lines(run, outline, fit, outward, flow, fs, trace, true, &work)
+}
+
+/// [`place_lines`], its work counted in a frame's `work` (ruling R46.1):
+/// what a frame laid along its halves keeps when it keeps R27's
+/// placement.
+#[allow(clippy::too_many_arguments)] // `place_lines`', and the work.
+pub(crate) fn place_lines_in(
+    run: &ShapedRun,
+    outline: &Outline,
+    fit: &FitMode,
+    outward: bool,
+    flow: &ResolvedText,
+    fs: &mut FontSystemWriteGuard,
+    trace: Option<&mut Trace>,
+    work: &Work,
+) -> (Option<ShapedRun>, PlacedRun) {
+    lay_lines(run, outline, fit, outward, flow, fs, trace, true, work)
 }
 
 /// [`place_lines`] as a frame laid along its halves reads it (rulings
@@ -359,7 +385,10 @@ pub(crate) fn place_lines(
 /// them again. The placement's glyphs, lines, cuts and truncation, and
 /// the run it returns, are [`place_lines`]'s; only positions differ.
 ///
+/// Its work is counted in the frame's `work` (ruling R46.1).
+///
 /// Cost: [`place_lines`]'s but the centering and spreading.
+#[allow(clippy::too_many_arguments)] // `place_lines`', and the work.
 pub(crate) fn frame_lines(
     run: &ShapedRun,
     outline: &Outline,
@@ -368,13 +397,14 @@ pub(crate) fn frame_lines(
     flow: &ResolvedText,
     fs: &mut FontSystemWriteGuard,
     trace: Option<&mut Trace>,
+    work: &Work,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    lay_lines(run, outline, fit, outward, flow, fs, trace, false)
+    lay_lines(run, outline, fit, outward, flow, fs, trace, false, work)
 }
 
 /// [`place_lines`], each line centered or spread as R27 lays it, or not
-/// ([`Lines::centered`]).
-#[allow(clippy::too_many_arguments)] // `place_lines`', and the choice.
+/// ([`Lines::centered`]), its work counted in `work`.
+#[allow(clippy::too_many_arguments)] // `place_lines`', the choice and the work.
 fn lay_lines(
     run: &ShapedRun,
     outline: &Outline,
@@ -384,6 +414,7 @@ fn lay_lines(
     fs: &mut FontSystemWriteGuard,
     trace: Option<&mut Trace>,
     centered: bool,
+    work: &Work,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let halves = frame_halves(outline, table_spacing(run, fit, flow));
     // A level line fits its span when its advances fit the span's width
@@ -393,9 +424,11 @@ fn lay_lines(
         path.at(span.end).0.x - path.at(span.start).0.x
     });
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
+    work.walked(clusters.len());
     let lines = part(&clusters, spans);
     let shaped = clusters.len();
     let parted = Lines {
+        work,
         run,
         clusters: &clusters,
         lines: lines.clone(),
@@ -426,10 +459,12 @@ fn lay_lines(
                 }
                 under
             };
-            (fit_reshape(run, &lines, &halves, outward, scale, low, fs), None)
+            (fit_reshape(run, &lines, &halves, outward, scale, low, fs, work), None)
         }
         FitMode::Once { filler: Some(filler) } => {
-            (Some(reshape(run, 1.0, Some((filler, flow)), fs)), Some(()))
+            let filled = reshape(run, 1.0, Some((filler, flow)), fs);
+            work.shaped(&filled);
+            (Some(filled), Some(()))
         }
         _ => (None, None),
     };
@@ -450,6 +485,7 @@ fn lay_lines(
         part(&clusters[..text_clusters], spans)
     };
     let mut laid = Lines {
+        work,
         run: laid_run,
         clusters: &clusters[..text_clusters],
         lines,
@@ -551,12 +587,24 @@ fn fit_reshape(
     mut scale: f32,
     low: f32,
     fs: &mut FontSystemWriteGuard,
+    work: &Work,
 ) -> Option<ShapedRun> {
-    let mut reshaped = (scale != 1.0).then(|| reshape(run, scale, None, fs));
+    let shaped = |scale: f32, fs: &mut FontSystemWriteGuard| {
+        let reshaped = reshape(run, scale, None, fs);
+        work.shaped(&reshaped);
+        reshaped
+    };
+    let mut reshaped = (scale != 1.0).then(|| shaped(scale, fs));
     for _ in 0..FIT_ROUNDS {
+        // The frame's work budget spent: the size as it stands (ruling
+        // R46.1).
+        if work.spent_all() {
+            break;
+        }
         let laid_run = reshaped.as_ref().unwrap_or(run);
         let clusters = clusters_of(&laid_run.glyphs, 0..laid_run.glyphs.len());
         let laid = Lines {
+            work,
             run: laid_run,
             clusters: &clusters,
             lines: lines.clone(),
@@ -576,7 +624,7 @@ fn fit_reshape(
             break;
         }
         scale = (scale / overrun * (1.0 - 1e-4)).max(low);
-        reshaped = Some(reshape(run, scale, None, fs));
+        reshaped = Some(shaped(scale, fs));
     }
     reshaped
 }
@@ -607,6 +655,7 @@ fn fill(
         let empty = lines.lines[k].is_empty();
         // How far `count` copies reach laid from `s`.
         let reach = |mut s: f32, count: usize| {
+            lines.work.walked(count.saturating_mul(copy.len()));
             for _ in 0..count {
                 for cluster in copy {
                     s += walk.step(s, cluster.advance, h).0;
@@ -622,6 +671,12 @@ fn fill(
         // After the line: copies until the next would pass the span.
         let mut s = after;
         loop {
+            // The frame's work budget spent: the copies laid so far
+            // (ruling R46.1).
+            if lines.work.spent_all() {
+                break;
+            }
+            lines.work.walked(copy.len());
             let mark = out.mark();
             match walk.lay(&lines.run.glyphs, copy, s, 0.0, out) {
                 Laid::Fits(next) if next > s => s = next,
@@ -644,7 +699,7 @@ fn fill(
         let budget = MAX_PLACED_GLYPHS.saturating_sub(out.glyphs.len()) / per_copy;
         let mut count = 0;
         let mut end = span.start;
-        while count < budget {
+        while count < budget && !lines.work.spent_all() {
             let next = reach(end, 1);
             if !(next > end && next <= room_before) {
                 break;
@@ -661,6 +716,7 @@ fn fill(
                 count -= 1;
             }
             let mut s = start;
+            lines.work.walked(count.saturating_mul(copy.len()));
             for _ in 0..count {
                 if let Laid::Fits(next) = walk.lay(&lines.run.glyphs, copy, s, 0.0, out) {
                     s = next;
