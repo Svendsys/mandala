@@ -43,11 +43,36 @@
 //! missing prerequisite into a failure instead.
 //!
 //! **How it builds.** `probe.rs` is copied into a staging crate under
-//! `target/`, together with the workspace's `Cargo.lock`, and built for
-//! wasm32 there. That compiles the dependency graph the app ships and
-//! needs no second lockfile in the repository to go stale. The first
-//! run compiles baumhard for wasm32 from scratch, which takes a couple
-//! of minutes; later runs are incremental.
+//! `target/wasm_font_lock/` (three small files: a generated manifest,
+//! the probe, the workspace's `Cargo.lock`), and built for wasm32 from
+//! there. That compiles the dependency graph the app ships and needs no
+//! second lockfile in the repository to go stale. The first run
+//! compiles baumhard for wasm32 from scratch, which takes a couple of
+//! minutes; later runs are incremental.
+//!
+//! **Where it builds: the workspace's own target directory** (#285),
+//! not a private one. The build output goes to `<target>/` itself, so
+//! the probe's host-side artifacts (proc macros and build scripts,
+//! about a fifth of what the private directory held) are the very
+//! files `cargo test` built for the workspace, and the wasm32 output
+//! sits in the `wasm32-unknown-unknown/` tree beside the clippy, doc
+//! and check legs'. Sharing the directory shares no *decision*:
+//! cargo names every unit's output by a hash of the package, its
+//! features, its profile, its target and its flags, and decides
+//! whether it is up to date from a fingerprint of the unit's source
+//! files, so a unit built for another feature set or profile lands
+//! beside the probe's rather than being mistaken for it, and an edit
+//! to baumhard (or to `probe.rs`, or to the manifest below) is
+//! recompiled before the module is run — which is what lets this test
+//! fail on a broken subject at all, and what the private directory
+//! relied on in exactly the same way. The staging crate's name is
+//! unique in the workspace, so its module cannot collide with a
+//! workspace member's output. What does *not* share: the check-only
+//! wasm32 artifacts of `./test.sh`'s clippy, doc and check legs are
+//! `.rmeta` files with no object code, which a build for execution
+//! cannot reuse, so the wasm32 dependency compiles stay the probe's
+//! own. (`CARGO_TARGET_DIR`, which `./test.sh --coverage` points at its
+//! own directory, is honored, as it was.)
 
 use baumhard::document::tests::format_memory_shapes::{check_pins, derive, Measured};
 use std::fs;
@@ -79,12 +104,18 @@ fn workspace_root() -> PathBuf {
         .expect("the workspace root is two levels above lib/baumhard")
 }
 
-/// Where staging happens: beside the workspace's own build output, so
-/// `cargo clean` removes it and it is already git-ignored.
-fn staging_dir(root: &Path) -> PathBuf {
-    let target = std::env::var_os("CARGO_TARGET_DIR")
+/// The workspace's build output directory, which the probe's build
+/// shares (see the module docs): `$CARGO_TARGET_DIR`, else `target/`.
+fn target_dir(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"));
+        .unwrap_or_else(|| root.join("target"))
+}
+
+/// Where staging happens: inside the target directory, so `cargo clean`
+/// removes it and it is already git-ignored. Only the three staged
+/// files live here; the build output does not.
+fn staging_dir(target: &Path) -> PathBuf {
     target.join("wasm_font_lock")
 }
 
@@ -139,7 +170,8 @@ fn test_font_lock_helpers_run_on_wasm32() {
 
     let root = workspace_root();
     let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wasm_font_lock");
-    let stage = staging_dir(&root);
+    let target = target_dir(&root);
+    let stage = staging_dir(&target);
     fs::create_dir_all(&stage).expect("the staging directory must be creatable");
 
     // The staging crate. `[workspace]` keeps cargo from adopting it
@@ -203,7 +235,7 @@ fn test_font_lock_helpers_run_on_wasm32() {
         .args(["build", "--target", TARGET, "--manifest-path"])
         .arg(stage.join("Cargo.toml"))
         .arg("--target-dir")
-        .arg(stage.join("target"))
+        .arg(&target)
         .output()
         .expect("cargo must be runnable");
     assert!(
@@ -212,7 +244,7 @@ fn test_font_lock_helpers_run_on_wasm32() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    let wasm = stage.join(format!("target/{TARGET}/debug/{PROBE_CRATE}.wasm"));
+    let wasm = target.join(format!("{TARGET}/debug/{PROBE_CRATE}.wasm"));
     assert!(
         wasm.is_file(),
         "the build succeeded but {} is missing",

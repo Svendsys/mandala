@@ -173,7 +173,8 @@ syn = "3.0.9"
 #
 # The wasm32 font-lock probe's nested build is its own workspace, so
 # none of this reaches it; its generated manifest sets
-# `debug = false` itself (`lib/baumhard/tests/wasm_font_lock.rs`).
+# `debug = false` itself (`lib/baumhard/tests/wasm_font_lock.rs`),
+# and builds into this workspace's own `target/`.
 [profile.dev]
 debug = "line-tables-only"
 
