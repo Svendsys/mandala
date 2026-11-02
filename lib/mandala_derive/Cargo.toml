@@ -35,6 +35,12 @@ quote = "1.0.47"
 # — that ask is baumhard's — though this crate compiles against it all
 # the same, through the workspace-hack, like `syn`'s `full` above.
 proc-macro2.workspace = true
-# One feature set for every shared dependency, whatever a command
-# selects (`.config/hakari.toml`, #284).
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# One feature set for every shared dependency, whatever a native
+# command selects (`.config/hakari.toml`, #284). Native only, as in
+# every member: the root manifest's `workspace-hack` entry says why. A
+# proc macro is compiled for the host, so for this crate the table
+# applies in every build, the browser's included; it is spelled as in
+# the other members so that one rule covers all of them.
 workspace-hack.workspace = true

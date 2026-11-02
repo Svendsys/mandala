@@ -27,9 +27,6 @@ serde_json.workspace = true
 # lean (`format/ipc.md` §`capture.record_start`).
 png.workspace = true
 gif = "0.14.2"
-# One feature set for every shared dependency, whatever a command
-# selects (`.config/hakari.toml`, #284).
-workspace-hack.workspace = true
 
 # The Windows client for the app's named pipe (`src/client.rs`, #169):
 # std can open a named pipe as a file but cannot bound a read or a write
@@ -52,3 +49,7 @@ tempfile.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom.workspace = true
 tungstenite = "0.30.0"
+# One feature set for every shared dependency, whatever a native
+# command selects (`.config/hakari.toml`, #284). Native only, as in
+# every member: the root manifest's `workspace-hack` entry says why.
+workspace-hack.workspace = true

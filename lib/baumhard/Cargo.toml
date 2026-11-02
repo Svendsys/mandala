@@ -75,9 +75,6 @@ serde_ignored = "0.1.14"
 # (`nodes[3].frame.rings[0].spans[2].color`). `document::format` is the
 # only consumer, so it stays out of `[workspace.dependencies]` per §13.
 serde_path_to_error = "0.1.20"
-# One feature set for every shared dependency, whatever a command
-# selects (`.config/hakari.toml`, #284).
-workspace-hack.workspace = true
 
 # `env_logger` is load-bearing, not a leftover — and it is the native
 # half of a matched pair with `console_log` below. `util::log::init()`
@@ -119,6 +116,10 @@ workspace-hack.workspace = true
 # on both legs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.11"
+# One feature set for every shared dependency, whatever a native
+# command selects (`.config/hakari.toml`, #284). Native only, as in
+# every member: the root manifest's `workspace-hack` entry says why.
+workspace-hack.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = "1.1.0"
@@ -141,8 +142,8 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # `full` on top of the default set the root table declares, without
 # editing the shared entry. What is compiled is another matter: the
 # workspace-hack (`.config/hakari.toml`, #284) carries `full` and
-# `visit` to every build of syn 3, the proc-macro graph's included, so
-# that one build serves both — see `lib/mandala_derive/Cargo.toml`.
+# `visit` to every native build of syn 3, the proc-macro graph's
+# included, so that one build serves both — see `lib/mandala_derive/Cargo.toml`.
 # This entry is still where the ask is made, and what `cargo hakari
 # generate` reads it from.
 # `visit` is for `util::source_scan::section_growths_in`, which walks
@@ -159,7 +160,7 @@ syn = { workspace = true, features = ["full", "visit"] }
 # wrong rows in silence.
 #
 # Additive on the shared entry, like `syn`'s `full` above, and carried
-# to every build of proc-macro2 by the workspace-hack for the same
+# to every native build of proc-macro2 by the workspace-hack for the same
 # reason: the derive macros the workspace expands compile against the
 # same proc-macro2 build as these tests.
 proc-macro2 = { workspace = true, features = ["span-locations"] }

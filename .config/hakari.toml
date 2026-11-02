@@ -4,12 +4,11 @@
 # feature set.
 #
 # Why it exists: cargo resolves features for the packages and targets a
-# command selects, so `cargo doc --workspace` (no dev-dependencies),
-# `cargo test -p baumhard` (one member) and `cargo check --target
-# wasm32-unknown-unknown` each settle on a different feature set for
-# some shared crate. A crate with another feature set is another build of
-# it, and of everything that depends on it, beside the first in the same
-# `target/`. The workspace-hack names the union of those feature sets as
+# command selects, so `cargo doc --workspace` (no dev-dependencies) and
+# `cargo test -p baumhard` (one member) each settle on a different
+# feature set for some shared crate than `cargo test --workspace` does.
+# A crate with another feature set is another build of it, and of
+# everything that depends on it, beside the first in the same `target/`. The workspace-hack names the union of those feature sets as
 # a dependency of every member, so they all agree.
 #
 # After a change to any member's dependencies, regenerate and commit:
@@ -33,14 +32,19 @@ dep-format-version = "4"
 # which means resolver 2.
 resolver = "2"
 
-# The platforms whose feature sets are unified. Each is one the
-# workspace is built for: Linux (every local run and the `test` job),
-# the browser build (`./test.sh`'s wasm32 legs, `trunk`), and Windows
-# (the `windows-ipc` job). A platform left out still builds; its
-# platform-specific crates are simply not unified.
+# The platforms whose feature sets are unified: Linux (every local run
+# and the `test` job) and Windows (the `windows-ipc` job, which builds
+# two members alone, `-p mandala -p mandalactl`). A platform left out
+# still builds; its platform-specific crates are simply not unified.
+#
+# wasm32 is left out on purpose, and so is the browser build: every
+# member depends on the workspace-hack from its `cfg(not(target_arch =
+# "wasm32"))` table, for the reasons the root manifest's
+# `workspace-hack` entry gives, so nothing compiled for wasm32 depends
+# on it. (A browser build still compiles it for the host, under
+# `mandala_derive`, which is a proc macro.)
 platforms = [
     "x86_64-unknown-linux-gnu",
-    "wasm32-unknown-unknown",
     "x86_64-pc-windows-msvc",
 ]
 

@@ -8,8 +8,11 @@ license.workspace = true
 baumhard = { path = "../../lib/baumhard" }
 regex = "1.13.1"
 serde_json.workspace = true
-# One feature set for every shared dependency, whatever a command
-# selects (`.config/hakari.toml`, #284).
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# One feature set for every shared dependency, whatever a native
+# command selects (`.config/hakari.toml`, #284). Native only, as in
+# every member: the root manifest's `workspace-hack` entry says why.
 workspace-hack.workspace = true
 
 [dev-dependencies]

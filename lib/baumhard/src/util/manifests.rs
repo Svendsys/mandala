@@ -1437,11 +1437,35 @@ name = "test_bench"
         assert_eq!(parse(path, &without_hakari_section(&planted)).deps.len(), 1);
     }
 
+    /// The table every member's workspace-hack dependency sits in: the
+    /// native one, so that nothing compiled for wasm32 depends on it
+    /// (the root manifest's `workspace-hack` entry says why).
+    const WORKSPACE_HACK_TABLE: &str = "target.'cfg(not(target_arch = \"wasm32\"))'.dependencies";
+
+    /// Each manifest that does not depend on the workspace-hack through
+    /// the root table from [`WORKSPACE_HACK_TABLE`], by path.
+    fn members_off_the_hack(manifests: &[Manifest]) -> Vec<&str> {
+        manifests
+            .iter()
+            .filter(|m| {
+                !m.member_deps().any(|dep| {
+                    dep.crate_name() == "workspace-hack"
+                        && dep.inherits_workspace
+                        && dep.table == Table::Member(WORKSPACE_HACK_TABLE.to_string())
+                })
+            })
+            .map(|m| m.path.as_str())
+            .collect()
+    }
+
     /// Every hand-written member depends on the workspace-hack, through
-    /// the root table. A member without it compiles its dependencies
-    /// with whatever features its own command selects, which is the
-    /// second build #284 removed. CI's `hakari` job checks the same
-    /// thing with `cargo hakari manage-deps --dry-run`; this holds it in
+    /// the root table, from its native table. A member without it
+    /// compiles its dependencies with whatever features its own command
+    /// selects, which is the second build #284 removed; one with it in
+    /// `[dependencies]` makes the wasm32 font-lock probe compile the
+    /// union for the browser. CI's `hakari` job checks the first half
+    /// with `cargo hakari manage-deps --dry-run`, which would also write
+    /// the line into `[dependencies]`; this holds both halves in
     /// `./test.sh`, where cargo-hakari need not be installed.
     #[test]
     fn test_every_member_depends_on_the_workspace_hack() {
@@ -1451,19 +1475,30 @@ name = "test_bench"
             5,
             "precondition: the hand-written members are read"
         );
-        let missing: Vec<&str> = manifests
-            .iter()
-            .filter(|m| {
-                !m.member_deps()
-                    .any(|dep| dep.crate_name() == "workspace-hack" && dep.inherits_workspace)
-            })
-            .map(|m| m.path.as_str())
-            .collect();
+        let missing = members_off_the_hack(&manifests);
         assert!(
             missing.is_empty(),
-            "these members do not depend on `workspace-hack.workspace = true`, so their \
-             dependencies build with another feature set: {missing:?}. Run `cargo hakari \
-             manage-deps` (`.config/hakari.toml`)."
+            "these members do not write `workspace-hack.workspace = true` under \
+             `[{WORKSPACE_HACK_TABLE}]`, so their dependencies build with another \
+             feature set, or the browser build compiles the union: {missing:?}. \
+             `cargo hakari manage-deps` adds the line to `[dependencies]`; move it \
+             (`.config/hakari.toml`)."
+        );
+
+        // Negative controls: the line in `[dependencies]`, and no line.
+        let in_dependencies = parse(
+            "control/Cargo.toml",
+            "[dependencies]\nworkspace-hack.workspace = true\n",
+        );
+        let without = parse("control/Cargo.toml", "[dependencies]\nserde = \"1\"\n");
+        let native = parse(
+            "control/Cargo.toml",
+            &format!("[{WORKSPACE_HACK_TABLE}]\nworkspace-hack.workspace = true\n"),
+        );
+        assert_eq!(
+            members_off_the_hack(&[in_dependencies, without, native]),
+            ["control/Cargo.toml", "control/Cargo.toml"],
+            "control: only the native table's line counts"
         );
         let shared = workspace_table(&manifests);
         assert!(

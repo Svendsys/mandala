@@ -82,29 +82,6 @@ smallvec = { version = "1", default-features = false, features = ["const_new", "
 thiserror = { version = "2" }
 ttf-parser = { version = "0.25", default-features = false, features = ["gvar-alloc"] }
 
-[target.wasm32-unknown-unknown.dependencies]
-crossbeam-utils = { version = "0.8" }
-getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
-js-sys = { version = "0.3" }
-once_cell = { version = "1", default-features = false, features = ["std"] }
-slab = { version = "0.4" }
-slotmap = { version = "1" }
-syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", default-features = false, features = ["extra-traits", "visit-mut"] }
-wasm-bindgen = { version = "0.2" }
-web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "AngleInstancedArrays", "Blob", "BlobPropertyBag", "CanvasRenderingContext2d", "CloseEvent", "CssStyleDeclaration", "Document", "DomException", "DomRect", "ExtBlendMinmax", "ExtColorBufferFloat", "ExtColorBufferHalfFloat", "ExtDisjointTimerQuery", "ExtFragDepth", "ExtSRgb", "ExtShaderTextureLod", "ExtTextureFilterAnisotropic", "FocusEvent", "HtmlCanvasElement", "HtmlImageElement", "HtmlVideoElement", "ImageBitmap", "ImageBitmapOptions", "ImageBitmapRenderingContext", "ImageData", "IntersectionObserver", "IntersectionObserverEntry", "KeyboardEvent", "Location", "MediaQueryList", "MessageChannel", "MessageEvent", "MessagePort", "Navigator", "NodeList", "OesElementIndexUint", "OesStandardDerivatives", "OesTextureFloat", "OesTextureFloatLinear", "OesTextureHalfFloat", "OesTextureHalfFloatLinear", "OesVertexArrayObject", "OffscreenCanvas", "OrientationLockType", "OrientationType", "OvrMultiview2", "PageTransitionEvent", "Performance", "PermissionState", "PermissionStatus", "Permissions", "PointerEvent", "PremultiplyAlpha", "ResizeObserver", "ResizeObserverBoxOptions", "ResizeObserverEntry", "ResizeObserverOptions", "ResizeObserverSize", "Response", "Screen", "ScreenOrientation", "Storage", "Url", "VideoFrame", "VisibilityState", "WebGl2RenderingContext", "WebGlActiveInfo", "WebGlBuffer", "WebGlFramebuffer", "WebGlProgram", "WebGlQuery", "WebGlRenderbuffer", "WebGlRenderingContext", "WebGlSampler", "WebGlShader", "WebGlShaderPrecisionFormat", "WebGlSync", "WebGlTexture", "WebGlTransformFeedback", "WebGlUniformLocation", "WebGlVertexArrayObject", "WebSocket", "WebglColorBufferFloat", "WebglCompressedTextureAstc", "WebglCompressedTextureEtc", "WebglCompressedTextureEtc1", "WebglCompressedTexturePvrtc", "WebglCompressedTextureS3tc", "WebglCompressedTextureS3tcSrgb", "WebglDebugRendererInfo", "WebglDebugShaders", "WebglDepthTexture", "WebglDrawBuffers", "WebglLoseContext", "WheelEvent", "Window", "Worker", "WorkerGlobalScope", "WorkerNavigator", "console"] }
-
-[target.wasm32-unknown-unknown.build-dependencies]
-crossbeam-utils = { version = "0.8" }
-getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
-js-sys = { version = "0.3" }
-once_cell = { version = "1", default-features = false, features = ["std"] }
-slab = { version = "0.4" }
-slotmap = { version = "1" }
-syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", default-features = false, features = ["extra-traits", "visit-mut"] }
-syn-f595c2ba2a3f28df = { package = "syn", version = "2", default-features = false, features = ["visit-mut"] }
-wasm-bindgen = { version = "0.2" }
-web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "AngleInstancedArrays", "Blob", "BlobPropertyBag", "CanvasRenderingContext2d", "CloseEvent", "CssStyleDeclaration", "Document", "DomException", "DomRect", "ExtBlendMinmax", "ExtColorBufferFloat", "ExtColorBufferHalfFloat", "ExtDisjointTimerQuery", "ExtFragDepth", "ExtSRgb", "ExtShaderTextureLod", "ExtTextureFilterAnisotropic", "FocusEvent", "HtmlCanvasElement", "HtmlImageElement", "HtmlVideoElement", "ImageBitmap", "ImageBitmapOptions", "ImageBitmapRenderingContext", "ImageData", "IntersectionObserver", "IntersectionObserverEntry", "KeyboardEvent", "Location", "MediaQueryList", "MessageChannel", "MessageEvent", "MessagePort", "Navigator", "NodeList", "OesElementIndexUint", "OesStandardDerivatives", "OesTextureFloat", "OesTextureFloatLinear", "OesTextureHalfFloat", "OesTextureHalfFloatLinear", "OesVertexArrayObject", "OffscreenCanvas", "OrientationLockType", "OrientationType", "OvrMultiview2", "PageTransitionEvent", "Performance", "PermissionState", "PermissionStatus", "Permissions", "PointerEvent", "PremultiplyAlpha", "ResizeObserver", "ResizeObserverBoxOptions", "ResizeObserverEntry", "ResizeObserverOptions", "ResizeObserverSize", "Response", "Screen", "ScreenOrientation", "Storage", "Url", "VideoFrame", "VisibilityState", "WebGl2RenderingContext", "WebGlActiveInfo", "WebGlBuffer", "WebGlFramebuffer", "WebGlProgram", "WebGlQuery", "WebGlRenderbuffer", "WebGlRenderingContext", "WebGlSampler", "WebGlShader", "WebGlShaderPrecisionFormat", "WebGlSync", "WebGlTexture", "WebGlTransformFeedback", "WebGlUniformLocation", "WebGlVertexArrayObject", "WebSocket", "WebglColorBufferFloat", "WebglCompressedTextureAstc", "WebglCompressedTextureEtc", "WebglCompressedTextureEtc1", "WebglCompressedTexturePvrtc", "WebglCompressedTextureS3tc", "WebglCompressedTextureS3tcSrgb", "WebglDebugRendererInfo", "WebglDebugShaders", "WebglDepthTexture", "WebglDrawBuffers", "WebglLoseContext", "WheelEvent", "Window", "Worker", "WorkerGlobalScope", "WorkerNavigator", "console"] }
-
 [target.x86_64-pc-windows-msvc.dependencies]
 log = { version = "0.4", default-features = false, features = ["kv", "release_max_level_warn", "std"] }
 smallvec = { version = "1", default-features = false, features = ["union"] }

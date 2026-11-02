@@ -3819,10 +3819,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
  "bytemuck",
- "crossbeam-utils",
- "getrandom 0.4.3",
  "half",
- "js-sys",
  "libc",
  "linux-raw-sys 0.12.1",
  "log",
@@ -3838,15 +3835,11 @@ dependencies = [
  "serde",
  "serde_core",
  "serde_json",
- "slab",
- "slotmap",
  "smallvec",
  "syn 2.0.119",
  "syn 3.0.9",
  "thiserror 2.0.21",
  "ttf-parser",
- "wasm-bindgen",
- "web-sys",
  "windows-sys 0.61.2",
 ]
 
