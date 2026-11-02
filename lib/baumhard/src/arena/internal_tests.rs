@@ -135,3 +135,20 @@ fn test_a_sibling_beside_a_parentless_node_panics() {
     assert_eq!(top.children(&arena).collect::<Vec<_>>(), vec![child, sibling]);
     top.insert_before_value(3, &mut arena);
 }
+
+/// The iterators clone over an arena whose values do not: they hold a
+/// shared borrow of the arena and a position, nothing of `T`. A clone
+/// walks on from the same place.
+#[test]
+fn test_the_iterators_clone_without_cloning_values() {
+    struct Opaque;
+    let mut arena = Arena::new();
+    let top = arena.new_node(Opaque);
+    let child = top.append_value(Opaque, &mut arena);
+    let mut children = top.children(&arena);
+    assert_eq!(children.clone().count(), 1);
+    assert_eq!(children.next(), Some(child));
+    assert_eq!(child.ancestors(&arena).clone().count(), 2);
+    assert_eq!(top.descendants(&arena).clone().count(), 2);
+    assert_eq!(top.traverse(&arena).clone().count(), 4);
+}

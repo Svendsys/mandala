@@ -572,6 +572,13 @@ fn stale_step(
             let result = if h_stale {
                 id.reattach_in_row(other_id, None, arena)
             } else if model.node(h).parent.is_some() {
+                assert_eq!(
+                    id.reattach_in_row(other_id, None, arena),
+                    Err(ArenaError::Attached(id)),
+                    "an attached node is refused before its stale parent"
+                );
+                assert!(*arena == before, "a refused operation changed the arena");
+                done.stale_refused += 1;
                 return;
             } else if rng.random_bool(0.5) {
                 id.reattach_in_row(other_id, None, arena)

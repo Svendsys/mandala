@@ -1576,8 +1576,14 @@ pub(crate) struct SameRowReattach {
 /// of that name. What is the engine function rather than the arena's
 /// method is allowed: its definition in `engine/siblings.rs`, a path
 /// whose qualifier is `siblings` (`siblings::reattach_in_row(..)`, and
-/// its `use`), and a bare call to it inside `engine/siblings.rs`. The
-/// arena module, which defines the method, is not read.
+/// its `use`), and a bare call to it inside `engine/siblings.rs`. A
+/// path with a qualified self (`<NodeId>::reattach_in_row`) is never the
+/// engine function, which is a free `fn`; and since `siblings` must be
+/// the module, a `use .. as siblings`, a `type siblings` or a
+/// `mod siblings` anywhere but `engine/mod.rs` is stray in itself. The
+/// arena module is read too: there, the method's definition in
+/// `arena/link.rs` is the one mention allowed, so no wrapper in the
+/// arena can launder the call for the crate.
 ///
 /// It is a heuristic over spellings, and the step counts are its other
 /// half: `test_same_row_rearrangement_is_linear_in_depth` counts every
@@ -1592,6 +1598,9 @@ pub(crate) fn same_row_reattach_calls() -> SameRowReattach {
     let mut files = Vec::new();
     collect_recursively(&repo_path("lib/baumhard/src"), ".rs", &mut files);
     files.sort();
+    // Files a `#[cfg(test)] mod x;` names are test code, gated in the
+    // file that declares them.
+    let test_only = test_gated_module_files(&files);
     let mut out = SameRowReattach {
         checked: Vec::new(),
         unchecked: 0,
@@ -1600,7 +1609,7 @@ pub(crate) fn same_row_reattach_calls() -> SameRowReattach {
     for file in files {
         let rel = relative_to_repo(&file);
         let in_tests = file.components().any(|c| c.as_os_str() == "tests");
-        if in_tests || rel.starts_with("lib/baumhard/src/arena/") {
+        if in_tests || test_only.contains(&file) {
             continue;
         }
         let text = std::fs::read_to_string(&file)
@@ -1633,14 +1642,20 @@ pub(crate) struct ReattachSites {
 
 /// [`same_row_reattach_calls`] over one file: `rel` is its
 /// repo-relative path, which says whether it is `engine/siblings.rs`,
-/// and `source` its text. Panics when `source` does not parse.
+/// `engine/mod.rs` or `arena/link.rs`, and `source` its text. Panics
+/// when `source` does not parse.
 pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
     use syn::visit::{self, Visit};
 
     const NAME: &str = "reattach_in_row";
 
     struct Scan {
+        /// The file is `engine/siblings.rs`.
         siblings: bool,
+        /// The file is `engine/mod.rs`, which declares `mod siblings`.
+        engine_mod: bool,
+        /// The file is `arena/link.rs`, which defines the method.
+        link: bool,
         in_body: bool,
         found: ReattachSites,
     }
@@ -1668,8 +1683,9 @@ pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
     impl Scan {
         /// A path naming `reattach_in_row`: the engine function when its
         /// qualifier is `siblings`, or when it is bare inside
-        /// `engine/siblings.rs`; otherwise the arena's method.
-        fn path(&mut self, path: &syn::Path) {
+        /// `engine/siblings.rs` — and never with a qualified self
+        /// (`<T>::`); otherwise the arena's method.
+        fn path(&mut self, qself: bool, path: &syn::Path) {
             let segments: Vec<_> = path.segments.iter().collect();
             let Some(last) = segments.last() else {
                 return;
@@ -1677,10 +1693,11 @@ pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
             if last.ident != NAME {
                 return;
             }
-            let engine = match segments.len() {
-                1 => self.siblings,
-                n => segments[n - 2].ident == "siblings",
-            };
+            let engine = !qself
+                && match segments.len() {
+                    1 => self.siblings,
+                    n => segments[n - 2].ident == "siblings",
+                };
             if !engine {
                 self.found.stray.push(line(last.ident.span()));
             }
@@ -1704,10 +1721,24 @@ pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
         }
 
         fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
-            if item.sig.ident == NAME {
+            if item.sig.ident == NAME && !self.link {
                 self.found.stray.push(line(item.sig.ident.span()));
             }
             visit::visit_impl_item_fn(self, item);
+        }
+
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            if item.ident == "siblings" {
+                self.found.stray.push(line(item.ident.span()));
+            }
+            visit::visit_item_type(self, item);
+        }
+
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            if item.ident == "siblings" && !self.engine_mod {
+                self.found.stray.push(line(item.ident.span()));
+            }
+            visit::visit_item_mod(self, item);
         }
 
         fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
@@ -1734,7 +1765,7 @@ pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
                     }
                 }
             }
-            self.path(&path.path);
+            self.path(path.qself.is_some(), &path.path);
             visit::visit_expr_path(self, path);
         }
 
@@ -1750,6 +1781,8 @@ pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
                     syn::UseTree::Rename(r) if r.ident == NAME && !through_siblings => {
                         out.push(line(r.ident.span()))
                     }
+                    // Only the module may be called `siblings`.
+                    syn::UseTree::Rename(r) if r.rename == "siblings" => out.push(line(r.rename.span())),
                     syn::UseTree::Group(g) => {
                         for item in &g.items {
                             walk(item, through_siblings, out);
@@ -1779,6 +1812,8 @@ pub(crate) fn reattach_sites(rel: &str, source: &str) -> ReattachSites {
     let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{rel} must parse as Rust: {e}"));
     let mut scan = Scan {
         siblings: rel == "lib/baumhard/src/engine/siblings.rs",
+        engine_mod: rel == "lib/baumhard/src/engine/mod.rs",
+        link: rel == "lib/baumhard/src/arena/link.rs",
         in_body: false,
         found: ReattachSites::default(),
     };
@@ -2474,6 +2509,68 @@ mod tests {
             reattach_sites(ELSEWHERE, "fn reattach_in_row() {}").stray.len(),
             1,
             "a function of that name elsewhere"
+        );
+        assert_eq!(
+            reattach_sites(
+                SIBLINGS,
+                "fn f() { let _ = <NodeId>::reattach_in_row(n, p, None, arena); }"
+            )
+            .stray
+            .len(),
+            1,
+            "a qualified self, even in siblings.rs"
+        );
+        assert_eq!(
+            stray(
+                "use crate::arena::NodeId as siblings; let _ = siblings::reattach_in_row(n, p, None, arena);"
+            ),
+            1,
+            "the type renamed `siblings`: the call through it reads as the engine function, so the \
+             rename itself is stray"
+        );
+        assert_eq!(
+            reattach_sites(ELSEWHERE, "type siblings = crate::arena::NodeId;")
+                .stray
+                .len(),
+            1,
+            "a type called `siblings`"
+        );
+        assert_eq!(
+            reattach_sites(ELSEWHERE, "mod siblings {}").stray.len(),
+            1,
+            "a module called `siblings` outside engine/mod.rs"
+        );
+        assert_eq!(
+            reattach_sites("lib/baumhard/src/engine/mod.rs", "mod siblings;")
+                .stray
+                .len(),
+            0,
+            "the engine's own `mod siblings`"
+        );
+        // The arena: the method's definition, and nothing else.
+        const LINK: &str = "lib/baumhard/src/arena/link.rs";
+        let method = "impl NodeId { pub(crate) fn reattach_in_row(self) {} }";
+        assert_eq!(
+            reattach_sites(LINK, method).stray.len(),
+            0,
+            "the method's definition"
+        );
+        assert_eq!(
+            reattach_sites(
+                LINK,
+                &format!("{method} pub(crate) fn put_back(n: NodeId) {{ n.reattach_in_row(); }}")
+            )
+            .stray
+            .len(),
+            1,
+            "a wrapper in the arena"
+        );
+        assert_eq!(
+            reattach_sites("lib/baumhard/src/arena/mod.rs", method)
+                .stray
+                .len(),
+            1,
+            "a definition anywhere but arena/link.rs"
         );
         // The engine function, which is allowed.
         assert_eq!(

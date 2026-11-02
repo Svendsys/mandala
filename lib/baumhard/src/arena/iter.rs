@@ -10,7 +10,6 @@ use crate::arena::{Arena, NodeId};
 /// `start` and every node above it, nearest first, up to the top of
 /// whatever it hangs in. From [`NodeId::ancestors`]. O(1) per step, so
 /// a whole climb is O(depth).
-#[derive(Clone)]
 pub struct Ancestors<'a, T> {
     arena: &'a Arena<T>,
     next: Option<NodeId>,
@@ -21,6 +20,17 @@ impl<'a, T> Ancestors<'a, T> {
         Ancestors {
             arena,
             next: arena.get(start).map(|_| start),
+        }
+    }
+}
+
+/// Not derived: a derive would ask `T: Clone`, and the iterator holds
+/// only a shared borrow of the arena. O(1).
+impl<T> Clone for Ancestors<'_, T> {
+    fn clone(&self) -> Self {
+        Ancestors {
+            arena: self.arena,
+            next: self.next,
         }
     }
 }
@@ -39,7 +49,6 @@ impl<T> std::iter::FusedIterator for Ancestors<'_, T> {}
 
 /// A node's children, first to last, and from the back last to first.
 /// From [`NodeId::children`]. O(1) per step.
-#[derive(Clone)]
 pub struct ChildrenOf<'a, T> {
     arena: &'a Arena<T>,
     /// The next child from the front; `None` once the two ends meet.
@@ -55,6 +64,18 @@ impl<'a, T> ChildrenOf<'a, T> {
             arena,
             head: node.and_then(|node| node.first_child),
             tail: node.and_then(|node| node.last_child),
+        }
+    }
+}
+
+/// Not derived: a derive would ask `T: Clone`, and the iterator holds
+/// only a shared borrow of the arena. O(1).
+impl<T> Clone for ChildrenOf<'_, T> {
+    fn clone(&self) -> Self {
+        ChildrenOf {
+            arena: self.arena,
+            head: self.head,
+            tail: self.tail,
         }
     }
 }
@@ -102,7 +123,6 @@ impl<T> std::iter::FusedIterator for ChildrenOf<'_, T> {}
 /// through the ancestors that have no next sibling to the first that
 /// does; each link is followed at most once down and once up over the
 /// whole walk, so a full walk is O(subtree), and no stack is kept.
-#[derive(Clone)]
 pub struct Descendants<'a, T> {
     traverse: Traverse<'a, T>,
 }
@@ -111,6 +131,16 @@ impl<'a, T> Descendants<'a, T> {
     pub(super) fn new(arena: &'a Arena<T>, top: NodeId) -> Self {
         Descendants {
             traverse: Traverse::new(arena, top),
+        }
+    }
+}
+
+/// Not derived: a derive would ask `T: Clone`, and the iterator holds
+/// only a shared borrow of the arena. O(1).
+impl<T> Clone for Descendants<'_, T> {
+    fn clone(&self) -> Self {
+        Descendants {
+            traverse: self.traverse.clone(),
         }
     }
 }
@@ -145,7 +175,6 @@ pub enum NodeEdge {
 /// [`Start`](NodeEdge::Start), then its children's edges, then its
 /// [`End`](NodeEdge::End). From [`NodeId::traverse`]. O(1) per step,
 /// O(subtree) in all; no stack is kept.
-#[derive(Clone)]
 pub struct Traverse<'a, T> {
     arena: &'a Arena<T>,
     top: NodeId,
@@ -179,6 +208,18 @@ impl<'a, T> Traverse<'a, T> {
                     None => node.parent.map(NodeEdge::End),
                 }
             }
+        }
+    }
+}
+
+/// Not derived: a derive would ask `T: Clone`, and the iterator holds
+/// only a shared borrow of the arena. O(1).
+impl<T> Clone for Traverse<'_, T> {
+    fn clone(&self) -> Self {
+        Traverse {
+            arena: self.arena,
+            top: self.top,
+            next: self.next,
         }
     }
 }
