@@ -1280,7 +1280,7 @@ name = "test_bench"
         ("crates/mandalactl/Cargo.toml", 8),
         ("crates/maptool/Cargo.toml", 5),
         ("lib/baumhard/Cargo.toml", 29),
-        ("lib/mandala_derive/Cargo.toml", 4),
+        ("lib/mandala_derive/Cargo.toml", 3),
     ];
 
     /// A parse that found nothing would make every rule below vacuous.
@@ -1458,15 +1458,60 @@ name = "test_bench"
             .collect()
     }
 
-    /// Every hand-written member depends on the workspace-hack, through
-    /// the root table, from its native table. A member without it
-    /// compiles its dependencies with whatever features its own command
-    /// selects, which is the second build #284 removed; one with it in
-    /// `[dependencies]` makes the wasm32 font-lock probe compile the
-    /// union for the browser. CI's `hakari` job checks the first half
-    /// with `cargo hakari manage-deps --dry-run`, which would also write
-    /// the line into `[dependencies]`; this holds both halves in
-    /// `./test.sh`, where cargo-hakari need not be installed.
+    /// The members `.config/hakari.toml` keeps off the workspace-hack:
+    /// its `[final-excludes]` table's `workspace-members` list, by
+    /// package name.
+    fn excluded_members(config: &str) -> BTreeSet<String> {
+        let mut in_table = false;
+        for line in config.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_table = line == "[final-excludes]";
+                continue;
+            }
+            if let Some(list) = in_table
+                .then(|| line.strip_prefix("workspace-members = ["))
+                .flatten()
+            {
+                return list
+                    .trim_end_matches(']')
+                    .split(',')
+                    .map(|name| name.trim().trim_matches('"').to_string())
+                    .filter(|name| !name.is_empty())
+                    .collect();
+            }
+        }
+        BTreeSet::new()
+    }
+
+    /// The `[package] name` of a manifest's text.
+    fn package_of(text: &str) -> String {
+        let mut in_package = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_package = line == "[package]";
+                continue;
+            }
+            if let Some(name) = in_package.then(|| line.strip_prefix("name = ")).flatten() {
+                return name.trim_matches('"').to_string();
+            }
+        }
+        panic!("a member manifest names its package")
+    }
+
+    /// Every hand-written member but the ones `.config/hakari.toml`
+    /// excludes depends on the workspace-hack, through the root table,
+    /// from its native table; the excluded ones do not depend on it at
+    /// all. A member without it compiles its dependencies with whatever
+    /// features its own command selects, which is the second build #284
+    /// removed; one with it in `[dependencies]` makes the wasm32
+    /// font-lock probe compile the union for the browser, and the
+    /// excluded proc macro would put it in every browser build's host
+    /// graph. CI's `hakari` job checks the first half with `cargo hakari
+    /// manage-deps --dry-run`, which would also write the line into
+    /// `[dependencies]`; this holds all of it in `./test.sh`, where
+    /// cargo-hakari need not be installed.
     #[test]
     fn test_every_member_depends_on_the_workspace_hack() {
         let manifests = workspace_manifests();
@@ -1475,7 +1520,20 @@ name = "test_bench"
             5,
             "precondition: the hand-written members are read"
         );
-        let missing = members_off_the_hack(&manifests);
+        let config = std::fs::read_to_string(repo_path(".config/hakari.toml"))
+            .expect(".config/hakari.toml must be readable");
+        let excluded = excluded_members(&config);
+        assert_eq!(
+            excluded.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["mandala_derive"],
+            "precondition: the exclusions are read"
+        );
+        let (kept, left_out): (Vec<Manifest>, Vec<Manifest>) = manifests.iter().cloned().partition(|m| {
+            let text = std::fs::read_to_string(repo_path(&m.path))
+                .unwrap_or_else(|e| panic!("{} must be readable: {e}", m.path));
+            !excluded.contains(&package_of(&text))
+        });
+        let missing = members_off_the_hack(&kept);
         assert!(
             missing.is_empty(),
             "these members do not write `workspace-hack.workspace = true` under \
@@ -1483,6 +1541,25 @@ name = "test_bench"
              feature set, or the browser build compiles the union: {missing:?}. \
              `cargo hakari manage-deps` adds the line to `[dependencies]`; move it \
              (`.config/hakari.toml`)."
+        );
+        let on_it: Vec<&str> = left_out
+            .iter()
+            .filter(|m| m.member_deps().any(|dep| dep.crate_name() == "workspace-hack"))
+            .map(|m| m.path.as_str())
+            .collect();
+        assert!(
+            on_it.is_empty(),
+            "these members are in `.config/hakari.toml`'s `[final-excludes]` and still \
+             depend on the workspace-hack: {on_it:?}"
+        );
+        assert_eq!(
+            excluded_members("[final-excludes]\nworkspace-members = [\"a\", \"b\"]\n").len(),
+            2,
+            "control: a list of two is read as two"
+        );
+        assert!(
+            excluded_members("[other]\nworkspace-members = [\"a\"]\n").is_empty(),
+            "control: the list is read from `[final-excludes]` alone"
         );
 
         // Negative controls: the line in `[dependencies]`, and no line.

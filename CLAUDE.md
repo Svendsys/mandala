@@ -408,7 +408,9 @@ the parity trajectory (or why none is owed):
   browser half of the app — its lints and its intra-doc links alike —
   is invisible. The wasm32 clippy leg is `--workspace` so baumhard is
   covered too, minus `--all-targets` (criterion and rayon refuse to
-  build for wasm32); the host doc leg is `--workspace` with private
+  build for wasm32) and minus the generated `workspace-hack`, which is
+  native only (`--exclude workspace-hack`, as on the wasm32 check; see
+  "Change a dependency" below); the host doc leg is `--workspace` with private
   items, while the wasm32 doc leg narrows to `-p mandala`, because
   baumhard cannot be documented standalone for wasm32 — its `rand` →
   `getrandom` edge needs the `wasm_js` feature that only the root

@@ -121,7 +121,10 @@ if [ "$LINT" -eq 1 ]; then
   # which is where it runs.
   if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
     echo "== clippy, wasm32-unknown-unknown (hard) =="
-    cargo clippy --workspace --target wasm32-unknown-unknown -- -D warnings 2>&1 \
+    # `--exclude workspace-hack`: the feature unifier (#284) is native
+    # only, and nothing compiled for wasm32 depends on it; selected here
+    # it would compile the union for the browser (`.config/hakari.toml`).
+    cargo clippy --workspace --exclude workspace-hack --target wasm32-unknown-unknown -- -D warnings 2>&1 \
       || { echo "FAILED (exit $?): cargo clippy --workspace, wasm32 — this gate holds a zero-warning baseline"; LINT_FAILED=1; }
     # 11 broken intra-doc links lived here undetected until this leg
     # existed — every one a link to a native-gated item from a
@@ -278,7 +281,8 @@ cargo check --workspace --benches
 # `rustup target add wasm32-unknown-unknown` aren't punished.
 if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
   echo "== wasm32 check =="
-  cargo check --target wasm32-unknown-unknown --workspace
+  # `--exclude workspace-hack`, as on the wasm32 clippy leg above.
+  cargo check --target wasm32-unknown-unknown --workspace --exclude workspace-hack
 else
   echo "== wasm32 check =="
   echo "(wasm32-unknown-unknown target not installed — skipping. Install with:"

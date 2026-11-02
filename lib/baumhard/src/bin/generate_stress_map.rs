@@ -62,7 +62,7 @@
 // this file — `build.rs` is a crate root by the same argument and
 // was uncovered too, found by checking the written count against
 // `cargo metadata` rather than by reading the tree. §9 now states
-// the count as targets, six of seven, and names the exception.
+// the count as targets and names the exception.
 //
 // It matters more here than the file's own cleanliness suggests.
 // `util::unwrap_posture` reads source text, so a call whose name and

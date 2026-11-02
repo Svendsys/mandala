@@ -41,8 +41,11 @@ cosmic-text = "0.19.0"
 # `std::sync::RwLock` for one capability std lacks: a *timed* write
 # acquire that queues fairly (`try_write_for`) instead of a
 # `try_write` + sleep poll, which is unfair and starved a waiter past
-# its ceiling under parallel tests. It was already in the lockfile
-# through wgpu, on both targets. On `wasm32-unknown-unknown` without
+# its ceiling under parallel tests. 0.13 rather than the 0.12 wgpu 30
+# and arboard ask for, so it is a second copy beside theirs: 0.13 is
+# the release with `RecursiveRwLock`, which `FONT_SYSTEM` is
+# (`util::lock_duplicates` lists the pair with that reason, #284). On
+# `wasm32-unknown-unknown` without
 # atomics its parker panics, so a *contended* acquire traps there;
 # `fonts.rs` catches every same-thread cause of contention first, and
 # the browser has no second thread to cause another. The uncontended

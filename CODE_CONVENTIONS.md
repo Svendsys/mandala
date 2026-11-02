@@ -356,7 +356,8 @@ first-class deployments. The lowest-spec target sets the budget.
   status" section naming the reason. "I'll add WASM later" is not a
   contract this repo recognizes. What enforces it: `./test.sh`'s WASM
   gate, which is `cargo check --target wasm32-unknown-unknown
-  --workspace` and is the check to reach for while iterating;
+  --workspace --exclude workspace-hack` (the generated feature unifier
+  is native only, #284) and is the check to reach for while iterating;
   `./build.sh`, which always builds both legs in full; and CI
   (`.github/workflows/test.yml`), which runs `./test.sh`.
 

@@ -1535,7 +1535,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
- "workspace-hack",
 ]
 
 [[package]]

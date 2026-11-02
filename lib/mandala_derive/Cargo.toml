@@ -15,13 +15,20 @@ proc-macro = true
 #
 # Asking for less is not the same as compiling against less, and it is
 # worth being exact about that here rather than believing the
-# comfortable version. This crate depends on the workspace-hack
-# (`.config/hakari.toml`, #284), as every member does, and through it
-# on `syn` with the union of every feature any member asks for —
-# baumhard's `full` and `visit` among them — on the proc-macro graph as
-# well as the target one. So what it compiles against is that union,
-# in every build, `cargo build -p mandala_derive` included; that is
-# what lets one build of syn serve every command.
+# comfortable version. In any native build of another member, this
+# crate compiles against the `syn` the workspace-hack
+# (`.config/hakari.toml`, #284) unifies: the union of every feature any
+# member asks for, baumhard's `full` and `visit` among them, on the
+# proc-macro graph as on the target one, so one build of it serves both.
+# Only a build of this crate alone (`cargo test -p mandala_derive`)
+# compiles it against the defaults.
+#
+# This crate is the one member that does not depend on the
+# workspace-hack itself (`[final-excludes]` in `.config/hakari.toml`).
+# A proc macro is compiled for the host in every build, the browser's
+# included, so a dependency here would put the union into the
+# browser build's host graph: every crate in it built a second time,
+# for the host, by each wasm32 command.
 #
 # What inheriting featureless does buy is the structural half: a
 # member can add `features` on top of the shared entry without editing
@@ -33,14 +40,6 @@ quote = "1.0.47"
 # Hoisted to `[workspace.dependencies]` when baumhard's tests grew a
 # second declaration of it (§13). Nothing here needs `span-locations`
 # — that ask is baumhard's — though this crate compiles against it all
-# the same, through the workspace-hack, like `syn`'s `full` above.
+# the same in a native build of the workspace, like `syn`'s `full`
+# above.
 proc-macro2.workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# One feature set for every shared dependency, whatever a native
-# command selects (`.config/hakari.toml`, #284). Native only, as in
-# every member: the root manifest's `workspace-hack` entry says why. A
-# proc macro is compiled for the host, so for this crate the table
-# applies in every build, the browser's included; it is spelled as in
-# the other members so that one rule covers all of them.
-workspace-hack.workspace = true

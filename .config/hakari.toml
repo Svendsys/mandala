@@ -37,12 +37,12 @@ resolver = "2"
 # two members alone, `-p mandala -p mandalactl`). A platform left out
 # still builds; its platform-specific crates are simply not unified.
 #
-# wasm32 is left out on purpose, and so is the browser build: every
-# member depends on the workspace-hack from its `cfg(not(target_arch =
-# "wasm32"))` table, for the reasons the root manifest's
-# `workspace-hack` entry gives, so nothing compiled for wasm32 depends
-# on it. (A browser build still compiles it for the host, under
-# `mandala_derive`, which is a proc macro.)
+# wasm32 is left out on purpose, and so is the browser build, for the
+# reasons the root manifest's `workspace-hack` entry gives: the members
+# depend on the workspace-hack from their `cfg(not(target_arch =
+# "wasm32"))` tables, `mandala_derive` not at all (below), and
+# `./test.sh`'s wasm32 legs pass `--exclude workspace-hack`, so no
+# browser build compiles it, for the target or for the host.
 platforms = [
     "x86_64-unknown-linux-gnu",
     "x86_64-pc-windows-msvc",
@@ -63,3 +63,15 @@ workspace-hack-line-style = "workspace-dotted"
 # (`clippy`, `doc`) then builds in full for the host beside the metadata
 # it builds for the target.
 unify-target-host = "unify-if-both"
+
+# `mandala_derive` does not depend on the workspace-hack. It is a proc
+# macro, compiled for the host in every build, the browser's included,
+# where its `cfg(not(target_arch = "wasm32"))` table would still apply:
+# the union would join the browser build's host graph, and each wasm32
+# command would build every crate in it a second time, for the host. It
+# loses nothing in a native build of the workspace, where the other
+# members bring the union in: the workspace-hack's build-dependency
+# tables carry the `syn` and `proc-macro2` features to the host graph
+# it compiles in.
+[final-excludes]
+workspace-members = ["mandala_derive"]
