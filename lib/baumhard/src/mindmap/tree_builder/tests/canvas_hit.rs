@@ -114,7 +114,7 @@ fn overlapping_icons_map(hub_id: &str, far_big: &str, far_small: &str) -> MindMa
 /// The `hub`-side icon area of the portal pair at `pair_idx`.
 fn hub_icon(tree: &GfxTree, pair_idx: usize) -> GlyphArea {
     let pair = tree
-        .root
+        .root()
         .children(tree.arena())
         .nth(pair_idx)
         .expect("portal pair");
@@ -322,7 +322,7 @@ fn sweep_points<T>(rects: &[OracleRect<T>], global_steps: usize, local_steps: us
 fn portal_oracle(portal: &PortalTree) -> Vec<OracleRect<PortalHit>> {
     let tree = &portal.tree;
     let mut out = Vec::new();
-    for pair in tree.root.children(tree.arena()) {
+    for pair in tree.root().children(tree.arena()) {
         for endpoint in pair.children(tree.arena()) {
             for leaf in endpoint.children(tree.arena()) {
                 let (pos, extent) = area_rect(glyph_area_of(tree, leaf));
@@ -349,7 +349,7 @@ fn portal_oracle(portal: &PortalTree) -> Vec<OracleRect<PortalHit>> {
 fn label_oracle(labels: &ConnectionLabelTree) -> Vec<OracleRect<EdgeKey>> {
     let tree = &labels.tree;
     let mut out = Vec::new();
-    for leaf in tree.root.children(tree.arena()) {
+    for leaf in tree.root().children(tree.arena()) {
         let (pos, extent) = area_rect(glyph_area_of(tree, leaf));
         if extent.x <= 0.0 || extent.y <= 0.0 {
             continue;

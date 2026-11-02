@@ -597,7 +597,7 @@ fn check_one_node(doc: &Document, max_elements: Option<u64>) -> OneNode {
 /// The saver's refusal for `error`, which the builder raised building
 /// node `i` (the document's `id`), named with the node's excerpt as the
 /// document holds it.
-fn node_refusal(doc: &Document, i: usize, id: indextree::NodeId, error: LoadError) -> SaveError {
+fn node_refusal(doc: &Document, i: usize, id: crate::arena::NodeId, error: LoadError) -> SaveError {
     let mut refusal = not_loadable(error);
     if let Some(context) = refusal.node.as_mut().filter(|context| context.index == i) {
         context.excerpt = context::tree_excerpt(doc.tree(), id);

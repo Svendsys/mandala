@@ -35,8 +35,8 @@
 
 use std::sync::Arc;
 
+use crate::arena::NodeId;
 use glam::Vec2;
-use indextree::NodeId;
 
 use crate::document::values::Rgba;
 use crate::engine::anchor::Anchors;
@@ -150,7 +150,7 @@ pub type Target = Vec<usize>;
 /// run and a fill, so that a box has an ancestor below the root.
 pub fn build_tree(choices: &mut Choices<'_>) -> (GfxTree, Vec<Target>) {
     let mut tree = GfxTree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let add = |tree: &mut GfxTree, parent: NodeId, element: GfxElement| {
         tree.insert_child(parent, element, Placement::Last)
             .expect("the parent was just inserted")
@@ -346,7 +346,7 @@ fn apply_and_check(
     assigned: Vec<(usize, GfxMutation)>,
 ) -> Result<(), String> {
     let mut mutators = GfxMutatorTree::new();
-    let mroot = mutators.root;
+    let mroot = mutators.root();
     // One macro per top-level target, and under a void mutator one per
     // nested target, each holding its mutations in order.
     let mut top: Vec<(usize, Vec<GfxMutation>)> = Vec::new();
@@ -385,7 +385,7 @@ fn apply_and_check(
 
     let before = snapshot(tree);
     let mut builder = JournalBuilder::new();
-    let root = tree.root;
+    let root = tree.root();
     mutators
         .apply_at_journaled(tree, &Anchors::Nodes(vec![root]), |_, _| (), &mut builder)
         .map_err(|error| format!("the walk refused: {error:?}"))?;

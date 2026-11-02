@@ -5,7 +5,7 @@
 //! vectors, and arena-tree helpers. Nothing here depends on the
 //! renderer, the GPU, or the mindmap model.
 
-/// Arena-wide subtree copy helpers built on `indextree`.
+/// Arena-wide subtree copy helpers built on [`crate::arena`].
 pub mod arena_utils;
 /// The §B8 bench-surface contract, checked: every `pub fn do_*()`
 /// in a tests tree has an entry in `benches/test_bench.rs`.

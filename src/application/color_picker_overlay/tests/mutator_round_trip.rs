@@ -31,13 +31,13 @@ fn picker_mutator_output_matches_spec_shape() {
 
     // Root must be a Void on channel 0 (the root_channel the JSON
     // declares).
-    match mt.arena().get(mt.root).unwrap().get() {
+    match mt.arena().get(mt.root()).unwrap().get() {
         GfxMutator::Void { key } if key.channel == 0 => {}
         other => panic!("picker mutator root must be Void(0), got {other:?}"),
     }
 
     let children: Vec<&GfxMutator> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| mt.arena().get(id).unwrap().get())
         .collect();

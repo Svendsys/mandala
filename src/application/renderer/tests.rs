@@ -1032,7 +1032,7 @@ fn overlay_cache_fixture_area() -> GlyphArea {
 fn overlay_cache_fixture() -> (Scene, SceneTreeId, GfxElement) {
     let element = GfxElement::new_area_non_indexed_with_id(overlay_cache_fixture_area(), 7, 7);
     let mut tree: GfxTree = GfxTree::new_non_indexed();
-    tree.insert_child(tree.root, element.clone(), Placement::Last)
+    tree.insert_child(tree.root(), element.clone(), Placement::Last)
         .unwrap();
     let mut scene = Scene::new();
     let id = scene.insert(tree, 0, Vec2::ZERO);
@@ -1577,7 +1577,7 @@ fn canvas_fill_fixture_scene() -> (Scene, Vec<SceneTreeId>) {
             let unique_id = tree_idx * 10 + leaf_idx + 1;
             let area = canvas_fill_fixture_area(&format!("r{unique_id}"), base_x + 60.0 * leaf_idx as f32);
             let element = GfxElement::new_area_non_indexed_with_id(area, 1, unique_id);
-            tree.insert_child(tree.root, element, Placement::Last).unwrap();
+            tree.insert_child(tree.root(), element, Placement::Last).unwrap();
         }
         ids.push(scene.insert(tree, tree_idx as i32, Vec2::ZERO));
     }
@@ -2063,7 +2063,7 @@ fn test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings() {
         let mut area = canvas_fill_fixture_area(&format!("h{unique_id}"), 40.0 * unique_id as f32);
         area.outline = ring.then_some(outline);
         tree.insert_child(
-            tree.root,
+            tree.root(),
             GfxElement::new_area_non_indexed_with_id(area, 1, unique_id),
             Placement::Last,
         )
@@ -2211,7 +2211,7 @@ fn patch_fixture_scene() -> (Scene, SceneTreeId) {
     plain.regions = ColorFontRegions::single_span(5, Some([0.4, 0.5, 0.6, 1.0]), None);
     for (area, unique_id) in [(outlined, 7usize), (plain, 8usize)] {
         tree.insert_child(
-            tree.root,
+            tree.root(),
             GfxElement::new_area_non_indexed_with_id(area, 1, unique_id),
             Placement::Last,
         )
@@ -2227,7 +2227,7 @@ fn patch_fixture_scene() -> (Scene, SceneTreeId) {
 fn edit_leaf_area(scene: &mut Scene, id: SceneTreeId, nth: usize, edit: impl FnOnce(&mut GlyphArea)) {
     let tree = scene.tree_mut(id).expect("tree registered");
     let leaf = tree
-        .root
+        .root()
         .children(tree.arena())
         .nth(nth)
         .expect("fixture has that many leaves");

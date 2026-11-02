@@ -6,6 +6,7 @@
 //! B.4); so every row is built by appending. Names get their indices
 //! from sorted order, never from where they sit in the file.
 
+use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::format::{load, LoadErrorKind};
 use crate::document::ids::Document;
@@ -13,7 +14,6 @@ use crate::document::tests::format_support::written;
 use crate::document::tests::format_support::{kids, node, same_document};
 use crate::document::tests::format_text::{map_with, node_of, rejection};
 use crate::document::values::{ColorRef, PaletteId, VarId};
-use indextree::NodeId;
 
 /// How many siblings the rows of [`ascending_map`] hold. Enough that a
 /// scan past each one before the next is placed would be a million key

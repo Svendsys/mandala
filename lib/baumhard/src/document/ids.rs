@@ -32,6 +32,7 @@
 //! alone, and is built only by the loader (V1-B2) and, for tests,
 //! `DocumentBuilder`, crate-private in `document::tests::test_support`.
 
+use crate::arena::NodeId;
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
 use crate::document::keyed::KeyedMap;
@@ -44,7 +45,6 @@ use crate::document::writer::{Derived, Writer};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::structure::Subtree;
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 
 /// A node's external identity: unique within its document, never
 /// reused while the document is open. `0` is reserved for "not yet

@@ -147,7 +147,7 @@ fn section_arena_id(
     tree: &baumhard::mindmap::tree_builder::MindMapTree,
     node_id: &str,
     section_idx: usize,
-) -> Option<indextree::NodeId> {
+) -> Option<baumhard::arena::NodeId> {
     tree.section_arena_id(node_id, section_idx)
 }
 
@@ -204,7 +204,7 @@ pub(in crate::application::app) fn apply_text_and_regions_delta(
     };
     // Targets the section-area at `(node_id, section_idx)`. Text
     // and regions live on the section in the post-refactor shape.
-    let indextree_node_id = match section_arena_id(tree, node_id, section_idx) {
+    let arena_node_id = match section_arena_id(tree, node_id, section_idx) {
         Some(id) => id,
         None => return false,
     };
@@ -214,7 +214,7 @@ pub(in crate::application::app) fn apply_text_and_regions_delta(
         GlyphAreaField::Operation(ApplyOperation::Assign),
     ]);
     tree.tree
-        .update(indextree_node_id, |element| match element.glyph_area_mut() {
+        .update(arena_node_id, |element| match element.glyph_area_mut() {
             Some(area) => {
                 delta.apply_to(area);
                 true
@@ -463,7 +463,7 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     // The text editor targets the section-area at
     // `(node_id, section_idx)` — that's where text + regions live
     // post-refactor.
-    let indextree_node_id = match section_arena_id(tree, node_id, section_idx) {
+    let arena_node_id = match section_arena_id(tree, node_id, section_idx) {
         Some(id) => id,
         None => return,
     };
@@ -499,7 +499,7 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     // not an area, has nothing to show the edit on.
     let applied = tree
         .tree
-        .update(indextree_node_id, |element| match element.glyph_area_mut() {
+        .update(arena_node_id, |element| match element.glyph_area_mut() {
             Some(area) => {
                 delta.apply_to(area);
                 true
@@ -523,7 +523,7 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     // The arena id was already resolved at the top of the function;
     // pass it through directly so the renderer skips an O(arena)
     // descendant scan to re-find the element.
-    renderer.reshape_buffer_for(indextree_node_id, &tree.tree);
+    renderer.reshape_buffer_for(arena_node_id, &tree.tree);
 }
 
 /// Apply a literal-character keystroke (Enter, Tab, or printable

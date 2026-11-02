@@ -6,8 +6,8 @@
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use glam::Vec2;
-use indextree::NodeId;
 use lazy_static::lazy_static;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -1188,11 +1188,11 @@ pub fn do_event_propagation_complex_symmetric() {
         // joins its ancestor.
         let ancestor_path = entry.3.to_string();
         if ancestor_path == "root" {
-            let root = model.root;
+            let root = model.root();
             model.update(root, |element| *element = model_node).unwrap();
             mutator = GfxMutatorTree::new_with(mutator_node);
-            model_index.insert("0".to_string(), model.root);
-            mutator_index.insert("0".to_string(), mutator.root);
+            model_index.insert("0".to_string(), model.root());
+            mutator_index.insert("0".to_string(), mutator.root());
         } else {
             let model_parent = *model_index.get(&ancestor_path).unwrap();
             let model_node_id = model
@@ -1245,7 +1245,7 @@ pub fn do_event_propagation_simple() {
     model_baby.subscribers_mut().push(subscriber);
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(model_root);
-    let model_root_id = model.root;
+    let model_root_id = model.root();
     model
         .insert_child(model_root_id, model_baby, Placement::Last)
         .unwrap();
@@ -1267,7 +1267,7 @@ pub fn do_event_propagation_simple() {
     );
 
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new_with(event);
-    let event_id = mutator.root;
+    let event_id = mutator.root();
     mutator
         .insert_child(event_id, event_baby, Placement::Last)
         .unwrap();
@@ -1288,7 +1288,7 @@ pub fn do_complex_tree_mutation() {
         0,
         0,
     ));
-    let root_id = model.root;
+    let root_id = model.root();
 
     let node_a = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("A", 1.0, 10.0, Vec2::new(30.0, 70.0), Vec2::new(500.0, 500.0)),
@@ -1543,7 +1543,7 @@ pub fn do_complex_tree_mutation() {
     // Create mutator-tree
     let mut mutator_c: GfxMutatorTree =
         GfxMutatorTree::new_with(GfxMutator::new_instruction(RepeatWhile(c_predicate), 0));
-    let c_instruction = mutator_c.root;
+    let c_instruction = mutator_c.root();
 
     mutator_c
         .insert_child(
@@ -1774,7 +1774,7 @@ pub fn do_complex_tree_mutation() {
 
     let mut mutator_a: GfxMutatorTree =
         GfxMutatorTree::new_with(GfxMutator::new_instruction(RepeatWhile(a_predicate), 0));
-    let a_instruction = mutator_a.root;
+    let a_instruction = mutator_a.root();
 
     mutator_a
         .insert_child(
@@ -1967,7 +1967,7 @@ pub fn do_simple_tree_mutation() {
         0,
         0,
     ));
-    let root_id = model.root;
+    let root_id = model.root();
 
     let node_a = GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new_with_str("A", 1.0, 10.0, Vec2::new(30.0, 70.0), Vec2::new(500.0, 500.0)),
@@ -2042,7 +2042,7 @@ pub fn do_simple_tree_mutation() {
         ])),
         0,
     ));
-    let mutator_root = mutator.root;
+    let mutator_root = mutator.root();
 
     // Set mutator relationships
     let mutator_c = mutator

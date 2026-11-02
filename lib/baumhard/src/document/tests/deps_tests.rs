@@ -5,6 +5,7 @@
 //! record — a change that alters a resolution touches an input that
 //! resolution recorded.
 
+use crate::arena::NodeId;
 use crate::document::deps::{inputs_changed, InputKind};
 use crate::document::element::{DocElement, DocKind};
 use crate::document::resolve::{
@@ -15,7 +16,6 @@ use crate::document::tests::test_support::{example, DocumentBuilder, Example};
 use crate::document::values::{ColorRef, FontSize, PaletteId, Rgba};
 use crate::engine::tree::Tree;
 use glam::Vec2;
-use indextree::NodeId;
 
 /// The kinds `edit` touches on the element at `id` of `builder`.
 fn touched(builder: &mut DocumentBuilder, id: NodeId, edit: impl FnOnce(&mut DocElement)) -> Vec<InputKind> {

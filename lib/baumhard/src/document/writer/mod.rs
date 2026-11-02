@@ -50,6 +50,7 @@ mod upkeep;
 pub use history::HistoryInfo;
 pub(crate) use upkeep::Derived;
 
+use crate::arena::NodeId;
 use crate::document::format::{self, Limits, SaveError};
 use crate::document::ids::Document;
 use crate::document::mutation::step::DocStep;
@@ -59,7 +60,6 @@ use crate::document::writer::history::History;
 use crate::document::writer::transaction::{inserted_by, removed_by, Open, TransactionKind};
 use crate::document::writer::upkeep::Direction;
 use crate::engine::journal::Touch;
-use indextree::NodeId;
 use log::error;
 
 /// How many entries the history holds unless the app sets another limit

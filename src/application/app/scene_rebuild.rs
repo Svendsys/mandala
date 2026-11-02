@@ -2426,7 +2426,7 @@ mod content_signature_dispatch {
             .split_last()
             .expect("a sentinel path names at least the leaf");
         let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
-        let mut parent = mt.root;
+        let mut parent = mt.root();
         for channel in void_channels {
             parent = mt
                 .insert_child(
@@ -2459,7 +2459,7 @@ mod content_signature_dispatch {
             .canvas_scene()
             .tree(id)
             .expect("a registered role has a tree");
-        tree.root.descendants(tree.arena()).any(|node| {
+        tree.root().descendants(tree.arena()).any(|node| {
             tree.arena()
                 .get(node)
                 .and_then(|n| n.get().glyph_area())

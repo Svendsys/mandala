@@ -143,7 +143,7 @@ mod tests {
     fn self_only_builds_to_macro_mutator() {
         let node = self_only(vec![nudge(10.0)]);
         let mt = build(&node, &NoRuntime).unwrap();
-        let root = mt.arena().get(mt.root).unwrap().get();
+        let root = mt.arena().get(mt.root()).unwrap().get();
         assert!(matches!(root.variant(), MutatorType::Macro));
     }
 
@@ -167,7 +167,7 @@ mod tests {
     fn descendants_builds_to_instruction_with_always_true_predicate() {
         let node = descendants(vec![nudge(1.0)]);
         let mt = build(&node, &NoRuntime).unwrap();
-        let root = mt.arena().get(mt.root).unwrap().get();
+        let root = mt.arena().get(mt.root()).unwrap().get();
         assert!(matches!(
             root,
             crate::gfx_structs::mutator::GfxMutator::Instruction {

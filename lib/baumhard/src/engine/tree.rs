@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The two arenas a walk aligns. [`Tree<E>`](crate::engine::tree::Tree) wraps an
-//! `indextree::Arena` of elements for O(1) child iteration and O(1)
+//! [`Arena`](crate::arena::Arena) of elements for O(1) child iteration and O(1)
 //! node access, plus the element type's per-tree
 //! [`TreeCache`](crate::engine::element::TreeCache);
 //! [`MutatorTree<E, M>`](crate::engine::tree::MutatorTree) mirrors that shape but carries
@@ -40,6 +40,7 @@
 //! stays allocated, out of the tree, until its journal is
 //! [discarded](crate::engine::journal::Journal::discard).
 
+use crate::arena::{Arena, ChildrenOf, Descendants, Node, NodeId};
 use crate::engine::anchor::{apply_anchored, Anchors};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::{move_among_siblings, JournalBuilder};
@@ -48,7 +49,6 @@ use crate::engine::mutation::Mutation;
 use crate::engine::mutator::{Mutator, MutatorType};
 use crate::engine::siblings;
 use crate::engine::walker::{run_walk, walk_anchor};
-use indextree::{Arena, Children, Descendants, Node, NodeId};
 use log::error;
 use rustc_hash::FxHashSet;
 use std::cell::Cell;
@@ -77,7 +77,7 @@ pub enum Placement {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeError {
     /// The id names no node of this tree: it was removed, or its slot
-    /// has been reused since (indextree's per-slot stamp no longer
+    /// has been reused since (the arena's per-slot generation no longer
     /// matches).
     StaleNode(NodeId),
     /// A [`Placement::Before`] / [`Placement::After`] named a sibling
@@ -190,17 +190,12 @@ pub struct Tree<E: TreeElement> {
     /// [`Tree::remove_subtree`] or a walk, which keep the
     /// sorted-children invariant.
     pub(in crate::engine) arena: Arena<E>,
-    /// Arena id of the tree root. Public for reading; **writes are
-    /// reserved to `engine/tree.rs`**. A root moved behind the engine's
-    /// back would leave [`Tree::contains`] and every journal describing
-    /// another tree. The compiler cannot hold that while the field is
-    /// public, so the source scan `test_only_the_engine_tree_writes_a_root_field`
-    /// refuses any write to a `root` field — an assignment, a `&mut`
-    /// borrow such as `std::mem::replace` takes, a `&raw mut` or an
-    /// `addr_of_mut!`, or a struct pattern that binds the field —
-    /// anywhere in the workspace's shipped code outside this file.
-    /// Making the field private belongs with the arena rework (#288).
-    pub root: NodeId,
+    /// Arena id of the tree root, read through [`Tree::root`]. Private
+    /// to this file: a root moved behind the engine's back would leave
+    /// [`Tree::contains`] and every journal describing another tree, so
+    /// only the constructors here set it, and the compiler holds every
+    /// other file — in the engine or out of it — to reading it.
+    root: NodeId,
     /// Draw order hint relative to sibling trees in a scene. Higher =
     /// drawn on top.
     pub layer: usize,
@@ -296,7 +291,7 @@ impl<E: TreeElement> Tree<E> {
         }
     }
 
-    /// The backing arena, read-only. Navigate it with indextree's
+    /// The backing arena, read-only. Navigate it with the arena's
     /// `NodeId` methods (`children`, `descendants`, `parent`, …);
     /// change the tree through [`Self::insert_child`],
     /// [`Self::update`], [`Self::remove_subtree`] or a walk. Besides
@@ -315,7 +310,7 @@ impl<E: TreeElement> Tree<E> {
 
     /// Whether `id` names a node **in the tree**: in the arena, and with
     /// [`Self::root`] among its ancestors (or the root itself). A
-    /// removed node and a reused slot under an old stamp answer `false`,
+    /// removed node and a reused slot under an old generation answer `false`,
     /// and so does a node of a subtree a structural command detached —
     /// still allocated, so a journal can put it back, but not part of
     /// the tree until it does.
@@ -348,7 +343,7 @@ impl<E: TreeElement> Tree<E> {
 
     /// Direct-child iterator over [`Self::root`]. See
     /// [`NodeId::children`].
-    pub fn children(&self) -> Children<'_, E> {
+    pub fn children(&self) -> ChildrenOf<'_, E> {
         self.root.children(&self.arena)
     }
 
@@ -442,9 +437,8 @@ impl<E: TreeElement> Tree<E> {
     /// an O(1) check that `id` is in the tree ([`Self::contains`]) — so
     /// a caller updating many elements pays nothing per element that
     /// grows with depth; only when the key changed, a scan of the
-    /// siblings the element moves past plus a same-row re-attach
-    /// (O(1) once the engine's own arena tree replaces indextree, V1-A6
-    /// #290; O(depth) until then).
+    /// siblings the element moves past plus an O(1) same-row
+    /// re-attach.
     pub fn update<R>(&mut self, id: NodeId, f: impl FnOnce(&mut E) -> R) -> Result<R, TreeError> {
         self.update_in(id, None, f)
     }
@@ -525,16 +519,16 @@ impl<E: TreeElement> Tree<E> {
 /// [`MutatorTree::apply_at`].
 #[derive(Clone, Debug)]
 pub struct MutatorTree<E: TreeElement, M: Mutation<E>> {
-    /// Backing arena — the same `indextree::Arena` the target `Tree`
+    /// Backing arena — the same [`Arena`] the target `Tree`
     /// uses, so `NodeId`s traverse the mutator tree freely. Private to
     /// the engine for the same reason as [`Tree`]'s: read it through
     /// [`MutatorTree::arena`], add to it through
     /// [`MutatorTree::insert_child`].
     pub(in crate::engine) arena: Arena<Mutator<E, M>>,
-    /// Arena id of the mutator root. Every walk starts here. Public
-    /// for reading; like [`Tree::root`], written only in this file,
-    /// which `test_only_the_engine_tree_writes_a_root_field` holds.
-    pub root: NodeId,
+    /// Arena id of the mutator root, where every walk starts; read
+    /// through [`MutatorTree::root`]. Private to this file, like
+    /// [`Tree::root`]'s.
+    root: NodeId,
     /// Whether any node is a [`Mutator::Structure`]. Kept by the two
     /// ways a mutator tree gains a node, [`Self::new_with`] and
     /// [`Self::insert_child`], so a walk knows before it starts whether
@@ -581,6 +575,11 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
     /// The backing arena, read-only. O(1).
     pub fn arena(&self) -> &Arena<Mutator<E, M>> {
         &self.arena
+    }
+
+    /// The mutator root's id, where every walk starts. O(1).
+    pub fn root(&self) -> NodeId {
+        self.root
     }
 
     /// Borrow the arena node at `id`, or `None` if it has been
@@ -801,7 +800,7 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
 }
 
 /// `id` and every node above it, up to the top of whatever it hangs
-/// in: indextree's `ancestors`, which the engine calls **only here**.
+/// in: the arena's `ancestors`, which the engine calls **only here**.
 /// A climb is O(depth), so it belongs only where its cost is paid once
 /// per node a user acts on — the cycle check of a re-parent
 /// ([`StructOp::Move`](crate::engine::structure::StructOp::Move)) and

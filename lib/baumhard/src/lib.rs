@@ -39,6 +39,10 @@
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+/// The arena tree every tree here is stored in: [`Arena`](arena::Arena)
+/// of linked nodes named by generational [`NodeId`](arena::NodeId)s,
+/// with O(1) links, iterative walks and O(1) same-row re-attach.
+pub mod arena;
 /// Low-level primitives: color regions, outlines, apply-operations,
 /// and pure-data value types.
 pub mod core;

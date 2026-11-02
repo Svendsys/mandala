@@ -8,13 +8,13 @@
 //! [`validate_applied`](crate::document::mutation::validate::validate_applied)
 //! finds after one.
 
+use crate::arena::NodeId;
 use crate::document::bounds::BoundError;
 use crate::document::element::DocKind;
 use crate::document::ids::NodeIdent;
 use crate::document::shape::ShapeError;
 use crate::document::values::{FontSize, LinkKind};
 use crate::engine::tree::TreeError;
-use indextree::NodeId;
 use std::fmt;
 
 /// Where in a mutator tree a refusal was found: the position of each

@@ -13,7 +13,7 @@
 //! reads its channel; the index supplies the `EdgeKey` behind it and
 //! nothing else — the geometry stays in the tree.
 
-use indextree::NodeId;
+use crate::arena::NodeId;
 
 use crate::engine::element::TreeElement;
 use crate::gfx_structs::tree::GfxTree;
@@ -93,7 +93,7 @@ impl EdgeChannelIndex {
     fn edge_root(tree: &GfxTree, mut node: NodeId) -> Option<NodeId> {
         loop {
             let parent = tree.arena().get(node)?.parent()?;
-            if parent == tree.root {
+            if parent == tree.root() {
                 return Some(node);
             }
             node = parent;

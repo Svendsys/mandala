@@ -12,6 +12,7 @@
 //! Follows the `do_*()` / `test_*()` split (§T2.2): every `do_*` body
 //! has a bench entry in `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use crate::engine::builder::{build, BuildError, ChannelSrc, CountSrc, MutationSrc, MutatorNode, NoRuntime};
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
@@ -21,7 +22,6 @@ use crate::engine::tests::test_element::{
 };
 use crate::engine::tree::{MutatorTree, Tree};
 use crate::engine::walker::walk_tree;
-use indextree::NodeId;
 use serde_json::json;
 
 /// A root (Plain 0, value 0) with three children, added in this order:
@@ -29,7 +29,7 @@ use serde_json::json;
 /// their ids in the same order.
 fn mixed() -> (Tree<TestElement>, [NodeId; 3]) {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let a0 = add(&mut tree, root, TestElement::new(0, 10));
     let b0 = add(&mut tree, root, TestElement::marked(0, 20));
     let a1 = add(&mut tree, root, TestElement::new(1, 30));
@@ -39,7 +39,7 @@ fn mixed() -> (Tree<TestElement>, [NodeId; 3]) {
 /// A mutator tree rooted at a `(Plain, 0)` `Void` with `children`.
 fn under_void(children: Vec<TestMutator>) -> MutatorTree<TestElement, TestMutation> {
     let mut mt = MutatorTree::new();
-    let root = mt.root;
+    let root = mt.root();
     for child in children {
         add_mutator(&mut mt, root, child);
     }
@@ -95,7 +95,7 @@ fn test_engine_walk_merges_rows_of_two_kinds() {
 /// key comes before every `Marked` one in both rows.
 pub fn do_engine_walk_merges_rows_of_two_kinds() {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let m1 = add(&mut tree, root, TestElement::marked(1, 1));
     let p0 = add(&mut tree, root, TestElement::new(0, 2));
     let m0 = add(&mut tree, root, TestElement::marked(0, 3));
@@ -178,7 +178,7 @@ pub fn do_mutator_and_ast_json_carry_the_kind() {
     assert!(missing.to_string().contains("missing field `kind`"), "{missing}");
     let node: Node = serde_json::from_value(json!({"Void": {"kind": "Marked", "channel": 2}})).unwrap();
     let mt = build(&node, &NoRuntime).unwrap();
-    assert_eq!(mt.arena()[mt.root].get().key(), marked(2));
+    assert_eq!(mt.arena()[mt.root()].get().key(), marked(2));
 }
 
 // ── the builder's keys ────────────────────────────────────────────
@@ -210,14 +210,14 @@ pub fn do_engine_build_repeat_emits_its_kind_on_consecutive_channels() {
     };
     let mt = build(&node, &IndexContext).unwrap();
     let keys: Vec<BranchKey<TestKind>> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| mt.arena()[id].get().key())
         .collect();
     assert_eq!(keys, vec![marked(1), marked(2)]);
 
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     let p1 = add(&mut tree, root, TestElement::new(1, 100));
     let m1 = add(&mut tree, root, TestElement::marked(1, 200));
     let m2 = add(&mut tree, root, TestElement::marked(2, 300));
@@ -304,7 +304,7 @@ pub fn do_engine_build_inserts_children_in_key_order() {
     let mt = build(&node, &Numbered).unwrap();
     assert_eq!(mt.check_sorted(), Ok(()));
     let order: Vec<(BranchKey<TestKind>, TestMutation)> = mt
-        .root
+        .root()
         .children(mt.arena())
         .map(|id| match mt.arena()[id].get() {
             Mutator::Single { key, mutation } => (*key, mutation.clone()),

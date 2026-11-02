@@ -46,13 +46,13 @@
 //! [`StructOp::Move`](crate::engine::structure::StructOp::Move) names is
 //! the instantiation's too.
 
+use crate::arena::{Arena, NodeId};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
 use crate::engine::siblings;
 use crate::engine::tree::{climb, MutatorTree, Placement, Tree, TreeError};
-use indextree::{Arena, NodeId};
 use rustc_hash::FxHashSet;
 use std::fmt;
 
@@ -319,9 +319,9 @@ pub enum StructOp<E: TreeElement> {
     /// Cost: to a new parent, O(depth of `to`) to check for a cycle —
     /// the price of refusing one, paid once per node moved, never per
     /// node visited (ruling R16 on #282) — plus a scan of `to`'s row
-    /// for the placement and the re-attach, which indextree checks the
-    /// same way. Within its own row, no climb: the scan and a same-row
-    /// re-attach.
+    /// for the placement and the re-attach, whose own cycle check the
+    /// arena makes the same way. Within its own row, no climb: the scan
+    /// and an O(1) same-row re-attach.
     Move {
         /// The new parent.
         to: NodeId,
@@ -403,7 +403,7 @@ fn apply_op<E: TreeElement>(
         // earlier command of this walk.
         return Err(TreeError::TargetRemovedEarlier(target));
     }
-    let root = tree.root;
+    let root = tree.root();
     let Tree { arena, detached, .. } = tree;
     match op {
         StructOp::Insert { subtree, at } => {
@@ -529,7 +529,7 @@ fn detach<E: TreeElement>(
 
 /// Allocate the elements below `subtree`'s root under `top`, the node
 /// already made for that root, each row in key order. Every node is
-/// new, so each goes in through indextree's value inserts, which climb
+/// new, so each goes in through the arena's value inserts, which climb
 /// nothing; and the work list is a heap stack, so a deep subtree costs
 /// no call stack.
 ///

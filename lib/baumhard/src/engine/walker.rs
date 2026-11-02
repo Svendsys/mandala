@@ -92,6 +92,7 @@
 //! sorted-children invariant is restored at its end; everything else in
 //! this module is internal to the engine.
 
+use crate::arena::{Arena, Node, NodeId};
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::key::BranchKey;
@@ -102,7 +103,6 @@ use crate::engine::structure::apply_ops;
 use crate::engine::tree::{MutatorTree, Tree, TreeError};
 use crate::util::geometry::aabb_contains;
 use crate::util::ordered_vec2::OrderedVec2;
-use indextree::{Arena, Node, NodeId};
 use log::{debug, error, warn};
 use std::cmp::Ordering;
 
@@ -379,7 +379,7 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
     mutator_tree: &MutatorTree<E, M>,
     seed: &E::Inherited,
 ) {
-    walk_tree_from(tree, mutator_tree, tree.root, mutator_tree.root, seed)
+    walk_tree_from(tree, mutator_tree, tree.root(), mutator_tree.root(), seed)
 }
 
 /// Dispatch one mutator node against one target node and walk into
@@ -454,7 +454,7 @@ pub(in crate::engine) fn walk_anchor<E: TreeElement, M: Mutation<E>>(
     let Some(target) = tree.arena.get(anchor) else {
         return;
     };
-    let root = mutator_tree.root;
+    let root = mutator_tree.root();
     if get_mutator(&mutator_tree.arena, root).get().key().kind != target.get().key().kind {
         debug!("Anchor {anchor} is of another kind than the mutator root, skipping it.");
         return;
@@ -1103,7 +1103,7 @@ fn get_target_mut<E: TreeElement>(arena: &mut Arena<E>, id: NodeId) -> &mut Node
 /// # Algorithm
 ///
 /// 1. Visit every descendant of `target_id` (not `target_id` itself)
-///    in pre-order, through `indextree`'s allocation-free
+///    in pre-order, through the arena's allocation-free
 ///    `descendants` traversal.
 /// 2. Among the boxes that contain the point, keep the smallest by
 ///    area; the first one found keeps a tie (innermost-first, then

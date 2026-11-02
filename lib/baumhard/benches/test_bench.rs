@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use baumhard::arena::tests::deep_tests::*;
+use baumhard::arena::tests::model_tests::*;
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::document::tests::bounds_tests::*;
 use baumhard::document::tests::deep_tests::*;
@@ -3013,6 +3015,17 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("ordered_vec2_distinguishes_close_floats_in_hashset", |b| {
         b.iter(do_ordered_vec2_distinguishes_close_floats_in_hashset)
     });
+    // arena //
+    c.bench_function("arena_matches_a_reference_model", |b| {
+        b.iter(do_arena_matches_a_reference_model)
+    });
+    c.bench_function("arena_deep_chain_walks", |b| b.iter(do_arena_deep_chain_walks));
+    c.bench_function("arena_deep_chain_owned_traits", |b| {
+        b.iter(do_arena_deep_chain_owned_traits)
+    });
+    c.bench_function("arena_deep_chain_structural_operations", |b| {
+        b.iter(do_arena_deep_chain_structural_operations)
+    });
     // arena_utils //
     c.bench_function("arena_utils_clone", |b| b.iter(do_clone));
     // primes //
@@ -3462,7 +3475,7 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
     // Deepest channel path: last pair, second endpoint, text slot.
     let last_leaf = {
         let t = &portal.tree;
-        let pair = t.root.children(t.arena()).nth(PAIRS - 1).expect("last pair");
+        let pair = t.root().children(t.arena()).nth(PAIRS - 1).expect("last pair");
         let endpoint = pair.children(t.arena()).nth(1).expect("to-endpoint void");
         endpoint.children(t.arena()).nth(1).expect("text leaf")
     };
@@ -3485,7 +3498,7 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
     let labels = build_connection_label_tree(&elements);
     let last_label = labels
         .tree
-        .root
+        .root()
         .children(labels.tree.arena())
         .nth(PAIRS - 1)
         .expect("last label leaf");

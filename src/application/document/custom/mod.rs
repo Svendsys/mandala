@@ -709,7 +709,7 @@ impl MindMapDocument {
             // the same primitive.
             //
             // §B7 borrow-split note: collecting into a
-            // `Vec<indextree::NodeId>` here is the smallest correct
+            // `Vec<baumhard::arena::NodeId>` here is the smallest correct
             // shape. `container_arena_id.children(tree.tree.arena())`
             // borrows the arena immutably; the loop body needs
             // `tree.tree.update(...)`, a mutable borrow, to apply the
@@ -720,7 +720,7 @@ impl MindMapDocument {
             // per node)` — bounded by user authoring (typically 1–4
             // per node), per affected-node-per-call, so allocation
             // cost is negligible relative to the mutation walker.
-            let section_arena_ids: Vec<indextree::NodeId> = container_arena_id
+            let section_arena_ids: Vec<baumhard::arena::NodeId> = container_arena_id
                 .children(tree.tree.arena())
                 .filter(|cid| {
                     tree.tree

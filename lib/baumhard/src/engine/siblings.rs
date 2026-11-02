@@ -19,8 +19,8 @@
 //! each move between the two. Nothing here allocates beyond the arena
 //! slot a new node takes.
 
+use crate::arena::{Arena, NodeId};
 use crate::engine::tree::{Placement, TreeError};
-use indextree::{Arena, NodeId};
 
 /// Insert `value` as a child of `parent` at the position `at` names
 /// within the run of children whose key equals `value`'s — the slot
@@ -29,7 +29,7 @@ use indextree::{Arena, NodeId};
 /// Errors: those of [`slot`]. Nothing is inserted on an error.
 ///
 /// Cost: [`slot`]'s scan plus one arena slot. The new node is fresh,
-/// so indextree's O(1) value-inserting paths apply — there is no
+/// so the arena's O(1) value-inserting paths apply — there is no
 /// ancestor walk.
 pub(crate) fn insert_sorted<T, K: Ord>(
     arena: &mut Arena<T>,
@@ -47,7 +47,7 @@ pub(crate) fn insert_sorted<T, K: Ord>(
 /// found by [`slot`] or [`last_slot`] in a sorted row; `prev`, when
 /// given, must be a live child of `parent`.
 ///
-/// Cost: O(1) — the node is new, so indextree's value inserts check no
+/// Cost: O(1) — the node is new, so the arena's value inserts check no
 /// ancestry, however deep `parent` sits.
 pub(crate) fn insert_value_at<T>(
     arena: &mut Arena<T>,
@@ -265,38 +265,20 @@ fn last_slot_for<T, K: Ord>(
 /// else does: the one place their insert is made.
 ///
 /// A node put back under the parent it came from cannot close a cycle,
-/// so the cycle check a checked insert makes — a climb from the insert
-/// point to the root — has nothing to find here. Ruling R16 on #282:
-/// this re-arrangement must cost O(1), which indextree 4.9 offers no
-/// insert for (every insert of an existing node climbs); the engine's
-/// own arena tree, V1-A6 (#290), will. Until it lands, [`link_in_row`]
-/// is the single call site that will change, and
-/// `test_same_row_rearrangement_is_linear_in_depth` the test that holds
-/// it to O(1).
+/// so it goes in through the arena's unchecked same-row re-attach,
+/// which climbs nothing (ruling R16 on #282, V1-A6 #290). That `parent`
+/// is the one `node` left is this function's callers' to guarantee,
+/// since a detached node no longer names it; every other precondition
+/// the arena checks in O(1) — a stale id, a node still attached, a
+/// `prev` under another parent — and refuses. A refusal is logged and
+/// leaves the node detached rather than aborting the caller (an
+/// interactive path, CODE_CONVENTIONS §9).
 ///
-/// Debug builds check that `node` is detached and that `prev` is a
-/// child of `parent` — that the parent is unchanged.
-///
-/// Cost today: the O(depth of `parent`) indextree insert check.
+/// Cost: O(1), however deep `parent` sits.
 pub(crate) fn reattach_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
-    debug_assert!(
-        arena.get(node).is_some_and(|n| n.parent().is_none()),
-        "engine invariant: a node re-attached in its row was detached from it first"
-    );
-    debug_assert!(
-        prev.is_none_or(|prev| arena.get(prev).and_then(|n| n.parent()) == Some(parent)),
-        "engine invariant: a re-attach in a row stays under the same parent"
-    );
-    link_in_row(arena, parent, node, prev);
-}
-
-/// The insert behind [`reattach_in_row`], and the only one: swapping
-/// in an insert without the cycle check — V1-A6 (#290) — is a change
-/// to this function alone (ruling R16 on #282).
-fn link_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
-    #[cfg(test)]
-    tests_support::count_row_link(arena, prev.unwrap_or(parent));
-    checked_attach(arena, parent, node, prev);
+    if let Err(e) = node.reattach_in_row(parent, prev, arena) {
+        log::error!("engine: could not re-attach node {node} in the row of {parent}: {e}");
+    }
 }
 
 /// Attach the detached `node` under `parent`, right after `prev`, or
@@ -310,44 +292,27 @@ fn link_in_row<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Opti
 /// For a node that changes parent — a move, or a node entering the
 /// tree. A node re-arranged within its own row goes through
 /// [`reattach_in_row`]; a node created for the insert goes in through
-/// indextree's value inserts, which need no check ([`insert_sorted`]).
+/// the arena's value inserts, which need no check ([`insert_sorted`]).
+/// This is the engine's one checked insert of an existing node:
+/// `test_the_engine_climbs_only_where_it_may` (over `util::source_scan`)
+/// holds every other engine file to not making one.
 ///
-/// Cost: the O(depth) indextree insert check — the cycle check a real
-/// re-parent pays once per node moved.
+/// The checked insert refuses only a stale node or a cycle, neither of
+/// which a detached node placed by a command that checked for one can
+/// be; a refusal is logged and leaves the node detached rather than
+/// aborting the caller (an interactive path, CODE_CONVENTIONS §9).
+///
+/// Cost: the arena's cycle check, a climb from `parent` to the top —
+/// O(depth), the price a real re-parent pays once per node moved.
 pub(crate) fn attach_at<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
     #[cfg(test)]
     tests_support::count_checked_attach();
-    checked_attach(arena, parent, node, prev);
-}
-
-/// indextree's checked insert of the detached `node` under `parent`
-/// after `prev`, behind both [`attach_at`] and [`link_in_row`] — the
-/// engine's only inserts of an existing node.
-/// `test_the_engine_climbs_only_where_it_may` (over `util::source_scan`) holds every
-/// other engine file to these two.
-fn checked_attach<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId, prev: Option<NodeId>) {
-    match prev {
-        Some(anchor) => attach_after(arena, anchor, node),
-        None => attach_first(arena, parent, node),
-    }
-}
-
-/// Attach the detached `node` right after `anchor`. The checked
-/// indextree insert refuses only a removed node or a cycle, neither of
-/// which a detached sibling of a live row can be; a refusal is logged
-/// and leaves the node detached rather than aborting the caller (an
-/// interactive path, CODE_CONVENTIONS §9).
-fn attach_after<T>(arena: &mut Arena<T>, anchor: NodeId, node: NodeId) {
-    if let Err(e) = anchor.checked_insert_after(node, arena) {
-        log::error!("engine: could not re-attach node {node} after {anchor}: {e}");
-    }
-}
-
-/// Attach the detached `node` as the first child of `parent`. See
-/// [`attach_after`] for why a refusal is logged rather than raised.
-fn attach_first<T>(arena: &mut Arena<T>, parent: NodeId, node: NodeId) {
-    if let Err(e) = parent.checked_prepend(node, arena) {
-        log::error!("engine: could not re-attach node {node} under {parent}: {e}");
+    let attached = match prev {
+        Some(anchor) => anchor.checked_insert_after(node, arena),
+        None => parent.checked_prepend(node, arena),
+    };
+    if let Err(e) = attached {
+        log::error!("engine: could not attach node {node} under {parent}: {e}");
     }
 }
 
@@ -379,15 +344,13 @@ pub(crate) fn check_sorted<T, K: Ord>(
     Ok(())
 }
 
-/// What the tests read of [`link_in_row`]: how many steps its inserts
-/// have taken on this thread. Compiled for tests only.
+/// What the tests read of [`attach_at`]: how many nodes it has put in
+/// place on this thread. Compiled for tests only.
 #[cfg(test)]
 pub(crate) mod tests_support {
-    use indextree::{Arena, NodeId};
     use std::cell::Cell;
 
     thread_local! {
-        static ROW_LINK_STEPS: Cell<usize> = const { Cell::new(0) };
         static CHECKED_ATTACHES: Cell<usize> = const { Cell::new(0) };
     }
 
@@ -401,20 +364,5 @@ pub(crate) mod tests_support {
     /// this thread so far: each one a climb to the root.
     pub(crate) fn checked_attaches() -> usize {
         CHECKED_ATTACHES.with(Cell::get)
-    }
-
-    /// Count the steps of one same-row insert next to `anchor`: the
-    /// checked insert's cycle check visits `anchor` and every ancestor
-    /// of it. When an insert without the check is swapped into
-    /// `link_in_row` (V1-A6, #290), this counts one per insert instead
-    /// — counted inside that insert, never by editing this model alone.
-    pub(super) fn count_row_link<T>(arena: &Arena<T>, anchor: NodeId) {
-        let steps = anchor.ancestors(arena).count();
-        ROW_LINK_STEPS.with(|cell| cell.set(cell.get() + steps));
-    }
-
-    /// The steps every same-row insert on this thread has taken so far.
-    pub(crate) fn row_link_steps() -> usize {
-        ROW_LINK_STEPS.with(Cell::get)
     }
 }

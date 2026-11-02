@@ -20,10 +20,10 @@
 //! [`Tree::descendant_at`](crate::engine::tree::Tree::descendant_at)
 //! — so the scene-level index stays cheap (O(trees)) and the
 //! per-tree walk stays linear in the tree's own node count.
+use crate::arena::NodeId;
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use crate::util::geometry::aabb_contains;
 use glam::Vec2;
-use indextree::NodeId;
 use slab::Slab;
 
 /// Opaque handle referring to a tree owned by a [`Scene`].

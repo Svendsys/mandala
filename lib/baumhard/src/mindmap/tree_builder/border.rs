@@ -10,8 +10,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::arena::NodeId;
 use glam::Vec2;
-use indextree::NodeId;
 
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
@@ -489,7 +489,7 @@ pub fn build_border_mutator_tree_from_nodes(
 
     let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for node in nodes {
-        let root = mt.root;
+        let root = mt.root();
         let Some(parent_node) = super::push_mutator(&mut mt, root, GfxMutator::new_void(node.parent_channel))
         else {
             continue;
@@ -542,7 +542,7 @@ fn append_border_sub_tree(tree: &mut GfxTree, node: &BorderNodeData, unique_id: 
     // Per-node Void parent — groups the eight runs for targeted
     // mutation. The parent's channel is the stable sorted-index
     // value so distinct nodes never collide across rebuilds.
-    let root = tree.root;
+    let root = tree.root();
     let Some(parent_id) = super::push_element(
         tree,
         root,

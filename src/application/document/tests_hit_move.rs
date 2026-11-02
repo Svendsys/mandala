@@ -1346,8 +1346,8 @@ fn test_collect_patches_recursive_skips_glyph_model_children() {
             .tree
             .arena()
             .iter()
-            .find(|n| n.get().unique_id() == *uid)
-            .map(|n| n.get())
+            .find(|(_, n)| n.get().unique_id() == *uid)
+            .map(|(_, n)| n.get())
             .expect("patch references a real arena entry");
         assert!(
             element.glyph_area().is_some(),
@@ -1920,7 +1920,7 @@ fn test_deep_chain_drag_does_not_exhaust_the_stack() {
 /// caller-supplied map.
 fn reference_recursive_walk(
     tree: &mut baumhard::gfx_structs::tree::GfxTree,
-    node_id: indextree::NodeId,
+    node_id: baumhard::arena::NodeId,
     dx: f32,
     dy: f32,
     mut patches: Option<&mut Vec<(usize, (f32, f32))>>,

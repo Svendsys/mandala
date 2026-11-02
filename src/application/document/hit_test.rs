@@ -307,7 +307,7 @@ pub fn apply_inactive_node_dimming(tree: &mut MindMapTree, active_node_id: Optio
 
     for mind_id in inactive {
         let Some(node_id) = tree.arena_id_for(&mind_id) else { continue };
-        let section_ids: Vec<indextree::NodeId> = node_id
+        let section_ids: Vec<baumhard::arena::NodeId> = node_id
             .children(tree.tree.arena())
             .filter(|cid| {
                 tree.tree
@@ -351,7 +351,7 @@ pub fn apply_inactive_node_dimming(tree: &mut MindMapTree, active_node_id: Optio
                 &mut tree.tree,
                 &mutator_tree,
                 section_node_id,
-                mutator_tree.root,
+                mutator_tree.root(),
                 &(),
             );
         }
@@ -404,7 +404,7 @@ where
         // node)` — bounded by user authoring (typically 1–4 per
         // node), and per-mind-id-per-call, so allocation cost is
         // negligible relative to the highlight macro itself.
-        let section_ids: Vec<indextree::NodeId> = node_id
+        let section_ids: Vec<baumhard::arena::NodeId> = node_id
             .children(tree.tree.arena())
             .filter(|cid| {
                 tree.tree
@@ -418,7 +418,7 @@ where
         // When a Section selection is active, filter the section
         // list to that one element so visual feedback matches what
         // the user pointed at.
-        let section_ids: Vec<indextree::NodeId> = match only_section_idx {
+        let section_ids: Vec<baumhard::arena::NodeId> = match only_section_idx {
             Some(target_idx) => section_ids
                 .into_iter()
                 .filter(|sid| {
@@ -455,7 +455,7 @@ where
                 &mut tree.tree,
                 &mutator_tree,
                 section_node_id,
-                mutator_tree.root,
+                mutator_tree.root(),
                 &(),
             );
         }
@@ -595,7 +595,7 @@ pub fn apply_section_resize_to_tree(
     section_idx: usize,
     new_position: Vec2,
     new_size: Vec2,
-) -> Option<indextree::NodeId> {
+) -> Option<baumhard::arena::NodeId> {
     let section_root = tree.section_arena_id(node_id, section_idx)?;
     let _ = tree.tree.update(section_root, |element| {
         if let Some(area) = element.glyph_area_mut() {
@@ -695,7 +695,7 @@ pub fn apply_node_resize_to_tree(
     new_size: Vec2,
     position_delta: Vec2,
     patches: &mut Vec<(usize, (f32, f32))>,
-) -> Option<indextree::NodeId> {
+) -> Option<baumhard::arena::NodeId> {
     patches.clear();
     let container_id = tree.arena_id_for(node_id)?;
     let _ = tree.tree.update(container_id, |element| {
@@ -778,7 +778,7 @@ pub fn hit_test_section_resize_handle(
 /// unconditionally (and patched, if `patches` is `Some`).
 fn walk_drag_node_and_sections(
     tree: &mut GfxTree,
-    node_id: indextree::NodeId,
+    node_id: baumhard::arena::NodeId,
     dx: f32,
     dy: f32,
     mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
@@ -840,7 +840,7 @@ fn walk_drag_node_and_sections(
 /// frontier would hold rather than this one.
 fn walk_drag_subtree(
     tree: &mut GfxTree,
-    node_id: indextree::NodeId,
+    node_id: baumhard::arena::NodeId,
     dx: f32,
     dy: f32,
     mut patches: Option<&mut Vec<(usize, (f32, f32))>>,

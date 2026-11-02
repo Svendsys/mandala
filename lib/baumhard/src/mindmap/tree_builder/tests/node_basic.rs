@@ -16,7 +16,7 @@ fn test_build_tree_structure() {
     assert_eq!(result.node_count(), 252);
 
     // Root of tree is Void, its children are the mindmap root nodes
-    let root_children: Vec<_> = result.tree.root.children(result.tree.arena()).collect();
+    let root_children: Vec<_> = result.tree.root().children(result.tree.arena()).collect();
     let mindmap_roots = map.root_nodes();
     assert_eq!(root_children.len(), mindmap_roots.len());
 }
@@ -28,7 +28,7 @@ fn test_tree_root_nodes_match_mindmap() {
     let result = build_mindmap_tree(&map);
 
     let mindmap_roots = map.root_nodes();
-    let tree_root_children: Vec<NodeId> = result.tree.root.children(result.tree.arena()).collect();
+    let tree_root_children: Vec<NodeId> = result.tree.root().children(result.tree.arena()).collect();
 
     // Each mindmap root should be in the node_map and a child of tree root
     for root in &mindmap_roots {

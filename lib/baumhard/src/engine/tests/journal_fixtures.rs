@@ -19,6 +19,7 @@
 //! Every generator draws from a [`StdRng`] seeded with
 //! `seed_from_u64`, so a failing seed reproduces exactly.
 
+use crate::arena::NodeId;
 use crate::engine::anchor::Anchors;
 use crate::engine::element::TreeElement;
 use crate::engine::journal::{Journal, JournalBuilder};
@@ -29,7 +30,6 @@ use crate::engine::predicate::{Comparator, Predicate};
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tests::test_element::{TestElement, TestField, TestKind, TestMutation, TestMutator};
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
-use indextree::NodeId;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -144,7 +144,7 @@ pub fn scenario(seed: u64) -> Scenario {
         .filter(|id| id.children(tree.arena()).nth(1).is_some())
         .collect();
     let busy = if parents.is_empty() {
-        tree.root
+        tree.root()
     } else {
         parents[rng.random_range(0..parents.len())]
     };
@@ -223,7 +223,7 @@ fn random_element(rng: &mut StdRng) -> TestElement {
 /// tree stays in the hundreds of nodes.
 pub fn random_tree(rng: &mut StdRng) -> Tree<TestElement> {
     let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
-    let root = tree.root;
+    let root = tree.root();
     grow(rng, &mut tree, root, 1);
     tree
 }
@@ -354,7 +354,7 @@ pub fn random_mutator_tree(
     let root = random_mutator(rng, key, no_op, false);
     let keyed_below = !matches!(root, Mutator::Instruction { .. });
     let mut mutators = MutatorTree::new_with(root);
-    let root = mutators.root;
+    let root = mutators.root();
     sprout(rng, &mut mutators, root, 1, no_op, keyed_below);
     mutators
 }
@@ -480,7 +480,7 @@ fn busy_parent(rng: &mut StdRng, tree: &Tree<TestElement>) -> NodeId {
         .filter(|id| id.children(tree.arena()).nth(1).is_some())
         .collect();
     if parents.is_empty() {
-        tree.root
+        tree.root()
     } else {
         pick(rng, &parents)
     }
@@ -585,10 +585,10 @@ fn structural_call(
         Intent::Remove => {
             let follow = removed_from
                 .pop()
-                .filter(|&id| tree.contains(id) && id != tree.root);
+                .filter(|&id| tree.contains(id) && id != tree.root());
             let target = match follow {
                 Some(parent) if rng.random_bool(0.5) => parent,
-                _ if rng.random_bool(0.02) => tree.root,
+                _ if rng.random_bool(0.02) => tree.root(),
                 _ => pick(rng, pool),
             };
             removed_from.extend(arena[target].parent());
@@ -663,7 +663,7 @@ fn structural_call(
     };
     let key = BranchKey::new(arena[target].get().kind, rng.random_range(0..CHANNELS));
     let mut mutators = MutatorTree::new_with(Mutator::new_structure(op, key));
-    let root = mutators.root;
+    let root = mutators.root();
     if rng.random_bool(0.4) {
         for _ in 0..rng.random_range(1..=2) {
             let mutation = if rng.random_bool(0.6) {

@@ -8,6 +8,7 @@
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use crate::engine::element::TreeElement;
 use crate::engine::mutator::Instruction;
 use crate::engine::mutator::Instruction::RepeatWhile;
@@ -21,7 +22,6 @@ use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
-use indextree::NodeId;
 
 // ---------------------------------------------------------------------------
 // Shared test helpers
@@ -63,7 +63,7 @@ pub fn do_repeat_while_skip_while() {
     //     thigh   → knee     → lower_leg  (mirrored left/right)
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(50.0, 50.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
 
     let head = append_area(&mut model, root, 100.0, 100.0, 0, 1);
     let neck = append_area(&mut model, head, 100.0, 110.0, 0, 2);
@@ -107,7 +107,7 @@ pub fn do_repeat_while_skip_while() {
         mutation: None,
     };
     let instruction_node_id = mutator
-        .insert_child(mutator.root, instruction_node, Placement::Last)
+        .insert_child(mutator.root(), instruction_node, Placement::Last)
         .unwrap();
     let void_node = mutator
         .insert_child(instruction_node_id, GfxMutator::new_void(0), Placement::Last)
@@ -178,13 +178,13 @@ pub fn do_macro_applies_all_mutations_in_order() {
     // One Macro mutator, two mutations inside, one target. Both mutations
     // must reach the target — this is the observable contract of Macro.
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let target = append_area(&mut model, root, 100.0, 100.0, 0, 1);
 
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new_macro(
                 vec![
                     GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(10.0))),
@@ -213,12 +213,12 @@ pub fn do_macro_with_empty_mutations_is_noop() {
     // edge case of a caller that built up a Vec<GfxMutation> and flushed it
     // before any mutation was pushed.
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let target = append_area(&mut model, root, 100.0, 100.0, 0, 1);
 
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     mutator
-        .insert_child(mutator.root, GfxMutator::new_macro(vec![], 0), Placement::Last)
+        .insert_child(mutator.root(), GfxMutator::new_macro(vec![], 0), Placement::Last)
         .unwrap();
 
     walk_tree(&mut model, &mutator, &());
@@ -238,13 +238,13 @@ pub fn do_mutator_without_payload_is_noop() {
     // descend into nothing — the target keeps its position and the
     // walk does not reach any payload dispatch.
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let target = append_area(&mut model, root, 42.0, 42.0, 0, 1);
 
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new_instruction(Instruction::MapChildren, 0),
             Placement::Last,
         )
@@ -260,7 +260,7 @@ pub fn do_mutator_without_payload_is_noop() {
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::Instruction {
                 key: 0.into(),
                 instruction: Instruction::MapChildren,
@@ -290,7 +290,7 @@ pub fn do_single_mutator_channel_filter_in_align_child_walks() {
     //   * c0 (t_chan < m_chan): "skip this target, advance"
     //   * c2 (t_chan > m_chan): "break inner loop"
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let c0 = append_area(&mut model, root, 100.0, 100.0, 0, 1);
     let c1 = append_area(&mut model, root, 200.0, 200.0, 1, 2);
     let c2 = append_area(&mut model, root, 300.0, 300.0, 2, 3);
@@ -298,7 +298,7 @@ pub fn do_single_mutator_channel_filter_in_align_child_walks() {
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new(
                 GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(50.0))),
                 1, // only c1 is on this channel
@@ -327,7 +327,7 @@ pub fn do_direct_walk_at_mismatched_channels_is_noop() {
     // We trigger it by starting walk_tree on a non-void Single root
     // mutator whose channel doesn't match the target root.
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(50.0, 50.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
 
     let mutator: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new(
         GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(99.0))),
@@ -353,7 +353,7 @@ pub fn do_deep_chain_walk_reaches_every_node() {
     const DEPTH: usize = 300;
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let mut parent = model.root;
+    let mut parent = model.root();
     let mut target_chain: Vec<NodeId> = Vec::with_capacity(DEPTH);
     for i in 0..DEPTH {
         let id = append_area(&mut model, parent, 0.0, 0.0, 0, i + 1);
@@ -364,7 +364,7 @@ pub fn do_deep_chain_walk_reaches_every_node() {
     // Mirror mutator chain: root (void) → m1 → m2 → ... → m{DEPTH},
     // each nudging its paired target down by 1.
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
-    let mut mparent = mutator.root;
+    let mut mparent = mutator.root();
     for _ in 0..DEPTH {
         let id = mutator
             .insert_child(
@@ -400,7 +400,7 @@ pub fn do_wide_fan_out_applies_to_all_matching_siblings() {
     const WIDTH: usize = 200;
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let mut kids: Vec<NodeId> = Vec::with_capacity(WIDTH);
     for i in 0..WIDTH {
         kids.push(append_area(&mut model, root, i as f32, 0.0, 0, i + 1));
@@ -409,7 +409,7 @@ pub fn do_wide_fan_out_applies_to_all_matching_siblings() {
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new(
                 GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(10.0))),
                 0,
@@ -437,13 +437,13 @@ pub fn do_applying_same_delta_twice_accumulates() {
     // mutations" optimization that would silently change semantics of
     // repeated nudges (which the drag path emits on purpose every frame).
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let target = append_area(&mut model, root, 0.0, 0.0, 0, 1);
 
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new(
                 GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(5.0))),
                 0,
@@ -472,13 +472,13 @@ pub fn do_mutation_is_deterministic_across_tree_clones() {
     // regression that (for example) started walking siblings in arena
     // order instead of linked-list order.
     let mut base: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let base_root = base.root;
+    let base_root = base.root();
     let a = append_area(&mut base, base_root, 1.0, 2.0, 0, 1);
     let b = append_area(&mut base, a, 3.0, 4.0, 0, 2);
     let c = append_area(&mut base, b, 5.0, 6.0, 0, 3);
 
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
-    let mut mparent = mutator.root;
+    let mut mparent = mutator.root();
     for _ in 0..3 {
         let id = mutator
             .insert_child(
@@ -540,7 +540,7 @@ pub fn test_repeat_while_without_children_is_noop() {
 pub fn do_repeat_while_without_children_is_noop() {
     fonts::init();
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let target = append_area(&mut model, root, 100.0, 100.0, 0, 1);
 
     let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
@@ -553,7 +553,7 @@ pub fn do_repeat_while_without_children_is_noop() {
     ));
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::Instruction {
                 instruction: RepeatWhile(predicate),
                 key: 0.into(),
@@ -585,7 +585,7 @@ pub fn do_repeat_while_aligns_targets_whatever_their_insertion_order() {
     fonts::init();
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     // Added on ch 2, 0, 1 — deliberately not ascending.
     let t2 = append_area(&mut model, root, 0.0, 0.0, 2, 1);
     let t0 = append_area(&mut model, root, 10.0, 0.0, 0, 2);
@@ -608,7 +608,7 @@ pub fn do_repeat_while_aligns_targets_whatever_their_insertion_order() {
     });
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new(
                 GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(10.0))),
                 0,
@@ -637,7 +637,7 @@ pub fn do_repeat_while_merge_advance_does_not_drop_mutator_without_target() {
     fonts::init();
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let t2 = append_area(&mut model, root, 0.0, 0.0, 2, 1);
     let t3 = append_area(&mut model, root, 10.0, 0.0, 3, 2);
 
@@ -654,7 +654,7 @@ pub fn do_repeat_while_merge_advance_does_not_drop_mutator_without_target() {
     });
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new(
                 GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(10.0))),
                 1,
@@ -664,7 +664,7 @@ pub fn do_repeat_while_merge_advance_does_not_drop_mutator_without_target() {
         .unwrap();
     mutator
         .insert_child(
-            mutator.root,
+            mutator.root(),
             GfxMutator::new(
                 GfxMutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(10.0))),
                 2,
@@ -694,7 +694,7 @@ pub fn do_default_terminator_resumes_whatever_the_insertion_order() {
     fonts::init();
 
     let mut model: GfxTree = GfxTree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
-    let root = model.root;
+    let root = model.root();
     let t0 = append_area(&mut model, root, 100.0, 100.0, 0, 1);
     let t2 = append_area(&mut model, root, 0.0, 0.0, 2, 2);
     let t1 = append_area(&mut model, root, 50.0, 50.0, 1, 3);
@@ -713,7 +713,7 @@ pub fn do_default_terminator_resumes_whatever_the_insertion_order() {
     });
     // After-mutations added in non-ascending order.
     let repeated = mutator
-        .insert_child(mutator.root, GfxMutator::new_void(0), Placement::Last)
+        .insert_child(mutator.root(), GfxMutator::new_void(0), Placement::Last)
         .unwrap();
     mutator
         .insert_child(

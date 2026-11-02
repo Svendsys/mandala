@@ -10,6 +10,7 @@
 //! Follows the `do_*()` / `test_*()` split (§T2.2): every `do_*` body
 //! has a bench entry in `benches/test_bench.rs`.
 
+use crate::arena::NodeId;
 use crate::core::primitives::{ApplyOperation, ColorFontRegion, ColorFontRegions, Flag, Flaggable, Range};
 use crate::engine::anchor::Anchors;
 use crate::engine::element::TreeElement;
@@ -27,7 +28,6 @@ use crate::gfx_structs::util::hitbox::BoundingRectangle;
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
-use indextree::NodeId;
 use ordered_float::OrderedFloat;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -253,7 +253,7 @@ pub fn do_gfx_clone_keeps_every_field() {
 /// A glyph tree: a void root with three areas on channels 0, 0 and 1.
 fn glyph_row() -> (GfxTree, Vec<NodeId>) {
     let mut tree = GfxTree::new_non_indexed();
-    let root = tree.root;
+    let root = tree.root();
     let ids = [(0, 1), (0, 2), (1, 3)]
         .into_iter()
         .map(|(channel, id)| {
@@ -298,11 +298,11 @@ fn test_gfx_journal_reverts_and_replays_a_glyph_walk_exactly() {
 /// flags and row order), and `replay` the one taken after.
 pub fn do_gfx_journal_reverts_and_replays_a_glyph_walk_exactly() {
     let (mut tree, ids) = glyph_row();
-    let root = tree.root;
+    let root = tree.root();
     let before = snapshot(&tree);
 
     let mut mutators = GfxMutatorTree::new();
-    let mroot = mutators.root;
+    let mroot = mutators.root();
     let reshape = GfxMutation::area_delta(DeltaGlyphArea::new(vec![
         GlyphAreaField::Position(OrderedVec2::new_f32(50.0, 60.0)),
         GlyphAreaField::Scale(OrderedFloat(20.0)),
@@ -472,7 +472,7 @@ fn test_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges() {
 /// from before and `replay` the one from after, with the same ids.
 pub fn do_gfx_structure_inserts_removes_and_moves_but_never_splits_or_merges() {
     let (mut tree, ids) = glyph_row();
-    let root = tree.root;
+    let root = tree.root();
     let command = |op| GfxMutatorTree::new_with(GfxMutator::new_structure(op, 0));
     let before = snapshot(&tree);
     let result = command(StructOp::Split { at: () }).apply_at_journaled(

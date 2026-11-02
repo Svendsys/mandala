@@ -25,6 +25,7 @@
 //! valid: a line link switched to a portal holds its first portal end
 //! for one step before it holds both (ruling R10 on #237).
 
+use crate::arena::NodeId;
 use crate::document::bounds::{
     check_canvas_coord, check_channel, check_control_points, check_extent, check_fit, check_font_size_pt,
     check_non_negative, check_rel_size, check_unit_interval, check_zoom_window, BoundError,
@@ -53,7 +54,6 @@ use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Tree;
 use crate::font::fonts::AppFont;
 use glam::Vec2;
-use indextree::NodeId;
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
@@ -152,7 +152,7 @@ impl<'d> Validator<'d> {
         let arena = mutator.arena();
         // (mutator, its depth below the root, its position among its
         // siblings).
-        let mut pending: Vec<(NodeId, usize, usize)> = vec![(mutator.root, 0, 0)];
+        let mut pending: Vec<(NodeId, usize, usize)> = vec![(mutator.root(), 0, 0)];
         while let Some((id, depth, position)) = pending.pop() {
             self.path.truncate(depth.saturating_sub(1));
             if depth > 0 {

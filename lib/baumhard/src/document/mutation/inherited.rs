@@ -36,12 +36,12 @@
 //! small `Copy` value on the walker's stack: nothing is allocated per
 //! visited element.
 
+use crate::arena::NodeId;
 use crate::document::defaults::BUILT_IN;
 use crate::document::element::{DefaultsData, DocElement, DocKind};
 use crate::document::ids::defaults;
 use crate::document::values::FontSize;
 use crate::engine::tree::Tree;
-use indextree::NodeId;
 
 /// What the element that handed a [`DocInherited`] down is, as far as
 /// its children's text sizes care.

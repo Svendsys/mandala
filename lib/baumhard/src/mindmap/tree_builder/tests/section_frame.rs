@@ -52,14 +52,14 @@ fn frame(node_id: &str, idx: usize, focused: bool) -> SectionFrameElement {
 fn test_section_frame_tree_empty_input_yields_empty_tree() {
     let tree = build_section_frame_tree(&[]);
     // Only the void root — no children.
-    assert_eq!(tree.root.children(tree.arena()).count(), 0);
+    assert_eq!(tree.root().children(tree.arena()).count(), 0);
 }
 
 #[test]
 fn test_section_frame_tree_one_void_parent_per_frame() {
     let frames = [frame("n", 0, false), frame("n", 1, false), frame("n", 2, false)];
     let tree = build_section_frame_tree(&frames);
-    let parents: Vec<_> = tree.root.children(tree.arena()).collect();
+    let parents: Vec<_> = tree.root().children(tree.arena()).collect();
     assert_eq!(parents.len(), 3, "one Void parent per frame");
 }
 
@@ -67,7 +67,7 @@ fn test_section_frame_tree_one_void_parent_per_frame() {
 fn test_section_frame_tree_eight_runs_per_frame() {
     let frames = [frame("n", 0, false)];
     let tree = build_section_frame_tree(&frames);
-    let parent = tree.root.children(tree.arena()).next().expect("one parent");
+    let parent = tree.root().children(tree.arena()).next().expect("one parent");
     let runs: Vec<_> = parent.children(tree.arena()).collect();
     // Plan revision 4: 4 fill rails + 4 corners = 8 runs.
     assert_eq!(runs.len(), 8, "4 rails + 4 corners = 8 runs");
@@ -77,7 +77,7 @@ fn test_section_frame_tree_eight_runs_per_frame() {
 fn test_section_frame_tree_focused_uses_heavy_preset_top_corner() {
     let frames = [frame("n", 0, true)];
     let tree = build_section_frame_tree(&frames);
-    let parent = tree.root.children(tree.arena()).next().expect("one parent");
+    let parent = tree.root().children(tree.arena()).next().expect("one parent");
     // Plan revision 4: TL corner is its own spec at index 4
     // (channels 5-8 are corners). Heavy preset uses ┏ (U+250F).
     let tl_corner_id = parent.children(tree.arena()).nth(4).expect("TL corner run");
@@ -99,7 +99,7 @@ fn test_section_frame_tree_focused_uses_heavy_preset_top_corner() {
 fn test_section_frame_tree_unfocused_uses_light_preset_top_corner() {
     let frames = [frame("n", 0, false)];
     let tree = build_section_frame_tree(&frames);
-    let parent = tree.root.children(tree.arena()).next().expect("one parent");
+    let parent = tree.root().children(tree.arena()).next().expect("one parent");
     // Plan revision 4: TL corner at index 4 (channel 5).
     let tl_corner_id = parent.children(tree.arena()).nth(4).expect("TL corner run");
     let area = tree
@@ -152,7 +152,7 @@ fn test_section_frame_tree_custom_preset_renders_author_glyphs() {
         focused: false,
     };
     let tree = build_section_frame_tree(&[elem]);
-    let parent = tree.root.children(tree.arena()).next().expect("one parent");
+    let parent = tree.root().children(tree.arena()).next().expect("one parent");
     // Plan revision 4: top fill rail (index 0, channel 1) carries
     // ONLY the fill `A` glyph — corners are separate specs.
     let top_run_id = parent.children(tree.arena()).next().expect("top run");
@@ -232,7 +232,7 @@ fn test_section_frame_tree_supports_prefix_fill_suffix_pattern() {
         focused: false,
     };
     let tree = build_section_frame_tree(&[elem]);
-    let parent = tree.root.children(tree.arena()).next().expect("one parent");
+    let parent = tree.root().children(tree.arena()).next().expect("one parent");
     let top_run_id = parent.children(tree.arena()).next().expect("top run");
     let area = tree
         .arena()

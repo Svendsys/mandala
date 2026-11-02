@@ -8,6 +8,7 @@
 //! the two judges giving the same answer case by case, so that one of
 //! them drifting to a copy of its own goes red here.
 
+use crate::arena::NodeId;
 use crate::document::bounds::{BoundError, MAX_CHANNEL};
 use crate::document::element::{
     DocElement, DocKind, FrameData, FrameStyle, RingData, RingStyle, SectionData, SpanData, TextStyle,
@@ -27,7 +28,6 @@ use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Placement;
 use crate::font::fonts::AppFont;
-use indextree::NodeId;
 
 /// A mutator of one payload on `kind`, at the root.
 fn at_root(kind: DocKind, mutation: DocMutation) -> DocMutatorTree {
