@@ -2,8 +2,8 @@
 
 //! The arena's tests: its structural operations held against a
 //! reference model under the generational-id rules
-//! ([`model_tests`]), and its operations and walks on a chain 100,000
-//! deep ([`deep_tests`]).
+//! ([`model_tests`](crate::arena::tests::model_tests)), and its operations and walks on a chain 100,000
+//! deep ([`deep_tests`](crate::arena::tests::deep_tests)).
 
 /// The arena's walks and structural operations on a 100,000-deep chain.
 pub mod deep_tests;

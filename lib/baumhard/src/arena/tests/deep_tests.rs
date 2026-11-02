@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The arena on a chain [`ARENA_DEPTH`] levels deep (design §20 rule 11):
+//! The arena on a chain [`ARENA_DEPTH`](crate::arena::tests::deep_tests::ARENA_DEPTH) levels deep (design §20 rule 11):
 //! every walk, every structural operation and every trait an owned
 //! arena carries — `Clone`, `PartialEq`, `Debug`, `Drop` — runs on a
 //! default test thread and, through `tests/wasm_font_lock.rs`, on

@@ -426,8 +426,8 @@ fn test_arena_matches_a_reference_model() {
 }
 
 /// Random sequences of every structural operation, on the arena and on
-/// the model ([`Reference`]), held together after every operation
-/// ([`check`]); every few operations the descendants and traversal of
+/// the model (`Reference`), held together after every operation
+/// (`check`); every few operations the descendants and traversal of
 /// every node too. Preconditions: each kind of operation ran, refused
 /// cycles included, and freed slots were reused — so the stale-id
 /// checks were made against slots that hold another node.

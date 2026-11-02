@@ -5,7 +5,7 @@
 //! [`MutatorTree`](crate::engine::tree::MutatorTree), and through them
 //! the document and the glyph trees.
 //!
-//! An [`Arena<T>`] holds nodes in one `Vec`; a [`NodeId`] names a node
+//! An [`Arena<T>`](crate::arena::Arena) holds nodes in one `Vec`; a [`NodeId`](crate::arena::NodeId) names a node
 //! by its slot and the slot's **generation**. Each node links to its
 //! parent, its first and last child and its previous and next sibling,
 //! so every one-step move, every child iteration and every structural
@@ -14,10 +14,10 @@
 //! # Generational ids
 //!
 //! Removing a node frees its slot for a later node, and moves the slot
-//! to its next generation. A [`NodeId`] matches its slot only while the
+//! to its next generation. A [`NodeId`](crate::arena::NodeId) matches its slot only while the
 //! generation it was handed out with is the slot's, so an id kept past
-//! its node's removal is **stale**: [`Arena::get`] answers `None` for
-//! it, [`NodeId::is_removed`] `true`, and indexing with it panics
+//! its node's removal is **stale**: [`Arena::get`](crate::arena::Arena::get) answers `None` for
+//! it, [`NodeId::is_removed`](crate::arena::NodeId::is_removed) `true`, and indexing with it panics
 //! naming the id — it never silently reads the node that took the slot
 //! since. A slot whose generation has reached `u32::MAX` is retired
 //! rather than reused, so no generation is ever handed out twice and no
@@ -30,8 +30,8 @@
 //! and goes in in O(1). A node that already exists is moved:
 //!
 //! - **under another parent** by the checked inserts
-//!   ([`NodeId::checked_append`], [`NodeId::checked_prepend`],
-//!   [`NodeId::checked_insert_after`], [`NodeId::checked_insert_before`]),
+//!   ([`NodeId::checked_append`](crate::arena::NodeId::checked_append), [`NodeId::checked_prepend`](crate::arena::NodeId::checked_prepend),
+//!   [`NodeId::checked_insert_after`](crate::arena::NodeId::checked_insert_after), [`NodeId::checked_insert_before`](crate::arena::NodeId::checked_insert_before)),
 //!   which refuse to put a node under itself or under one of its own
 //!   descendants. Telling that is a climb from the destination to the
 //!   top of its tree, O(depth), paid **once per moved subtree**, never
@@ -46,9 +46,9 @@
 //!
 //! Nothing here recurses, and nothing spends work per node that grows
 //! with the depth (design §20 rule 11): the iterators carry their
-//! position, [`NodeId::remove_subtree`] frees a subtree with a cursor,
+//! position, [`NodeId::remove_subtree`](crate::arena::NodeId::remove_subtree) frees a subtree with a cursor,
 //! and `Clone`, `Drop`, `PartialEq` and `Debug` of an arena are those
-//! of its flat `Vec` of slots. [`NodeId::ancestors`] and the checked
+//! of its flat `Vec` of slots. [`NodeId::ancestors`](crate::arena::NodeId::ancestors) and the checked
 //! inserts are the climbs, and they are O(depth) by what they answer.
 //!
 //! No `unsafe` (the crate forbids it, CONVENTIONS §B7).
