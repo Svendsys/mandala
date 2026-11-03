@@ -2952,10 +2952,16 @@ fn stripped<K: Copy>(
             // against this one's: each of this class's boxes copied into
             // each of the finer class's strips it lies across, or each finer
             // box placed in this class's strips.
+            // The strips round a box saturate at `i64`'s ends, as
+            // `placed`'s do: a box further out than `i64` counts strips is
+            // in its end's, and so is the one beside it.
             let spans = |i: usize| {
                 let (min, max) = boxes[i].1;
                 let strip = |at: f32| (f64::from(at) / strip_height(*fine)).floor() as i64;
-                (strip(min[across]) - 1, strip(max[across] + TOUCH) + 1)
+                (
+                    strip(min[across]).saturating_sub(1),
+                    strip(max[across] + TOUCH).saturating_add(1),
+                )
             };
             let copies = own.iter().try_fold(0_usize, |n, b| {
                 let (low, high) = spans(b.i);
@@ -4289,6 +4295,15 @@ pub(crate) fn touch_seam<K: Copy>(
         None => touch_scan(boxes, exempt, &mut looked),
     };
     (touches, looked.swept, looked.stripped)
+}
+
+/// Test seam (#294, ruling R51.4): whether two of `boxes` touch, but for
+/// the pairs `exempt` excuses, as a frame's checks ask it — by
+/// [`touching`], which leaves out a box with no ink ([`has_ink`]) before
+/// it looks.
+#[cfg(test)]
+pub(crate) fn touching_seam<K: Copy>(boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool) -> bool {
+    touching(boxes, exempt, &Work::new(0))
 }
 
 /// Test seam (#294, ruling R46.1): whether a frame's work, its budget

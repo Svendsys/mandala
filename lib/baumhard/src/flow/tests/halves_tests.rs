@@ -3330,28 +3330,34 @@ fn touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> Vec<((u
     boxes
 }
 
-/// R50.1 (review 5745584645): the touch check finds two inks touching
-/// exactly where a look at every pair of them does, on 40,000 fixed-seed
-/// cases of [`touch_case`] under each of the three kinds of pair it
-/// excuses — none, a line's neighbors (`overlapping`), and a side arc's
-/// (`place_halves`) — the whole check, and its strips alone across each
-/// axis. The reviewer's brute-force comparison, committed.
+/// R50.1 (review 5745584645), R51.1 (review 5751828253): the touch
+/// check finds two inks touching exactly where a look at every pair of
+/// them does, under each of the three kinds of pair it excuses — none, a
+/// line's neighbors (`overlapping`), and a side arc's (`place_halves`) —
+/// the whole check, and its strips alone across each axis. The reviewer's
+/// brute-force comparison, committed: 40,000 fixed-seed cases of
+/// [`touch_case`]; then 20,000 of them at extreme scales
+/// ([`extreme_touch_case`]: 10⁻³ to 10³⁰, offsets to ±10³⁰, heights over
+/// 24 powers of two, among boxes with a corner not a number, infinite or
+/// of no area), where the strips' arithmetic saturates as `stripped`
+/// says; and the reviewer's repro, a box 10²⁰ out across the axis beside
+/// finer ones, whose strips lie past `i64`'s range. At extreme scales
+/// every pair is looked at among the boxes with ink — every corner finite,
+/// some width and some height, decided here — the strips are given those
+/// alone, as `touching` gives them, and `touching` itself all of them.
 ///
 /// Controls, each red: finer boxes not weighed against the coarser strip
 /// before their own; a class's strips not weighed against the one after;
 /// a coarser box's copies without the strip either side; the strips'
-/// two-list sweep in one direction only. (No `do_*` twin: it reads a test
-/// seam.)
+/// two-list sweep in one direction only; `stripped`'s strips round a
+/// box at a plain `- 1` and `+ 1` (a panic, `attempt to add with
+/// overflow`). (No `do_*` twin: it reads a test seam.)
 #[test]
 fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
-    use crate::flow::place::halves::{touch_seam, TOUCH};
-    let mut choices = crate::util::tests::choices::Choices::seeded(0x0057_4558_4645);
-    let (mut strips, mut touch) = (0, 0);
-    let cases = 40_000;
-    for case in 0..cases {
-        let boxes = touch_case(&mut choices);
-        let kind = choices.below(3);
-        let exempt = move |(a, i): (u8, usize), (b, j): (u8, usize)| match kind {
+    use crate::flow::place::halves::{touch_seam, touching_seam, TOUCH};
+    type Keyed = ((u8, usize), (Vec2, Vec2));
+    let excusing = |kind: u32| {
+        move |(a, i): (u8, usize), (b, j): (u8, usize)| match kind {
             0 => false,
             1 => a == b && i.abs_diff(j) <= 1,
             _ => {
@@ -3361,31 +3367,202 @@ fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
                     a != 2 && b != 2
                 }
             }
-        };
-        let gap = |a: (Vec2, Vec2), b: (Vec2, Vec2)| (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length();
-        let every = (0..boxes.len()).any(|i| {
+        }
+    };
+    let gap = |a: (Vec2, Vec2), b: (Vec2, Vec2)| (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length();
+    let every = |boxes: &[Keyed], exempt: &dyn Fn((u8, usize), (u8, usize)) -> bool| {
+        (0..boxes.len()).any(|i| {
             (i + 1..boxes.len())
                 .any(|j| !exempt(boxes[i].0, boxes[j].0) && gap(boxes[i].1, boxes[j].1) <= TOUCH)
-        });
+        })
+    };
+    // Whether a box has ink, as this test reads it: every corner finite,
+    // some width and some height.
+    let inked = |(min, max): (Vec2, Vec2)| {
+        [min.x, min.y, max.x, max.y].iter().all(|v| v.is_finite()) && max.x > min.x && max.y > min.y
+    };
+    // The check, and its strips across each axis, against every pair: the
+    // count of the cases that reached the strips and that touch.
+    let agree = |what: &str, case: usize, kind: u32, given: &[Keyed]| {
+        let exempt = excusing(kind);
+        let boxes: Vec<Keyed> = given.iter().copied().filter(|b| inked(b.1)).collect();
+        let every = every(&boxes, &exempt);
         let (found, _, stripped) = touch_seam(&boxes, &exempt, None);
         assert_eq!(
             found, every,
-            "case {case}, excusing kind {kind}: the check, {boxes:?}"
+            "{what} case {case}, excusing kind {kind}: the check, {boxes:?}"
         );
         for axis in [0, 1] {
             let (found, _, _) = touch_seam(&boxes, &exempt, Some(axis));
             assert_eq!(
                 found, every,
-                "case {case}, excusing kind {kind}: the strips across axis {axis}, {boxes:?}"
+                "{what} case {case}, excusing kind {kind}: the strips across axis {axis}, {boxes:?}"
             );
         }
-        strips += usize::from(stripped > 0);
-        touch += usize::from(every);
+        assert_eq!(
+            touching_seam(given.to_vec(), exempt),
+            every,
+            "{what} case {case}, excusing kind {kind}: `touching`, given every box, {given:?}"
+        );
+        (stripped > 0, every)
+    };
+    let mut choices = crate::util::tests::choices::Choices::seeded(0x0057_4558_4645);
+    let (mut strips, mut touch) = (0, 0);
+    let cases = 40_000;
+    for case in 0..cases {
+        let boxes = touch_case(&mut choices);
+        let kind = choices.below(3);
+        let (reached, touches) = agree("a", case, kind, &boxes);
+        strips += usize::from(reached);
+        touch += usize::from(touches);
     }
     assert!(
         strips * 4 >= cases && touch * 5 >= cases && (cases - touch) * 5 >= cases,
         "precondition: a quarter of the cases or more reach the strips ({strips} of {cases}), and a fifth or more touch ({touch}) and do not"
     );
+
+    let mut choices = crate::util::tests::choices::Choices::seeded(0x0057_5182_8253);
+    let (mut strips, mut touch, mut far, mut uninked) = (0, 0, 0, 0);
+    let cases = 20_000;
+    for case in 0..cases {
+        let (boxes, scale) = extreme_touch_case(&mut choices);
+        let kind = choices.below(3);
+        let (reached, touches) = agree("an extreme", case, kind, &boxes);
+        strips += usize::from(reached);
+        touch += usize::from(touches);
+        far += usize::from(reached && scale >= 1e18);
+        uninked += usize::from(reached && boxes.iter().any(|b| !inked(b.1)));
+    }
+    assert!(
+        strips * 4 >= cases && far * 20 >= cases && uninked * 20 >= cases && touch * 10 >= cases && (cases - touch) * 10 >= cases,
+        "precondition: at extreme scales a quarter of the cases or more reach the strips ({strips} of {cases}), a twentieth or more at a scale of 10¹⁸ or more ({far}) and among boxes with no ink ({uninked}), and a tenth or more touch ({touch}) and do not"
+    );
+
+    // The reviewer's repro: ten inks in a column of strips 2⁻⁶ tall across
+    // y, one 10²⁰ out across it, and one 10²¹ along x, so x is the sweep's
+    // axis and the far one's strips of the finer class lie past `i64`'s.
+    let mut boxes: Vec<Keyed> = (0..10)
+        .map(|k| {
+            let y = 0.02 * k as f32;
+            ((0, k), (Vec2::new(0.0, y), Vec2::new(5.0, y + 0.01)))
+        })
+        .collect();
+    boxes.push(((1, 0), (Vec2::new(0.0, 1e20), Vec2::new(5.0, 1e20 + 1e14))));
+    boxes.push(((1, 1), (Vec2::new(1e21, 0.0), Vec2::new(2e21, 0.01))));
+    for kind in 0..3 {
+        let (reached, _) = agree("the repro", 0, kind, &boxes);
+        assert!(reached, "precondition: the repro reaches the strips");
+    }
+}
+
+/// R51.4 (review 5751828253, ruling R49.2): a frame's touch check
+/// leaves out a box with no ink, so it touches nothing. Two coincident
+/// boxes of no height, which would touch were they a point tall, do not;
+/// and a box with a corner that is not a number, laid among three inked
+/// boxes apart from one another where with that corner a number it
+/// would touch two of them, touches none — `box_gap` reads the component
+/// that is not a number as no distance.
+///
+/// Control: `has_ink` returning `true`, red on both. (No `do_*` twin: it
+/// reads a test seam.)
+#[test]
+fn test_flow_halves_a_box_with_no_ink_touches_nothing() {
+    use crate::flow::place::halves::touching_seam;
+    let never = |_: usize, _: usize| false;
+    let flat = (Vec2::new(0.0, 0.0), Vec2::new(5.0, 0.0));
+    let tall = (Vec2::new(0.0, 0.0), Vec2::new(5.0, 1.0));
+    assert!(
+        touching_seam(vec![(0, tall), (1, tall)], never),
+        "precondition: the boxes, a point tall, touch"
+    );
+    assert!(
+        !touching_seam(vec![(0, flat), (1, flat)], never),
+        "two coincident boxes of no height touched"
+    );
+
+    let inked: Vec<(usize, (Vec2, Vec2))> = (0..3)
+        .map(|k| {
+            let y = 3.0 * k as f32;
+            (k, (Vec2::new(0.0, y), Vec2::new(5.0, y + 1.0)))
+        })
+        .collect();
+    let across = |x: f32| (3, (Vec2::new(x, 0.5), Vec2::new(5.0, 3.5)));
+    assert!(
+        !touching_seam(inked.clone(), never),
+        "precondition: the inked boxes are apart"
+    );
+    assert!(
+        touching_seam([inked.clone(), vec![across(0.0)]].concat(), never),
+        "precondition: the box across them, its corner a number, touches them"
+    );
+    assert!(
+        !touching_seam([inked, vec![across(f32::NAN)]].concat(), never),
+        "a box with a corner not a number touched the inked boxes"
+    );
+}
+
+/// One case of [`test_flow_halves_the_touch_check_finds_what_every_pair_does`]
+/// at an extreme scale (R51.1, review 5751828253): a [`touch_case`] and
+/// up to two boxes beside it as tall across y as one of its by a power of
+/// two to 2²³, then scaled by one of 10⁻³, 1, 10³, 10⁶, 10¹⁸ and 10³⁰ and moved along
+/// each axis, by up to 40,000 times the scale or, one time in four, by up
+/// to ±10³⁰, among copies of its boxes with a corner made
+/// not a number or infinite, or made of no width or no height. Returns
+/// the boxes and the scale.
+#[cfg(test)]
+fn extreme_touch_case(
+    choices: &mut crate::util::tests::choices::Choices<'_>,
+) -> (Vec<((u8, usize), (Vec2, Vec2))>, f32) {
+    const SCALES: [f32; 6] = [1e-3, 1.0, 1e3, 1e6, 1e18, 1e30];
+    const OFFSETS: [f32; 7] = [0.0, 1e6, -1e6, 1e18, -1e18, 1e30, -1e30];
+    let mut boxes = touch_case(choices);
+    let right = boxes
+        .iter()
+        .map(|(_, (_, max))| max.x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    for _ in 0..choices.below(3) {
+        let at = Vec2::new(
+            right + choices.below(64) as f32 / 4.0,
+            choices.below(64) as f32 / 4.0 - 8.0,
+        );
+        let height = (0.02 + choices.below(200) as f32 / 64.0) / 4.0 * (1u32 << choices.below(24)) as f32;
+        let n = boxes.iter().filter(|((g, _), _)| *g == 1).count();
+        boxes.push(((1, n), (at, at + Vec2::new(0.5, height))));
+    }
+    let scale = SCALES[choices.index(SCALES.len())];
+    // Mostly an offset a few thousand of the case's units out, which keeps
+    // its boxes apart in an `f32`; else one of `OFFSETS`, which at a
+    // smaller scale lays them all on one another, of no area.
+    let mut offset = || {
+        if choices.one_in(4) {
+            OFFSETS[choices.index(OFFSETS.len())]
+        } else {
+            scale * [0.0, 1e3, -1e3, 4e4, -4e4][choices.index(5)]
+        }
+    };
+    let offset = Vec2::new(offset(), offset());
+    for (_, (min, max)) in &mut boxes {
+        *min = *min * scale + offset;
+        *max = *max * scale + offset;
+    }
+    for _ in 0..choices.below(4) {
+        let (key, (mut min, mut max)) = boxes[choices.index(boxes.len())];
+        let corner = choices.index(4);
+        let value = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY][choices.index(3)];
+        match choices.below(3) {
+            0 => match corner {
+                0 => min.x = value,
+                1 => min.y = value,
+                2 => max.x = value,
+                _ => max.y = value,
+            },
+            1 => max.x = min.x,
+            _ => max.y = min.y,
+        }
+        let n = boxes.iter().filter(|((g, _), _)| *g == key.0).count();
+        boxes.push(((key.0, n), (min, max)));
+    }
+    (boxes, scale)
 }
 
 /// R50.5 (review 5745584645): a side arc whose search for its count the
