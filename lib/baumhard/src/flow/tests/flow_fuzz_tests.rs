@@ -1626,9 +1626,13 @@ fn test_the_raw_harness_draws_every_frame_fit() {
 /// once weighed against every other in the touch check's strips: 4,315
 /// looks over 95 boxes, past `TOUCH_LOOKS_A_BOX`, then 12, a box. A box with
 /// no ink is left out of the check now (ruling R49.2), and the replay —
-/// held to the bound by the fuzz property — passes.
+/// held to the bound by the fuzz property — passes. The strips by class
+/// of height hold it even with every box taken as inked (ruling R50.1):
+/// a line-tall box no wider than nothing is weighed against its own
+/// class's few neighbors, 383 looks over the 95 boxes, 4.03 a box.
 ///
-/// Control: with every box taken as inked, red.
+/// Control: with every box taken as inked and in strips of the tallest's
+/// class, as when it was found, red.
 #[test]
 fn test_flow_raw_finding_a_touch_check_past_its_looks_a_box() {
     let found = include_bytes!("fuzz_findings/raw_frame_touch_check_past_its_looks_a_box");

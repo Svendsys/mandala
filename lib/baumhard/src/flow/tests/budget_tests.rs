@@ -54,6 +54,14 @@ fn mixed_sides() -> [String; 5] {
 /// is laid, and while the second is.
 const MIXED_BUDGETS: [usize; 3] = [1, 60_000, 200_000];
 
+/// The budgets round the large sharp square with the widest of
+/// [`mixed_sides`], the reviewer's `"⸻" + "|".repeat(100)` (ruling
+/// R50.4): spent with an arc's copies laid and its touch check still to
+/// run, the first arc's and then the second's — where, with the side
+/// check's reserve removed, a take crosses the budget by 28,840 and
+/// 22,042 glyph steps, past the 14,459 `overshoot_steps` allows.
+const WIDEST_BUDGETS: [usize; 2] = [660_000, 780_000];
+
 /// The outline of the grid's sharp rectangle: 600 × 12, where the
 /// quatrain's two lines face each other inward and the last resorts run.
 fn flat() -> Outline {
@@ -159,7 +167,8 @@ enum Size {
     /// Span natural with the long ornament, at each of [`LARGE_BUDGETS`].
     Large,
     /// Span natural with each of [`mixed_sides`], at each of
-    /// [`MIXED_BUDGETS`].
+    /// [`MIXED_BUDGETS`], and with the widest at each of
+    /// [`WIDEST_BUDGETS`].
     Mixed,
 }
 
@@ -179,13 +188,23 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
             &[Some(long_sides())],
             &LARGE_BUDGETS,
         ),
-        Size::Mixed => grid(
-            shape,
-            name,
-            &[("natural", LineSpan::NATURAL)],
-            &mixed_sides().map(Some),
-            &MIXED_BUDGETS,
-        ),
+        Size::Mixed => {
+            let mut frames = grid(
+                shape,
+                name,
+                &[("natural", LineSpan::NATURAL)],
+                &mixed_sides().map(Some),
+                &MIXED_BUDGETS,
+            );
+            frames.extend(grid(
+                shape,
+                name,
+                &[("natural", LineSpan::NATURAL)],
+                &[Some(format!("⸻{}", "|".repeat(100)))],
+                &WIDEST_BUDGETS,
+            ));
+            frames
+        }
         Size::Small => grid(
             shape,
             name,
