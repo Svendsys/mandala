@@ -13,48 +13,16 @@ use baumhard::font::{buffer, Align, Attrs, Color, FontSystem, SHAPING_ADVANCED};
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::tree::GfxTree;
 
-use super::{MindMapTextBuffer, NodeBackgroundRect};
-
-/// Extract the background-fill rect for a single `GlyphArea`, or
-/// `None` if the area carries no `background_color`. Single source
-/// for both the full-walker text path
-/// ([`shape_one_element_into_buffers`]) and the drag-fast-path
-/// rebuild ([`super::Renderer::rebuild_node_backgrounds_from_tree`])
-/// — they used to inline this padding-and-rect math twice and the
-/// audit flagged the divergence as a bug magnet.
-///
-/// `offset` is added to the rect's position; pass `Vec2::ZERO` for
-/// canvas-space callers.
-pub(super) fn extract_background_rect(
-    element: &GfxElement,
-    area: &baumhard::gfx_structs::area::GlyphArea,
-    offset: Vec2,
-) -> Option<NodeBackgroundRect> {
-    let color = area.background_color?;
-    // The fill rect — the box grown per edge by `background_padding`,
-    // so framed nodes whose border runs sit at different visible-stroke
-    // offsets get a matching asymmetric fill — is Baumhard's to state,
-    // so the scene introspection reports the rect drawn here.
-    let (rect_pos, rect_size) = area.background_rect()?;
-    Some(NodeBackgroundRect {
-        position: rect_pos + offset,
-        size: rect_size,
-        color,
-        shape_id: area.shape.shader_id(),
-        zoom_visibility: area.zoom_visibility,
-        unique_id: element.unique_id(),
-    })
-}
+use super::MindMapTextBuffer;
 
 /// Shared tree → cosmic-text buffer walker.
 ///
 /// Iterates every `GlyphArea` descendant of `tree`, shapes a
 /// `cosmic_text::Buffer` for each one, and hands the result to
 /// `yield_buffer` together with the element's `unique_id` (raw
-/// `usize`, not stringified — keying is the caller's choice).
-/// Background fills (if any) are forwarded to `yield_background`
-/// before the buffer is built so rects attached to text-empty
-/// areas still land.
+/// `usize`, not stringified — keying is the caller's choice). An area
+/// draws its text and nothing behind it (V1-B12), so a text-empty
+/// area yields nothing.
 ///
 /// `offset` is added to every `position` — callers pass
 /// `Vec2::ZERO` whenever the tree's areas are already in the
@@ -65,7 +33,7 @@ pub(super) fn extract_background_rect(
 /// # Costs
 ///
 /// O(descendants). One `cosmic_text::Buffer` allocated per
-/// non-empty-text area; background rect yields are trivial. No
+/// non-empty-text area. No
 /// per-area `String` allocation — the `unique_id` flows as a raw
 /// integer all the way to the buffer map's key. Holds the provided
 /// `font_system` write guard for the duration of the walk — keep
@@ -75,7 +43,6 @@ pub(super) fn walk_tree_into_buffers(
     offset: Vec2,
     font_system: &mut FontSystem,
     mut yield_buffer: impl FnMut(usize, MindMapTextBuffer),
-    mut yield_background: impl FnMut(NodeBackgroundRect),
 ) {
     for descendant_id in tree.root().descendants(tree.arena()) {
         let node = match tree.arena().get(descendant_id) {
@@ -87,13 +54,12 @@ pub(super) fn walk_tree_into_buffers(
             offset,
             font_system,
             &mut yield_buffer,
-            &mut yield_background,
         );
     }
 }
 
-/// Shape a single `GfxElement` into a (background, buffer-set)
-/// pair via the same per-element work the full walker does.
+/// Shape a single `GfxElement` into its buffer set via the same
+/// per-element work the full walker does.
 /// Extracted so the keyed-reshape API
 /// (`Renderer::reshape_buffer_for`) can re-shape one element
 /// without walking the whole tree on every keystroke. `Void` /
@@ -104,16 +70,11 @@ pub(super) fn shape_one_element_into_buffers(
     offset: Vec2,
     font_system: &mut FontSystem,
     yield_buffer: &mut dyn FnMut(usize, MindMapTextBuffer),
-    yield_background: &mut dyn FnMut(NodeBackgroundRect),
 ) {
     let area = match element.glyph_area() {
         Some(a) => a,
         None => return, // Void and GlyphModel nodes carry no text.
     };
-
-    if let Some(rect) = extract_background_rect(element, area, offset) {
-        yield_background(rect);
-    }
 
     if area.text.is_empty() {
         return;

@@ -11,7 +11,9 @@
 
 use crate::arena::NodeId;
 use crate::document::defaults::BUILT_IN;
-use crate::document::element::{DefaultsData, DocElement, PaletteData, RingLayoutStyle, TextStyle};
+use crate::document::element::{
+    DefaultsData, DocElement, PaletteData, RingLayoutStyle, TextStyle, ThemeData, ThemeVariant,
+};
 use crate::document::resolve::{
     resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end, resolve_ring, resolve_text,
     BorderPoint, Content, Input, ResolvedText,
@@ -512,29 +514,38 @@ pub fn do_document_resolve_ring_size_never_reads_points() {
     }
 }
 
-#[test]
-fn test_document_resolve_palette_fill_by_depth() {
-    do_document_resolve_palette_fill_by_depth();
+/// Give each of `nodes` the text color `palette(frame)`, so its text
+/// reads the palette group its binding gives it at its depth.
+fn frame_colored(builder: &mut DocumentBuilder, nodes: &[NodeId]) {
+    for &id in nodes {
+        style(builder, id, |s| s.color = Some(ColorRef::Palette(PaletteField::Frame)));
+    }
 }
 
-/// The palette tier: `a` binds the three-group palette, so its
-/// unstyled grandchild `c` fills from group 2, `b` from group 1 and `a`
-/// from group 0. Control: an explicit fill on `c` outranks it, and
-/// `Defaults.node.fill` does not.
-pub fn do_document_resolve_palette_fill_by_depth() {
+#[test]
+fn test_document_resolve_palette_by_depth() {
+    do_document_resolve_palette_by_depth();
+}
+
+/// The palette tier by depth: `a` binds the three-group palette, so a
+/// color naming the group's `frame` is group 0's on `a`, group 1's on
+/// `b` and group 2's on its grandchild `c`. Control: on `d`, which
+/// nothing binds, the reference falls through to `Defaults.node`, and
+/// an explicit color on `c` outranks it.
+pub fn do_document_resolve_palette_by_depth() {
     let (mut builder, ids) = example();
-    defaults(&mut builder, |d| d.node.fill = rgba(MAGENTA));
-    let fill = |builder: &DocumentBuilder, id| resolve_node(builder.tree(), id, &mut ()).fill;
-    assert_eq!(fill(&builder, ids.a), Rgba::opaque(10, 0, 0));
-    assert_eq!(fill(&builder, ids.b), Rgba::opaque(11, 0, 0));
-    assert_eq!(fill(&builder, ids.c), Rgba::opaque(12, 0, 0));
+    defaults(&mut builder, |d| d.node.text.color = rgba(MAGENTA));
+    frame_colored(&mut builder, &[ids.a, ids.b, ids.c, ids.d]);
+    assert_eq!(color(&builder, ids.a), Rgba::opaque(0, 10, 0));
+    assert_eq!(color(&builder, ids.b), Rgba::opaque(0, 11, 0));
+    assert_eq!(color(&builder, ids.c), Rgba::opaque(0, 12, 0));
     assert_eq!(
-        fill(&builder, ids.d),
+        color(&builder, ids.d),
         MAGENTA,
         "an unbound node falls through to Defaults"
     );
-    builder.edit_node(ids.c, |n| n.style.fill = rgba(RED));
-    assert_eq!(fill(&builder, ids.c), RED);
+    style(&mut builder, ids.c, |s| s.color = rgba(RED));
+    assert_eq!(color(&builder, ids.c), RED);
 }
 
 #[test]
@@ -551,22 +562,23 @@ pub fn do_document_resolve_palette_clamps_and_nearest_binding_wins() {
         groups: vec![palette_group(20), palette_group(21)],
     });
     builder.edit_node(ids.a, |n| n.palette = Some(short));
-    let fill = |builder: &DocumentBuilder, id| resolve_node(builder.tree(), id, &mut ()).fill;
-    assert_eq!(fill(&builder, ids.b), Rgba::opaque(21, 0, 0));
+    frame_colored(&mut builder, &[ids.a, ids.b, ids.c]);
+    let fill = |builder: &DocumentBuilder, id| color(builder, id);
+    assert_eq!(fill(&builder, ids.b), Rgba::opaque(0, 21, 0));
     assert_eq!(
         fill(&builder, ids.c),
-        Rgba::opaque(21, 0, 0),
+        Rgba::opaque(0, 21, 0),
         "depth 2 clamps to the last group"
     );
 
     builder.edit_node(ids.b, |n| n.palette = Some(PaletteId(0)));
     assert_eq!(
         fill(&builder, ids.b),
-        Rgba::opaque(10, 0, 0),
+        Rgba::opaque(0, 10, 0),
         "b binds palette 0 itself: group 0"
     );
-    assert_eq!(fill(&builder, ids.c), Rgba::opaque(11, 0, 0));
-    assert_eq!(fill(&builder, ids.a), Rgba::opaque(20, 0, 0));
+    assert_eq!(fill(&builder, ids.c), Rgba::opaque(0, 11, 0));
+    assert_eq!(fill(&builder, ids.a), Rgba::opaque(0, 20, 0));
 }
 
 #[test]
@@ -667,9 +679,9 @@ fn test_document_resolve_explicit_palette_reference() {
 pub fn do_document_resolve_explicit_palette_reference() {
     let (mut builder, ids, section, span) = unbound_span();
     style(&mut builder, ids.b_connector_span, |s| {
-        s.color = Some(ColorRef::Palette(PaletteField::Fill))
+        s.color = Some(ColorRef::Palette(PaletteField::Frame))
     });
-    assert_eq!(color(&builder, ids.b_connector_span), Rgba::opaque(11, 0, 0));
+    assert_eq!(color(&builder, ids.b_connector_span), Rgba::opaque(0, 11, 0));
 
     style(&mut builder, span, |s| {
         s.color = Some(ColorRef::Palette(PaletteField::Title))
@@ -836,24 +848,26 @@ fn test_document_records_node_and_frame_reads() {
     do_document_records_node_and_frame_reads();
 }
 
-/// `resolve_node` with every field set reads the node's style alone; with the
-/// fill unset it reads the palette walk too. A ring that sets its whole
-/// style reads no frame; one that does not, does.
+/// `resolve_node` with its shape set reads the node's style alone; with
+/// the shape unset it reads `Defaults` too, and never a palette: a shape
+/// is not palette-colored, and a node has no fill (V1-B12). A ring that
+/// sets its whole style reads no frame; one that does not, does.
 pub fn do_document_records_node_and_frame_reads() {
     let (mut builder, ids) = example();
     builder.edit_node(ids.b, |n| {
         n.style.shape = Some(Shape::Ellipse);
-        n.style.fill = rgba(RED);
-        n.style.fill_fade = Some(2.0);
     });
     let mut reads = Vec::new();
     resolve_node(builder.tree(), ids.b, &mut reads);
     assert_eq!(reads, vec![Input::Style(ids.b)]);
-    builder.edit_node(ids.b, |n| n.style.fill = None);
+    builder.edit_node(ids.b, |n| n.style.shape = None);
     let mut reads = Vec::new();
     resolve_node(builder.tree(), ids.b, &mut reads);
-    assert!(reads.contains(&Input::Palette(PaletteId(0))));
-    assert!(!reads.contains(&Input::Defaults), "the palette gave the fill");
+    assert_eq!(reads, vec![Input::Style(ids.b), Input::Defaults]);
+    assert!(
+        !reads.iter().any(|read| matches!(read, Input::Palette(_) | Input::PaletteBinding(_))),
+        "b is bound to a palette, and its node resolution reads none"
+    );
 
     style(&mut builder, ids.ring, |s| {
         *s = TextStyle {
@@ -1292,8 +1306,8 @@ fn test_document_resolve_node_chain() {
     do_document_resolve_node_chain();
 }
 
-/// A node's shape and fill fade: its own, then `Defaults.node`, then
-/// `BUILT_IN` — a sharp rectangle with no fade.
+/// A node's shape: its own, then `Defaults.node`, then `BUILT_IN` — a
+/// sharp rectangle.
 pub fn do_document_resolve_node_chain() {
     let (mut builder, ids) = example();
     let node = |b: &DocumentBuilder| resolve_node(b.tree(), ids.d, &mut ());
@@ -1303,29 +1317,89 @@ pub fn do_document_resolve_node_chain() {
             radius: Percent::new(0)
         }
     );
-    assert_eq!(node(&builder).fill, BUILT_IN.node.fill);
-    assert_eq!(node(&builder).fill_fade, 0.0);
     defaults(&mut builder, |d| {
         d.node.shape = Some(Shape::Ellipse);
-        d.node.fill_fade = Some(3.0);
     });
-    assert_eq!(
-        (node(&builder).shape, node(&builder).fill_fade),
-        (Shape::Ellipse, 3.0)
-    );
+    assert_eq!(node(&builder).shape, Shape::Ellipse);
     builder.edit_node(ids.d, |n| {
         n.style.shape = Some(Shape::Rectangle {
             radius: Percent::new(40),
         });
-        n.style.fill_fade = Some(1.0);
     });
     assert_eq!(
-        (node(&builder).shape, node(&builder).fill_fade),
-        (
-            Shape::Rectangle {
-                radius: Percent::new(40)
-            },
-            1.0
-        )
+        node(&builder).shape,
+        Shape::Rectangle {
+            radius: Percent::new(40)
+        }
     );
+}
+
+#[test]
+fn test_document_resolve_background() {
+    do_document_resolve_background();
+}
+
+/// The map's background (V1-B12): black when the map gives none, a
+/// literal as it is, and a theme variable in the active variant —
+/// opaque, whatever alpha the variable holds, since nothing is drawn
+/// behind it. A literal reads the map's style alone; a variable reads
+/// the theme too, so a variant switch dirties it. Controls: switching
+/// the variant changes a variable background and leaves a literal one
+/// as it was; a variable the theme lacks falls back to black.
+pub fn do_document_resolve_background() {
+    use crate::document::defaults::DEFAULT_BACKGROUND;
+    use crate::document::resolve::resolve_background;
+
+    let (mut builder, _) = example();
+    let root = builder.root();
+    let background = |builder: &DocumentBuilder| {
+        let mut reads = Vec::new();
+        let color = resolve_background(builder.tree(), &mut reads);
+        (color, reads)
+    };
+    assert_eq!(background(&builder), (DEFAULT_BACKGROUND, vec![Input::Style(root)]));
+    assert_eq!(DEFAULT_BACKGROUND, Rgba::opaque(0, 0, 0), "black when unset");
+
+    let set = |builder: &mut DocumentBuilder, color: PlainColor| {
+        builder.edit(root, |e| {
+            if let DocElement::Map(map) = e {
+                map.background = color;
+            }
+        });
+    };
+    set(&mut builder, PlainColor::Rgba(Rgba::opaque(1, 2, 3)));
+    assert_eq!(background(&builder), (Rgba::opaque(1, 2, 3), vec![Input::Style(root)]));
+
+    builder.theme(ThemeData {
+        variables: vec!["bg".to_string()],
+        variants: vec![
+            ThemeVariant {
+                name: "dark".to_string(),
+                values: vec![Rgba::new(10, 20, 30, 0x40)],
+            },
+            ThemeVariant {
+                name: "light".to_string(),
+                values: vec![Rgba::opaque(200, 210, 220)],
+            },
+        ],
+        active: 0,
+    });
+    let literal = background(&builder).0;
+    set(&mut builder, PlainColor::Var(VarId(0)));
+    assert_eq!(
+        background(&builder),
+        (Rgba::opaque(10, 20, 30), vec![Input::Style(root), Input::Theme]),
+        "the variable's alpha is not applied"
+    );
+    let theme = builder.theme_id();
+    builder.edit(theme, |e| {
+        if let DocElement::Theme(theme) = e {
+            theme.active = 1;
+        }
+    });
+    assert_eq!(background(&builder).0, Rgba::opaque(200, 210, 220), "the active variant's");
+    set(&mut builder, PlainColor::Rgba(Rgba::opaque(1, 2, 3)));
+    assert_eq!(background(&builder).0, literal, "a literal does not follow the variant");
+    set(&mut builder, PlainColor::Var(VarId(7)));
+    assert_eq!(background(&builder).0, DEFAULT_BACKGROUND, "a variable the theme lacks");
 }

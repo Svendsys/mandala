@@ -1223,7 +1223,7 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
     of the node's opening `{`.
   - **Rendered**, an error in `format/schema.md`'s example map reads
     `nodes[2].parent: no node before this one has the id 3; a parent
-    comes before its children (node 5 "the firmament", line 64)`.
+    comes before its children (node 5 "the firmament", line 63)`.
   - File text in a message (the excerpt, names, keys and reader
     messages) has every control, line separator and bidi control
     escaped.

@@ -232,9 +232,15 @@ fn test_a_color_naming_a_variable_the_theme_lacks_has_no_spelling() {
     let mut builder = with_node(|node| node.style.text.color = Some(ColorRef::Var(VarId(9))));
     builder.theme(theme_of(&["x"]));
     refuses(builder, "nodes[0].color", unknown(9));
-    let mut builder = with_node(|node| node.style.fill = Some(ColorRef::Var(VarId(1))));
+    let mut builder = DocumentBuilder::new();
     builder.theme(theme_of(&["x"]));
-    refuses(builder, "nodes[0].fill", unknown(1));
+    let root = builder.root();
+    builder.edit(root, |map| {
+        if let DocElement::Map(map) = map {
+            map.background = PlainColor::Var(VarId(1));
+        }
+    });
+    refuses(builder, "background", unknown(1));
     // A palette group has all its colors; one that cannot be named is
     // refused, not written as a variable no theme defines.
     let mut builder = DocumentBuilder::new();
@@ -242,18 +248,17 @@ fn test_a_color_naming_a_variable_the_theme_lacks_has_no_spelling() {
     builder.palette(PaletteData {
         name: "p".to_string(),
         groups: vec![PaletteGroup {
-            fill: PlainColor::Var(VarId(3)),
-            frame: PlainColor::Rgba(Rgba::opaque(0, 0, 0)),
+            frame: PlainColor::Var(VarId(3)),
             text: PlainColor::Rgba(Rgba::opaque(0, 0, 0)),
             title: None,
         }],
     });
-    refuses(builder, "palettes.p[0].fill", unknown(3));
+    refuses(builder, "palettes.p[0].frame", unknown(3));
     // A variable that is defined is written.
-    let mut builder = with_node(|node| node.style.fill = Some(ColorRef::Var(VarId(0))));
+    let mut builder = with_node(|node| node.style.text.color = Some(ColorRef::Var(VarId(0))));
     builder.theme(theme_of(&["x"]));
     let text = written(&builder.build().unwrap());
-    assert!(text.contains("\"fill\": \"var(x)\""), "{text}");
+    assert!(text.contains("\"color\": \"var(x)\""), "{text}");
 }
 
 #[test]

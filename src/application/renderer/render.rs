@@ -14,7 +14,6 @@ use log::debug;
 use wgpu::StoreOp;
 
 use baumhard::font::{fonts, COLOR_WHITE};
-use baumhard::util::color_conversion::convert_u8_to_f32;
 
 use super::scene_shape_cache::CanvasSource;
 use super::{Renderer, RECT_VBUF_INITIAL_CAPACITY, RECT_VERTEX_FLOATS};
@@ -23,13 +22,11 @@ use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::shape::SHAPE_ID_RECTANGLE;
 use glyphon::Resolution;
 
-/// Where [`Renderer::prepare_frame`] left one frame's two rect batches in
-/// the shared vertex buffer — `[main | palette]` — for
-/// [`Renderer::encode_frame`] to draw.
+/// Where [`Renderer::prepare_frame`] left one frame's rect batch — the
+/// screen-space backdrops, the only rects a frame draws (V1-B12) — in
+/// the shared vertex buffer, for [`Renderer::encode_frame`] to draw.
 pub(super) struct PreparedFrame {
-    main_bytes: u64,
     palette_bytes: u64,
-    main_vertices: u32,
     palette_vertices: u32,
 }
 
@@ -237,8 +234,8 @@ impl Renderer {
     /// `canvas` names which shaped canvas set the main pass draws the
     /// tree-rendered roles from: the window's live set, or a capture's
     /// composition of it with a scratch projection
-    /// ([`CanvasSource`]). The node text and backgrounds are the
-    /// renderer's own and are drawn either way.
+    /// ([`CanvasSource`]). The node text is the renderer's own and is
+    /// drawn either way.
     ///
     /// Leaves the glyphon viewport at the target's resolution; the next
     /// frame's prepare sets it to its own. `Viewport::update` writes
@@ -254,46 +251,9 @@ impl Renderer {
         let vp_h_px = height as f32;
         self.viewport.update(&self.queue, Resolution { width, height });
 
-        // Rebuild the "main" rect batch: canvas-space node
-        // backgrounds transformed to NDC via `camera`.
-        // Cheap: one push per visible node, no text shaping.
-        // Visible-range test mirrors the text-area cull below so
-        // clipped-offscreen nodes don't waste vertices either.
-        self.main_rect_vertices.clear();
-        for rect in self
-            .node_background_rects
-            .iter()
-            .chain(super::scene_shape_cache::background_fills(
-                super::scene_shape_cache::canvas_elements(
-                    canvas,
-                    &self.canvas_scene_elements,
-                    &self.capture_canvas,
-                ),
-            ))
-        {
-            if !rect.visible_at(camera) {
-                continue;
-            }
-            let screen_tl = camera.canvas_to_screen(rect.position);
-            let screen_size = rect.size * camera.pixels_per_unit();
-            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
-                screen_tl.x,
-                screen_tl.y,
-                screen_size.x,
-                screen_size.y,
-                vp_w_px,
-                vp_h_px,
-            );
-            let color = convert_u8_to_f32(&rect.color);
-            Self::push_rect_ndc(
-                &mut self.main_rect_vertices,
-                ndc_min,
-                ndc_max,
-                color,
-                rect.shape_id,
-            );
-        }
-
+        // A map draws no rect: its one background is the clear color,
+        // and every other color is a glyph's (V1-B12). The only rects
+        // are the chrome backdrops below.
         // Rebuild the "palette" rect batch: one opaque backdrop
         // behind the command palette and/or the glyph-wheel color
         // picker, in screen space at the camera's pixel ratio. The two
@@ -329,12 +289,10 @@ impl Renderer {
             );
         }
 
-        // Upload both batches to the shared rect vertex buffer,
-        // growing if the combined size exceeds the current
-        // capacity. Layout: `[main_bytes | palette_bytes]`.
-        let main_bytes_len = self.main_rect_vertices.len() * std::mem::size_of::<f32>();
+        // Upload the batch to the rect vertex buffer, growing it if
+        // the batch exceeds the current capacity.
         let palette_bytes_len = self.console_rect_vertices.len() * std::mem::size_of::<f32>();
-        let total_bytes = (main_bytes_len + palette_bytes_len) as u64;
+        let total_bytes = palette_bytes_len as u64;
         if total_bytes > self.rect_vertex_buffer_capacity {
             let mut new_cap = self.rect_vertex_buffer_capacity.max(RECT_VBUF_INITIAL_CAPACITY);
             while new_cap < total_bytes {
@@ -348,20 +306,15 @@ impl Renderer {
             });
             self.rect_vertex_buffer_capacity = new_cap;
         }
-        if main_bytes_len > 0 {
-            self.queue.write_buffer(
-                &self.rect_vertex_buffer,
-                0,
-                bytemuck::cast_slice(&self.main_rect_vertices),
-            );
-        }
         if palette_bytes_len > 0 {
             self.queue.write_buffer(
                 &self.rect_vertex_buffer,
-                main_bytes_len as u64,
+                0,
                 bytemuck::cast_slice(&self.console_rect_vertices),
             );
         }
+        let palette_vertices = (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
+        self.rect_quads = palette_vertices / 6;
 
         // Collect text areas + run both glyphon prepares against
         // the atlas. Shared with `prewarm()` (through `render`) so the
@@ -370,15 +323,14 @@ impl Renderer {
         // gets rasterized.
         self.prepare_text_for_pass(camera, modal, canvas)?;
         Ok(PreparedFrame {
-            main_bytes: main_bytes_len as u64,
             palette_bytes: palette_bytes_len as u64,
-            main_vertices: (self.main_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32,
-            palette_vertices: (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32,
+            palette_vertices,
         })
     }
 
     /// The GPU half of a frame: one render pass into `view`, cleared to
-    /// the canvas color, drawing what [`Self::prepare_frame`] uploaded.
+    /// the map's background ([`Self::set_background`]), drawing what
+    /// [`Self::prepare_frame`] uploaded.
     /// Returns the encoder unsubmitted, so a caller can record more
     /// after the pass — the capture records its texture-to-buffer copy
     /// there.
@@ -411,16 +363,10 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            // 1. Node backgrounds (rect pipeline, camera-transformed).
-            if prepared.main_vertices > 0 {
-                pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..prepared.main_bytes));
-                pass.draw(0..prepared.main_vertices, 0..1);
-            }
-
-            // 2. Main text pass — node text, borders, connections,
+            // 1. Main text pass — node text, borders, connections,
             //    edge handles, camera-transformed and screen-space
-            //    overlays, all drawn on top of the node backgrounds.
+            //    overlays, straight onto the cleared background: a map
+            //    draws no fill (V1-B12).
             //    Interactive path: log and continue on render failure
             //    so a single bad atlas frame doesn't crash the editor.
             //    Unreachable as of glyphon 0.12.0 — `TextRenderer::
@@ -434,25 +380,21 @@ impl Renderer {
                 log::warn!("renderer: text_renderer.render failed: {e}");
             }
 
-            // 2b. Positioned glyph runs — every glyph of every
+            // 1b. Positioned glyph runs — every glyph of every
             //     `GlyphRun` at its own canvas position, one instanced
             //     draw. Canvas content, so under the palette below.
             self.glyph_runs.render(&mut pass);
 
-            // 3. Palette backdrop (rect pipeline, screen-space).
+            // 2. Palette backdrop (rect pipeline, screen-space).
             //    Drawn AFTER the main text pass so node text
             //    sitting behind the palette is fully occluded.
             if prepared.palette_vertices > 0 {
                 pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(
-                    0,
-                    self.rect_vertex_buffer
-                        .slice(prepared.main_bytes..prepared.main_bytes + prepared.palette_bytes),
-                );
+                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..prepared.palette_bytes));
                 pass.draw(0..prepared.palette_vertices, 0..1);
             }
 
-            // 4. Palette text pass — cyan border, query line,
+            // 3. Palette text pass — cyan border, query line,
             //    filtered action rows. Drawn on top of the palette
             //    backdrop so every glyph sits cleanly on solid fill.
             //    Interactive path: log and continue on render failure.

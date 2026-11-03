@@ -260,6 +260,7 @@ built-in value, unless the table gives a default of its own.
 | `format` | integer | yes | | The format number: `1`. Read and checked before anything else in the file, wherever it sits; a newer one is refused as written by a newer version. |
 | `name` | string | yes | | The map's name. |
 | `theme` | [theme](#theme) | no | the empty theme | The theme. Absent is the empty theme (no variables, no variants), which has no other spelling. A theme that is present has at least one variant. |
+| `background` | [background](#background) | no | `"#000000"` | The one color drawn behind the whole canvas. Every other color a map draws comes from a glyph. The default, black, is written by leaving the key out. |
 | `palettes` | object: name to array of [palette groups](#palette-group) | no | none | The palettes. |
 | `defaults` | [defaults](#defaults) | no | nothing set | Per-field defaults, consulted after the element and its owners and before the built-in value. |
 | `edits` | array of [definitions](#definitions) | no | `[]` | The edits the map defines. V1-D1 extends this schema. |
@@ -282,16 +283,32 @@ the same in every variant. A variant's index is likewise its position in
 ascending byte order of its name. Neither depends on the order of the
 keys in the file.
 
+### Background
+
+The map's one background (V1-B12): the color the whole canvas is
+cleared to, behind everything the map draws. A map draws every other
+color with glyphs — text, frames, rings, connectors, links, labels,
+portal ends and ornaments — and nothing draws a shaped fill behind a
+node, a section or anything else.
+
+| Spelling | Meaning |
+|---|---|
+| `"#rrggbb"` | A literal color. It is **opaque**: alpha digits are refused (`TranslucentBackground`), since nothing is drawn behind the canvas for an alpha to blend with, and a map would store an alpha it never shows. |
+| `"var(name)"` | The theme variable `name`, in the active variant, so a variant switch changes the background. The name must be a variable of the theme. A variable's alpha is **not applied**: the variable may color glyphs too, where its alpha means something, and the background is drawn opaque. |
+
+A `palette(...)` is not a spelling: a palette colors a node by its
+depth, and the background belongs to no node.
+
 ### Palette group
 
 A palette is an array of groups, one per depth below the node bound to
 it (the nearest ancestor-or-self with `palette` set); a depth past the
 last group takes the last. A palette's index is its position in
-ascending byte order of its name.
+ascending byte order of its name. A group colors text: it has no fill,
+because nothing in a map is filled (see [background](#background)).
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `fill` | [color](#colors) | yes | | A node's fill. |
 | `frame` | [color](#colors) | yes | | A node's frame text. |
 | `text` | [color](#colors) | yes | | Section text. |
 | `title` | [color](#colors) | no | the group's `text` | The text of a node's first section (its lowest channel). With no `title`, the first section takes `text`. |
@@ -336,8 +353,6 @@ one field of an element never copies a default into it.
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `shape` | [shape](#shape) | no | unset | The outline. |
-| `fill` | [color](#colors) | no | unset | The background fill. |
-| `fill_fade` | number `>= 0` | no | unset | The width of the fill's soft edge. |
 | `font` | string | no | unset | See [text style](#text-style). |
 | `size` | number | no | unset | Points. |
 | `color` | [color](#colors) | no | unset | The text color. |
@@ -444,9 +459,7 @@ of: the ring's, its frame's, `defaults.ring`'s, `defaults.frame`'s.
 | `channel` | integer `0..=4294967295` | no | `0` | The node's place among its sibling nodes: siblings are listed in ascending channel. |
 | `position` | `[x, y]` | yes | | The top-left corner, canvas units. |
 | `min_size` | `[w, h]` | no | none | The size the user set, a *minimum*: the node grows to fit its content (D5). |
-| `shape` | [shape](#shape) | no | unset | The outline its fill and frame share. |
-| `fill` | [color](#colors) | no | unset | The background fill. |
-| `fill_fade` | number `>= 0` | no | unset | The width of the fill's soft edge. |
+| `shape` | [shape](#shape) | no | unset | The outline its frame runs around. |
 | `palette` | string | no | none | The name of the palette that colors the node and its descendants by depth. |
 | `zoom` | [zoom](#zoom) | no | none | The zoom range the node renders in. |
 | `folded` | boolean | no | `false` | Whether its descendants are collapsed. |
@@ -665,7 +678,7 @@ One end of a portal link.
 |---|---|
 | `"#rrggbb"`, `"#rrggbbaa"` | A literal color. Hex digits are lowercase, and an opaque color is written without alpha digits: `#ABCDEF` and `#abcdefff` are refused, with the canonical spelling in the message. |
 | `"var(name)"` | The theme variable `name`, in the active variant. The name must be a variable of the theme. |
-| `"palette(fill)"`, `"palette(frame)"`, `"palette(text)"`, `"palette(title)"` | That color of the palette group the element's owning node is bound to, at the node's depth. Not allowed inside `palettes`. |
+| `"palette(frame)"`, `"palette(text)"`, `"palette(title)"` | That color of the palette group the element's owning node is bound to, at the node's depth. Not allowed inside `palettes`, nor as the [background](#background). |
 
 ### Weight
 
@@ -892,7 +905,7 @@ its path.
 | Font size in points | `0.5` to `4096` |
 | Font size as a fraction (inside a frame) | above `0`, at most `1` |
 | `opacity`, a label's `t`, `border_t`, a start point's `at`, a numeric `span` | `0` to `1` |
-| `fill_fade`, `gap`, `inset`, `spacing` | `>= 0` |
+| `gap`, `inset`, `spacing` | `>= 0` |
 | A [sides](#sides) `content`, and a `once` `filler` | something to draw, at most 256 bytes |
 | A `zoom` bound | above `0`, and `min` not above `max` (the bound the mutations hold an edit to) |
 | `fit` bounds | `0 < min <= max` |
@@ -909,7 +922,7 @@ A load returns a `LoadError`: a `path`, the `node` it is in, a
 `position` in the text, and a `kind`. Rendered, it reads
 
 ```text
-nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)
+nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 63)
 ```
 
 - **The `path`** writes keys after a dot and array positions in
@@ -918,7 +931,7 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
   which only a name an author chose can be, is quoted in brackets as
   JSON quotes a string, with every control, line separator and bidi
   control escaped too, so that it cannot be read as more path:
-  `palettes["My Palette"][0].fill`, `theme.variants[""].bg`. The path
+  `palettes["My Palette"][0].frame`, `theme.variants[""].bg`. The path
   addresses a node by its place in the list, never by its id, so it is
   always a JSON path a tool can follow (`jq '.nodes[3].frame'`). It is
   empty for an error about the whole text (too large, a byte-order mark,
@@ -953,8 +966,8 @@ nodes[2].parent: no node before this one has the id 3; a parent comes before its
   then the other top-level values, all of which are read first, in the
   order of the table above (a wrong type, an unknown or a missing key),
   before any of their content is checked: the counts an index
-  addresses, the theme, the palettes, the edits, presentations and
-  verbs, and the defaults last; then the nodes in list order; then the
+  addresses, the theme, the background, the palettes, the edits,
+  presentations and verbs, and the defaults last; then the nodes in list order; then the
   links, in list order. Within a node, an error the JSON reader finds —
   a wrong type, an unknown or a missing key, anywhere in the node —
   comes first, in the order of the text, since the node is read whole
@@ -996,7 +1009,8 @@ A small map, exactly as the saver writes it (it is the fixture
 `tree.mandala.json`): two top-level nodes, three levels, two node
 channels and two section channels, a line link and a portal link that
 both name later nodes, a verb named from a node's `on` and from a span's
-`link`, a palette, two theme variants and a default. The ids are
+`link`, a palette, two theme variants, a background that names one of
+their variables, and a default. The ids are
 deliberately not in list order: the list is ordered by structure, and
 node 5 was made after node 3 but sits under node 2.
 
@@ -1019,16 +1033,15 @@ node 5 was made after node 3 but sits under node 2.
       }
     }
   },
+  "background": "var(bg)",
   "palettes": {
     "rainbow": [
       {
-        "fill": "#2a1b3d",
         "frame": "#a239ca",
         "text": "#e0e0e0",
         "title": "#ffffff"
       },
       {
-        "fill": "var(bg)",
         "frame": "var(accent)",
         "text": "var(fg)"
       }
@@ -1093,23 +1106,23 @@ node 5 was made after node 3 but sits under node 2.
 }
 ```
 
-How it reads, node by node (the nodes start on line 47; each line is
+How it reads, node by node (the nodes start on line 46; each line is
 where the node's block opens):
 
 | Line | Node | Parent | The chain before it | Accepted because |
 |---|---|---|---|---|
-| 47 | 1 | none | empty | a top-level node may always start |
-| 57 | 2 | 1 | 1 | 1 is the node before it |
-| 64 | 5 | 2 | 1, 2 | 2 is the node before it |
-| 70 | 3 | 1 | 1, 2, 5 | 1 is on the chain, which closes 5 and 2; its previous sibling, 2, has channel 0, as 3 does |
-| 77 | 4 | 1 | 1, 3 | 1 is on the chain, which closes 3; channel 1 is not below 3's channel 0 |
-| 84 | 6 | none | 1, 4 | a top-level node, which closes 4 and 1; the previous one, 1, has channel 0, as 6 does |
+| 46 | 1 | none | empty | a top-level node may always start |
+| 56 | 2 | 1 | 1 | 1 is the node before it |
+| 63 | 5 | 2 | 1, 2 | 2 is the node before it |
+| 69 | 3 | 1 | 1, 2, 5 | 1 is on the chain, which closes 5 and 2; its previous sibling, 2, has channel 0, as 3 does |
+| 76 | 4 | 1 | 1, 3 | 1 is on the chain, which closes 3; channel 1 is not below 3's channel 0 |
+| 83 | 6 | none | 1, 4 | a top-level node, which closes 4 and 1; the previous one, 1, has channel 0, as 6 does |
 
 Edits that make it invalid, and what the loader says:
 
 - Move node 3's block below node 4's:
-  `nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 77)`
+  `nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 76)`
 - Give node 5 `"parent": 3`:
-  `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)`
+  `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 63)`
 - Move node 5's block to the end of the list:
-  `nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 83)`
+  `nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 82)`

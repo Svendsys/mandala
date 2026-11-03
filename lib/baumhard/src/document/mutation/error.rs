@@ -140,6 +140,15 @@ pub enum MutationError {
         /// Where.
         at: MutatorPath,
     },
+    /// A literal background with an alpha below 255: nothing is drawn
+    /// behind the canvas for it to blend with, and a load refuses it
+    /// (V1-B12).
+    TranslucentBackground {
+        /// Where.
+        at: MutatorPath,
+        /// The alpha given.
+        alpha: u8,
+    },
     /// A reference to something the document does not have.
     Missing {
         /// Where.
@@ -276,6 +285,10 @@ impl fmt::Display for MutationError {
                     "{at}: a span inside a ring takes the ring's size and sets none"
                 )
             }
+            MutationError::TranslucentBackground { at, alpha } => write!(
+                f,
+                "{at}: a background is opaque, and this one has alpha {alpha}; nothing is drawn behind it"
+            ),
             MutationError::Missing { at, what, index } => {
                 write!(f, "{at}: the document has no {what} {index}")
             }

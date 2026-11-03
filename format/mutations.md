@@ -226,17 +226,21 @@ extend it, padding any gap with whitespace.
 > `maptool` path used these keys, so there was nothing to migrate in
 > the same commit.
 
-### Glyph run and fill mutations
+### Glyph run mutations
 
-The glyph layers (design §12.1) are made of two element types besides
-areas and models. A **`GlyphRun`** is one whole TextFlow — a shaped
-box or a shaped run placed along a path — and a **`Fill`** is a node's
-background. Three run mutations and three fill mutations are *authored*:
-a presentation or a custom mutation can name them. The two that
-replace a whole payload, `RunSet` and `FillSet`, belong to projection
-and are never authored; they have **no JSON spelling**, and
-`{"RunSet": …}` or `{"FillSet": …}` in a file is refused as an unknown
-variant.
+The glyph layers (design §12.1) are made of one element type besides
+areas and models: a **`GlyphRun`**, one whole TextFlow — a shaped box
+or a shaped run placed along a path. Three run mutations are
+*authored*: a presentation or a custom mutation can name them. The one
+that replaces a whole payload, `RunSet`, belongs to projection and is
+never authored; it has **no JSON spelling**, and `{"RunSet": …}` in a
+file is refused as an unknown variant.
+
+There is no fill element (V1-B12): a map has one background, the color
+the canvas is cleared to, and every other color comes from a glyph. A
+mutation naming a fill — `FillColor`, `FillOpacity`, `FillRect` or
+`FillSet` — is refused as an unknown variant, and a list holding one
+does not read.
 
 ```json
 {
@@ -247,16 +251,13 @@ variant.
     {"RunOverrides": {"Color": {"range": {"start": 0, "end": 3}, "value": [255, 0, 0, 255]}}},
     {"RunOverrides": {"Color": {"range": {"start": 4, "end": 6}, "value": null}}},
     {"RunOverrides": {"Scale": {"range": {"start": 3, "end": 6}, "value": 1.5}}},
-    {"RunOverrides": "Clear"},
-    {"FillColor": [30, 60, 90, 255]},
-    {"FillOpacity": 0.25},
-    {"FillRect": {"origin": [0.0, 0.0], "size": [120.0, 60.0]}}
+    {"RunOverrides": "Clear"}
   ]
 }
 ```
 
-- `RunOpacity` / `FillOpacity` — a number, multiplied into the alpha of
-  every glyph of the run, or of the fill's color.
+- `RunOpacity` — a number, multiplied into the alpha of every glyph of
+  the run.
 - `RunOrigin` — a two-element `[x, y]` array (not an `{"x", "y"}`
   object, as for every `Vec2`): the canvas position of a box run's
   top-left, or the offset applied to every placed glyph of a path run.
@@ -279,28 +280,24 @@ variant.
   and a frame's [sides](./schema.md#sides) ornament are skipped by
   every range, since they belong to no span. A
   run's hit-test box does not move with its overrides.
-- `FillColor` — an `[r, g, b, a]` array of bytes.
-- `FillRect` — `{"origin": [x, y], "size": [w, h]}`: the rectangle the
-  fill covers, and its hit-test box.
 
 On a predicate, two element-level fields select these elements:
 `GfxElementField::ElementType` names an element's variant, and
-`GfxElementField::Opacity` compares the opacity of a run or a fill.
+`GfxElementField::Opacity` compares the opacity of a run.
 
 ```json
 [
   {"ElementType": "GlyphRun"},
-  {"ElementType": "Fill"},
   {"Opacity": 0.5}
 ]
 ```
 
 `ElementType` is tested with `Equals` (`Equals(false)` is `==`,
 `Equals(true)` is `!=`); the variants are `GlyphArea`, `GlyphModel`,
-`GlyphRun`, `Fill` and `Void`. `Opacity` accepts the ordering
-comparators and matches only a run or a fill.
+`GlyphRun` and `Void`. `Opacity` accepts the ordering comparators and
+matches only a run.
 
-A run or fill mutation that reaches an element of another kind changes
+A run mutation that reaches an element of another kind changes
 nothing and is logged, in every build. A scope such as
 `SelfAndDescendants` sends one list to elements of every kind, so
 `{"RunOpacity": 0.5}` meets areas, models and voids and leaves them as
@@ -488,9 +485,8 @@ Common idioms:
 - `Predicate { fields: [(Flag(SectionRoot), Equals(true))], … }`
   — the inverse: "land on the container only, skip every
   section." Useful for container-only mutations that shouldn't
-  touch the section glyphs. (No mutation reaches a node's
-  background fill: it is set when the scene is built and changes
-  through a rebuild.)
+  touch the section glyphs. The container is chrome only: it
+  draws nothing (V1-B12 removed the node background it held).
 
 `predicate` is `null` (or absent) by default — every candidate
 element passes through unfiltered. The field round-trips through
@@ -826,13 +822,13 @@ in `snake_case`, beside the same comparators as above:
 | Field | Value | On |
 |---|---|---|
 | `kind` | a kind | every element |
+| `background` | a color, never a palette color | map |
 | `channel` | integer | every element |
 | `ident` | integer | node |
 | `position_x`, `position_y` | number | node |
 | `min_width`, `min_height` | number | node, section |
 | `shape` | `"ellipse"` or `{"rectangle": {"radius": 0–100}}` | node |
-| `fill` | a color | node |
-| `fill_fade`, `opacity` | number | node |
+| `opacity` | number | node |
 | `palette`, `on_click`, `on_hover` | integer (an index) | node |
 | `folded`, `hidden` | boolean | node |
 | `zoom_min`, `zoom_max` | number | node, connector, link |
@@ -856,7 +852,7 @@ in `snake_case`, beside the same comparators as above:
 | `border_t` | number | portal end |
 
 A color is `{"rgba": [r, g, b, a]}`, `{"var": <variable index>}` or
-`{"palette": "fill" | "frame" | "text" | "title"}`.
+`{"palette": "frame" | "text" | "title"}`.
 
 **This is the spelling of the in-memory `DocField`, and it is not what a
 `.mandala.json` holds.** The values here are indices (`{"var": 1}`,
@@ -864,14 +860,14 @@ A color is `{"rgba": [r, g, b, a]}`, `{"var": <variable index>}` or
 it would name another entry the moment a name was added. A predicate
 saved in a map, in an edit (V1-D1) or a presentation, is spelled with the
 file's own values — colors as `"#rrggbb"`, `"var(name)"` or
-`"palette(fill)"`, a font by family name, a verb by id, a palette by
+`"palette(frame)"`, a font by family name, a verb by id, a palette by
 name, a fit, shape or start point as `format/schema.md` writes them —
 and is resolved against the open document when it runs. The file format's
 types hold no index (`document::tests::format_strict_tests` keeps
 `DocField` and every index type out of the types the loader reads).
 
 A predicate tests what an element **stores**, not what it resolves
-to: a node with no `fill` of its own has none here, whatever its
+to: a node with no `color` of its own has none here, whatever its
 palette or the map's defaults paint it. A field the element's kind
 does not carry answers nothing and the predicate moves on to its next
 pair. On an unset optional field `Exists` fails, `Equals(false)` fails

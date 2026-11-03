@@ -19,8 +19,7 @@
 //! 3. **The palette tier.** The owning node's binding — the nearest node
 //!    at or above it with `palette: Some(p)` — colors whatever is still
 //!    unset, from group `depth(node) − depth(binding)` clamped to the
-//!    last group: a node's fill from the group's `fill`, frame and ring
-//!    text from `frame`, section text from `text`, and the node's first
+//!    last group: frame and ring text from `frame`, section text from `text`, and the node's first
 //!    section (lowest channel) from `title` — or from `text` when the
 //!    group sets no `title` (ruling R5 on #235). Connectors, links, caps,
 //!    labels and portal ends are not palette-colored.
@@ -91,7 +90,7 @@
 //! this for V1-B7 and V1-C2).
 
 use crate::arena::NodeId;
-use crate::document::defaults::{BuiltInPath, BUILT_IN};
+use crate::document::defaults::{BuiltInPath, BUILT_IN, DEFAULT_BACKGROUND};
 use crate::document::element::{
     DefaultsData, DocElement, DocKind, FlowStyle, PaletteGroup, TextStyle, ThemeData,
 };
@@ -111,7 +110,7 @@ use crate::font::fonts::AppFont;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Input {
     /// An element's style fields: what it draws with — a text style, a
-    /// node's shape, fill and fill fade, a path's flow style, a frame's
+    /// node's shape, the map's background, a path's flow style, a frame's
     /// visibility and fit, a ring's fit, a portal end's marker color,
     /// size and content. Never a position, a placement, an ident or a
     /// flag.
@@ -178,10 +177,6 @@ pub struct ResolvedText {
 pub struct ResolvedNode {
     /// The outline.
     pub shape: Shape,
-    /// The fill.
-    pub fill: Rgba,
-    /// The width of the fill's soft edge.
-    pub fill_fade: f32,
 }
 
 /// A resolved frame.
@@ -433,7 +428,6 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
 /// is its `text`, within the same tier (ruling R5 on #235). O(1).
 fn palette_color(group: &PaletteGroup, field: PaletteField) -> PlainColor {
     match field {
-        PaletteField::Fill => group.fill,
         PaletteField::Frame => group.frame,
         PaletteField::Text => group.text,
         PaletteField::Title => group.title.unwrap_or(group.text),
@@ -803,13 +797,11 @@ fn path_built_in(kind: DocKind) -> BuiltInPath {
     }
 }
 
-/// A node's shape, fill and fill fade. The chain: the node's style, the
-/// palette tier (the fill, from the group's `fill`), `Defaults.node`,
-/// `BUILT_IN`. A `node` that is not a node has no own tier.
+/// A node's shape. The chain: the node's style, `Defaults.node`,
+/// `BUILT_IN`; a shape is not palette-colored, so no palette is read. A
+/// `node` that is not a node has no own tier.
 ///
-/// Cost: when the palette tier is reached, the climb to the nearest
-/// binding, O(its distance; the depth when there is none); else O(1).
-/// A one-off question: see the module docs. No allocation.
+/// Cost: O(1). No allocation.
 pub fn resolve_node(tree: &Tree<DocElement>, node: NodeId, rec: &mut impl ReadRecorder) -> ResolvedNode {
     let owning = element(tree, node)
         .filter(|e| e.kind() == DocKind::Node)
@@ -819,25 +811,38 @@ pub fn resolve_node(tree: &Tree<DocElement>, node: NodeId, rec: &mut impl ReadRe
         .and_then(|id| inputs.style(id))
         .and_then(DocElement::as_node);
     let mut shape = own.and_then(|n| n.style.shape);
-    let mut fill = own.and_then(|n| n.style.fill).and_then(|c| inputs.color(c));
-    let mut fill_fade = own.and_then(|n| n.style.fill_fade);
-    if fill.is_none() {
-        fill = inputs.palette_tier(PaletteField::Fill);
-    }
-    if shape.is_none() || fill.is_none() || fill_fade.is_none() {
+    if shape.is_none() {
         if let Some(defaults) = inputs.defaults() {
-            shape = shape.or(defaults.node.shape);
-            if fill.is_none() {
-                fill = defaults.node.fill.and_then(|c| inputs.color(c));
-            }
-            fill_fade = fill_fade.or(defaults.node.fill_fade);
+            shape = defaults.node.shape;
         }
     }
     ResolvedNode {
         shape: shape.unwrap_or(BUILT_IN.node.shape),
-        fill: fill.unwrap_or(BUILT_IN.node.fill),
-        fill_fade: fill_fade.unwrap_or(BUILT_IN.node.fill_fade),
     }
+}
+
+/// The map's background: the one color drawn behind the whole canvas
+/// (V1-B12). The map's own `background`, a literal or a theme variable
+/// in the active variant; a variable the theme does not have is
+/// [`DEFAULT_BACKGROUND`]. Reads the map's style
+/// ([`Input::Style`] of the root) and, for a variable, the theme, so a
+/// variant switch dirties it and a rename of the map does not.
+///
+/// **Always opaque.** Nothing is drawn behind the canvas, so an alpha
+/// has nothing to blend with: a literal is opaque by the loader's and
+/// the mutations' rule, and a theme variable's alpha — which the glyphs
+/// that name the same variable do apply — is set to 255 here.
+///
+/// Cost: O(1). No allocation.
+pub fn resolve_background(tree: &Tree<DocElement>, rec: &mut impl ReadRecorder) -> Rgba {
+    let root = tree.root();
+    let mut inputs = Inputs::new(tree, rec, None);
+    let color = match inputs.style(root) {
+        Some(DocElement::Map(map)) => inputs.plain(map.background),
+        _ => None,
+    };
+    let Rgba([r, g, b, _]) = color.unwrap_or(DEFAULT_BACKGROUND);
+    Rgba::opaque(r, g, b)
 }
 
 /// A frame's fields. The chain: the frame's style, `Defaults.frame`,

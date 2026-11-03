@@ -32,8 +32,8 @@ use crate::document::bounds::{clamp_canvas_coord, clamp_font_size_pt, clamp_rel_
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteGroup, TextStyle};
 use crate::document::mutation::inherited::DocInherited;
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId, Rgba,
-    Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
+    PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::MutatorTree;
@@ -130,10 +130,6 @@ pub enum NodeOp {
     SetMinSize(Option<Vec2>),
     /// Set the outline; `None` inherits.
     SetShape(Option<Shape>),
-    /// Set the fill; `None` inherits.
-    SetFill(Option<ColorRef>),
-    /// Set the fill's soft edge; `None` inherits.
-    SetFillFade(Option<f32>),
     /// Bind a palette, or unbind.
     SetPalette(Option<PaletteId>),
     /// Set the zoom range it renders in.
@@ -358,6 +354,12 @@ pub enum DefaultsOp {
 pub enum MapOp {
     /// Rename the map.
     SetName(String),
+    /// Set the one color drawn behind the canvas (V1-B12): a literal,
+    /// which must be opaque, or a theme variable. Not inherited, so
+    /// there is no `None`; setting
+    /// [`DEFAULT_BACKGROUND`](crate::document::defaults::DEFAULT_BACKGROUND)
+    /// is how a map goes back to the default.
+    SetBackground(PlainColor),
 }
 
 impl DocMutation {
@@ -422,7 +424,10 @@ impl Mutation<DocElement> for DocMutation {
     fn apply_to(&self, target: &mut DocElement, inherited: &DocInherited) {
         let kind = target.kind();
         match (self, target) {
-            (DocMutation::Map(MapOp::SetName(name)), DocElement::Map(map)) => map.name.clone_from(name),
+            (DocMutation::Map(op), DocElement::Map(map)) => match op {
+                MapOp::SetName(name) => map.name.clone_from(name),
+                MapOp::SetBackground(background) => map.background = *background,
+            },
             (DocMutation::Theme(op), DocElement::Theme(theme)) => match op {
                 ThemeOp::SetActive(active) => {
                     if usize::from(*active) < theme.variants.len() {
@@ -462,8 +467,6 @@ impl Mutation<DocElement> for DocMutation {
                 NodeOp::Nudge(delta) => node.position = nudge(node.position, *delta),
                 NodeOp::SetMinSize(size) => node.min_size = *size,
                 NodeOp::SetShape(shape) => node.style.shape = *shape,
-                NodeOp::SetFill(fill) => node.style.fill = *fill,
-                NodeOp::SetFillFade(fade) => node.style.fill_fade = *fade,
                 NodeOp::SetPalette(palette) => node.palette = *palette,
                 NodeOp::SetZoom(zoom) => node.zoom = *zoom,
                 NodeOp::SetFolded(folded) => node.folded = *folded,

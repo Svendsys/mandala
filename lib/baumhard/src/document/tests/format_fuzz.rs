@@ -61,7 +61,7 @@ use crate::document::format::{
 };
 use crate::document::ids::Document;
 use crate::document::tests::format_support::same_document;
-use crate::document::values::{FitMode, FontSize, Shape, Sides, ZoomWindow};
+use crate::document::values::{FitMode, FontSize, PlainColor, Shape, Sides, ZoomWindow};
 use crate::document::writer::Derived;
 
 /// Every property of a load of `bytes`, whatever they are: the
@@ -594,7 +594,14 @@ pub fn bounds_hold(doc: &Document) -> Result<(), String> {
 /// The bounds of one element's own fields.
 fn element_bounds(element: &DocElement) -> Result<(), String> {
     match element {
-        DocElement::Map(_) | DocElement::Theme(_) | DocElement::Palette(_) => Ok(()),
+        // A background is opaque or a variable (V1-B12).
+        DocElement::Map(map) => match map.background {
+            PlainColor::Rgba(rgba) if rgba.0[3] != u8::MAX => {
+                Err(format!("a translucent background loaded: {rgba:?}"))
+            }
+            _ => Ok(()),
+        },
+        DocElement::Theme(_) | DocElement::Palette(_) => Ok(()),
         DocElement::Defaults(defaults) => {
             node_style(&defaults.node)?;
             text_style(&defaults.section)?;
@@ -688,9 +695,6 @@ fn text_style(style: &TextStyle) -> Result<(), String> {
 fn node_style(style: &NodeStyle) -> Result<(), String> {
     if let Some(Shape::Rectangle { radius }) = style.shape {
         named("shape.radius", bounds::check_percent(radius.get()))?;
-    }
-    if let Some(fade) = style.fill_fade {
-        named("fill_fade", bounds::check_non_negative(fade))?;
     }
     text_style(&style.text)
 }
@@ -826,6 +830,23 @@ pub struct MapSpec {
     pub bounded: Option<&'static str>,
     /// The header's `defaults`: each style and its JSON object.
     pub defaults: Vec<(String, String)>,
+    /// The header's `background`, if it has one.
+    pub background: Option<Background>,
+}
+
+/// A generated map's `background` (V1-B12).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Background {
+    /// A literal, as JSON text: `"#rrggbb"`, or `"#rrggbbaa"` for a
+    /// translucent one, which is refused.
+    Literal(String),
+    /// `"var(bg)"`, with a one-variant theme defining `bg` as this
+    /// literal — translucent or not, since a variable's alpha is not
+    /// the background's to refuse.
+    Var(String),
+    /// A spelling a background does not have, or a variable the map
+    /// does not define, as JSON text.
+    Unspelled(&'static str),
 }
 
 /// What was injected into a generated map.
@@ -1071,11 +1092,59 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
         3 => inject(choices, &mut nodes, &mut defaults),
         _ => (Fault::None, None),
     };
+    // Drawn last, so that every seed written before the background was
+    // reads as it did, with no background: a choice past the end of an
+    // input is zero.
+    let (background, fault) = background(choices, fault);
     MapSpec {
         nodes,
         fault,
         bounded,
         defaults,
+        background,
+    }
+}
+
+/// A literal color drawn from `choices`, as JSON text: opaque, or with
+/// alpha digits below `ff` when `translucent`.
+fn hex(choices: &mut crate::util::tests::choices::Choices<'_>, translucent: bool) -> String {
+    let rgb = choices.below(1 << 24);
+    if translucent {
+        format!("\"#{rgb:06x}{:02x}\"", choices.below(255))
+    } else {
+        format!("\"#{rgb:06x}\"")
+    }
+}
+
+/// The map's background, and the fault the map then carries: none, a
+/// literal, a variable — each valid — or, on a map with no other fault,
+/// a translucent literal or a spelling a background lacks, which the
+/// loader refuses at `background` (it is read before any node).
+fn background(
+    choices: &mut crate::util::tests::choices::Choices<'_>,
+    fault: Fault,
+) -> (Option<Background>, Fault) {
+    let header_fault = |kind: &'static str| Fault::Content {
+        node: None,
+        path: "background".to_string(),
+        kind,
+    };
+    match choices.below(6) {
+        2 => (Some(Background::Literal(hex(choices, false))), fault),
+        3 => {
+            let translucent = choices.one_in(2);
+            (Some(Background::Var(hex(choices, translucent))), fault)
+        }
+        4 if fault == Fault::None => (
+            Some(Background::Literal(hex(choices, true))),
+            header_fault("TranslucentBackground"),
+        ),
+        5 if fault == Fault::None => {
+            let spelling = *choices.pick(&[r#""palette(text)""#, r##""#fff""##, "null", "7", r#""var()""#]);
+            let kind = if spelling == r#""var()""# { "UnknownVariable" } else { "Invalid" };
+            (Some(Background::Unspelled(spelling)), header_fault(kind))
+        }
+        _ => (None, fault),
     }
 }
 
@@ -1466,7 +1535,7 @@ const ORNAMENT: Bounded = Bounded::Length {
 /// structure's, which `corrupt` drives; the counts of palettes, theme
 /// variables and variants, verbs, edits and presentations are left to
 /// load_raw).
-pub static BOUNDED_FIELDS: [BoundedField; 115] = [
+pub static BOUNDED_FIELDS: [BoundedField; 113] = [
     BoundedField {
         name: "position x",
         needs: Needs::Nothing,
@@ -1506,14 +1575,6 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         template: "#",
         path: ".opacity",
         value: float(UNIT, unit),
-    },
-    BoundedField {
-        name: "fill_fade",
-        needs: Needs::Nothing,
-        key: "fill_fade",
-        template: "#",
-        path: ".fill_fade",
-        value: float(NON_NEGATIVE, non_negative),
     },
     BoundedField {
         name: "zoom min",
@@ -2007,14 +2068,6 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         template: r#", "kind": "portal", "ends": [{"spans": [{"text": "a", "weight": #}]}, {}]"#,
         path: ".ends[0].spans[0].weight",
         value: WEIGHT,
-    },
-    BoundedField {
-        name: "defaults node fill_fade",
-        needs: Needs::Defaults,
-        key: "node",
-        template: r#"{"fill_fade": #}"#,
-        path: ".node.fill_fade",
-        value: float(NON_NEGATIVE, non_negative),
     },
     BoundedField {
         name: "defaults node size",
@@ -2591,6 +2644,15 @@ pub fn render(spec: &MapSpec, order: u32) -> String {
         })
         .collect();
     let mut top = vec![r#""format": 1"#.to_string(), r#""name": "generated""#.to_string()];
+    match &spec.background {
+        None => {}
+        Some(Background::Literal(value)) => top.push(format!(r#""background": {value}"#)),
+        Some(Background::Unspelled(value)) => top.push(format!(r#""background": {value}"#)),
+        Some(Background::Var(value)) => {
+            top.push(format!(r#""theme": {{"active": "a", "variants": {{"a": {{"bg": {value}}}}}}}"#));
+            top.push(r#""background": "var(bg)""#.to_string());
+        }
+    }
     if !spec.defaults.is_empty() {
         let styles: Vec<String> = spec
             .defaults

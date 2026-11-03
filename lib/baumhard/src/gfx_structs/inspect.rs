@@ -8,8 +8,8 @@
 //! channel, the id or a flag — so a mutator can express things like
 //! "repeat on every child whose text starts empty" without hand-coding
 //! a walker. The element-level fields also select by variant
-//! (`ElementType`, so a presentation can reach the runs or the fills of
-//! a layer) and by the opacity of a run or fill. O(1) evaluations, no allocation.
+//! (`ElementType`, so a presentation can reach the runs of a layer) and
+//! by the opacity of a run. O(1) evaluations, no allocation.
 //!
 //! **Negation flag worked example.** A
 //! `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
@@ -109,12 +109,11 @@ fn evaluate_field(element: &GfxElement, field: &GfxElementField, comparator: &Co
             }
         }),
         GfxElementField::Opacity(opacity) => {
-            // Only runs and fills have an opacity. Another element
+            // Only a run has an opacity. Another element
             // decides the predicate as false, as a missing area does
             // for the area fields.
             let own = match element {
                 GfxElement::GlyphRun { run, .. } => run.opacity(),
-                GfxElement::Fill { fill, .. } => fill.opacity,
                 _ => return Some(false),
             };
             Some(comparator.compare_f32(own, opacity.0))

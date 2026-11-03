@@ -72,8 +72,6 @@ fn test_the_saver_writes_keys_in_the_order_the_schema_lists_them() {
             "position",
             "min_size",
             "shape",
-            "fill",
-            "fill_fade",
             "palette",
             "zoom",
             "folded",
@@ -184,7 +182,6 @@ fn test_the_saver_leaves_out_what_the_file_would_say_by_default() {
         "on",
         "connector",
         "shape",
-        "fill",
     ] {
         assert!(!has(&value, &a, key), "node a has no `{key}` to write");
     }
@@ -317,10 +314,12 @@ fn test_a_float_survives_the_text_exactly() {
         state
     };
     let mut checked = 0;
-    // Random bit patterns, and the neighbors of the interesting values.
+    // Random bit patterns, and the neighbors of the interesting values,
+    // read and written as a zoom bound: a number with no upper bound,
+    // above zero.
     let mut values: Vec<f32> = (0..200_000)
         .map(|_| f32::from_bits((next() >> 32) as u32))
-        .filter(|v| v.is_finite() && *v >= 0.0)
+        .filter(|v| v.is_finite() && *v > 0.0)
         .collect();
     for base in [
         0.1_f32,
@@ -340,13 +339,13 @@ fn test_a_float_survives_the_text_exactly() {
     }
     for value in values {
         let json = map_of(&format!(
-            r#","fill_fade":{}"#,
+            r#","zoom":{{"min":{}}}"#,
             serde_json::to_string(&value).unwrap()
         ));
         let doc = load(&json).unwrap_or_else(|e| panic!("{value:e}: {e}"));
         let (_, data) = node(&doc, 1);
         assert_eq!(
-            data.style.fill_fade.map(f32::to_bits),
+            data.zoom.and_then(|zoom| zoom.min).map(f32::to_bits),
             Some(value.to_bits()),
             "{value:e} did not survive the text {json}"
         );

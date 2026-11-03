@@ -358,6 +358,7 @@ fn header<'t>(index: &MapIndex<'t>) -> Result<MapHeaderDto<'t>, LoadError> {
         format: index::FORMAT,
         name: optional(index, "name")?.unwrap_or_default(),
         theme: optional(index, "theme")?,
+        background: optional(index, "background")?,
         palettes: optional(index, "palettes")?.unwrap_or_default(),
         defaults: optional(index, "defaults")?,
         edits: optional(index, "edits")?.unwrap_or_default(),

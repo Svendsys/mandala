@@ -7,8 +7,8 @@
 //! an element answers each one.
 //!
 //! A predicate tests what an element **stores**, not what it resolves
-//! to: a node with no `fill` of its own has no fill here, whatever its
-//! palette or the map's defaults would color it. Resolution needs the
+//! to: a node with no `color` of its own has no color here, whatever
+//! its palette or the map's defaults would color its text. Resolution needs the
 //! tree, and a predicate sees one element (design §4.3).
 //!
 //! The rules, the same for every field:
@@ -26,19 +26,24 @@
 //!   do on an unset field: there is nothing to order.
 
 use crate::document::element::{DocElement, DocKind, TextStyle};
-use crate::document::values::{Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, Shape};
+use crate::document::values::{
+    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, PlainColor, Shape,
+};
 use crate::engine::predicate::{Comparator, Inspect};
 use crate::font::fonts::AppFont;
 use serde::{Deserialize, Serialize};
 
 /// A facet of a document element a predicate can test, with the value
 /// it is compared against. Serialized in `snake_case`:
-/// `{"kind": "node"}`, `{"opacity": 0.5}`, `{"fill": {"rgba": [255, 0, 0, 255]}}`.
+/// `{"kind": "node"}`, `{"opacity": 0.5}`, `{"background": {"rgba": [0, 0, 0, 255]}}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocField {
     /// The element's kind. Every element.
     Kind(DocKind),
+    /// The map's background: a literal or a theme variable, never a
+    /// palette color, which no map stores.
+    Background(ColorRef),
     /// The element's channel. Every element.
     Channel(usize),
     /// A node's ident.
@@ -53,10 +58,6 @@ pub enum DocField {
     MinHeight(f32),
     /// A node's shape.
     Shape(Shape),
-    /// A node's fill.
-    Fill(ColorRef),
-    /// A node's fill fade.
-    FillFade(f32),
     /// The index of a node's palette.
     Palette(u16),
     /// Whether a node is folded.
@@ -234,6 +235,16 @@ impl Inspect for DocElement {
         let min_size = node.map(|n| &n.min_size).or_else(|| section.map(|s| &s.min_size));
         match field {
             DocField::Kind(kind) => unordered(Stored::Value(Some(&self.kind())), kind, comparator),
+            DocField::Background(color) => {
+                let stored_background = match self {
+                    DocElement::Map(map) => Some(match map.background {
+                        PlainColor::Rgba(rgba) => ColorRef::Rgba(rgba),
+                        PlainColor::Var(var) => ColorRef::Var(var),
+                    }),
+                    _ => None,
+                };
+                unordered(stored(stored_background.as_ref().map(Some)), color, comparator)
+            }
             DocField::Channel(channel) => integer(Stored::Value(Some(&self.channel())), *channel, comparator),
             DocField::Ident(ident) => integer(stored(node.map(|n| Some(&n.ident.0))), *ident, comparator),
             DocField::PositionX(x) => number(stored(node.map(|n| Some(&n.position.x))), *x, comparator),
@@ -247,12 +258,6 @@ impl Inspect for DocElement {
             DocField::Shape(shape) => {
                 unordered(stored(node.map(|n| n.style.shape.as_ref())), shape, comparator)
             }
-            DocField::Fill(fill) => unordered(stored(node.map(|n| n.style.fill.as_ref())), fill, comparator),
-            DocField::FillFade(fade) => number(
-                stored(node.map(|n| n.style.fill_fade.as_ref())),
-                *fade,
-                comparator,
-            ),
             DocField::Palette(palette) => integer(
                 stored(node.map(|n| n.palette.as_ref().map(|p| &p.0))),
                 *palette,

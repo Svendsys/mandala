@@ -9,7 +9,8 @@ use crate::arena::NodeId;
 use crate::document::deps::{inputs_changed, InputKind};
 use crate::document::element::{DocElement, DocKind};
 use crate::document::resolve::{
-    resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end, resolve_ring, resolve_text,
+    resolve_background, resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end, resolve_ring,
+    resolve_text,
     Input,
 };
 use crate::document::tests::test_support::{example, DocumentBuilder, Example};
@@ -137,6 +138,25 @@ pub fn do_document_inputs_changed_by_kind() {
     assert_eq!(
         touched(&mut builder, ids.b_span, span(|s| s.text.push('!'))),
         none
+    );
+    // The map: its name is read by no resolver, its background is its
+    // style.
+    let map = builder.root();
+    assert_eq!(
+        touched(&mut builder, map, |e| {
+            if let DocElement::Map(m) = e {
+                m.name.push('!');
+            }
+        }),
+        none
+    );
+    assert_eq!(
+        touched(&mut builder, map, |e| {
+            if let DocElement::Map(m) = e {
+                m.background = crate::document::values::PlainColor::Rgba(Rgba::opaque(1, 2, 3));
+            }
+        }),
+        vec![InputKind::Style]
     );
     assert_eq!(
         touched(&mut builder, ids.b_span, span(|s| s.style.italic = Some(true))),
@@ -285,10 +305,14 @@ fn resolve_all(tree: &Tree<DocElement>) -> Vec<Resolution> {
     let mut out = Vec::new();
     for id in tree.descendants() {
         let kind = tree.arena()[id].get().kind();
-        if matches!(
-            kind,
-            DocKind::Map | DocKind::Theme | DocKind::Palette | DocKind::Defaults
-        ) {
+        if kind == DocKind::Map {
+            // The map has no text; its one resolution is the background.
+            let mut reads = Vec::new();
+            let background = format!("{:?}", resolve_background(tree, &mut reads));
+            out.push((id, "background", background, reads));
+            continue;
+        }
+        if matches!(kind, DocKind::Theme | DocKind::Palette | DocKind::Defaults) {
             continue;
         }
         let mut reads = Vec::new();
@@ -409,11 +433,19 @@ fn edits() -> Vec<Edit> {
                 }
             })
         }),
+        ("map background", false, |b, _| {
+            let map = b.root();
+            change(b, map, |e| {
+                if let DocElement::Map(m) = e {
+                    m.background = crate::document::values::PlainColor::Rgba(Rgba::opaque(9, 9, 9));
+                }
+            })
+        }),
         ("palette group", false, |b, _| {
             let palette = b.root().children(b.tree().arena()).nth(1).unwrap();
             change(b, palette, |e| {
                 if let DocElement::Palette(p) = e {
-                    p.groups[1].fill = crate::document::values::PlainColor::Rgba(Rgba::opaque(9, 9, 9));
+                    p.groups[1].text = crate::document::values::PlainColor::Rgba(Rgba::opaque(9, 9, 9));
                 }
             })
         }),

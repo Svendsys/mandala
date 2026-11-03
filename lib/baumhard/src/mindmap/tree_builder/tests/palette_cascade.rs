@@ -3,8 +3,9 @@
 //! The palette cascade as the *projection passes* see it.
 //!
 //! `model::theme`'s own tests pin the resolver; these pin the thing
-//! the resolver exists for — that a themed node's fill, frame, text
-//! and outgoing edge stroke actually come out of `map.palettes`, and
+//! the resolver exists for — that a themed node's frame, text and
+//! outgoing edge stroke actually come out of `map.palettes` (a group's
+//! `background` is no longer drawn: a node has no fill, V1-B12), and
 //! that editing a palette moves them. Every assertion here fails if
 //! the cascade is unwired, because every node in the fixtures carries
 //! `style` colors deliberately different from its palette group.
@@ -99,29 +100,6 @@ fn frame_color_of(map: &MindMap, mind_id: &str) -> String {
         .border_style
         .color
         .clone()
-}
-
-// ---- node fill -------------------------------------------------
-
-#[test]
-fn test_node_fill_comes_from_the_palette_group() {
-    let mut map = probe_map();
-    map.nodes.get_mut("a").unwrap().color_schema = Some(schema(0, true, false));
-    let tree = build_mindmap_tree(&map);
-    let area = glyph_area_of(&tree.tree, tree.arena_id_for("a").unwrap());
-    assert_eq!(
-        area.background_color,
-        Some([0xa1, 0, 0, 255]),
-        "the themed node must fill from groups[0].background, not style.background_color"
-    );
-}
-
-#[test]
-fn test_node_fill_falls_back_to_style_without_a_schema() {
-    let map = probe_map();
-    let tree = build_mindmap_tree(&map);
-    let area = glyph_area_of(&tree.tree, tree.arena_id_for("a").unwrap());
-    assert_eq!(area.background_color, Some([0, 0, 0, 255]));
 }
 
 // ---- node frame ------------------------------------------------
@@ -297,10 +275,6 @@ fn test_editing_the_palette_changes_the_projected_output() {
     }
 
     let before = build_mindmap_tree(&map);
-    assert_eq!(
-        glyph_area_of(&before.tree, before.arena_id_for("a").unwrap()).background_color,
-        Some([0xa1, 0, 0, 255])
-    );
     assert_eq!(frame_color_of(&map, "a"), "#a20000");
     // One line, no newline, so the title channel does not apply and
     // the whole section takes `text`.
@@ -316,12 +290,7 @@ fn test_editing_the_palette_changes_the_projected_output() {
     };
 
     let tree = build_mindmap_tree(&map);
-    assert_eq!(
-        glyph_area_of(&tree.tree, tree.arena_id_for("a").unwrap()).background_color,
-        Some([0x0a, 0x0b, 0x0c, 255]),
-        "fill must follow the edited palette"
-    );
-    assert_eq!(frame_color_of(&map, "a"), "#101112", "frame must follow it too");
+    assert_eq!(frame_color_of(&map, "a"), "#101112", "the frame must follow it");
     assert_eq!(
         section_color(&tree, "a", 0),
         vec!["#202122".to_string()],
@@ -341,11 +310,6 @@ fn test_editing_the_palette_changes_the_projected_output() {
 #[test]
 fn test_cascade_fixture_themes_the_schema_root() {
     let map = cascade_map();
-    let tree = build_mindmap_tree(&map);
-    assert_eq!(
-        glyph_area_of(&tree.tree, tree.arena_id_for("0").unwrap()).background_color,
-        Some([0xa1, 0, 0, 255])
-    );
     assert_eq!(frame_color_of(&map, "0"), "#a20000");
 }
 
@@ -355,27 +319,21 @@ fn test_cascade_fixture_themes_the_schema_root() {
 #[test]
 fn test_cascade_fixture_honors_starts_at_root_false() {
     let map = cascade_map();
-    let tree = build_mindmap_tree(&map);
     assert_eq!(
-        glyph_area_of(&tree.tree, tree.arena_id_for("1").unwrap()).background_color,
-        Some([0x11, 0x11, 0x11, 255]),
-        "the transparent schema root keeps style.background_color"
+        frame_color_of(&map, "1"),
+        "#222222",
+        "the transparent schema root keeps style.frame_color"
     );
-    assert_eq!(
-        glyph_area_of(&tree.tree, tree.arena_id_for("1.0").unwrap()).background_color,
-        Some([0xa1, 0, 0, 255]),
-        "its child shifts onto groups[0]"
-    );
+    assert_eq!(frame_color_of(&map, "1.0"), "#a20000", "its child shifts onto groups[0]");
 }
 
 /// Node `0.0.0` sits at `level: 9` against a three-group palette.
 #[test]
 fn test_cascade_fixture_clamps_an_out_of_range_level() {
     let map = cascade_map();
-    let tree = build_mindmap_tree(&map);
     assert_eq!(
-        glyph_area_of(&tree.tree, tree.arena_id_for("0.0.0").unwrap()).background_color,
-        Some([0xc1, 0, 0, 255]),
+        frame_color_of(&map, "0.0.0"),
+        "#c20000",
         "level 9 clamps to the last of three groups"
     );
 }
@@ -383,11 +341,7 @@ fn test_cascade_fixture_clamps_an_out_of_range_level() {
 #[test]
 fn test_cascade_fixture_leaves_the_unthemed_node_on_its_style() {
     let map = cascade_map();
-    let tree = build_mindmap_tree(&map);
-    assert_eq!(
-        glyph_area_of(&tree.tree, tree.arena_id_for("2").unwrap()).background_color,
-        Some([0x11, 0x11, 0x11, 255])
-    );
+    assert_eq!(frame_color_of(&map, "2"), "#222222");
 }
 
 /// The fixture's edges, per source node: `0 -> 0.0` and `1 -> 1.0`

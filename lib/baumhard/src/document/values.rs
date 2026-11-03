@@ -51,13 +51,11 @@ pub struct VarId(pub u16);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PaletteId(pub u16);
 
-/// Which of a palette group's four colors a
+/// Which of a palette group's three colors a
 /// [`ColorRef::Palette`] names.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaletteField {
-    /// The node's background fill.
-    Fill,
     /// The node's frame text.
     Frame,
     /// Section text.
@@ -66,9 +64,10 @@ pub enum PaletteField {
     Title,
 }
 
-/// A color a palette group may hold: a literal or a theme variable.
-/// A palette never refers to another palette, so this has no
-/// `Palette` arm.
+/// A color a palette group or the map's background may hold: a
+/// literal or a theme variable. A palette never refers to another
+/// palette, and the background belongs to no node a palette could be
+/// bound to, so this has no `Palette` arm.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PlainColor {
     /// A literal color.
@@ -136,7 +135,7 @@ impl From<u8> for Percent {
     }
 }
 
-/// A node's outline, which its fill and frame share (D11).
+/// A node's outline, which its frame runs around (D11).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Shape {

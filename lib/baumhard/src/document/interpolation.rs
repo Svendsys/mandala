@@ -5,8 +5,8 @@
 //!
 //! **The fields #237 lists interpolate; everything else snaps.** A
 //! node's position and minimum size, a section's offset and minimum
-//! size, an opacity, a fill fade, a font size of one unit, a literal
-//! color (a palette group's included), a frame's gap and inset, a
+//! size, an opacity, a font size of one unit, a literal color (a
+//! palette group's and the map's background included), a frame's gap and inset, a
 //! frame's or ring's `span` and `spacing` (#291), a path's spacing and
 //! size, its control points when both sides have as many, a label's `t`
 //! and offset, a portal end's `border_t`, offset and size, and the
@@ -65,7 +65,8 @@ fn color_ref(value: &mut Option<ColorRef>, from: &Option<ColorRef>, to: &Option<
     }
 }
 
-/// A palette color: a literal blends; a variable snaps.
+/// A palette color or the background: a literal blends; a variable
+/// snaps.
 fn plain(value: &mut PlainColor, from: &PlainColor, to: &PlainColor, t: f32) {
     if let (PlainColor::Rgba(from), PlainColor::Rgba(to)) = (from, to) {
         *value = PlainColor::Rgba(Rgba::lerp(from, to, t));
@@ -97,8 +98,6 @@ fn flow(value: &mut FlowStyle, from: &FlowStyle, to: &FlowStyle, t: f32) {
 }
 
 fn node_style(value: &mut NodeStyle, from: &NodeStyle, to: &NodeStyle, t: f32) {
-    color_ref(&mut value.fill, &from.fill, &to.fill, t);
-    opt(&mut value.fill_fade, &from.fill_fade, &to.fill_fade, t);
     text(&mut value.text, &from.text, &to.text, t);
 }
 
@@ -175,7 +174,6 @@ fn theme(value: &mut ThemeData, from: &ThemeData, to: &ThemeData, t: f32) {
 }
 
 fn palette_group(value: &mut PaletteGroup, from: &PaletteGroup, to: &PaletteGroup, t: f32) {
-    plain(&mut value.fill, &from.fill, &to.fill, t);
     plain(&mut value.frame, &from.frame, &to.frame, t);
     plain(&mut value.text, &from.text, &to.text, t);
     if let (Some(value), Some(from), Some(to)) = (value.title.as_mut(), &from.title, &to.title) {
@@ -202,7 +200,7 @@ impl Interpolable for DocElement {
         use DocElement as E;
         let mut value = snap.pick(before, after, t).clone();
         match (&mut value, before, after) {
-            (E::Map(_), _, _) => {}
+            (E::Map(v), E::Map(a), E::Map(b)) => plain(&mut v.background, &a.background, &b.background, t),
             (E::Theme(v), E::Theme(a), E::Theme(b)) => theme(v, a, b, t),
             (E::Palette(v), E::Palette(a), E::Palette(b)) => {
                 if a.groups.len() == b.groups.len() && v.groups.len() == a.groups.len() {

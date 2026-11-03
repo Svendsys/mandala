@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! What `GlyphRun` and `Fill` do together, and as elements among the
-//! others: `same_state`, interpolation, predicate fields, the BVH hit
-//! test, journals, the wire, events, and a chain 100,000 levels deep.
-//! The elements alone are in `run_tests` and `fill_tests`.
+//! What `GlyphRun` does as an element among the others: `same_state`,
+//! interpolation, predicate fields, the BVH hit test, journals, the
+//! wire, events, and a chain 100,000 levels deep. The run alone is in
+//! `run_tests`. The glyph layer has no fill element (V1-B12): every
+//! color but the canvas background comes from a glyph, and a mutation
+//! naming a fill is refused as an unknown variant.
 //!
 //! Follows the `do_*()` / `test_*()` split (§T2.2).
 
@@ -22,14 +24,11 @@ use crate::engine::interpolate::{Interpolable, Snap};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::predicate::{Comparator, Predicate};
 use crate::engine::tree::Placement;
-use crate::flow::Rect;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::{GfxElement, GfxElementField, GfxElementType};
-use crate::gfx_structs::fill::{FillData, FillShape};
 use crate::gfx_structs::model::GlyphModel;
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance};
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, RunShape};
-use crate::gfx_structs::tests::fill_tests::{a_fill, a_fill_element};
 use crate::gfx_structs::tests::run_tests::{apply, box_shape, four_glyph_element, four_glyph_shape, run_of};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 #[cfg(not(target_arch = "wasm32"))]
@@ -73,8 +72,8 @@ fn base_run_with_shape(shape: crate::gfx_structs::run::RunShape) -> GfxElement {
 /// The element's channel, rewritten: no mutation reaches it.
 fn set_channel(element: &mut GfxElement, to: usize) {
     match element {
-        GfxElement::GlyphRun { channel, .. } | GfxElement::Fill { channel, .. } => *channel = to,
-        _ => unreachable!("the variations are for runs and fills"),
+        GfxElement::GlyphRun { channel, .. } => *channel = to,
+        _ => unreachable!("the variations are for runs"),
     }
 }
 
@@ -167,65 +166,6 @@ const RUN_VARIATIONS: &[Variation] = &[
     ("unique_id", |e| e.set_unique_id(8)),
 ];
 
-/// One variation per state field of a fill element.
-const FILL_VARIATIONS: &[Variation] = &[
-    ("rect origin", |e| {
-        apply(
-            e,
-            GfxMutation::FillRect(Rect::new(Vec2::new(10.0, 21.0), Vec2::new(100.0, 50.0))),
-        )
-    }),
-    ("rect size", |e| {
-        apply(
-            e,
-            GfxMutation::FillRect(Rect::new(Vec2::new(10.0, 20.0), Vec2::new(100.0, 51.0))),
-        )
-    }),
-    ("shape (radius)", |e| {
-        let mut fill = a_fill();
-        fill.shape = FillShape::Rect { radius: 9.0 };
-        apply(e, GfxMutation::FillSet(Box::new(fill)))
-    }),
-    ("shape (kind)", |e| {
-        let mut fill = a_fill();
-        fill.shape = FillShape::Ellipse;
-        apply(e, GfxMutation::FillSet(Box::new(fill)))
-    }),
-    ("color", |e| {
-        apply(e, GfxMutation::FillColor(Rgba::new(255, 255, 255, 203)))
-    }),
-    ("fade", |e| {
-        let mut fill = a_fill();
-        fill.fade = 7.0;
-        apply(e, GfxMutation::FillSet(Box::new(fill)))
-    }),
-    ("opacity", |e| apply(e, GfxMutation::FillOpacity(0.7))),
-    ("zoom (min)", |e| {
-        let mut fill = a_fill();
-        fill.zoom = Some(ZoomWindow {
-            min: Some(0.6),
-            max: None,
-        });
-        apply(e, GfxMutation::FillSet(Box::new(fill)))
-    }),
-    ("zoom (max)", |e| {
-        let mut fill = a_fill();
-        fill.zoom = Some(ZoomWindow {
-            min: Some(0.5),
-            max: Some(9.0),
-        });
-        apply(e, GfxMutation::FillSet(Box::new(fill)))
-    }),
-    ("zoom (removed)", |e| {
-        let mut fill = a_fill();
-        fill.zoom = None;
-        apply(e, GfxMutation::FillSet(Box::new(fill)))
-    }),
-    ("flags", |e| e.set_flag(Flag::Focused)),
-    ("channel", |e| set_channel(e, 2)),
-    ("unique_id", |e| e.set_unique_id(8)),
-];
-
 /// Each variation changes the base's state, and the base compares the
 /// same as its own clone.
 fn assert_each_variation_changes_state(kind: &str, base: &GfxElement, variations: &[Variation]) {
@@ -245,13 +185,12 @@ fn test_glyph_layer_same_state_compares_every_state_field() {
     do_glyph_layer_same_state_compares_every_state_field();
 }
 
-/// `same_state` against every state field of a run and of a fill, one
-/// at a time. A clone is the same state, since it shares the shaping;
+/// `same_state` against every state field of a run, one at a time. A clone is the same state, since it shares the shaping;
 /// a second shaping that comes out glyph for glyph alike is not
 /// (`RunShape` is compared by `Arc` identity). A `NaN` payload equals
 /// itself, so an element holding one is still the same state as its own
-/// clone. Subscribers are not state. The new variants never compare the
-/// same as another variant or as each other.
+/// clone. Subscribers are not state. A run never compares the same as
+/// another variant.
 pub fn do_glyph_layer_same_state_compares_every_state_field() {
     let run = base_run();
     assert!(run.same_state(&run.clone()));
@@ -261,10 +200,6 @@ pub fn do_glyph_layer_same_state_compares_every_state_field() {
     let other_shaping = base_run_with_shape(four_glyph_shape());
     assert!(run != other_shaping, "a second shaping is not equal");
     assert!(run == run.clone());
-
-    let fill = a_fill_element();
-    assert!(fill.same_state(&fill.clone()));
-    assert_each_variation_changes_state("fill", &fill, FILL_VARIATIONS);
 
     let mut subscribed = run.clone();
     subscribed
@@ -285,9 +220,6 @@ pub fn do_glyph_layer_same_state_compares_every_state_field() {
     apply(&mut nan, GfxMutation::RunOpacity(f32::NAN));
     assert!(nan.same_state(&nan.clone()), "NaN is the same state as NaN");
     assert!(!nan.same_state(&run));
-    let mut nan_fill = fill.clone();
-    apply(&mut nan_fill, GfxMutation::FillOpacity(f32::NAN));
-    assert!(nan_fill.same_state(&nan_fill.clone()));
 
     let area =
         GfxElement::new_area_non_indexed_with_id(GlyphArea::new(1.0, 10.0, Vec2::ZERO, Vec2::ONE), 1, 7);
@@ -295,12 +227,7 @@ pub fn do_glyph_layer_same_state_compares_every_state_field() {
     let void = GfxElement::new_void_with_id(1, 7);
     for (name, other) in [("area", &area), ("model", &model), ("void", &void)] {
         assert!(!run.same_state(other) && !other.same_state(&run), "run vs {name}");
-        assert!(
-            !fill.same_state(other) && !other.same_state(&fill),
-            "fill vs {name}"
-        );
     }
-    assert!(!run.same_state(&fill) && !fill.same_state(&run));
 }
 
 // ── events ────────────────────────────────────────────────────────
@@ -310,10 +237,10 @@ fn test_glyph_layer_elements_deliver_events_to_their_subscribers() {
     do_glyph_layer_elements_deliver_events_to_their_subscribers();
 }
 
-/// An `Event` mutation reaches the subscribers of a run and of a fill,
-/// as it does for an area, and changes no state.
+/// An `Event` mutation reaches the subscribers of a run, as it does
+/// for an area, and changes no state.
 pub fn do_glyph_layer_elements_deliver_events_to_their_subscribers() {
-    for mut element in [base_run(), a_fill_element()] {
+    for mut element in [base_run()] {
         let seen = Rc::new(RefCell::new(0_usize));
         let sink = Rc::clone(&seen);
         element.subscribers_mut().push(Rc::new(RefCell::new(
@@ -545,94 +472,19 @@ pub fn do_run_interpolates_origin_opacity_and_overrides_and_snaps_the_shape() {
 }
 
 #[test]
-fn test_fill_interpolates_geometry_and_color_and_snaps_the_shape() {
-    do_fill_interpolates_geometry_and_color_and_snaps_the_shape();
-}
-
-/// Between two fills, halfway: `rect` (origin and size), `color` (per
-/// channel, rounded), `fade` and `opacity` are their midpoints; `shape`
-/// and `zoom` take the side their snap picks. The endpoints are the
-/// fills themselves.
-pub fn do_fill_interpolates_geometry_and_color_and_snaps_the_shape() {
-    let before = GfxElement::new_fill(
-        FillData {
-            rect: Rect::new(Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0)),
-            shape: FillShape::Rect { radius: 4.0 },
-            color: Rgba::new(0, 100, 200, 0),
-            fade: 0.0,
-            opacity: 0.0,
-            zoom: Some(ZoomWindow {
-                min: Some(1.0),
-                max: None,
-            }),
-        },
-        2,
-        9,
-    );
-    let after = GfxElement::new_fill(
-        FillData {
-            rect: Rect::new(Vec2::new(20.0, 40.0), Vec2::new(200.0, 150.0)),
-            shape: FillShape::Ellipse,
-            color: Rgba::new(100, 0, 50, 254),
-            fade: 10.0,
-            opacity: 1.0,
-            zoom: None,
-        },
-        2,
-        9,
-    );
-    for (snap, shape, zoom) in [
-        (
-            Snap::End,
-            FillShape::Rect { radius: 4.0 },
-            Some(ZoomWindow {
-                min: Some(1.0),
-                max: None,
-            }),
-        ),
-        (Snap::Start, FillShape::Ellipse, None),
-    ] {
-        let mid = GfxElement::interpolate(&before, &after, 0.5, snap);
-        let fill = mid.fill().unwrap();
-        assert_eq!(
-            fill.rect,
-            Rect::new(Vec2::new(10.0, 20.0), Vec2::new(150.0, 100.0)),
-            "{snap:?}: rect"
-        );
-        assert_eq!(
-            fill.color,
-            Rgba::new(50, 50, 125, 127),
-            "{snap:?}: color per channel"
-        );
-        assert!(close(fill.fade, 5.0), "{snap:?}: fade");
-        assert!(close(fill.opacity, 0.5), "{snap:?}: opacity");
-        assert_eq!(fill.shape, shape, "{snap:?}: shape snaps");
-        assert_eq!(fill.zoom, zoom, "{snap:?}: zoom snaps");
-        assert_eq!(
-            mid.spatial_bounds(),
-            Some((Vec2::new(10.0, 20.0), Vec2::new(150.0, 100.0)))
-        );
-    }
-    for snap in [Snap::End, Snap::Start] {
-        assert!(GfxElement::interpolate(&before, &after, 0.0, snap).same_state(&before));
-        assert!(GfxElement::interpolate(&before, &after, 1.0, snap).same_state(&after));
-    }
-}
-
-#[test]
 fn test_interpolation_between_other_variants_still_snaps_whole() {
     do_interpolation_between_other_variants_still_snaps_whole();
 }
 
-/// A run and a fill, a run and an area: different variants share no
-/// interpolating field, so the whole element snaps with the snap, and a
-/// model still interpolates its position (D24).
+/// A run and an area: different variants share no interpolating field,
+/// so the whole element snaps with the snap, and a model still
+/// interpolates its position (D24).
 pub fn do_interpolation_between_other_variants_still_snaps_whole() {
     let run = base_run();
-    let fill = a_fill_element();
+    let area = an_area(Vec2::new(0.0, 0.0), Vec2::new(60.0, 40.0), 1, 7);
     for snap in [Snap::End, Snap::Start] {
-        let at_half = GfxElement::interpolate(&run, &fill, 0.5, snap);
-        let expected = if snap == Snap::End { &run } else { &fill };
+        let at_half = GfxElement::interpolate(&run, &area, 0.5, snap);
+        let expected = if snap == Snap::End { &run } else { &area };
         assert!(at_half.same_state(expected), "{snap:?}");
     }
 
@@ -659,17 +511,17 @@ fn only(field: GfxElementField, comparator: Comparator) -> Predicate<GfxElement>
 }
 
 #[test]
-fn test_predicates_select_runs_and_fills_by_element_type_and_opacity() {
-    do_predicates_select_runs_and_fills_by_element_type_and_opacity();
+fn test_predicates_select_runs_by_element_type_and_opacity() {
+    do_predicates_select_runs_by_element_type_and_opacity();
 }
 
-/// `ElementType` selects by variant: of one area, one model, one void,
-/// one run and one fill, `Equals(false)` picks exactly the named
-/// variant and `Equals(true)` exactly the others; `Exists` is always
-/// present, and an ordering comparator on a tag matches nothing.
-/// `Opacity` compares a run's or a fill's opacity with the ordering
-/// comparators and matches no other element.
-pub fn do_predicates_select_runs_and_fills_by_element_type_and_opacity() {
+/// `ElementType` selects by variant: of one area, one model, one void
+/// and one run, `Equals(false)` picks exactly the named variant and
+/// `Equals(true)` exactly the others; `Exists` is always present, and
+/// an ordering comparator on a tag matches nothing. `Opacity` compares
+/// a run's opacity with the ordering comparators and matches no other
+/// element.
+pub fn do_predicates_select_runs_by_element_type_and_opacity() {
     let elements = [
         (
             "area",
@@ -681,12 +533,10 @@ pub fn do_predicates_select_runs_and_fills_by_element_type_and_opacity() {
         ),
         ("void", GfxElement::new_void(0)),
         ("run", base_run()),
-        ("fill", a_fill_element()),
     ];
-    for wanted in ["run", "fill", "area", "model", "void"] {
+    for wanted in ["run", "area", "model", "void"] {
         let tag = match wanted {
             "run" => GfxElementType::GlyphRun,
-            "fill" => GfxElementType::Fill,
             "area" => GfxElementType::GlyphArea,
             "model" => GfxElementType::GlyphModel,
             _ => GfxElementType::Void,
@@ -704,7 +554,7 @@ pub fn do_predicates_select_runs_and_fills_by_element_type_and_opacity() {
             .filter(|(_, e)| differs.test(e))
             .map(|(n, _)| *n)
             .collect();
-        assert_eq!(others.len(), 4, "Equals(true) on {wanted} matches the other four");
+        assert_eq!(others.len(), 3, "Equals(true) on {wanted} matches the other three");
         assert!(!others.contains(&wanted));
     }
     let tag = GfxElementType::GlyphRun;
@@ -715,7 +565,7 @@ pub fn do_predicates_select_runs_and_fills_by_element_type_and_opacity() {
         "tags are unordered"
     );
 
-    // Opacity: the run holds 0.5, the fill 0.75.
+    // Opacity: the run holds 0.5.
     use ordered_float::OrderedFloat as Of;
     let opacity = |at: f32, comparator| only(GfxElementField::Opacity(Of(at)), comparator);
     assert!(opacity(0.5, Comparator::Equals(false)).test(&elements[3].1));
@@ -729,8 +579,8 @@ pub fn do_predicates_select_runs_and_fills_by_element_type_and_opacity() {
         "0.5 is not > 0.5"
     );
     assert!(
-        opacity(0.6, Comparator::GreaterThan(false)).test(&elements[4].1),
-        "0.75 > 0.6"
+        opacity(0.4, Comparator::GreaterThan(false)).test(&elements[3].1),
+        "0.5 > 0.4"
     );
     for (name, element) in &elements[..3] {
         for comparator in [
@@ -748,21 +598,20 @@ pub fn do_predicates_select_runs_and_fills_by_element_type_and_opacity() {
 
 // ── hit-testing ───────────────────────────────────────────────────
 
-/// The tree the hit tests use: a fill `(0, 0)`–`(60, 40)` on channel 0
-/// with an area-free void root, and the four-glyph run (bounds `(100,
-/// 50)`–`(130, 90)`) on channel 1.
+/// An area of `size` at `origin`: a box that is no run, for the hit
+/// tests to tell a run's box from.
+fn an_area(origin: Vec2, size: Vec2, channel: usize, id: usize) -> GfxElement {
+    GfxElement::new_area_non_indexed_with_id(GlyphArea::new(1.0, 10.0, origin, size), channel, id)
+}
+
+/// The tree the hit tests use: an area `(0, 0)`–`(60, 40)` on channel 0
+/// under a void root, and the four-glyph run (bounds `(100, 50)`–`(130,
+/// 90)`) on channel 1.
 fn hit_tree() -> (GfxTree, NodeId, NodeId) {
     let mut tree = GfxTree::new_non_indexed();
     let root = tree.root();
-    let fill = GfxElement::new_fill(
-        FillData {
-            rect: Rect::new(Vec2::new(0.0, 0.0), Vec2::new(60.0, 40.0)),
-            ..a_fill()
-        },
-        0,
-        1,
-    );
-    let fill = tree.insert_child(root, fill, Placement::Last).unwrap();
+    let area = an_area(Vec2::new(0.0, 0.0), Vec2::new(60.0, 40.0), 0, 1);
+    let area = tree.insert_child(root, area, Placement::Last).unwrap();
     let run = tree
         .insert_child(
             root,
@@ -770,36 +619,36 @@ fn hit_tree() -> (GfxTree, NodeId, NodeId) {
             Placement::Last,
         )
         .unwrap();
-    (tree, fill, run)
+    (tree, area, run)
 }
 
 #[test]
-fn test_descendant_at_finds_runs_and_fills_by_their_boxes() {
-    do_descendant_at_finds_runs_and_fills_by_their_boxes();
+fn test_descendant_at_finds_runs_by_their_boxes() {
+    do_descendant_at_finds_runs_by_their_boxes();
 }
 
-/// The BVH hit test finds a `GlyphRun` by its bounds and a `Fill` by
-/// its rectangle — at their edges (closed boxes), not outside them — and
-/// the smallest box wins where they overlap. A run's bounds are the
+/// The BVH hit test finds a `GlyphRun` by its bounds, beside an area
+/// found by its own — at their edges (closed boxes), not outside them —
+/// and the smallest box wins where they overlap. A run's bounds are the
 /// union of its glyph boxes, so a point in the union that no glyph box
 /// covers still hits. After a mutation moves the run, the hit follows
 /// it. Negative: a point outside both finds nothing, and neither does a
 /// point where the run was.
-pub fn do_descendant_at_finds_runs_and_fills_by_their_boxes() {
-    let (mut tree, fill, run) = hit_tree();
+pub fn do_descendant_at_finds_runs_by_their_boxes() {
+    let (mut tree, area, run) = hit_tree();
     assert_eq!(
         tree.descendant_at(Vec2::new(30.0, 20.0)),
-        Some(fill),
-        "inside the fill"
+        Some(area),
+        "inside the area"
     );
     assert_eq!(
         tree.descendant_at(Vec2::new(0.0, 0.0)),
-        Some(fill),
-        "the fill's corner"
+        Some(area),
+        "the area's corner"
     );
     assert_eq!(
         tree.descendant_at(Vec2::new(60.0, 40.0)),
-        Some(fill),
+        Some(area),
         "the far corner is inside"
     );
     assert_eq!(
@@ -828,26 +677,19 @@ pub fn do_descendant_at_finds_runs_and_fills_by_their_boxes() {
         assert_eq!(tree.descendant_at(outside), None, "{outside} is in neither box");
     }
 
-    // The smallest box wins: a fill covering the run's box loses to it.
-    let big = GfxElement::new_fill(
-        FillData {
-            rect: Rect::new(Vec2::new(90.0, 40.0), Vec2::new(100.0, 100.0)),
-            ..a_fill()
-        },
-        2,
-        3,
-    );
+    // The smallest box wins: an area covering the run's box loses to it.
+    let big = an_area(Vec2::new(90.0, 40.0), Vec2::new(100.0, 100.0), 2, 3);
     let root = tree.root();
     let big = tree.insert_child(root, big, Placement::Last).unwrap();
     assert_eq!(
         tree.descendant_at(Vec2::new(110.0, 60.0)),
         Some(run),
-        "the run is smaller than the fill under it"
+        "the run is smaller than the area under it"
     );
     assert_eq!(
         tree.descendant_at(Vec2::new(170.0, 120.0)),
         Some(big),
-        "outside the run, the big fill"
+        "outside the run, the big area"
     );
 
     // Mutating the run moves what is hit: the cache is dropped with it.
@@ -868,8 +710,8 @@ pub fn do_descendant_at_finds_runs_and_fills_by_their_boxes() {
     );
     assert_eq!(
         tree.descendant_at(Vec2::new(50.0, 30.0)),
-        Some(fill),
-        "and no longer reaches the fill's right half"
+        Some(area),
+        "and no longer reaches the area's right half"
     );
     assert_eq!(
         tree.descendant_at(Vec2::new(110.0, 60.0)),
@@ -879,18 +721,18 @@ pub fn do_descendant_at_finds_runs_and_fills_by_their_boxes() {
 }
 
 #[test]
-fn test_descendants_aabb_covers_runs_and_fills() {
-    do_descendants_aabb_covers_runs_and_fills();
+fn test_descendants_aabb_covers_runs() {
+    do_descendants_aabb_covers_runs();
 }
 
 /// The tree's overall box is the union of every spatial descendant, a
-/// run and a fill included — not only the areas.
-pub fn do_descendants_aabb_covers_runs_and_fills() {
+/// run included — not only the areas.
+pub fn do_descendants_aabb_covers_runs() {
     let (tree, _, _) = hit_tree();
     assert_eq!(
         tree.descendants_aabb(),
         Some((Vec2::new(0.0, 0.0), Vec2::new(130.0, 90.0))),
-        "the fill's corner to the run's"
+        "the area's corner to the run's"
     );
     let mut empty = GfxTree::new_non_indexed();
     let root = empty.root();
@@ -921,18 +763,17 @@ fn same_snapshot(a: &[(NodeId, GfxElement)], b: &[(NodeId, GfxElement)]) -> bool
 }
 
 #[test]
-fn test_journal_round_trips_a_tree_of_runs_and_fills() {
-    do_journal_round_trips_a_tree_of_runs_and_fills();
+fn test_journal_round_trips_a_tree_of_runs() {
+    do_journal_round_trips_a_tree_of_runs();
 }
 
 /// A journaled walk changes a run (origin, opacity, a range of
-/// overrides, in one macro), replaces another run's shaping with
-/// `RunSet`, recolors a fill and replaces another fill — and leaves a
-/// sibling area alone. The journal names exactly the four changed
-/// elements, `revert` restores the snapshot taken before (the very
+/// overrides, in one macro) and replaces another run's shaping with
+/// `RunSet` — and leaves a sibling area alone. The journal names
+/// exactly the two changed elements, `revert` restores the snapshot taken before (the very
 /// `Arc`s included: `same_state` compares shaping by identity), and
 /// `replay` the one taken after.
-pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
+pub fn do_journal_round_trips_a_tree_of_runs() {
     let mut tree = GfxTree::new_non_indexed();
     let root = tree.root();
     let mut ids = Vec::new();
@@ -949,21 +790,9 @@ pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
                 2,
             ),
         ),
-        (2, GfxElement::new_fill(a_fill(), 2, 6)),
         (
-            3,
-            GfxElement::new_fill(
-                FillData {
-                    opacity: 1.0,
-                    ..a_fill()
-                },
-                3,
-                3,
-            ),
-        ),
-        (
-            4,
-            GfxElement::new_area_non_indexed(GlyphArea::new(1.0, 10.0, Vec2::ZERO, Vec2::ONE), 4),
+            2,
+            GfxElement::new_area_non_indexed(GlyphArea::new(1.0, 10.0, Vec2::ZERO, Vec2::ONE), 2),
         ),
     ] {
         assert_eq!(element.channel(), channel);
@@ -979,10 +808,6 @@ pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
         None,
     )
     .unwrap();
-    let replacement_fill = FillData {
-        shape: FillShape::Ellipse,
-        ..a_fill()
-    };
     let mut mutators = GfxMutatorTree::new();
     let mroot = mutators.root();
     for mutator in [
@@ -998,8 +823,6 @@ pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
             0,
         ),
         GfxMutator::new(GfxMutation::RunSet(Box::new(replacement_run)), 1),
-        GfxMutator::new(GfxMutation::FillColor(Rgba::new(10, 20, 30, 255)), 2),
-        GfxMutator::new(GfxMutation::FillSet(Box::new(replacement_fill)), 3),
     ] {
         mutators.insert_child(mroot, mutator, Placement::Last).unwrap();
     }
@@ -1012,15 +835,15 @@ pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
     let touched: Vec<NodeId> = journal.touched().map(|(id, _)| id).collect();
     assert_eq!(
         touched,
-        ids[..4].to_vec(),
-        "the four changed elements, not the area"
+        ids[..2].to_vec(),
+        "the two changed elements, not the area"
     );
     assert!(!same_snapshot(&before, &after), "the walk changed the tree");
 
     journal.revert(&mut tree).unwrap();
     assert!(
         same_snapshot(&snapshot(&tree), &before),
-        "revert restores runs and fills"
+        "revert restores the runs"
     );
     tree.check_sorted().unwrap();
     journal.replay(&mut tree).unwrap();
@@ -1032,8 +855,8 @@ pub fn do_journal_round_trips_a_tree_of_runs_and_fills() {
 
 // ── the wire ──────────────────────────────────────────────────────
 
-/// The authored run and fill mutations, with the exact JSON each
-/// serializes to and the doc publishes.
+/// The authored run mutations, with the exact JSON each serializes to
+/// and the doc publishes.
 pub fn authored_glyph_layer_mutations() -> Vec<(GfxMutation, &'static str)> {
     vec![
         (GfxMutation::RunOpacity(0.5), r#"{"RunOpacity":0.5}"#),
@@ -1073,15 +896,6 @@ pub fn authored_glyph_layer_mutations() -> Vec<(GfxMutation, &'static str)> {
             GfxMutation::RunOverrides(RunOverrideOp::Clear),
             r#"{"RunOverrides":"Clear"}"#,
         ),
-        (
-            GfxMutation::FillColor(Rgba::new(30, 60, 90, 255)),
-            r#"{"FillColor":[30,60,90,255]}"#,
-        ),
-        (GfxMutation::FillOpacity(0.25), r#"{"FillOpacity":0.25}"#),
-        (
-            GfxMutation::FillRect(Rect::new(Vec2::new(0.0, 0.0), Vec2::new(120.0, 60.0))),
-            r#"{"FillRect":{"origin":[0.0,0.0],"size":[120.0,60.0]}}"#,
-        ),
     ]
 }
 
@@ -1090,11 +904,14 @@ fn test_authored_glyph_layer_mutations_have_the_wire_shape() {
     do_authored_glyph_layer_mutations_have_the_wire_shape();
 }
 
-/// The authored run and fill mutations serialize to the spellings
+/// The authored run mutations serialize to the spellings
 /// `format/mutations.md` publishes and parse back to themselves.
-/// `RunSet` and `FillSet`, which hold shaped text, are
-/// `#[serde(skip)]`: serializing one is an error and no file can spell
-/// one.
+/// `RunSet`, which holds shaped text, is `#[serde(skip)]`: serializing
+/// one is an error and no file can spell one. The glyph layer has no
+/// fill (V1-B12), so a mutation that names one — the three a fill had,
+/// and the projection's replacement — is refused as an unknown variant,
+/// and a mutator tree that holds one does not parse. The control is a
+/// run mutation in the same tree, which does.
 pub fn do_authored_glyph_layer_mutations_have_the_wire_shape() {
     let authored = authored_glyph_layer_mutations();
     for (mutation, wire) in &authored {
@@ -1108,19 +925,40 @@ pub fn do_authored_glyph_layer_mutations_have_the_wire_shape() {
         serde_json::to_string(&run_set).is_err(),
         "RunSet has no wire form"
     );
-    let fill_set = GfxMutation::FillSet(Box::new(a_fill()));
-    assert!(
-        serde_json::to_string(&fill_set).is_err(),
-        "FillSet has no wire form"
-    );
     assert!(
         serde_json::from_str::<GfxMutation>(r#"{"RunSet":{}}"#).is_err(),
         "no file spells RunSet"
     );
-    assert!(
-        serde_json::from_str::<GfxMutation>(r#"{"FillSet":{}}"#).is_err(),
-        "no file spells FillSet"
-    );
+    for fill in [
+        r#"{"FillColor":[30,60,90,255]}"#,
+        r#"{"FillOpacity":0.25}"#,
+        r#"{"FillRect":{"origin":[0.0,0.0],"size":[120.0,60.0]}}"#,
+        r#"{"FillSet":{}}"#,
+    ] {
+        let refused = serde_json::from_str::<GfxMutation>(fill)
+            .expect_err("a fill mutation has no spelling")
+            .to_string();
+        assert!(
+            refused.contains("unknown variant"),
+            "{fill} is refused as an unknown variant, not for its value: {refused}"
+        );
+        // A mutator tree naming one is refused whole; the same tree with
+        // a run mutation in its place reads (the negative control).
+        let tree = |mutation: &str| format!(r#"{{"mutations":[{{"RunOpacity":0.5}},{mutation}]}}"#);
+        #[derive(serde::Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct Authored {
+            mutations: Vec<GfxMutation>,
+        }
+        assert!(
+            serde_json::from_str::<Authored>(&tree(fill)).is_err(),
+            "a list naming {fill} is refused"
+        );
+        assert!(
+            serde_json::from_str::<Authored>(&tree(r#"{"RunOpacity":0.25}"#)).is_ok(),
+            "the same list with a run mutation in its place reads"
+        );
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1138,7 +976,7 @@ pub fn do_format_doc_publishes_the_authored_glyph_layer_mutations() {
     // The doc's example, read from the doc.
     let doc = documented_json_block(
         &format_doc_path("mutations.md"),
-        "### Glyph run and fill mutations",
+        "### Glyph run mutations",
         0,
     );
     #[derive(serde::Deserialize)]
@@ -1156,22 +994,18 @@ pub fn do_format_doc_publishes_the_authored_glyph_layer_mutations() {
     // The predicate spellings, the same way.
     let predicates = documented_json_block(
         &format_doc_path("mutations.md"),
-        "### Glyph run and fill mutations",
+        "### Glyph run mutations",
         1,
     );
     let fields: Vec<GfxElementField> = serde_json::from_str(&predicates).unwrap_or_else(|e| {
         panic!("the predicate example in format/mutations.md must parse: {e}\n{predicates}")
     });
-    assert_eq!(fields.len(), 3);
+    assert_eq!(fields.len(), 2);
     assert!(matches!(
         fields[0],
         GfxElementField::ElementType(GfxElementType::GlyphRun)
     ));
-    assert!(matches!(
-        fields[1],
-        GfxElementField::ElementType(GfxElementType::Fill)
-    ));
-    assert!(matches!(&fields[2], GfxElementField::Opacity(o) if o.0 == 0.5));
+    assert!(matches!(&fields[1], GfxElementField::Opacity(o) if o.0 == 0.5));
 }
 
 #[test]
@@ -1186,7 +1020,7 @@ fn test_hostile_authored_values_degrade_without_panicking() {
 /// of it panics or allocates in proportion to the range: the run keeps
 /// exactly as many overrides as it has placed glyphs, overrides never
 /// move its bounds, and a run whose origin is not finite has no box, so
-/// a hit test over a tree holding it still answers for the fill beside
+/// a hit test over a tree holding it still answers for the area beside
 /// it.
 pub fn do_hostile_authored_values_degrade_without_panicking() {
     let parse = |json: &str| -> GfxMutation { serde_json::from_str(json).unwrap() };
@@ -1231,28 +1065,11 @@ pub fn do_hostile_authored_values_degrade_without_panicking() {
 
     let mut tree = GfxTree::new_non_indexed();
     let root = tree.root();
-    let fill = GfxElement::new_fill(
-        FillData {
-            rect: Rect::new(Vec2::ZERO, Vec2::new(10.0, 10.0)),
-            ..a_fill()
-        },
-        0,
-        1,
-    );
-    let fill = tree.insert_child(root, fill, Placement::Last).unwrap();
+    let area = an_area(Vec2::ZERO, Vec2::new(10.0, 10.0), 0, 1);
+    let area = tree.insert_child(root, area, Placement::Last).unwrap();
     tree.insert_child(root, element, Placement::Last).unwrap();
-    assert_eq!(tree.descendant_at(Vec2::new(5.0, 5.0)), Some(fill));
+    assert_eq!(tree.descendant_at(Vec2::new(5.0, 5.0)), Some(area));
     assert_eq!(tree.descendant_at(Vec2::new(5000.0, 5000.0)), None);
-
-    // The same for a fill whose authored rectangle is not finite.
-    for wire in [
-        r#"{"FillRect":{"origin":[1e39,0.0],"size":[10.0,10.0]}}"#,
-        r#"{"FillRect":{"origin":[0.0,0.0],"size":[1e39,10.0]}}"#,
-    ] {
-        let mut hostile_fill = a_fill_element();
-        apply(&mut hostile_fill, parse(wire));
-        assert_eq!(hostile_fill.spatial_bounds(), None, "{wire}");
-    }
 }
 
 // ── depth ─────────────────────────────────────────────────────────
@@ -1261,18 +1078,18 @@ pub fn do_hostile_authored_values_degrade_without_panicking() {
 const DEEP: usize = 100_000;
 
 #[test]
-fn test_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain() {
-    do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain();
+fn test_hit_test_reaches_a_run_in_a_deep_chain() {
+    do_hit_test_reaches_a_run_in_a_deep_chain();
 }
 
-/// A glyph tree `DEEP` levels deep, a fill and then a run under its
+/// A glyph tree `DEEP` levels deep, an area and then a run under its
 /// bottom void — a map is untrusted and its depth bounded by memory
 /// alone (D30) — is hit-tested, boxed and dropped on a default thread:
-/// the passes that learned to read a run's and a fill's box
+/// the passes that learned to read a run's box
 /// (`ensure_subtree_aabbs`, `descendant_at`, `descendants_aabb`) iterate,
 /// and spend nothing per level beyond one entry. The same body runs
 /// under wasm32 in debug in the `wasm_font_lock` probe (§20 rule 11).
-pub fn do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain() {
+pub fn do_hit_test_reaches_a_run_in_a_deep_chain() {
     let mut tree = GfxTree::new_non_indexed();
     let mut at = tree.root();
     for _ in 0..DEEP {
@@ -1280,21 +1097,14 @@ pub fn do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain() {
             .insert_child(at, GfxElement::new_void(0), Placement::Last)
             .unwrap();
     }
-    let fill = GfxElement::new_fill(
-        FillData {
-            rect: Rect::new(Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0)),
-            ..a_fill()
-        },
-        0,
-        1,
-    );
-    let fill = tree.insert_child(at, fill, Placement::Last).unwrap();
+    let area = an_area(Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0), 0, 1);
+    let area = tree.insert_child(at, area, Placement::Last).unwrap();
     let run = GfxElement::new_run(
         run_of(box_shape(Vec2::new(20.0, 20.0), 1), Vec2::new(10.0, 10.0)),
         0,
         2,
     );
-    let run = tree.insert_child(fill, run, Placement::Last).unwrap();
+    let run = tree.insert_child(area, run, Placement::Last).unwrap();
 
     assert_eq!(
         tree.descendant_at(Vec2::new(15.0, 15.0)),
@@ -1303,8 +1113,8 @@ pub fn do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain() {
     );
     assert_eq!(
         tree.descendant_at(Vec2::new(80.0, 80.0)),
-        Some(fill),
-        "the fill, beside it"
+        Some(area),
+        "the area, beside it"
     );
     assert_eq!(tree.descendant_at(Vec2::new(500.0, 500.0)), None);
     assert_eq!(

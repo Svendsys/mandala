@@ -301,7 +301,7 @@ impl Tree<GfxElement> {
 
             // This node's own AABB: the box it answers
             // `spatial_bounds` with, which is positive on both axes by
-            // definition — an area's, a run's or a fill's.
+            // definition — an area's or a run's.
             let own_aabb = arena.get(node_id).and_then(|n| {
                 let (pos, size) = n.get().spatial_bounds()?;
                 Some((pos, pos + size))
@@ -445,8 +445,8 @@ fn bvh_find(
             continue; // no subtree AABB → no renderable content
         }
 
-        // 2. Check this node's own box: a `GlyphArea`'s, a `GlyphRun`'s
-        //    or a `Fill`'s, whichever it has.
+        // 2. Check this node's own box: a `GlyphArea`'s or a
+        //    `GlyphRun`'s, whichever it has.
         if let Some((pos, bounds)) = element.spatial_bounds() {
             let min = Vec2::new(pos.x - slack, pos.y - slack);
             let max = Vec2::new(pos.x + bounds.x + slack, pos.y + bounds.y + slack);
@@ -486,7 +486,7 @@ fn bvh_find(
                     // stays inside the unchanged AABB.
                     //
                     // Only a `GlyphArea` carries a shape to refine
-                    // with. A run or a fill is hit by its box.
+                    // with. A run is hit by its box.
                     let local = point - min;
                     let inflated = max - min;
                     element

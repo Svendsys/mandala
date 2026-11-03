@@ -181,7 +181,7 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
 #[test]
 fn test_the_structured_glyph_mutation_seeds_hold_the_values_they_are_named_for() {
     let seeds = files(&repo_path("fuzz/seeds/glyph_mutation_structured"));
-    assert!(seeds.len() >= 10, "precondition: the seeds are read");
+    assert!(seeds.len() >= 9, "precondition: the seeds are read");
     for (name, bytes) in &seeds {
         let (_, _, assigned) = glyph_layer_fuzz::generate(&mut Choices::new(bytes));
         let scale = |pred: fn(f32) -> bool| {
@@ -202,9 +202,6 @@ fn test_the_structured_glyph_mutation_seeds_hold_the_values_they_are_named_for()
                 matches!(m, GfxMutation::RunOverrides(RunOverrideOp::Offset { value, .. }) if !value.is_finite() && !value.is_nan())
             }),
             "origin_nan" => assigned.iter().any(|(_, m)| matches!(m, GfxMutation::RunOrigin(v) if v.is_nan())),
-            "fill_rect_infinite" => assigned
-                .iter()
-                .any(|(_, m)| matches!(m, GfxMutation::FillRect(r) if !(r.origin + r.size).is_finite())),
             "range_to_usize_max" => assigned.iter().any(|(_, m)| {
                 matches!(m, GfxMutation::RunOverrides(RunOverrideOp::Scale { range, .. } | RunOverrideOp::Offset { range, .. })
                     if range.start == 0 && range.end == usize::MAX)

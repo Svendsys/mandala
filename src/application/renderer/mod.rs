@@ -413,7 +413,7 @@ impl FrameIntervalRing {
 }
 
 /// Number of `f32`-sized slots per vertex. The CPU accumulates
-/// packed floats into `main_rect_vertices` / `console_rect_vertices`,
+/// packed floats into `console_rect_vertices`,
 /// and the draw divides their length by this to get a vertex count,
 /// so it is four bytes times this that has to equal
 /// [`RECT_VERTEX_SIZE`].
@@ -427,12 +427,10 @@ impl FrameIntervalRing {
 /// zero, so every ellipse would draw as a rectangle.
 pub(super) const RECT_VERTEX_FLOATS: usize = 9;
 
-/// Starting capacity (in bytes) for the rect vertex buffer. Big
-/// enough for a modest map with several hundred node backgrounds
-/// without an immediate grow; doubling-on-overflow handles anything
-/// larger. 8192 bytes ÷ 36 bytes/vertex ≈ 227 vertices ≈ 37 rects.
-/// Deliberately small since most maps will have a handful of colored
-/// nodes and the grow path is exercised rarely.
+/// Starting capacity (in bytes) for the rect vertex buffer. 8192
+/// bytes ÷ 36 bytes/vertex ≈ 227 vertices ≈ 37 rects, far past the
+/// one or two screen-space backdrops it holds (a map draws no rect:
+/// V1-B12); doubling-on-overflow handles anything larger.
 pub(super) const RECT_VBUF_INITIAL_CAPACITY: u64 = 8192;
 
 pub struct Renderer {
@@ -641,34 +639,21 @@ pub struct Renderer {
     /// this flag so the event loop can explicitly clear the cache and
     /// re-run the connection rebuild.
     connection_geometry_dirty: bool,
-    /// Filled-rectangle rendering pipeline. Used to draw node
-    /// backgrounds (from `GlyphArea.background_color`), the command
-    /// palette backdrop, and any other solid-color fill that needs
-    /// to sit in the render pipeline alongside text. See the
-    /// `RECT_SHADER_WGSL` const above for the shader, and
-    /// `push_rect_ndc` for the CPU-side
-    /// vertex layout.
+    /// Filled-rectangle rendering pipeline. It draws UI chrome only:
+    /// the screen-space backdrops behind the console and the color
+    /// picker. A map draws none — its one background is the frame's
+    /// clear color ([`Self::set_background`]) and every other color
+    /// comes from a glyph (V1-B12) — so no canvas-space batch exists.
+    /// See the `RECT_SHADER_WGSL` const above for the shader, and
+    /// `push_rect_ndc` for the CPU-side vertex layout.
     rect_pipeline: RenderPipeline,
     /// Persistent vertex buffer for the rect pipeline. Grows
     /// (doubling) on overflow, never shrinks. Re-uploaded each
-    /// frame with the concatenation of `main_rect_vertices` and
-    /// `console_rect_vertices`; the two batches draw separately
-    /// using offset + count so a single buffer keeps the code
-    /// simple.
+    /// frame with `console_rect_vertices`.
     rect_vertex_buffer: wgpu::Buffer,
     /// Current allocated capacity of `rect_vertex_buffer`, in
     /// bytes.
     rect_vertex_buffer_capacity: u64,
-    /// Canvas-space node background rects (pos, size, rgba u8)
-    /// collected from `GlyphArea.background_color` during
-    /// `rebuild_buffers_from_tree`. Camera-transformed to NDC in
-    /// `render` each frame so a camera pan/zoom is a pure CPU
-    /// rebuild — no tree rewalk required.
-    node_background_rects: Vec<NodeBackgroundRect>,
-    /// Packed vertex floats for the "main" (node background) rect
-    /// batch, rebuilt every frame from `node_background_rects` +
-    /// current camera. 6 floats per vertex, 6 vertices per rect.
-    main_rect_vertices: Vec<f32>,
     /// Packed vertex floats for the "overlay" (palette backdrop)
     /// rect batch, rebuilt whenever the palette opens/closes or
     /// the viewport resizes. Stays empty when the palette is shut.
@@ -679,10 +664,15 @@ pub struct Renderer {
     /// current viewport size without re-running the layout.
     /// `None` whenever the palette is closed.
     console_backdrop: Option<(f32, f32, f32, f32)>, // (left, top, width, height)
-    /// Clear color for the render pass, driven by the map's
-    /// `Canvas.background_color`. Starts as opaque black so the
-    /// app looks sensible before a map loads; the event loop
-    /// calls `set_clear_color_from_hex` right after load.
+    /// How many rects the last prepared frame drew: the screen-space
+    /// backdrops, and nothing of the map's (V1-B12). Read by the
+    /// GPU-backed tests ([`Self::rect_quads_in_last_frame`]).
+    rect_quads: u32,
+    /// Clear color for the render pass: the map's resolved
+    /// background, the one color drawn behind the whole canvas
+    /// ([`Self::set_background`]). Starts as opaque black — the
+    /// format's default background — so the app looks right before a
+    /// map loads; the event loop sets it right after load.
     clear_color: Color,
 }
 
@@ -742,47 +732,39 @@ impl Sink {
 #[cfg(not(target_arch = "wasm32"))]
 const HEADLESS_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
 
-/// Canvas-space record of a background fill drawn behind a node's
-/// text. The CPU always uploads an axis-aligned quad covering
-/// `(position, size)`; the fragment shader then discards pixels
-/// outside the shape described by `shape_id` (rectangle keeps the
-/// whole quad, ellipse clips to the inscribed conic, future shapes
-/// add one more case). Captured from `GlyphArea.background_color`
-/// during the tree walk in `rebuild_buffers_from_tree`;
-/// camera-transformed to NDC in `render` each frame.
-#[derive(Clone, Debug)]
-pub(super) struct NodeBackgroundRect {
-    pub position: Vec2,
-    pub size: Vec2,
-    pub color: [u8; 4],
-    /// Stable shape id from [`baumhard::gfx_structs::shape::NodeShape::shader_id`].
-    /// Flat-interpolated to the fragment shader's `switch`.
-    pub shape_id: u32,
-    /// Per-`GlyphArea` zoom window. The main render loop skips this
-    /// rect whenever `camera.zoom` falls outside the window. Default
-    /// (both bounds `None`) renders at every zoom — existing nodes
-    /// pay nothing.
-    pub zoom_visibility: baumhard::gfx_structs::zoom_visibility::ZoomVisibility,
-    /// `GfxElement::unique_id` of the source element. Lets keyed
-    /// reshape paths ([`Renderer::reshape_buffer_for`]) drop the
-    /// stale rect for a single element before re-collecting it
-    /// — otherwise repeated keystrokes leak duplicate rects per
-    /// edit. Always populated by the tree walker; tests synthesize
-    /// rects with any sentinel value (matching by `unique_id`
-    /// during reshape is the only consumer today).
-    pub unique_id: usize,
-}
-
-impl NodeBackgroundRect {
-    /// Should this rect render at the current camera state? Asks
-    /// the one cull predicate, `Camera2D::visibility`, which the
-    /// IPC scene introspection reports verbatim. Pure, no
-    /// allocation; the render loop calls this once per rect per
-    /// frame.
-    pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
-        camera
-            .visibility(self.position, self.size, self.zoom_visibility)
-            .is_visible()
+/// The render-pass clear value that leaves `background` in a target of
+/// `format`, opaque.
+///
+/// A clear value is linear: on an sRGB target the GPU encodes it to
+/// sRGB as it writes, as it does every color a shader returns. So on
+/// an sRGB target each channel is the sRGB byte decoded to linear
+/// light — the same decode the glyph passes apply to a glyph's color
+/// — and the frame holds the authored byte. On a linear (`Unorm`)
+/// target, which the browser's WebGL2 surface may be, the byte goes in
+/// as it is, which that target stores unchanged. Either way the frame
+/// shows `#rrggbb` as written, on native and in the browser alike
+/// (CODE_CONVENTIONS §4). The alpha is always 1.
+///
+/// Pure, so the renderer-free tier pins it (§T8). O(1).
+pub(super) fn clear_color_for(background: [u8; 4], format: TextureFormat) -> Color {
+    let [r, g, b, _] = background;
+    let channel = |byte: u8| -> f64 {
+        let value = f64::from(byte) / 255.0;
+        if format.is_srgb() {
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        } else {
+            value
+        }
+    };
+    Color {
+        r: channel(r),
+        g: channel(g),
+        b: channel(b),
+        a: 1.0,
     }
 }
 
@@ -1018,10 +1000,9 @@ impl Renderer {
             rect_pipeline,
             rect_vertex_buffer,
             rect_vertex_buffer_capacity: RECT_VBUF_INITIAL_CAPACITY,
-            node_background_rects: Vec::new(),
-            main_rect_vertices: Vec::new(),
             console_rect_vertices: Vec::new(),
             console_backdrop: None,
+            rect_quads: 0,
             clear_color: Color {
                 r: 0.0,
                 g: 0.0,
@@ -1106,19 +1087,33 @@ impl Renderer {
         self.surface_size.1
     }
 
-    /// Set the render-pass clear color from a hex string like
-    /// `#141820`. Called by the event loop after a map loads so the
-    /// canvas matches `Canvas.background_color`. Bad hex degrades
-    /// to opaque black via `hex_to_rgba_safe`, so a typo in a
-    /// theme file can't leave the app with a glitched background.
-    pub fn set_clear_color_from_hex(&mut self, hex: &str) {
-        let rgba = baumhard::util::color::hex_to_rgba_safe(hex, [0.0, 0.0, 0.0, 1.0]);
-        self.clear_color = Color {
-            r: rgba[0] as f64,
-            g: rgba[1] as f64,
-            b: rgba[2] as f64,
-            a: rgba[3] as f64,
-        };
+    /// Clear every frame to `background`, the map's one background
+    /// color (V1-B12), so the frame shows exactly that color behind
+    /// everything the map draws. Called by the event loop when a map
+    /// loads, on both targets.
+    ///
+    /// Opaque whatever `background` says: nothing is behind the
+    /// canvas for an alpha to blend with. See [`clear_color_for`] for
+    /// how the color is written to a target of this renderer's format.
+    pub fn set_background(&mut self, background: [u8; 4]) {
+        self.clear_color = clear_color_for(background, self.format);
+    }
+
+    /// The color every frame is cleared to, as the render pass is
+    /// given it. For the GPU-backed tests (TEST_CONVENTIONS §T8),
+    /// which assert on state, never on pixels.
+    #[cfg(test)]
+    pub(crate) fn clear_color(&self) -> Color {
+        self.clear_color
+    }
+
+    /// How many rects the last prepared frame drew — the screen-space
+    /// backdrops of an open console or color picker, and nothing of
+    /// the map's, whose nodes have no fill (V1-B12). For the GPU-backed
+    /// tests.
+    #[cfg(test)]
+    pub(crate) fn rect_quads_in_last_frame(&self) -> u32 {
+        self.rect_quads
     }
 
     /// Set the screen-space FPS readout mode. Routes through the

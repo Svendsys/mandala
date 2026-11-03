@@ -15,16 +15,16 @@ use crate::document::element::{
 use crate::document::ids::{Definitions, Document, NodeIdent, VerbDef};
 use crate::document::mutation::error::{MutationError, StructureRule};
 use crate::document::mutation::ops::{
-    DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LayoutOp, LinkOp, NodeOp, PaletteOp, PathOp,
-    PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
+    DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LayoutOp, LinkOp, MapOp, NodeOp, PaletteOp,
+    PathOp, PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
 };
 use crate::document::mutation::step::{DocStep, DocWalk};
 use crate::document::mutation::validate::{validate, validate_applied, validate_for_presentation};
 use crate::document::shape::ShapeError;
 use crate::document::tests::test_support::{example, node_data, palette_group, path_data, Example};
 use crate::document::values::{
-    ColorRef, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Sides, StartPoint, VarId,
-    VerbId, ZoomWindow,
+    ColorRef, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Rgba, Sides, StartPoint,
+    VarId, VerbId, ZoomWindow,
 };
 use crate::engine::anchor::Anchors;
 use crate::engine::journal::JournalBuilder;
@@ -148,7 +148,6 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
         (DocKind::Node, DocMutation::Node(NodeOp::SetPosition(Vec2::new(2.0e9, 0.0))), DocMutation::Node(NodeOp::SetPosition(Vec2::splat(MAX_CANVAS_COORD))), "node.position"),
         (DocKind::Node, DocMutation::Node(NodeOp::Nudge(Vec2::new(f32::NAN, 0.0))), DocMutation::Node(NodeOp::Nudge(Vec2::new(1.0e30, 0.0))), "node.nudge"),
         (DocKind::Node, DocMutation::Node(NodeOp::SetMinSize(Some(Vec2::new(-1.0, 1.0)))), DocMutation::Node(NodeOp::SetMinSize(Some(Vec2::ZERO))), "node.min_size"),
-        (DocKind::Node, DocMutation::Node(NodeOp::SetFillFade(Some(-0.5))), DocMutation::Node(NodeOp::SetFillFade(Some(0.0))), "node.fill_fade"),
         (DocKind::Node, DocMutation::Node(NodeOp::SetZoom(zoom(Some(0.0), None))), DocMutation::Node(NodeOp::SetZoom(zoom(Some(0.1), Some(0.1)))), "node.zoom"),
         (DocKind::Node, DocMutation::Node(NodeOp::SetOpacity(1.5)), DocMutation::Node(NodeOp::SetOpacity(1.0)), "node.opacity"),
         (DocKind::Node, DocMutation::Node(NodeOp::Text(TextOp::SetSize(Some(FontSize::Pt(0.4))))), DocMutation::Node(NodeOp::Text(TextOp::SetSize(Some(FontSize::Pt(0.5))))), "text.size"),
@@ -359,11 +358,21 @@ pub fn do_document_validate_refuses_a_missing_reference() {
         Ok(())
     );
     assert_eq!(
-        missing(node(NodeOp::SetFill(Some(ColorRef::Var(VarId(2)))))),
+        missing(node(NodeOp::Text(TextOp::SetColor(Some(ColorRef::Var(VarId(2))))))),
         ("theme variable", 2)
     );
     assert_eq!(
-        validate(&node(NodeOp::SetFill(Some(ColorRef::Var(VarId(1))))), &doc),
+        validate(&node(NodeOp::Text(TextOp::SetColor(Some(ColorRef::Var(VarId(1)))))), &doc),
+        Ok(())
+    );
+    // The background names a variable the theme has, as a color does.
+    let map = |op| at_root(DocKind::Map, DocMutation::Map(op));
+    assert_eq!(
+        missing(map(MapOp::SetBackground(PlainColor::Var(VarId(2))))),
+        ("theme variable", 2)
+    );
+    assert_eq!(
+        validate(&map(MapOp::SetBackground(PlainColor::Var(VarId(1)))), &doc),
         Ok(())
     );
     // A sides color naming a theme variable, per tier: a frame's, a
@@ -1325,4 +1334,36 @@ fn test_document_validate_holds_an_inserted_name_to_the_files_rule() {
     // Control: names a file can hold pass.
     assert_eq!(judge_element(&doc, &palette("My Palette")), Ok(()));
     assert_eq!(judge_element(&doc, &theme("d", "bg")), Ok(()));
+}
+
+#[test]
+fn test_document_background_is_opaque_or_a_variable() {
+    do_document_background_is_opaque_or_a_variable();
+}
+
+/// A literal background is opaque (V1-B12): any alpha below 255 is
+/// refused, naming the alpha, as the loader refuses it — nothing is drawn
+/// behind the canvas for it to blend with. Controls: the same color
+/// opaque passes, and so does a variable, whatever alpha the variable's
+/// value has (the glyphs that name it use it; the background is drawn
+/// opaque).
+pub fn do_document_background_is_opaque_or_a_variable() {
+    let (doc, _) = document();
+    let map = |background| at_root(DocKind::Map, DocMutation::Map(MapOp::SetBackground(background)));
+    for alpha in [0u8, 1, 0x80, 254] {
+        assert_eq!(
+            validate(&map(PlainColor::Rgba(Rgba::new(10, 20, 30, alpha))), &doc),
+            Err(MutationError::TranslucentBackground {
+                at: Default::default(),
+                alpha,
+            }),
+            "alpha {alpha}"
+        );
+    }
+    assert_eq!(
+        validate(&map(PlainColor::Rgba(Rgba::opaque(10, 20, 30))), &doc),
+        Ok(()),
+        "the control: the same color, opaque"
+    );
+    assert_eq!(validate(&map(PlainColor::Var(VarId(0))), &doc), Ok(()));
 }
