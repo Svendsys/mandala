@@ -951,7 +951,7 @@ pub const MIXED_SIZE_SPANS: usize = 16;
 /// [`ORNAMENT_GLYPHS`] at a size of 0.5 pt times a power of two to 2¹³,
 /// over the whole font-size window, 0.5 to 4,096 pt, at `scale` — a text
 /// of up to sixteen sizes, as a map's may be, whose touch checks hold a
-/// class of height for each, where the three spans [`check_generated`]
+/// class of height for each, where the three spans `check_generated`
 /// draws first hold three at most.
 ///
 /// Drawn after [`long_ornament`], from choices nothing before it reads,

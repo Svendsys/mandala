@@ -172,6 +172,7 @@ pub(crate) fn spans_run(
 /// The reviewer's mixed-size text (review 5751828253), `copies` times
 /// over: a span of `dots` `.`s at 0.5 pt, then an `x` in each of 14 spans
 /// at 0.5, 1, 2, … 4,096 pt, the whole font-size window.
+#[cfg(test)]
 pub(crate) fn mixed_sizes(copies: usize, dots: usize) -> Vec<(String, f32)> {
     (0..copies)
         .flat_map(|_| {
@@ -2564,6 +2565,7 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks)> {
 /// within `touch_looks` of its classes; and no side arc's check holding
 /// more classes than it was held back for (`height_classes`). What failed, with each part's
 /// ratio to its bound, where one did.
+#[cfg(test)]
 pub(crate) fn looks_as_measured(looks: &Looks) -> Result<(), String> {
     use crate::flow::place::halves::{
         touch_looks, TOUCH_LOOKS_A_CLASS, TOUCH_LOOKS_A_CLASS_MEASURED, TOUCH_LOOKS_BASE,
@@ -2610,6 +2612,7 @@ pub(crate) fn looks_as_measured(looks: &Looks) -> Result<(), String> {
 /// The ratio of each part of `looks` to its measured bound, for a
 /// message: in the sweep and the classes' own strips, between classes,
 /// and the check nearest `touch_looks`.
+#[cfg(test)]
 pub(crate) fn looks_ratios(looks: &Looks) -> String {
     use crate::flow::place::halves::{touch_looks, TOUCH_LOOKS_A_CLASS_MEASURED, TOUCH_LOOKS_BASE_MEASURED};
     let (base, boxes) = looks.base;
@@ -3682,6 +3685,11 @@ fn test_flow_halves_a_box_with_no_ink_touches_nothing() {
     );
 }
 
+/// Ink boxes, each keyed by its group and its place in it, as
+/// [`touch_case`] draws them.
+#[cfg(test)]
+type KeyedBoxes = Vec<((u8, usize), (Vec2, Vec2))>;
+
 /// One case of [`test_flow_halves_the_touch_check_finds_what_every_pair_does`]
 /// at an extreme scale (R51.1, review 5751828253): a [`touch_case`] and
 /// up to two boxes beside it as tall across y as one of its by a power of
@@ -3691,9 +3699,7 @@ fn test_flow_halves_a_box_with_no_ink_touches_nothing() {
 /// not a number or infinite, or made of no width or no height. Returns
 /// the boxes and the scale.
 #[cfg(test)]
-fn extreme_touch_case(
-    choices: &mut crate::util::tests::choices::Choices<'_>,
-) -> (Vec<((u8, usize), (Vec2, Vec2))>, f32) {
+fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> (KeyedBoxes, f32) {
     const SCALES: [f32; 6] = [1e-3, 1.0, 1e3, 1e6, 1e18, 1e30];
     const OFFSETS: [f32; 7] = [0.0, 1e6, -1e6, 1e18, -1e18, 1e30, -1e30];
     let mut boxes = touch_case(choices);
