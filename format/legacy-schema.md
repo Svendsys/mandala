@@ -321,7 +321,7 @@ untouched and never reported as unrecognized. See
 
 | Field | Type | Notes |
 |---|---|---|
-| `background_color` | string | `#RRGGBB` or `var(--name)`. **Required** — the one `Canvas` key with no default; every other key below may be absent |
+| `background_color` | string | `#RRGGBB` or `var(--name)`: the map's one background, which every frame is cleared to. **Required** — the one `Canvas` key with no default; every other key below may be absent |
 | `default_border` | object\|null | Fallback `GlyphBorderConfig` for every node with no `style.border` of its own. A node's own `border` replaces it whole, except for `color` (see [`canvas.md`](./canvas.md#cascade-resolution)) |
 | `default_connection` | object\|null | Fallback `GlyphConnectionConfig` for every edge |
 | `default_section_frame_border` | object\|null | Fallback `GlyphBorderConfig` for unfocused section frames in NodeEdit mode. `null` → hardcoded `light`-preset thin line. See [`border-patterns.md`](./border-patterns.md#section-frames). |
@@ -388,7 +388,7 @@ untouched and never reported as unrecognized. See
 
 | Field | Type | Notes |
 |---|---|---|
-| `background_color` | string | `#RRGGBB`, empty (`""` for transparent), or `var(--name)` |
+| `background_color` | string | `#RRGGBB`, empty (`""` for transparent), or `var(--name)`. Loaded, resolved and editable, and **not drawn**: a node has no fill since V1-B12 |
 | `frame_color` | string | Border color |
 | `text_color` | string | Base text color — the section default, which a `TextRun`'s own `color` overrides |
 | `shape` | string | See [enums.md](./enums.md) |

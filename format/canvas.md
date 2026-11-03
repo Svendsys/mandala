@@ -14,7 +14,7 @@ the same table in brief.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `background_color` | string | **required** | Whole-canvas fill, `#RRGGBB` or `var(--name)`, resolved against `theme_variables` at render time. The one `Canvas` key with no serde default: a `canvas` object without it fails the typed load. No console verb sets it; author it in the file. |
+| `background_color` | string | **required** | The map's one background, `#RRGGBB` or `var(--name)`, resolved against `theme_variables` when the map loads, and drawn opaque: every frame is cleared to it, on native and in the browser alike. It is the only fill a map has — nodes draw none (V1-B12) — and it is the `.mandala.json` format's top-level [`background`](./schema.md#background). The one `Canvas` key with no serde default: a `canvas` object without it fails the typed load. No console verb sets it; author it in the file. |
 | `default_connection` | object\|null | `null` | The map-wide `GlyphConnectionConfig` every edge falls back to when it carries no `glyph_connection` of its own. Same shape as an edge's `glyph_connection`. |
 | `theme_variables` | object | `{}` | The **live** CSS-variable-style color table. Every `var(--name)` reference in node / edge / section styles resolves through it. No console verb edits it today; author it in the file, or switch it wholesale from `theme_variants` (next row). |
 | `theme_variants` | object | `{}` | Named presets, each a whole variable map. Inert until activated: a `CustomMutation` carrying the `SetThemeVariant` document action copies the named preset into `theme_variables` (see [mutations.md](./mutations.md)). Editing a variant changes nothing on screen until then. |

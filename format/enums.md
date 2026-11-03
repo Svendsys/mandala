@@ -35,9 +35,9 @@ becomes a prose exercise, not a decoding one.
 Inherited from miMind's shape catalog (plus the `"circle"` alias).
 Default: `"rectangle"`.
 
-`"rectangle"` and `"ellipse"` are **live shapes** — they drive both the
-background fill (SDF in the rect pipeline) and the hit test (BVH descent
-plus `rect_select`) via
+`"rectangle"` and `"ellipse"` are **live shapes** — they drive the hit
+test (BVH descent plus `rect_select`), and nothing draws them: a node has
+no background fill since V1-B12 — via
 [`NodeShape`](../lib/baumhard/src/gfx_structs/shape.rs). A perfect circle
 is expressed as `"ellipse"` with `width == height`; stretched /
 "conical" cases are the same variant with `width != height`. `"circle"`

@@ -286,8 +286,8 @@ pub struct NodeDump {
     /// The model's `folded` flag: this node's descendants are hidden.
     /// The node itself is drawn — it is in the scene.
     pub folded: bool,
-    /// The node container's placement: its background fill grown by
-    /// its padding, or its layout box when it draws no fill.
+    /// The node container's placement: its layout box, since a
+    /// container draws nothing (a node has no fill, V1-B12).
     #[serde(flatten)]
     pub placement: ScenePlacement,
     /// Each rendered section the filter keeps, in model order. A

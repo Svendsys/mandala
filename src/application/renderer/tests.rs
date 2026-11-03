@@ -790,6 +790,43 @@ fn clamp_surface_size_passes_exact_limit() {
     assert_eq!((w, h), (8192, 8192));
 }
 
+/// The map's background is the frame's clear value, written so the
+/// frame holds the authored byte (V1-B12): on an sRGB target each byte
+/// is decoded to linear light — the GPU encodes it back as it writes —
+/// and on a linear target it goes in as it is. The expectations are
+/// the sRGB transfer function's own values at three bytes (IEC
+/// 61966-2-1: `0x80` is 0.2158605…, `0x0a` 0.0030352…), not a second
+/// run of the code under test. Controls: the two targets disagree on
+/// every byte but the ends, so the decode is not skipped on either;
+/// and the alpha is 1 whatever the background's, since nothing is
+/// behind the canvas.
+#[test]
+fn test_the_clear_color_holds_the_background_on_either_target() {
+    use wgpu::TextureFormat::{Bgra8Unorm, Bgra8UnormSrgb, Rgba8Unorm, Rgba8UnormSrgb};
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    for srgb in [Bgra8UnormSrgb, Rgba8UnormSrgb] {
+        let clear = clear_color_for([0x80, 0x0a, 0xff, 0x40], srgb);
+        assert!(close(clear.r, 0.215_860_5), "{srgb:?}: 0x80 decodes, got {}", clear.r);
+        assert!(close(clear.g, 0.003_035_27), "{srgb:?}: 0x0a decodes, got {}", clear.g);
+        assert!(close(clear.b, 1.0), "{srgb:?}: 0xff is 1");
+        assert_eq!(clear.a, 1.0, "{srgb:?}: opaque, whatever the alpha");
+        let black = clear_color_for([0, 0, 0, 0], srgb);
+        assert_eq!((black.r, black.g, black.b, black.a), (0.0, 0.0, 0.0, 1.0));
+    }
+    for linear in [Bgra8Unorm, Rgba8Unorm] {
+        let clear = clear_color_for([0x80, 0x0a, 0xff, 0x40], linear);
+        assert!(close(clear.r, 128.0 / 255.0), "{linear:?}: the byte as it is");
+        assert!(close(clear.g, 10.0 / 255.0));
+        assert!(close(clear.b, 1.0));
+        assert_eq!(clear.a, 1.0);
+    }
+    for byte in 1..255u8 {
+        let srgb = clear_color_for([byte, byte, byte, 255], Bgra8UnormSrgb).r;
+        let linear = clear_color_for([byte, byte, byte, 255], Bgra8Unorm).r;
+        assert!(srgb < linear, "0x{byte:02x}: an sRGB target's value is decoded");
+    }
+}
+
 // --- FrameIntervalRing --------------------------------------------------
 // Fundamentals coverage for the sum invariant backing
 // `FpsDisplayMode::Debug`'s rolling average. Pure arithmetic, no clock.

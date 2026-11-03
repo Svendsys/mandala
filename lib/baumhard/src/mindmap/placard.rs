@@ -158,8 +158,9 @@ const PLACARD_FONT_FAMILY: &str = "";
 /// mechanism.
 const PLACARD_ERROR_COLOR: &str = "#ff6b6b";
 
-/// Node fill. Matches the fill a freshly-created node takes, so the
-/// placard sits on the canvas as a node rather than as chrome.
+/// The `style.background_color` the placard's node is written with,
+/// the one a freshly-created node takes. Not drawn: a node has no fill
+/// since V1-B12.
 const PLACARD_BACKGROUND_COLOR: &str = "#141414";
 
 /// Advance of one text cell as a fraction of the point size, and the

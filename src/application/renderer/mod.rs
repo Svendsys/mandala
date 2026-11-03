@@ -613,12 +613,10 @@ pub struct Renderer {
     /// camera-transformed pass. Empty until a canvas component
     /// migrates to a tree.
     ///
-    /// Unlike the overlay half, these entries carry the walker's
-    /// background fills as well as its buffers: canvas fills *are*
-    /// wired to the camera-transformed rect pipeline. Holding each
-    /// element's fill inside the element's own entry is what keeps
-    /// that index-ordered draw stream stable while only part of the
-    /// scene re-shapes.
+    /// Holding each element's output inside the element's own entry
+    /// is what keeps the order glyphon draws them in stable while only
+    /// part of the scene re-shapes. No entry holds a fill: a map draws
+    /// no rect (V1-B12).
     canvas_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
     /// A capture's canvas: the shaped output of the capture engine's
     /// scratch scene — the zoom-dependent roles projected at the

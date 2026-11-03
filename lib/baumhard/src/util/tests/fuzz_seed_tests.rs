@@ -140,6 +140,16 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                         .any(|(key, value)| key == "frame" && value.matches("{}").count() >= 3000)
             }
             "random_tree_1024" => nodes.len() == 1024,
+            // A map with a background that loads (V1-B12): a literal,
+            // and a theme variable.
+            "background_literal" => {
+                matches!(spec.background, Some(format_fuzz::Background::Literal(_)))
+                    && spec.fault == format_fuzz::Fault::None
+            }
+            "background_var" => {
+                matches!(spec.background, Some(format_fuzz::Background::Var(_)))
+                    && spec.fault == format_fuzz::Fault::None
+            }
             // A bounded field written past its bound, refused as `Bound`
             // at its path, so a dropped check fails on the seed itself.
             n if n.starts_with("bounded_") && n.ends_with("_past") => {
