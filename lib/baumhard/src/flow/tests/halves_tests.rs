@@ -3634,6 +3634,45 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
     );
 }
 
+/// R51.3 (review 5751828253): an ordinary line of one gap, two letters
+/// at 16 pt laid outward round a circle 40 across, over parts of its
+/// first half 15 to 35 long, is solved to its part's end, within the
+/// line's tolerance. Round a bend, outward, a gap moves the line's end
+/// by less than the gap, so one gap as long as all the room the line has
+/// at no gap still leaves it short — where the tracking solve's stop for
+/// a line no gap moves once fired and left it points short (precondition)
+/// — but less short than at no gap, so the stop does not fire.
+///
+/// Control: the stop as 03ac0b3f wrote it, without `value >= low.1`, red:
+/// the line is left points short of its end. (No `do_*` twin: it reads a
+/// test seam.)
+#[test]
+fn test_flow_halves_a_one_gap_line_on_a_curve_is_solved_to_its_end() {
+    use crate::flow::place::halves::solve_line_seam;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(40.0)), Shape::Ellipse);
+    let mut stopped = 0;
+    for room in [15.0, 20.0, 25.0, 30.0, 35.0] {
+        let (gap, short, tolerance, at_zero, at_room) = with_fonts(|fs| {
+            let run = real_run("ab", &style(16.0), fs);
+            let fs: &mut FontSystem = fs;
+            solve_line_seam(&run, &shape, room, fs)
+        });
+        assert!(
+            at_zero > 0.0 && at_room > tolerance && at_room < at_zero,
+            "precondition: over a part {room} long the line is short at no gap ({at_zero}), and at a gap of all that room still short ({at_room}), but less"
+        );
+        stopped += usize::from(at_room > 1.0);
+        assert!(
+            short.abs() <= tolerance,
+            "over a part {room} long the line is solved to gap {gap}, {short} short of its end, past its tolerance of {tolerance}"
+        );
+    }
+    assert!(
+        stopped >= 3,
+        "precondition: over three parts or more a gap of all the room leaves the line a point or more short ({stopped})"
+    );
+}
+
 /// A frame's line tracked where no gap moves its end, or where a gap that
 /// would places its glyphs past every `f32`, keeps a lay placed finitely
 /// (seeds 2970 and 4284 of the structured flow generator, with a host's
@@ -3641,8 +3680,9 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
 /// letter at one center, so that the room the line leaves never shrank;
 /// the tracking solve widened its gap past every `f32`, and the line was
 /// placed at `NaN`). The solve stops once one gap is as long as all the
-/// room the line had at no gap, and reads a lay placed past every `f32`
-/// as past its part's end ([`solve_tracking_seam`]).
+/// room the line had at no gap and leaves it no less short than the probe
+/// before, and reads a lay placed past every `f32` as past its part's end
+/// ([`solve_tracking_seam`]).
 ///
 /// Controls: without the stop, the first line's gap runs to 10³⁸; with
 /// a lay placed past every `f32` read as any other, the second line is

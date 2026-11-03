@@ -33,8 +33,9 @@ use crate::util::tests::choices::Choices;
 ///   frame's line on a part some 10³³ along its half, where an `f32` sets
 ///   every letter at one center, so no gap moved its end; the tracking
 ///   solve widened its gap past every `f32` and placed the line at `NaN`.
-///   It stops once one gap is as long as all the room the line had, and
-///   reads a lay past every `f32` as past its part's end
+///   It stops once one gap is as long as all the room the line had and
+///   leaves it no less short than the probe before (R51.3), and reads a
+///   lay past every `f32` as past its part's end
 ///   (`test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay` holds
 ///   both on every host).
 ///

@@ -3422,12 +3422,15 @@ fn solve_tracking(
             return (g, tracked);
         }
         // Still short with one gap as long as all the room the line had at
-        // no gap: no gap moves its end there, where the path is too far out
-        // for an `f32` to set its letters apart (seeds 2970 and 4284 of the
-        // structured flow generator: a part 10³³ along its half, every
-        // letter at one center). Widened on, the gap ran past every `f32`
-        // and the line was laid at `NaN`; it keeps its last lay instead.
-        if g > at_zero_short {
+        // no gap, and no less short than at the probe before: no gap moves
+        // its end there, where the path is too far out for an `f32` to set
+        // its letters apart (seeds 2970 and 4284 of the structured flow
+        // generator: a part 10³³ along its half, every letter at one
+        // center). Widened on, the gap ran past every `f32`; it keeps its
+        // last lay instead. A line its gap still moves goes on, however
+        // little a gap moves its end: round a bend, outward, one gap moves
+        // a line's end by less than the gap (ruling R51.3).
+        if g > at_zero_short && value >= low.1 {
             return (g, tracked);
         }
         // Still short: on along the line through the last two probes,
@@ -4334,6 +4337,40 @@ pub(crate) fn track_seam(run: &ShapedRun, outline: &Outline, gaps: &[f32], fs: &
             tracked.ends.map_or(sa, |(_, last)| halves.along(0, middle(last)))
         })
         .collect()
+}
+
+/// Test seam (#294, ruling R51.3): `run`, a line of letters, solved as
+/// a frame lays it ([`solve_tracking`]) along `outline`'s first half,
+/// outward, over a part from its top-left junction `room` points long:
+/// the gap solved, how short of the part's end it leaves the line, the
+/// tolerance on that, and how short the line is at no gap and at one gap
+/// as long as all that room — where [`solve_tracking`]'s stop for a line
+/// no gap moves once looked.
+#[cfg(test)]
+pub(crate) fn solve_line_seam(
+    run: &ShapedRun,
+    outline: &Outline,
+    room: f32,
+    fs: &mut FontSystem,
+) -> (f32, f32, f32, f32, f32) {
+    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let run = inked(run, fs);
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
+    let walk = line_walk(&halves.paths[0], &run, true);
+    let sa = halves.junctions[0].0;
+    let sb = sa + room;
+    let letters = clusters.iter().filter(|c| !c.blank).count();
+    let steps = letters.saturating_sub(1) + clusters.iter().filter(|c| c.blank).count();
+    let lay = |g: f32| track(&walk, &run.glyphs, &clusters, (sa, sb), g);
+    let (gap, tracked) = solve_tracking(lay, steps, sb, None, &|| false);
+    let at_zero = lay(0.0).short;
+    (
+        gap,
+        tracked.short,
+        line_tolerance(steps, sb),
+        at_zero,
+        lay(at_zero).short,
+    )
 }
 
 /// Test seam (#294, ruling R43): the geometry of a line's ends on
