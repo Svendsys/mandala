@@ -228,6 +228,11 @@ const JOIN_FLOOR: f32 = 4.0 * INK_TOLERANCE;
 /// cannot hold its lines at the size R27 gave it.
 const SHRINK_ROUNDS: usize = 12;
 
+/// The most sizes a `Fit` frame is tried at down from R27's before its
+/// shrink falls back to the floor (#308): two, a step of twice the
+/// shrink's precision and then twice that.
+const SHRINK_GALLOP: usize = 2;
+
 /// The shrink stops once its bracket on the scale is within this share
 /// of the scale held (ruling R42.2).
 const SHRINK_PRECISION: f32 = 0.01;
@@ -2052,7 +2057,18 @@ impl Layout<'_> {
                 last_offset.set(offset);
                 lay_at(offset, warm_gap)
             },
-            |(_, _, _, tracked)| offset_of(tracked, self.outward),
+            // A lay whose end its tracking could not set at its part's end
+            // — round a bend too tight for its letters, where its length
+            // jumps as its gap moves — has its letters where the jump left
+            // them, and the offset they want moves with the jump, not the
+            // offset: it is kept as laid (no miss to solve).
+            |(_, sb, _, tracked)| {
+                if letters >= 2 && tracked.short.abs() > line_tolerance(steps, *sb) {
+                    f32::NAN
+                } else {
+                    offset_of(tracked, self.outward)
+                }
+            },
             &|| self.spent_all(),
         );
         Line {
@@ -4690,12 +4706,52 @@ pub(super) fn place_halves(
         } else {
             1.0
         };
-        let Some(at_floor) = build(floor, zero, false, fs) else {
-            unreachable!("only a cheap build is refused")
+        // Down from R27's size first, a step of twice the shrink's
+        // precision and each next step twice the last, to the first size
+        // that holds (#308): a frame its halves nearly hold at R27's size —
+        // most frames that shrink at all — is held within a probe or two
+        // of it, where a bisection from the floor up probes half the way
+        // down first, and a quarter, each probe a clearance search. Each
+        // probe seeded from R27's clearance, scaled to its size. Past the
+        // floor, the floor, built in full.
+        let mut over = 1.0_f32;
+        let mut down = 2.0 * SHRINK_PRECISION;
+        let mut found: Option<(f32, Built)> = None;
+        for _ in 0..SHRINK_GALLOP {
+            let at = 1.0 - down;
+            if at <= floor || lay.spent_all() {
+                break;
+            }
+            let seed = built.clear.map(|half| half.map(|c| c * at * SEED_SHARE));
+            match build(at, seed, true, fs) {
+                Some(probe) if probe.holds() => {
+                    found = Some((at, probe));
+                    break;
+                }
+                _ => {
+                    over = at;
+                    down *= 2.0;
+                }
+            }
+        }
+        let held_at = match found {
+            Some(found) => Some(found),
+            None if lay.spent_all() => None,
+            None => {
+                let Some(at_floor) = build(floor, zero, false, fs) else {
+                    unreachable!("only a cheap build is refused")
+                };
+                if at_floor.holds() {
+                    Some((floor, at_floor))
+                } else {
+                    (built, scale) = (at_floor, floor);
+                    None
+                }
+            }
         };
-        if at_floor.holds() {
-            let (mut held, mut over) = (floor, 1.0_f32);
-            let mut best = at_floor;
+        if let Some((held, best)) = held_at {
+            let mut held = held;
+            let mut best = best;
             for _ in 0..SHRINK_ROUNDS {
                 // Sub-percent precision in a last resort buys nothing a
                 // reader can see (ruling R42.2): the bracket within 1% of
@@ -4715,8 +4771,6 @@ pub(super) fn place_halves(
                 }
             }
             (built, scale) = (best, held);
-        } else {
-            (built, scale) = (at_floor, floor);
         }
     }
     let Built {
