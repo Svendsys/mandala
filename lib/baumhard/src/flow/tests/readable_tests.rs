@@ -850,7 +850,7 @@ pub fn do_flow_readable_a_repeat_ring_closes_evenly() {
     ];
     let top = start(Edge::Top, 0.0);
     for (name, shape) in &outlines {
-        for pattern in ["✦ ", "❦ ", "· ", "+ ", "~ ", "·:·", "To see ", "Heaven "] {
+        for pattern in ["¤ ", "§ ", "· ", "+ ", "~ ", "·:·", "To see ", "Heaven "] {
             for direction in [Direction::Clockwise, Direction::CounterClockwise] {
                 let what = format!("{name} {pattern:?} {direction:?}");
                 let placed = around(pattern, shape, top, direction, &FitMode::Repeat, false);
@@ -982,7 +982,7 @@ pub fn do_flow_readable_an_ornament_ring_is_evenly_inked() {
     ];
     let top = start(Edge::Top, 0.0);
     for (name, shape, smooth) in &outlines {
-        for pattern in ["✦ ", "❦ ", "· ", "+ ", "~ ", "·:·", "✦ · "] {
+        for pattern in ["¤ ", "§ ", "· ", "+ ", "~ ", "·:·", "¤ · "] {
             for direction in [Direction::Clockwise, Direction::CounterClockwise] {
                 for outward in [false, true] {
                     let what = format!("{name} {pattern:?} {direction:?} outward {outward}");

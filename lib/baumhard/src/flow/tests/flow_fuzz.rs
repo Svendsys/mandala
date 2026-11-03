@@ -866,16 +866,17 @@ pub fn sides_in_time(
 }
 
 /// The glyphs a long side ornament is drawn from (ruling R50.3): widths
-/// from a hairline to an em dash, a full block and an Egyptian
-/// hieroglyph, each held by a compiled face, so that it shapes alike on
+/// from a hairline to an em dash, an underscore with no side bearings
+/// and an Egyptian hieroglyph, each held and inked by a compiled face, so that it shapes alike on
 /// every host — and one, U+FFFE, a noncharacter no face holds on any
 /// host, as a map's ornament may hold glyphs no face does: a `.notdef` weighs 2,200 glyph steps to shape
 /// (`SHAPE_NOTDEF_STEPS`), which [`sides_in_time`] cuts the ornament for.
 /// (At e402949d it drew `❧`, `⸻` and `﷽`, which no compiled face holds:
 /// held by a host face here and not on CI, so the long ornaments CI drew
 /// were `.notdef`s, which the harness did not cut for — the flow_structured
-/// finding `structured_frame_long_ornament_past_the_input_bound`.)
-pub const ORNAMENT_GLYPHS: [char; 10] = ['|', '·', '-', '=', 'x', 'W', '—', '─', '𓀀', '\u{FFFE}'];
+/// finding `structured_frame_long_ornament_past_the_input_bound`. Until
+/// R51 it drew `─`, which the compiled faces hold but give no ink.)
+pub const ORNAMENT_GLYPHS: [char; 10] = ['|', '·', '-', '=', 'x', 'W', '—', '_', '𓀀', '\u{FFFE}'];
 
 /// The longest side ornament the long-ornament mode draws, in bytes
 /// (ruling R50.3): the reviewer's 200 (review 5739829769).

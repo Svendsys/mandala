@@ -252,7 +252,7 @@ fn test_flow_shape_run_marks_letters() {
 /// ruling R29). A combining mark's glyph shares its letter's grapheme,
 /// and its mark.
 pub fn do_flow_shape_run_marks_letters() {
-    let run = with_fonts(|fs| real_run("✦ a1·q\u{0301}", &style(20.0), fs));
+    let run = with_fonts(|fs| real_run("¤ a1·q\u{0301}", &style(20.0), fs));
     let letters: Vec<bool> = run.glyphs.iter().map(|g| g.letter).collect();
     assert_eq!(
         letters,
@@ -276,7 +276,7 @@ fn test_flow_shape_run_measures_an_ornaments_ink() {
 /// boxes.
 pub fn do_flow_shape_run_measures_an_ornaments_ink() {
     with_fonts(|fs| {
-        let run = real_run("✦ ·", &style(40.0), fs);
+        let run = real_run("¤ ·", &style(40.0), fs);
         let laid: Vec<_> = run.layout_glyphs().cloned().collect();
         assert_eq!(laid.len(), 3, "{:?}", run.glyphs);
         assert!(

@@ -98,7 +98,7 @@ fn test_flow_fit_fills_a_steep_line_with_an_ornament() {
 /// would leave it smaller with the rest spread as gaps — the last ink
 /// ending its right bearing short of the line's end.
 pub fn do_flow_fit_fills_a_steep_line_with_an_ornament() {
-    let text = "✦ · ✦ · ✦";
+    let text = "¤ · ¤ · ¤";
     let probe = with_fonts(|fs| real_run(text, &style(12.0), fs));
     let step = |glyph: &crate::flow::GlyphMetrics| match glyph.ink {
         Some(ink) => (ink.max.y - ink.min.y) + glyph.advance - (ink.max.x - ink.min.x),

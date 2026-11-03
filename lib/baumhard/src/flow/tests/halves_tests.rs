@@ -576,16 +576,17 @@ pub fn do_flow_halves_sides_hold_the_junctions() {
     };
     let half = LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE);
     // One-glyph ornaments, at whole and ½; then copies of several glyphs
-    // (`"✦ ✦"`, `"<·>"`), one with spaces round it (`" · "`) and one with
-    // no side bearings (`"─"`), at whole.
+    // (`"¤ ¤"`, `"<·>"`), one with spaces round it (`" · "`) and one with
+    // no side bearings (`"_"`), at whole: each a glyph the compiled faces
+    // hold (§T14; `✦` and `─` once, which no compiled face inks).
     let ornaments: [(&str, &[LineSpan]); 7] = [
         ("·", &[LineSpan::WHOLE, half]),
-        ("✦", &[LineSpan::WHOLE, half]),
-        ("✦ ✦", &[LineSpan::WHOLE]),
+        ("¤", &[LineSpan::WHOLE, half]),
+        ("¤ ¤", &[LineSpan::WHOLE]),
         ("<·>", &[LineSpan::WHOLE]),
         (" · ", &[LineSpan::WHOLE]),
-        ("─", &[LineSpan::WHOLE]),
-        ("──────", &[LineSpan::WHOLE]),
+        ("_", &[LineSpan::WHOLE]),
+        ("______", &[LineSpan::WHOLE]),
     ];
     for (ornament, spans) in ornaments {
         let per_copy = ornament.chars().filter(|c| !c.is_whitespace()).count();
@@ -699,7 +700,7 @@ pub fn do_flow_halves_no_line_is_laid_tighter_than_its_font() {
             .fold(0.0_f32, f32::max)
     };
     let sides = RingLayout {
-        sides: Some(("✦".to_owned(), Rgba::opaque(200, 200, 200))),
+        sides: Some(("¤".to_owned(), Rgba::opaque(200, 200, 200))),
         ..RingLayout::whole()
     };
     let half = RingLayout {
@@ -789,8 +790,8 @@ fn test_flow_halves_a_repeat_ring_takes_its_spacing() {
 }
 
 /// A `repeat` ring's `spacing` is added between every two of its glyph
-/// steps, ink to ink (ruling R34): with 6 points of it a `"✦"` ring's
-/// copies are 6 points further apart, a `"✦ "` ring's 12 (two steps a
+/// steps, ink to ink (ruling R34): with 6 points of it a `"¤"` ring's
+/// copies are 6 points further apart, a `"¤ "` ring's 12 (two steps a
 /// copy, the space's and the star's) — each within the slack R29 shares
 /// among a ring's gaps, at most one copy's length over the copies — and
 /// it holds fewer of them. A spacing as large as an `f32` goes keeps
@@ -837,11 +838,19 @@ pub fn do_flow_halves_a_repeat_ring_takes_its_spacing() {
     let measure = |pattern: &str, spacing: f32| {
         let (run, placed) = ring(pattern, spacing);
         let inks: Vec<(Vec2, Vec2)> = inks(&run, &placed).into_iter().flatten().collect();
+        // A ring of a glyph with no outline has no ink to measure its gaps
+        // by (`✦` on the compiled faces alone, which have no such glyph).
+        let (Some(&first), Some(&last)) = (inks.first(), inks.last()) else {
+            panic!(
+                "precondition: a {pattern:?} ring at spacing {spacing} lays inked copies ({} glyphs, none inked)",
+                placed.glyphs.len()
+            );
+        };
         let mut gaps: Vec<f32> = inks.windows(2).map(|w| gap(w[0], w[1])).collect();
-        gaps.push(gap(inks[inks.len() - 1], inks[0]));
+        gaps.push(gap(last, first));
         (inks.len(), mean(&gaps))
     };
-    let (run, placed) = ring("✦ ", f32::MAX);
+    let (run, placed) = ring("¤ ", f32::MAX);
     assert!(!placed.glyphs.is_empty(), "the largest spacing lays a copy");
     for g in &placed.glyphs {
         assert!(
@@ -852,7 +861,7 @@ pub fn do_flow_halves_a_repeat_ring_takes_its_spacing() {
         );
         assert!((g.glyph as usize) < run.glyphs.len());
     }
-    for (pattern, steps) in [("✦", 1.0_f32), ("✦ ", 2.0)] {
+    for (pattern, steps) in [("¤", 1.0_f32), ("¤ ", 2.0)] {
         let (none_count, none_gap) = measure(pattern, 0.0);
         let (some_count, some_gap) = measure(pattern, 6.0);
         assert!(
@@ -883,7 +892,7 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
         fit: FitMode::Repeat,
         span: LineSpan::new(0.25).unwrap_or(LineSpan::WHOLE),
         sides: Some(ResolvedSides {
-            content: "✦".to_owned(),
+            content: "¤".to_owned(),
             color,
         }),
         spacing: 3.0,
@@ -892,7 +901,7 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
         RingLayout::of(&ring),
         RingLayout {
             span: LineSpan::new(0.25).unwrap_or(LineSpan::WHOLE),
-            sides: Some(("✦".to_owned(), color)),
+            sides: Some(("¤".to_owned(), color)),
             spacing: 3.0,
         }
     );
@@ -1458,7 +1467,7 @@ pub fn do_flow_halves_a_crowded_frame_shrinks_or_cuts() {
     };
     let layout = RingLayout {
         sides: Some((
-            "✦ · ✦ · ✦ · ✦ · ✦ · ✦ · ✦ · ✦ · ✦ · ✦ · ✦".to_owned(),
+            "• · • · • · • · • · • · • · • · • · • · •".to_owned(),
             Rgba::opaque(9, 9, 9),
         )),
         ..RingLayout::whole()
@@ -1922,11 +1931,11 @@ fn test_flow_halves_a_copy_at_its_floor_clears_its_neighbors() {
 /// than the tolerance, so no rounding of the rule lets two touch — an
 /// ornament with no side bearings, whose floor is all that keeps it
 /// under the rule rather than where its box falls, included.
-/// Precondition: `"─"` has no side bearings, its ink as wide as its
+/// Precondition: `"_"` has no side bearings, its ink as wide as its
 /// advance or wider.
 pub fn do_flow_halves_a_copy_at_its_floor_clears_its_neighbors() {
     let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(820.0, 330.0)), Shape::Ellipse);
-    for ornament in ["─", "──────", "·", "✦ ✦"] {
+    for ornament in ["_", "______", "·", "¤ ¤"] {
         let copies = 4;
         let laid = with_fonts(|fs| {
             let flow = style(38.0);
@@ -1953,12 +1962,12 @@ pub fn do_flow_halves_a_copy_at_its_floor_clears_its_neighbors() {
             copies * per_copy,
             "precondition: {ornament:?}: every copy laid"
         );
-        if ornament == "─" {
+        if ornament == "_" {
             let (i, (a, b)) = drawn[0];
             let bearings = run.glyphs[i].advance - (b.x - a.x);
             assert!(
                 bearings < INK_TOLERANCE,
-                "precondition: \"─\" has side bearings of {bearings}, which would hold its copies apart"
+                "precondition: \"_\" has side bearings of {bearings}, which would hold its copies apart"
             );
         }
         let one_glyph = ornament.chars().count() == 1;
@@ -2181,7 +2190,7 @@ fn test_flow_halves_a_side_that_would_touch_is_left_out() {
 /// A side ornament whose copies would touch the text, or fold back
 /// across themselves round a thin tip, is left out of its break and
 /// reported (ruling R35.2): the quatrain laid inward round a 600 × 12
-/// ellipse with `"✦"` sides, at span ½, where each tip's arc wraps the
+/// ellipse with `"¤"` sides, at span ½, where each tip's arc wraps the
 /// tip inside an outline thinner than its two lines. No two inks touch,
 /// text or ornament. Precondition: the trace reports a break left
 /// without its ornament. Control: with every arc kept, copies touch.
@@ -2189,7 +2198,7 @@ pub fn do_flow_halves_a_side_that_would_touch_is_left_out() {
     let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
     let layout = RingLayout {
         span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
-        sides: Some(("✦".to_owned(), Rgba::opaque(9, 9, 9))),
+        sides: Some(("¤".to_owned(), Rgba::opaque(9, 9, 9))),
         ..RingLayout::whole()
     };
     let (run, placed, trace) = frame_with(QUATRAIN, 18.0, &shape, &FIT, &layout, false);
