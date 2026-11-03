@@ -51,7 +51,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
-use crate::flow::place::halves::{frame_budget, frame_work_steps, TOUCH_LOOKS_A_BOX};
+use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks};
 use crate::flow::place::{frame_halves, place_on_closed_traced, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
@@ -178,8 +178,9 @@ impl InputWork {
     /// `frame_work_steps`. The engine scales a frame's budget by its
     /// text's glyphs once cut, never more than the run has, spends no
     /// more than its budget and its overshoot, and no touch check of it
-    /// looks at more than `TOUCH_LOOKS_A_BOX` pairs a box, which that
-    /// overshoot rests on (ruling R48.2): properties.
+    /// looks at more than `touch_looks` pairs a box of the classes of
+    /// height it holds, which that overshoot rests on (rulings R48.2,
+    /// R51.2): properties.
     pub(crate) fn frame(
         &mut self,
         run: &ShapedRun,
@@ -190,10 +191,11 @@ impl InputWork {
     ) -> Result<(), String> {
         let budget = frame_budget(run.glyphs.len());
         let most = frame_work_steps(run, ornament, sized);
-        if trace.looks.0 > TOUCH_LOOKS_A_BOX.saturating_mul(trace.looks.1) {
+        if !trace.looks.within() {
+            let (looks, boxes, classes) = trace.looks.worst;
             return Err(format!(
-                "{what}: a touch check looked at {} pairs of {} boxes, past {TOUCH_LOOKS_A_BOX} a box (ruling R48.2)",
-                trace.looks.0, trace.looks.1
+                "{what}: a touch check looked at {looks} pairs of {boxes} boxes of {classes} classes of height, past {} a box (rulings R48.2, R51.2)",
+                touch_looks(classes)
             ));
         }
         if trace.budget > budget {
@@ -599,6 +601,9 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                     // found in (review 5739829769).
                     let drawn = ring_layout(choices);
                     let layouts = laid_layouts(long_ornament(choices, drawn), bounded);
+                    // Its text's sizes, spread over the font-size window one time in
+                    // four (ruling R51.2), drawn after its layout too.
+                    let (frame_texts, frame_styles) = mixed_sizes(choices, &texts, &styles, scale, &faces);
                     for layout in &layouts {
                         // The frame's sides and then its text, held to what
                         // its frame lays inside the timeout (rulings R45.1,
@@ -614,15 +619,15 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                             |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES);
                         let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
                         let framed = framed(
-                            &texts,
-                            &styles,
+                            &frame_texts,
+                            &frame_styles,
                             scale,
                             &mut fs,
                             if bounded { &fits_in_time } else { &as_found },
                         );
                         let frame_spans: Vec<FlowSpan<'_>> = framed
                             .iter()
-                            .zip(&styles)
+                            .zip(&frame_styles)
                             .map(|(text, style)| FlowSpan {
                                 text,
                                 style,
@@ -913,6 +918,56 @@ pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayou
         },
         Err(_) => layout,
     }
+}
+
+/// The most spans a frame's text has in the mixed-size mode (ruling
+/// R51.2): the three it may draw, and more of a size each, to sixteen.
+pub const MIXED_SIZE_SPANS: usize = 16;
+
+/// `texts` in `styles`, or, one time in four, with spans added to
+/// [`MIXED_SIZE_SPANS`] in all (ruling R51.2): each one to four glyphs of
+/// [`ORNAMENT_GLYPHS`] at a size of 0.5 pt times a power of two to 2¹³,
+/// over the whole font-size window, 0.5 to 4,096 pt, at `scale` — a text
+/// of up to sixteen sizes, as a map's may be, whose touch checks hold a
+/// class of height for each, where the three spans [`check_generated`]
+/// draws first hold three at most.
+///
+/// Drawn after [`long_ornament`], from choices nothing before it reads,
+/// and not at all on a zero choice: an input that ends before it — every
+/// committed finding — lays the text it was found with. Its spans are
+/// short, and the frame's text is cut as any other to fit the per-input
+/// work bound ([`framed`]).
+pub fn mixed_sizes(
+    choices: &mut Choices<'_>,
+    texts: &[String],
+    styles: &[ResolvedText],
+    scale: f32,
+    faces: &[AppFont],
+) -> (Vec<String>, Vec<ResolvedText>) {
+    let (mut texts, mut styles) = (texts.to_vec(), styles.to_vec());
+    if !choices.one_in(4) {
+        return (texts, styles);
+    }
+    let more = 1 + choices.index(MIXED_SIZE_SPANS.saturating_sub(texts.len()).max(1));
+    for _ in 0..more {
+        texts.push(
+            (0..1 + choices.below(4))
+                .map(|_| *choices.pick(&ORNAMENT_GLYPHS))
+                .collect(),
+        );
+        // The size the shaper sets at `scale`, where that is a number.
+        let size = 0.5 * (1u32 << choices.below(14)) as f32;
+        let unscaled = size / scale;
+        styles.push(ResolvedText {
+            size: FontSize::Pt(if unscaled.is_finite() && unscaled > 0.0 {
+                unscaled
+            } else {
+                size
+            }),
+            ..style(choices, faces)
+        });
+    }
+    (texts, styles)
 }
 
 /// `texts`, in `styles`, at `scale`, each cut to the same share of its

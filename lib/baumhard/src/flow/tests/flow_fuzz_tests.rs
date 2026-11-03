@@ -1341,7 +1341,7 @@ fn test_the_flow_fuzzers_draw_every_ring_layout() {
 }
 
 /// R50.3: the structured flow fuzzer draws long side ornaments, so that
-/// a geometry that breaks `TOUCH_LOOKS_A_BOX` is a finding: drawn after
+/// a geometry that breaks `touch_looks` is a finding: drawn after
 /// the ring's layout, one time in four, up to 200 bytes of a sequence of
 /// [`ORNAMENT_GLYPHS`] repeated — a wide glyph among thin ones — and on
 /// zero choices, an input that ends before it, not at all, so every
@@ -1375,6 +1375,69 @@ fn test_the_structured_flow_fuzzer_draws_long_mixed_ornaments() {
     assert!(
         drawn >= 50 && long >= 20 && mixed >= 10 && most <= LONG_ORNAMENT_BYTES,
         "400 seeds: {drawn} long ornaments drawn, {long} of 100 bytes or more, {mixed} of them of two glyphs or more, the longest {most} bytes"
+    );
+}
+
+/// R51.2: the structured flow fuzzer draws texts of many sizes, so that
+/// a touch check of many classes of height is reached and a geometry
+/// that breaks `touch_looks` is a finding: drawn after the ring's layout
+/// and its long ornament, one time in four, spans added to
+/// [`MIXED_SIZE_SPANS`] at most, each at 0.5 pt times a power of two
+/// over the whole font-size window, 0.5 to 4,096 pt, as the frame is
+/// scaled; and on zero choices not at all, so every committed finding
+/// replays the text it was found with.
+///
+/// Control: with no span ever added, red.
+///
+/// [`MIXED_SIZE_SPANS`]: crate::flow::tests::flow_fuzz::MIXED_SIZE_SPANS
+#[test]
+fn test_the_structured_flow_fuzzer_draws_texts_of_many_sizes() {
+    use crate::document::resolve::ResolvedText;
+    use crate::document::values::FontSize;
+    use crate::flow::tests::flow_fuzz::{faces, mixed_sizes, MIXED_SIZE_SPANS};
+    let faces = faces();
+    let texts = vec!["A frame".to_string()];
+    let styles = vec![crate::flow::tests::support::style(16.0)];
+    let (none, unstyled) = mixed_sizes(&mut Choices::new(&[]), &texts, &styles, 1.0, &faces);
+    assert!(
+        none == texts && unstyled.len() == 1,
+        "zero choices add no span: {none:?}"
+    );
+    let points = |style: &ResolvedText, scale: f32| match style.size {
+        FontSize::Pt(points) => points * scale,
+        _ => f32::NAN,
+    };
+    let (mut drawn, mut sixteen, mut most_sizes) = (0, 0, 0);
+    let (mut least, mut largest) = (f32::INFINITY, 0.0_f32);
+    for seed in 0..400 {
+        let scale = [1.0, 0.25, 3.0][seed as usize % 3];
+        let (texts, styles) = mixed_sizes(&mut Choices::seeded(seed), &texts, &styles, scale, &faces);
+        assert!(
+            texts.len() == styles.len() && texts.len() <= MIXED_SIZE_SPANS,
+            "seed {seed}: {} texts, {} styles",
+            texts.len(),
+            styles.len()
+        );
+        if texts.len() == 1 {
+            continue;
+        }
+        drawn += 1;
+        sixteen += usize::from(texts.len() == MIXED_SIZE_SPANS);
+        let mut sizes: Vec<u32> = styles[1..]
+            .iter()
+            .map(|s| (points(s, scale) * 2.0).round() as u32)
+            .collect();
+        sizes.sort_unstable();
+        sizes.dedup();
+        most_sizes = most_sizes.max(sizes.len());
+        for style in &styles[1..] {
+            least = least.min(points(style, scale));
+            largest = largest.max(points(style, scale));
+        }
+    }
+    assert!(
+        drawn >= 50 && sixteen >= 3 && most_sizes >= 10 && (least - 0.5).abs() < 1e-3 && (largest - 4_096.0).abs() < 1.0,
+        "400 seeds: {drawn} texts of more sizes drawn, {sixteen} of {MIXED_SIZE_SPANS} spans, at most {most_sizes} sizes in one, from {least} to {largest} pt as scaled"
     );
 }
 
@@ -1731,7 +1794,8 @@ fn test_the_raw_harness_draws_every_frame_fit() {
 /// break, whose control characters' glyphs are given inks zero wide and
 /// line tall, laid a third of a point apart round the rectangle. Each was
 /// once weighed against every other in the touch check's strips: 4,315
-/// looks over 95 boxes, past `TOUCH_LOOKS_A_BOX`, then 12, a box. A box with
+/// looks over 95 boxes, past `TOUCH_LOOKS_A_BOX`, then 12 a box (now
+/// `touch_looks`, ruling R51.2). A box with
 /// no ink is left out of the check now (ruling R49.2), and the replay —
 /// held to the bound by the fuzz property — passes. The strips by class
 /// of height hold it even with every box taken as inked (ruling R50.1):

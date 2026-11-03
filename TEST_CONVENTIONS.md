@@ -868,15 +868,18 @@ what its weights allow past it, one build's shaping and inking and a
 lay of each line (`frame_work_steps`, R47.2): the budget is read before
 each build, reshape and lay, and before each copy of a side ornament,
 which also holds back the cost of its arc's touch check at
-`TOUCH_LOOKS_A_BOX` looks a box (R48.2), so once it is spent nothing
+`touch_looks` looks a box of the classes of height it holds (R48.2,
+R51.2), so once it is spent nothing
 runs that the overshoot does not count (the `PAST_BUDGET` grid in
 `flow/tests/budget_tests.rs` holds every fit mode, span, kind of sides
 and direction to it, a take that crosses the budget counted for the
 part past it, R50.4). Every flow fuzz frame is held to that bound on
 looks a box too, so a geometry that breaks it is a finding: the check's
-looks are the inks near each box, whatever the tallest (R50.1), and
-flow_structured draws long mixed side ornaments, up to 200 bytes of a
-wide glyph among thin ones (`long_ornament`, R50.3), the ornament cut
+looks are the inks near each box, whatever the tallest (R50.1), and a
+few for each class of height (R51.2), and flow_structured draws texts
+of up to sixteen sizes over the whole font-size window (`mixed_sizes`,
+R51.2) and long mixed side ornaments, up to 200 bytes of a wide glyph
+among thin ones (`long_ornament`, R50.3), the ornament cut
 until a frame of no text beside it fits, and then the frame's text, to
 leave their shaping and inking room within the per-input bound below
 (`sides_in_time`, `framed`). A glyph a compiled face lacks shapes as a

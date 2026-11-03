@@ -13,6 +13,7 @@ use glam::Vec2;
 use crate::document::resolve::{ResolvedRing, ResolvedSides};
 use crate::document::values::{Direction, Edge, FitMode, LineSpan, Percent, Rgba, Shape, StartPoint};
 use crate::flow::path::ArcPath;
+use crate::flow::place::halves::Looks;
 use crate::flow::place::halves::{end_seam, halves_seam, room_seam, side_floor_seam, track_seam};
 use crate::flow::place::{place_lines, place_on_closed_traced, Trace, INK_TOLERANCE, MIN_TABLE_SPACING};
 use crate::flow::tests::support::{real_run, style, with_fonts};
@@ -102,10 +103,31 @@ pub(crate) fn frame_with(
     layout: &RingLayout,
     outward: bool,
 ) -> (ShapedRun, PlacedRun, Trace) {
+    frame_of_spans(
+        &[(text.to_string(), points)],
+        points,
+        outline,
+        fit,
+        layout,
+        outward,
+    )
+}
+
+/// `spans`, each its text at its size in points, shaped for real as one
+/// run, laid as a frame as [`frame_with`] lays a text, its sides in the
+/// style of `points`.
+pub(crate) fn frame_of_spans(
+    spans: &[(String, f32)],
+    points: f32,
+    outline: &Outline,
+    fit: &FitMode,
+    layout: &RingLayout,
+    outward: bool,
+) -> (ShapedRun, PlacedRun, Trace) {
     let flow = style(points);
     let mut trace = Trace::default();
     let (rescaled, placed) = with_fonts(|fs| {
-        let run = real_run(text, &flow, fs);
+        let run = spans_run(spans, fs);
         let start = StartPoint {
             edge: Edge::Top,
             at: 0.0,
@@ -125,6 +147,38 @@ pub(crate) fn frame_with(
         (rescaled.unwrap_or(run), placed)
     });
     (rescaled, placed, trace)
+}
+
+/// `spans`, each its text at its size in points, shaped for real as one
+/// run in [`FACE`](crate::flow::tests::support::FACE), at scale 1.
+pub(crate) fn spans_run(
+    spans: &[(String, f32)],
+    fs: &mut crate::font::fonts::FontSystemWriteGuard,
+) -> ShapedRun {
+    let styles: Vec<crate::document::resolve::ResolvedText> =
+        spans.iter().map(|(_, points)| style(*points)).collect();
+    let flow: Vec<crate::flow::FlowSpan<'_>> = spans
+        .iter()
+        .zip(&styles)
+        .map(|((text, _), style)| crate::flow::FlowSpan {
+            text,
+            style,
+            link: None,
+        })
+        .collect();
+    crate::flow::shape_run(&flow, 1.0, fs)
+}
+
+/// The reviewer's mixed-size text (review 5751828253), `copies` times
+/// over: a span of `dots` `.`s at 0.5 pt, then an `x` in each of 14 spans
+/// at 0.5, 1, 2, … 4,096 pt, the whole font-size window.
+pub(crate) fn mixed_sizes(copies: usize, dots: usize) -> Vec<(String, f32)> {
+    (0..copies)
+        .flat_map(|_| {
+            std::iter::once((".".repeat(dots), 0.5))
+                .chain((0..14).map(|k| ("x".to_string(), 0.5 * (1u32 << k) as f32)))
+        })
+        .collect()
 }
 
 /// Each placed glyph's ink box on the canvas, measured here from its
@@ -1000,9 +1054,9 @@ pub struct SweepWork {
     /// The most glyph steps a frame took a glyph of its text, rounded up
     /// (ruling R44.2).
     pub most_per_glyph: usize,
-    /// The most pairs a frame's touch check looked at a box: its looks
-    /// and its boxes (`Trace::looks`, ruling R48.2).
-    pub most_looks: (usize, usize),
+    /// The most pairs a frame's touch checks looked at a box
+    /// (`Trace::looks`, rulings R48.2, R51.2).
+    pub(crate) most_looks: Looks,
     /// The rounds a letter was moved clear of an ink before its neighbor,
     /// and of them the rounds that left it where it was (ruling R44.7).
     pub earlier: (usize, usize),
@@ -1196,7 +1250,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                             work.steps += trace.spent;
                             work.most_per_glyph =
                                 work.most_per_glyph.max(trace.spent.div_ceil(trace.glyphs.max(1)));
-                            work.most_looks = more_looks(work.most_looks, trace.looks);
+                            work.most_looks = work.most_looks.with(trace.looks);
                             work.lookups += lookups_so_far() - looked;
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
                                 shrunk += 1;
@@ -2361,7 +2415,7 @@ pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
 /// each took: its trace's glyph steps, and the path lookups its
 /// placement made. `Repeat` rings take no glyph step and are left out.
 #[cfg(test)]
-pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, (usize, usize))> {
+pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks)> {
     use crate::arena::NodeId;
     use crate::document::element::{DocElement, DocKind};
     use crate::document::format::load;
@@ -2502,50 +2556,110 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, (usize, usize))> {
     out
 }
 
-/// Of two touch checks' looks and boxes, the one that looked at more
-/// pairs a box.
-pub(crate) fn more_looks(a: (usize, usize), b: (usize, usize)) -> (usize, usize) {
-    if b.0 * a.1.max(1) > a.0 * b.1.max(1) {
-        b
+/// Whether a frame's touch checks, `looks`, looked at no more pairs a
+/// box than measured (ruling R51.2): in their sweeps and within each
+/// class of height's own strips, `TOUCH_LOOKS_BASE_MEASURED` a box;
+/// between a class and the finer ones, `TOUCH_LOOKS_A_CLASS_MEASURED` a
+/// box for each class the check held; and so, each part twice that,
+/// within `touch_looks` of its classes; and no side arc's check holding
+/// more classes than it was held back for (`height_classes`). What failed, with each part's
+/// ratio to its bound, where one did.
+pub(crate) fn looks_as_measured(looks: &Looks) -> Result<(), String> {
+    use crate::flow::place::halves::{
+        touch_looks, TOUCH_LOOKS_A_CLASS, TOUCH_LOOKS_A_CLASS_MEASURED, TOUCH_LOOKS_BASE,
+        TOUCH_LOOKS_BASE_MEASURED,
+    };
+    let (base, boxes) = looks.base;
+    let (across, of, classes) = looks.across;
+    let (worst, worst_boxes, worst_classes) = looks.worst;
+    let mut broken = Vec::new();
+    if base > TOUCH_LOOKS_BASE_MEASURED * boxes {
+        broken.push(format!(
+            "{base} looks over {boxes} boxes in a check's sweep and its classes' own strips, {:.2} a box, past the {TOUCH_LOOKS_BASE_MEASURED} measured (TOUCH_LOOKS_BASE, {TOUCH_LOOKS_BASE}, is ×{:.2} it)",
+            base as f64 / boxes.max(1) as f64,
+            (TOUCH_LOOKS_BASE * boxes) as f64 / base.max(1) as f64
+        ));
+    }
+    if across > TOUCH_LOOKS_A_CLASS_MEASURED * of * classes {
+        broken.push(format!(
+            "{across} looks over {of} boxes of {classes} classes between its classes, {:.2} a box a class, past the {TOUCH_LOOKS_A_CLASS_MEASURED} measured (TOUCH_LOOKS_A_CLASS, {TOUCH_LOOKS_A_CLASS}, is ×{:.2} it)",
+            across as f64 / (of * classes).max(1) as f64,
+            (TOUCH_LOOKS_A_CLASS * of * classes) as f64 / across.max(1) as f64
+        ));
+    }
+    if looks.reserved > 0 && looks.classes > looks.reserved {
+        broken.push(format!(
+            "a side arc's check held {} classes of height, past the {} it was held back for",
+            looks.classes, looks.reserved
+        ));
+    }
+    if !looks.within() {
+        broken.push(format!(
+            "{worst} looks over {worst_boxes} boxes of {worst_classes} classes, {:.2} a box, past touch_looks's {}",
+            worst as f64 / worst_boxes.max(1) as f64,
+            touch_looks(worst_classes)
+        ));
+    }
+    if broken.is_empty() {
+        Ok(())
     } else {
-        a
+        Err(broken.join("; "))
     }
 }
 
-/// R48.2, R50.2: no touch check of the aspect sweep's frames or the demo
-/// maps' looks at more than `TOUCH_LOOKS_MEASURED` pairs a box, and
-/// `TOUCH_LOOKS_A_BOX`, what a side arc holds back for its check, is
-/// twice that. The most measured over these frames is 6.19 (631 looks
-/// over 102 boxes, a check whose sweep ran past `SWEEP_PAIRS` and laid
-/// its boxes in strips by class of height); over the budget grids, which
-/// hold their frames to the same bound (`flow::tests::budget_tests`),
-/// 8.58, which `TOUCH_LOOKS_MEASURED` is rounded up from. The flow fuzz
-/// property holds every committed finding and fuzzed frame to
-/// `TOUCH_LOOKS_A_BOX`.
+/// The ratio of each part of `looks` to its measured bound, for a
+/// message: in the sweep and the classes' own strips, between classes,
+/// and the check nearest `touch_looks`.
+pub(crate) fn looks_ratios(looks: &Looks) -> String {
+    use crate::flow::place::halves::{touch_looks, TOUCH_LOOKS_A_CLASS_MEASURED, TOUCH_LOOKS_BASE_MEASURED};
+    let (base, boxes) = looks.base;
+    let (across, of, classes) = looks.across;
+    let (worst, worst_boxes, worst_classes) = looks.worst;
+    format!(
+        "{base} looks over {boxes} boxes in sweeps and own strips ({:.2} a box of {TOUCH_LOOKS_BASE_MEASURED} measured); {across} over {of} boxes of {classes} classes between classes ({:.2} a box a class of {TOUCH_LOOKS_A_CLASS_MEASURED}); nearest its bound, {worst} over {worst_boxes} boxes of {worst_classes} classes ({:.2} a box of {}); at most {} classes in a side arc's check, {} held back for",
+        base as f64 / boxes.max(1) as f64,
+        across as f64 / (of * classes).max(1) as f64,
+        worst as f64 / worst_boxes.max(1) as f64,
+        touch_looks(worst_classes),
+        looks.classes,
+        looks.reserved
+    )
+}
+
+/// R48.2, R50.2, R51.2: no touch check of the aspect sweep's frames or
+/// the demo maps' looks at more pairs a box than measured
+/// ([`looks_as_measured`]), and what a side arc holds back for its check,
+/// `touch_looks` of its classes, is twice each part. The most measured
+/// over these frames is 3.22 a box in their sweeps and their classes' own
+/// strips (219 looks over 68 boxes) and 0.68 a box a class between
+/// classes (200 over 74 boxes of four classes); over the budget grids and
+/// the pins, which hold their frames to the same parts, 4.96 and 1.50,
+/// which the measured parts are rounded up from.
+/// The flow fuzz property holds every committed finding and fuzzed frame
+/// to `touch_looks`.
 ///
-/// Control: with the measured bound at 6, red. (No `do_*` twin: it reads
-/// the sweep's traces.)
+/// Control: with each part measured one lower, red. (No `do_*` twin: it
+/// reads the sweep's traces.)
 #[test]
 fn test_flow_halves_a_touch_check_looks_at_few_pairs_a_box() {
-    use crate::flow::place::halves::{TOUCH_LOOKS_A_BOX, TOUCH_LOOKS_MEASURED};
+    use crate::flow::place::halves::{
+        TOUCH_LOOKS_A_CLASS, TOUCH_LOOKS_A_CLASS_MEASURED, TOUCH_LOOKS_BASE, TOUCH_LOOKS_BASE_MEASURED,
+    };
     let mut most = the_sweep().most_looks;
     for (_, _, _, looks) in demo_map_frames() {
-        most = more_looks(most, looks);
+        most = most.with(looks);
     }
-    let (looks, boxes) = most;
     assert!(
-        looks > 0 && boxes > 0,
-        "precondition: the frames' touch checks are traced ({looks} looks over {boxes} boxes)"
+        most.base.0 > 0 && most.base.1 > 0 && most.across.0 > 0,
+        "precondition: the frames' touch checks are traced, and some lay boxes of more than one class: {}",
+        looks_ratios(&most)
     );
-    assert!(
-        looks <= TOUCH_LOOKS_MEASURED * boxes,
-        "a touch check looked at {looks} pairs of {boxes} boxes, {:.2} a box, past the {TOUCH_LOOKS_MEASURED} measured (TOUCH_LOOKS_A_BOX, {TOUCH_LOOKS_A_BOX}, is ×{:.2} it)",
-        looks as f64 / boxes as f64,
-        TOUCH_LOOKS_A_BOX as f64 * boxes as f64 / looks as f64
-    );
+    if let Err(why) = looks_as_measured(&most) {
+        panic!("{why}");
+    }
     assert_eq!(
-        TOUCH_LOOKS_A_BOX,
-        2 * TOUCH_LOOKS_MEASURED,
+        (TOUCH_LOOKS_BASE, TOUCH_LOOKS_A_CLASS),
+        (2 * TOUCH_LOOKS_BASE_MEASURED, 2 * TOUCH_LOOKS_A_CLASS_MEASURED),
         "twice the most measured"
     );
 }
@@ -3227,8 +3341,9 @@ pub(crate) fn mixed_sides() -> String {
 
 /// R50.2 (review 5745584645): a touch check's looks are output-sensitive,
 /// the inks near each box whatever the tallest, so a long ornament that
-/// mixes one wide glyph with thin ones looks at no more than
-/// `TOUCH_LOOKS_MEASURED` pairs a box, and so within `TOUCH_LOOKS_A_BOX`: [`mixed_sides`] round a 20,000 sharp
+/// mixes one wide glyph with thin ones looks at no more pairs a box than
+/// measured ([`looks_as_measured`]), and so within `touch_looks` of its
+/// classes: [`mixed_sides`] round a 20,000 sharp
 /// square, and the fuzzable `"﷽|||"` round a 2,000 one — "To see a World
 /// in a Grain of Sand" at 16 pt, `Once` at span natural, outward, both
 /// arcs filled (a floor of 40,000,000, the test seam). With one strip
@@ -3240,7 +3355,7 @@ pub(crate) fn mixed_sides() -> String {
 /// `do_*` twin: it sets a test seam.)
 #[test]
 fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box() {
-    use crate::flow::place::halves::{FLOOR_OVERRIDE, TOUCH_LOOKS_A_BOX, TOUCH_LOOKS_MEASURED};
+    use crate::flow::place::halves::FLOOR_OVERRIDE;
     let text = "To see a World in a Grain of Sand";
     for (sides, size) in [(mixed_sides(), 20_000.0), ("﷽|||".to_string(), 2_000.0)] {
         let shape = outline(
@@ -3257,19 +3372,81 @@ fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box
         let (_, placed, trace) = with_seam(&FLOOR_OVERRIDE, 40_000_000, || {
             frame_with(text, 16.0, &shape, &FitMode::Once { filler: None }, &layout, true)
         });
-        let (looks, boxes) = trace.looks;
         assert!(
             trace.unheld.sides.is_empty() && placed.glyphs.len() > 1_000,
             "precondition, {sides:?} round {size}: both arcs are filled ({} glyphs, {:?})",
             placed.glyphs.len(),
             trace.unheld
         );
+        if let Err(why) = looks_as_measured(&trace.looks) {
+            panic!("{sides:?} round {size}: {why}");
+        }
+    }
+}
+
+/// R51.2 (review 5751828253): a touch check weighs a box against every
+/// coarser class of height it holds, so its looks a box grow with its
+/// classes, and a text that mixes sizes over the whole font-size window
+/// looks at no more pairs a box than measured, a part for each class
+/// ([`looks_as_measured`]), and so within `touch_looks` of its classes:
+/// the reviewer's 14-size probe ([`mixed_sizes`]), round a 2,000 sharp
+/// square with 60 dots, `Fit` from ¼ to 4 and `Once`, and five times over
+/// round a 20,000 one with 3,000 dots a span, `Once`; at span natural,
+/// `x` on its sides, inward, each at its own budget. At R50, whose bound
+/// was 18 a box whatever the classes, they looked at 23.86, 21.28 and
+/// 23.46 pairs a box.
+///
+/// Control: with `touch_looks` 18 a box whatever the classes, as at R50,
+/// red. (No `do_*` twin: it reads a frame's trace.)
+#[test]
+fn test_flow_halves_a_mixed_size_frame_s_touch_check_looks_within_its_classes() {
+    let square = |size: f32| {
+        outline(
+            Rect::new(Vec2::ZERO, Vec2::splat(size)),
+            Shape::Rectangle {
+                radius: Percent::new(0),
+            },
+        )
+    };
+    let layout = RingLayout {
+        span: LineSpan::NATURAL,
+        sides: Some(("x".to_string(), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    for (name, text, size, fit) in [
+        (
+            "Fit",
+            mixed_sizes(1, 60),
+            2_000.0,
+            FitMode::Fit { min: 0.25, max: 4.0 },
+        ),
+        (
+            "Once",
+            mixed_sizes(1, 60),
+            2_000.0,
+            FitMode::Once { filler: None },
+        ),
+        (
+            "Once, five times over",
+            mixed_sizes(5, 3_000),
+            20_000.0,
+            FitMode::Once { filler: None },
+        ),
+    ] {
+        let (_, placed, trace) = frame_of_spans(&text, 16.0, &square(size), &fit, &layout, false);
         assert!(
-            looks <= TOUCH_LOOKS_MEASURED * boxes,
-            "{sides:?} round {size}: a touch check looked at {looks} pairs of {boxes} boxes, {:.2} a box, past the {TOUCH_LOOKS_MEASURED} measured (TOUCH_LOOKS_A_BOX, {TOUCH_LOOKS_A_BOX}, is ×{:.2} it)",
-            looks as f64 / boxes as f64,
-            TOUCH_LOOKS_A_BOX as f64 * boxes as f64 / looks.max(1) as f64
+            trace.looks.across.2 >= 14
+                && trace.looks.across.0 > 0
+                && trace.looks.classes >= 10
+                && trace.looks.reserved > 0
+                && placed.glyphs.len() > 60,
+            "precondition, {name} round {size}: a touch check of the frame holds the text's 14 sizes' classes or more and looks between them, and its side arcs' checks hold ten or more and are held back for ({}; {} glyphs)",
+            looks_ratios(&trace.looks),
+            placed.glyphs.len()
         );
+        if let Err(why) = looks_as_measured(&trace.looks) {
+            panic!("{name} round {size}: {why}");
+        }
     }
 }
 

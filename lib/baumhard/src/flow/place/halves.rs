@@ -93,8 +93,8 @@
 //! slide, shrink (its floor build too), cut and backtrack, R27's fit and
 //! a `Once` filler's copies — and before each copy of a side ornament,
 //! which is laid only while the frame can afford it and the touch check
-//! of the arc after ([`check_steps`], at [`TOUCH_LOOKS_A_BOX`] looks a
-//! box): an arc it cannot afford is left empty, or keeps the copies it
+//! of the arc after ([`check_steps`], at [`touch_looks`] looks a box of
+//! the classes of height it holds): an arc it cannot afford is left empty, or keeps the copies it
 //! has where they hold the equal-gap rule, and is reported as left empty
 //! or kept short ([`Unheld::sides`]).
 //! So a frame overshoots its budget
@@ -357,38 +357,99 @@ pub(crate) const BOXES_A_STEP: usize = 32;
 /// 2.97 µs, and 4.)
 pub(crate) const STRIPPED_A_STEP: usize = 8;
 
-/// The most pairs a touch check looks at a box it is given (rulings
-/// R48.2, R50.2): twice the most any check made over the aspect sweep,
-/// the budget grids — their long mixed side ornaments among them — the
-/// demo maps' frames, the long-ornament pins and every committed flow
-/// fuzz finding ([`TOUCH_LOOKS_MEASURED`]). What a side arc holds back
-/// for its check rests on it ([`check_steps`]), and with it
+/// The most pairs a touch check looks at a box it is given past what
+/// its classes of height add (rulings R48.2, R51.2): twice the most any
+/// check made over its corpus ([`TOUCH_LOOKS_BASE_MEASURED`]) — its
+/// sweep's looks and each class's own strips' ([`stripped`]).
+pub(crate) const TOUCH_LOOKS_BASE: usize = TOUCH_LOOKS_BASE_MEASURED * 2;
+
+/// The most pairs a touch check looked at a box in its sweep and within
+/// each class's own strips, rounded up, over the frames
+/// [`TOUCH_LOOKS_A_CLASS_MEASURED`] is measured over (ruling R51.2):
+/// 4.96, 506 looks over 102 boxes, the quatrain round the budget grid's
+/// 1,000 × 20 ellipse, a check of three classes; over a check of
+/// thousands of boxes, 4.15 (a long ornament round a 20,000 sharp
+/// square, 48,025 boxes). Pinned by
+/// `test_flow_halves_a_touch_check_looks_at_few_pairs_a_box` over the
+/// sweep and the demo maps, by the budget grids over theirs, and by the
+/// long-ornament and mixed-size pins (`looks_as_measured`).
+pub(crate) const TOUCH_LOOKS_BASE_MEASURED: usize = 5;
+
+/// The most pairs a touch check looks at a box for each class of height
+/// it holds (rulings R48.2, R51.2): twice the most any check made over
+/// its corpus ([`TOUCH_LOOKS_A_CLASS_MEASURED`]) — the boxes a class pair
+/// places and the looks between them ([`stripped`]).
+pub(crate) const TOUCH_LOOKS_A_CLASS: usize = TOUCH_LOOKS_A_CLASS_MEASURED * 2;
+
+/// The most pairs a touch check looked at a box for each class of height
+/// it held, rounded up, between a class and the finer ones — each finer
+/// box placed in its strips or each of its boxes copied into theirs, and
+/// the looks between them ([`stripped`]) — over the aspect sweep, the
+/// budget grids, the demo maps' frames, the long-ornament and mixed-size
+/// pins and every committed flow fuzz finding (ruling R51.2):
+/// 1.50, 1,654 looks over 79 boxes of 14 classes, the reviewer's text of
+/// 14 sizes from 0.5 to 4,096 pt round a 2,000 sharp square, `Fit`
+/// (review 5751828253: 1,885 looks over those 79 boxes in all, 23.86 a
+/// box); over a check of thousands of boxes, 1.28 (a long text's frame,
+/// 1,118 boxes of two classes). Pinned as [`TOUCH_LOOKS_BASE_MEASURED`]
+/// is. (At R50, one bound of 18 a box for every check, `TOUCH_LOOKS_A_BOX`,
+/// measured as 8.58 over a corpus with no text of mixed sizes.)
+pub(crate) const TOUCH_LOOKS_A_CLASS_MEASURED: usize = 2;
+
+/// The most pairs a touch check of `classes` classes of height looks at
+/// a box (rulings R48.2, R51.2): [`TOUCH_LOOKS_BASE`], and
+/// [`TOUCH_LOOKS_A_CLASS`] for each class. What a side arc holds back for
+/// its check rests on it ([`check_steps`]), and with it
 /// [`overshoot_steps`]; the flow fuzz property fails a frame whose check
 /// looks at more.
-pub(crate) const TOUCH_LOOKS_A_BOX: usize = TOUCH_LOOKS_MEASURED * 2;
+///
+/// A box is weighed against every coarser class the check holds, near
+/// it or not: a lookup that charged it only for the coarser inks near
+/// it, along the axis as well as across, would still look for them in
+/// each class, so the classes are counted instead. A check holds no more
+/// classes than its frame's inks span ([`height_classes`]), and the
+/// font-size window bounds those: every size is from 0.5 to 4,096 pt,
+/// so an ink no taller than twice its size is less than 8,192 tall, of
+/// class 14 at most, and the least class, of an ink of no height and
+/// [`TOUCH`], is −9: 24 classes at most, one more for each doubling of an
+/// ink past twice its size.
+pub(crate) fn touch_looks(classes: usize) -> usize {
+    TOUCH_LOOKS_BASE.saturating_add(TOUCH_LOOKS_A_CLASS.saturating_mul(classes))
+}
 
-/// The most pairs a touch check looked at a box, rounded up, over the
-/// frames [`TOUCH_LOOKS_A_BOX`] names (ruling R50.2): 8.58, 841 looks
-/// over 98 boxes, the quatrain's lines facing each other inward round
-/// the budget grid's 600 × 12 sharp rectangle, a check of six classes of
-/// height ([`stripped`]); over a check of thousands of boxes, 6.68 (a
-/// long ornament round the 20,000 ellipse) and 6.50 (a long mixed one
-/// round the 20,000 sharp square, 21,094 boxes). Pinned by
-/// `test_flow_halves_a_touch_check_looks_at_few_pairs_a_box` over the
-/// sweep and the demo maps, by the budget grids over theirs and by
-/// `test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box`.
-/// (6 at 289a684f, 5.41 measured over the sweep and the demo maps, when
-/// every box shared one strip height, the tallest's.)
-pub(crate) const TOUCH_LOOKS_MEASURED: usize = 9;
-
-/// The most glyph steps a touch check of `boxes` boxes counts while it
-/// looks at no more than [`TOUCH_LOOKS_A_BOX`] pairs a box (ruling
-/// R48.2): its sweep, [`SWEEP_PAIRS`] looks a box at most, and past it
-/// its strips, each at its weight.
-pub(crate) fn check_steps(boxes: usize) -> usize {
+/// The most glyph steps a touch check of `boxes` boxes of `classes`
+/// classes of height counts while it looks at no more than
+/// [`touch_looks`] pairs a box (rulings R48.2, R51.2): its sweep,
+/// [`SWEEP_PAIRS`] looks a box at most, and past it its strips, each at
+/// its weight.
+pub(crate) fn check_steps(boxes: usize, classes: usize) -> usize {
     let swept = boxes.saturating_add(boxes.saturating_add(1).saturating_mul(SWEEP_PAIRS));
-    let stripped = boxes.saturating_add(boxes.saturating_mul(TOUCH_LOOKS_A_BOX));
+    let stripped = boxes.saturating_add(boxes.saturating_mul(touch_looks(classes)));
     weighing_steps(swept).saturating_add(stripped.div_ceil(STRIPPED_A_STEP))
+}
+
+/// How many classes of height a touch check of boxes `sizes` wide and
+/// tall holds at most, across either axis it may sweep along ([`stripped`],
+/// ruling R51.2): the distinct classes ([`strip_class`]) of their heights
+/// or of their widths, whichever are more. A size with no ink to touch
+/// with ([`has_ink`]) is left out, as the check leaves it out.
+pub(crate) fn height_classes(sizes: impl IntoIterator<Item = Vec2>) -> usize {
+    let mut across: [Vec<i32>; 2] = [Vec::new(), Vec::new()];
+    for size in sizes {
+        if has_ink((Vec2::ZERO, size)) {
+            across[0].push(strip_class(size.y));
+            across[1].push(strip_class(size.x));
+        }
+    }
+    across
+        .iter_mut()
+        .map(|classes| {
+            classes.sort_unstable();
+            classes.dedup();
+            classes.len()
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// Clusters one glyph step walks in R27's arithmetic lays
@@ -476,12 +537,14 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// one of each runs past it; [`untouched`] runs within the budget, which
 /// holds its share back, and so does a side arc's touch check, held back
 /// before each copy ([`check_steps`], ruling R48.2). That rests on one
-/// assumption: that no touch check looks at more than
-/// [`TOUCH_LOOKS_A_BOX`] pairs a box, which the flow fuzz property holds
-/// every frame to. A check's looks are output-sensitive — the inks near
-/// each box, whatever the tallest box ([`stripped`], ruling R50.1) — and
-/// the structured fuzzer draws long mixed side ornaments, as a map may
-/// hold (ruling R50.3), so a geometry that breaks it is a finding.
+/// assumption: that no touch check looks at more than [`touch_looks`]
+/// pairs a box of the classes of height it holds, which the flow fuzz
+/// property holds every frame to. A check's looks are the inks near each
+/// box, whatever the tallest box ([`stripped`], ruling R50.1), and a few
+/// for each class of height it holds (ruling R51.2); the structured
+/// fuzzer draws long mixed side ornaments and texts of up to 16 sizes, as
+/// a map may hold (rulings R50.3, R51.2), so a geometry that breaks it is
+/// a finding.
 pub(crate) fn overshoot_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
     let r27 = if sized { shaping_steps(text) } else { 0 };
     FRAME_STEPS
@@ -765,10 +828,6 @@ thread_local! {
     /// short text.
     #[cfg(test)]
     pub(crate) static CAP_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-    /// Test counter (#294, ruling R48.2): the most pairs a touch check on
-    /// this thread has looked at a box, as its looks and its boxes.
-    #[cfg(test)]
-    pub(crate) static MOST_LOOKS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// Test counter (#294, ruling R46.1): the times R27's fit has
     /// reshaped a frame's text on this thread (`lines::fit_reshape`).
     #[cfg(test)]
@@ -1362,9 +1421,11 @@ pub(super) struct Work {
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
-    /// The most pairs a touch check of the frame looked at a box: its
-    /// looks and its boxes (ruling R48.2).
-    looks: Cell<(usize, usize)>,
+    /// The most pairs its touch checks looked at a box (rulings R48.2,
+    /// R51.2).
+    looks: Cell<Looks>,
+    /// The classes of height the last touch check held.
+    last_classes: Cell<usize>,
     /// Whether [`untouched`] is running, within the share held back for
     /// it: its steps are not past the budget ([`PAST_BUDGET`]).
     #[cfg(test)]
@@ -1379,7 +1440,8 @@ impl Work {
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
-            looks: Cell::new((0, 0)),
+            looks: Cell::new(Looks::default()),
+            last_classes: Cell::new(0),
             #[cfg(test)]
             reserved: Cell::new(false),
         };
@@ -1415,19 +1477,11 @@ impl Work {
         self.take(inking_steps(run));
     }
 
-    /// Note a touch check that looked at `looks` pairs of `boxes` boxes.
-    fn looked(&self, looks: usize, boxes: usize) {
-        #[cfg(test)]
-        MOST_LOOKS.with(|most| {
-            let (m, of) = most.get();
-            if looks.saturating_mul(of.max(1)) > m.saturating_mul(boxes.max(1)) {
-                most.set((looks, boxes));
-            }
-        });
-        let (most, of) = self.looks.get();
-        if looks.saturating_mul(of.max(1)) > most.saturating_mul(boxes.max(1)) {
-            self.looks.set((looks, boxes));
-        }
+    /// Note a touch check of `boxes` boxes that looked at the pairs
+    /// `looked` holds.
+    fn looked(&self, looked: &Looked, boxes: usize) {
+        self.looks.set(self.looks.get().more(looked, boxes));
+        self.last_classes.set(looked.classes);
     }
 
     /// Whether the frame can still take `steps` glyph steps within its
@@ -1930,6 +1984,11 @@ struct SideOrnament<'a> {
     base: Cell<usize>,
     /// The glyphs of one copy, each an ink box at most.
     per_copy: usize,
+    /// The ink sizes of one copy's glyphs, and the classes of height the
+    /// touch check of the arc being laid holds at most: the text's and
+    /// these (ruling R51.2).
+    sizes: Vec<Vec2>,
+    classes: Cell<usize>,
 }
 
 impl<'a> SideOrnament<'a> {
@@ -1944,22 +2003,42 @@ impl<'a> SideOrnament<'a> {
             },
             glyphs: &run.glyphs,
             per_copy: range.len(),
+            sizes: run.glyphs[range.clone()]
+                .iter()
+                .filter_map(|g| g.ink.map(|ink| ink.max - ink.min))
+                .collect(),
             clusters: clusters_of(&run.glyphs, range),
             work: &layout.work,
             base: Cell::new(0),
+            classes: Cell::new(0),
         }
     }
 
+    /// Weigh the touch checks of its arcs as holding the classes of
+    /// height of `text`, the text's ink boxes, and of its own copies'
+    /// glyphs ([`height_classes`], ruling R51.2).
+    fn beside(&self, text: &[InkBox]) {
+        let sizes = text.iter().map(|(min, max)| *max - *min);
+        self.classes
+            .set(height_classes(sizes.chain(self.sizes.iter().copied())));
+        let looks = self.work.looks.get();
+        self.work.looks.set(Looks {
+            reserved: looks.reserved.max(self.classes.get()),
+            ..looks
+        });
+    }
+
     /// Whether the frame can afford `copies` copies of the arc being laid
-    /// and the touch check of them after (ruling R48.2): the check's glyph
-    /// steps at [`TOUCH_LOOKS_A_BOX`] looks a box ([`check_steps`]) held
-    /// back from what the budget has left.
+    /// and the touch check of them after (rulings R48.2, R51.2): the
+    /// check's glyph steps at [`touch_looks`] looks a box of the classes
+    /// of height it holds ([`check_steps`]) held back from what the budget
+    /// has left.
     fn affords(&self, copies: usize) -> bool {
         let boxes = self
             .base
             .get()
             .saturating_add(copies.saturating_mul(self.per_copy));
-        self.work.affords(check_steps(boxes))
+        self.work.affords(check_steps(boxes, self.classes.get()))
     }
 
     /// Count `copies` copies laid against the frame's glyph steps.
@@ -2740,7 +2819,7 @@ fn touching<K: Copy>(boxes: Vec<(K, InkBox)>, exempt: impl Fn(K, K) -> bool, wor
                 .div_ceil(STRIPPED_A_STEP),
         );
     }
-    work.looked(looked.swept.saturating_add(looked.stripped), boxes.len());
+    work.looked(&looked, boxes.len());
     touches
 }
 
@@ -2769,11 +2848,88 @@ const SWEEP_PAIRS: usize = 2;
 const CELL_MARGIN: f64 = 1.0 + 1.0 / (1u64 << 20) as f64;
 
 /// The pairs of boxes [`touch_scan`] has looked at: in its sweep, and
-/// past it, in its strips ([`stripped`]).
+/// past it, in its strips ([`stripped`]) — of those, the ones between a
+/// class of height and the finer ones — and the classes of height its
+/// strips held, none where it did not reach them.
 #[derive(Default)]
 struct Looked {
     swept: usize,
     stripped: usize,
+    across: usize,
+    classes: usize,
+}
+
+/// The most pairs a frame's touch checks looked at a box (rulings R48.2,
+/// R51.2): of the check that came nearest its bound ([`touch_looks`]),
+/// its looks, boxes and classes of height; and, each over all its
+/// checks, the most a box in its sweep and within each class's own
+/// strips, as those looks and the boxes; the most a box for each class,
+/// between a class and the finer ones, as those looks, the boxes and the
+/// classes; and the most classes a side arc's check held, and one was
+/// held back for.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub(crate) struct Looks {
+    pub(crate) worst: (usize, usize, usize),
+    pub(crate) base: (usize, usize),
+    pub(crate) across: (usize, usize, usize),
+    /// The most classes of height a side arc's touch check held, and the
+    /// most one was held back for ([`height_classes`]).
+    pub(crate) classes: usize,
+    pub(crate) reserved: usize,
+}
+
+impl Looks {
+    /// These and one more check, of `boxes` boxes, that looked at the
+    /// pairs `looked` holds.
+    fn more(self, looked: &Looked, boxes: usize) -> Looks {
+        let looks = looked.swept.saturating_add(looked.stripped);
+        self.with(Looks {
+            worst: (looks, boxes, looked.classes),
+            base: (looks.saturating_sub(looked.across), boxes),
+            across: (looked.across, boxes, looked.classes),
+            classes: 0,
+            reserved: 0,
+        })
+    }
+
+    /// The most of these and `other`, each part apart.
+    pub(crate) fn with(self, other: Looks) -> Looks {
+        // `a` over `of` against `b` over `by`, as a fraction, without one.
+        let more = |(a, of): (usize, usize), (b, by): (usize, usize)| {
+            (a as u128) * (by.max(1) as u128) > (b as u128) * (of.max(1) as u128)
+        };
+        let bound = |(looks, boxes, classes): (usize, usize, usize)| {
+            (looks, boxes.saturating_mul(touch_looks(classes)))
+        };
+        let per_class =
+            |(looks, boxes, classes): (usize, usize, usize)| (looks, boxes.saturating_mul(classes));
+        Looks {
+            worst: if more(bound(other.worst), bound(self.worst)) {
+                other.worst
+            } else {
+                self.worst
+            },
+            base: if more(other.base, self.base) {
+                other.base
+            } else {
+                self.base
+            },
+            across: if more(per_class(other.across), per_class(self.across)) {
+                other.across
+            } else {
+                self.across
+            },
+            classes: self.classes.max(other.classes),
+            reserved: self.reserved.max(other.reserved),
+        }
+    }
+
+    /// Whether the check nearest its bound looked at no more than
+    /// [`touch_looks`] pairs a box of its classes.
+    pub(crate) fn within(&self) -> bool {
+        let (looks, boxes, classes) = self.worst;
+        looks <= boxes.saturating_mul(touch_looks(classes))
+    }
 }
 
 /// Whether two of `boxes`, each with ink ([`has_ink`]), touch, as
@@ -2913,10 +3069,10 @@ fn stripped<K: Copy>(
     let by_strip = |a: &Swept, b: &Swept| a.strip.cmp(&b.strip).then_with(|| a.before(b));
     // `a` weighed against `after`, the boxes after it in the sweep's order,
     // while they start within its reach.
-    let mut looks = 0_usize;
-    let mut scan = |a: &Swept, after: &[Swept]| {
+    let looks = Cell::new(0_usize);
+    let scan = &mut |a: &Swept, after: &[Swept]| {
         for b in after {
-            looks += 1;
+            looks.set(looks.get() + 1);
             if !b.start.le(&a.reach) {
                 return false;
             }
@@ -2941,13 +3097,15 @@ fn stripped<K: Copy>(
         levels.push((class, own));
         at = end;
     }
+    looked.classes = levels.len();
     let mut touches = false;
     for (c, (class, own)) in levels.iter().enumerate() {
-        touches = touches || within_strips(own, &mut scan);
+        touches = touches || within_strips(own, scan);
         for (fine, finer) in &levels[..c] {
             if touches {
                 break;
             }
+            let before = looks.get();
             // The cheaper of the two ways to weigh a finer class's boxes
             // against this one's: each of this class's boxes copied into
             // each of the finer class's strips it lies across, or each finer
@@ -2980,19 +3138,22 @@ fn stripped<K: Copy>(
                     .collect();
                 copied.sort_unstable_by(by_strip);
                 looked.stripped += copied.len();
-                in_shared_strips(finer, &copied, &mut scan)
+                looked.across += copied.len();
+                in_shared_strips(finer, &copied, scan)
             } else {
                 let mut visiting: Vec<Swept> = finer.iter().map(|b| placed(b.i, *class)).collect();
                 visiting.sort_unstable_by(by_strip);
                 looked.stripped += visiting.len();
-                among_strips(&visiting, own, &mut scan)
+                looked.across += visiting.len();
+                among_strips(&visiting, own, scan)
             };
+            looked.across += looks.get() - before;
         }
         if touches {
             break;
         }
     }
-    looked.stripped += looks;
+    looked.stripped += looks.get();
     touches
 }
 
@@ -4171,6 +4332,7 @@ pub(super) fn place_halves(
             .iter()
             .flat_map(|l| l.tracked.boxes.iter().copied())
             .collect();
+        side.beside(&text_boxes);
         for (at, from, to) in side_arcs(&lines, halves.length) {
             let budget = glyph_cap().saturating_sub(text.len() + sides.len());
             if let Some(arc) = side.arc(from, to) {
@@ -4220,6 +4382,11 @@ pub(super) fn place_halves(
                     },
                     &lay.work,
                 );
+                let looks = lay.work.looks.get();
+                lay.work.looks.set(Looks {
+                    classes: looks.classes.max(lay.work.last_classes.get()),
+                    ..looks
+                });
                 if touches {
                     sides.truncate(before);
                     unheld

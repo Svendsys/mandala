@@ -9,11 +9,12 @@ use glam::Vec2;
 
 use crate::document::values::{FitMode, LineSpan, Percent, Rgba, Shape};
 use crate::flow::place::halves::{
-    overshoot_steps, spent_seam, untouched_steps, BUDGET_OVERRIDE, PAST_BUDGET, TOUCH_LOOKS_MEASURED,
-    UNTOUCHED_TAKEN,
+    overshoot_steps, spent_seam, untouched_steps, Looks, BUDGET_OVERRIDE, PAST_BUDGET, UNTOUCHED_TAKEN,
 };
 use crate::flow::tests::flow_fuzz::ornament_run;
-use crate::flow::tests::halves_tests::{frame_with, with_seam, QUATRAIN};
+use crate::flow::tests::halves_tests::{
+    frame_of_spans, frame_with, looks_as_measured, looks_ratios, mixed_sizes, spans_run, with_seam, QUATRAIN,
+};
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{outline, Outline, Rect, RingLayout};
 
@@ -54,6 +55,11 @@ fn mixed_sides() -> [String; 5] {
 /// is laid, and while the second is.
 const MIXED_BUDGETS: [usize; 3] = [1, 60_000, 200_000];
 
+/// The budgets round the large sharp square with the reviewer's 14-size
+/// text five times over (ruling R51.2): spent while its lines are laid,
+/// before its first arc, and while its arcs are.
+const MIXED_SIZE_BUDGETS: [usize; 4] = [1, 100_000, 400_000, 700_000];
+
 /// The budgets round the large sharp square with the widest of
 /// [`mixed_sides`], the reviewer's `"⸻" + "|".repeat(100)` (ruling
 /// R50.4): spent with an arc's copies laid and its touch check still to
@@ -88,17 +94,23 @@ struct Past {
     overlap: bool,
     /// The most glyph steps an `untouched` of it took, and its estimate.
     untouched: (usize, usize),
-    /// The most pairs one of its touch checks looked at a box: its looks
-    /// and its boxes.
-    looks: (usize, usize),
+    /// The most pairs its touch checks looked at a box.
+    looks: Looks,
 }
 
-/// The quatrain laid round `shape` in every fit mode, at each of `spans`,
-/// with each of `sides`, in both directions, at each of `budgets`: what
-/// each frame took past its budget.
+/// The quatrain at [`POINTS`], as the grid's text: one span.
+fn quatrain() -> Vec<(String, f32)> {
+    vec![(QUATRAIN.to_string(), POINTS)]
+}
+
+/// `text`, its spans each at its size, laid round `shape` in every fit
+/// mode, at each of `spans`, with each of `sides` in the style of
+/// [`POINTS`], in both directions, at each of `budgets`: what each frame
+/// took past its budget.
 fn grid(
     shape: &Outline,
     name: &str,
+    text: &[(String, f32)],
     spans: &[(&str, LineSpan)],
     sides: &[Option<String>],
     budgets: &[usize],
@@ -119,24 +131,22 @@ fn grid(
                     sides: side.clone().map(|s| (s, Rgba::opaque(0, 0, 0))),
                     ..RingLayout::whole()
                 };
-                let (run, ornament) = with_fonts(|fs| {
-                    (
-                        real_run(QUATRAIN, &flow, fs),
-                        ornament_run(&layout, &flow, 1.0, fs),
-                    )
-                });
+                let (run, ornament) =
+                    with_fonts(|fs| (spans_run(text, fs), ornament_run(&layout, &flow, 1.0, fs)));
                 let allowed = overshoot_steps(&run, ornament.as_ref(), sized);
                 for outward in [true, false] {
                     for &budget in budgets {
                         PAST_BUDGET.with(|past| past.set(0));
                         UNTOUCHED_TAKEN.with(|most| most.set((0, 0)));
                         let (_, _, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
-                            frame_with(QUATRAIN, POINTS, shape, fit, &layout, outward)
+                            frame_of_spans(text, POINTS, shape, fit, &layout, outward)
                         });
                         let sides_name = side.as_ref().map_or(0, |s| s.len());
                         out.push(Past {
                             what: format!(
-                                "{name}, {fit_name}, span {span_name}, {sides_name}-byte sides, {}, budget {budget}",
+                                "{name}, {} spans of {} glyphs, {fit_name}, span {span_name}, {sides_name}-byte sides, {}, budget {budget}",
+                                text.len(),
+                                run.glyphs.len(),
                                 if outward { "outward" } else { "inward" }
                             ),
                             past: PAST_BUDGET.with(std::cell::Cell::get),
@@ -170,6 +180,11 @@ enum Size {
     /// [`MIXED_BUDGETS`], and with the widest at each of
     /// [`WIDEST_BUDGETS`].
     Mixed,
+    /// The reviewer's 14-size text ([`mixed_sizes`]) at span natural with
+    /// `x` on its sides: once with 60 dots, at each of [`BUDGETS`], and
+    /// five times over with 3,000 dots a span, at each of
+    /// [`MIXED_SIZE_BUDGETS`].
+    MixedSizes,
 }
 
 /// Hold every frame of the grid round `shape` to R47.2's bound: no more
@@ -177,13 +192,14 @@ enum Size {
 /// of a take that crosses it the part past it (R50.4) — no more in all
 /// than its budget and that, no two inks touching, an `untouched` within
 /// its share of the budget (R46.1), and no touch check looking at more
-/// than `TOUCH_LOOKS_MEASURED` pairs a box (R48.2, R50.2), in the grid
+/// pairs a box than measured (R48.2, R50.2, R51.2: `looks_as_measured`), in the grid
 /// `outline` names ([`Size`]).
 fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
     let frames = match outline {
         Size::Large => grid(
             shape,
             name,
+            &quatrain(),
             &[("natural", LineSpan::NATURAL)],
             &[Some(long_sides())],
             &LARGE_BUDGETS,
@@ -192,6 +208,7 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
             let mut frames = grid(
                 shape,
                 name,
+                &quatrain(),
                 &[("natural", LineSpan::NATURAL)],
                 &mixed_sides().map(Some),
                 &MIXED_BUDGETS,
@@ -199,15 +216,31 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
             frames.extend(grid(
                 shape,
                 name,
+                &quatrain(),
                 &[("natural", LineSpan::NATURAL)],
                 &[Some(format!("⸻{}", "|".repeat(100)))],
                 &WIDEST_BUDGETS,
             ));
             frames
         }
+        Size::MixedSizes => {
+            let sides = [Some("x".to_string())];
+            let natural = [("natural", LineSpan::NATURAL)];
+            let mut frames = grid(shape, name, &mixed_sizes(1, 60), &natural, &sides, &BUDGETS);
+            frames.extend(grid(
+                shape,
+                name,
+                &mixed_sizes(5, 3_000),
+                &natural,
+                &sides,
+                &MIXED_SIZE_BUDGETS,
+            ));
+            frames
+        }
         Size::Small => grid(
             shape,
             name,
+            &quatrain(),
             &[
                 ("whole", LineSpan::WHOLE),
                 ("½", LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE)),
@@ -230,7 +263,7 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
                 || f.spent > f.held + f.allowed
                 || f.overlap
                 || f.untouched.0 > f.untouched.1
-                || f.looks.0 > TOUCH_LOOKS_MEASURED * f.looks.1
+                || looks_as_measured(&f.looks).is_err()
         })
         .map(|f| {
             let broken: Vec<&str> = [
@@ -238,13 +271,13 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
                 (f.spent > f.held + f.allowed, "in all"),
                 (f.overlap, "overlap"),
                 (f.untouched.0 > f.untouched.1, "untouched"),
-                (f.looks.0 > TOUCH_LOOKS_MEASURED * f.looks.1, "looks"),
+                (looks_as_measured(&f.looks).is_err(), "looks"),
             ]
             .into_iter()
             .filter_map(|(broken, what)| broken.then_some(what))
             .collect();
             format!(
-                "{} [{}]: {} past the budget, {} in all, against {} past {} (overlap {}); `untouched` took {} of its {}; a touch check looked at {} pairs of {} boxes",
+                "{} [{}]: {} past the budget, {} in all, against {} past {} (overlap {}); `untouched` took {} of its {}; its touch checks: {}",
                 f.what,
                 broken.join(", "),
                 f.past,
@@ -254,8 +287,7 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
                 f.overlap,
                 f.untouched.0,
                 f.untouched.1,
-                f.looks.0,
-                f.looks.1
+                looks_ratios(&f.looks)
             )
         })
         .collect();
@@ -361,6 +393,28 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_mi
         ),
         "20,000 sharp square",
         Size::Mixed,
+    );
+}
+
+/// As above, round the 20,000 sharp square with the reviewer's 14-size
+/// text (ruling R51.2, review 5751828253), once with 60 dots and five
+/// times over with 3,000 dots a span, `x` on its sides: a touch check
+/// of it holds a class of height for each size, and looks at a few pairs
+/// a box for each.
+///
+/// Control: with the side check's reserve at R50's 18 looks a box
+/// whatever the classes, red.
+#[test]
+fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_mixed_sizes() {
+    holds_the_bound(
+        &outline(
+            Rect::new(Vec2::ZERO, Vec2::splat(20_000.0)),
+            Shape::Rectangle {
+                radius: Percent::new(0),
+            },
+        ),
+        "20,000 sharp square",
+        Size::MixedSizes,
     );
 }
 

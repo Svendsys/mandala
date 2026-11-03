@@ -607,9 +607,9 @@ pub(crate) struct Trace {
     /// scaled by (ruling R44.2).
     pub(crate) budget: usize,
     pub(crate) glyphs: usize,
-    /// For a text frame, the most pairs one of its touch checks looked at
-    /// a box: its looks and its boxes (ruling R48.2).
-    pub(crate) looks: (usize, usize),
+    /// For a text frame, the most pairs its touch checks looked at a box
+    /// (rulings R48.2, R51.2).
+    pub(crate) looks: halves::Looks,
 }
 
 /// What a text frame's last resorts — a `Fit` frame's shrink, then the
