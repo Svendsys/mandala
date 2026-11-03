@@ -169,7 +169,6 @@ impl Lines<'_> {
             level: true,
             ornament: false,
             baseline: self.run.baseline(),
-            push: None,
         }
     }
 
@@ -517,6 +516,7 @@ fn lay_lines(
             from,
             to,
             cut,
+            offset: None,
         });
     }
     let used_filler =

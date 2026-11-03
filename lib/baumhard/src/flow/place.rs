@@ -153,7 +153,6 @@ pub(crate) fn box_step(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, Vec2) {
         level: false,
         ornament: false,
         baseline: 0.0,
-        push: None,
     };
     walk.step(s, w, h)
 }
@@ -610,6 +609,10 @@ pub(crate) struct Trace {
     /// For a text frame, the most pairs its touch checks looked at a box
     /// (rulings R48.2, R51.2).
     pub(crate) looks: halves::Looks,
+    /// For a text frame with sides, each arc of side ornament laid: its
+    /// glyphs, indices into the placement, and the offset off the outline
+    /// its baseline lies at (#308).
+    pub(crate) side_arcs: Vec<(Range<usize>, f32)>,
 }
 
 /// What a text frame's last resorts — a `Fit` frame's shrink, then the
@@ -664,6 +667,12 @@ pub(crate) struct TracedLine {
     pub(crate) to: f32,
     /// Whether it was cut to fit its span.
     pub(crate) cut: bool,
+    /// The offset off the outline its baseline lies at, along the
+    /// outline's outward normal (#308): every ink's baseline point lies
+    /// on the outline's offset curve there. `None` for a line R27 lays
+    /// on its level span, a frame's lines only where its halves cannot
+    /// be measured.
+    pub(crate) offset: Option<f32>,
 }
 
 /// One stretch of a [`Trace`].
@@ -788,11 +797,6 @@ struct PathWalk<'p> {
     /// Where the run's baseline sits below a box's top
     /// ([`ShapedRun::baseline`]): where an ornament's ink is in its box.
     baseline: f32,
-    /// The half size an ink is pushed off a closed path by
-    /// ([`ink_at`](Self::ink_at)), when not its own: a frame's side
-    /// ornaments are pushed as far as the text's mean ink, so they sit on
-    /// the text's own center line (#291, ruling R33.1).
-    push: Option<Vec2>,
 }
 
 impl PathWalk<'_> {
@@ -924,26 +928,16 @@ impl PathWalk<'_> {
     /// The center on the canvas of the ink of a glyph whose ink is `ink`
     /// (in its box's coordinates) set at `c` along the path (ruling R31):
     /// on the path there — pushed outward on a closed path by the
-    /// [`support`] of the ellipse its ink box bounds (or the walk's
-    /// [`push`](Self::push), when set), along the normal of the chord
-    /// across its own reach, so the ink, not its box, clears a side of the
-    /// outline, and the push turns with the chord through a sharp corner
-    /// rather than jumping.
-    fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {
-        self.ink_point(c, ink).0
-    }
-
-    /// [`ink_at`](Self::ink_at), and the direction the ink moves in as
-    /// `c` grows: the chord it is pushed off along, or on a path it is
-    /// not pushed off, the direction of travel at `c`. What a frame's
-    /// pairwise rule models the next step with, at no lookup more
-    /// (ruling R43).
+    /// [`support`] of the ellipse its ink box bounds, along the normal of
+    /// the chord across its own reach, so the ink, not its box, clears a
+    /// side of the outline, and the push turns with the chord through a
+    /// sharp corner rather than jumping. A frame's text is set on a
+    /// baseline instead (#308, `halves`).
     ///
     /// Cost: one path lookup; three where the ink is pushed outward.
-    fn ink_point(&self, c: f32, ink: Ink) -> (Vec2, Vec2) {
+    fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {
         let size = ink.max - ink.min;
         let (mut center, tangent) = self.path.at(c);
-        let mut moves = tangent;
         if self.outward {
             let reach = 0.5 * size.length();
             let dir = if reach > 0.0 {
@@ -951,10 +945,9 @@ impl PathWalk<'_> {
             } else {
                 tangent
             };
-            center += support(self.path.outward(dir), self.push.unwrap_or(size * 0.5));
-            moves = dir;
+            center += support(self.path.outward(dir), size * 0.5);
         }
-        (center, moves)
+        center
     }
 
     /// Walk a cluster of `body` from `s`, `trail` remembering an
@@ -2619,7 +2612,6 @@ fn place(
         level: false,
         ornament: !run.glyphs.iter().any(|glyph| glyph.letter),
         baseline: run.baseline(),
-        push: None,
     };
     let walked = match fit {
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
