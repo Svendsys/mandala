@@ -886,9 +886,9 @@ pub const LONG_ORNAMENT_BYTES: usize = 200;
 /// of [`INPUT_STEPS`]; beside 200 `|`s, which add 9,016 more to shape
 /// and ink, 471,965, past it, so the text is halved to 75 glyphs, whose
 /// budget is the 400,000-step floor: 417,090. A text of one glyph beside
-/// the heaviest long ornament the compiled faces hold takes at most
-/// 412,342; a frame of no text beside fifty `.notdef`s, 624,221, so the
-/// ornament is cut first.
+/// the heaviest long ornament the compiled faces hold, 200 `|`s, takes
+/// 412,280, with host faces or without; a frame of no text beside fifty
+/// `.notdef`s, 624,221, so the ornament is cut first.
 pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayout {
     if !choices.one_in(4) {
         return layout;
