@@ -602,9 +602,22 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                     let drawn = ring_layout(choices);
                     let layouts = laid_layouts(long_ornament(choices, drawn), bounded);
                     // Its text's sizes, spread over the font-size window one time in
-                    // four (ruling R51.2), drawn after its layout too.
-                    let (frame_texts, frame_styles) = mixed_sizes(choices, &texts, &styles, scale, &faces);
-                    for layout in &layouts {
+                    // four (ruling R51.2), drawn after its layout too. A replay
+                    // lays a finding's text as found as well, as it lays its
+                    // layout (`laid_layouts`): two committed findings run on
+                    // past the draw.
+                    let drawn_texts = mixed_sizes(choices, &texts, &styles, scale, &faces);
+                    let mut laid_texts = vec![drawn_texts];
+                    if !bounded && laid_texts[0].0 != texts {
+                        laid_texts.push((texts.clone(), styles.clone()));
+                    }
+                    for ((frame_texts, frame_styles), layout) in laid_texts
+                        .iter()
+                        .flat_map(|t| layouts.iter().map(move |l| (t, l)))
+                    {
+                        if laid_texts.len() > 1 && *frame_texts == texts {
+                            FOUND_TEXT_LAID.with(|n| n.set(n.get() + 1));
+                        }
                         // The frame's sides and then its text, held to what
                         // its frame lays inside the timeout (rulings R45.1,
                         // R46.3, R50.3) — or, replaying a finding, its text
@@ -619,15 +632,15 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                             |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES);
                         let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
                         let framed = framed(
-                            &frame_texts,
-                            &frame_styles,
+                            frame_texts,
+                            frame_styles,
                             scale,
                             &mut fs,
                             if bounded { &fits_in_time } else { &as_found },
                         );
                         let frame_spans: Vec<FlowSpan<'_>> = framed
                             .iter()
-                            .zip(&frame_styles)
+                            .zip(frame_styles)
                             .map(|(text, style)| FlowSpan {
                                 text,
                                 style,
@@ -674,7 +687,8 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                             .and_then(|()| {
                                 check_placed(&frame_spans, &run, placed, whole, "around an outline")
                             });
-                        checked.map_err(|why| format!("{why}, laid {layout:?}"))?;
+                        checked
+                            .map_err(|why| format!("{why}, laid {layout:?}, {} spans", frame_texts.len()))?;
                     }
                     Ok(())
                 }
@@ -920,6 +934,14 @@ pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayou
     }
 }
 
+thread_local! {
+    /// Test counters (ruling R51.2): the texts of more sizes
+    /// [`mixed_sizes`] has drawn on this thread, and the frames replayed
+    /// with a finding's text as found beside one it drew.
+    pub(crate) static MIXED_DRAWN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static FOUND_TEXT_LAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The most spans a frame's text has in the mixed-size mode (ruling
 /// R51.2): the three it may draw, and more of a size each, to sixteen.
 pub const MIXED_SIZE_SPANS: usize = 16;
@@ -948,6 +970,7 @@ pub fn mixed_sizes(
     if !choices.one_in(4) {
         return (texts, styles);
     }
+    MIXED_DRAWN.with(|n| n.set(n.get() + 1));
     let more = 1 + choices.index(MIXED_SIZE_SPANS.saturating_sub(texts.len()).max(1));
     for _ in 0..more {
         texts.push(

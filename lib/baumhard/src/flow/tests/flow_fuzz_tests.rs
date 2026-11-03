@@ -1441,6 +1441,41 @@ fn test_the_structured_flow_fuzzer_draws_texts_of_many_sizes() {
     );
 }
 
+/// R51.2: the two committed structured findings whose bytes run on past
+/// the mixed-size draw — `structured_frame_cut_apart_outward` and
+/// `structured_frame_long_ornament_past_the_input_bound`, both found
+/// before it — draw a text of more sizes now, and a replay lays each
+/// with its text as found as well, as it lays a finding's layout as
+/// found (`laid_layouts`).
+///
+/// Control: with a replay laying the drawn text alone, red.
+#[test]
+fn test_a_committed_structured_finding_replays_the_text_it_was_found_with() {
+    use crate::flow::tests::flow_fuzz::{FOUND_TEXT_LAID, MIXED_DRAWN};
+    for (name, found) in [
+        (
+            "structured_frame_cut_apart_outward",
+            &include_bytes!("fuzz_findings/structured_frame_cut_apart_outward")[..],
+        ),
+        (
+            "structured_frame_long_ornament_past_the_input_bound",
+            &include_bytes!("fuzz_findings/structured_frame_long_ornament_past_the_input_bound")[..],
+        ),
+    ] {
+        MIXED_DRAWN.with(|n| n.set(0));
+        FOUND_TEXT_LAID.with(|n| n.set(0));
+        if let Err(why) = check_flow_structured_as_found(found) {
+            panic!("{name}: {why}");
+        }
+        let (drawn, laid) = (MIXED_DRAWN.with(|n| n.get()), FOUND_TEXT_LAID.with(|n| n.get()));
+        assert!(drawn > 0, "precondition: {name} draws a text of more sizes");
+        assert!(
+            laid > 0,
+            "{name} is not replayed with the text it was found with ({drawn} drawn)"
+        );
+    }
+}
+
 /// R50.3, R45.1: a long fuzzed side ornament of the glyphs the compiled
 /// faces hold fits the per-input work bound beside a text cut to
 /// nothing, on every host: in every face a span can name, upright and
