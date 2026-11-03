@@ -3674,7 +3674,7 @@ fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
     let (mut strips, mut touch, mut far, mut uninked) = (0, 0, 0, 0);
     let cases = 20_000;
     for case in 0..cases {
-        let (boxes, scale) = extreme_touch_case(&mut choices);
+        let boxes = extreme_touch_case(&mut choices);
         let kind = choices.below(3);
         let (reached, touches) = agree("an extreme", case, kind, &boxes);
         strips += usize::from(reached);
@@ -3767,9 +3767,9 @@ type KeyedBoxes = Vec<((u8, usize), (Vec2, Vec2))>;
 /// 10⁶, 10¹⁸ and 10³⁰ and moved along each axis, by up to 40,000 times the
 /// scale or, one time in four, by up to ±10³⁰, among copies of their
 /// boxes with a corner made not a number or infinite, or made of no width
-/// or no height. Returns the boxes and the scale.
+/// or no height.
 #[cfg(test)]
-fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> (KeyedBoxes, f32) {
+fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> KeyedBoxes {
     const SCALES: [f32; 6] = [1e-3, 1.0, 1e3, 1e6, 1e18, 1e30];
     const OFFSETS: [f32; 7] = [0.0, 1e6, -1e6, 1e18, -1e18, 1e30, -1e30];
     let mut boxes = touch_case(choices);
@@ -3811,7 +3811,7 @@ fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) ->
         let n = boxes.iter().filter(|((g, _), _)| *g == 1).count();
         let along = 10.0 * far.abs();
         boxes.push(((1, n), (Vec2::new(along, 0.0), Vec2::new(2.0 * along, 0.01))));
-        return (boxes, scale);
+        return boxes;
     }
     let scale = SCALES[choices.index(SCALES.len())];
     // Mostly an offset a few thousand of the case's units out, which keeps
@@ -3846,7 +3846,7 @@ fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) ->
         let n = boxes.iter().filter(|((g, _), _)| *g == key.0).count();
         boxes.push(((key.0, n), (min, max)));
     }
-    (boxes, scale)
+    boxes
 }
 
 /// R50.5 (review 5745584645): a side arc whose search for its count the
