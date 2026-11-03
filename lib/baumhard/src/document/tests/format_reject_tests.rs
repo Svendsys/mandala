@@ -590,7 +590,10 @@ fn test_every_color_spelling_but_the_listed_ones_is_refused_and_the_listed_read(
         "palette(text)",
         "palette(title)",
     ] {
-        assert!(load(&map_of(&format!(r#","color":"{color}""#))).is_ok(), "{color}");
+        assert!(
+            load(&map_of(&format!(r#","color":"{color}""#))).is_ok(),
+            "{color}"
+        );
     }
 }
 
@@ -611,7 +614,11 @@ fn test_a_color_has_one_spelling_and_the_refusal_names_it() {
     };
     refused(&map_of(r##","color":"#ABCDEF""##), "nodes[0].color", "#abcdef");
     refused(&map_of(r##","color":"#AbCdEf""##), "nodes[0].color", "#abcdef");
-    refused(&map_of(r##","color":"#ABCDEF12""##), "nodes[0].color", "#abcdef12");
+    refused(
+        &map_of(r##","color":"#ABCDEF12""##),
+        "nodes[0].color",
+        "#abcdef12",
+    );
     refused(&map_of(r##","color":"#abcdefff""##), "nodes[0].color", "#abcdef");
     refused(&map_of(r##","color":"#ABCDEFFF""##), "nodes[0].color", "#abcdef");
     // The same in a theme's literal colors and in a palette's.
@@ -870,7 +877,11 @@ fn test_a_theme_variable_that_is_not_defined_is_refused() {
     );
     // A name is exact: no case folding, no padding.
     rejects(&map_of(r#","color":"var(BG)""#), "nodes[0].color", unknown("BG"));
-    rejects(&map_of(r#","color":"var( bg)""#), "nodes[0].color", unknown(" bg"));
+    rejects(
+        &map_of(r#","color":"var( bg)""#),
+        "nodes[0].color",
+        unknown(" bg"),
+    );
 }
 
 #[test]
@@ -1329,10 +1340,7 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
         },
     );
     // Zero is in.
-    assert!(load(&map_of(
-        r#","min_size":[0,0],"frame":{"gap":0,"inset":0}"#
-    ))
-    .is_ok());
+    assert!(load(&map_of(r#","min_size":[0,0],"frame":{"gap":0,"inset":0}"#)).is_ok());
 }
 
 #[test]
@@ -1749,8 +1757,16 @@ fn test_the_fill_keys_are_refused_as_unknown() {
     // the schema does not define, at its own path; `palette(fill)` is a
     // spelling no color has. No shim reads them.
     let unknown = |key: &str| LoadErrorKind::UnknownKey { key: key.to_string() };
-    rejects(&map_of(r##","fill":"#102030""##), "nodes[0].fill", unknown("fill"));
-    rejects(&map_of(r#","fill_fade":2"#), "nodes[0].fill_fade", unknown("fill_fade"));
+    rejects(
+        &map_of(r##","fill":"#102030""##),
+        "nodes[0].fill",
+        unknown("fill"),
+    );
+    rejects(
+        &map_of(r#","fill_fade":2"#),
+        "nodes[0].fill_fade",
+        unknown("fill_fade"),
+    );
     rejects(
         &map_with(r##","defaults":{"node":{"fill":"#102030"}}"##, ""),
         "defaults.node.fill",
@@ -1784,7 +1800,11 @@ fn test_the_fill_keys_are_refused_as_unknown() {
         assert!(load(&map_of(body)).is_ok(), "{body}");
     }
     assert!(load(&map_with(r##","defaults":{"node":{"color":"#102030"}}"##, "")).is_ok());
-    assert!(load(&map_with(r##","palettes":{"p":[{"frame":"#000000","text":"#000000"}]}"##, "")).is_ok());
+    assert!(load(&map_with(
+        r##","palettes":{"p":[{"frame":"#000000","text":"#000000"}]}"##,
+        ""
+    ))
+    .is_ok());
 }
 
 #[test]
@@ -1804,15 +1824,28 @@ fn test_a_background_is_opaque_a_variable_and_never_a_palette() {
     assert!(load(&header(r##""#102030""##)).is_ok());
     assert!(load(&header(r#""var(bg)""#)).is_ok());
     let translucent_var = r##"{"format":1,"name":"t","theme":{"active":"d","variants":{"d":{"bg":"#10203040"}}},"background":"var(bg)"}"##;
-    assert!(load(translucent_var).is_ok(), "a translucent variable is the theme's");
+    assert!(
+        load(translucent_var).is_ok(),
+        "a translucent variable is the theme's"
+    );
     // A variable the theme lacks, a palette color and a spelling no
     // color has are refused at `background`.
     rejects(
         &header(r#""var(nope)""#),
         "background",
-        LoadErrorKind::UnknownVariable { name: "nope".to_string() },
+        LoadErrorKind::UnknownVariable {
+            name: "nope".to_string(),
+        },
     );
-    for spelling in [r#""palette(text)""#, r#""palette(fill)""#, r##""#fff""##, r##""#ABCDEF""##, "null", "7", r#""black""#] {
+    for spelling in [
+        r#""palette(text)""#,
+        r#""palette(fill)""#,
+        r##""#fff""##,
+        r##""#ABCDEF""##,
+        "null",
+        "7",
+        r#""black""#,
+    ] {
         rejects_as_invalid(&header(spelling), "background");
     }
 }

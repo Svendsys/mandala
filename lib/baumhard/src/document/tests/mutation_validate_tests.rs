@@ -358,11 +358,16 @@ pub fn do_document_validate_refuses_a_missing_reference() {
         Ok(())
     );
     assert_eq!(
-        missing(node(NodeOp::Text(TextOp::SetColor(Some(ColorRef::Var(VarId(2))))))),
+        missing(node(NodeOp::Text(TextOp::SetColor(Some(ColorRef::Var(VarId(
+            2
+        ))))))),
         ("theme variable", 2)
     );
     assert_eq!(
-        validate(&node(NodeOp::Text(TextOp::SetColor(Some(ColorRef::Var(VarId(1)))))), &doc),
+        validate(
+            &node(NodeOp::Text(TextOp::SetColor(Some(ColorRef::Var(VarId(1)))))),
+            &doc
+        ),
         Ok(())
     );
     // The background names a variable the theme has, as a color does.

@@ -192,7 +192,10 @@ pub fn do_document_interpolate_blends_numbers_and_colors() {
     );
     let half = DocElement::interpolate(&from, &to, 0.5, Snap::End);
     let DocElement::Node(n) = &half else { panic!("a node") };
-    assert_eq!(n.style.text.color, Some(ColorRef::Rgba(Rgba::opaque(100, 50, 25))));
+    assert_eq!(
+        n.style.text.color,
+        Some(ColorRef::Rgba(Rgba::opaque(100, 50, 25)))
+    );
     assert_eq!(n.style.text.size, Some(FontSize::Pt(15.0)));
     assert_eq!(n.opacity, 0.5);
     assert_eq!(DocElement::interpolate(&from, &to, 0.0, Snap::Start), from);
@@ -482,6 +485,13 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
     let (end, start) = halves(&black, &map(PlainColor::Var(crate::document::values::VarId(0))));
     let DocElement::Map(end) = end else { panic!("the map") };
     let DocElement::Map(start) = start else { panic!("the map") };
-    assert_eq!(end.background, PlainColor::Rgba(Rgba::opaque(0, 0, 0)), "a variable snaps");
-    assert_eq!(start.background, PlainColor::Var(crate::document::values::VarId(0)));
+    assert_eq!(
+        end.background,
+        PlainColor::Rgba(Rgba::opaque(0, 0, 0)),
+        "a variable snaps"
+    );
+    assert_eq!(
+        start.background,
+        PlainColor::Var(crate::document::values::VarId(0))
+    );
 }

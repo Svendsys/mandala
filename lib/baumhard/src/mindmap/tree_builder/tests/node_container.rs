@@ -23,7 +23,10 @@ fn test_a_node_container_draws_no_background() {
         glyph_area_of(&result.tree, result.arena_id_for("n").unwrap()).clone()
     };
     let plain = container(&|_| {});
-    assert!(plain.text.is_empty(), "the container holds no text: it draws nothing");
+    assert!(
+        plain.text.is_empty(),
+        "the container holds no text: it draws nothing"
+    );
     for background in ["#ff8800", "var(--panel)", "", "#00000000", "not-a-color"] {
         let with = container(&|node| node.style.background_color = background.into());
         assert!(

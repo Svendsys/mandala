@@ -784,7 +784,6 @@ mod projection_only_refusals {
     fn test_a_run_set_at_a_void_trips_the_debug_assert() {
         apply(&mut GfxElement::new_void(0), run_set());
     }
-
 }
 
 /// The release-profile half of the above: `RunSet` at the wrong element

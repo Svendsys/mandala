@@ -130,7 +130,8 @@ fn test_the_frame_is_cleared_to_the_maps_resolved_background() {
     // The other variant, once it is the active one.
     let light = document_text(Some("var(bg)")).replace(r#""active":"dark""#, r#""active":"light""#);
     let doc = load(&light).expect("the map loads");
-    init.renderer.set_background(resolve_background(doc.tree(), &mut ()).0);
+    init.renderer
+        .set_background(resolve_background(doc.tree(), &mut ()).0);
     draw(init);
     assert_clear(
         init.renderer.clear_color(),

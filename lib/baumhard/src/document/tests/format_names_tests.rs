@@ -90,9 +90,7 @@ fn test_a_name_that_is_not_an_identifier_is_quoted_in_a_path() {
     // "My Palette" is a name, and an error inside it says so in quotes.
     let palette = |name: &str, fill: &str| {
         map_with(
-            &format!(
-                r##","palettes":{{"{name}":[{{"frame":"{fill}","text":"#000000"}}]}}"##
-            ),
+            &format!(r##","palettes":{{"{name}":[{{"frame":"{fill}","text":"#000000"}}]}}"##),
             "",
         )
     };

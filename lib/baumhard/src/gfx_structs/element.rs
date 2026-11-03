@@ -331,9 +331,7 @@ impl GfxElement {
             GfxElement::GlyphArea {
                 glyph_area: section, ..
             } => Some(section.as_mut()),
-            GfxElement::Void { .. }
-            | GfxElement::GlyphModel { .. }
-            | GfxElement::GlyphRun { .. } => None,
+            GfxElement::Void { .. } | GfxElement::GlyphModel { .. } | GfxElement::GlyphRun { .. } => None,
         }
     }
 
@@ -346,9 +344,7 @@ impl GfxElement {
             GfxElement::GlyphArea {
                 glyph_area: section, ..
             } => Some(section),
-            GfxElement::Void { .. }
-            | GfxElement::GlyphModel { .. }
-            | GfxElement::GlyphRun { .. } => None,
+            GfxElement::Void { .. } | GfxElement::GlyphModel { .. } | GfxElement::GlyphRun { .. } => None,
         }
     }
 
@@ -431,9 +427,7 @@ impl GfxElement {
             GfxElement::GlyphArea { glyph_area, .. } => {
                 glyph_area.regions.get(range).and_then(|region| region.color)
             }
-            GfxElement::GlyphModel { .. }
-            | GfxElement::GlyphRun { .. }
-            | GfxElement::Void { .. } => None,
+            GfxElement::GlyphModel { .. } | GfxElement::GlyphRun { .. } | GfxElement::Void { .. } => None,
         }
     }
 

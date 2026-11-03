@@ -518,7 +518,9 @@ pub fn do_document_resolve_ring_size_never_reads_points() {
 /// reads the palette group its binding gives it at its depth.
 fn frame_colored(builder: &mut DocumentBuilder, nodes: &[NodeId]) {
     for &id in nodes {
-        style(builder, id, |s| s.color = Some(ColorRef::Palette(PaletteField::Frame)));
+        style(builder, id, |s| {
+            s.color = Some(ColorRef::Palette(PaletteField::Frame))
+        });
     }
 }
 
@@ -865,7 +867,9 @@ pub fn do_document_records_node_and_frame_reads() {
     resolve_node(builder.tree(), ids.b, &mut reads);
     assert_eq!(reads, vec![Input::Style(ids.b), Input::Defaults]);
     assert!(
-        !reads.iter().any(|read| matches!(read, Input::Palette(_) | Input::PaletteBinding(_))),
+        !reads
+            .iter()
+            .any(|read| matches!(read, Input::Palette(_) | Input::PaletteBinding(_))),
         "b is bound to a palette, and its node resolution reads none"
     );
 
@@ -1357,7 +1361,10 @@ pub fn do_document_resolve_background() {
         let color = resolve_background(builder.tree(), &mut reads);
         (color, reads)
     };
-    assert_eq!(background(&builder), (DEFAULT_BACKGROUND, vec![Input::Style(root)]));
+    assert_eq!(
+        background(&builder),
+        (DEFAULT_BACKGROUND, vec![Input::Style(root)])
+    );
     assert_eq!(DEFAULT_BACKGROUND, Rgba::opaque(0, 0, 0), "black when unset");
 
     let set = |builder: &mut DocumentBuilder, color: PlainColor| {
@@ -1368,7 +1375,10 @@ pub fn do_document_resolve_background() {
         });
     };
     set(&mut builder, PlainColor::Rgba(Rgba::opaque(1, 2, 3)));
-    assert_eq!(background(&builder), (Rgba::opaque(1, 2, 3), vec![Input::Style(root)]));
+    assert_eq!(
+        background(&builder),
+        (Rgba::opaque(1, 2, 3), vec![Input::Style(root)])
+    );
 
     builder.theme(ThemeData {
         variables: vec!["bg".to_string()],
@@ -1397,9 +1407,21 @@ pub fn do_document_resolve_background() {
             theme.active = 1;
         }
     });
-    assert_eq!(background(&builder).0, Rgba::opaque(200, 210, 220), "the active variant's");
+    assert_eq!(
+        background(&builder).0,
+        Rgba::opaque(200, 210, 220),
+        "the active variant's"
+    );
     set(&mut builder, PlainColor::Rgba(Rgba::opaque(1, 2, 3)));
-    assert_eq!(background(&builder).0, literal, "a literal does not follow the variant");
+    assert_eq!(
+        background(&builder).0,
+        literal,
+        "a literal does not follow the variant"
+    );
     set(&mut builder, PlainColor::Var(VarId(7)));
-    assert_eq!(background(&builder).0, DEFAULT_BACKGROUND, "a variable the theme lacks");
+    assert_eq!(
+        background(&builder).0,
+        DEFAULT_BACKGROUND,
+        "a variable the theme lacks"
+    );
 }

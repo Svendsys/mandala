@@ -49,8 +49,8 @@ use crate::document::format::error::{render_path, NodeContext, SaveError, SaveEr
 use crate::document::format::index::FORMAT;
 use crate::document::format::rows::{Halt, RowSource, Rows, RowsError};
 use crate::document::format::spelling::{
-    BackgroundDto, ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, LineSpanDto, Named, PaletteFieldDto,
-    RectangleDto, ShapeDto, SidesDto, SidesObjectDto, StartDto, StartPointDto, WeightDto,
+    BackgroundDto, ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, LineSpanDto, Named,
+    PaletteFieldDto, RectangleDto, ShapeDto, SidesDto, SidesObjectDto, StartDto, StartPointDto, WeightDto,
 };
 use crate::document::ids::{Document, VerbDef};
 use crate::document::keyed::{KeyedMap, KeyedSet};

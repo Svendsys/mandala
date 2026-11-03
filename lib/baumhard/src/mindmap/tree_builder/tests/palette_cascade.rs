@@ -324,7 +324,11 @@ fn test_cascade_fixture_honors_starts_at_root_false() {
         "#222222",
         "the transparent schema root keeps style.frame_color"
     );
-    assert_eq!(frame_color_of(&map, "1.0"), "#a20000", "its child shifts onto groups[0]");
+    assert_eq!(
+        frame_color_of(&map, "1.0"),
+        "#a20000",
+        "its child shifts onto groups[0]"
+    );
 }
 
 /// Node `0.0.0` sits at `level: 9` against a three-group palette.

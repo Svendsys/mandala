@@ -437,7 +437,6 @@ pub fn do_gfx_interpolates_geometry_and_snaps_the_rest() {
             "{snap:?}: t = 1 is the replayed tree"
         );
     }
-
 }
 
 // ── structural commands ───────────────────────────────────────────

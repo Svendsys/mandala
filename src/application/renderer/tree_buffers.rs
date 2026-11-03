@@ -20,20 +20,15 @@ impl Renderer {
     pub fn rebuild_buffers_from_tree(&mut self, tree: &GfxTree) {
         self.mindmap_buffers.clear();
         let mut font_system = fonts::acquire_font_system_write("rebuild_buffers_from_tree");
-        walk_tree_into_buffers(
-            tree,
-            Vec2::ZERO,
-            &mut font_system,
-            |unique_id, buffer| {
-                // The walker emits multiple buffers per element
-                // when an outline halo is configured (one buffer
-                // per halo offset, then the main glyph). Push onto
-                // the entry's `Vec` so all of them survive in
-                // emission order — `insert`-style replace would
-                // collapse halos onto the main glyph silently.
-                self.mindmap_buffers.entry(unique_id).or_default().push(buffer);
-            },
-        );
+        walk_tree_into_buffers(tree, Vec2::ZERO, &mut font_system, |unique_id, buffer| {
+            // The walker emits multiple buffers per element
+            // when an outline halo is configured (one buffer
+            // per halo offset, then the main glyph). Push onto
+            // the entry's `Vec` so all of them survive in
+            // emission order — `insert`-style replace would
+            // collapse halos onto the main glyph silently.
+            self.mindmap_buffers.entry(unique_id).or_default().push(buffer);
+        });
     }
 
     /// Re-shape one element's text buffers in place, keyed by the
@@ -65,14 +60,9 @@ impl Renderer {
         self.mindmap_buffers.remove(&unique_id);
 
         let mut font_system = fonts::acquire_font_system_write("reshape_buffer_for");
-        shape_one_element_into_buffers(
-            element,
-            Vec2::ZERO,
-            &mut font_system,
-            &mut |uid, buffer| {
-                self.mindmap_buffers.entry(uid).or_default().push(buffer);
-            },
-        );
+        shape_one_element_into_buffers(element, Vec2::ZERO, &mut font_system, &mut |uid, buffer| {
+            self.mindmap_buffers.entry(uid).or_default().push(buffer);
+        });
     }
 
     /// Patch the canvas-space position of moved nodes' buffers in

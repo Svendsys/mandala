@@ -237,10 +237,10 @@ fn test_glyph_layer_elements_deliver_events_to_their_subscribers() {
     do_glyph_layer_elements_deliver_events_to_their_subscribers();
 }
 
-/// An `Event` mutation reaches the subscribers of a run, as it does
-/// for an area, and changes no state.
+/// An `Event` mutation reaches the subscribers of a run as it does an
+/// area's, and changes no state.
 pub fn do_glyph_layer_elements_deliver_events_to_their_subscribers() {
-    for mut element in [base_run()] {
+    for mut element in [base_run(), an_area(Vec2::ZERO, Vec2::ONE, 1, 7)] {
         let seen = Rc::new(RefCell::new(0_usize));
         let sink = Rc::clone(&seen);
         element.subscribers_mut().push(Rc::new(RefCell::new(
@@ -554,7 +554,11 @@ pub fn do_predicates_select_runs_by_element_type_and_opacity() {
             .filter(|(_, e)| differs.test(e))
             .map(|(n, _)| *n)
             .collect();
-        assert_eq!(others.len(), 3, "Equals(true) on {wanted} matches the other three");
+        assert_eq!(
+            others.len(),
+            3,
+            "Equals(true) on {wanted} matches the other three"
+        );
         assert!(!others.contains(&wanted));
     }
     let tag = GfxElementType::GlyphRun;
@@ -974,11 +978,7 @@ fn test_format_doc_publishes_the_authored_glyph_layer_mutations() {
 pub fn do_format_doc_publishes_the_authored_glyph_layer_mutations() {
     let authored = authored_glyph_layer_mutations();
     // The doc's example, read from the doc.
-    let doc = documented_json_block(
-        &format_doc_path("mutations.md"),
-        "### Glyph run mutations",
-        0,
-    );
+    let doc = documented_json_block(&format_doc_path("mutations.md"), "### Glyph run mutations", 0);
     #[derive(serde::Deserialize)]
     struct Documented {
         mutations: Vec<GfxMutation>,
@@ -992,11 +992,7 @@ pub fn do_format_doc_publishes_the_authored_glyph_layer_mutations() {
     );
 
     // The predicate spellings, the same way.
-    let predicates = documented_json_block(
-        &format_doc_path("mutations.md"),
-        "### Glyph run mutations",
-        1,
-    );
+    let predicates = documented_json_block(&format_doc_path("mutations.md"), "### Glyph run mutations", 1);
     let fields: Vec<GfxElementField> = serde_json::from_str(&predicates).unwrap_or_else(|e| {
         panic!("the predicate example in format/mutations.md must parse: {e}\n{predicates}")
     });

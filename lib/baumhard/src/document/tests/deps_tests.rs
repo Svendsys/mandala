@@ -9,9 +9,8 @@ use crate::arena::NodeId;
 use crate::document::deps::{inputs_changed, InputKind};
 use crate::document::element::{DocElement, DocKind};
 use crate::document::resolve::{
-    resolve_background, resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end, resolve_ring,
-    resolve_text,
-    Input,
+    resolve_background, resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end,
+    resolve_ring, resolve_text, Input,
 };
 use crate::document::tests::test_support::{example, DocumentBuilder, Example};
 use crate::document::values::{ColorRef, FontSize, PaletteId, Rgba};

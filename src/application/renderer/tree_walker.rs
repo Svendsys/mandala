@@ -49,12 +49,7 @@ pub(super) fn walk_tree_into_buffers(
             Some(n) => n,
             None => continue,
         };
-        shape_one_element_into_buffers(
-            node.get(),
-            offset,
-            font_system,
-            &mut yield_buffer,
-        );
+        shape_one_element_into_buffers(node.get(), offset, font_system, &mut yield_buffer);
     }
 }
 

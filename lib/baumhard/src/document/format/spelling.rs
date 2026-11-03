@@ -376,9 +376,7 @@ impl<'de> Deserialize<'de> for ColorDto<'_> {
             type Value = ColorDto<'static>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(
-                    "a color: `#rrggbb`, `#rrggbbaa`, `var(name)` or `palette(frame|text|title)`",
-                )
+                f.write_str("a color: `#rrggbb`, `#rrggbbaa`, `var(name)` or `palette(frame|text|title)`")
             }
 
             fn visit_str<E: de::Error>(self, text: &str) -> Result<ColorDto<'static>, E> {

@@ -1141,7 +1141,11 @@ fn background(
         ),
         5 if fault == Fault::None => {
             let spelling = *choices.pick(&[r#""palette(text)""#, r##""#fff""##, "null", "7", r#""var()""#]);
-            let kind = if spelling == r#""var()""# { "UnknownVariable" } else { "Invalid" };
+            let kind = if spelling == r#""var()""# {
+                "UnknownVariable"
+            } else {
+                "Invalid"
+            };
             (Some(Background::Unspelled(spelling)), header_fault(kind))
         }
         _ => (None, fault),
@@ -2649,7 +2653,9 @@ pub fn render(spec: &MapSpec, order: u32) -> String {
         Some(Background::Literal(value)) => top.push(format!(r#""background": {value}"#)),
         Some(Background::Unspelled(value)) => top.push(format!(r#""background": {value}"#)),
         Some(Background::Var(value)) => {
-            top.push(format!(r#""theme": {{"active": "a", "variants": {{"a": {{"bg": {value}}}}}}}"#));
+            top.push(format!(
+                r#""theme": {{"active": "a", "variants": {{"a": {{"bg": {value}}}}}}}"#
+            ));
             top.push(r#""background": "var(bg)""#.to_string());
         }
     }

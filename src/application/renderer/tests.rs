@@ -806,8 +806,16 @@ fn test_the_clear_color_holds_the_background_on_either_target() {
     let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
     for srgb in [Bgra8UnormSrgb, Rgba8UnormSrgb] {
         let clear = clear_color_for([0x80, 0x0a, 0xff, 0x40], srgb);
-        assert!(close(clear.r, 0.215_860_5), "{srgb:?}: 0x80 decodes, got {}", clear.r);
-        assert!(close(clear.g, 0.003_035_27), "{srgb:?}: 0x0a decodes, got {}", clear.g);
+        assert!(
+            close(clear.r, 0.215_860_5),
+            "{srgb:?}: 0x80 decodes, got {}",
+            clear.r
+        );
+        assert!(
+            close(clear.g, 0.003_035_27),
+            "{srgb:?}: 0x0a decodes, got {}",
+            clear.g
+        );
         assert!(close(clear.b, 1.0), "{srgb:?}: 0xff is 1");
         assert_eq!(clear.a, 1.0, "{srgb:?}: opaque, whatever the alpha");
         let black = clear_color_for([0, 0, 0, 0], srgb);
@@ -1586,7 +1594,11 @@ fn test_the_canvas_and_overlay_passes_shape_the_same_text() {
     scene_shape_cache::refresh(&scene, &ids, &mut as_canvas, ScenePassKind::Canvas);
     let mut as_overlay: Vec<ShapedSceneElement> = Vec::new();
     scene_shape_cache::refresh(&scene, &ids, &mut as_overlay, ScenePassKind::Overlay);
-    assert_eq!(canvas_text_stream(&as_canvas).len(), 4, "precondition: four leaves shape text");
+    assert_eq!(
+        canvas_text_stream(&as_canvas).len(),
+        4,
+        "precondition: four leaves shape text"
+    );
     assert_eq!(
         canvas_text_stream(&as_overlay),
         canvas_text_stream(&as_canvas),

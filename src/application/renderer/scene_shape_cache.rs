@@ -512,12 +512,9 @@ pub(crate) fn refresh(
             let font_system =
                 font_system.get_or_insert_with(|| fonts::acquire_font_system_write(kind.font_system_site()));
             let mut buffers = Vec::new();
-            shape_one_element_into_buffers(
-                element,
-                offset,
-                font_system,
-                &mut |_unique_id, buffer| buffers.push(buffer),
-            );
+            shape_one_element_into_buffers(element, offset, font_system, &mut |_unique_id, buffer| {
+                buffers.push(buffer)
+            });
             let fresh = ShapedSceneElement::new(id, element, offset, buffers);
             match shaped.get_mut(slot) {
                 Some(existing) => *existing = fresh,

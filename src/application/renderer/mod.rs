@@ -664,7 +664,7 @@ pub struct Renderer {
     console_backdrop: Option<(f32, f32, f32, f32)>, // (left, top, width, height)
     /// How many rects the last prepared frame drew: the screen-space
     /// backdrops, and nothing of the map's (V1-B12). Read by the
-    /// GPU-backed tests ([`Self::rect_quads_in_last_frame`]).
+    /// GPU-backed tests (`Renderer::rect_quads_in_last_frame`, test-only).
     rect_quads: u32,
     /// Clear color for the render pass: the map's resolved
     /// background, the one color drawn behind the whole canvas

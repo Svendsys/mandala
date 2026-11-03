@@ -68,23 +68,8 @@ fn test_the_saver_writes_keys_in_the_order_the_schema_lists_them() {
     in_line(
         line(1),
         &[
-            "id",
-            "position",
-            "min_size",
-            "shape",
-            "palette",
-            "zoom",
-            "folded",
-            "opacity",
-            "on",
-            "font",
-            "size",
-            "color",
-            "weight",
-            "italic",
-            "sections",
-            "frame",
-            "links",
+            "id", "position", "min_size", "shape", "palette", "zoom", "folded", "opacity", "on", "font",
+            "size", "color", "weight", "italic", "sections", "frame", "links",
         ],
     );
     assert!(line(4).starts_with(
