@@ -592,12 +592,6 @@ fn glyph_cap() -> usize {
 /// 135°.
 const STACKED: f32 = -std::f32::consts::FRAC_1_SQRT_2;
 
-/// How far from the outline's normal, as a cosine, the way from the
-/// outline to an ink off it must turn for the ink to lie past a sharp
-/// corner ([`Layout::normals`]): a degree. On a smooth outline the way
-/// from the point nearest an ink to the ink is the normal there.
-const CORNER: f32 = 0.999_847_7;
-
 /// How far apart two inks must be not to touch, in points: past
 /// [`INK_TOLERANCE`], what the pairwise rule sets inks apart to.
 pub(crate) const TOUCH: f32 = INK_TOLERANCE;
@@ -867,6 +861,9 @@ struct Tracked {
     /// point of the outline nearest each is looked for near
     /// ([`ArcPath::nearest_near`]).
     centers: Option<(f32, f32)>,
+    /// The outline's outward normal under its first and last inks'
+    /// baseline points ([`Set::normal`]).
+    normals: Option<(Vec2, Vec2)>,
     /// Each inked cluster's ink box, in text order.
     boxes: Vec<InkBox>,
     /// How many of [`glyphs`](Self::glyphs) come before each box's: where
@@ -917,6 +914,10 @@ struct Set {
     /// baseline point moves along the line's baseline
     /// ([`ArcPath::offset_at`]).
     moves: Vec2,
+    /// The outline's outward normal its baseline point is offset along
+    /// ([`OffsetPoint::normal`]): at a sharp corner, the way from the
+    /// corner to it.
+    normal: Vec2,
     /// How far it reaches toward and away from the outline (#308).
     reach: Reach,
 }
@@ -988,19 +989,21 @@ fn track(
     for cluster in clusters {
         lay.cluster(cluster, g);
     }
-    let (short, ends, centers) = match (lay.first, lay.last) {
+    let (short, ends, centers, normals) = match (lay.first, lay.last) {
         (Some(a), Some(b)) => (
             sb - b.center,
             Some(((a.at - a.half, a.at + a.half), (b.at - b.half, b.at + b.half))),
             Some((a.center, b.center)),
+            Some((a.normal, b.normal)),
         ),
-        _ => (sb - sa, None, None),
+        _ => (sb - sa, None, None, None),
     };
     Tracked {
         glyphs: lay.out,
         short,
         ends,
         centers,
+        normals,
         boxes: lay.boxes,
         marks: lay.marks,
         reaches: lay.reaches,
@@ -1078,16 +1081,22 @@ impl<'w> InkLay<'w> {
             half,
             center: c,
             moves: on.moves,
+            normal: on.normal,
             reach: Reach::of(middle, half, on.normal),
         }
     }
 
     /// The lay set on from the ink `before`, as though it were the last
     /// laid — a text ink a side ornament's copies start past — which is
-    /// neither placed nor among [`boxes`](Self::boxes).
-    fn after(mut self, before: Set) -> Self {
+    /// neither placed nor among [`boxes`](Self::boxes), and held clear of
+    /// `earlier`, the inks before it, nearest first, as of the inks it
+    /// laid before its last ([`EARLIER`]).
+    fn after(mut self, before: Set, earlier: &[Set]) -> Self {
         self.s = before.center + extent(before.moves, before.half.x * 2.0, before.half.y * 2.0) * 0.5;
         self.last = Some(before);
+        for (slot, set) in self.earlier.iter_mut().zip(earlier) {
+            *slot = Some(*set);
+        }
         self
     }
 
@@ -1590,11 +1599,15 @@ struct LayMemo {
     /// it lay.
     laid: FxHashMap<(usize, u32, u32, u32), Line>,
     /// Each line's last lay at a span, by line and span's bits: its
-    /// part's length, its gap and its offset, what its next lay's
-    /// tracking is warm-started from ([`solve_tracking`], ruling R43) — a
-    /// round moves a line's part a little, and its gap and its offset
-    /// with it (#308).
-    warm: FxHashMap<(usize, u32), (f32, f32, f32)>,
+    /// part's length and its gap, what its next lay's tracking is
+    /// warm-started from ([`solve_tracking`], ruling R43) — a round moves
+    /// a line's part a little, and its gap with it.
+    warm: FxHashMap<(usize, u32), (f32, f32)>,
+    /// Each line's offset as its last lay at a span solved it, pressed or
+    /// not, by line and span's bits: what its next lay's offset is solved
+    /// from (#308) — a round moves a line's part a little, and the offset
+    /// its nearest ink wants with it.
+    offsets: FxHashMap<(usize, u32), f32>,
 }
 
 /// One clearance search's state ([`Layout::lay_clear`]): the lines it
@@ -1651,10 +1664,8 @@ impl Layout<'_> {
     }
 
     /// `clusters` laid at gap `g` over `part` on half `k` on their own
-    /// baseline (#308): at `offset`, and then at the offset that lay
-    /// wants ([`offset_of`]) until the two agree to [`OFFSET_TOLERANCE`],
-    /// [`OFFSET_ROUNDS`] lays at most. Returns the last lay and its
-    /// offset.
+    /// baseline (#308, [`solve_offset`]), from `offset`. Returns the lay
+    /// and its offset.
     ///
     /// Cost: a [`track`] for each offset it is laid at.
     fn settled(
@@ -1667,19 +1678,13 @@ impl Layout<'_> {
         offset: f32,
     ) -> (Tracked, f32) {
         let walk = self.walk(k, run);
-        let mut offset = offset;
-        let mut tracked = self.track(&walk, &run.glyphs, clusters, part, g, offset);
-        for _ in 1..OFFSET_ROUNDS {
-            let wanted = offset_of(&tracked, self.outward);
-            if !wanted.is_finite()
-                || (wanted - offset).abs() <= resolved(OFFSET_TOLERANCE, part.1)
-                || self.spent_all()
-            {
-                break;
-            }
-            offset = wanted;
-            tracked = self.track(&walk, &run.glyphs, clusters, part, g, offset);
-        }
+        let (offset, tracked) = solve_offset(
+            offset,
+            resolved(OFFSET_TOLERANCE, part.1),
+            |offset, _: Option<&Tracked>| self.track(&walk, &run.glyphs, clusters, part, g, offset),
+            |tracked| offset_of(tracked, self.outward),
+            &|| self.spent_all(),
+        );
         (tracked, offset)
     }
 
@@ -1768,9 +1773,7 @@ impl Layout<'_> {
             .fold(0.0_f32, f32::max);
         let apex = self.halves.apexes[k];
         let walk = self.walk(k, run);
-        let mut offset = self.apex_offset(k, run, &clusters);
-        let (mut na, mut long) = (apex, 0.0);
-        for _ in 0..OFFSET_ROUNDS {
+        let center = |offset: f32, _: Option<&(f32, f32, Tracked)>| {
             let laid = |from: f32| {
                 self.track(&walk, &run.glyphs, &clusters, (from, from), natural_gap, offset)
             };
@@ -1799,16 +1802,15 @@ impl Layout<'_> {
                 CENTER_ROUNDS,
                 &|| self.spent_all(),
             );
-            (na, long) = (start, length);
-            // The offset the line laid there wants: its own, once the two
-            // agree.
-            let tracked = tracked.unwrap_or_else(|| laid(na));
-            let wanted = offset_of(&tracked, self.outward);
-            if !wanted.is_finite() || (wanted - offset).abs() <= resolved(OFFSET_TOLERANCE, apex) || self.spent_all() {
-                break;
-            }
-            offset = wanted;
-        }
+            (start, length, tracked.unwrap_or_else(|| laid(start)))
+        };
+        let (offset, (na, long, _)) = solve_offset(
+            self.apex_offset(k, run, &clusters),
+            resolved(OFFSET_TOLERANCE, apex),
+            center,
+            |(_, _, tracked)| offset_of(tracked, self.outward),
+            &|| self.spent_all(),
+        );
         Some(Prepared {
             half: k,
             offset,
@@ -1878,6 +1880,18 @@ impl Layout<'_> {
                 if next == na {
                     break;
                 }
+                // A start before `lo`: the line from `lo` ends past `hi`
+                // too, it is longer than the room and starts at `lo` —
+                // where a slide that chased the start below it, round a
+                // bend whose letters move by a jump, once took all its
+                // rounds (#308).
+                if next < lo {
+                    let from_lo = reach(lo);
+                    if lo + from_lo >= hi {
+                        (na, long) = (lo, from_lo);
+                        break;
+                    }
+                }
                 last = Some((na, miss));
             }
             if na < lo {
@@ -1916,13 +1930,13 @@ impl Layout<'_> {
                     return line.clone();
                 }
                 let warm = memo.warm.get(&(i, span.to_bits())).copied();
-                let line = self.lay_one(run, p, room, span, warm);
+                let offset = memo.offsets.get(&(i, span.to_bits())).copied();
+                let line = self.lay_one(run, p, room, span, warm, offset);
                 if line.tracks && !line.pressed {
-                    memo.warm.insert(
-                        (i, span.to_bits()),
-                        (line.part.1 - line.part.0, line.gap, line.offset),
-                    );
+                    memo.warm
+                        .insert((i, span.to_bits()), (line.part.1 - line.part.0, line.gap));
                 }
+                memo.offsets.insert((i, span.to_bits()), line.offset);
                 memo.laid.insert(key, line.clone());
                 line
             })
@@ -1930,8 +1944,9 @@ impl Layout<'_> {
     }
 
     /// [`lay`](Self::lay)'s line `p` over `(lo, hi)`, its tracking
-    /// warm-started from `warm` — the part's length, the gap and the
-    /// offset of the line's last lay at this span — when there is one.
+    /// warm-started from `warm` — the part's length and the gap of the
+    /// line's last lay at this span — and its offset solved from
+    /// `offset`, its last lay's at this span, when there is one.
     ///
     /// **One baseline** (#308). The line is laid on one baseline, the
     /// outline's offset curve at one offset ([`InkLay::set_at`]), chosen
@@ -1953,7 +1968,8 @@ impl Layout<'_> {
         p: &Prepared,
         (lo, hi): (f32, f32),
         span: f32,
-        warm: Option<(f32, f32, f32)>,
+        warm: Option<(f32, f32)>,
+        offset: Option<f32>,
     ) -> Line {
         let walk = self.walk(p.half, run);
         // A line of one letter has no gap to track: it sits at
@@ -2009,16 +2025,33 @@ impl Layout<'_> {
             };
             (sa, sb, gap, tracked)
         };
-        let mut offset = warm.map_or(p.offset, |(_, _, offset)| offset);
-        let (mut sa, mut sb, mut gap, mut tracked) = lay_at(offset, warm.map(|(long, gap, _)| (long, gap)));
-        for _ in 1..OFFSET_ROUNDS {
-            let wanted = offset_of(&tracked, self.outward);
-            if !wanted.is_finite() || (wanted - offset).abs() <= resolved(OFFSET_TOLERANCE, sb) || self.spent_all() {
-                break;
-            }
-            offset = wanted;
-            (sa, sb, gap, tracked) = lay_at(offset, Some((sb - sa, gap)));
-        }
+        let start = offset.unwrap_or(p.offset);
+        // Each lay's tracking warm-started from the last: its gap moved by
+        // the part's change in length and, its baseline the further off
+        // the outline, by how much longer that makes it over the part —
+        // the offset's change times how far the outline turns under the
+        // line — shared among its gaps.
+        let last_offset = Cell::new(start);
+        let (offset, (sa, sb, gap, tracked)) = solve_offset(
+            start,
+            resolved(OFFSET_TOLERANCE, hi),
+            |offset, last: Option<&(f32, f32, f32, Tracked)>| {
+                let warm_gap = match last {
+                    Some((sa, sb, gap, tracked)) => {
+                        let turn = tracked
+                            .normals
+                            .map_or(0.0, |(a, b)| a.perp_dot(b).atan2(a.dot(b)).abs());
+                        let longer = (offset - last_offset.get()) * turn;
+                        Some((sb - sa, gap + longer / steps.max(1) as f32))
+                    }
+                    None => warm,
+                };
+                last_offset.set(offset);
+                lay_at(offset, warm_gap)
+            },
+            |(_, _, _, tracked)| offset_of(tracked, self.outward),
+            &|| self.spent_all(),
+        );
         Line {
             half: p.half,
             offset,
@@ -2044,44 +2077,28 @@ impl Layout<'_> {
         }
     }
 
-    /// The outward normal of the outline at the point nearest each end
-    /// ink of a line `tracked` on half `k` over `part`, first then last:
-    /// the normal of the ink as it lies, which on a sharp tip turns away
-    /// from the normal where its center is set along the path. Past a
-    /// sharp corner, where the point nearest the ink is the corner and
-    /// the outline has no one normal there, the way from the corner to
-    /// the ink: an ink pushed round a corner off the end of a side faces
-    /// between the two sides, where the side after the corner's normal
-    /// would face it the other side's way (a frame round a 10:1
+    /// The outward normal of the outline under each end ink of a line
+    /// `tracked` on half `k` over `part`, first then last: the normal its
+    /// baseline point is offset along ([`Set::normal`], #308), which is
+    /// the outline's at the point nearest the baseline point — an offset
+    /// curve's points lie along the normals of the points they are offset
+    /// from. Past a sharp corner, where the outline has no one normal,
+    /// the way from the corner to the baseline point, as the baseline
+    /// sweeps round it: an end set round a corner off the end of a side
+    /// faces between the two sides, where the side after the corner's
+    /// normal would face it the other side's way (a frame round a 10:1
     /// rectangle once took a junction so for lines stacked across it). A
     /// line with no ink takes the normals at its part's ends. Found once
     /// a line is laid ([`Line::normals`]).
     ///
-    /// An ink is pushed off the outline by no more than its own half
-    /// size, so the point of the outline nearest it is within its
-    /// diagonal of where it is set, by arc length within twice that on a
-    /// convex outline: it is looked for there (ruling R43).
-    ///
-    /// Cost: two [`ArcPath::nearest_near`]s.
+    /// Cost: none, as the lay found them; two path lookups for a line
+    /// with no ink.
     fn normals(&self, k: usize, tracked: &Tracked, part: (f32, f32)) -> [Vec2; 2] {
         let path = &self.halves.paths[k];
         let normal = |s: f32| path.outward(path.at(s).1);
-        match (tracked.ends, tracked.centers) {
-            (Some((first, last)), Some((a, b))) => [(first, a), (last, b)].map(|(ink, set)| {
-                let p = middle(ink);
-                let (q, tangent) = path.at(path.nearest_near(p, set, near_reach(ink)));
-                let along = path.outward(tangent);
-                let off = p - q;
-                let way = off.normalize_or_zero();
-                // Off the outline by more than a hundredth of the ink's
-                // size, in a way its normal there is not: past a corner.
-                if off.length() > 0.01 * (ink.1 - ink.0).length() && way.dot(along) < CORNER {
-                    way
-                } else {
-                    along
-                }
-            }),
-            _ => [normal(part.0), normal(part.1)],
+        match tracked.normals {
+            Some((first, last)) => [first, last],
+            None => [normal(part.0), normal(part.1)],
         }
     }
 
@@ -2094,10 +2111,18 @@ impl Layout<'_> {
     /// turn more than 135° apart, lines stacked across a thin outline
     /// rather than lines meeting, only not to touch (ruling R35.1) — and,
     /// for each line, how much drawing its
-    /// end back at that junction parts the two: the cosine between the
-    /// way its end moves as its clearance grows and the way away from the
-    /// other end. A single line is measured against the junction point
-    /// on its own center line, owing half that.
+    /// end back at that junction parts the two: how much further apart
+    /// the two ends' centers are, as a share of how far apart they are,
+    /// once its end has moved that far the way it moves as its clearance
+    /// grows — `|u + r| − 1`, of the unit way `u` away from the other end
+    /// and the way `r` its end moves: 1 drawn straight away, none at 120°
+    /// from it, and short of none past that. Two ends on baselines of
+    /// different offsets meet at a junction one off the other along the
+    /// outline's normal, across the way either draws back, which the
+    /// cosine between the two ways read as parting nothing; drawn back as
+    /// far as they are apart, either parts them by 0.41 of that (#308).
+    /// A single line is measured against the junction point on its own
+    /// center line, owing half that.
     fn apart(&self, lines: &[Line]) -> Junctions {
         let words: Vec<f32> = lines.iter().filter_map(|l| l.word).collect();
         let word = if words.is_empty() {
@@ -2115,7 +2140,12 @@ impl Layout<'_> {
             if !l.tracks {
                 0.0
             } else if box_gap(own, other) > 0.0 {
-                retreat(l, j).dot((middle(own) - middle(other)).normalize_or_zero())
+                let away = (middle(own) - middle(other)).normalize_or_zero();
+                if away == Vec2::ZERO {
+                    1.0
+                } else {
+                    (away + retreat(l, j)).length() - 1.0
+                }
             } else {
                 1.0
             }
@@ -2307,9 +2337,16 @@ impl<'a> SideOrnament<'a> {
 struct SideArc<'s> {
     side: &'s SideOrnament<'s>,
     /// The text ink the arc starts past, as the pairwise rule sets the
-    /// first copy from it.
+    /// first copy from it, and the few before it on its line, nearest
+    /// first ([`EARLIER`]), which the copies are held clear of too.
     start: Set,
-    to: (Vec2, Vec2),
+    before: Vec<Set>,
+    /// The text ink the arc ends before, and the few after it on its
+    /// line: the join is to the nearest of them (#308). The two lines'
+    /// baselines lie at offsets of their own, and the arc's at its own,
+    /// so the ink of a line nearest the arc's copies is not always its
+    /// end ink.
+    to: Vec<InkBox>,
     /// The least gap a copy is laid at ([`SideOrnament::arc_floor`]).
     floor: f32,
     /// Where `from`'s and `to`'s centers lie along the path, `cb` past
@@ -2332,7 +2369,7 @@ struct SideArc<'s> {
 }
 
 impl<'s> SideArc<'s> {
-    fn new(side: &'s SideOrnament<'s>, (from, near_a): ArcEnd, (to, near_b): ArcEnd) -> Option<Self> {
+    fn new(side: &'s SideOrnament<'s>, (from, near_a, before): ArcEnd, (to, near_b, after): ArcEnd) -> Option<Self> {
         side.clusters.iter().find(|c| !c.blank && c.ink.is_some())?;
         let path = side.walk.path;
         // The point of the path nearest each ink, looked for near where
@@ -2347,16 +2384,22 @@ impl<'s> SideArc<'s> {
             .walked(side.inks.len().saturating_mul(SWEEP_SAMPLES + 1));
         let offset = swept_offset(path, &side.inks, (ca, cb), side.outward);
         let offset = if offset.is_finite() { offset } else { 0.0 };
+        let on = path.offset_at(ca, offset);
+        // A text ink as the pairwise rule sets a copy from it: where along
+        // the path the arc starts, which no copy is set before.
+        let text = |b: InkBox| Set {
+            at: middle(b),
+            half: 0.5 * (b.1 - b.0),
+            center: ca,
+            moves: on.moves,
+            normal: on.normal,
+            reach: Reach::default(),
+        };
         Some(SideArc {
             side,
-            start: Set {
-                at: middle(from),
-                half: 0.5 * (from.1 - from.0),
-                center: ca,
-                moves: path.offset_at(ca, offset).moves,
-                reach: Reach::default(),
-            },
-            to,
+            start: text(from),
+            before: before.into_iter().map(text).collect(),
+            to: std::iter::once(to).chain(after).collect(),
             floor: side.arc_floor()?,
             ca,
             cb,
@@ -2375,7 +2418,7 @@ impl<'s> SideArc<'s> {
     ///
     /// Cost: an [`InkLay::set_at`] or a few a glyph.
     fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32)) {
-        let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap, self.offset).after(self.start);
+        let mut lay = self.begun(gap);
         for _ in 0..n {
             for cluster in &self.side.clusters {
                 lay.cluster(cluster, gap);
@@ -2386,11 +2429,21 @@ impl<'s> SideArc<'s> {
         (lay, end)
     }
 
-    /// How far the last ink `lay` set is from `to`, and where along the
-    /// path its center lies.
+    /// A lay of copies at `gap` begun past the text ink the arc starts
+    /// from, held clear of the few before it too.
+    fn begun(&self, gap: f32) -> InkLay<'_> {
+        InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap, self.offset).after(self.start, &self.before)
+    }
+
+    /// How far the last ink `lay` set is from the nearest of `to`'s inks,
+    /// and where along the path its center lies.
     fn end_of(&self, lay: &InkLay<'_>) -> (f32, f32) {
         lay.last
-            .map(|l| (box_gap((l.at - l.half, l.at + l.half), self.to), l.center))
+            .map(|l| {
+                let last = (l.at - l.half, l.at + l.half);
+                let near = self.to.iter().map(|&t| box_gap(last, t)).fold(f32::INFINITY, f32::min);
+                (near, l.center)
+            })
             .unwrap_or((f32::INFINITY, self.ca))
     }
 
@@ -2434,7 +2487,7 @@ impl<'s> SideArc<'s> {
     /// Cost: one lay of the copies that fit and the one that does not.
     fn floor_row(&self, most: usize) -> Option<FloorRow> {
         let gap = self.floor;
-        let mut lay = InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap, self.offset).after(self.start);
+        let mut lay = self.begun(gap);
         let mut rooms = Vec::new();
         while rooms.len() < most.min(MAX_SIDE_COPIES) {
             if !self.side.affords(rooms.len() + 1) {
@@ -2653,9 +2706,10 @@ impl<'s> SideArc<'s> {
 /// leaves and the glyphs it places.
 type FloorRow = (Vec<PlacedGlyph>, Vec<(f32, usize)>);
 
-/// A text ink a side arc runs from or to ([`side_arcs`]): its box, and
-/// where along the first half's path it is set.
-type ArcEnd = (InkBox, f32);
+/// A text ink a side arc runs from or to ([`side_arcs`]): its box, where
+/// along the first half's path it is set, and the boxes of the few inks
+/// beside it on its line ([`EARLIER`]), nearest first.
+type ArcEnd = (InkBox, f32, Vec<InkBox>);
 
 /// The text inks each arc of a side runs between, and which junctions
 /// (top-left, bottom-right) the arc lies round: with two lines one arc
@@ -2672,17 +2726,26 @@ fn side_arcs(lines: &[Line], length: f32) -> Vec<([bool; 2], ArcEnd, ArcEnd)> {
             let (a, b) = l.tracked.ends?;
             let (first, last) = l.tracked.centers?;
             let on_first = |s: f32| if l.half == 0 { s } else { length - s };
-            Some((l.half, ((a, on_first(first)), (b, on_first(last)))))
+            let boxes = &l.tracked.boxes;
+            let after_first = boxes.iter().skip(1).take(EARLIER).copied().collect();
+            let before_last = boxes.iter().rev().skip(1).take(EARLIER).copied().collect();
+            Some((
+                l.half,
+                ((a, on_first(first), after_first), (b, on_first(last), before_last)),
+            ))
         })
         .collect();
     match ends.as_slice() {
-        [(_, (a1, b1)), (_, (a2, b2)), ..] => vec![([true, false], *a2, *a1), ([false, true], *b1, *b2)],
+        [(_, (a1, b1)), (_, (a2, b2)), ..] => vec![
+            ([true, false], a2.clone(), a1.clone()),
+            ([false, true], b1.clone(), b2.clone()),
+        ],
         // The first half's line leaves the second: clockwise from its
         // last ink round to its first.
-        [(0, (a, b))] => vec![([true, true], *b, *a)],
+        [(0, (a, b))] => vec![([true, true], b.clone(), a.clone())],
         // The second half's line leaves the first: clockwise from its
         // first ink over the top to its last.
-        [(_, (a, b))] => vec![([true, true], *a, *b)],
+        [(_, (a, b))] => vec![([true, true], a.clone(), b.clone())],
         [] => Vec::new(),
     }
 }
@@ -3935,6 +3998,58 @@ fn offset_of(tracked: &Tracked, outward: bool) -> f32 {
     offset_from(&tracked.reaches, outward)
 }
 
+/// The offset a line's baseline settles at, and the line laid there
+/// (#308): where the offset its lay wants ([`offset_from`], by `wants`)
+/// is the offset it was laid at, to `tolerance`. `lay` lays the line at
+/// an offset, given the lay before when there is one. The first lay is
+/// at `start`, the second at the offset the first wants, and each after
+/// where the line through the last two lays' misses — the offset wanted
+/// less the offset laid at — crosses none (the secant): round a tight
+/// bend the ink nearest the outline turns with the line's letters, and
+/// the offset it wants swings past where it was laid by more than the
+/// change, so laying each line again at what the last wanted would
+/// circle the answer and never reach it. [`OFFSET_ROUNDS`] lays at most,
+/// fewer with `stop`; the lay whose miss is the least is kept. A miss
+/// that is not a number — no ink — keeps the lay.
+///
+/// Cost: `lay`'s, once for each offset tried.
+fn solve_offset<T: Clone>(
+    start: f32,
+    tolerance: f32,
+    mut lay: impl FnMut(f32, Option<&T>) -> T,
+    wants: impl Fn(&T) -> f32,
+    stop: &dyn Fn() -> bool,
+) -> (f32, T) {
+    let mut offset = start;
+    let mut laid = lay(offset, None);
+    let mut best: Option<(f32, f32, T)> = None;
+    let mut before: Option<(f32, f32)> = None;
+    for round in 1..=OFFSET_ROUNDS {
+        let wanted = wants(&laid);
+        if !wanted.is_finite() {
+            return (offset, laid);
+        }
+        let miss = wanted - offset;
+        if best.as_ref().is_none_or(|(_, least, _)| miss.abs() < *least) {
+            best = Some((offset, miss.abs(), laid.clone()));
+        }
+        if miss.abs() <= tolerance || round == OFFSET_ROUNDS || stop() {
+            break;
+        }
+        let next = match before {
+            Some((was, missed)) if missed != miss => offset - miss * (offset - was) / (miss - missed),
+            _ => wanted,
+        };
+        before = Some((offset, miss));
+        offset = if next.is_finite() { next } else { wanted };
+        laid = lay(offset, Some(&laid));
+    }
+    match best {
+        Some((offset, _, laid)) => (offset, laid),
+        None => (offset, laid),
+    }
+}
+
 /// The most offset off the outline a baseline of `inks` (each in its
 /// glyph's coordinates, `y` from the baseline) could want laid anywhere
 /// over the part `(lo, hi)` of `path` (#308): outward, the most any of
@@ -4811,6 +4926,7 @@ pub(crate) fn solve_tracking_seam(lay: impl Fn(f32) -> (f32, Vec2), steps: usize
             short,
             ends: None,
             centers: None,
+            normals: None,
             boxes: Vec::new(),
             marks: Vec::new(),
             reaches: Vec::new(),
@@ -4913,25 +5029,22 @@ pub(crate) fn solve_line_seam(
     )
 }
 
-/// Test seam (#294, ruling R43): the geometry of a line's ends on
+/// Test seam (#294, ruling R43; #308): the geometry of a line's ends on
 /// `outline`'s half `half` — the outward normal the 135° test weighs for
-/// an end ink `ink` set at `set` along the half ([`Layout::normals`]),
-/// and the way the end of a part ending at `end` draws back
-/// ([`retreats`]).
-pub(crate) fn end_seam(
-    outline: &Outline,
-    half: usize,
-    ink: (Vec2, Vec2),
-    set: f32,
-    end: f32,
-) -> (Vec2, Vec2) {
+/// an end ink whose baseline point is set at `set` along the half, on
+/// the baseline `offset` off the outline ([`Layout::normals`]), and the
+/// way the end of a part ending at `end` draws back ([`retreats`]).
+pub(crate) fn end_seam(outline: &Outline, half: usize, offset: f32, set: f32, end: f32) -> (Vec2, Vec2) {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
     let lay = Layout::new(&halves, true, Work::new(0));
+    let on = halves.paths[half].offset_at(set, offset);
+    let ink = (on.point, on.point);
     let tracked = Tracked {
         glyphs: Vec::new(),
         short: 0.0,
         ends: Some((ink, ink)),
         centers: Some((set, set)),
+        normals: Some((on.normal, on.normal)),
         boxes: vec![ink],
         marks: vec![0],
         reaches: vec![Reach::default()],
@@ -4964,7 +5077,7 @@ pub(crate) fn side_floor_seam(
     let (ja, jb) = halves.junctions[0];
     let point = |s: f32| {
         let p = halves.paths[0].at(s).0;
-        ((p, p), s)
+        ((p, p), s, Vec::new())
     };
     let arc = side.arc(point(ja), point(jb))?;
     let glyphs = arc.lay(n, arc.floor).0.out;
@@ -4998,7 +5111,7 @@ pub(crate) fn side_solve_seam(
     let (ja, jb) = halves.junctions[0];
     let point = |s: f32| {
         let p = halves.paths[0].at(s).0;
-        ((p, p), s)
+        ((p, p), s, Vec::new())
     };
     let arc = side.arc(point(ja), point(jb))?;
     let (row, rooms) = arc.floor_row(n)?;

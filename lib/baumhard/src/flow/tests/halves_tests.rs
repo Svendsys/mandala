@@ -211,12 +211,36 @@ fn center(b: (Vec2, Vec2)) -> Vec2 {
 }
 
 /// One line's letter gaps (between neighboring inks of a word) and word
-/// gaps (across a space), and its first and last ink.
+/// gaps (across a space), and its first and last ink, with their
+/// baseline points: straight below or above each ink's center, on its
+/// glyph's baseline (#308).
 struct LineGaps {
     letters: Vec<f32>,
     words: Vec<f32>,
     ends: ((Vec2, Vec2), (Vec2, Vec2)),
+    anchors: (Vec2, Vec2),
     centers: Vec<Vec2>,
+}
+
+/// The outline's outward normal under the baseline point `p` of an ink
+/// (#308), `path` walked clockwise: the normal at the point of the
+/// outline nearest `p` — the way from that point to a point of a line's
+/// baseline, which lies along the normal of the point it is offset from
+/// — or, where `p` lies off the outline in no normal of it there, a
+/// degree off or more, the way from that point to `p`: past a sharp
+/// corner, where the nearest point is the corner and the outline has no
+/// one normal, the way from the corner, turned outward for a point
+/// inside the outline.
+fn normal_under(path: &ArcPath, p: Vec2) -> Vec2 {
+    let (q, tangent) = path.at(path.nearest(p));
+    let along = Vec2::new(tangent.y, -tangent.x);
+    let off = p - q;
+    let way = off.normalize_or_zero() * off.dot(along).signum();
+    if off.length() > 0.5 && way.dot(along) < 1.0_f32.to_radians().cos() {
+        way
+    } else {
+        along
+    }
 }
 
 fn line_gaps(
@@ -229,6 +253,7 @@ fn line_gaps(
     let mut previous: Option<(Vec2, Vec2)> = None;
     let mut spaced = false;
     let mut first = None;
+    let mut anchors: Option<(Vec2, Vec2)> = None;
     for k in range {
         if run.glyphs[placed.glyphs[k].glyph as usize].blank {
             spaced = true;
@@ -243,6 +268,8 @@ fn line_gaps(
             }
         }
         first.get_or_insert(ink);
+        let anchor = Vec2::new(center(ink).x, placed.glyphs[k].pos.y + run.baseline());
+        anchors = Some((anchors.map_or(anchor, |(a, _)| a), anchor));
         centers.push(center(ink));
         previous = Some(ink);
         spaced = false;
@@ -252,6 +279,7 @@ fn line_gaps(
         letters,
         words,
         ends: (first, previous.expect("a line with ink")),
+        anchors: anchors.expect("a line with ink"),
         centers,
     }
 }
@@ -1210,10 +1238,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
     for (name, shape, height, points) in &outlines {
         // The outline's outward normal nearest `p`.
         let path = ArcPath::closed(shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
-        let normal = |p: Vec2| {
-            let tangent = path.at(path.nearest(p)).1;
-            Vec2::new(tangent.y, -tangent.x)
-        };
+        let normal = |p: Vec2| normal_under(&path, p);
         for text in [ECCLESIASTES, QUATRAIN] {
             let (fitted, r27_cut) = with_fonts(|fs| {
                 let flow = style(*points);
@@ -1387,9 +1412,9 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                     .map(|l| mean(&l.words))
                                     .collect();
                                 let word = if words.is_empty() { 0.0 } else { mean(&words) };
-                                for (j, (junction, a, b)) in [
-                                    ("top-left", one.ends.0, two.ends.0),
-                                    ("bottom-right", one.ends.1, two.ends.1),
+                                for (j, (junction, a, b, anchors)) in [
+                                    ("top-left", one.ends.0, two.ends.0, (one.anchors.0, two.anchors.0)),
+                                    ("bottom-right", one.ends.1, two.ends.1, (one.anchors.1, two.anchors.1)),
                                 ]
                                 .into_iter()
                                 .enumerate()
@@ -1398,7 +1423,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                         continue;
                                     }
                                     let apart = gap(a, b);
-                                    let turn = normal(center(a)).dot(normal(center(b)));
+                                    let turn = normal(anchors.0).dot(normal(anchors.1));
                                     // Stacked past 135°: only not touching.
                                     // Between 130° and 135°, where the
                                     // engine's ink and this projection may
@@ -2051,10 +2076,7 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
         ),
     ] {
         let path = ArcPath::closed(shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
-        let normal = |p: Vec2| {
-            let tangent = path.at(path.nearest(p)).1;
-            Vec2::new(tangent.y, -tangent.x)
-        };
+        let normal = |p: Vec2| normal_under(&path, p);
         for span in spans {
             let layout = RingLayout {
                 span,
@@ -2080,13 +2102,13 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
                 trace.unheld
             );
             let word = word_gap(&lines);
-            for (junction, a, b) in [
-                ("top-left", lines[0].ends.0, lines[1].ends.0),
-                ("bottom-right", lines[0].ends.1, lines[1].ends.1),
+            for (junction, a, b, anchors) in [
+                ("top-left", lines[0].ends.0, lines[1].ends.0, (lines[0].anchors.0, lines[1].anchors.0)),
+                ("bottom-right", lines[0].ends.1, lines[1].ends.1, (lines[0].anchors.1, lines[1].anchors.1)),
             ] {
                 let apart = gap(a, b);
-                let turn = normal(center(a))
-                    .dot(normal(center(b)))
+                let turn = normal(anchors.0)
+                    .dot(normal(anchors.1))
                     .clamp(-1.0, 1.0)
                     .acos()
                     .to_degrees();
@@ -2753,21 +2775,23 @@ fn test_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
     do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it();
 }
 
-/// A line's ends at a sharp corner (ruling R43), round a 600 × 60
-/// rectangle with no radius. An end ink pushed round the corner off the
-/// end of a side — here past the bottom-left corner, on the second half,
-/// which runs down the left side from its middle — lies nearest the
-/// corner, where the outline has no one normal: it faces the way from
-/// the corner to it, not the bottom side's way, which the 135° test
-/// would read as a line stacked across the outline from one on the top.
-/// And a part ending at a corner — the first half's at the bottom-right
-/// one, down the right side — draws back up the side before it, not
-/// along the bottom after it, which reads as drawing back parting
-/// nothing. Each expectation is the geometry's, worked here by hand.
+/// A line's ends at a sharp corner (ruling R43, #308), round a 600 × 60
+/// rectangle with no radius. An end ink set round the corner — here at
+/// the bottom-left corner, on the second half, which runs down the left
+/// side from its middle — has its baseline point on the baseline's sweep
+/// round the corner, where the outline has no one normal: it faces the
+/// way from the corner to it, halfway between the two sides' normals
+/// where it is set at the corner itself, not the left side's way or the
+/// bottom's, which the 135° test would read as a line stacked across
+/// the outline from one on the top. And a part ending at a corner — the
+/// first half's at the bottom-right one, down the right side — draws
+/// back up the side before it, not along the bottom after it, which
+/// reads as drawing back parting nothing. Each expectation is the
+/// geometry's, worked here by hand.
 ///
-/// Controls: with the normal always the outline's at the nearest point,
-/// the end faces a side's way, `(-1, 0)`; with the retreat taken from
-/// the tangent at the end itself, it runs along the bottom.
+/// Controls: with the normal always the outline's at the point the end
+/// is set at, the end faces a side's way, `(-1, 0)`; with the retreat
+/// taken from the tangent at the end itself, it runs along the bottom.
 pub fn do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
     let shape = outline(
         Rect::new(Vec2::ZERO, Vec2::new(600.0, 60.0)),
@@ -2775,17 +2799,18 @@ pub fn do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
             radius: Percent::new(0),
         },
     );
-    // The second half from (0, 30) down: the corner (0, 60) is 30 along.
-    let ink = (Vec2::new(-12.0, 58.0), Vec2::new(-2.0, 68.0));
-    let (normal, _) = end_seam(&shape, 1, ink, 30.0, 630.0);
-    let away = Vec2::new(-7.0, 3.0).normalize();
+    // The second half from (0, 30) down: the corner (0, 60) is 30 along,
+    // and a baseline 10 off the outline sweeps round it from the left
+    // side's normal to the bottom's.
+    let (normal, _) = end_seam(&shape, 1, 10.0, 30.0, 630.0);
+    let away = Vec2::new(-1.0, 1.0).normalize();
     assert!(
         normal.distance(away) < 1e-3,
-        "an end ink past the bottom-left corner faces {normal:?}, not the way from the corner to it, {away:?}"
+        "an end set at the bottom-left corner faces {normal:?}, not the way from the corner to it, {away:?}"
     );
     // The first half from (0, 30) up: over the top, then down the right
     // side to the corner (600, 60), 690 along.
-    let (_, retreat) = end_seam(&shape, 0, ink, 300.0, 690.0);
+    let (_, retreat) = end_seam(&shape, 0, 10.0, 300.0, 690.0);
     assert!(
         retreat.distance(Vec2::new(0.0, -1.0)) < 1e-3,
         "an end at the bottom-right corner draws back along {retreat:?}, not up the right side"
