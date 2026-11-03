@@ -2512,16 +2512,18 @@ pub(crate) fn more_looks(a: (usize, usize), b: (usize, usize)) -> (usize, usize)
     }
 }
 
-/// R48.2: no touch check of the aspect sweep's frames or the demo maps'
-/// looks at more than `TOUCH_LOOKS_MEASURED` pairs a box, and
+/// R48.2, R50.2: no touch check of the aspect sweep's frames or the demo
+/// maps' looks at more than `TOUCH_LOOKS_MEASURED` pairs a box, and
 /// `TOUCH_LOOKS_A_BOX`, what a side arc holds back for its check, is
-/// twice that: the most measured, 5.41 (552 looks over 102 boxes, a check
-/// whose sweep ran past `SWEEP_PAIRS` and laid its boxes in strips),
-/// rounded up to 6. The budget grids hold their frames to the bound
-/// (`flow::tests::budget_tests`), and the flow fuzz property every
-/// committed finding and fuzzed frame.
+/// twice that. The most measured over these frames is 6.19 (631 looks
+/// over 102 boxes, a check whose sweep ran past `SWEEP_PAIRS` and laid
+/// its boxes in strips by class of height); over the budget grids, which
+/// hold their frames to the same bound (`flow::tests::budget_tests`),
+/// 8.58, which `TOUCH_LOOKS_MEASURED` is rounded up from. The flow fuzz
+/// property holds every committed finding and fuzzed frame to
+/// `TOUCH_LOOKS_A_BOX`.
 ///
-/// Control: with the measured bound at 5, red. (No `do_*` twin: it reads
+/// Control: with the measured bound at 6, red. (No `do_*` twin: it reads
 /// the sweep's traces.)
 #[test]
 fn test_flow_halves_a_touch_check_looks_at_few_pairs_a_box() {
@@ -2989,10 +2991,13 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 /// 65,000 glyphs, in at most [`SIDE_LOOKUPS_A_GLYPH`] path lookups a glyph
 /// placed (128 round the ellipse, 146 round the square; 784 at dd04a8f5,
 /// when each fill bisected its gap in 30 lays of every copy), and looks at most at
-/// [`PAIRS_A_BOX`] pairs of boxes a glyph for touching (some 3; every
-/// pair, some two billion, at dd04a8f5; round the square 5,272 a glyph at
-/// 1f1b3f8e, when a sweep along one axis weighed every copy down a
-/// straight side against every other).
+/// [`PAIRS_A_BOX`] pairs of boxes a glyph for touching (6.5 round the
+/// ellipse and 6.8 round the square, each box placed or copied into a
+/// class's strips counted a look; 7.3 and 8.1 at 289a684f, when every
+/// box shared the tallest's strip height; every pair, some two billion,
+/// at dd04a8f5; round the square 5,272 a glyph at 1f1b3f8e, when a
+/// sweep along one axis weighed every copy down a straight side against
+/// every other).
 ///
 /// At its own budget, 400,000, neither can afford its arcs and the touch
 /// check of them (some 34,000 copies each, the check held back at
@@ -3094,8 +3099,10 @@ fn test_flow_halves_a_long_side_ornament_round_a_sharp_square_is_filled_in_few_l
 const SIDE_LOOKUPS_A_GLYPH: usize = 200;
 
 /// The most pairs of boxes the same frames may look at for touching a
-/// glyph they place: the few inks either side of each, in the cells of
-/// the grid round it, with a margin past the some 3 they look at.
+/// glyph they place: the few inks near each, in the strips of its class
+/// and the coarser ones round it — 6.5 a glyph round the ellipse and 6.8
+/// round the square, so a margin of ×1.46 (7.3 and 8.1 at 289a684f, a
+/// margin of ×1.24).
 #[cfg(test)]
 const PAIRS_A_BOX: usize = 10;
 
@@ -3218,10 +3225,10 @@ pub(crate) fn mixed_sides() -> String {
     format!("⸻{}", "|".repeat(100))
 }
 
-/// R50.2 (review 5745584645): a touch check's looks are output-sensitive
-/// ([`stripped`](crate::flow::place::halves)), so a long ornament that
+/// R50.2 (review 5745584645): a touch check's looks are output-sensitive,
+/// the inks near each box whatever the tallest, so a long ornament that
 /// mixes one wide glyph with thin ones looks at no more than
-/// `TOUCH_LOOKS_A_BOX` pairs a box: [`mixed_sides`] round a 20,000 sharp
+/// `TOUCH_LOOKS_MEASURED` pairs a box, and so within `TOUCH_LOOKS_A_BOX`: [`mixed_sides`] round a 20,000 sharp
 /// square, and the fuzzable `"﷽|||"` round a 2,000 one — "To see a World
 /// in a Grain of Sand" at 16 pt, `Once` at span natural, outward, both
 /// arcs filled (a floor of 40,000,000, the test seam). With one strip
@@ -3233,7 +3240,7 @@ pub(crate) fn mixed_sides() -> String {
 /// `do_*` twin: it sets a test seam.)
 #[test]
 fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box() {
-    use crate::flow::place::halves::{FLOOR_OVERRIDE, TOUCH_LOOKS_A_BOX};
+    use crate::flow::place::halves::{FLOOR_OVERRIDE, TOUCH_LOOKS_A_BOX, TOUCH_LOOKS_MEASURED};
     let text = "To see a World in a Grain of Sand";
     for (sides, size) in [(mixed_sides(), 20_000.0), ("﷽|||".to_string(), 2_000.0)] {
         let shape = outline(
@@ -3258,9 +3265,10 @@ fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box
             trace.unheld
         );
         assert!(
-            looks <= TOUCH_LOOKS_A_BOX * boxes,
-            "{sides:?} round {size}: a touch check looked at {looks} pairs of {boxes} boxes, {:.2} a box, past TOUCH_LOOKS_A_BOX, {TOUCH_LOOKS_A_BOX}",
-            looks as f64 / boxes as f64
+            looks <= TOUCH_LOOKS_MEASURED * boxes,
+            "{sides:?} round {size}: a touch check looked at {looks} pairs of {boxes} boxes, {:.2} a box, past the {TOUCH_LOOKS_MEASURED} measured (TOUCH_LOOKS_A_BOX, {TOUCH_LOOKS_A_BOX}, is ×{:.2} it)",
+            looks as f64 / boxes as f64,
+            TOUCH_LOOKS_A_BOX as f64 * boxes as f64 / looks.max(1) as f64
         );
     }
 }

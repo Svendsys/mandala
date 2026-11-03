@@ -1302,6 +1302,135 @@ fn test_the_flow_fuzzers_draw_every_ring_layout() {
     );
 }
 
+/// R50.3: the structured flow fuzzer draws long side ornaments, so that
+/// a geometry that breaks `TOUCH_LOOKS_A_BOX` is a finding: drawn after
+/// the ring's layout, one time in four, up to 200 bytes of a sequence of
+/// [`ORNAMENT_GLYPHS`] repeated — a wide glyph among thin ones — and on
+/// zero choices, an input that ends before it, not at all, so every
+/// committed finding replays in the layout it was found in.
+///
+/// Control: with no long ornament ever drawn, red.
+///
+/// [`ORNAMENT_GLYPHS`]: crate::flow::tests::flow_fuzz::ORNAMENT_GLYPHS
+#[test]
+fn test_the_structured_flow_fuzzer_draws_long_mixed_ornaments() {
+    use crate::flow::tests::flow_fuzz::{long_ornament, LONG_ORNAMENT_BYTES};
+    assert_eq!(
+        long_ornament(&mut Choices::new(&[]), RingLayout::whole()),
+        RingLayout::whole(),
+        "zero choices draw no long ornament"
+    );
+    let (mut drawn, mut long, mut mixed, mut most) = (0, 0, 0, 0);
+    for seed in 0..400 {
+        let layout = long_ornament(&mut Choices::seeded(seed), RingLayout::whole());
+        let Some((ornament, _)) = layout.sides else {
+            continue;
+        };
+        drawn += 1;
+        most = most.max(ornament.len());
+        long += usize::from(ornament.len() >= 100);
+        let mut glyphs: Vec<char> = ornament.chars().collect();
+        glyphs.sort_unstable();
+        glyphs.dedup();
+        mixed += usize::from(ornament.len() >= 100 && glyphs.len() >= 2);
+    }
+    assert!(
+        drawn >= 50 && long >= 20 && mixed >= 10 && most <= LONG_ORNAMENT_BYTES,
+        "400 seeds: {drawn} long ornaments drawn, {long} of 100 bytes or more, {mixed} of them of two glyphs or more, the longest {most} bytes"
+    );
+}
+
+/// R50.3, R45.1: a long fuzzed side ornament fits the per-input work
+/// bound beside a text cut to nothing: in every face a span can name,
+/// upright and bold italic, each glyph of [`ORNAMENT_GLYPHS`] and all of
+/// them in turn, repeated to [`LONG_ORNAMENT_BYTES`], shape with no
+/// `.notdef`, and a frame of one glyph beside such an ornament, laid to
+/// the whole of its budget and its overshoot, takes no more than
+/// [`INPUT_STEPS`]. So the fuzzer's rule — cut the text until its frame
+/// fits — always finds a frame that fits ([`fits_in_time`]).
+///
+/// Control: with `﷽` replaced by a glyph no face holds, red.
+///
+/// [`ORNAMENT_GLYPHS`]: crate::flow::tests::flow_fuzz::ORNAMENT_GLYPHS
+/// [`LONG_ORNAMENT_BYTES`]: crate::flow::tests::flow_fuzz::LONG_ORNAMENT_BYTES
+/// [`INPUT_STEPS`]: crate::flow::tests::flow_fuzz::INPUT_STEPS
+/// [`fits_in_time`]: crate::flow::tests::flow_fuzz::fits_in_time
+#[test]
+fn test_a_long_fuzzed_ornament_fits_the_per_input_bound() {
+    use crate::flow::place::halves::{build_steps, frame_work_steps};
+    use crate::flow::tests::flow_fuzz::{faces, INPUT_STEPS, LONG_ORNAMENT_BYTES, ORNAMENT_GLYPHS};
+    let repeated = |glyphs: &[char]| {
+        let mut ornament = String::new();
+        for glyph in glyphs.iter().cycle() {
+            if ornament.len() + glyph.len_utf8() > LONG_ORNAMENT_BYTES {
+                break;
+            }
+            ornament.push(*glyph);
+        }
+        ornament
+    };
+    let mut ornaments: Vec<String> = ORNAMENT_GLYPHS.iter().map(|g| repeated(&[*g])).collect();
+    ornaments.push(repeated(&ORNAMENT_GLYPHS));
+    let mut heaviest = (0, String::new(), 0);
+    for face in faces() {
+        for (weight, italic) in [
+            (Weight::NORMAL, false),
+            (Weight::new(700).unwrap_or(Weight::NORMAL), true),
+        ] {
+            let style = ResolvedText {
+                font: face,
+                size: FontSize::Pt(16.0),
+                color: Rgba::new(255, 255, 255, 255),
+                weight,
+                italic,
+            };
+            for ornament in &ornaments {
+                let (notdefs, work, alone) = with_fonts(|fs| {
+                    let shaped = shape_run(
+                        &[FlowSpan {
+                            text: ornament,
+                            style: &style,
+                            link: None,
+                        }],
+                        1.0,
+                        fs,
+                    );
+                    let notdefs = shaped.layout_glyphs().filter(|g| g.glyph_id == 0).count();
+                    let text = shape_run(
+                        &[FlowSpan {
+                            text: "a",
+                            style: &style,
+                            link: None,
+                        }],
+                        1.0,
+                        fs,
+                    );
+                    (
+                        notdefs,
+                        frame_work_steps(&text, Some(&shaped), true),
+                        build_steps(&text, Some(&shaped)) - build_steps(&text, None),
+                    )
+                });
+                assert_eq!(
+                    notdefs, 0,
+                    "{face:?}: {ornament:?} shapes {notdefs} glyphs no face holds"
+                );
+                assert!(
+                    work <= INPUT_STEPS,
+                    "{face:?}: a one-glyph frame beside {ornament:?} takes {work} glyph steps, past the {INPUT_STEPS} an input may take"
+                );
+                if work > heaviest.0 {
+                    heaviest = (work, format!("{face:?} {ornament:?}"), alone);
+                }
+            }
+        }
+    }
+    assert!(
+        heaviest.0 > 400_000,
+        "precondition: the frames are laid at the floor of their budget ({heaviest:?})"
+    );
+}
+
 /// R44.2's property: a frame two of whose inks touch fails, whatever its
 /// budget did — never overlap wins over never cut, and a frame that
 /// cannot hold its inks apart cuts them and says so.
@@ -1495,7 +1624,7 @@ fn test_the_raw_harness_draws_every_frame_fit() {
 /// break, whose control characters' glyphs are given inks zero wide and
 /// line tall, laid a third of a point apart round the rectangle. Each was
 /// once weighed against every other in the touch check's strips: 4,315
-/// looks over 95 boxes, past `TOUCH_LOOKS_A_BOX` (12) a box. A box with
+/// looks over 95 boxes, past `TOUCH_LOOKS_A_BOX`, then 12, a box. A box with
 /// no ink is left out of the check now (ruling R49.2), and the replay —
 /// held to the bound by the fuzz property — passes.
 ///

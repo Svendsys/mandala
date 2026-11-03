@@ -871,8 +871,14 @@ which also holds back the cost of its arc's touch check at
 `TOUCH_LOOKS_A_BOX` looks a box (R48.2), so once it is spent nothing
 runs that the overshoot does not count (the `PAST_BUDGET` grid in
 `flow/tests/budget_tests.rs` holds every fit mode, span, kind of sides
-and direction to it). Every flow fuzz frame is held to that bound on
-looks a box too, so a geometry that breaks it is a finding. A counted step costs at
+and direction to it, a take that crosses the budget counted for the
+part past it, R50.4). Every flow fuzz frame is held to that bound on
+looks a box too, so a geometry that breaks it is a finding: the check's
+looks are the inks near each box, whatever the tallest (R50.1), and
+flow_structured draws long mixed side ornaments, up to 200 bytes of a
+wide glyph among thin ones (`long_ornament`, R50.3), its frame's text
+cut to leave their shaping and inking room within the per-input bound
+below. A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
 1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
 An input's worst case is the sum of its frames' work at that cost, and

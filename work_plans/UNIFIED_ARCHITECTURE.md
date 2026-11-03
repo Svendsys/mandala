@@ -826,7 +826,9 @@ line (cosmic-text gives each glyph's advance), then placed:
      while the frame can afford it and its arc's touch check after, at
      `TOUCH_LOOKS_A_BOX` looks a box (an arc it cannot afford is left
      empty, or keeps the copies it has where their gaps are equal, and is
-     reported; ruling R48.2), `untouched` runs within it, and
+     reported as left empty or kept short; rulings R48.2, R50.5), the
+     check's looks the inks near each box, whatever the tallest (ruling
+     R50.1), `untouched` runs within it, and
      a frame overshoots it by `overshoot_steps` at most (ruling R47.2):
      what runs before it is first read — the frame's setup, R27's first
      reshape and one build's shaping and inking — a lay of each line,

@@ -9,7 +9,7 @@ use glam::Vec2;
 
 use crate::document::values::{FitMode, LineSpan, Percent, Rgba, Shape};
 use crate::flow::place::halves::{
-    overshoot_steps, spent_seam, untouched_steps, BUDGET_OVERRIDE, PAST_BUDGET, TOUCH_LOOKS_A_BOX,
+    overshoot_steps, spent_seam, untouched_steps, BUDGET_OVERRIDE, PAST_BUDGET, TOUCH_LOOKS_MEASURED,
     UNTOUCHED_TAKEN,
 };
 use crate::flow::tests::flow_fuzz::ornament_run;
@@ -49,12 +49,10 @@ fn mixed_sides() -> [String; 5] {
     ]
 }
 
-/// The budgets round a large outline with a long mixed side ornament
-/// (ruling R50.2): spent while its first arc is laid, or its second, or
-/// with both laid before their last touch check — at 700,000 and the
-/// widest row, where the check that one strip height made look at 28.9
-/// pairs a box ran 56,938 glyph steps past the bound.
-const MIXED_BUDGETS: [usize; 4] = [1, 60_000, 300_000, 700_000];
+/// The budgets round the large sharp square with a long mixed side
+/// ornament (ruling R50.2): spent before the frame's first arc, while it
+/// is laid, and while the second is.
+const MIXED_BUDGETS: [usize; 3] = [1, 60_000, 200_000];
 
 /// The outline of the grid's sharp rectangle: 600 × 12, where the
 /// quatrain's two lines face each other inward and the last resorts run.
@@ -70,8 +68,9 @@ fn flat() -> Outline {
 /// What one frame of the grid did past its budget.
 struct Past {
     what: String,
-    /// The glyph steps it took once its budget read as spent
-    /// ([`PAST_BUDGET`]), and all it took.
+    /// The glyph steps it took past its budget ([`PAST_BUDGET`]): each
+    /// take once its budget read as spent, and the part past it of a take
+    /// that crossed it (ruling R50.4); and all it took.
     past: usize,
     spent: usize,
     /// What it may take past its budget (`overshoot_steps`), and its
@@ -151,33 +150,43 @@ fn grid(
     out
 }
 
+/// Which grid [`holds_the_bound`] lays.
+#[derive(Clone, Copy)]
+enum Size {
+    /// Every span, with no sides, a short ornament and a long one, at
+    /// each of [`BUDGETS`].
+    Small,
+    /// Span natural with the long ornament, at each of [`LARGE_BUDGETS`].
+    Large,
+    /// Span natural with each of [`mixed_sides`], at each of
+    /// [`MIXED_BUDGETS`].
+    Mixed,
+}
+
 /// Hold every frame of the grid round `shape` to R47.2's bound: no more
-/// than `overshoot_steps` taken once its budget is spent, no more in all
+/// than `overshoot_steps` taken past its budget — once it is spent, and
+/// of a take that crosses it the part past it (R50.4) — no more in all
 /// than its budget and that, no two inks touching, an `untouched` within
 /// its share of the budget (R46.1), and no touch check looking at more
-/// than `TOUCH_LOOKS_A_BOX` pairs a box (R48.2). A small outline is
-/// laid at every span with no sides, a short ornament and a long one, at
-/// each of [`BUDGETS`]; a large one at span natural with the long
-/// ornament, at each of [`LARGE_BUDGETS`].
-fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
-    let frames = if large {
-        let mut frames = grid(
+/// than `TOUCH_LOOKS_MEASURED` pairs a box (R48.2, R50.2), in the grid
+/// `outline` names ([`Size`]).
+fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
+    let frames = match outline {
+        Size::Large => grid(
             shape,
             name,
             &[("natural", LineSpan::NATURAL)],
             &[Some(long_sides())],
             &LARGE_BUDGETS,
-        );
-        frames.extend(grid(
+        ),
+        Size::Mixed => grid(
             shape,
             name,
             &[("natural", LineSpan::NATURAL)],
             &mixed_sides().map(Some),
             &MIXED_BUDGETS,
-        ));
-        frames
-    } else {
-        grid(
+        ),
+        Size::Small => grid(
             shape,
             name,
             &[
@@ -187,7 +196,7 @@ fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
             ],
             &[None, Some("❧".to_string()), Some(long_sides())],
             &BUDGETS,
-        )
+        ),
     };
     let spent = frames.iter().filter(|f| f.past > 0).count();
     assert!(
@@ -202,7 +211,7 @@ fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
                 || f.spent > f.held + f.allowed
                 || f.overlap
                 || f.untouched.0 > f.untouched.1
-                || f.looks.0 > TOUCH_LOOKS_A_BOX * f.looks.1
+                || f.looks.0 > TOUCH_LOOKS_MEASURED * f.looks.1
         })
         .map(|f| {
             let broken: Vec<&str> = [
@@ -210,7 +219,7 @@ fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
                 (f.spent > f.held + f.allowed, "in all"),
                 (f.overlap, "overlap"),
                 (f.untouched.0 > f.untouched.1, "untouched"),
-                (f.looks.0 > TOUCH_LOOKS_A_BOX * f.looks.1, "looks"),
+                (f.looks.0 > TOUCH_LOOKS_MEASURED * f.looks.1, "looks"),
             ]
             .into_iter()
             .filter_map(|(broken, what)| broken.then_some(what))
@@ -254,7 +263,7 @@ fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
 /// (round the 600 × 12 rectangle).
 #[test]
 fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_flat() {
-    holds_the_bound(&flat(), "600 × 12 sharp", false);
+    holds_the_bound(&flat(), "600 × 12 sharp", Size::Small);
 }
 
 /// As above, round a 600 ellipse.
@@ -263,7 +272,7 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_round() 
     holds_the_bound(
         &outline(Rect::new(Vec2::ZERO, Vec2::splat(600.0)), Shape::Ellipse),
         "600 ellipse",
-        false,
+        Size::Small,
     );
 }
 
@@ -273,7 +282,7 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_thin() {
     holds_the_bound(
         &outline(Rect::new(Vec2::ZERO, Vec2::new(1_000.0, 20.0)), Shape::Ellipse),
         "1,000 × 20 ellipse",
-        false,
+        Size::Small,
     );
 }
 
@@ -284,7 +293,7 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_wide() {
     holds_the_bound(
         &outline(Rect::new(Vec2::ZERO, Vec2::new(1_000.0, 50.0)), Shape::Ellipse),
         "1,000 × 50 ellipse",
-        false,
+        Size::Small,
     );
 }
 
@@ -301,7 +310,7 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_sq
             },
         ),
         "20,000 sharp square",
-        true,
+        Size::Large,
     );
 }
 
@@ -311,7 +320,28 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_ro
     holds_the_bound(
         &outline(Rect::new(Vec2::ZERO, Vec2::splat(20_000.0)), Shape::Ellipse),
         "20,000 ellipse",
-        true,
+        Size::Large,
+    );
+}
+
+/// As above, round the 20,000 sharp square with each long mixed
+/// ornament (ruling R50.2): the reviewer's four rows, whose touch checks
+/// looked at up to 28.9 pairs a box when every box shared the tallest's
+/// strip height — the widest ran 56,938 glyph steps past the bound — and
+/// `"﷽|||"`.
+///
+/// Control: with the side check's reserve removed, `PAST_BUDGET` red.
+#[test]
+fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_mixed() {
+    holds_the_bound(
+        &outline(
+            Rect::new(Vec2::ZERO, Vec2::splat(20_000.0)),
+            Shape::Rectangle {
+                radius: Percent::new(0),
+            },
+        ),
+        "20,000 sharp square",
+        Size::Mixed,
     );
 }
 

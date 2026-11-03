@@ -95,7 +95,8 @@
 //! which is laid only while the frame can afford it and the touch check
 //! of the arc after ([`check_steps`], at [`TOUCH_LOOKS_A_BOX`] looks a
 //! box): an arc it cannot afford is left empty, or keeps the copies it
-//! has where they hold the equal-gap rule, and is reported ([`Unheld`]).
+//! has where they hold the equal-gap rule, and is reported as left empty
+//! or kept short ([`Unheld::sides`]).
 //! So a frame overshoots its budget
 //! by at most [`overshoot_steps`] (ruling R47.2): what runs before the
 //! budget is first read — its setup, R27's first reshape and one build's
@@ -340,25 +341,45 @@ pub(crate) const INK_FACE_STEPS: usize = 104;
 /// (the sweep before, 0.50), at a load average of 2 to 6.
 pub(crate) const BOXES_A_STEP: usize = 32;
 
-/// Ink boxes and pairs of them one glyph step weighs past
-/// [`touch_scan`]'s sweep, in its strips or for a box that is not a
-/// number (ruling R48.1): at most 2.97 µs a box or a look over the calls
-/// of 256 units or more, measured as [`BOXES_A_STEP`] is with the strips
-/// forced on, so 16 µs ÷ 2.97 µs = 5.4, rounded down to 4.
-pub(crate) const STRIPPED_A_STEP: usize = 4;
+/// Ink boxes and looks one glyph step weighs past [`touch_scan`]'s
+/// sweep, in its strips ([`stripped`]; rulings R48.1, R50.1), a box
+/// placed or copied into a class's strips a look: at most 1.97 µs a box
+/// or a look over the calls of 256 units or more, measured as
+/// [`BOXES_A_STEP`] is with the strips forced on, so 16 µs ÷ 1.97 µs =
+/// 8.1, rounded down to 8. Measured again at R50 (review 5745584645) on
+/// the strips by class of height: the flow_structured target's ASan
+/// build over its seeds, the committed findings, the heavy seeds, 299
+/// seeded structured inputs and twelve long-ornament frames round 2,000
+/// and 20,000 outlines (calls of up to 155,732 units), three runs, at a
+/// load average of about 1. The worst was a call of 258 boxes that found
+/// a touch at its first look; calls of 100,000 units or more took 1.05
+/// µs a unit at most. (At R48, with one strip height for every box,
+/// 2.97 µs, and 4.)
+pub(crate) const STRIPPED_A_STEP: usize = 8;
 
-/// The most pairs a touch check looks at a box it is given (ruling
-/// R48.2): twice the most any check made over the aspect sweep, the
-/// budget grids, the demo maps' frames and every committed flow fuzz
-/// finding. What a side arc holds back for its check rests on it
-/// ([`check_steps`]), and with it [`overshoot_steps`]; the flow fuzz
-/// property fails a frame whose check looks at more.
+/// The most pairs a touch check looks at a box it is given (rulings
+/// R48.2, R50.2): twice the most any check made over the aspect sweep,
+/// the budget grids — their long mixed side ornaments among them — the
+/// demo maps' frames, the long-ornament pins and every committed flow
+/// fuzz finding ([`TOUCH_LOOKS_MEASURED`]). What a side arc holds back
+/// for its check rests on it ([`check_steps`]), and with it
+/// [`overshoot_steps`]; the flow fuzz property fails a frame whose check
+/// looks at more.
 pub(crate) const TOUCH_LOOKS_A_BOX: usize = TOUCH_LOOKS_MEASURED * 2;
 
 /// The most pairs a touch check looked at a box, rounded up, over the
-/// frames [`TOUCH_LOOKS_A_BOX`] names (pinned by
-/// `test_flow_halves_a_touch_check_looks_at_few_pairs_a_box`).
-pub(crate) const TOUCH_LOOKS_MEASURED: usize = 6;
+/// frames [`TOUCH_LOOKS_A_BOX`] names (ruling R50.2): 8.58, 841 looks
+/// over 98 boxes, the quatrain's lines facing each other inward round
+/// the budget grid's 600 × 12 sharp rectangle, a check of six classes of
+/// height ([`stripped`]); over a check of thousands of boxes, 6.68 (a
+/// long ornament round the 20,000 ellipse) and 6.50 (a long mixed one
+/// round the 20,000 sharp square, 21,094 boxes). Pinned by
+/// `test_flow_halves_a_touch_check_looks_at_few_pairs_a_box` over the
+/// sweep and the demo maps, by the budget grids over theirs and by
+/// `test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box`.
+/// (6 at 289a684f, 5.41 measured over the sweep and the demo maps, when
+/// every box shared one strip height, the tallest's.)
+pub(crate) const TOUCH_LOOKS_MEASURED: usize = 9;
 
 /// The most glyph steps a touch check of `boxes` boxes counts while it
 /// looks at no more than [`TOUCH_LOOKS_A_BOX`] pairs a box (ruling
@@ -457,7 +478,10 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// before each copy ([`check_steps`], ruling R48.2). That rests on one
 /// assumption: that no touch check looks at more than
 /// [`TOUCH_LOOKS_A_BOX`] pairs a box, which the flow fuzz property holds
-/// every frame to.
+/// every frame to. A check's looks are output-sensitive — the inks near
+/// each box, whatever the tallest box ([`stripped`], ruling R50.1) — and
+/// the structured fuzzer draws long mixed side ornaments, as a map may
+/// hold (ruling R50.3), so a geometry that breaks it is a finding.
 pub(crate) fn overshoot_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
     let r27 = if sized { shaping_steps(text) } else { 0 };
     FRAME_STEPS
@@ -3771,8 +3795,8 @@ pub(crate) fn to_cap_seam(run: &ShapedRun, range: Range<usize>, left: usize) -> 
 /// clearance again, [`CUT_ROUNDS`] times at most; a cut apart a
 /// bisection of clearance searches per line; a side arc a lay of its
 /// copies at the floor, and a few lays per copy count weighed
-/// ([`falsi`]); every touch check a sort and a look at the pairs of
-/// inks in neighboring cells of a grid ([`touch_scan`]); a build's
+/// ([`falsi`]); every touch check a sort and its looks, a sweep's few a
+/// box and past it the inks near each box ([`touch_scan`]); a build's
 /// shaping and inking. In all, at most the frame's budget of glyph steps
 /// ([`frame_budget`]: [`STEPS_PER_GLYPH`] a glyph of its text cut to
 /// [`MAX_PLACED_GLYPHS`], at least [`TRACK_BUDGET`]), every kind of work

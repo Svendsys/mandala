@@ -251,8 +251,9 @@ pub(crate) fn ornament_run(
     ))
 }
 
-/// The most characters a fuzzed side ornament holds: a short one,
-/// every copy of it laid many times round each junction.
+/// The most characters a fuzzed side ornament [`ring_layout`] draws holds:
+/// a short one, every copy of it laid many times round each junction.
+/// A long one is drawn after it ([`long_ornament`], ruling R50.3).
 const MAX_ORNAMENT_CHARS: u32 = 4;
 
 /// Characters a structured span draws from besides any code point:
@@ -589,7 +590,8 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                     // too, whatever it draws: a finding that runs on past
                     // its outline draws another layout from the one it was
                     // found in (review 5739829769).
-                    let layouts = laid_layouts(ring_layout(choices), bounded);
+                    let drawn = ring_layout(choices);
+                    let layouts = laid_layouts(long_ornament(choices, drawn), bounded);
                     for layout in &layouts {
                         // The frame's text, held to what its frame lays
                         // inside the timeout (rulings R45.1, R46.3) — or,
@@ -707,7 +709,7 @@ fn plain_style() -> ResolvedText {
 /// bearing its name comes first (the shadowing R30.1 removes): a sweep
 /// that drew its faces from the index would stop pinning that family at
 /// all, and so could not see a host face win its pin.
-fn faces() -> Vec<AppFont> {
+pub(crate) fn faces() -> Vec<AppFont> {
     let mut faces: Vec<AppFont> = COMPILED_FONT_ID_MAP
         .iter()
         .filter(|(_, ids)| !ids.is_empty())
@@ -785,6 +787,67 @@ pub fn ring_layout(choices: &mut Choices<'_>) -> RingLayout {
         0.0
     };
     RingLayout { span, sides, spacing }
+}
+
+/// The glyphs a long side ornament is drawn from (ruling R50.3): widths
+/// from a hairline to a three-em dash and an Arabic ligature wider still,
+/// each one a compiled face holds, so that a long ornament shapes with
+/// no `.notdef`, which would weigh 2,200 glyph steps a glyph
+/// (`SHAPE_NOTDEF_STEPS`) and leave a frame no room for its text.
+pub const ORNAMENT_GLYPHS: [char; 10] = ['|', '·', '-', '=', 'x', 'W', '❧', '─', '⸻', '﷽'];
+
+/// The longest side ornament the long-ornament mode draws, in bytes
+/// (ruling R50.3): the reviewer's 200 (review 5739829769).
+pub const LONG_ORNAMENT_BYTES: usize = 200;
+
+/// `layout`, or, one time in four, `layout` with a long side ornament
+/// (ruling R50.3): up to two glyphs of [`ORNAMENT_GLYPHS`], then a
+/// sequence of one to four of them repeated, up to
+/// [`LONG_ORNAMENT_BYTES`] bytes in all — a wide glyph among thin ones,
+/// as a map's ornament may be, where [`ring_layout`]'s are at most
+/// [`MAX_ORNAMENT_CHARS`] characters.
+///
+/// Drawn after [`ring_layout`], from choices nothing before it reads, and
+/// not at all on a zero choice: an input that ends before it — every
+/// committed finding — lays the layout it was found in.
+///
+/// It stays within the per-input work bound (ruling R45.1) by trading
+/// text for ornament: a frame's text is cut until its work, laid to the
+/// whole of its budget and its overshoot, fits [`INPUT_STEPS`]
+/// ([`framed`], [`fits_in_time`]), and the overshoot counts the
+/// ornament's shaping and inking twice beside the text's (`build_steps`).
+/// At 16 pt, [`MAX_FRAME_GLYPHS`] glyphs of one face beside a 4-glyph
+/// ornament take 462,949 steps, within the 464,396 of [`INPUT_STEPS`];
+/// beside 200 `|`s, which add 9,016 more to shape and ink, 471,965,
+/// past it, so the text is halved to 75 glyphs, whose budget is the
+/// 400,000-step floor: 417,090. A text of one glyph beside the heaviest
+/// long ornament takes at most 412,342 (a face that lacks some of its
+/// glyphs draws them from another), which `test_a_long_fuzzed_ornament_fits_the_per_input_bound`
+/// holds in every face: so the cut always finds a frame that fits.
+pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayout {
+    if !choices.one_in(4) {
+        return layout;
+    }
+    let mut ornament: String = (0..choices.below(3))
+        .map(|_| *choices.pick(&ORNAMENT_GLYPHS))
+        .collect();
+    let unit: Vec<char> = (0..1 + choices.below(4))
+        .map(|_| *choices.pick(&ORNAMENT_GLYPHS))
+        .collect();
+    let bytes = 1 + choices.index(LONG_ORNAMENT_BYTES);
+    for glyph in unit.iter().cycle() {
+        if ornament.len() + glyph.len_utf8() > bytes {
+            break;
+        }
+        ornament.push(*glyph);
+    }
+    match bounds::check_ornament(&ornament) {
+        Ok(_) => RingLayout {
+            sides: Some((ornament, Rgba::new(255, 255, 255, 255))),
+            ..layout
+        },
+        Err(_) => layout,
+    }
 }
 
 /// `texts`, in `styles`, at `scale`, each cut to the same share of its
