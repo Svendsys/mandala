@@ -3018,7 +3018,7 @@ fn test_flow_halves_a_frames_shaping_inking_and_tracking_are_all_counted() {
     );
     let sided = RingLayout {
         span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
-        sides: Some(("❧".to_string(), Rgba::opaque(0, 0, 0))),
+        sides: Some(("=".to_string(), Rgba::opaque(0, 0, 0))),
         ..RingLayout::whole()
     };
     for (what, fit, layout, outward) in [
@@ -3332,11 +3332,13 @@ fn test_flow_halves_a_sides_gap_is_solved_to_copies_that_fit() {
 }
 
 /// The reviewer's long mixed side ornament (review 5745584645): one wide
-/// glyph, `⸻`, and a hundred thin ones, `|`, whose wide glyph down a
-/// vertical side stands as tall as it is wide among the thin ones.
+/// glyph, `—`, and a hundred thin ones, `|`, whose wide glyph down a
+/// vertical side stands as tall as it is wide among the thin ones. The
+/// review named `⸻`; `—` is as flat, and the compiled faces hold it, so
+/// every host lays the same geometry (ruling R51.5).
 #[cfg(test)]
 pub(crate) fn mixed_sides() -> String {
-    format!("⸻{}", "|".repeat(100))
+    format!("—{}", "|".repeat(100))
 }
 
 /// R50.2 (review 5745584645): a touch check's looks are output-sensitive,
@@ -3344,12 +3346,14 @@ pub(crate) fn mixed_sides() -> String {
 /// mixes one wide glyph with thin ones looks at no more pairs a box than
 /// measured ([`looks_as_measured`]), and so within `touch_looks` of its
 /// classes: [`mixed_sides`] round a 20,000 sharp
-/// square, and the fuzzable `"﷽|||"` round a 2,000 one — "To see a World
+/// square, and the fuzzable `"𓀀|||"` round a 2,000 one — "To see a World
 /// in a Grain of Sand" at 16 pt, `Once` at span natural, outward, both
-/// arcs filled (a floor of 40,000,000, the test seam). With one strip
-/// height, the tallest box's, for every box, the first looked at 28.9
-/// pairs a box and its frame ran 56,938 glyph steps past its budget and
-/// overshoot; the second at 9.2.
+/// arcs filled (a floor of 40,000,000, the test seam), each glyph one the
+/// compiled faces hold (ruling R51.5). With one strip height, the tallest
+/// box's, for every box, the first looked at 21.11 pairs a box (821,262
+/// over 38,910 boxes) with host faces and without; with `⸻` and `﷽`,
+/// which no compiled face holds, 28.9 and 9.2 (review 5745584645), and
+/// 25.36 on CI's faces, where they shaped as `.notdef`s.
 ///
 /// Control: with every box in strips of the tallest's class, red. (No
 /// `do_*` twin: it sets a test seam.)
@@ -3357,7 +3361,7 @@ pub(crate) fn mixed_sides() -> String {
 fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box() {
     use crate::flow::place::halves::FLOOR_OVERRIDE;
     let text = "To see a World in a Grain of Sand";
-    for (sides, size) in [(mixed_sides(), 20_000.0), ("﷽|||".to_string(), 2_000.0)] {
+    for (sides, size) in [(mixed_sides(), 20_000.0), ("𓀀|||".to_string(), 2_000.0)] {
         let shape = outline(
             Rect::new(Vec2::ZERO, Vec2::splat(size)),
             Shape::Rectangle {
@@ -3746,7 +3750,9 @@ fn extreme_touch_case(
 /// frame's budget stopped keeps the copies it had where they hold the
 /// equal-gap rule, and is reported kept short, apart from an arc left
 /// empty: "To see a World in a Grain of Sand" at 16 pt round a 2,000
-/// sharp square, `Once` at span ½ with a `❧` on its sides, outward, whose
+/// sharp square, `Once` at span ½ with an `=` on its sides (ruling R51.5:
+/// a glyph the compiled faces hold, wider than tall, where `❧` was one no
+/// compiled face holds), outward, whose
 /// count search moves from its guess, at budgets from 5,000 to 8,000 in
 /// steps of 5. The first budget at which an arc is kept short places more
 /// glyphs than the last before it at which that arc was left empty, the
@@ -3767,7 +3773,7 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
     );
     let layout = RingLayout {
         span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
-        sides: Some(("❧".to_string(), Rgba::opaque(0, 0, 0))),
+        sides: Some(("=".to_string(), Rgba::opaque(0, 0, 0))),
         ..RingLayout::whole()
     };
     let fit = FitMode::Once { filler: None };

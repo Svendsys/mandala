@@ -39,14 +39,18 @@ fn long_sides() -> String {
 /// reviewer's four rows (review 5745584645) — thin glyphs alone, and one
 /// or two wide ones among them, whose touch checks looked at 10.7 to 28.9
 /// pairs a box when every box shared the tallest's strip height — and
-/// the fuzzable `"﷽|||"`, a wider glyph still.
+/// the fuzzable `"𓀀|||"`, a glyph as tall as it is wide among them. The
+/// wide glyph is `—` and the square one `𓀀`, which the compiled faces
+/// hold, so that every host lays the same geometry (ruling R51.5; the
+/// review's rows named `⸻` and `﷽`, which no compiled face holds, and
+/// which CI shaped as `.notdef`s).
 fn mixed_sides() -> [String; 5] {
     [
         "|".repeat(40),
-        format!("⸻{}", "|".repeat(40)),
-        format!("⸻⸻{}", "|".repeat(60)),
-        format!("⸻{}", "|".repeat(100)),
-        "﷽|||".to_string(),
+        format!("—{}", "|".repeat(40)),
+        format!("——{}", "|".repeat(60)),
+        format!("—{}", "|".repeat(100)),
+        "𓀀|||".to_string(),
     ]
 }
 
@@ -61,12 +65,14 @@ const MIXED_BUDGETS: [usize; 3] = [1, 60_000, 200_000];
 const MIXED_SIZE_BUDGETS: [usize; 4] = [1, 100_000, 400_000, 700_000];
 
 /// The budgets round the large sharp square with the widest of
-/// [`mixed_sides`], the reviewer's `"⸻" + "|".repeat(100)` (ruling
+/// [`mixed_sides`], the reviewer's `"—" + "|".repeat(100)` (ruling
 /// R50.4): spent with an arc's copies laid and its touch check still to
 /// run, the first arc's and then the second's — where, with the side
-/// check's reserve removed, a take crosses the budget by 28,840 and
-/// 22,042 glyph steps, past the 14,459 `overshoot_steps` allows.
-const WIDEST_BUDGETS: [usize; 2] = [660_000, 780_000];
+/// check's reserve removed, the frame takes 13,774 and 18,873 glyph
+/// steps past its budget, past the 13,591 `overshoot_steps` allows
+/// (`Once` and `Spread`, outward; with `⸻`, at 660,000 and 780,000,
+/// 28,840 and 22,042 past 14,459).
+const WIDEST_BUDGETS: [usize; 2] = [46_000, 74_000];
 
 /// The outline of the grid's sharp rectangle: 600 × 12, where the
 /// quatrain's two lines face each other inward and the last resorts run.
@@ -218,7 +224,7 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
                 name,
                 &quatrain(),
                 &[("natural", LineSpan::NATURAL)],
-                &[Some(format!("⸻{}", "|".repeat(100)))],
+                &[Some(format!("—{}", "|".repeat(100)))],
                 &WIDEST_BUDGETS,
             ));
             frames
@@ -246,7 +252,7 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
                 ("½", LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE)),
                 ("natural", LineSpan::NATURAL),
             ],
-            &[None, Some("❧".to_string()), Some(long_sides())],
+            &[None, Some("=".to_string()), Some(long_sides())],
             &BUDGETS,
         ),
     };
@@ -378,8 +384,8 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_ro
 /// As above, round the 20,000 sharp square with each long mixed
 /// ornament (ruling R50.2): the reviewer's four rows, whose touch checks
 /// looked at up to 28.9 pairs a box when every box shared the tallest's
-/// strip height — the widest ran 56,938 glyph steps past the bound — and
-/// `"﷽|||"`.
+/// strip height — the widest, with `⸻`, ran 56,938 glyph steps past the
+/// bound — and `"𓀀|||"`.
 ///
 /// Control: with the side check's reserve removed, `PAST_BUDGET` red.
 #[test]
@@ -402,8 +408,14 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_mi
 /// of it holds a class of height for each size, and looks at a few pairs
 /// a box for each.
 ///
-/// Control: with the side check's reserve at R50's 18 looks a box
-/// whatever the classes, red.
+/// Controls: with `touch_looks` 18 a box whatever the classes, as at
+/// R50, red (`looks`, three frames). With the side check's reserve
+/// counting no class, green: no frame here crosses its bound, the
+/// shaping in `overshoot_steps` covering the difference (as review
+/// 5751828253 found); what holds the reserve's classes is that no side
+/// arc's check holds more than it was held back for
+/// (`looks_as_measured`), red with them counted across the axis with
+/// fewer, or from the text alone.
 #[test]
 fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_mixed_sizes() {
     holds_the_bound(
@@ -446,15 +458,15 @@ fn test_flow_budget_untouched_s_share_is_held_back() {
 /// R46.1: `untouched` takes no more than the share of the budget held
 /// back for it, `untouched_steps` of the inks it is given: the quatrain
 /// inward round the 600 × 12 sharp rectangle, `Once` at span whole with
-/// a `❧` on its sides, whose budget of 20,000 is spent while its lines
+/// an `=` on its sides, whose budget of 20,000 is spent while its lines
 /// still touch — where `untouched` takes the most of its share the grid
-/// above found, 36 of 48 glyph steps.
+/// above found, 32 of 48 glyph steps.
 ///
 /// Control: with `untouched_steps` halved, red.
 #[test]
 fn test_flow_budget_untouched_takes_its_share_at_most() {
     let layout = RingLayout {
-        sides: Some(("❧".to_string(), Rgba::opaque(0, 0, 0))),
+        sides: Some(("=".to_string(), Rgba::opaque(0, 0, 0))),
         ..RingLayout::whole()
     };
     UNTOUCHED_TAKEN.with(|most| most.set((0, 0)));
