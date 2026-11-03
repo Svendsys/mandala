@@ -390,6 +390,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_the_touch_check_finds_what_every_pair_does",
             CannotCompileIntoTheLibrary,
         ),

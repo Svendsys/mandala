@@ -398,6 +398,40 @@ pub fn do_flow_table_spacing_has_a_floor() {
 }
 
 #[test]
+fn test_flow_a_curve_faster_than_the_largest_f32_is_tabled() {
+    do_flow_a_curve_faster_than_the_largest_f32_is_tabled();
+}
+
+/// A curve whose every control point and leg is finite but whose speed
+/// bound — the degree times its longest leg — is past the largest `f32`
+/// still builds its table: the bound saturates there, and its path has
+/// its length. Seed 1021 of the structured flow generator: a quadratic
+/// from (1, 1) by (−2.4 × 10³⁸, −587) to (−10³⁰, 1), 2.4 × 10³⁸ long,
+/// whose bound of twice its first leg was infinite, so that it built no
+/// table and its `Spread` was cut to nothing though its text fit.
+///
+/// Control: with the bound not saturated, no table and no length.
+pub fn do_flow_a_curve_faster_than_the_largest_f32_is_tabled() {
+    let curve = Curve::Quadratic(
+        Vec2::new(1.0, 1.0),
+        Vec2::new(-2.409_018_9e38, -587.0),
+        Vec2::new(-1e30, 1.0),
+    );
+    assert_eq!(
+        curve.speed_bound(),
+        f32::MAX,
+        "the bound saturates at the largest f32"
+    );
+    let path = ArcPath::open(&curve, 4.8);
+    assert!(path.table_samples() > 0, "the curve builds its table");
+    assert!(
+        path.length().is_finite() && path.length() > 2.4e38,
+        "its path is as long as it is: {}",
+        path.length()
+    );
+}
+
+#[test]
 fn test_flow_non_finite_curves_build_no_table() {
     do_flow_non_finite_curves_build_no_table();
 }

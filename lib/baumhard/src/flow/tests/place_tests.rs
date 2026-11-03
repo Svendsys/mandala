@@ -680,3 +680,50 @@ pub fn do_flow_place_keeps_every_position_finite() {
     finite(&place_at_point(&hello, Vec2::new(nan, 4.0)), "point at NaN");
     finite(&place_at_point(&hello, Vec2::splat(inf)), "point at infinity");
 }
+
+#[test]
+fn test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks() {
+    do_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks();
+}
+
+/// A closed ring's count of copies (ruling R29, `ring_copies`) is the
+/// most whose seam closes, found in few looks at the seam: a copy
+/// dropped at a time for the first few, then by bisection. Seed 2771 of
+/// the structured flow generator, with a host's faces, laid a `Repeat`
+/// round an ellipse 10²² from the origin, where an `f32` cannot set its
+/// glyphs apart and no count of its some 22,000 copies closed: dropped one
+/// at a time, every count was measured, each a walk of up to 65,536
+/// glyphs, past 18 minutes in a debug build (141 s now, the measures its
+/// gap's solve takes).
+///
+/// Control: with every copy dropped one at a time, the never-closing
+/// ring asks 21,844 times.
+pub fn do_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks() {
+    use crate::flow::place::ring_copies;
+    use std::cell::Cell;
+    // The count `ring_copies` finds when `closes` up to `most` copies, and
+    // how often it asks.
+    let count = |copies: usize, most: usize| {
+        let asked = Cell::new(0);
+        let found = ring_copies(copies, |k| {
+            asked.set(asked.get() + 1);
+            k <= most
+        });
+        (found, asked.get())
+    };
+    assert_eq!(
+        count(10, 8),
+        (8, 3),
+        "a ring two copies short: 8 copies in 3 looks"
+    );
+    let (far, asked) = count(21_845, 3);
+    assert!(
+        far == 3 && asked <= 20,
+        "a ring that closes at 3 copies of 21,845: {far} in {asked} looks"
+    );
+    let (never, asked) = count(21_845, 0);
+    assert!(
+        never == 1 && asked <= 20,
+        "a ring that never closes: {never} copies in {asked} looks"
+    );
+}

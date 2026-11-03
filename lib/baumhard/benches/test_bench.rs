@@ -2325,6 +2325,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_non_finite_curves_build_no_table", |b| {
         b.iter(do_flow_non_finite_curves_build_no_table)
     });
+    c.bench_function("flow_a_curve_faster_than_the_largest_f32_is_tabled", |b| {
+        b.iter(do_flow_a_curve_faster_than_the_largest_f32_is_tabled)
+    });
+    c.bench_function(
+        "flow_a_ring_that_never_closes_counts_its_copies_in_few_asks",
+        |b| b.iter(do_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks),
+    );
     c.bench_function("flow_place_keeps_every_position_finite", |b| {
         b.iter(do_flow_place_keeps_every_position_finite)
     });

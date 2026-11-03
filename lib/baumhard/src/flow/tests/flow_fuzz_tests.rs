@@ -19,6 +19,43 @@ use crate::flow::{shape_box, shape_run, FlowSpan, PlacedGlyph, PlacedRun, RingLa
 use crate::font::fonts::AppFont;
 use crate::util::tests::choices::Choices;
 
+/// The seeds a sweep of the structured generator's seeds 0 to 5,000 found
+/// failing (review round R50), with the compiled faces alone and with this
+/// machine's host faces:
+///
+/// - **1021**, on every host: a `Spread` of seven glyphs along a quadratic
+///   from (1, 1) by (−2.4 × 10³⁸, −587) to (−10³⁰, 1), whose natural length
+///   fits its 2.4 × 10³⁸, was cut to nothing. The curve's speed bound,
+///   twice its first leg, was past the largest `f32`, so its path built no
+///   table and had no length; the bound saturates now
+///   (`Curve::speed_bound`).
+/// - **2970** and **4284**, with host faces that shape their text: a
+///   frame's line on a part some 10³³ along its half, where an `f32` sets
+///   every letter at one center, so no gap moved its end; the tracking
+///   solve widened its gap past every `f32` and placed the line at `NaN`.
+///   It stops once one gap is as long as all the room the line had, and
+///   reads a lay past every `f32` as past its part's end
+///   (`test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay` holds
+///   both on every host).
+///
+/// Seed 2771, with host faces, laid a `Repeat` ring whose seam no count of
+/// its copies closed for past 18 minutes; it is held by
+/// `test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks`, not
+/// replayed here (141 s in a debug build).
+///
+/// Controls: with the speed bound not saturated, red at 1021 ("its natural
+/// length fits, and it was cut"); without both the tracking solve's stop
+/// and its reading of a lay past every `f32`, red at 2970 where host faces
+/// shape its text, as here (either alone holds it finite).
+#[test]
+fn test_generated_flows_the_r50_seed_sweep_found_hold_every_flow_property() {
+    for seed in [1021, 2970, 4284] {
+        if let Err(why) = check_flow_generated(&mut Choices::seeded(seed)) {
+            panic!("seed {seed}: {why}");
+        }
+    }
+}
+
 #[test]
 fn test_generated_flows_hold_every_flow_property() {
     for seed in 0..100 {

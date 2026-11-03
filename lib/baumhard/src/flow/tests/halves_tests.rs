@@ -3456,3 +3456,34 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
             .last()
     );
 }
+
+/// A frame's line tracked where no gap moves its end, or where a gap that
+/// would places its glyphs past every `f32`, keeps a lay placed finitely
+/// (seeds 2970 and 4284 of the structured flow generator, with a host's
+/// faces: a part some 10³³ along its half, where an `f32` sets every
+/// letter at one center, so that the room the line leaves never shrank;
+/// the tracking solve widened its gap past every `f32`, and the line was
+/// placed at `NaN`). The solve stops once one gap is as long as all the
+/// room the line had at no gap, and reads a lay placed past every `f32`
+/// as past its part's end ([`solve_tracking_seam`]).
+///
+/// Controls: without the stop, the first line's gap runs to 10³⁸; with
+/// a lay placed past every `f32` read as any other, the second line is
+/// placed at infinity. (No `do_*` twin: it reads a test seam.)
+///
+/// [`solve_tracking_seam`]: crate::flow::place::halves::solve_tracking_seam
+#[test]
+fn test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay() {
+    use crate::flow::place::halves::solve_tracking_seam;
+    let room = 1.4e33_f32;
+    let (gap, pos) = solve_tracking_seam(|g| (room, Vec2::new(g * 10.0, 0.0)), 7, 5e33);
+    assert!(
+        pos.is_finite() && gap <= 4.0 * room,
+        "a line no gap moves: gap {gap}, its glyph at {pos}, against a room of {room}"
+    );
+    let (gap, pos) = solve_tracking_seam(|g| (1e38 - g * 1e-3, Vec2::new(g * 10.0, 0.0)), 7, 1e38);
+    assert!(
+        pos.is_finite(),
+        "a line a gap moves by less than it places its glyph: gap {gap}, its glyph at {pos}"
+    );
+}

@@ -3330,9 +3330,11 @@ fn solve_tracking(
     // than its letters are set to.
     let tolerance = line_tolerance(steps, end);
     let width = GAP_PRECISION.max(tolerance / per_gap);
-    // A room that is not a number reads as past the end.
+    // A room that is not a number reads as past the end, and so does a
+    // lay with a glyph that is not placed finitely: a gap past what an
+    // `f32` can lay along the path.
     let short = |t: &Tracked| {
-        if t.short.is_nan() {
+        if t.short.is_nan() || !t.glyphs.iter().all(|g| g.pos.is_finite()) {
             f32::NEG_INFINITY
         } else {
             t.short
@@ -3384,6 +3386,7 @@ fn solve_tracking(
         return (0.0, at_zero);
     }
     let aim = |g: f32| g * (1.0 + 1e-3) + f32::MIN_POSITIVE;
+    let at_zero_short = at_zero.short;
     let mut low = (0.0_f32, at_zero.short, at_zero);
     let mut g = aim(low.1 / per_gap);
     for round in 0..TRACK_DOUBLINGS {
@@ -3410,6 +3413,15 @@ fn solve_tracking(
             );
         }
         if value <= tolerance {
+            return (g, tracked);
+        }
+        // Still short with one gap as long as all the room the line had at
+        // no gap: no gap moves its end there, where the path is too far out
+        // for an `f32` to set its letters apart (seeds 2970 and 4284 of the
+        // structured flow generator: a part 10³³ along its half, every
+        // letter at one center). Widened on, the gap ran past every `f32`
+        // and the line was laid at `NaN`; it keeps its last lay instead.
+        if g > at_zero_short {
             return (g, tracked);
         }
         // Still short: on along the line through the last two probes,
@@ -4238,6 +4250,27 @@ pub(super) fn place_halves(
     glyphs.extend(sides);
     let placed = PlacedRun { glyphs, truncated };
     (changed.then(|| uninked(drawn)), placed)
+}
+
+/// Test seam (#294): [`solve_tracking`] of a line whose lay at gap `g`
+/// leaves `lay(g).0` of its part short and places its one glyph at
+/// `lay(g).1`, over `steps` gaps to `end`: the gap solved and where the
+/// glyph lies.
+#[cfg(test)]
+pub(crate) fn solve_tracking_seam(lay: impl Fn(f32) -> (f32, Vec2), steps: usize, end: f32) -> (f32, Vec2) {
+    let track = |g: f32| {
+        let (short, pos) = lay(g);
+        Tracked {
+            glyphs: vec![PlacedGlyph { glyph: 0, pos }],
+            short,
+            ends: None,
+            centers: None,
+            boxes: Vec::new(),
+            marks: Vec::new(),
+        }
+    };
+    let (gap, tracked) = solve_tracking(track, steps, end, None, &|| false);
+    (gap, tracked.glyphs[0].pos)
 }
 
 /// Test seam (#294, ruling R50.1): whether two of `boxes`, each with

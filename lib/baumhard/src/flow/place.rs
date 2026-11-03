@@ -2797,6 +2797,39 @@ fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32, closed: bool) -> Walke
     }
 }
 
+/// The copies [`close_ring`] drops one at a time before it bisects for
+/// the most whose seam closes.
+const RING_DROPS: usize = 4;
+
+/// The most of `copies` copies, at least one, whose ring `closes` — its
+/// seam as wide as its other gaps, which it is for fewer copies and not
+/// for more: [`close_ring`]'s count. A copy dropped at a time, as a ring
+/// a copy or two short of closing takes, and past [`RING_DROPS`] of them
+/// by bisection.
+///
+/// Cost: `closes` asked at most `RING_DROPS + 1 + log₂(copies)` times.
+pub(crate) fn ring_copies(mut copies: usize, closes: impl Fn(usize) -> bool) -> usize {
+    let mut dropped = 0;
+    while copies > 1 && !closes(copies) {
+        if dropped == RING_DROPS {
+            // `copies` does not close; the most below it that does, or 1.
+            let (mut low, mut high) = (1, copies);
+            while high - low > 1 {
+                let mid = low + (high - low) / 2;
+                if closes(mid) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            return low;
+        }
+        copies -= 1;
+        dropped += 1;
+    }
+    copies
+}
+
 /// A closed ring of whole copies of `clusters` (ruling R29): the most
 /// copies, at most `copies`, whose seam — from the last copy's last
 /// cluster back round to the first's first — can be as wide as every
@@ -2809,7 +2842,8 @@ fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32, closed: bool) -> Walke
 /// the path.
 ///
 /// Cost: a solve of at most `2 · SOLVE_ROUNDS` measures of the copies,
-/// a measure more per copy dropped, and one lay of them.
+/// a measure more per copy dropped, [`RING_DROPS`] of them and then a
+/// bisection of the counts below, and one lay of them.
 fn close_ring(
     run: &ShapedRun,
     clusters: &[Cluster],
@@ -2859,10 +2893,18 @@ fn close_ring(
         let between = (first_at - last).abs() - last_half - first_half;
         owed - between.max(Vec2::ZERO).length()
     };
-    let mut copies = copies;
-    while copies > 1 && miss(copies, 0.0) > SOLVE_TOLERANCE {
-        copies -= 1;
-    }
+    // The most copies whose seam is as wide as the other gaps: a copy
+    // dropped at a time, as a ring a copy or two short of closing takes,
+    // and past [`RING_DROPS`] of them by bisection, the seam narrowing as
+    // the copies grow. Dropped one at a time all the way, a ring whose
+    // seam no count closes measured every count from its most down: on a
+    // path too far out for an `f32` to set its glyphs apart, some 22,000
+    // counts of up to 65,536 glyphs (seed 2771 of the structured flow
+    // generator, an ellipse 10²² from the origin).
+    // A miss that is not a number closes it, as the drop it replaces read.
+    let copies = ring_copies(copies, |count| {
+        miss(count, 0.0).partial_cmp(&SOLVE_TOLERANCE) != Some(Ordering::Greater)
+    });
     let extra = if miss(copies, 0.0) >= 0.0 {
         0.0
     } else {
