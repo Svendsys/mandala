@@ -1340,21 +1340,25 @@ fn test_the_structured_flow_fuzzer_draws_long_mixed_ornaments() {
     );
 }
 
-/// R50.3, R45.1: a long fuzzed side ornament fits the per-input work
-/// bound beside a text cut to nothing: in every face a span can name,
-/// upright and bold italic, each glyph of [`ORNAMENT_GLYPHS`] and all of
-/// them in turn, repeated to [`LONG_ORNAMENT_BYTES`], shape with no
-/// `.notdef`, and a frame of one glyph beside such an ornament, laid to
-/// the whole of its budget and its overshoot, takes no more than
-/// [`INPUT_STEPS`]. So the fuzzer's rule — cut the text until its frame
-/// fits — always finds a frame that fits ([`fits_in_time`]).
+/// R50.3, R45.1: a long fuzzed side ornament of the glyphs the compiled
+/// faces hold fits the per-input work bound beside a text cut to
+/// nothing, on every host: in every face a span can name, upright and
+/// bold italic, each glyph of [`ORNAMENT_GLYPHS`] but the last (U+FFFE,
+/// which no face holds) and all of them in turn, repeated to
+/// [`LONG_ORNAMENT_BYTES`], shape with no `.notdef`, and a frame of one
+/// glyph beside such an ornament, laid to the whole of its budget and its
+/// overshoot, takes no more than [`INPUT_STEPS`] — so the harness need
+/// not cut it ([`sides_in_time`]).
 ///
-/// Control: with `﷽` replaced by a glyph no face holds, red.
+/// Control: with `𓀀` replaced by `⸻`, which no compiled face holds, red
+/// where no host face holds it either (on CI, and here with
+/// `FONTCONFIG_FILE` naming a config of one empty font directory, which
+/// leaves the compiled faces alone).
 ///
 /// [`ORNAMENT_GLYPHS`]: crate::flow::tests::flow_fuzz::ORNAMENT_GLYPHS
 /// [`LONG_ORNAMENT_BYTES`]: crate::flow::tests::flow_fuzz::LONG_ORNAMENT_BYTES
 /// [`INPUT_STEPS`]: crate::flow::tests::flow_fuzz::INPUT_STEPS
-/// [`fits_in_time`]: crate::flow::tests::flow_fuzz::fits_in_time
+/// [`sides_in_time`]: crate::flow::tests::flow_fuzz::sides_in_time
 #[test]
 fn test_a_long_fuzzed_ornament_fits_the_per_input_bound() {
     use crate::flow::place::halves::{build_steps, frame_work_steps};
@@ -1369,8 +1373,9 @@ fn test_a_long_fuzzed_ornament_fits_the_per_input_bound() {
         }
         ornament
     };
-    let mut ornaments: Vec<String> = ORNAMENT_GLYPHS.iter().map(|g| repeated(&[*g])).collect();
-    ornaments.push(repeated(&ORNAMENT_GLYPHS));
+    let held = &ORNAMENT_GLYPHS[..ORNAMENT_GLYPHS.len() - 1];
+    let mut ornaments: Vec<String> = held.iter().map(|g| repeated(&[*g])).collect();
+    ornaments.push(repeated(held));
     let mut heaviest = (0, String::new(), 0);
     for face in faces() {
         for (weight, italic) in [
@@ -1429,6 +1434,70 @@ fn test_a_long_fuzzed_ornament_fits_the_per_input_bound() {
         heaviest.0 > 400_000,
         "precondition: the frames are laid at the floor of their budget ({heaviest:?})"
     );
+}
+
+/// R50.3, R45.1: a long side ornament no frame could lay inside the
+/// timeout is cut until a frame of no text beside it fits, on every host:
+/// fifty U+FFFE, a noncharacter no face holds, each `.notdef` weighed at
+/// `SHAPE_NOTDEF_STEPS` twice, take a frame of no text to 624,221 glyph
+/// steps, past the 464,396 one input may take; [`sides_in_time`] cuts
+/// them to what fits, some copies' worth left.
+///
+/// Control: with the ornament left uncut, red.
+///
+/// [`sides_in_time`]: crate::flow::tests::flow_fuzz::sides_in_time
+#[test]
+fn test_a_long_ornament_no_face_holds_is_cut_to_fit() {
+    use crate::flow::place::halves::frame_work_steps;
+    use crate::flow::tests::flow_fuzz::{frame_steps, sides_in_time};
+    let flow = style(16.0);
+    let given = "\u{FFFE}".repeat(50);
+    let layout = RingLayout {
+        sides: Some((given.clone(), Rgba::new(255, 255, 255, 255))),
+        ..RingLayout::whole()
+    };
+    let (work, cut) = with_fonts(|fs| {
+        let empty = shape_run(
+            &[FlowSpan {
+                text: "",
+                style: &flow,
+                link: None,
+            }],
+            1.0,
+            fs,
+        );
+        let (cut, ornament) = sides_in_time(&layout, &flow, 1.0, 1, fs);
+        (frame_work_steps(&empty, ornament.as_ref(), true), cut)
+    });
+    let kept = cut.sides.as_ref().map_or(0, |(s, _)| s.chars().count());
+    assert!(
+        work <= frame_steps(1) && kept > 0 && kept < given.chars().count(),
+        "fifty glyphs no face holds cut to {kept}, a frame of no text beside them taking {work} glyph steps against the {} one frame may take",
+        frame_steps(1)
+    );
+}
+
+/// CI's flow_structured finding at d5ae4735 (run 41583576270): a frame
+/// whose long side ornament — `"﷽=·W"` repeated, when the long-ornament
+/// mode drew `﷽`, which no compiled face holds — was `.notdef`s on the
+/// runner, so that even its text cut to nothing left its frame 465,977
+/// glyph steps, past the 464,396 one input may take. Here the same bytes
+/// draw U+FFFE in its place, which no face holds on any host, and the
+/// harness cuts the ornament until a frame fits ([`sides_in_time`],
+/// ruling R50.3).
+///
+/// Control: with the ornament left uncut, red.
+///
+/// [`sides_in_time`]: crate::flow::tests::flow_fuzz::sides_in_time
+#[test]
+fn test_flow_structured_finding_a_long_ornament_past_the_input_bound() {
+    let found = include_bytes!("fuzz_findings/structured_frame_long_ornament_past_the_input_bound");
+    if let Err(why) = crate::flow::tests::flow_fuzz::check_flow_structured(found) {
+        panic!("{why}");
+    }
+    if let Err(why) = check_flow_structured_as_found(found) {
+        panic!("as found: {why}");
+    }
 }
 
 /// R44.2's property: a frame two of whose inks touch fails, whatever its

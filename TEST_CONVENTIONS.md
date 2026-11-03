@@ -876,9 +876,16 @@ part past it, R50.4). Every flow fuzz frame is held to that bound on
 looks a box too, so a geometry that breaks it is a finding: the check's
 looks are the inks near each box, whatever the tallest (R50.1), and
 flow_structured draws long mixed side ornaments, up to 200 bytes of a
-wide glyph among thin ones (`long_ornament`, R50.3), its frame's text
-cut to leave their shaping and inking room within the per-input bound
-below. A counted step costs at
+wide glyph among thin ones (`long_ornament`, R50.3), the ornament cut
+until a frame of no text beside it fits, and then the frame's text, to
+leave their shaping and inking room within the per-input bound below
+(`sides_in_time`, `framed`). A glyph a compiled face lacks shapes as a
+host face holds it, or as a `.notdef`, weighed 2,200 steps, where none
+does — on CI, which has few host faces — so a harness counts what it
+shapes on the host it runs on, and a fixture names glyphs the compiled
+faces hold. To see what CI sees, point `FONTCONFIG_FILE` at a config
+whose one `<dir>` is empty: the host's faces are then not indexed, and
+the compiled ones alone remain. A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
 1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
 An input's worst case is the sum of its frames' work at that cost, and
