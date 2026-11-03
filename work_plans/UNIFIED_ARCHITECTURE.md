@@ -1291,11 +1291,11 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
   `RandomState`, with a warning.
 - **Platform limits.** On wasm32, memory is the only limit, and a map
   costs it on two axes. Its peak while loading and then saving is at
-  most `text × 7 + elements × 480` bytes
+  most `text × 6 + elements × 480` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`, measured
   by the wasm32 probe). Each axis takes half of the 3 GiB
   `WASM32_MEMORY_BUDGET`:
-  - `MAX_MAP_BYTES` is `WASM32_MAX_MAP_BYTES`, 230,087,533 bytes. A
+  - `MAX_MAP_BYTES` is `WASM32_MAX_MAP_BYTES`, 268,435,456 bytes. A
     larger text is refused before parsing (`TooLarge`).
   - `MAX_ELEMENTS` is `WASM32_MAX_ELEMENTS`, 3,355,443. Each verb,
     edit and presentation counts as one element. The element past the

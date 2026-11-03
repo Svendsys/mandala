@@ -132,8 +132,11 @@ pub const WASM32_MEMORY_BUDGET: u64 = 3 * 1024 * 1024 * 1024;
 /// the document holds from it, the extents the index keeps of it, and
 /// on a save the text being written. Measured
 /// (`tests/format_memory.rs`) on a map that is one long text, where the
-/// elements cost nothing next to it, and rounded up.
-pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 7;
+/// elements cost nothing next to it, and rounded up. 6 since V1-B12
+/// (#298) took the fill out of a palette group: the costliest text,
+/// one palette of many groups, measured by the probe at 5.96 bytes
+/// per byte; 7 before.
+pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 6;
 
 /// The most heap a load or a save of a map needs **per element**,
 /// beside what its text costs ([`WASM32_BYTES_PER_TEXT_BYTE`] per

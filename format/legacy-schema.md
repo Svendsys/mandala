@@ -399,8 +399,8 @@ untouched and never reported as unrecognized. See
 | `border` | object\|null | `GlyphBorderConfig`; optional per-node override |
 
 The three color fields are the **fallback** tier. A node carrying a
-`color_schema` takes its fill, frame and text from the referenced
-palette group instead — or from `color_schema.overrides` where that
+`color_schema` takes its fill (loaded, not drawn since V1-B12), frame
+and text from the referenced palette group instead — or from `color_schema.overrides` where that
 node has excepted a channel by hand — and these values are what it
 would fall back to if the schema were removed. They are *not* where
 a per-node recolor lands on a themed node; that is

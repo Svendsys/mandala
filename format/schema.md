@@ -986,7 +986,7 @@ would have had in the file.
 
 | Limit | Value |
 |---|---|
-| The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, 230,087,533 bytes, before it is parsed (`TooLarge`). |
+| The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, 268,435,456 bytes, before it is parsed (`TooLarge`). |
 | Elements | On native, at most 4,294,967,294 (`u32::MAX - 1`, the arena's slot count). On wasm32 a map may become at most `MAX_ELEMENTS`, 3,355,443 elements. Each verb, edit and presentation counts as one; the one past either bound is refused, before it is built, at its path (`TooManyElements`). |
 | Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 7 + elements × 480` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
 | The tree's depth | **None.** Every walk is iterative. |
