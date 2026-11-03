@@ -52,6 +52,7 @@ use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
 use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks};
+use crate::flow::place::ring::ring_work_steps;
 use crate::flow::place::{frame_halves, place_on_closed_traced, size_factor, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
@@ -90,16 +91,19 @@ pub const MAX_FRAME_GLYPHS: usize = 150;
 pub const FOUND_FRAME_GLYPHS: usize = 320;
 
 /// The frames flow_raw lays an input round its rectangle, each in a fit
-/// mode that tracks its halves ([`raw_frame_fits`]; ruling R45.1). One:
-/// a frame's budget is at least 400,000 glyph steps whatever its text
-/// (`TRACK_BUDGET`), so two frames may take 800,000 steps, 25.8 s at
-/// [`ASAN_STEP_NANOS`] a step, past [`INPUT_WORK_MICROS`] however few
-/// glyphs they share — and three, as before R45, 38.8 s. Its `Repeat`
-/// round the rectangle tracks no halves, and is laid besides.
+/// mode that tracks its halves or as a `Repeat` ring ([`raw_frame_fits`];
+/// ruling R45.1). One: a frame's budget is at least 400,000 glyph steps
+/// whatever its text (`TRACK_BUDGET`), so two frames may take 800,000
+/// steps, 25.8 s at [`ASAN_STEP_NANOS`] a step, past
+/// [`INPUT_WORK_MICROS`] however few glyphs they share — and three, as
+/// before R45, 38.8 s. A ring's budget is a frame's (#310), so the ring
+/// the target laid besides its frame until then is one of the modes it
+/// draws.
 pub const RAW_FRAMES: usize = 1;
 
 /// The frames flow_structured lays an input: one, round its outline,
-/// when it draws an outline at all and a fit mode other than `Repeat`.
+/// when it draws an outline at all — a `Repeat` ring among them, which is
+/// budgeted as a frame is (#310).
 pub const STRUCTURED_FRAMES: usize = 1;
 
 /// `scripts/fuzz.sh`'s `-timeout`, in seconds: the longest one input
@@ -223,6 +227,32 @@ impl InputWork {
         Ok(())
     }
 
+    /// Count a `Repeat` ring of `run`, laid with `trace`: the most it may
+    /// take, `ring_work_steps` (#310). The engine scales a ring's budget
+    /// by its run's glyphs, a copy's, as a frame's by its text's, and
+    /// spends no more than its budget and the one cluster past it that
+    /// found it spent: properties.
+    pub(crate) fn ring(&mut self, run: &ShapedRun, trace: &Trace, what: &str) -> Result<(), String> {
+        let budget = frame_budget(run.glyphs.len());
+        let most = ring_work_steps(run.glyphs.len());
+        if trace.budget > budget {
+            return Err(format!(
+                "{what}: a ring budgeted {} glyph steps, past the {budget} its {} glyphs a copy give",
+                trace.budget,
+                run.glyphs.len()
+            ));
+        }
+        if trace.spent > most {
+            return Err(format!(
+                "{what}: a ring took {} glyph steps, past its budget of {} and its overshoot, {most} in all ({:?})",
+                trace.spent, trace.budget, trace.ring
+            ));
+        }
+        self.frames += 1;
+        self.steps += most;
+        Ok(())
+    }
+
     /// Whether the input's frames, laid to their whole budgets and past
     /// them, fit in [`INPUT_STEPS`]: what holds the harness to the
     /// timeout on every input, as
@@ -305,11 +335,11 @@ const INTERESTING: [char; 28] = [
 /// target's whole body.
 ///
 /// It lays [`RAW_FRAMES`] frames round its rectangle, in fit modes drawn
-/// from the bytes ([`raw_frame_fits`]), so that the input's work is held
-/// inside the fuzz timeout (ruling R45.1); a `Repeat` round the
-/// rectangle, which tracks no halves, and all four modes along its line
+/// from the bytes ([`raw_frame_fits`]) — a `Repeat` ring among them, which
+/// is budgeted as a frame is (#310) — so that the input's work is held
+/// inside the fuzz timeout (ruling R45.1); all four modes along its line
 /// are laid whatever it draws. [`check_flow_bytes_in_every_fit`] lays
-/// all three frames, as a finding's replay does.
+/// all three frames and the ring, as a finding's replay does.
 pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
     let fits = raw_frame_fits(bytes);
     check_raw(bytes, &fits, true)
@@ -346,14 +376,22 @@ pub fn frame_fits() -> [FitMode; 3] {
 /// The [`RAW_FRAMES`] fit modes flow_raw lays `bytes`' frames in
 /// (ruling R45.1): read as choices after the ring's layout
 /// ([`ring_layout`]), the first of them is any of [`frame_fits`], and
-/// the rest follow it in turn. An input whose choices run out before it
-/// — every committed raw finding but the ones that spell a layout —
-/// draws `Fit`, the mode most of them were found in.
+/// the rest follow it in turn — or, one time in four, a `Repeat` ring,
+/// budgeted as a frame is (#310), is laid in their place, so that an
+/// input lays one budgeted placement round its rectangle: two would pass
+/// the timeout. An input whose choices run out before it — every
+/// committed raw finding but the ones that spell a layout — draws `Fit`,
+/// the mode most of them were found in.
 pub fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
     let mut choices = Choices::new(bytes);
     ring_layout(&mut choices);
     let fits = frame_fits();
     let first = choices.below(fits.len() as u32) as usize;
+    // The ring in place of the frame one time in four, drawn after it so
+    // that every input draws the frame it drew before (#310).
+    if choices.one_in(4) {
+        return vec![FitMode::Repeat; RAW_FRAMES];
+    }
     (0..RAW_FRAMES)
         .map(|k| fits[(first + k) % fits.len()].clone())
         .collect()
@@ -454,7 +492,14 @@ fn frames_round_a_rectangle(
     }];
     let frame_run = shape_run(&frame_spans, 1.0, fs);
     let mut work = InputWork::default();
-    for fit in std::iter::once(&FitMode::Repeat).chain(fits) {
+    // Held to the timeout, the frames drawn, a `Repeat` ring among them
+    // (#310); replaying a finding, a ring and every frame, as found.
+    let laid: Vec<&FitMode> = if bounded {
+        fits.iter().collect()
+    } else {
+        std::iter::once(&FitMode::Repeat).chain(fits).collect()
+    };
+    for fit in laid {
         let path = outline(
             rect,
             Shape::Rectangle {
@@ -474,7 +519,9 @@ fn frames_round_a_rectangle(
             fs,
             Some(&mut trace),
         );
-        if !matches!(fit, FitMode::Repeat) {
+        if matches!(fit, FitMode::Repeat) {
+            work.ring(&frame_run, &trace, "around a rectangle")?;
+        } else {
             let sized = matches!(fit, FitMode::Fit { .. });
             work.frame(&frame_run, ornament.as_ref(), sized, &trace, "around a rectangle")?;
         }
@@ -681,8 +728,12 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                         let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
                         let mut work = InputWork::default();
                         let sized = matches!(fit, FitMode::Fit { .. });
-                        let checked = work
-                            .frame(&run, ornament.as_ref(), sized, &trace, "around an outline")
+                        let counted = if matches!(fit, FitMode::Repeat) {
+                            work.ring(&run, &trace, "around an outline")
+                        } else {
+                            work.frame(&run, ornament.as_ref(), sized, &trace, "around an outline")
+                        };
+                        let checked = counted
                             .and_then(|()| {
                                 if bounded {
                                     work.within_the_timeout()

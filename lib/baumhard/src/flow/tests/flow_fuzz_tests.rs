@@ -40,9 +40,11 @@ use crate::util::tests::choices::Choices;
 ///   both on every host).
 ///
 /// Seed 2771, with host faces, laid a `Repeat` ring whose seam no count of
-/// its copies closed for past 18 minutes; it is held by
-/// `test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks`, not
-/// replayed here (141 s in a debug build).
+/// its copies closed for past 18 minutes; its count is held by
+/// `test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks`, and
+/// the input it drew then, which R51.2's mixed sizes draw otherwise now,
+/// is replayed within its ring's budget (#310) by
+/// `test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays_within_its_budget`.
 ///
 /// Controls: with the speed bound not saturated, red at 1021 ("its natural
 /// length fits, and it was cut"); without both the tracking solve's stop
@@ -1782,6 +1784,9 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
 /// face, with a short side ornament, that fit: 150, 462,949 glyph steps,
 /// 14.95 s; 151 take 466,014, 15.05 s.
 ///
+/// A `Repeat` ring's work (#310) fits an input's as its one budgeted
+/// placement, and not beside a frame.
+///
 /// Control: flow_raw's three frames an input, as before R45, red — three
 /// floor frames take 1,206,315 steps, 38.96 s.
 ///
@@ -1844,14 +1849,33 @@ fn test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout() {
         seconds(past),
         frame_steps(1)
     );
+    // A `Repeat` ring is budgeted as a frame is (#310): laid as an input's
+    // one budgeted placement, any copy a frame's cut leaves it fits, and
+    // laid beside a frame, as flow_raw laid it until then, the two do not.
+    let ring = crate::flow::place::ring::ring_work_steps(MAX_FRAME_GLYPHS);
+    assert!(
+        ring <= frame_steps(1),
+        "a ring of {MAX_FRAME_GLYPHS} glyphs a copy takes {ring} glyph steps, {:.2} s, past the {:.2} s an input may take",
+        seconds(ring),
+        seconds(INPUT_STEPS)
+    );
+    let beside = floor + crate::flow::place::ring::ring_work_steps(0);
+    assert!(
+        beside > INPUT_STEPS,
+        "a ring beside a frame takes {beside} glyph steps, {:.2} s, within an input's {:.2} s: lay it besides",
+        seconds(beside),
+        seconds(INPUT_STEPS)
+    );
 }
 
 /// R45.1: flow_raw draws its frame's fit mode from its input, so every
-/// mode a frame tracks its halves in is laid by some input, and an input
-/// whose choices run out before it — every committed raw finding — draws
-/// `Fit`, the mode they were found in.
+/// mode a frame tracks its halves in is laid by some input, and so is a
+/// `Repeat` ring, budgeted as a frame is (#310) and drawn in place of
+/// one; and an input whose choices run out before it — every committed
+/// raw finding — draws `Fit`, the mode they were found in.
 ///
-/// Control: with the mode fixed at `Fit`, red.
+/// Controls: with the mode fixed at `Fit`, red; with the ring left out of
+/// the draw, red.
 #[test]
 fn test_the_raw_harness_draws_every_frame_fit() {
     use crate::document::values::FitMode;
@@ -1860,7 +1884,7 @@ fn test_the_raw_harness_draws_every_frame_fit() {
         matches!(raw_frame_fits(&[])[..], [FitMode::Fit { .. }, ..]),
         "an input with no choices left draws Fit first"
     );
-    let mut drawn = [false; 3];
+    let mut drawn = [false; 4];
     for byte in 0..=u8::MAX {
         let fits = raw_frame_fits(&[byte; 64]);
         assert_eq!(fits.len(), RAW_FRAMES, "{RAW_FRAMES} frames an input");
@@ -1868,11 +1892,15 @@ fn test_the_raw_harness_draws_every_frame_fit() {
             drawn[match fit {
                 FitMode::Fit { .. } => 0,
                 FitMode::Spread => 1,
-                _ => 2,
+                FitMode::Once { .. } => 2,
+                FitMode::Repeat => 3,
             }] = true;
         }
     }
-    assert_eq!(drawn, [true; 3], "Fit, Spread and Once are each drawn");
+    assert_eq!(
+        drawn, [true; 4],
+        "Fit, Spread, Once and a Repeat ring are each drawn"
+    );
     for name in [
         "fit_frame_pressed_by_a_clearance_its_other_line_could_give",
         "fit_frame_shrunk_by_whole_clearance_searches",
@@ -1983,6 +2011,42 @@ fn test_the_flow_properties_find_a_frame_past_its_work() {
     );
 }
 
+/// #310's property: a `Repeat` ring that takes more than its budget and
+/// the overshoot past it (`ring_work_steps`) fails, as does one the
+/// engine budgets more than its glyphs a copy give.
+///
+/// Control: with the property never failing, red.
+#[test]
+fn test_the_flow_properties_find_a_ring_past_its_work() {
+    use crate::flow::place::halves::frame_budget;
+    use crate::flow::place::ring::ring_work_steps;
+    use crate::flow::place::Trace;
+    use crate::flow::tests::flow_fuzz::InputWork;
+    let flow = style(16.0);
+    let run = with_fonts(|fs| real_run("· ", &flow, fs));
+    let (budget, most) = (frame_budget(run.glyphs.len()), ring_work_steps(run.glyphs.len()));
+    let mut trace = Trace {
+        spent: most,
+        budget,
+        ..Trace::default()
+    };
+    assert!(
+        InputWork::default().ring(&run, &trace, "a ring").is_ok(),
+        "precondition: a ring that takes its budget and its overshoot holds"
+    );
+    trace.spent = most + 1;
+    assert!(
+        InputWork::default().ring(&run, &trace, "a ring").is_err(),
+        "a ring past its budget and its overshoot fails"
+    );
+    trace.spent = most;
+    trace.budget = budget + 1;
+    assert!(
+        InputWork::default().ring(&run, &trace, "a ring").is_err(),
+        "a ring budgeted past its glyphs fails"
+    );
+}
+
 /// R45.1's property: an input whose frames may take more than one input
 /// may inside the timeout fails — flow_raw's three frames at their
 /// least budget, 1,200,000 glyph steps, as the harness laid an input
@@ -2001,4 +2065,52 @@ fn test_the_flow_properties_find_an_input_past_the_timeout() {
         three.as_ref().is_err_and(|why| why.contains("past the")),
         "three frames an input fail: {three:?}"
     );
+}
+
+/// Seed 2771 of the structured generator as it drew at 03ac0b3f, before
+/// R51.2 drew its frames' texts at mixed sizes (which draws it another
+/// text since): a `Repeat` of an ornament of three glyphs round an
+/// ellipse 3.4 × 10²¹ round, where no `f32` sets one glyph's ink apart
+/// from the last but by a bisection that barely moves it — 1,262 path
+/// reads a glyph, its first walk capped at 65,535 glyphs and 82.7
+/// million reads, 26.7 s in a debug build with the compiled faces alone
+/// (review 5751828253 found 25.6 s, and 141 s with host faces, and read
+/// it as the ring's close; the close never ran, the walk being capped).
+/// Its ring is budgeted as a frame is now (#310): it counts its path's
+/// reads, so its walk stops once what its budget has left after holding
+/// back phase 2's lay of it is spent, short, and says so; the replay,
+/// held to the fuzz property's bound, passes within its budget.
+///
+/// Precondition: the ring is laid and its budget stops it. Control: with
+/// the budget never read (`RingWork::affords` always `true`), red, 82.7
+/// million path lookups.
+#[test]
+fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays_within_its_budget() {
+    use crate::flow::path::PATH_LOOKUPS;
+    use crate::flow::place::ring::{ring_work_steps, READS_A_STEP};
+    use crate::flow::place::{LAST_RING, RINGS_STOPPED};
+    let found = include_bytes!("fuzz_findings/structured_ring_whose_inks_its_floats_cannot_part");
+    for counter in [&PATH_LOOKUPS, &RINGS_STOPPED] {
+        counter.with(|count| count.set(0));
+    }
+    LAST_RING.with(|last| last.set(None));
+    if let Err(why) = crate::flow::tests::flow_fuzz::check_flow_structured(found) {
+        panic!("the fuzzer's input: {why}");
+    }
+    let lookups = PATH_LOOKUPS.with(std::cell::Cell::get);
+    let Some((glyphs, loss)) = LAST_RING.with(std::cell::Cell::get) else {
+        panic!("precondition: the input lays a ring");
+    };
+    assert!(
+        loss.is_some() && RINGS_STOPPED.with(std::cell::Cell::get) == 1,
+        "precondition: the ring's budget stops it ({loss:?})"
+    );
+    let most = ring_work_steps(glyphs) * READS_A_STEP;
+    assert!(
+        lookups <= most,
+        "the ring of {glyphs} glyphs a copy looked up {lookups} points, past the {most} its budget reads as"
+    );
+    if let Err(why) = check_flow_structured_as_found(found) {
+        panic!("as found: {why}");
+    }
 }

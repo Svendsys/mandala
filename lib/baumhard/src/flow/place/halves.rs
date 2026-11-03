@@ -1921,6 +1921,7 @@ impl Layout<'_> {
                 let walk = PathWalk {
                     path: &self.halves.paths[one.half],
                     memo: None,
+                    work: None,
                     line_height: 0.0,
                     outward: self.outward,
                     limit: f32::INFINITY,
@@ -3645,6 +3646,7 @@ fn line_walk<'p>(path: &'p ArcPath, run: &ShapedRun, outward: bool) -> PathWalk<
     PathWalk {
         path,
         memo: None,
+        work: None,
         line_height: run.line_height,
         outward,
         limit: f32::INFINITY,

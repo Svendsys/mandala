@@ -923,6 +923,21 @@ rounds. An ornament is spaced by its ink, the seam too (ruling R31,
 below). A ring too short for one whole repetition is cut as a connector
 is. Along an open path `repeat` is unchanged.
 
+A ring's work is budgeted as a frame's is (#310): `max(TRACK_BUDGET,
+STEPS_PER_GLYPH × glyphs)` glyph steps for a pattern of `glyphs`
+glyphs, its copies counted against it, and counted in its path's reads
+(`READS_A_STEP` to a step) and the glyphs it sets (`GLYPHS_A_STEP`) —
+an ornament's glyph set by its ink where the outline's floats barely
+move it reads the path a thousand times or more. The budget is read
+before every cluster the ring's walks lay or measure and before every
+probe of the reading-order lay's spacing solves, and what that lay
+takes whatever is spent is held back as the copies are laid
+(`phase_two_steps`), so a ring takes at most its budget and one
+cluster more (`ring_overshoot`). A ring whose budget is spent is laid
+as far as it got — short of the outline, or round it unclosed, or
+closed but uneven — and its trace says which; it is never capped
+silently.
+
 An ornament — a flow with no letter or digit, such as `✦ ·` or `─` —
 has no reading direction, so no part of it is reversed (§6.2 step 4):
 it is placed as walked. Reversed, a glyph-and-space ornament would meet

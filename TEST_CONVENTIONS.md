@@ -896,7 +896,13 @@ it is held to `INPUT_WORK_MICROS`, 15 s, three quarters of the 20 s
 `-timeout`: 464,396 steps. Two frames at the 400,000-step floor alone
 take 25.8 s, so each flow target lays one frame an input
 (`RAW_FRAMES`, `STRUCTURED_FRAMES`; flow_raw draws the frame's fit mode
-from its input), its text cut until the frame's work fits
+from its input). A `Repeat` ring round an outline is budgeted as a
+frame is (#310) — its work counted in its path's reads and the glyphs
+it sets, its reading-order lay held back for as its copies are laid,
+past its budget at most one cluster (`ring_work_steps`) — so it is an
+input's one frame too: flow_structured lays it as its outline's, and
+flow_raw draws it in place of its frame one input in four. The frame's
+text is cut until the frame's work fits
 (`fits_in_time`): at most `MAX_FRAME_GLYPHS` (150) glyphs of a text in
 one face, 462,949 steps, 14.95 s, and fewer of a text the shaper must
 search every face for. `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`

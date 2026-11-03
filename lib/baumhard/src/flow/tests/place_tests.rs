@@ -693,8 +693,8 @@ fn test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks() {
 /// round an ellipse 10²² from the origin, where an `f32` cannot set its
 /// glyphs apart and no count of its some 22,000 copies closed: dropped one
 /// at a time, every count was measured, each a walk of up to 65,536
-/// glyphs, past 18 minutes in a debug build (141 s now, the measures its
-/// gap's solve takes).
+/// glyphs, past 18 minutes in a debug build. (Its ring's work is budgeted
+/// since #310, `flow::place::ring`.)
 ///
 /// Control: with every copy dropped one at a time, the never-closing
 /// ring asks 21,844 times.
