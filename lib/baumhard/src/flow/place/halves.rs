@@ -3079,10 +3079,10 @@ fn in_shared_strips(
             first += 1;
         }
         match runs.get(first) {
-            Some((there, copies)) if *there == strip => {
-                if between(&finer[run], &copied[copies.clone()], scan) {
-                    return true;
-                }
+            Some((there, copies))
+                if *there == strip && between(&finer[run], &copied[copies.clone()], scan) =>
+            {
+                return true;
             }
             _ => {}
         }

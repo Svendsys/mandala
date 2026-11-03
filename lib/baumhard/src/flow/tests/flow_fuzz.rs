@@ -805,7 +805,7 @@ pub const LONG_ORNAMENT_BYTES: usize = 200;
 /// sequence of one to four of them repeated, up to
 /// [`LONG_ORNAMENT_BYTES`] bytes in all — a wide glyph among thin ones,
 /// as a map's ornament may be, where [`ring_layout`]'s are at most
-/// [`MAX_ORNAMENT_CHARS`] characters.
+/// `MAX_ORNAMENT_CHARS` characters.
 ///
 /// Drawn after [`ring_layout`], from choices nothing before it reads, and
 /// not at all on a zero choice: an input that ends before it — every

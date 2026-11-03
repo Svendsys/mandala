@@ -3337,14 +3337,15 @@ fn touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> Vec<((u
 /// (`place_halves`) — the whole check, and its strips alone across each
 /// axis. The reviewer's brute-force comparison, committed.
 ///
-/// Control: with every box in strips of the tallest's class, it still
-/// agrees (the strips' height is not what this holds); with a class's
-/// strips weighed against only the strip after them, red. (No `do_*`
-/// twin: it reads a test seam.)
+/// Controls, each red: finer boxes not weighed against the coarser strip
+/// before their own; a class's strips not weighed against the one after;
+/// a coarser box's copies without the strip either side; the strips'
+/// two-list sweep in one direction only. (No `do_*` twin: it reads a test
+/// seam.)
 #[test]
 fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
     use crate::flow::place::halves::{touch_seam, TOUCH};
-    let mut choices = crate::util::tests::choices::Choices::seeded(0x5745_5846_45);
+    let mut choices = crate::util::tests::choices::Choices::seeded(0x0057_4558_4645);
     let (mut strips, mut touch) = (0, 0);
     let cases = 40_000;
     for case in 0..cases {
