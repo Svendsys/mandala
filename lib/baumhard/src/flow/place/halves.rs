@@ -511,7 +511,7 @@ const CORNER: f32 = 0.999_847_7;
 
 /// How far apart two inks must be not to touch, in points: past
 /// [`INK_TOLERANCE`], what the pairwise rule sets inks apart to.
-const TOUCH: f32 = INK_TOLERANCE;
+pub(crate) const TOUCH: f32 = INK_TOLERANCE;
 
 /// The most times a frame's lines are cut and the clearance found
 /// again: a cut line, stretched over its half at whole, has wider word
@@ -749,11 +749,12 @@ thread_local! {
     /// reshaped a frame's text on this thread (`lines::fit_reshape`).
     #[cfg(test)]
     pub(crate) static FIT_RESHAPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Test counter (#294, ruling R47.2): the glyph steps frames on this
-    /// thread have taken while their budget was already spent
-    /// ([`Work::spent_all`]), but for [`untouched`]'s, which run within
-    /// the share of the budget held back for it: what a frame does past
-    /// its budget once it has read that it is spent.
+    /// Test counter (#294, rulings R47.2, R50.4): the glyph steps frames
+    /// on this thread have taken past their budget, less the share held
+    /// back for [`untouched`] — where [`Work::spent_all`] reads it as
+    /// spent: each take made once it was spent, and the part past it of a
+    /// take that crosses it — but for [`untouched`]'s, which run within
+    /// that share: all a frame does past its budget.
     #[cfg(test)]
     pub(crate) static PAST_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#294, ruling R46.1): the most glyph steps one
@@ -1364,9 +1365,18 @@ impl Work {
 
     /// Count `steps` glyph steps taken.
     pub(super) fn take(&self, steps: usize) {
+        // The part of the take past the budget less what is held back for
+        // `untouched`, where it reads as spent: all of it once spent, and
+        // of a take that crosses it, what lies past (ruling R50.4).
         #[cfg(test)]
-        if self.spent_all() && !self.reserved.get() {
-            PAST_BUDGET.with(|past| past.set(past.get().saturating_add(steps)));
+        if !self.reserved.get() {
+            let room = self.budget.get().saturating_sub(self.reserve.get());
+            let past = self
+                .spent
+                .get()
+                .saturating_add(steps)
+                .saturating_sub(room.max(self.spent.get()));
+            PAST_BUDGET.with(|most| most.set(most.get().saturating_add(past)));
         }
         self.spent.set(self.spent.get().saturating_add(steps));
     }
@@ -2201,11 +2211,13 @@ impl<'s> SideArc<'s> {
     /// [`MAX_SIDE_COPIES`] or as many as `budget` glyphs hold — weighing
     /// the most that fit at the target and one more, whose gap is
     /// narrower — every gap and both joins equal. Nothing when not even
-    /// one copy fits, or the budget holds none. Nothing, and `false`, when
-    /// the frame cannot afford the copies and their touch check
-    /// ([`SideOrnament::affords`], rulings R47.2, R48.2): before the
-    /// floor's row is laid, or before its search ends, where the copies
-    /// it has do not hold the equal-gap rule. The arc is left empty.
+    /// one copy fits, or the budget holds none. Where the frame cannot
+    /// afford the copies and their touch check ([`SideOrnament::affords`],
+    /// rulings R47.2, R48.2, R50.5) the arc is left as it stands, which it
+    /// returns: before the floor's row is laid, or before its search ends
+    /// where the copies it has do not hold the equal-gap rule, empty
+    /// ([`SideLoss::Empty`]); before its search ends where they do, kept
+    /// short with them ([`SideLoss::Short`]). `None` when the search ended.
     ///
     /// The two counts weighed are those whose gaps bracket the target:
     /// guessed from the floor's row by the straight path, then moved a
@@ -2215,7 +2227,7 @@ impl<'s> SideArc<'s> {
     /// Cost (ruling R44.3): the floor's row, and two solves where the
     /// guess holds — a lay of every copy each widening and each of
     /// [`falsi`]'s rounds, the copies chosen kept as laid.
-    fn fill(&self, target: f32, budget: usize, out: &mut Vec<PlacedGlyph>) -> bool {
+    fn fill(&self, target: f32, budget: usize, out: &mut Vec<PlacedGlyph>) -> Option<SideLoss> {
         let per_copy = self
             .side
             .clusters
@@ -2225,14 +2237,14 @@ impl<'s> SideArc<'s> {
             .max(1);
         let most = MAX_SIDE_COPIES.min(budget / per_copy);
         if most == 0 {
-            return true;
+            return None;
         }
         let Some((row, rooms)) = self.floor_row(most) else {
-            return false;
+            return Some(SideLoss::Empty);
         };
         let fit = rooms.len();
         if fit == 0 {
-            return true;
+            return None;
         }
         let mut solved: Vec<Option<(f32, Vec<PlacedGlyph>, bool)>> = vec![None; fit + 1];
         let mut solve = |n: usize| -> f32 {
@@ -2274,15 +2286,15 @@ impl<'s> SideArc<'s> {
             }
         }
         // A search the frame could not afford to finish keeps its copies
-        // only where they hold the equal-gap rule; else the arc is left
-        // empty, and reported (ruling R48.2).
+        // only where they hold the equal-gap rule, kept short; else the arc
+        // is left empty. Either way it is reported (rulings R48.2, R50.5).
         match solved[best.0].take() {
-            Some((_, _, false)) if self.stopped.get() => false,
+            Some((_, _, false)) if self.stopped.get() => Some(SideLoss::Empty),
             Some((_, glyphs, _)) => {
                 out.extend(glyphs);
-                true
+                self.stopped.get().then_some(SideLoss::Short)
             }
-            None => true,
+            None => None,
         }
     }
 }
@@ -2727,13 +2739,13 @@ fn has_ink((min, max): InkBox) -> bool {
 /// some 0.25.
 const SWEEP_PAIRS: usize = 2;
 
-/// How much taller than the tallest box and [`TOUCH`] a strip of
-/// [`touch_scan`]'s is: enough that rounding a box's corner to its strip
-/// never puts two boxes that touch two strips apart.
+/// How much taller than a box and [`TOUCH`] a strip of its class is at
+/// least ([`strip_class`]): enough that rounding a box's corner to its
+/// strip never puts two boxes that touch two strips apart.
 const CELL_MARGIN: f64 = 1.0 + 1.0 / (1u64 << 20) as f64;
 
 /// The pairs of boxes [`touch_scan`] has looked at: in its sweep, and
-/// past it, in its strips or for a box that is not a number.
+/// past it, in its strips ([`stripped`]).
 #[derive(Default)]
 struct Looked {
     swept: usize,
@@ -2749,21 +2761,20 @@ struct Looked {
 /// past where it ends. Round a ring those are the few inks either side
 /// of each, and the sweep is the answer. Where it looks at more than
 /// [`SWEEP_PAIRS`] pairs a box — boxes stacked across the axis, a side
-/// ornament's copies down a straight side — it stops, and of its pairs
-/// only the ones that can touch are looked at: the boxes are bucketed by
-/// their least corner across the axis into strips as tall as the tallest
-/// box and [`TOUCH`] ([`CELL_MARGIN`]), so two that touch lie in one
-/// strip or in two beside each other, and the sweep runs within each
-/// strip and over each two beside each other. Two inks laid on one
-/// another touch, and the check returns at the first two that do.
+/// ornament's copies down a straight side — it stops, and the boxes are
+/// looked at in strips across the axis instead ([`stripped`]), where a
+/// box looks only at the inks near it. Two inks laid on one another
+/// touch, and the check returns at the first two that do.
 ///
-/// Cost: a sort, and [`SWEEP_PAIRS`] looks a box at most before a look at
-/// each pair of boxes in one strip or two beside each other that share
-/// some of their width along the axis: round any outline, the few inks
-/// either side of each. The sweep alone looked at every pair that shared
-/// some of its width, which down a straight side across the axis is
-/// every pair: quadratic in a side ornament's copies (R44.3's 200-byte
-/// ornament round a sharp square, some 5,000 pairs a glyph).
+/// Cost: a sort, and [`SWEEP_PAIRS`] looks a box at most before
+/// [`stripped`]'s: the inks near each box, whatever the tallest ink and
+/// however many inks the check is given. The sweep alone looked at every
+/// pair that shared some of its width, which down a straight side across
+/// the axis is every pair: quadratic in a side ornament's copies (R44.3's
+/// 200-byte ornament round a sharp square, some 5,000 pairs a glyph). One
+/// strip height for every box, the tallest's, was quadratic too, in the
+/// thin boxes a tall one's strip holds (review 5745584645: `"⸻"` and a
+/// hundred `"|"` round a 20,000 sharp square, 28.9 pairs a box).
 fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, looked: &mut Looked) -> bool {
     let spread = |axis: usize| {
         let (lo, hi) = boxes
@@ -2777,11 +2788,11 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
     };
     let axis = if spread(1) > spread(0) { 1 } else { 0 };
     let start = |i: usize| boxes[i].1 .0[axis];
-    // Whether the sweep weighs box `i` with `j`, after it — `j` starting
-    // no further than `TOUCH` past where `i` ends — and the two touch.
+    // Whether box `i` touches `j`, after it in the sweep's order, but for
+    // a pair `exempt` excuses.
     let weigh = |i: usize, j: usize| {
         let ((k, a), (l, b)) = (boxes[i], boxes[j]);
-        b.0[axis].le(&(a.1[axis] + TOUCH)) && !exempt(k, l) && box_gap(a, b) <= TOUCH
+        !exempt(k, l) && box_gap(a, b) <= TOUCH
     };
     let mut order: Vec<usize> = (0..boxes.len()).collect();
     order.sort_by(|&i, &j| start(i).total_cmp(&start(j)));
@@ -2813,35 +2824,75 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
     if whole {
         return false;
     }
+    stripped(boxes, axis, exempt, looked)
+}
 
-    // In strips across the sweep's axis: by
-    // strip, then in the sweep's order.
+/// Whether two of `boxes` touch, as [`touch_scan`] asks, looked at in
+/// strips across `axis` by class of height, as a hierarchical grid lays
+/// them (rulings R48, R50.1), the pairs looked at added to `looked`.
+///
+/// Each box has a class, the least power of two as tall across the axis
+/// as it and [`TOUCH`] are ([`strip_class`]), and lies in the strip of
+/// its class its least corner across the axis falls in. Two boxes of a
+/// class or finer that touch lie less than one strip of that class
+/// apart, corner to corner, so in one of its strips or in two beside each
+/// other. So each class's boxes are weighed against one another in its
+/// strips, each strip with itself and the one after it; and against each
+/// finer class's boxes, in whichever of two ways places fewer boxes —
+/// each finer box placed in this class's strips, and weighed against the
+/// strip before its own, its own and the one after; or each of this
+/// class's boxes copied into every strip of the finer class it lies
+/// across, with one more either side, and weighed against that strip's
+/// finer boxes. Every pair is weighed at the class of the taller of the
+/// two, and once. Within the strips weighed together the boxes are swept
+/// as [`touch_scan`] sweeps them, each against those after it that start
+/// within its reach.
+///
+/// So the looks are output-sensitive: a box looks only at inks near it,
+/// of its own class or a coarser one, in the strips of that class round
+/// it, which start within its reach along the axis or whose own reach
+/// holds where it starts. No tall box makes the strips a thin one is
+/// weighed in tall: a thin box is weighed against thin boxes in strips of
+/// its own height, and against a tall one only in the strips the tall
+/// one lies across. Where no two touch, which is when every look is made,
+/// boxes of a class set more than [`TOUCH`] apart fit no more than a few
+/// across the strips weighed together, each at least half a strip tall;
+/// along the axis, within one box's reach, as many as its width holds of
+/// theirs: font geometry, never the count of boxes nor the tallest's
+/// height. Each box placed or copied counts as a look, and a class pair
+/// places no more boxes than the finer class has, nor than its own
+/// boxes' copies.
+///
+/// Cost: a sort of each class's boxes, and of the boxes each pair of
+/// classes places, and the looks.
+fn stripped<K: Copy>(
+    boxes: &[(K, InkBox)],
+    axis: usize,
+    exempt: &impl Fn(K, K) -> bool,
+    looked: &mut Looked,
+) -> bool {
     let across = 1 - axis;
-    let height = {
-        let tallest = (0..boxes.len())
-            .map(|i| boxes[i].1 .1[across] - boxes[i].1 .0[across])
-            .fold(0.0_f32, f32::max);
-        (f64::from(tallest) + f64::from(TOUCH)) * CELL_MARGIN
+    let class = |i: usize| strip_class(boxes[i].1 .1[across] - boxes[i].1 .0[across]);
+    // Box `i` in the strip of class `class` its least corner across the
+    // axis falls in.
+    let placed = |i: usize, class: i32| {
+        let (min, max) = boxes[i].1;
+        Swept {
+            // A strip past `i64`'s range is its end's, shared by every box
+            // there.
+            strip: (f64::from(min[across]) / strip_height(class)).floor() as i64,
+            start: min[axis],
+            reach: max[axis] + TOUCH,
+            i,
+        }
     };
-    let mut order: Vec<Swept> = (0..boxes.len())
-        .map(|i| {
-            let (min, max) = boxes[i].1;
-            Swept {
-                // A strip past `i64`'s range is its end's, shared by every
-                // box there.
-                strip: (f64::from(min[across]) / height).floor() as i64,
-                start: min[axis],
-                reach: max[axis] + TOUCH,
-                i,
-            }
-        })
-        .collect();
-    order.sort_unstable_by(|a, b| a.strip.cmp(&b.strip).then_with(|| a.before(b)));
+    let by_strip = |a: &Swept, b: &Swept| a.strip.cmp(&b.strip).then_with(|| a.before(b));
     // `a` weighed against `after`, the boxes after it in the sweep's order,
     // while they start within its reach.
+    let mut looks = 0_usize;
     let mut scan = |a: &Swept, after: &[Swept]| {
         for b in after {
-            looked.stripped += 1;
+            looks += 1;
             if !b.start.le(&a.reach) {
                 return false;
             }
@@ -2852,41 +2903,191 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
         }
         false
     };
+
+    // Each class's boxes in its own strips, finest first.
+    let mut classes: Vec<(i32, usize)> = (0..boxes.len()).map(|i| (class(i), i)).collect();
+    classes.sort_unstable();
+    let mut levels: Vec<(i32, Vec<Swept>)> = Vec::new();
     let mut at = 0;
-    while at < order.len() {
-        let strip = order[at].strip;
-        let end = at + order[at..].iter().take_while(|e| e.strip == strip).count();
-        let next = strip.checked_add(1);
-        let next_end = end + order[end..].iter().take_while(|e| Some(e.strip) == next).count();
-        let (here, beside) = (&order[at..end], &order[end..next_end]);
-        // Within the strip, and with the strip beside it: each box with
-        // those after it in the sweep's order.
-        let mut first = 0;
-        for (n, a) in here.iter().enumerate() {
-            while first < beside.len() && beside[first].before(a) == Ordering::Less {
-                first += 1;
-            }
-            if scan(a, &here[n + 1..]) || scan(a, &beside[first..]) {
-                return true;
-            }
-        }
-        let mut first = 0;
-        for b in beside {
-            while first < here.len() && here[first].before(b) == Ordering::Less {
-                first += 1;
-            }
-            if scan(b, &here[first..]) {
-                return true;
-            }
-        }
+    while at < classes.len() {
+        let class = classes[at].0;
+        let end = at + classes[at..].iter().take_while(|c| c.0 == class).count();
+        let mut own: Vec<Swept> = classes[at..end].iter().map(|&(_, i)| placed(i, class)).collect();
+        own.sort_unstable_by(by_strip);
+        levels.push((class, own));
         at = end;
+    }
+    let mut touches = false;
+    for (c, (class, own)) in levels.iter().enumerate() {
+        touches = touches || within_strips(own, &mut scan);
+        for (fine, finer) in &levels[..c] {
+            if touches {
+                break;
+            }
+            // The cheaper of the two ways to weigh a finer class's boxes
+            // against this one's: each of this class's boxes copied into
+            // each of the finer class's strips it lies across, or each finer
+            // box placed in this class's strips.
+            let spans = |i: usize| {
+                let (min, max) = boxes[i].1;
+                let strip = |at: f32| (f64::from(at) / strip_height(*fine)).floor() as i64;
+                (strip(min[across]) - 1, strip(max[across] + TOUCH) + 1)
+            };
+            let copies = own.iter().try_fold(0_usize, |n, b| {
+                let (low, high) = spans(b.i);
+                let n = n
+                    .saturating_add(usize::try_from(high.saturating_sub(low)).unwrap_or(usize::MAX))
+                    .saturating_add(1);
+                (n <= finer.len()).then_some(n)
+            });
+            touches = if copies.is_some() {
+                let mut copied: Vec<Swept> = own
+                    .iter()
+                    .flat_map(|b| {
+                        let (low, high) = spans(b.i);
+                        (low..=high).map(move |strip| Swept { strip, ..*b })
+                    })
+                    .collect();
+                copied.sort_unstable_by(by_strip);
+                looked.stripped += copied.len();
+                in_shared_strips(finer, &copied, &mut scan)
+            } else {
+                let mut visiting: Vec<Swept> = finer.iter().map(|b| placed(b.i, *class)).collect();
+                visiting.sort_unstable_by(by_strip);
+                looked.stripped += visiting.len();
+                among_strips(&visiting, own, &mut scan)
+            };
+        }
+        if touches {
+            break;
+        }
+    }
+    looked.stripped += looks;
+    touches
+}
+
+/// The class of [`stripped`]'s strips a box `height` tall across the
+/// axis is weighed in: the least power of two, as an exponent, no
+/// shorter than its height and [`TOUCH`] with [`CELL_MARGIN`] to spare.
+fn strip_class(height: f32) -> i32 {
+    let tall = (f64::from(height) + f64::from(TOUCH)) * CELL_MARGIN;
+    let class = tall.log2().ceil() as i32;
+    if strip_height(class) < tall {
+        class + 1
+    } else {
+        class
+    }
+}
+
+/// How tall a strip of class `class` is ([`strip_class`]).
+fn strip_height(class: i32) -> f64 {
+    2.0_f64.powi(class)
+}
+
+/// The strips `order` runs over, sorted by strip and then in the sweep's
+/// order: each strip's range, and the strip.
+fn strip_runs(order: &[Swept]) -> impl Iterator<Item = (i64, Range<usize>)> + '_ {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let strip = order.get(at)?.strip;
+        let end = at + order[at..].iter().take_while(|e| e.strip == strip).count();
+        let run = (strip, at..end);
+        at = end;
+        Some(run)
+    })
+}
+
+/// Whether two of `order`'s boxes touch, one class's in its strips
+/// ([`stripped`]): each strip's boxes against one another and against
+/// the strip after it's, by `scan`.
+fn within_strips(order: &[Swept], scan: &mut impl FnMut(&Swept, &[Swept]) -> bool) -> bool {
+    let runs: Vec<(i64, Range<usize>)> = strip_runs(order).collect();
+    for (n, (strip, run)) in runs.iter().enumerate() {
+        let here = &order[run.clone()];
+        let beside = match runs.get(n + 1) {
+            Some((next, next_run)) if strip.checked_add(1) == Some(*next) => &order[next_run.clone()],
+            _ => &[][..],
+        };
+        if here.iter().enumerate().any(|(k, a)| scan(a, &here[k + 1..])) || between(here, beside, scan) {
+            return true;
+        }
     }
     false
 }
 
-/// A box as [`touch_scan`]'s strips sweep it: its strip, where it starts
-/// along the sweep's axis and how far past that it reaches, [`TOUCH`]
-/// beyond its end, and which box it is.
+/// Whether one of `finer`'s boxes touches one of `own`'s, both placed in
+/// the strips of `own`'s class ([`stripped`]): each strip of `finer`'s
+/// against the strips of `own`'s before it, at it and after it.
+fn among_strips(finer: &[Swept], own: &[Swept], scan: &mut impl FnMut(&Swept, &[Swept]) -> bool) -> bool {
+    let runs: Vec<(i64, Range<usize>)> = strip_runs(own).collect();
+    let mut first = 0;
+    for (strip, run) in strip_runs(finer) {
+        let here = &finer[run];
+        let lowest = strip.saturating_sub(1);
+        while first < runs.len() && runs[first].0 < lowest {
+            first += 1;
+        }
+        for (near, near_run) in &runs[first..] {
+            if *near > strip.saturating_add(1) {
+                break;
+            }
+            if between(here, &own[near_run.clone()], scan) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether one of `finer`'s boxes touches one of `copied`'s, both in the
+/// strips of `finer`'s class, each copied box in each strip it lies
+/// across ([`stripped`]): each strip's boxes of the two against each
+/// other.
+fn in_shared_strips(
+    finer: &[Swept],
+    copied: &[Swept],
+    scan: &mut impl FnMut(&Swept, &[Swept]) -> bool,
+) -> bool {
+    let runs: Vec<(i64, Range<usize>)> = strip_runs(copied).collect();
+    let mut first = 0;
+    for (strip, run) in strip_runs(finer) {
+        while first < runs.len() && runs[first].0 < strip {
+            first += 1;
+        }
+        match runs.get(first) {
+            Some((there, copies)) if *there == strip => {
+                if between(&finer[run], &copied[copies.clone()], scan) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether a box of `here` touches one of `there`, each in the sweep's
+/// order: each box of either against those of the other after it in
+/// that order, by `scan`.
+fn between(here: &[Swept], there: &[Swept], scan: &mut impl FnMut(&Swept, &[Swept]) -> bool) -> bool {
+    for (one, other) in [(here, there), (there, here)] {
+        let mut first = 0;
+        for a in one {
+            while first < other.len() && other[first].before(a) == Ordering::Less {
+                first += 1;
+            }
+            if scan(a, &other[first..]) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A box as [`stripped`] sweeps it: its strip, where it starts along the
+/// sweep's axis and how far past that it reaches, [`TOUCH`] beyond its
+/// end, and which box it is.
+#[derive(Clone, Copy)]
 struct Swept {
     strip: i64,
     start: f32,
@@ -3931,9 +4132,13 @@ pub(super) fn place_halves(
                 let before = sides.len();
                 side.base.set(text_boxes.len().saturating_add(before));
                 // An arc the frame cannot afford to lay and check is left
-                // empty, and reported (rulings R47.2, R48.2).
-                if !arc.fill(target, budget, &mut sides) {
-                    unheld.sides.extend((0..2).filter(|&j| at[j]));
+                // empty, or kept short, and reported (rulings R47.2, R48.2,
+                // R50.5).
+                let loss = arc.fill(target, budget, &mut sides);
+                if loss == Some(SideLoss::Empty) {
+                    unheld
+                        .sides
+                        .extend((0..2).filter(|&j| at[j]).map(|j| (j, SideLoss::Empty)));
                     continue;
                 }
                 // An arc whose copies would touch the text, the copies
@@ -3972,7 +4177,11 @@ pub(super) fn place_halves(
                 );
                 if touches {
                     sides.truncate(before);
-                    unheld.sides.extend((0..2).filter(|&j| at[j]));
+                    unheld
+                        .sides
+                        .extend((0..2).filter(|&j| at[j]).map(|j| (j, SideLoss::Empty)));
+                } else if let Some(loss) = loss {
+                    unheld.sides.extend((0..2).filter(|&j| at[j]).map(|j| (j, loss)));
                 }
             }
         }
@@ -4005,6 +4214,24 @@ pub(super) fn place_halves(
     glyphs.extend(sides);
     let placed = PlacedRun { glyphs, truncated };
     (changed.then(|| uninked(drawn)), placed)
+}
+
+/// Test seam (#294, ruling R50.1): whether two of `boxes`, each with
+/// ink, touch, but for the pairs `exempt` excuses — by [`touch_scan`],
+/// or with `strips`, by [`stripped`] alone across that axis — and the
+/// pairs it looked at, in its sweep and in its strips.
+#[cfg(test)]
+pub(crate) fn touch_seam<K: Copy>(
+    boxes: &[(K, InkBox)],
+    exempt: &impl Fn(K, K) -> bool,
+    strips: Option<usize>,
+) -> (bool, usize, usize) {
+    let mut looked = Looked::default();
+    let touches = match strips {
+        Some(axis) => stripped(boxes, axis, exempt, &mut looked),
+        None => touch_scan(boxes, exempt, &mut looked),
+    };
+    (touches, looked.swept, looked.stripped)
 }
 
 /// Test seam (#294, ruling R46.1): whether a frame's work, its budget

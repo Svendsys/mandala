@@ -3008,6 +3008,7 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 #[cfg(test)]
 fn a_long_side_ornament(shape: Shape, what: &str) {
     use crate::flow::place::halves::{overshoot_steps, BOXES_WEIGHED, FLOOR_OVERRIDE, PAST_BUDGET};
+    use crate::flow::place::SideLoss;
     use crate::flow::tests::flow_fuzz::ornament_run;
     use crate::flow::tests::support::style;
     let text = "To see a World in a Grain of Sand";
@@ -3051,7 +3052,7 @@ fn a_long_side_ornament(shape: Shape, what: &str) {
     let past = PAST_BUDGET.with(std::cell::Cell::get);
     assert!(
         placed.glyphs.len() >= text.chars().filter(|c| !c.is_whitespace()).count()
-            && trace.unheld.sides == [0, 1]
+            && trace.unheld.sides == [(0, SideLoss::Empty), (1, SideLoss::Empty)]
             && !placed.truncated,
         "{what}: at its own budget, which cannot hold the check of either arc, the text is laid whole and both arcs are left empty and reported ({} glyphs, {:?})",
         placed.glyphs.len(),
@@ -3206,5 +3207,243 @@ fn test_flow_halves_a_sides_gap_is_solved_to_copies_that_fit() {
     assert!(
         touching.is_empty(),
         "solved to copies that touch the text's ink: {touching:?}"
+    );
+}
+
+/// The reviewer's long mixed side ornament (review 5745584645): one wide
+/// glyph, `⸻`, and a hundred thin ones, `|`, whose wide glyph down a
+/// vertical side stands as tall as it is wide among the thin ones.
+#[cfg(test)]
+pub(crate) fn mixed_sides() -> String {
+    format!("⸻{}", "|".repeat(100))
+}
+
+/// R50.2 (review 5745584645): a touch check's looks are output-sensitive
+/// ([`stripped`](crate::flow::place::halves)), so a long ornament that
+/// mixes one wide glyph with thin ones looks at no more than
+/// `TOUCH_LOOKS_A_BOX` pairs a box: [`mixed_sides`] round a 20,000 sharp
+/// square, and the fuzzable `"﷽|||"` round a 2,000 one — "To see a World
+/// in a Grain of Sand" at 16 pt, `Once` at span natural, outward, both
+/// arcs filled (a floor of 40,000,000, the test seam). With one strip
+/// height, the tallest box's, for every box, the first looked at 28.9
+/// pairs a box and its frame ran 56,938 glyph steps past its budget and
+/// overshoot; the second at 9.2.
+///
+/// Control: with every box in strips of the tallest's class, red. (No
+/// `do_*` twin: it sets a test seam.)
+#[test]
+fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box() {
+    use crate::flow::place::halves::{FLOOR_OVERRIDE, TOUCH_LOOKS_A_BOX};
+    let text = "To see a World in a Grain of Sand";
+    for (sides, size) in [(mixed_sides(), 20_000.0), ("﷽|||".to_string(), 2_000.0)] {
+        let shape = outline(
+            Rect::new(Vec2::ZERO, Vec2::splat(size)),
+            Shape::Rectangle {
+                radius: Percent::new(0),
+            },
+        );
+        let layout = RingLayout {
+            span: LineSpan::NATURAL,
+            sides: Some((sides.clone(), Rgba::opaque(0, 0, 0))),
+            ..RingLayout::whole()
+        };
+        let (_, placed, trace) = with_seam(&FLOOR_OVERRIDE, 40_000_000, || {
+            frame_with(text, 16.0, &shape, &FitMode::Once { filler: None }, &layout, true)
+        });
+        let (looks, boxes) = trace.looks;
+        assert!(
+            trace.unheld.sides.is_empty() && placed.glyphs.len() > 1_000,
+            "precondition, {sides:?} round {size}: both arcs are filled ({} glyphs, {:?})",
+            placed.glyphs.len(),
+            trace.unheld
+        );
+        assert!(
+            looks <= TOUCH_LOOKS_A_BOX * boxes,
+            "{sides:?} round {size}: a touch check looked at {looks} pairs of {boxes} boxes, {:.2} a box, past TOUCH_LOOKS_A_BOX, {TOUCH_LOOKS_A_BOX}",
+            looks as f64 / boxes as f64
+        );
+    }
+}
+
+/// One case of [`test_flow_halves_the_touch_check_finds_what_every_pair_does`]:
+/// ink boxes, each keyed by its group and its place in it — columns of
+/// boxes stacked across an axis, a column's gaps half, just under, at and
+/// just over `TOUCH`, straddling strips of every class; one box in 15
+/// tall; and a few scattered — laid along x or along y.
+#[cfg(test)]
+fn touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> Vec<((u8, usize), (Vec2, Vec2))> {
+    use crate::flow::place::halves::TOUCH;
+    let gaps = [0.5, 0.999, 1.0, 1.01, 1.01, 1.01];
+    let unit =
+        |choices: &mut crate::util::tests::choices::Choices<'_>| 0.02 + choices.below(200) as f32 / 64.0;
+    // One gap down every column, and across between some of them.
+    let gap = gaps[choices.index(gaps.len())] * TOUCH;
+    let mut boxes = Vec::new();
+    let columns = 2 + choices.below(9) as usize;
+    let mut x = (choices.below(64) as f32 - 32.0) / 8.0;
+    for column in 0..columns {
+        let width = unit(choices);
+        let mut y =
+            (choices.below(64) as f32 - 32.0) / 8.0 + [0.0, 0.5 * TOUCH, -0.5 * TOUCH][choices.index(3)];
+        let height = unit(choices) / 4.0;
+        for _ in 0..2 + choices.below(12) {
+            let tall = if choices.one_in(15) {
+                height * (2 + choices.below(400)) as f32
+            } else {
+                height
+            };
+            let group = (column % 3) as u8;
+            let at = boxes.iter().filter(|((g, _), _)| *g == group).count();
+            boxes.push(((group, at), (Vec2::new(x, y), Vec2::new(x + width, y + tall))));
+            y += tall + gap;
+        }
+        x += width
+            + if choices.one_in(4) {
+                gap
+            } else {
+                1.0 + choices.below(16) as f32
+            };
+    }
+    for _ in 0..choices.below(3) {
+        let at = Vec2::new(
+            x + choices.below(64) as f32 / 4.0,
+            choices.below(64) as f32 / 4.0 - 8.0,
+        );
+        let size = Vec2::new(unit(choices), unit(choices));
+        let n = boxes.iter().filter(|((g, _), _)| *g == 2).count();
+        boxes.push(((2, n), (at, at + size)));
+    }
+    if choices.one_in(2) {
+        for (_, (min, max)) in &mut boxes {
+            *min = Vec2::new(min.y, min.x);
+            *max = Vec2::new(max.y, max.x);
+        }
+    }
+    boxes
+}
+
+/// R50.1 (review 5745584645): the touch check finds two inks touching
+/// exactly where a look at every pair of them does, on 40,000 fixed-seed
+/// cases of [`touch_case`] under each of the three kinds of pair it
+/// excuses — none, a line's neighbors (`overlapping`), and a side arc's
+/// (`place_halves`) — the whole check, and its strips alone across each
+/// axis. The reviewer's brute-force comparison, committed.
+///
+/// Control: with every box in strips of the tallest's class, it still
+/// agrees (the strips' height is not what this holds); with a class's
+/// strips weighed against only the strip after them, red. (No `do_*`
+/// twin: it reads a test seam.)
+#[test]
+fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
+    use crate::flow::place::halves::{touch_seam, TOUCH};
+    let mut choices = crate::util::tests::choices::Choices::seeded(0x5745_5846_45);
+    let (mut strips, mut touch) = (0, 0);
+    let cases = 40_000;
+    for case in 0..cases {
+        let boxes = touch_case(&mut choices);
+        let kind = choices.below(3);
+        let exempt = move |(a, i): (u8, usize), (b, j): (u8, usize)| match kind {
+            0 => false,
+            1 => a == b && i.abs_diff(j) <= 1,
+            _ => {
+                if a == 2 && b == 2 {
+                    i.abs_diff(j) <= 1
+                } else {
+                    a != 2 && b != 2
+                }
+            }
+        };
+        let gap = |a: (Vec2, Vec2), b: (Vec2, Vec2)| (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length();
+        let every = (0..boxes.len()).any(|i| {
+            (i + 1..boxes.len())
+                .any(|j| !exempt(boxes[i].0, boxes[j].0) && gap(boxes[i].1, boxes[j].1) <= TOUCH)
+        });
+        let (found, _, stripped) = touch_seam(&boxes, &exempt, None);
+        assert_eq!(
+            found, every,
+            "case {case}, excusing kind {kind}: the check, {boxes:?}"
+        );
+        for axis in [0, 1] {
+            let (found, _, _) = touch_seam(&boxes, &exempt, Some(axis));
+            assert_eq!(
+                found, every,
+                "case {case}, excusing kind {kind}: the strips across axis {axis}, {boxes:?}"
+            );
+        }
+        strips += usize::from(stripped > 0);
+        touch += usize::from(every);
+    }
+    assert!(
+        strips * 4 >= cases && touch * 5 >= cases && (cases - touch) * 5 >= cases,
+        "precondition: a quarter of the cases or more reach the strips ({strips} of {cases}), and a fifth or more touch ({touch}) and do not"
+    );
+}
+
+/// R50.5 (review 5745584645): a side arc whose search for its count the
+/// frame's budget stopped keeps the copies it had where they hold the
+/// equal-gap rule, and is reported kept short, apart from an arc left
+/// empty: "To see a World in a Grain of Sand" at 16 pt round a 2,000
+/// sharp square, `Once` at span ½ with a `❧` on its sides, outward, whose
+/// count search moves from its guess, at budgets from 5,000 to 8,000 in
+/// steps of 5. The first budget at which an arc is kept short places more
+/// glyphs than the last before it at which that arc was left empty, the
+/// other arc as it was.
+///
+/// Control: with a stopped search's kept copies not reported, red. (No
+/// `do_*` twin: it sets a test seam.)
+#[test]
+fn test_flow_halves_an_arc_kept_short_is_reported() {
+    use crate::flow::place::halves::BUDGET_OVERRIDE;
+    use crate::flow::place::SideLoss;
+    let text = "To see a World in a Grain of Sand";
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::splat(2_000.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let layout = RingLayout {
+        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+        sides: Some(("❧".to_string(), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    let fit = FitMode::Once { filler: None };
+    let mut frames = Vec::new();
+    for budget in (5_000..8_000).step_by(5) {
+        let (_, placed, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
+            frame_with(text, 16.0, &shape, &fit, &layout, true)
+        });
+        let short = trace
+            .unheld
+            .sides
+            .iter()
+            .find(|s| s.1 == SideLoss::Short)
+            .map(|s| s.0);
+        frames.push((budget, trace.unheld.sides, placed.glyphs.len()));
+        let Some(arc) = short else {
+            continue;
+        };
+        let (budget, sides, glyphs) = frames.pop().unwrap_or_default();
+        let empty: Vec<_> = sides
+            .iter()
+            .map(|&(j, loss)| if j == arc { (j, SideLoss::Empty) } else { (j, loss) })
+            .collect();
+        let before = frames.iter().rev().find(|f| f.1 == empty);
+        let Some((at, _, fewer)) = before else {
+            panic!("precondition: a budget below {budget} leaves arc {arc} empty, the other as at {budget} ({sides:?})");
+        };
+        assert!(
+            glyphs > *fewer,
+            "arc {arc} is reported kept short at a budget of {budget} ({sides:?}) and places {glyphs} glyphs, no more than the {fewer} placed at {at}, where it was left empty"
+        );
+        return;
+    }
+    panic!(
+        "no arc is reported kept short at any budget from 5,000 to 8,000: {:?}",
+        frames
+            .iter()
+            .map(|f| (f.0, f.1.clone()))
+            .collect::<Vec<_>>()
+            .last()
     );
 }

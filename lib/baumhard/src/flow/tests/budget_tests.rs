@@ -34,6 +34,28 @@ fn long_sides() -> String {
     "-=".repeat(20)
 }
 
+/// The large grid's long mixed side ornaments (ruling R50.2): the
+/// reviewer's four rows (review 5745584645) — thin glyphs alone, and one
+/// or two wide ones among them, whose touch checks looked at 10.7 to 28.9
+/// pairs a box when every box shared the tallest's strip height — and
+/// the fuzzable `"﷽|||"`, a wider glyph still.
+fn mixed_sides() -> [String; 5] {
+    [
+        "|".repeat(40),
+        format!("⸻{}", "|".repeat(40)),
+        format!("⸻⸻{}", "|".repeat(60)),
+        format!("⸻{}", "|".repeat(100)),
+        "﷽|||".to_string(),
+    ]
+}
+
+/// The budgets round a large outline with a long mixed side ornament
+/// (ruling R50.2): spent while its first arc is laid, or its second, or
+/// with both laid before their last touch check — at 700,000 and the
+/// widest row, where the check that one strip height made look at 28.9
+/// pairs a box ran 56,938 glyph steps past the bound.
+const MIXED_BUDGETS: [usize; 4] = [1, 60_000, 300_000, 700_000];
+
 /// The outline of the grid's sharp rectangle: 600 × 12, where the
 /// quatrain's two lines face each other inward and the last resorts run.
 fn flat() -> Outline {
@@ -139,13 +161,21 @@ fn grid(
 /// ornament, at each of [`LARGE_BUDGETS`].
 fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
     let frames = if large {
-        grid(
+        let mut frames = grid(
             shape,
             name,
             &[("natural", LineSpan::NATURAL)],
             &[Some(long_sides())],
             &LARGE_BUDGETS,
-        )
+        );
+        frames.extend(grid(
+            shape,
+            name,
+            &[("natural", LineSpan::NATURAL)],
+            &mixed_sides().map(Some),
+            &MIXED_BUDGETS,
+        ));
+        frames
     } else {
         grid(
             shape,
@@ -175,9 +205,29 @@ fn holds_the_bound(shape: &Outline, name: &str, large: bool) {
                 || f.looks.0 > TOUCH_LOOKS_A_BOX * f.looks.1
         })
         .map(|f| {
+            let broken: Vec<&str> = [
+                (f.past > f.allowed, "PAST_BUDGET"),
+                (f.spent > f.held + f.allowed, "in all"),
+                (f.overlap, "overlap"),
+                (f.untouched.0 > f.untouched.1, "untouched"),
+                (f.looks.0 > TOUCH_LOOKS_A_BOX * f.looks.1, "looks"),
+            ]
+            .into_iter()
+            .filter_map(|(broken, what)| broken.then_some(what))
+            .collect();
             format!(
-                "{}: {} past the budget, {} in all, against {} past {} (overlap {}); `untouched` took {} of its {}; a touch check looked at {} pairs of {} boxes",
-                f.what, f.past, f.spent, f.allowed, f.held, f.overlap, f.untouched.0, f.untouched.1, f.looks.0, f.looks.1
+                "{} [{}]: {} past the budget, {} in all, against {} past {} (overlap {}); `untouched` took {} of its {}; a touch check looked at {} pairs of {} boxes",
+                f.what,
+                broken.join(", "),
+                f.past,
+                f.spent,
+                f.allowed,
+                f.held,
+                f.overlap,
+                f.untouched.0,
+                f.untouched.1,
+                f.looks.0,
+                f.looks.1
             )
         })
         .collect();

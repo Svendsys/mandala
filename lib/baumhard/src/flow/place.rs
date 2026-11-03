@@ -624,10 +624,25 @@ pub(crate) struct Unheld {
     pub(crate) junctions: Vec<usize>,
     /// Whether two of the lines' inks still touch.
     pub(crate) overlap: bool,
-    /// The junctions whose break was left without its side ornament:
-    /// its copies would have touched the text, or the frame's work budget
-    /// was spent before they were laid (rulings R44.2, R47.2).
-    pub(crate) sides: Vec<usize>,
+    /// The junctions whose side ornament was not laid as owed, and how
+    /// (rulings R44.2, R47.2, R48.2, R50.5): [`SideLoss::Empty`], the
+    /// break left without its ornament — its copies would have touched
+    /// the text, or the frame could not afford them and their touch check
+    /// and the copies it had did not hold the equal-gap rule; or
+    /// [`SideLoss::Short`], kept with the copies a search the frame could
+    /// not afford to finish had laid, which hold the equal-gap rule but
+    /// need not be the count whose gap is nearest the target.
+    pub(crate) sides: Vec<(usize, SideLoss)>,
+}
+
+/// How a junction's side ornament was left ([`Unheld::sides`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SideLoss {
+    /// Left empty: no copy laid.
+    Empty,
+    /// Kept short: the copies laid when the frame's budget stopped the
+    /// search for their count, every gap and both joins equal.
+    Short,
 }
 
 impl Unheld {
