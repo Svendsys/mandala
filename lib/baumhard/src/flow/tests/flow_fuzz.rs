@@ -179,7 +179,8 @@ impl InputWork {
     /// text's glyphs once cut, never more than the run has, spends no
     /// more than its budget and its overshoot, and no touch check of it
     /// looks at more than `touch_looks` pairs a box of the classes of
-    /// height it holds, which that overshoot rests on (rulings R48.2,
+    /// height it holds, nor a side arc's check holds more classes than its
+    /// arc held back for — the two that overshoot rests on (rulings R48.2,
     /// R51.2): properties.
     pub(crate) fn frame(
         &mut self,
@@ -196,6 +197,12 @@ impl InputWork {
             return Err(format!(
                 "{what}: a touch check looked at {looks} pairs of {boxes} boxes of {classes} classes of height, past {} a box (rulings R48.2, R51.2)",
                 touch_looks(classes)
+            ));
+        }
+        if trace.looks.classes > trace.looks.reserved {
+            return Err(format!(
+                "{what}: a side arc's touch check held {} classes of height, past the {} its arc held back for (ruling R51.2)",
+                trace.looks.classes, trace.looks.reserved
             ));
         }
         if trace.budget > budget {

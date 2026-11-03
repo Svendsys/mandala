@@ -536,10 +536,12 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// R27's fit, each lay and each copy of a side ornament, so no more than
 /// one of each runs past it; [`untouched`] runs within the budget, which
 /// holds its share back, and so does a side arc's touch check, held back
-/// before each copy ([`check_steps`], ruling R48.2). That rests on one
-/// assumption: that no touch check looks at more than [`touch_looks`]
-/// pairs a box of the classes of height it holds, which the flow fuzz
-/// property holds every frame to. A check's looks are the inks near each
+/// before each copy ([`check_steps`], ruling R48.2). That rests on two
+/// assumptions, which the flow fuzz property holds every frame to: that
+/// no touch check looks at more than [`touch_looks`] pairs a box of the
+/// classes of height it holds; and that no side arc's check holds more
+/// classes than its arc held back for ([`height_classes`], over the
+/// text's boxes and the ornament's inks before the fill; ruling R51.2). A check's looks are the inks near each
 /// box, whatever the tallest box ([`stripped`], ruling R50.1), and a few
 /// for each class of height it holds (ruling R51.2); the structured
 /// fuzzer draws long mixed side ornaments and texts of up to 16 sizes, as
@@ -2983,13 +2985,13 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
     let mut swept = 0;
     let whole = 'sweep: {
         for (at, &i) in order.iter().enumerate() {
-            let reach = boxes[i].1 .1[axis] + TOUCH;
+            let end = boxes[i].1 .1[axis];
             for &j in &order[at + 1..] {
                 swept += 1;
                 if swept > most {
                     break 'sweep false;
                 }
-                if !start(j).le(&reach) {
+                if !within_reach(end, start(j)) {
                     break;
                 }
                 if weigh(i, j) {
@@ -3062,7 +3064,7 @@ fn stripped<K: Copy>(
             // there.
             strip: (f64::from(min[across]) / strip_height(class)).floor() as i64,
             start: min[axis],
-            reach: max[axis] + TOUCH,
+            end: max[axis],
             i,
         }
     };
@@ -3073,7 +3075,7 @@ fn stripped<K: Copy>(
     let scan = &mut |a: &Swept, after: &[Swept]| {
         for b in after {
             looks.set(looks.get() + 1);
-            if !b.start.le(&a.reach) {
+            if !within_reach(a.end, b.start) {
                 return false;
             }
             let ((k, p), (l, q)) = (boxes[a.i], boxes[b.i]);
@@ -3275,15 +3277,25 @@ fn between(here: &[Swept], there: &[Swept], scan: &mut impl FnMut(&Swept, &[Swep
     false
 }
 
-/// A box as [`stripped`] sweeps it: its strip, where it starts along the
-/// sweep's axis and how far past that it reaches, [`TOUCH`] beyond its
-/// end, and which box it is.
+/// A box as [`stripped`] sweeps it: its strip, where it starts and ends
+/// along the sweep's axis, and which box it is.
 #[derive(Clone, Copy)]
 struct Swept {
     strip: i64,
     start: f32,
-    reach: f32,
+    end: f32,
     i: usize,
+}
+
+/// Whether a box starting at `start` along the sweep's axis, after one
+/// that ends at `end`, may touch it: no more than [`TOUCH`] past it, by
+/// the subtraction [`box_gap`] makes — so a pair it reads as touching is
+/// never passed over where `end + TOUCH` rounds below `start` (review
+/// 5757429244: two inks 0.001 apart once `f32` subtracted them, at a
+/// thousandth of a point's scale). Monotone in `start`, so a sweep in its
+/// order stops at the first box past it.
+fn within_reach(end: f32, start: f32) -> bool {
+    (start - end).le(&TOUCH)
 }
 
 impl Swept {

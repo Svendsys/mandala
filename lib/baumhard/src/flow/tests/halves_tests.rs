@@ -1067,6 +1067,10 @@ pub struct SweepWork {
     /// The most pairs a frame's touch checks looked at a box
     /// (`Trace::looks`, rulings R48.2, R51.2).
     pub(crate) most_looks: Looks,
+    /// Each frame a side arc's touch check of held more classes of height
+    /// than it was held back for (ruling R51.2), checked before the frames
+    /// are folded into [`SweepWork::most_looks`].
+    pub(crate) over_reserved: Vec<String>,
     /// The rounds a letter was moved clear of an ink before its neighbor,
     /// and of them the rounds that left it where it was (ruling R44.7).
     pub earlier: (usize, usize),
@@ -1260,6 +1264,12 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                             work.steps += trace.spent;
                             work.most_per_glyph =
                                 work.most_per_glyph.max(trace.spent.div_ceil(trace.glyphs.max(1)));
+                            if trace.looks.classes > trace.looks.reserved {
+                                work.over_reserved.push(format!(
+                                    "{what}: a side arc's check held {} classes, {} held back for",
+                                    trace.looks.classes, trace.looks.reserved
+                                ));
+                            }
                             work.most_looks = work.most_looks.with(trace.looks);
                             work.lookups += lookups_so_far() - looked;
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
@@ -2646,21 +2656,41 @@ pub(crate) fn looks_ratios(looks: &Looks) -> String {
 /// strips (219 looks over 68 boxes) and 0.68 a box a class between
 /// classes (200 over 74 boxes of four classes); over the budget grids and
 /// the pins, which hold their frames to the same parts, 4.96 and 1.50,
-/// which the measured parts are rounded up from.
-/// The flow fuzz property holds every committed finding and fuzzed frame
-/// to `touch_looks`.
+/// which the measured parts are rounded up from. And no frame's side arc's
+/// check holds more classes of height than its arc held back for, each
+/// frame held to it on its own, before the frames are folded (ruling
+/// R51.2). The flow fuzz property holds every committed finding and
+/// fuzzed frame to both.
 ///
-/// Control: with each part measured one lower, red. (No `do_*` twin: it
-/// reads the sweep's traces.)
+/// Controls: with each part measured one lower, red; with each arc held
+/// back for one class at most, red on the frames held to it one by one.
+/// (With an arc's classes taken from the text alone, green: every
+/// ornament of these frames is of classes their text holds.) (No `do_*`
+/// twin: it reads the sweep's traces.)
 #[test]
 fn test_flow_halves_a_touch_check_looks_at_few_pairs_a_box() {
     use crate::flow::place::halves::{
         TOUCH_LOOKS_A_CLASS, TOUCH_LOOKS_A_CLASS_MEASURED, TOUCH_LOOKS_BASE, TOUCH_LOOKS_BASE_MEASURED,
     };
-    let mut most = the_sweep().most_looks;
-    for (_, _, _, looks) in demo_map_frames() {
+    let sweep = the_sweep();
+    let mut over_reserved = sweep.over_reserved.clone();
+    let mut most = sweep.most_looks;
+    for (name, _, _, looks) in demo_map_frames() {
+        // Each frame on its own, before the fold takes the most classes
+        // and the most held back of different frames.
+        if looks.classes > looks.reserved {
+            over_reserved.push(format!(
+                "{name}: a side arc's check held {} classes, {} held back for",
+                looks.classes, looks.reserved
+            ));
+        }
         most = most.with(looks);
     }
+    assert!(
+        over_reserved.is_empty(),
+        "side arcs' checks held more classes of height than they were held back for:\n{}",
+        over_reserved.join("\n")
+    );
     assert!(
         most.base.0 > 0 && most.base.1 > 0 && most.across.0 > 0,
         "precondition: the frames' touch checks are traced, and some lay boxes of more than one class: {}",
@@ -3530,11 +3560,13 @@ fn touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> Vec<((u
 /// the whole check, and its strips alone across each axis. The reviewer's
 /// brute-force comparison, committed: 40,000 fixed-seed cases of
 /// [`touch_case`]; then 20,000 of them at extreme scales
-/// ([`extreme_touch_case`]: 10⁻³ to 10³⁰, offsets to ±10³⁰, heights over
-/// 24 powers of two, among boxes with a corner not a number, infinite or
-/// of no area), where the strips' arithmetic saturates as `stripped`
-/// says; and the reviewer's repro, a box 10²⁰ out across the axis beside
-/// finer ones, whose strips lie past `i64`'s range. At extreme scales
+/// ([`extreme_touch_case`]): half far, a tall box 10²⁰ to 10³⁰ out across
+/// the axis beside finer boxes at a moderate scale, whose strips lie past
+/// `i64`'s range, where `stripped` saturates them — a twentieth or more
+/// of the cases are held to reach that — and half at one scale from
+/// 10⁻³ to 10³⁰, offsets to ±10³⁰, heights over 24 powers of two, among
+/// boxes with a corner not a number, infinite or of no area; and the
+/// reviewer's repro, a box 10²⁰ out across the axis beside finer ones. At extreme scales
 /// every pair is looked at among the boxes with ink — every corner finite,
 /// some width and some height, decided here — the strips are given those
 /// alone, as `touching` gives them, and `touching` itself all of them.
@@ -3544,7 +3576,8 @@ fn touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> Vec<((u
 /// a coarser box's copies without the strip either side; the strips'
 /// two-list sweep in one direction only; `stripped`'s strips round a
 /// box at a plain `- 1` and `+ 1` (a panic, `attempt to add with
-/// overflow`). (No `do_*` twin: it reads a test seam.)
+/// overflow`, among the far cases before the repro). (No `do_*` twin: it
+/// reads a test seam.)
 #[test]
 fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
     use crate::flow::place::halves::{touch_seam, touching_seam, TOUCH};
@@ -3615,6 +3648,29 @@ fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
     );
 
     let mut choices = crate::util::tests::choices::Choices::seeded(0x0057_5182_8253);
+    // Whether one of `boxes`' inks lies further across the sweep's axis
+    // than 2⁶³ strips of the finest class, which is no taller than twice
+    // the thinnest ink and `TOUCH`: where a strip index saturates.
+    let saturates = |boxes: &[Keyed]| {
+        let inked: Vec<(Vec2, Vec2)> = boxes.iter().map(|b| b.1).filter(|b| inked(*b)).collect();
+        let spread = |axis: usize| {
+            let (lo, hi) = inked
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), b| {
+                    (lo.min(f64::from(b.0[axis])), hi.max(f64::from(b.1[axis])))
+                });
+            hi - lo
+        };
+        let across = if spread(1) > spread(0) { 0 } else { 1 };
+        let thinnest = inked
+            .iter()
+            .map(|b| f64::from(b.1[across] - b.0[across]))
+            .fold(f64::INFINITY, f64::min);
+        let strip = 2.0 * (thinnest + f64::from(TOUCH)) * (1.0 + 1e-6);
+        inked
+            .iter()
+            .any(|b| f64::from(b.0[across]).abs().max(f64::from(b.1[across]).abs()) / strip > 2f64.powi(63))
+    };
     let (mut strips, mut touch, mut far, mut uninked) = (0, 0, 0, 0);
     let cases = 20_000;
     for case in 0..cases {
@@ -3623,12 +3679,12 @@ fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
         let (reached, touches) = agree("an extreme", case, kind, &boxes);
         strips += usize::from(reached);
         touch += usize::from(touches);
-        far += usize::from(reached && scale >= 1e18);
+        far += usize::from(reached && saturates(&boxes));
         uninked += usize::from(reached && boxes.iter().any(|b| !inked(b.1)));
     }
     assert!(
         strips * 4 >= cases && far * 20 >= cases && uninked * 20 >= cases && touch * 10 >= cases && (cases - touch) * 10 >= cases,
-        "precondition: at extreme scales a quarter of the cases or more reach the strips ({strips} of {cases}), a twentieth or more at a scale of 10¹⁸ or more ({far}) and among boxes with no ink ({uninked}), and a tenth or more touch ({touch}) and do not"
+        "precondition: at extreme scales a quarter of the cases or more reach the strips ({strips} of {cases}), a twentieth or more with an ink past 2⁶³ strips of the finest class across the axis ({far}) and among boxes with no ink ({uninked}), and a tenth or more touch ({touch}) and do not"
     );
 
     // The reviewer's repro: ten inks in a column of strips 2⁻⁶ tall across
@@ -3700,18 +3756,24 @@ fn test_flow_halves_a_box_with_no_ink_touches_nothing() {
 type KeyedBoxes = Vec<((u8, usize), (Vec2, Vec2))>;
 
 /// One case of [`test_flow_halves_the_touch_check_finds_what_every_pair_does`]
-/// at an extreme scale (R51.1, review 5751828253): a [`touch_case`] and
-/// up to two boxes beside it as tall across y as one of its by a power of
-/// two to 2²³, then scaled by one of 10⁻³, 1, 10³, 10⁶, 10¹⁸ and 10³⁰ and moved along
-/// each axis, by up to 40,000 times the scale or, one time in four, by up
-/// to ±10³⁰, among copies of its boxes with a corner made
-/// not a number or infinite, or made of no width or no height. Returns
-/// the boxes and the scale.
+/// at an extreme scale (R51.1, reviews 5751828253 and 5757429244): a
+/// [`touch_case`] and up to two boxes beside it as tall across y as one
+/// of its by a power of two to 2²³. One case in two is far: the case at
+/// a scale of 10⁻³, 1 or 10³, its tall boxes moved across y by ±10²⁰ to
+/// ±10³⁰ of their own, and a box ten times as far along x — so a coarse
+/// box lies past `i64`'s range of the finer classes' strips, where
+/// `stripped` saturates them (a uniform scale never reaches it: the strips
+/// scale with the boxes). The rest are scaled by one of 10⁻³, 1, 10³,
+/// 10⁶, 10¹⁸ and 10³⁰ and moved along each axis, by up to 40,000 times the
+/// scale or, one time in four, by up to ±10³⁰, among copies of their
+/// boxes with a corner made not a number or infinite, or made of no width
+/// or no height. Returns the boxes and the scale.
 #[cfg(test)]
 fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> (KeyedBoxes, f32) {
     const SCALES: [f32; 6] = [1e-3, 1.0, 1e3, 1e6, 1e18, 1e30];
     const OFFSETS: [f32; 7] = [0.0, 1e6, -1e6, 1e18, -1e18, 1e30, -1e30];
     let mut boxes = touch_case(choices);
+    let cased = boxes.len();
     let right = boxes
         .iter()
         .map(|(_, (_, max))| max.x)
@@ -3724,6 +3786,32 @@ fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) ->
         let height = (0.02 + choices.below(200) as f32 / 64.0) / 4.0 * (1u32 << choices.below(24)) as f32;
         let n = boxes.iter().filter(|((g, _), _)| *g == 1).count();
         boxes.push(((1, n), (at, at + Vec2::new(0.5, height))));
+    }
+    // One case in two is far: its tall boxes moved across y by an offset of
+    // their own, 10²⁰ to 10³⁰ out whatever the scale, beside the case's
+    // boxes at a moderate scale, with one box ten times as far along x, so
+    // that x is the sweep's axis — strips of the finer classes some 2⁶³ or
+    // more out across it, past `i64`'s range, as the reviewer's repro lays
+    // them (review 5757429244).
+    if choices.one_in(2) {
+        let far =
+            [1e20_f32, 1e22, 1e25, 1e28, 1e30][choices.index(5)] * if choices.one_in(2) { -1.0 } else { 1.0 };
+        let scale = [1e-3_f32, 1.0, 1e3][choices.index(3)];
+        for (k, (_, (min, max))) in boxes.iter_mut().enumerate() {
+            *min *= scale;
+            *max *= scale;
+            if k >= cased {
+                // As tall as it was in proportion to how far out it is, so
+                // that an `f32` there still gives it some height.
+                let tall = (max.y - min.y) / scale * far.abs() * 1e-6;
+                min.y = far;
+                max.y = far + tall;
+            }
+        }
+        let n = boxes.iter().filter(|((g, _), _)| *g == 1).count();
+        let along = 10.0 * far.abs();
+        boxes.push(((1, n), (Vec2::new(along, 0.0), Vec2::new(2.0 * along, 0.01))));
+        return (boxes, scale);
     }
     let scale = SCALES[choices.index(SCALES.len())];
     // Mostly an offset a few thousand of the case's units out, which keeps
