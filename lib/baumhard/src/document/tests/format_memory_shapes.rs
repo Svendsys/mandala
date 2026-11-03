@@ -211,7 +211,7 @@ pub fn text_text(shape: &str, length: usize) -> String {
                 if group > 0 {
                     text.push(',');
                 }
-                text.push_str(r#"{"fill":"var(a)","frame":"var(a)","text":"var(a)"}"#);
+                text.push_str(r#"{"frame":"var(a)","text":"var(a)"}"#);
                 group += 1;
             }
             text.push_str(&format!("]}},\"nodes\":[{one}]}}"));
