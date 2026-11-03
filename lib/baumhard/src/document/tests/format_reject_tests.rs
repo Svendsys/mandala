@@ -131,9 +131,9 @@ fn test_the_native_ceiling_is_none_and_the_browser_is_bounded() {
         crate::document::format::MAX_ELEMENTS,
         Some(crate::document::format::WASM32_MAX_ELEMENTS)
     );
-    // The derived values, written out: half of 3 GiB over 7 bytes per
+    // The derived values, written out: half of 3 GiB over 6 bytes per
     // byte of text, and over 480 bytes per element.
-    assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 230_087_533);
+    assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 268_435_456);
     assert_eq!(crate::document::format::WASM32_MAX_ELEMENTS, 3_355_443);
 }
 
