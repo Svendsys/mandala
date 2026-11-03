@@ -222,18 +222,21 @@ fn test_document_interpolation_follows_the_listed_fields() {
 
 /// #237's list, field by field: each listed field is at its midpoint
 /// halfway, and each field outside it — a flag, a shape's radius, a fit
-/// range, a zoom window, a frame's start point, unequal control points —
-/// holds the before value under `Snap::End` and the after value under
-/// `Snap::Start`. The four that B1 blended and the list leaves out
-/// (radius, fit range, zoom window, start point) are among the snapped
-/// (ruling R10 on #237).
+/// range, a zoom window, a frame's start point, a frame's sides, unequal
+/// control points — holds the before value under `Snap::End` and the
+/// after value under `Snap::Start`. The four that B1 blended and the
+/// list leaves out (radius, fit range, zoom window, start point) are
+/// among the snapped (ruling R10 on #237); a frame's and a ring's span
+/// and spacing are on the list (ruling R34 on #291).
 pub fn do_document_interpolation_follows_the_listed_fields() {
     use crate::document::element::{
         ConnectorData, FrameData, FrameStyle, LabelData, LabelStyle, PaletteData, PathData, PortalEndData,
-        PortalEndStyle, SectionData, ThemeData, ThemeVariant,
+        PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SectionData, ThemeData, ThemeVariant,
     };
     use crate::document::tests::test_support::{palette_group, path_data};
-    use crate::document::values::{Edge, FitMode, Percent, PlainColor, Shape, StartPoint, ZoomWindow};
+    use crate::document::values::{
+        Edge, FitMode, LineSpan, Percent, PlainColor, Shape, Sides, StartPoint, ZoomWindow,
+    };
 
     /// `before` and `after` at 0.5 under both snaps.
     fn halves(before: &DocElement, after: &DocElement) -> (DocElement, DocElement) {
@@ -334,6 +337,50 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
         "a fit range snaps"
     );
     assert_eq!(start.style.fit, Some(FitMode::Fit { min: 0.5, max: 3.0 }));
+
+    // A frame's and a ring's span and spacing blend; their sides snap
+    // (ruling R34 on #291).
+    let layout = |span: f32, spacing: f32, content: &str| RingLayoutStyle {
+        span: LineSpan::new(span),
+        sides: Some(Sides::On {
+            content: content.to_string(),
+            color: None,
+        }),
+        spacing: Some(spacing),
+    };
+    let laid = |l: RingLayoutStyle| {
+        DocElement::Frame(FrameData {
+            style: FrameStyle {
+                ring_layout: l,
+                ..FrameStyle::default()
+            },
+        })
+    };
+    let (end, start) = halves(&laid(layout(0.0, 2.0, "·")), &laid(layout(1.0, 6.0, "✦")));
+    let (DocElement::Frame(end), DocElement::Frame(start)) = (end, start) else { panic!("frames") };
+    assert_eq!(end.style.ring_layout.span, LineSpan::new(0.5));
+    assert_eq!(end.style.ring_layout.spacing, Some(4.0));
+    let content = |f: &FrameData| match &f.style.ring_layout.sides {
+        Some(Sides::On { content, .. }) => content.clone(),
+        _ => String::new(),
+    };
+    assert_eq!(content(&end), "·", "sides snap");
+    assert_eq!(content(&start), "✦");
+    let ring = |l: RingLayoutStyle| {
+        DocElement::Ring(RingData {
+            channel: 0,
+            style: RingStyle {
+                ring_layout: l,
+                ..RingStyle::default()
+            },
+        })
+    };
+    let (end, _) = halves(&ring(layout(0.25, 0.0, "·")), &ring(layout(0.75, 8.0, "·")));
+    let DocElement::Ring(end) = end else { panic!("a ring") };
+    assert_eq!(
+        (end.style.ring_layout.span, end.style.ring_layout.spacing),
+        (LineSpan::new(0.5), Some(4.0))
+    );
 
     let connector = |spacing: f32, size: f32, points: Vec<Vec2>| {
         let mut path: PathData = path_data();

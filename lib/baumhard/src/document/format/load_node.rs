@@ -256,10 +256,15 @@ impl Builder {
             Some(fit) => Some(self.fit("fit", fit)?),
             None => None,
         };
+        let ring_layout = self.ring_layout(layout_in!(dto))?;
         let text = self.text_style(text_in!(dto), Unit::of_tier(DocKind::Ring))?;
         let data = DocElement::Ring(RingData {
             channel,
-            style: RingStyle { fit, text },
+            style: RingStyle {
+                fit,
+                ring_layout,
+                text,
+            },
         });
         self.element(frame, data, |b, ring| b.spans(ring, &dto.spans))
             .map(|_| ())

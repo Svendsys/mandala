@@ -16,7 +16,8 @@
 #     load_*               lib/baumhard/src/document/format/fixtures
 #                          lib/baumhard/src/document/tests/fuzz_findings
 #                          maps/*.mandala.json
-#     flow_structured      lib/baumhard/src/flow/tests/fuzz_findings
+#     flow_raw, flow_structured
+#                          lib/baumhard/src/flow/tests/fuzz_findings
 #     glyph_mutation_raw   lib/baumhard/src/gfx_structs/tests/fuzz_findings
 #
 # Each input is held to a time and a memory budget: `-timeout` (seconds
@@ -39,7 +40,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGETS=(load_raw load_structured flow_raw flow_structured glyph_mutation_raw glyph_mutation_structured)
 
 usage() {
-  sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 if [ "${1:-}" = "--list" ]; then
@@ -65,9 +66,18 @@ fi
 
 # The longest input each surface is fed. The raw loader's must hold the
 # largest committed seed (a deep chain with a link on every node); a
-# structured input is choices, four bytes each. Every input this script
-# feeds a target fits its ceiling, which
-# `test_every_fuzz_input_fits_its_targets_max_len` holds.
+# structured input is choices, four bytes each. A flow target's length
+# does not bound its work (flow_fuzz.rs; rulings R44.2, R45-R47): a
+# frame's budget is max(400,000, 3,000 × glyphs) steps of all its work,
+# overshot by one build's shaping and inking and a lay of each line, at
+# most 32.3 µs a step under ASan (ASAN_STEP_NANOS), and an input's
+# frames together may take 15 s, three quarters of -timeout=20: 464,396
+# steps. Two frames at the floor are 25.8 s, so a flow target lays one
+# frame an input, its text cut until that frame's work fits: at most
+# MAX_FRAME_GLYPHS (150) glyphs in one face, 462,949 steps, 14.95 s.
+# Every input this script feeds a target
+# fits its ceiling, which `test_every_fuzz_input_fits_its_targets_max_len`
+# holds.
 case "$TARGET" in
   load_raw) MAX_LEN=65536 ;;
   load_structured) MAX_LEN=65536 ;;
@@ -96,6 +106,9 @@ case "$TARGET" in
       [ -e "$map" ] && ln -s "$map" "$MAPS/"
     done
     CORPORA+=("$MAPS")
+    ;;
+  flow_raw)
+    CORPORA+=("lib/baumhard/src/flow/tests/fuzz_findings")
     ;;
   flow_structured)
     CORPORA+=("lib/baumhard/src/flow/tests/fuzz_findings")

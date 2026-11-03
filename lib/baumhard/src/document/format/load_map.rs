@@ -383,6 +383,7 @@ impl Builder {
                 Some(fit) => Some(self.fit("fit", fit)?),
                 None => None,
             },
+            ring_layout: self.ring_layout(layout_in!(dto))?,
             text: self.text_style(text_in!(dto), Unit::of_tier(DocKind::Ring))?,
         })
     }

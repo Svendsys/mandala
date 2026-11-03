@@ -67,6 +67,12 @@
       "fit": "fit",
       "gap": 2.0,
       "inset": 4.0,
+      "span": "whole",
+      "sides": {
+        "content": "✦",
+        "color": "var(accent)"
+      },
+      "spacing": 2.0,
       "font": "Public Pixel",
       "size": 0.05,
       "color": "var(accent)",
@@ -75,6 +81,9 @@
     },
     "ring": {
       "fit": "repeat",
+      "span": 0.5,
+      "sides": false,
+      "spacing": 0.0,
       "font": "Novem",
       "size": 0.06,
       "color": "#30b082",
@@ -160,7 +169,7 @@
       "weight": "bold",
       "italic": false,
       "sections": [{"offset": [8.0, 8.0], "min_size": [200.0, 60.0], "align": "center", "font": "Novem", "size": 20.0, "color": "#ffcc00", "weight": 300, "italic": true, "spans": [{"text": "In the beginning", "size": 24.0, "weight": "bold"}, {"text": " God created", "font": "Novem", "color": "var(accent)", "italic": true}, {"text": " the heaven", "link": {"url": "https://example.com/a?b=c&d=e"}}, {"text": " and the earth", "link": {"verb": "glow"}}]}, {"channel": 1, "align": "right", "spans": [{"text": "second section\nwith a line break"}]}, {"channel": 2, "align": "left"}],
-      "frame": {"visible": true, "start": "top-left", "direction": "clockwise", "fit": "fit", "gap": 2.0, "inset": 4.0, "font": "Public Pixel", "size": 0.05, "color": "palette(frame)", "weight": "normal", "italic": false, "rings": [{"spans": [{"text": "And the earth was without form, and void; ", "color": "#00ff00", "weight": "bold"}]}, {"channel": 1, "fit": "spread", "font": "Novem", "size": 0.04, "color": "var(accent)", "weight": "bold", "italic": true, "spans": [{"text": "darkness "}]}]},
+      "frame": {"visible": true, "start": "top-left", "direction": "clockwise", "fit": "fit", "gap": 2.0, "inset": 4.0, "span": "natural", "sides": "·", "spacing": 1.5, "font": "Public Pixel", "size": 0.05, "color": "palette(frame)", "weight": "normal", "italic": false, "rings": [{"spans": [{"text": "And the earth was without form, and void; ", "color": "#00ff00", "weight": "bold"}]}, {"channel": 1, "fit": "spread", "span": 0.25, "sides": {"content": "✦", "color": "palette(frame)"}, "spacing": 3.0, "font": "Novem", "size": 0.04, "color": "var(accent)", "weight": "bold", "italic": true, "spans": [{"text": "darkness "}]}]},
       "links": [{"to": 3, "kind": "line", "fit": "repeat", "spacing": 1.5, "size": 14.0, "color": "palette(frame)", "content": "~", "anchors": ["right", "left"], "control_points": [[40.0, -20.0], [80.0, 20.0]], "visible": false, "zoom": {"min": 1.0}, "spans": [{"text": "~"}], "cap_start": {"font": "Novem", "size": 16.0, "color": "#ff0000", "weight": "bold", "italic": true, "spans": [{"text": "<"}]}, "cap_end": {"spans": [{"text": ">"}]}, "label": {"t": 0.25, "offset": -6.0, "font": "Public Pixel", "size": 13.0, "color": "var(fg)", "weight": 600, "italic": false, "spans": [{"text": "see also"}]}}, {"to": 5, "kind": "portal", "ends": [{"border_t": 0.25, "offset": 3.0, "color": "#aa88cc", "size": 40.0, "content": "◆", "spans": [{"text": "A"}], "label": {"spans": [{"text": "out"}]}}, {"border_t": 0.75, "spans": [{"text": "B"}]}]}]
     },
     {

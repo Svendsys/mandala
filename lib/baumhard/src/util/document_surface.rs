@@ -60,7 +60,9 @@ fn builder_references(source: &str) -> Vec<(usize, &'static str)> {
 const FORBIDDEN: &[&str] = &["mindmap", "gfx_structs", "parent_id", "edge_type", "parent_child"];
 
 /// The `String`-holding fields #235 allows on document elements, as
-/// `Type.field` (a tuple field by its index, an enum's by its variant).
+/// `Type.field` (a tuple field by its index, an enum's by its variant),
+/// and a frame's sides ornament, which #291 adds beside the `once`
+/// filler it stands in for on a frame.
 const ALLOWED_STRINGS: &[&str] = &[
     "FitMode::Once.filler",
     "FlowStyle.content",
@@ -68,6 +70,7 @@ const ALLOWED_STRINGS: &[&str] = &[
     "MapData.name",
     "PaletteData.name",
     "PortalEndStyle.content",
+    "Sides::On.content",
     "SpanData.text",
     "ThemeData.variables",
     "ThemeVariant.name",
@@ -164,8 +167,8 @@ const MAY_EDIT: &[&str] = &["tests/test_support.rs"];
 /// - `spelled` derives a spelling enum and its conversions.
 /// - `forward_methods` and `forward_scalars` forward a deserializer's
 ///   methods to the one it wraps, on a type private to `format`.
-/// - `text_in`, `frame_in`, `flow_in` and `portal_in` build a style
-///   from a DTO's fields, in a body, as an expression.
+/// - `text_in`, `frame_in`, `layout_in`, `flow_in` and `portal_in`
+///   build a style from a DTO's fields, in a body, as an expression.
 const ALLOWED_MACROS: &[(&str, Option<&str>)] = &[
     ("macro_rules", None),
     ("thread_local", None),
@@ -174,6 +177,7 @@ const ALLOWED_MACROS: &[(&str, Option<&str>)] = &[
     ("forward_scalars", Some("format/strict.rs")),
     ("text_in", Some("format/macros.rs")),
     ("frame_in", Some("format/macros.rs")),
+    ("layout_in", Some("format/macros.rs")),
     ("flow_in", Some("format/macros.rs")),
     ("portal_in", Some("format/macros.rs")),
 ];
@@ -2203,10 +2207,10 @@ hidden_items!();
         use crate::document::element::PathData;
         use crate::document::element::{
             ConnectorData, DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, LinkData, MapData,
-            PaletteData, PortalEndData, PortalEndStyle, RingData, RingStyle, SpanData, ThemeData,
-            ThemeVariant,
+            PaletteData, PortalEndData, PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SpanData,
+            ThemeData, ThemeVariant,
         };
-        use crate::document::values::{Anchor, FitMode, LinkKind, LinkTarget};
+        use crate::document::values::{Anchor, FitMode, LinkKind, LinkTarget, Sides};
         use crate::document::writer::budget::text_bytes;
 
         const TEXT: &str = "seven b";
@@ -2296,6 +2300,32 @@ hidden_items!();
                             style: style.clone(),
                         }),
                         defaults(&|d| d.portal_end = style.clone()),
+                    ]
+                }
+                "Sides::On.content" => {
+                    let layout = || RingLayoutStyle {
+                        sides: Some(Sides::On {
+                            content: TEXT.to_string(),
+                            color: None,
+                        }),
+                        ..RingLayoutStyle::default()
+                    };
+                    vec![
+                        DocElement::Frame(FrameData {
+                            style: FrameStyle {
+                                ring_layout: layout(),
+                                ..FrameStyle::default()
+                            },
+                        }),
+                        DocElement::Ring(RingData {
+                            channel: 0,
+                            style: RingStyle {
+                                ring_layout: layout(),
+                                ..RingStyle::default()
+                            },
+                        }),
+                        defaults(&|d| d.frame.ring_layout = layout()),
+                        defaults(&|d| d.ring.ring_layout = layout()),
                     ]
                 }
                 "SpanData.text" => vec![DocElement::Span(SpanData {

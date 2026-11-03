@@ -307,3 +307,32 @@ pub fn do_document_bounds_channel() {
         assert_eq!(check_channel(past), Err(BoundError::NotAChannel(1 << 32)));
     }
 }
+
+#[test]
+fn test_document_bounds_ornament() {
+    do_document_bounds_ornament();
+}
+
+/// A sides ornament must have something to draw (#291, ruling R33.1):
+/// one visible character is in, as is one among spaces; nothing,
+/// whitespace, a line break, a paragraph separator and zero-width
+/// characters alone are not. `MAX_ORNAMENT_BYTES` is in, a byte more is
+/// not.
+pub fn do_document_bounds_ornament() {
+    assert_eq!(check_ornament("·"), Ok("·"));
+    assert_eq!(check_ornament(" ✦ "), Ok(" ✦ "));
+    for nothing in ["", " ", "\t", "\n", "\u{2029}", "\u{200B}\u{200D}", " \u{FEFF} "] {
+        assert_eq!(check_ornament(nothing), Err(BoundError::EmptyText), "{nothing:?}");
+    }
+    let longest = "·".repeat(MAX_ORNAMENT_BYTES / "·".len());
+    assert!(longest.len() <= MAX_ORNAMENT_BYTES);
+    assert!(check_ornament(&longest).is_ok());
+    let over = "x".repeat(MAX_ORNAMENT_BYTES + 1);
+    assert_eq!(
+        check_ornament(&over),
+        Err(BoundError::TooLong {
+            len: MAX_ORNAMENT_BYTES + 1,
+            max: MAX_ORNAMENT_BYTES
+        })
+    );
+}

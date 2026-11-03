@@ -95,10 +95,10 @@ use crate::document::defaults::{BuiltInPath, BUILT_IN};
 use crate::document::element::{
     DefaultsData, DocElement, DocKind, FlowStyle, PaletteGroup, TextStyle, ThemeData,
 };
-use crate::document::ids::{defaults, palette, theme};
+use crate::document::ids::{defaults, owning_node, palette, theme};
 use crate::document::values::{
-    ColorRef, Direction, FitMode, FontSize, PaletteField, PaletteId, PlainColor, Rgba, Shape, StartPoint,
-    VarId, Weight,
+    ColorRef, Direction, FitMode, FontSize, LineSpan, PaletteField, PaletteId, PlainColor, Rgba, Shape,
+    Sides, StartPoint, VarId, Weight,
 };
 use crate::engine::tree::Tree;
 use crate::font::fonts::AppFont;
@@ -206,6 +206,26 @@ pub struct ResolvedFrame {
 pub struct ResolvedRing {
     /// What its text does when text and outline differ in length.
     pub fit: FitMode,
+    /// How much of its half each of its two lines covers.
+    pub span: LineSpan,
+    /// The ornament in the breaks between its two lines, if any.
+    pub sides: Option<ResolvedSides>,
+    /// The space added between every two glyph steps when it repeats.
+    pub spacing: f32,
+}
+
+/// A ring's sides ornament, resolved: one copy's text and its color.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedSides {
+    /// One copy's text, never empty: something to draw, at most
+    /// [`MAX_ORNAMENT_BYTES`](crate::document::bounds::MAX_ORNAMENT_BYTES)
+    /// long ([`check_ornament`](crate::document::bounds::check_ornament)).
+    /// The loader and the mutation validator refuse any other, a `once`
+    /// filler's included; sides of any other text in a document built
+    /// otherwise resolve to none.
+    pub content: String,
+    /// Its own color, or else the ring's text color.
+    pub color: Rgba,
 }
 
 /// What a path or a portal end draws.
@@ -867,31 +887,87 @@ pub fn resolve_frame(tree: &Tree<DocElement>, frame: NodeId, rec: &mut impl Read
     }
 }
 
-/// A ring's fit. The chain: the ring, its frame, `Defaults.ring`,
-/// `Defaults.frame`, `BUILT_IN`'s frame fit. Its text is
+/// A ring's fit, span, sides and spacing, each on its own. The chain:
+/// the ring, its frame, `Defaults.ring`, `Defaults.frame`, `BUILT_IN`'s
+/// frame — but sides unset all the way down, on a ring whose fit is a
+/// `once` with a filler, are that filler (ruling R34): round a frame the
+/// filler fills the breaks between the lines, which is what sides do,
+/// and an explicit `sides`, `false` included, wins. A sides ornament's
+/// color is its own, resolved as a ring's
+/// text color is — a palette field through the owning node's binding —
+/// or, when it has none or names a variable the theme lacks, the
+/// ring's text color ([`resolve_text`] of the ring). Its text is
 /// [`resolve_text`] of the ring.
 ///
-/// Cost: O(1). No allocation beyond cloning a `FitMode::Once` filler.
+/// Cost: O(1), and with sides a [`resolve_text`] of the ring. No
+/// allocation beyond cloning a `FitMode::Once` filler and a sides
+/// ornament.
 pub fn resolve_ring(tree: &Tree<DocElement>, ring: NodeId, rec: &mut impl ReadRecorder) -> ResolvedRing {
-    let mut inputs = Inputs::new(tree, rec, None);
-    let mut fit = match inputs.style(ring) {
-        Some(DocElement::Ring(ring)) => ring.style.fit.as_ref(),
+    let mut inputs = Inputs::new(tree, rec, owning_node(tree, ring));
+    let own = match inputs.style(ring) {
+        Some(DocElement::Ring(ring)) => Some(&ring.style),
         _ => None,
     };
-    if fit.is_none() {
+    let mut fit = own.and_then(|s| s.fit.as_ref());
+    let mut span = own.and_then(|s| s.ring_layout.span);
+    let mut sides = own.and_then(|s| s.ring_layout.sides.as_ref());
+    let mut spacing = own.and_then(|s| s.ring_layout.spacing);
+    let complete =
+        |fit: Option<&FitMode>, span: Option<LineSpan>, sides: Option<&Sides>, spacing: Option<f32>| {
+            fit.is_some() && span.is_some() && sides.is_some() && spacing.is_some()
+        };
+    if !complete(fit, span, sides, spacing) {
         if let Some(frame) = parent(tree, ring) {
             if let Some(DocElement::Frame(frame)) = inputs.style(frame) {
-                fit = frame.style.fit.as_ref();
+                let f = &frame.style;
+                fit = fit.or(f.fit.as_ref());
+                span = span.or(f.ring_layout.span);
+                sides = sides.or(f.ring_layout.sides.as_ref());
+                spacing = spacing.or(f.ring_layout.spacing);
             }
         }
     }
-    if fit.is_none() {
+    if !complete(fit, span, sides, spacing) {
         if let Some(defaults) = inputs.defaults() {
-            fit = defaults.ring.fit.as_ref().or(defaults.frame.fit.as_ref());
+            let (r, f) = (&defaults.ring, &defaults.frame);
+            fit = fit.or(r.fit.as_ref()).or(f.fit.as_ref());
+            span = span.or(r.ring_layout.span).or(f.ring_layout.span);
+            sides = sides
+                .or(r.ring_layout.sides.as_ref())
+                .or(f.ring_layout.sides.as_ref());
+            spacing = spacing.or(r.ring_layout.spacing).or(f.ring_layout.spacing);
         }
     }
+    let built_in = &BUILT_IN.frame;
+    let fit = fit.cloned().unwrap_or(built_in.fit.clone());
+    let sides = match (sides, &fit) {
+        (Some(Sides::On { content, color }), _) => {
+            Some((content.clone(), color.and_then(|c| inputs.color(c))))
+        }
+        (Some(Sides::Off), _) => None,
+        // Unset all the way down: a `once` filler is the frame's sides,
+        // the role it plays round a frame (ruling R34), in the ring's
+        // text color as the filler is drawn.
+        (None, FitMode::Once { filler: Some(filler) }) => Some((filler.clone(), None)),
+        (None, _) => match &built_in.sides {
+            Sides::On { content, .. } => Some((content.clone(), None)),
+            Sides::Off => None,
+        },
+    };
+    // Held to `check_ornament` here too, so that what resolves has
+    // something to draw whatever built the document: the loader and the
+    // mutation validator refuse any other (ruling R35.4).
+    let sides = sides
+        .filter(|(content, _)| crate::document::bounds::check_ornament(content).is_ok())
+        .map(|(content, own)| ResolvedSides {
+            content,
+            color: own.unwrap_or_else(|| resolve_text(tree, ring, rec).color),
+        });
     ResolvedRing {
-        fit: fit.cloned().unwrap_or(BUILT_IN.frame.fit),
+        fit,
+        span: span.unwrap_or(built_in.span),
+        sides,
+        spacing: spacing.unwrap_or(built_in.spacing),
     }
 }
 

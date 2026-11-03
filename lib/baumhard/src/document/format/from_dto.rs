@@ -741,8 +741,14 @@ impl Builder {
         self.key(key, |b| match fit {
             FitDto::Repeat => Ok(FitMode::Repeat),
             FitDto::Spread => Ok(FitMode::Spread),
-            FitDto::Once(once) => Ok(FitMode::Once {
-                filler: once.as_ref().map(|once| once.filler.to_string()),
+            // A filler is held to the sides' bounds, since round a frame
+            // it is its sides when they are unset (ruling R35.4).
+            FitDto::Once(None) => Ok(FitMode::Once { filler: None }),
+            FitDto::Once(Some(once)) => b.key("once", |b| {
+                let filler = b.bounded("filler", bounds::check_ornament(&once.filler))?;
+                Ok(FitMode::Once {
+                    filler: Some(filler.to_owned()),
+                })
             }),
             FitDto::Fit(None) => Ok(FitMode::Fit {
                 min: FIT_MIN,

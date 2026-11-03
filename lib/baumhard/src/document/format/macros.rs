@@ -61,7 +61,20 @@ macro_rules! frame_in {
             fit: $dto.fit.as_ref(),
             gap: $dto.gap,
             inset: $dto.inset,
+            layout: layout_in!($dto),
             text: text_in!($dto),
+        }
+    };
+}
+
+/// A [`LayoutIn`](crate::document::format::load_style::LayoutIn) of
+/// `$dto`'s layout keys: a frame's, a ring's or their defaults'.
+macro_rules! layout_in {
+    ($dto:expr) => {
+        $crate::document::format::load_style::LayoutIn {
+            span: $dto.span,
+            sides: $dto.sides.as_ref(),
+            spacing: $dto.spacing,
         }
     };
 }

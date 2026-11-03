@@ -5,14 +5,20 @@
 //! conditions. Geometric assertions only — positions, distances and
 //! counts, never pixels (TEST_CONVENTIONS §T10).
 
+/// A frame's work budget: past it, and `untouched`'s share of it.
+#[cfg(test)]
+mod budget_tests;
 pub mod fit_tests;
 /// TextFlow's fuzz properties, which the `fuzz/` targets call
 /// (TEST_CONVENTIONS §T14).
 pub mod flow_fuzz;
 #[cfg(test)]
 mod flow_fuzz_tests;
+pub mod halves_tests;
+pub mod lines_tests;
 pub mod outline_tests;
 pub mod place_tests;
+pub mod readable_tests;
 pub mod shape_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;

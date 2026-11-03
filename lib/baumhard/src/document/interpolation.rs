@@ -6,19 +6,23 @@
 //! **The fields #237 lists interpolate; everything else snaps.** A
 //! node's position and minimum size, a section's offset and minimum
 //! size, an opacity, a fill fade, a font size of one unit, a literal
-//! color (a palette group's included), a frame's gap and inset, a path's
-//! spacing and size, its control points when both sides have as many, a
-//! label's `t` and offset, a portal end's `border_t`, offset and size,
-//! and the theme's variant values — each moves along the straight line
-//! from before to after. Everything else switches whole at the snap
-//! point: text, fonts, weights, flags, ids, links, a color given by a
-//! theme variable or a palette, and every enum, with what it carries —
-//! a shape and its corner radius, a fit mode and its range, a frame's
-//! start point — and a zoom window. A field interpolates only when both
-//! sides hold a value of the same form; otherwise it snaps, so a field
-//! that appears or disappears switches rather than inventing a value.
-//! (B1 blended fit ranges, corner radii, zoom windows and start points
-//! too; ruling R10 on #237 holds them to the list.)
+//! color (a palette group's included), a frame's gap and inset, a
+//! frame's or ring's `span` and `spacing` (#291), a path's spacing and
+//! size, its control points when both sides have as many, a label's `t`
+//! and offset, a portal end's `border_t`, offset and size, and the
+//! theme's variant values — each moves along the straight line from
+//! before to after. Everything else switches whole at the snap point:
+//! text, fonts, weights, flags, ids, links, a color given by a theme
+//! variable or a palette, and every enum, with what it carries — a
+//! shape and its corner radius, a fit mode and its range, a frame's
+//! start point, a frame's or ring's `sides` — and a zoom window. A field
+//! interpolates only when both sides hold a value of the same form;
+//! otherwise it snaps, so a field that appears or disappears switches
+//! rather than inventing a value. (B1 blended fit ranges, corner radii,
+//! zoom windows and start points too; ruling R10 on #237 holds them to
+//! the list. Ruling R34 on #291 adds a ring's `span` and `spacing` to
+//! it, so `spacing` lerps on a ring as on a path: one key, one
+//! behavior.)
 //!
 //! Every interpolated element starts as a clone of the side the snap
 //! picks ([`Snap::pick`](crate::engine::interpolate::Snap::pick)), and
@@ -32,9 +36,9 @@
 
 use crate::document::element::{
     DefaultsData, DocElement, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PaletteGroup, PathData,
-    PortalEndStyle, RingStyle, TextStyle, ThemeData,
+    PortalEndStyle, RingLayoutStyle, RingStyle, TextStyle, ThemeData,
 };
-use crate::document::values::{ColorRef, FontSize, PlainColor, Rgba};
+use crate::document::values::{ColorRef, FontSize, LineSpan, PlainColor, Rgba};
 use crate::engine::interpolate::{Interpolable, Interpolate, Snap};
 use glam::Vec2;
 
@@ -101,11 +105,29 @@ fn node_style(value: &mut NodeStyle, from: &NodeStyle, to: &NodeStyle, t: f32) {
 fn frame(value: &mut FrameStyle, from: &FrameStyle, to: &FrameStyle, t: f32) {
     opt(&mut value.gap, &from.gap, &to.gap, t);
     opt(&mut value.inset, &from.inset, &to.inset, t);
+    ring_layout(&mut value.ring_layout, &from.ring_layout, &to.ring_layout, t);
     text(&mut value.text, &from.text, &to.text, t);
 }
 
 fn ring(value: &mut RingStyle, from: &RingStyle, to: &RingStyle, t: f32) {
+    ring_layout(&mut value.ring_layout, &from.ring_layout, &to.ring_layout, t);
     text(&mut value.text, &from.text, &to.text, t);
+}
+
+/// A frame's or ring's layout: its span and spacing blend, its sides
+/// snap (ruling R34 on #291).
+fn ring_layout(value: &mut RingLayoutStyle, from: &RingLayoutStyle, to: &RingLayoutStyle, t: f32) {
+    opt(&mut value.span, &from.span, &to.span, t);
+    opt(&mut value.spacing, &from.spacing, &to.spacing, t);
+}
+
+/// Along the straight line between the two fractions, held to `0..=1`
+/// for a `t` past either end.
+impl Interpolate for LineSpan {
+    fn lerp(from: &LineSpan, to: &LineSpan, t: f32) -> LineSpan {
+        let blended = f32::lerp(&from.get(), &to.get(), t);
+        LineSpan::new(blended.clamp(0.0, 1.0)).unwrap_or(*from)
+    }
 }
 
 fn label(value: &mut LabelStyle, from: &LabelStyle, to: &LabelStyle, t: f32) {

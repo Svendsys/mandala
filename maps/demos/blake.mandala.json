@@ -1,0 +1,48 @@
+{
+  "format": 1,
+  "name": "Auguries of Innocence",
+  "theme": {
+    "active": "night",
+    "variants": {
+      "night": {
+        "gold": "#f0d08c",
+        "sky": "#96baf0"
+      }
+    }
+  },
+  "defaults": {
+    "frame": {
+      "fit": "fit",
+      "font": "Galatia SIL"
+    }
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "position": [-680.0, -360.0],
+      "min_size": [1360.0, 720.0],
+      "shape": "ellipse",
+      "frame": {"sides": {"content": "·", "color": "#f0d08c96"}, "rings": [{"size": 0.0417, "color": "var(gold)", "spans": [{"text": "To see a World in a Grain of Sand, And a Heaven in a Wild Flower, Hold Infinity in the palm of your hand, And Eternity in an hour. "}]}]}
+    },
+    {
+      "id": 2,
+      "position": [-560.0, -280.0],
+      "min_size": [1120.0, 560.0],
+      "shape": "ellipse",
+      "frame": {"fit": "repeat", "rings": [{"size": 0.0321, "color": "#aa96dccc", "spans": [{"text": "✦ · "}]}]}
+    },
+    {
+      "id": 3,
+      "position": [-430.0, -190.0],
+      "min_size": [860.0, 380.0],
+      "shape": "ellipse",
+      "frame": {"sides": {"content": "✦", "color": "#96baf096"}, "rings": [{"size": 0.079, "color": "var(sky)", "spans": [{"text": "The heavens declare the glory of God; and the firmament sheweth his handywork. "}]}]}
+    },
+    {
+      "id": 4,
+      "position": [-400.0, -40.0],
+      "min_size": [800.0, 100.0],
+      "sections": [{"min_size": [800.0, 0.0], "align": "center", "font": "Galatia SIL", "size": 32.0, "color": "#f6eacc", "italic": true, "spans": [{"text": "William Blake — Auguries of Innocence"}]}, {"channel": 1, "offset": [0.0, 52.0], "min_size": [800.0, 0.0], "align": "center", "font": "Galatia SIL", "size": 24.0, "color": "var(sky)", "italic": true, "spans": [{"text": "Psalm 19:1"}]}]
+    }
+  ]
+}

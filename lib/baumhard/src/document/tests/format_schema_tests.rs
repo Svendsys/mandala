@@ -88,8 +88,14 @@ const SECTIONS: &[(&str, &[&str])] = &[
 ];
 
 /// The DTOs whose keys share one table, "Start point"'s second:
-/// `radius`, `filler`, `min`, `max`, `edge`, `at`.
-const SPELLING_OBJECTS: &[&str] = &["RectangleDto", "FitOnceDto", "FitRangeDto", "StartPointDto"];
+/// `radius`, `filler`, `min`, `max`, `edge`, `at`, `content`, `color`.
+const SPELLING_OBJECTS: &[&str] = &[
+    "RectangleDto",
+    "FitOnceDto",
+    "FitRangeDto",
+    "StartPointDto",
+    "SidesObjectDto",
+];
 
 /// The JSON keys of `dto`, in declaration order.
 fn members(graph: &TypeGraph, dto: &str) -> Vec<String> {

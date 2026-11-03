@@ -15,6 +15,59 @@ use crate::font::fonts::{
 };
 
 #[test]
+fn test_outline_bounds_follows_the_curve() {
+    do_outline_bounds_follows_the_curve();
+}
+
+/// An outline's bounds are the curve's, not its control points': a
+/// quadratic arch from (0, 0) to (10, 0) bending toward (5, 10) peaks at
+/// 5, a cubic one bending toward (0, 10) and (10, 10) at 7.5, and an
+/// S-shaped cubic overshoots its end points sideways exactly as far as
+/// its extremum. A path with no command draws nothing.
+pub fn do_outline_bounds_follows_the_curve() {
+    use cosmic_text::Command;
+    use glam::Vec2;
+    let close = |a: Vec2, b: Vec2| (a - b).abs().max_element() < 1e-4;
+    let quad = [
+        Command::MoveTo([0.0, 0.0].into()),
+        Command::QuadTo([5.0, 10.0].into(), [10.0, 0.0].into()),
+        Command::Close,
+    ];
+    let (min, max) = fonts::outline_bounds(&quad).unwrap_or_else(|| panic!("no bounds"));
+    assert!(
+        close(min, Vec2::ZERO) && close(max, Vec2::new(10.0, 5.0)),
+        "{min} {max}"
+    );
+    let cubic = [
+        Command::MoveTo([0.0, 0.0].into()),
+        Command::CurveTo([0.0, 10.0].into(), [10.0, 10.0].into(), [10.0, 0.0].into()),
+        Command::Close,
+    ];
+    let (min, max) = fonts::outline_bounds(&cubic).unwrap_or_else(|| panic!("no bounds"));
+    assert!(
+        close(min, Vec2::ZERO) && close(max, Vec2::new(10.0, 7.5)),
+        "{min} {max}"
+    );
+    // x(t) = 120t(1 − t)² − 90t²(1 − t) + 10t³ swings out past both of
+    // its ends, to −2.83349 and 12.83349 where x′(t)/3 = 220t² − 220t +
+    // 40 is 0, and well short of its control points at 40 and −30.
+    let s = [
+        Command::MoveTo([0.0, 0.0].into()),
+        Command::CurveTo([40.0, 3.0].into(), [-30.0, 6.0].into(), [10.0, 9.0].into()),
+    ];
+    let (min, max) = fonts::outline_bounds(&s).unwrap_or_else(|| panic!("no bounds"));
+    assert!(
+        (min.x + 2.833_49).abs() < 1e-3 && (max.x - 12.833_49).abs() < 1e-3,
+        "{min} {max}"
+    );
+    assert!(
+        close(Vec2::new(0.0, min.y), Vec2::ZERO) && close(Vec2::new(0.0, max.y), Vec2::new(0.0, 9.0)),
+        "{min} {max}"
+    );
+    assert!(fonts::outline_bounds(&[]).is_none());
+}
+
+#[test]
 fn test_measure_glyph_ink_bounds_latin_has_positive_advance() {
     do_measure_glyph_ink_bounds_latin_has_positive_advance();
 }

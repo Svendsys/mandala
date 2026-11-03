@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "name": "Hope is the thing with feathers",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [-750.0, -116.0],
+      "min_size": [1400.0, 0.0],
+      "font": "Galatia SIL",
+      "sections": [
+        {"min_size": [1400.0, 0.0], "align": "center", "size": 76.0, "color": "#f4d696", "spans": [{"text": "“Hope” is the thing with feathers –"}]},
+        {"channel": 1, "offset": [0.0, 130.0], "min_size": [1400.0, 0.0], "align": "center", "size": 76.0, "color": "#e4ceac", "spans": [{"text": "That perches in the soul –"}]},
+        {"channel": 2, "offset": [778.0, 298.0], "min_size": [400.0, 0.0], "align": "center", "size": 38.0, "color": "#b2a6cc", "italic": true, "spans": [{"text": "Emily Dickinson"}]}
+      ]
+    }
+  ]
+}

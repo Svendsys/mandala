@@ -40,7 +40,9 @@ use std::sync::Once;
 
 use baumhard::document::resolve::ResolvedText;
 use baumhard::document::values::{Align, Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, StartPoint, Weight};
-use baumhard::flow::{outline, place_on_closed, place_on_open, shape_box, shape_run, Curve, FlowSpan, Rect};
+use baumhard::flow::{
+    outline, place_on_closed, place_on_open, shape_box, shape_run, Curve, FlowSpan, Rect, RingLayout,
+};
 use baumhard::font::fonts::{
     self, acquire_font_system_read, acquire_font_system_write, try_acquire_font_system_write, AppFont,
 };
@@ -191,7 +193,7 @@ pub extern "C" fn flow_shape_and_place() -> u32 {
         at: 0.5,
     };
     let fit = FitMode::Fit { min: 0.5, max: 2.0 };
-    let (rescaled, placed) = place_on_closed(&run, &path, start, Direction::Clockwise, &fit, true, &style, &mut fs);
+    let (rescaled, placed) = place_on_closed(&run, &path, start, Direction::Clockwise, &fit, &RingLayout::natural(), true, &style, &mut fs);
     if rescaled.is_none() || placed.glyphs.len() != 3 {
         return 4;
     }

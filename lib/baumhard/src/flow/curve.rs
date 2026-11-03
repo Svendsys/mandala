@@ -68,19 +68,28 @@ impl Curve {
     /// how an arc-length table picks its sample count. O(1).
     ///
     /// `NaN` when any leg's length is not finite — a control point that
-    /// is not finite, or legs too long for `f32` — since such a curve has
-    /// no bound. (`f32::max` would drop a `NaN` leg and bound the rest.)
+    /// is not finite, or a leg longer than the largest `f32` — since such
+    /// a curve has no bound. (`f32::max` would drop a `NaN` leg and bound the rest.)
+    /// Every leg finite, the bound saturates at the largest `f32`: a
+    /// quadratic whose legs are each within it can still be twice as fast,
+    /// and its path no longer for that (seed 1021 of the structured flow
+    /// generator: a leg of 2.4 × 10³⁸, a path that long, whose bound of
+    /// twice that was infinite, so that it built no table and was placed
+    /// as a path of no length). The bound only picks a table's sample
+    /// count, which [`MAX_TABLE_SAMPLES`](crate::flow::path::MAX_TABLE_SAMPLES)
+    /// caps far below it; a path longer than the largest `f32` is still
+    /// dropped as not walkable (`ArcPath::from_stretches`).
     pub fn speed_bound(&self) -> f32 {
         let bound = |degree: f32, legs: &[Vec2]| {
             let mut longest = 0.0_f32;
             for leg in legs {
-                let length = leg.length();
+                let length = crate::flow::path::length_of(*leg);
                 if !length.is_finite() {
                     return f32::NAN;
                 }
                 longest = longest.max(length);
             }
-            degree * longest
+            (degree * longest).min(f32::MAX)
         };
         match *self {
             Curve::Line(a, b) => bound(1.0, &[b - a]),

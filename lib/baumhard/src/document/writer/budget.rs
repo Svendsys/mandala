@@ -18,9 +18,9 @@
 
 use crate::document::element::{
     DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, MapData, PaletteData, PortalEndData,
-    PortalEndStyle, RingData, RingStyle, SpanData, ThemeData, ThemeVariant,
+    PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SpanData, ThemeData, ThemeVariant,
 };
-use crate::document::values::{FitMode, LinkTarget};
+use crate::document::values::{FitMode, LinkTarget, Sides};
 
 /// A document's cost on the two axes.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -141,14 +141,32 @@ fn frame_style(style: &FrameStyle) -> u64 {
         fit: mode,
         gap: _,
         inset: _,
+        ring_layout,
         text: _,
     } = style;
-    fit(mode)
+    fit(mode) + ring_layout_style(ring_layout)
 }
 
 fn ring_style(style: &RingStyle) -> u64 {
-    let RingStyle { fit: mode, text: _ } = style;
-    fit(mode)
+    let RingStyle {
+        fit: mode,
+        ring_layout,
+        text: _,
+    } = style;
+    fit(mode) + ring_layout_style(ring_layout)
+}
+
+/// A ring's layout: its `sides` ornament's text (#291).
+fn ring_layout_style(style: &RingLayoutStyle) -> u64 {
+    let RingLayoutStyle {
+        span: _,
+        sides,
+        spacing: _,
+    } = style;
+    match sides {
+        Some(Sides::On { content, color: _ }) => len(content),
+        Some(Sides::Off) | None => 0,
+    }
 }
 
 fn portal_end_style(style: &PortalEndStyle) -> u64 {

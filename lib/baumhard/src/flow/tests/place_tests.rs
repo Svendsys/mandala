@@ -8,13 +8,16 @@
 
 use glam::Vec2;
 
+use crate::flow::path::ArcPath;
+use crate::flow::place::box_step;
+
 use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
 use crate::flow::tests::support::{
     center, close, de_casteljau, positioned, real_run, style, synthetic, with_fonts,
 };
 use crate::flow::{
     offset, outline, place_at_point, place_on_closed, place_on_open, ring_offset, Curve, Outline, PlacedRun,
-    Rect, ShapedRun,
+    Rect, RingLayout, ShapedRun,
 };
 
 const ONCE: FitMode = FitMode::Once { filler: None };
@@ -35,8 +38,19 @@ fn closed(
     fit: &FitMode,
     outward: bool,
 ) -> PlacedRun {
-    let (rescaled, placed) =
-        with_fonts(|fs| place_on_closed(run, path, start, direction, fit, outward, &style(12.0), fs));
+    let (rescaled, placed) = with_fonts(|fs| {
+        place_on_closed(
+            run,
+            path,
+            start,
+            direction,
+            fit,
+            &RingLayout::natural(),
+            outward,
+            &style(12.0),
+            fs,
+        )
+    });
     assert!(rescaled.is_none(), "these modes place the run they are given");
     placed
 }
@@ -157,19 +171,20 @@ fn test_flow_place_step_follows_the_chord_at_a_corner() {
 /// So the center is 8.736 on, at (100, 3.736): between the corner, where
 /// the tangent taken half a step on would put it, and (100, 5), where the
 /// tangent at the glyph's start alone would. The first glyph, entirely
-/// on the top side, steps its advance either way.
+/// on the top side, steps its advance either way. The steps are taken
+/// with the walk's own rule (`box_step`) on the outline's path, cluster
+/// after cluster from the start with no gap: a frame ring's placement
+/// adds its even spacing (ruling R29) on top of them.
 pub fn do_flow_place_step_follows_the_chord_at_a_corner() {
-    let run = synthetic(&[20.0, 20.0], 10.0);
-    let path = sharp(0.0, 0.0, 100.0, 100.0);
-    let placed = closed(
-        &run,
-        &path,
+    let path = ArcPath::closed(
+        &sharp(0.0, 0.0, 100.0, 100.0),
         start(Edge::Top, 0.75),
         Direction::Clockwise,
-        &ONCE,
-        false,
+        1.0,
     );
-    let c = centers(&run, &placed);
+    let (first, _) = box_step(&path, 0.0, 20.0, 10.0);
+    let (second, _) = box_step(&path, first, 20.0, 10.0);
+    let c = [path.at(first * 0.5).0, path.at(first + second * 0.5).0];
     assert!(c[0].distance(Vec2::new(85.0, 0.0)) < 1e-3, "{}", c[0]);
     assert!(c[1].distance(Vec2::new(100.0, 3.7358)) < 1e-3, "{}", c[1]);
 }
@@ -183,22 +198,18 @@ fn test_flow_place_corner_moves_continuously() {
 /// never jumps: between consecutive start points its center moves by
 /// little more than the start point does. A step taken from the tangent
 /// alone jumps by up to half the difference of advance and line height
-/// (here 25) as its middle crosses the corner.
+/// (here 25) as its middle crosses the corner. The steps are the walk's
+/// own (`box_step`), from the start with no gap, as in
+/// `test_flow_place_step_follows_the_chord_at_a_corner`.
 pub fn do_flow_place_corner_moves_continuously() {
-    let run = synthetic(&[10.0, 60.0], 10.0);
-    let path = sharp(0.0, 0.0, 100.0, 100.0);
+    let square = sharp(0.0, 0.0, 100.0, 100.0);
     let mut previous: Option<Vec2> = None;
     for i in 0..=2000 {
         let at = 0.5 + 0.5 * i as f32 / 2000.0;
-        let placed = closed(
-            &run,
-            &path,
-            start(Edge::Top, at),
-            Direction::Clockwise,
-            &ONCE,
-            false,
-        );
-        let second = centers(&run, &placed)[1];
+        let path = ArcPath::closed(&square, start(Edge::Top, at), Direction::Clockwise, 1.0);
+        let (first, _) = box_step(&path, 0.0, 10.0, 10.0);
+        let (second_step, _) = box_step(&path, first, 60.0, 10.0);
+        let second = path.at(first + second_step * 0.5).0;
         if let Some(previous) = previous {
             let moved = second.distance(previous);
             assert!(moved < 0.5, "at {at}: the second glyph jumped {moved}");
@@ -414,22 +425,38 @@ fn test_flow_place_start_and_direction() {
     do_flow_place_start_and_direction();
 }
 
-/// From the top-left corner, clockwise text runs rightward along the
-/// top; counter-clockwise it runs downward along the left side.
+/// From the top-left corner, clockwise a `Repeat` ring runs rightward
+/// along the top; counter-clockwise it runs downward along the left side.
+/// (`start` and `direction` belong to `Repeat` rings: a text frame reads
+/// in two lines, over the top and along the bottom — ruling R27.)
 pub fn do_flow_place_start_and_direction() {
     let run = synthetic(&[8.0; 3], 10.0);
     let path = sharp(0.0, 0.0, 200.0, 100.0);
     let top_left = start(Edge::Top, 0.0);
     let cw = centers(
         &run,
-        &closed(&run, &path, top_left, Direction::Clockwise, &ONCE, false),
+        &closed(
+            &run,
+            &path,
+            top_left,
+            Direction::Clockwise,
+            &FitMode::Repeat,
+            false,
+        ),
     );
     assert!(cw[1].x > cw[0].x + 1.0, "rightward: {:?}", &cw[..2]);
     close(cw[1].y, cw[0].y, 1e-3, "level");
     close(cw[0].y, 0.0, 1e-3, "on the top side");
     let ccw = centers(
         &run,
-        &closed(&run, &path, top_left, Direction::CounterClockwise, &ONCE, false),
+        &closed(
+            &run,
+            &path,
+            top_left,
+            Direction::CounterClockwise,
+            &FitMode::Repeat,
+            false,
+        ),
     );
     assert!(ccw[1].y > ccw[0].y + 1.0, "downward: {:?}", &ccw[..2]);
     close(ccw[1].x, ccw[0].x, 1e-3, "plumb");
@@ -456,7 +483,7 @@ pub fn do_flow_place_rings_stack_outward() {
             &path,
             start(Edge::Top, 0.5),
             Direction::Clockwise,
-            &ONCE,
+            &FitMode::Repeat,
             true,
         );
         centers(&run, &placed)[0]
@@ -550,7 +577,8 @@ fn test_flow_place_keeps_every_position_finite() {
 /// stretches. Two marks with no base step zero along a horizontal
 /// tangent, so they fit even an empty path and are placed — at the
 /// origin, not at `NaN` — and `"hello"` is cut, or placed on what is
-/// finite. Every mode, and a point placement at a center that is not
+/// finite. Every mode — a frame's at span natural, at whole, and with
+/// sides and a spacing — and a point placement at a center that is not
 /// finite.
 pub fn do_flow_place_keeps_every_position_finite() {
     let (marks, hello) = with_fonts(|fs| {
@@ -611,23 +639,38 @@ pub fn do_flow_place_keeps_every_position_finite() {
         edge: Edge::Top,
         at: 0.5,
     };
+    // The frame's layouts: at natural, at whole (the built-in), and at
+    // whole with sides and a spacing, so the clearance and the side arcs
+    // meet the broken outline too.
+    let layouts = [
+        RingLayout::natural(),
+        RingLayout::whole(),
+        RingLayout {
+            sides: Some(("·".to_string(), crate::document::values::Rgba::opaque(9, 9, 9))),
+            spacing: 4.0,
+            ..RingLayout::whole()
+        },
+    ];
     let mut placed_on_broken = 0;
-    for fit in &modes {
-        for (name, run) in [("marks", &marks), ("hello", &hello)] {
-            let (_, placed) = with_fonts(|fs| {
-                place_on_closed(
-                    run,
-                    &broken,
-                    top,
-                    Direction::Clockwise,
-                    fit,
-                    true,
-                    &style(12.0),
-                    fs,
-                )
-            });
-            finite(&placed, &format!("NaN rect, {fit:?}, {name}"));
-            placed_on_broken += placed.glyphs.len();
+    for layout in &layouts {
+        for fit in &modes {
+            for (name, run) in [("marks", &marks), ("hello", &hello)] {
+                let (_, placed) = with_fonts(|fs| {
+                    place_on_closed(
+                        run,
+                        &broken,
+                        top,
+                        Direction::Clockwise,
+                        fit,
+                        layout,
+                        true,
+                        &style(12.0),
+                        fs,
+                    )
+                });
+                finite(&placed, &format!("NaN rect, {fit:?}, {name}, {layout:?}"));
+                placed_on_broken += placed.glyphs.len();
+            }
         }
     }
     assert!(
@@ -636,4 +679,51 @@ pub fn do_flow_place_keeps_every_position_finite() {
     );
     finite(&place_at_point(&hello, Vec2::new(nan, 4.0)), "point at NaN");
     finite(&place_at_point(&hello, Vec2::splat(inf)), "point at infinity");
+}
+
+#[test]
+fn test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks() {
+    do_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks();
+}
+
+/// A closed ring's count of copies (ruling R29, `ring_copies`) is the
+/// most whose seam closes, found in few looks at the seam: a copy
+/// dropped at a time for the first few, then by bisection. Seed 2771 of
+/// the structured flow generator, with a host's faces, laid a `Repeat`
+/// round an ellipse 10²² from the origin, where an `f32` cannot set its
+/// glyphs apart and no count of its some 22,000 copies closed: dropped one
+/// at a time, every count was measured, each a walk of up to 65,536
+/// glyphs, past 18 minutes in a debug build (141 s now, the measures its
+/// gap's solve takes).
+///
+/// Control: with every copy dropped one at a time, the never-closing
+/// ring asks 21,844 times.
+pub fn do_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks() {
+    use crate::flow::place::ring_copies;
+    use std::cell::Cell;
+    // The count `ring_copies` finds when `closes` up to `most` copies, and
+    // how often it asks.
+    let count = |copies: usize, most: usize| {
+        let asked = Cell::new(0);
+        let found = ring_copies(copies, |k| {
+            asked.set(asked.get() + 1);
+            k <= most
+        });
+        (found, asked.get())
+    };
+    assert_eq!(
+        count(10, 8),
+        (8, 3),
+        "a ring two copies short: 8 copies in 3 looks"
+    );
+    let (far, asked) = count(21_845, 3);
+    assert!(
+        far == 3 && asked <= 20,
+        "a ring that closes at 3 copies of 21,845: {far} in {asked} looks"
+    );
+    let (never, asked) = count(21_845, 0);
+    assert!(
+        never == 1 && asked <= 20,
+        "a ring that never closes: {never} copies in {asked} looks"
+    );
 }

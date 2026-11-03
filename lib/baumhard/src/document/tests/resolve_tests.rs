@@ -11,14 +11,15 @@
 
 use crate::arena::NodeId;
 use crate::document::defaults::BUILT_IN;
-use crate::document::element::{DefaultsData, DocElement, PaletteData, TextStyle};
+use crate::document::element::{DefaultsData, DocElement, PaletteData, RingLayoutStyle, TextStyle};
 use crate::document::resolve::{
     resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end, resolve_ring, resolve_text,
     BorderPoint, Content, Input, ResolvedText,
 };
 use crate::document::tests::test_support::{example, palette_group, DocumentBuilder, Example};
 use crate::document::values::{
-    ColorRef, FitMode, FontSize, PaletteField, PaletteId, Percent, PlainColor, Rgba, Shape, VarId, Weight,
+    ColorRef, FitMode, FontSize, LineSpan, PaletteField, PaletteId, Percent, PlainColor, Rgba, Shape, Sides,
+    VarId, Weight,
 };
 use crate::font::fonts::AppFont;
 
@@ -949,6 +950,271 @@ pub fn do_document_resolve_portal_end_content_and_position() {
     );
     assert_eq!(end(&builder, ids.portal_target).border_t, BorderPoint::At(0.75));
     assert_eq!(end(&builder, ids.portal_source).content, Content::Spans);
+}
+
+#[test]
+fn test_document_resolve_ring_layout_chain() {
+    do_document_resolve_ring_layout_chain();
+}
+
+/// A ring's span, sides and spacing (#291) each run ring → frame →
+/// `Defaults.ring` → `Defaults.frame` → `BUILT_IN`'s frame, on their
+/// own: every tier sets all three to its own values, and as each tier
+/// is cleared the next gives all three — and a tier that sets one only
+/// gives that one, the others passing it by. `sides: Off` is a value,
+/// not an absence: a ring's `Off` hides the frame's ornament.
+pub fn do_document_resolve_ring_layout_chain() {
+    let (mut builder, ids) = example();
+    let ring = |b: &DocumentBuilder| {
+        let r = resolve_ring(b.tree(), ids.ring, &mut ());
+        (r.span.get(), r.sides.map(|s| s.content), r.spacing)
+    };
+    let on = |content: &str| Sides::On {
+        content: content.to_string(),
+        color: None,
+    };
+    let tier = |k: f32, content: &str| RingLayoutStyle {
+        span: LineSpan::new(k / 10.0),
+        sides: Some(on(content)),
+        spacing: Some(k),
+    };
+    assert_eq!(BUILT_IN.frame.sides, Sides::Off);
+    let built_in = (BUILT_IN.frame.span.get(), None, BUILT_IN.frame.spacing);
+    assert_eq!(ring(&builder), built_in);
+    assert_eq!(built_in, (1.0, None, 0.0), "whole, no sides, no spacing");
+    defaults(&mut builder, |d| {
+        d.frame.ring_layout = tier(1.0, "a");
+        d.ring.ring_layout = tier(2.0, "b");
+    });
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout = tier(3.0, "c");
+        }
+    });
+    let edit_ring = |b: &mut DocumentBuilder, layout: RingLayoutStyle| {
+        b.edit(ids.ring, |e| {
+            if let DocElement::Ring(r) = e {
+                r.style.ring_layout = layout;
+            }
+        });
+    };
+    edit_ring(&mut builder, tier(4.0, "d"));
+    assert_eq!(
+        ring(&builder),
+        (0.4, Some("d".to_string()), 4.0),
+        "the ring's own"
+    );
+    edit_ring(&mut builder, RingLayoutStyle::default());
+    assert_eq!(ring(&builder), (0.3, Some("c".to_string()), 3.0), "the frame's");
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout = RingLayoutStyle::default();
+        }
+    });
+    assert_eq!(ring(&builder), (0.2, Some("b".to_string()), 2.0), "Defaults.ring");
+    defaults(&mut builder, |d| d.ring.ring_layout = RingLayoutStyle::default());
+    assert_eq!(
+        ring(&builder),
+        (0.1, Some("a".to_string()), 1.0),
+        "Defaults.frame"
+    );
+
+    // Each field on its own: the ring sets its span only, the frame its
+    // sides only; the spacing comes from `Defaults.frame`.
+    edit_ring(
+        &mut builder,
+        RingLayoutStyle {
+            span: Some(LineSpan::NATURAL),
+            ..RingLayoutStyle::default()
+        },
+    );
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout.sides = Some(on("e"));
+        }
+    });
+    assert_eq!(ring(&builder), (0.0, Some("e".to_string()), 1.0));
+    edit_ring(
+        &mut builder,
+        RingLayoutStyle {
+            sides: Some(Sides::Off),
+            ..RingLayoutStyle::default()
+        },
+    );
+    assert_eq!(
+        ring(&builder),
+        (0.1, None, 1.0),
+        "a ring's Off hides the frame's ornament"
+    );
+    defaults(&mut builder, |d| d.frame.ring_layout = RingLayoutStyle::default());
+    edit_ring(&mut builder, RingLayoutStyle::default());
+    builder.edit(ids.frame, |e| {
+        if let DocElement::Frame(f) = e {
+            f.style.ring_layout = RingLayoutStyle::default();
+        }
+    });
+    assert_eq!(ring(&builder), built_in, "every tier cleared");
+}
+
+#[test]
+fn test_document_resolve_ring_sides_color() {
+    do_document_resolve_ring_sides_color();
+}
+
+/// A ring's sides ornament takes its own color when it has one, else
+/// the ring's text color: both resolved, a theme variable through the
+/// active variant. Controls: the ornament's color removed hands it the
+/// ring's; the ring's text color changed moves it along.
+pub fn do_document_resolve_ring_sides_color() {
+    let (mut builder, ids) = example();
+    builder.edit_node(ids.a, |n| n.palette = None);
+    let sides = |b: &DocumentBuilder| resolve_ring(b.tree(), ids.ring, &mut ()).sides.map(|s| s.color);
+    let set = |b: &mut DocumentBuilder, color: Option<ColorRef>| {
+        b.edit(ids.ring, |e| {
+            if let DocElement::Ring(r) = e {
+                r.style.ring_layout.sides = Some(Sides::On {
+                    content: "✦".to_string(),
+                    color,
+                });
+            }
+        });
+    };
+    style(&mut builder, ids.ring, |s| s.color = rgba(RED));
+    assert_eq!(sides(&builder), None, "no sides, no color");
+    set(&mut builder, rgba(GREEN));
+    assert_eq!(sides(&builder), Some(GREEN), "its own");
+    set(&mut builder, None);
+    assert_eq!(sides(&builder), Some(RED), "the ring's text color");
+    style(&mut builder, ids.ring, |s| s.color = rgba(BLUE));
+    assert_eq!(sides(&builder), Some(BLUE), "the ring's text color, again");
+}
+
+#[test]
+fn test_document_resolve_ring_sides_var_records_the_theme() {
+    do_document_resolve_ring_sides_var_records_the_theme();
+}
+
+/// A sides color given by a theme variable resolves through the active
+/// variant and records the theme read, so a change to the variable
+/// marks the ring's resolution stale. Control: the same ring with a
+/// literal color records no theme read through its sides.
+pub fn do_document_resolve_ring_sides_var_records_the_theme() {
+    let (mut builder, ids) = example();
+    builder.edit_node(ids.a, |n| n.palette = None);
+    style(&mut builder, ids.ring, |s| s.color = rgba(RED));
+    let set = |b: &mut DocumentBuilder, color: ColorRef| {
+        b.edit(ids.ring, |e| {
+            if let DocElement::Ring(r) = e {
+                r.style.ring_layout.sides = Some(Sides::On {
+                    content: "✦".to_string(),
+                    color: Some(color),
+                });
+            }
+        });
+    };
+    let theme_reads = |b: &DocumentBuilder| {
+        let mut reads: Vec<Input> = Vec::new();
+        let ring = resolve_ring(b.tree(), ids.ring, &mut reads);
+        (
+            ring.sides.map(|s| s.color),
+            reads.iter().filter(|r| **r == Input::Theme).count(),
+        )
+    };
+    set(&mut builder, ColorRef::Rgba(GREEN));
+    assert_eq!(
+        theme_reads(&builder),
+        (Some(GREEN), 0),
+        "a literal reads no theme"
+    );
+    set(&mut builder, ColorRef::Var(VarId(0)));
+    let (color, reads) = theme_reads(&builder);
+    assert!(reads > 0, "a variable records the theme read");
+    let theme = builder.tree().arena().iter().find_map(|(_, n)| match n.get() {
+        DocElement::Theme(t) => Some(t.clone()),
+        _ => None,
+    });
+    let expected = theme.and_then(|t| {
+        t.variants
+            .get(usize::from(t.active))
+            .and_then(|v| v.values.first().copied())
+    });
+    assert_eq!(color, expected, "the active variant's value");
+}
+
+#[test]
+fn test_document_resolve_ring_once_filler_is_its_sides() {
+    do_document_resolve_ring_once_filler_is_its_sides();
+}
+
+/// A ring whose fit is a `once` with a filler, and whose sides are unset
+/// all the way down, has the filler as its sides, in its text color
+/// (ruling R34). Controls: sides set to an ornament win, and so does
+/// `false`; a `once` with no filler has none. A filler or sides that
+/// `check_ornament` refuses — blank, zero-width, past 256 bytes — is
+/// none, so a resolved ornament always has something to draw (ruling
+/// R35.4).
+pub fn do_document_resolve_ring_once_filler_is_its_sides() {
+    let (mut builder, ids) = example();
+    builder.edit_node(ids.a, |n| n.palette = None);
+    style(&mut builder, ids.ring, |s| s.color = rgba(RED));
+    let edit = |b: &mut DocumentBuilder, fit: FitMode, sides: Option<Sides>| {
+        b.edit(ids.ring, |e| {
+            if let DocElement::Ring(r) = e {
+                r.style.fit = Some(fit);
+                r.style.ring_layout.sides = sides;
+            }
+        });
+    };
+    let sides = |b: &DocumentBuilder| {
+        resolve_ring(b.tree(), ids.ring, &mut ())
+            .sides
+            .map(|s| (s.content, s.color))
+    };
+    let filler = || FitMode::Once {
+        filler: Some("·".to_string()),
+    };
+    edit(&mut builder, filler(), None);
+    assert_eq!(
+        sides(&builder),
+        Some(("·".to_string(), RED)),
+        "the filler, in the ring's color"
+    );
+    edit(
+        &mut builder,
+        filler(),
+        Some(Sides::On {
+            content: "✦".to_string(),
+            color: None,
+        }),
+    );
+    assert_eq!(
+        sides(&builder),
+        Some(("✦".to_string(), RED)),
+        "an explicit ornament wins"
+    );
+    edit(&mut builder, filler(), Some(Sides::Off));
+    assert_eq!(sides(&builder), None, "an explicit false wins");
+    edit(&mut builder, FitMode::Once { filler: None }, None);
+    assert_eq!(sides(&builder), None, "no filler, no sides");
+    // Ruling R35.4: what resolves always has something to draw, however
+    // the document was built. A loaded or validated one never holds
+    // these; one built in code can.
+    for bad in ["", "   ", "\u{200B}", &"·".repeat(4000)] {
+        let once = FitMode::Once {
+            filler: Some(bad.to_string()),
+        };
+        edit(&mut builder, once, None);
+        assert_eq!(sides(&builder), None, "a filler {bad:.12?} is no sides");
+        edit(
+            &mut builder,
+            FitMode::Once { filler: None },
+            Some(Sides::On {
+                content: bad.to_string(),
+                color: None,
+            }),
+        );
+        assert_eq!(sides(&builder), None, "sides {bad:.12?} are none");
+    }
 }
 
 #[test]

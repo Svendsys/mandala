@@ -15,7 +15,7 @@ use crate::document::element::{
 use crate::document::ids::{Definitions, Document, NodeIdent, VerbDef};
 use crate::document::mutation::error::{MutationError, StructureRule};
 use crate::document::mutation::ops::{
-    DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LinkOp, NodeOp, PaletteOp, PathOp,
+    DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LayoutOp, LinkOp, NodeOp, PaletteOp, PathOp,
     PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
 };
 use crate::document::mutation::step::{DocStep, DocWalk};
@@ -23,7 +23,7 @@ use crate::document::mutation::validate::{validate, validate_applied, validate_f
 use crate::document::shape::ShapeError;
 use crate::document::tests::test_support::{example, node_data, palette_group, path_data, Example};
 use crate::document::values::{
-    ColorRef, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, StartPoint, VarId,
+    ColorRef, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Sides, StartPoint, VarId,
     VerbId, ZoomWindow,
 };
 use crate::engine::anchor::Anchors;
@@ -130,6 +130,19 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
     let fit = |min, max| Some(FitMode::Fit { min, max });
     let zoom = |min, max| Some(ZoomWindow { min, max });
     let points = |n: usize| vec![Vec2::ZERO; n];
+    // A `once` filler is held to the sides' bounds (ruling R35.4): `·`
+    // is two bytes, so 128 of them are the 256-byte bound and 129 pass it.
+    let once = |filler: &str| {
+        Some(FitMode::Once {
+            filler: Some(filler.to_string()),
+        })
+    };
+    let sides = |content: &str| {
+        Some(Sides::On {
+            content: content.to_string(),
+            color: None,
+        })
+    };
     #[rustfmt::skip]
     let cases: Vec<(DocKind, DocMutation, DocMutation, &str)> = vec![
         (DocKind::Node, DocMutation::Node(NodeOp::SetPosition(Vec2::new(2.0e9, 0.0))), DocMutation::Node(NodeOp::SetPosition(Vec2::splat(MAX_CANVAS_COORD))), "node.position"),
@@ -150,6 +163,13 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
         (DocKind::Frame, DocMutation::Frame(FrameOp::SetInset(Some(f32::NAN))), DocMutation::Frame(FrameOp::SetInset(Some(5.0))), "frame.inset"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::Text(TextOp::SetSize(Some(FontSize::Rel(1.5))))), DocMutation::Frame(FrameOp::Text(TextOp::SetSize(Some(FontSize::Rel(1.0))))), "text.size"),
         (DocKind::Ring, DocMutation::Ring(RingOp::SetFit(fit(0.0, 1.0))), DocMutation::Ring(RingOp::SetFit(fit(0.1, 1.0))), "ring.fit"),
+        (DocKind::Frame, DocMutation::Frame(FrameOp::SetFit(once("   "))), DocMutation::Frame(FrameOp::SetFit(once("·"))), "frame.fit"),
+        (DocKind::Ring, DocMutation::Ring(RingOp::SetFit(once(&"·".repeat(129)))), DocMutation::Ring(RingOp::SetFit(once(&"·".repeat(128)))), "ring.fit"),
+        (DocKind::Link, DocMutation::Path(PathOp::SetFit(once("\u{200B}"))), DocMutation::Path(PathOp::SetFit(once("-"))), "path.fit"),
+        (DocKind::Frame, DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpacing(Some(-1.0)))), DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpacing(Some(0.0)))), "frame.spacing"),
+        (DocKind::Ring, DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(f32::NAN)))), DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(6.0)))), "ring.spacing"),
+        (DocKind::Frame, DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides("")))), DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides("✦")))), "frame.sides"),
+        (DocKind::Ring, DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(sides("")))), DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(sides("·")))), "ring.sides"),
         (DocKind::Link, DocMutation::Path(PathOp::SetSpacing(Some(-1.0))), DocMutation::Path(PathOp::SetSpacing(Some(0.0))), "path.spacing"),
         (DocKind::Link, DocMutation::Path(PathOp::SetSize(Some(5000.0))), DocMutation::Path(PathOp::SetSize(Some(MAX_FONT_SIZE_PT))), "path.size"),
         (DocKind::Link, DocMutation::Path(PathOp::SetControlPoints(points(3))), DocMutation::Path(PathOp::SetControlPoints(points(2))), "path.control_points"),
@@ -315,8 +335,9 @@ fn test_document_validate_refuses_a_missing_reference() {
     do_document_validate_refuses_a_missing_reference();
 }
 
-/// A verb, a palette, a theme variable, a theme variant and a palette
-/// group each must exist; the last one that does passes.
+/// A verb, a palette, a theme variable — a sides color's included, on
+/// a frame, a ring and each defaults table — a theme variant and a
+/// palette group each must exist; the last one that does passes.
 pub fn do_document_validate_refuses_a_missing_reference() {
     let (doc, _) = document();
     assert_eq!(doc.definitions().verbs.len(), 1);
@@ -345,6 +366,47 @@ pub fn do_document_validate_refuses_a_missing_reference() {
         validate(&node(NodeOp::SetFill(Some(ColorRef::Var(VarId(1))))), &doc),
         Ok(())
     );
+    // A sides color naming a theme variable, per tier: a frame's, a
+    // ring's, and each defaults table's. A mutation is the only route
+    // to these (the loader refuses such a map).
+    let sides = |var| {
+        Some(Sides::On {
+            content: "✦".to_string(),
+            color: Some(ColorRef::Var(VarId(var))),
+        })
+    };
+    for var in [2, 1] {
+        let frame = at_root(
+            DocKind::Frame,
+            DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides(var)))),
+        );
+        let ring = at_root(
+            DocKind::Ring,
+            DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(sides(var)))),
+        );
+        let mut frame_default = DefaultsData::default();
+        frame_default.frame.ring_layout.sides = sides(var);
+        let mut ring_default = DefaultsData::default();
+        ring_default.ring.ring_layout.sides = sides(var);
+        let defaults = |d: DefaultsData| {
+            at_root(
+                DocKind::Defaults,
+                DocMutation::Defaults(DefaultsOp::Replace(Box::new(d))),
+            )
+        };
+        for (tier, mutator) in [
+            ("frame", frame),
+            ("ring", ring),
+            ("defaults.frame", defaults(frame_default)),
+            ("defaults.ring", defaults(ring_default)),
+        ] {
+            if var == 2 {
+                assert_eq!(missing(mutator), ("theme variable", 2), "{tier}.sides");
+            } else {
+                assert_eq!(validate(&mutator, &doc), Ok(()), "{tier}.sides");
+            }
+        }
+    }
     let link = DocMutation::Span(SpanOp::SetLink(Some(LinkTarget::Verb(VerbId(4)))));
     assert_eq!(missing(at_root(DocKind::Span, link)), ("verb", 4));
 

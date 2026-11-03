@@ -858,7 +858,58 @@ The script builds on the pinned nightly (rustup installs it on first
 use), runs over the generated corpus, the seeds and the surface's own
 inputs, and bounds every input: `-timeout`, `-rss_limit_mb` and a
 `-max_len` per surface. It exits non-zero on a finding and leaves the
-input in `fuzz/artifacts/<target>/`. Running a fuzzer is not
+input in `fuzz/artifacts/<target>/`. Where the engine's own bound on an
+input's work lies past the timeout, the harness bounds what it
+generates instead, never the engine (rulings R44.2, R45, R46, R47). A
+text frame's work — its tracking, shaping, inking and the rest, each
+counted at a weight measured in one tracking step's time (R46.1) — is
+bounded by its budget, `max(400,000, 3,000 × glyphs)` steps, and by
+what its weights allow past it, one build's shaping and inking and a
+lay of each line (`frame_work_steps`, R47.2): the budget is read before
+each build, reshape and lay, and before each copy of a side ornament,
+which also holds back the cost of its arc's touch check at
+`touch_looks` looks a box of the classes of height it holds (R48.2,
+R51.2), so once it is spent nothing
+runs that the overshoot does not count (the `PAST_BUDGET` grid in
+`flow/tests/budget_tests.rs` holds every fit mode, span, kind of sides
+and direction to it, a take that crosses the budget counted for the
+part past it, R50.4). Every flow fuzz frame is held to that bound on
+looks a box too, so a geometry that breaks it is a finding: the check's
+looks are the inks near each box, whatever the tallest (R50.1), and a
+few for each class of height (R51.2), and flow_structured draws texts
+of up to sixteen sizes over the whole font-size window (`mixed_sizes`,
+R51.2) and long mixed side ornaments, up to 200 bytes of a wide glyph
+among thin ones (`long_ornament`, R50.3), the ornament cut
+until a frame of no text beside it fits, and then the frame's text, to
+leave their shaping and inking room within the per-input bound below
+(`sides_in_time`, `framed`). A glyph a compiled face lacks shapes as a
+host face holds it, or as a `.notdef`, weighed 2,200 steps, where none
+does — on CI, which has few host faces — so a harness counts what it
+shapes on the host it runs on, and a fixture names glyphs the compiled
+faces hold. To see what CI sees, point `FONTCONFIG_FILE` at a config
+whose one `<dir>` is empty: the host's faces are then not indexed, and
+the compiled ones alone remain. A counted step costs at
+most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
+1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
+An input's worst case is the sum of its frames' work at that cost, and
+it is held to `INPUT_WORK_MICROS`, 15 s, three quarters of the 20 s
+`-timeout`: 464,396 steps. Two frames at the 400,000-step floor alone
+take 25.8 s, so each flow target lays one frame an input
+(`RAW_FRAMES`, `STRUCTURED_FRAMES`; flow_raw draws the frame's fit mode
+from its input), its text cut until the frame's work fits
+(`fits_in_time`): at most `MAX_FRAME_GLYPHS` (150) glyphs of a text in
+one face, 462,949 steps, 14.95 s, and fewer of a text the shaper must
+search every face for. `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
+computes it from those constants, and every input holds its own frames
+to it. A committed finding replays in the frame it was found in: a raw
+one in every fit mode it was found among (`check_flow_bytes_in_every_fit`),
+each its text cut as at R44 (`FOUND_FRAME_GLYPHS`, 320), and a
+structured one likewise (`check_flow_structured_as_found`). Since R44.4
+the fuzzers draw a frame's ring layout from the input, and a finding's
+bytes draw one too, though every committed finding was found over whole
+halves with no sides: a replay lays each frame in both
+`RingLayout::whole()` and the layout its bytes draw (`laid_layouts`). A real map's frame places
+its whole text. Running a fuzzer is not
 benchmarking — CLAUDE.md §6 still holds, and a run is never cited as a
 performance number.
 

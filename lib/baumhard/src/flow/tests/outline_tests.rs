@@ -9,7 +9,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI};
 use glam::Vec2;
 
 use crate::document::values::{Direction, Edge, Percent, Shape, StartPoint};
-use crate::flow::path::ArcPath;
+use crate::flow::path::{direction_of, length_of, ArcPath};
 use crate::flow::tests::support::{close, de_casteljau, de_casteljau_derivative};
 use crate::flow::{offset, outline, ring_offset, Curve, Outline, Rect};
 
@@ -398,6 +398,40 @@ pub fn do_flow_table_spacing_has_a_floor() {
 }
 
 #[test]
+fn test_flow_a_curve_faster_than_the_largest_f32_is_tabled() {
+    do_flow_a_curve_faster_than_the_largest_f32_is_tabled();
+}
+
+/// A curve whose every control point and leg is finite but whose speed
+/// bound — the degree times its longest leg — is past the largest `f32`
+/// still builds its table: the bound saturates there, and its path has
+/// its length. Seed 1021 of the structured flow generator: a quadratic
+/// from (1, 1) by (−2.4 × 10³⁸, −587) to (−10³⁰, 1), 2.4 × 10³⁸ long,
+/// whose bound of twice its first leg was infinite, so that it built no
+/// table and its `Spread` was cut to nothing though its text fit.
+///
+/// Control: with the bound not saturated, no table and no length.
+pub fn do_flow_a_curve_faster_than_the_largest_f32_is_tabled() {
+    let curve = Curve::Quadratic(
+        Vec2::new(1.0, 1.0),
+        Vec2::new(-2.409_018_9e38, -587.0),
+        Vec2::new(-1e30, 1.0),
+    );
+    assert_eq!(
+        curve.speed_bound(),
+        f32::MAX,
+        "the bound saturates at the largest f32"
+    );
+    let path = ArcPath::open(&curve, 4.8);
+    assert!(path.table_samples() > 0, "the curve builds its table");
+    assert!(
+        path.length().is_finite() && path.length() > 2.4e38,
+        "its path is as long as it is: {}",
+        path.length()
+    );
+}
+
+#[test]
 fn test_flow_non_finite_curves_build_no_table() {
     do_flow_non_finite_curves_build_no_table();
 }
@@ -424,4 +458,305 @@ pub fn do_flow_non_finite_curves_build_no_table() {
     let path = ArcPath::closed(&ellipse, start(Edge::Top, 0.0), Direction::Clockwise, 1.0);
     assert_eq!(path.table_samples(), 0, "NaN ellipse");
     assert_eq!(path.length(), 0.0, "NaN ellipse");
+}
+
+#[test]
+fn test_flow_outline_support_faces_its_direction() {
+    do_flow_outline_support_faces_its_direction();
+}
+
+/// `Outline::support` (#291, ruling R33), against values worked out
+/// here: on a 400 × 200 ellipse the point `c + (a², b²)/√(a² + b²)` for
+/// `(1, 1)` — where its tangent runs at 45° — and in every direction a
+/// point on the ellipse whose normal, `(x/a², y/b²)`, is parallel to the
+/// direction; on a rounded rectangle its corner arc's midpoint; on a
+/// sharp one its corner; on a pill the end of its cap; and its center
+/// for a direction of no length or one not a number.
+pub fn do_flow_outline_support_faces_its_direction() {
+    let near = |a: Vec2, b: Vec2| a.distance(b) <= 1e-3;
+    let (a, b) = (200.0_f32, 100.0_f32);
+    let ellipse = outline(rect(0.0, 0.0, 2.0 * a, 2.0 * b), Shape::Ellipse);
+    let c = Vec2::new(a, b);
+    let expected = c + Vec2::new(a * a, b * b) / (a * a + b * b).sqrt();
+    assert!(
+        near(ellipse.support(Vec2::ONE), expected),
+        "{}",
+        ellipse.support(Vec2::ONE)
+    );
+    for dir in [
+        Vec2::new(-1.0, -1.0),
+        Vec2::new(1.0, 1.0),
+        Vec2::new(0.0, -1.0),
+        Vec2::new(3.0, 1.0),
+        Vec2::new(-1.0, 4.0),
+    ] {
+        let p = ellipse.support(dir) - c;
+        assert!(
+            ((p.x / a).powi(2) + (p.y / b).powi(2) - 1.0).abs() < 1e-4,
+            "{dir}: {p} on the ellipse"
+        );
+        let normal = Vec2::new(p.x / (a * a), p.y / (b * b)).normalize();
+        assert!(
+            normal.dot(dir.normalize()) > 1.0 - 1e-5,
+            "{dir}: the normal {normal} faces it"
+        );
+    }
+    // A rounded rectangle 400 × 200 at 50%: corner radius 50.
+    let round = outline(rect(0.0, 0.0, 400.0, 200.0), rounded(50));
+    let corner = Vec2::new(350.0, 150.0) + Vec2::splat(50.0 * FRAC_1_SQRT_2);
+    assert!(
+        near(round.support(Vec2::ONE), corner),
+        "{}",
+        round.support(Vec2::ONE)
+    );
+    let top_left = Vec2::new(50.0, 50.0) - Vec2::splat(50.0 * FRAC_1_SQRT_2);
+    assert!(near(round.support(-Vec2::ONE), top_left));
+    let sharp = outline(rect(10.0, 20.0, 400.0, 200.0), rounded(0));
+    assert!(near(sharp.support(-Vec2::ONE), Vec2::new(10.0, 20.0)));
+    assert!(near(sharp.support(Vec2::ONE), Vec2::new(410.0, 220.0)));
+    let pill = outline(rect(0.0, 0.0, 400.0, 200.0), rounded(100));
+    assert!(
+        near(pill.support(Vec2::X), Vec2::new(400.0, 100.0)),
+        "{}",
+        pill.support(Vec2::X)
+    );
+    assert!(near(
+        pill.support(Vec2::ONE),
+        Vec2::new(300.0, 100.0) + Vec2::splat(100.0 * FRAC_1_SQRT_2)
+    ));
+    for nothing in [Vec2::ZERO, Vec2::new(f32::NAN, 1.0)] {
+        assert_eq!(ellipse.support(nothing), c, "{nothing}");
+        assert_eq!(round.support(nothing), Vec2::new(200.0, 100.0), "{nothing}");
+    }
+}
+
+#[test]
+fn test_flow_path_nearest_finds_its_own_points() {
+    do_flow_path_nearest_finds_its_own_points();
+}
+
+/// `ArcPath::nearest` on a closed ellipse finds, for a point a little
+/// off the path at `s`, that `s` — round the path, a point just before
+/// the seam included, which sits as near the sample at the seam's start
+/// as at its end — to within a hundredth of a point, measured round the
+/// path.
+pub fn do_flow_path_nearest_finds_its_own_points() {
+    let shape = outline(rect(0.0, 0.0, 400.0, 200.0), Shape::Ellipse);
+    let path = ArcPath::closed(&shape, start(Edge::Left, 0.5), Direction::CounterClockwise, 0.25);
+    let length = path.length();
+    for s in [
+        0.0,
+        1.0,
+        0.25 * length,
+        0.5 * length,
+        0.9 * length,
+        length - 0.1,
+        length - 0.01,
+    ] {
+        let (p, tangent) = path.at(s);
+        let off = p + path.outward(tangent) * 3.0;
+        let found = path.nearest(off);
+        let apart = (found - s).rem_euclid(length);
+        let apart = apart.min(length - apart);
+        assert!(apart <= 1e-2, "at {s} of {length}: found {found}");
+    }
+}
+
+#[test]
+fn test_flow_path_measures_past_the_root_of_the_largest_f32() {
+    do_flow_path_measures_past_the_root_of_the_largest_f32();
+}
+
+/// A vector, a line, a curve and an outline longer than `√f32::MAX`
+/// (about `1.8e19`) — whose squared length passes every `f32` — measure
+/// their lengths, each against the same length worked in `f64`, and
+/// walk to their ends. Control: measured by `Vec2::length`, each is
+/// infinite or not walked at all.
+pub fn do_flow_path_measures_past_the_root_of_the_largest_f32() {
+    let near = |got: f32, want: f64, what: &str| {
+        assert!(
+            ((got as f64) - want).abs() <= want * 1e-5,
+            "{what}: {got:e}, owed {want:e}"
+        );
+    };
+    near(length_of(Vec2::new(3.0e30, -4.0e30)), 5.0e30, "a vector");
+    near(length_of(Vec2::new(3.0, 4.0)), 5.0, "a short vector");
+    let dir = direction_of(Vec2::new(3.0e30, -4.0e30)).expect("a direction");
+    assert!(dir.distance(Vec2::new(0.6, -0.8)) <= 1e-6, "its direction {dir}");
+    assert_eq!(length_of(Vec2::ZERO), 0.0);
+    for v in [
+        Vec2::ZERO,
+        Vec2::new(f32::NAN, 1.0),
+        Vec2::new(f32::INFINITY, 0.0),
+    ] {
+        assert_eq!(direction_of(v), None, "{v} has no direction");
+    }
+    // Below the overflow, `try_normalize`'s answer exactly: `None` for a
+    // vector whose length underflows to zero, as for zero itself.
+    for v in [
+        Vec2::new(1.0e-38, 0.0),
+        Vec2::new(3.0e-25, -4.0e-25),
+        Vec2::new(0.3, -0.4),
+        Vec2::new(3.0e18, 4.0e18),
+    ] {
+        assert_eq!(
+            direction_of(v),
+            v.try_normalize(),
+            "{v}: try_normalize's direction"
+        );
+    }
+    assert_eq!(
+        direction_of(Vec2::new(1.0e-38, 0.0)),
+        None,
+        "an underflowing vector has no direction"
+    );
+    // A line from -1e20 to 1e20, and a diagonal one.
+    let (a, b) = (Vec2::new(-1.0e20, 0.0), Vec2::new(1.0e20, 0.0));
+    let line = ArcPath::open(&Curve::Line(a, b), 1.0);
+    near(line.length(), 2.0e20, "a line");
+    assert!(
+        line.at(line.length()).0.distance(b) <= 1.0e15,
+        "the line walks to its end"
+    );
+    let (a, b) = (Vec2::splat(-1.0e37), Vec2::splat(1.0e37));
+    near(
+        ArcPath::open(&Curve::Line(a, b), 1.0).length(),
+        2.0e37 * std::f64::consts::SQRT_2,
+        "a diagonal line",
+    );
+    // A curve with a control point far out: its length lies between its
+    // chord and its control polygon.
+    let (a, c, b) = (
+        Vec2::new(0.0, 0.0),
+        Vec2::new(5.0e25, 0.0),
+        Vec2::new(0.0, 1.0e25),
+    );
+    let curve = ArcPath::open(&Curve::Quadratic(a, c, b), 1.0);
+    let polygon = (c - a).as_dvec2().length() + (b - c).as_dvec2().length();
+    let chord = (b - a).as_dvec2().length();
+    assert!(
+        (curve.length() as f64) >= chord && (curve.length() as f64) <= polygon * (1.0 + 1e-5),
+        "a curve {:e}, between {chord:e} and {polygon:e}",
+        curve.length()
+    );
+    // A rounded rectangle 1e30 wide.
+    let (w, h, r) = (1.0e30_f64, 40.0_f64, 10.0_f64);
+    let rounded = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(w as f32, h as f32)),
+        Shape::Rectangle {
+            radius: Percent::new(50),
+        },
+    );
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.0,
+    };
+    let path = ArcPath::closed(&rounded, start, Direction::Clockwise, 1.0);
+    near(
+        path.length(),
+        2.0 * (w - 2.0 * r) + 2.0 * (h - 2.0 * r) + 2.0 * PI as f64 * r,
+        "an outline",
+    );
+}
+
+/// A path looked up forward a little at a time — as a walk looks it up —
+/// is answered from where the last lookup fell, not by a search of its
+/// stretches and its table (#294): fewer than one search in a hundred
+/// lookups. Every answer is the one a path that has not been walked
+/// gives, bit for bit, a search's. Control: with no cursor, every lookup
+/// searches. (No `do_*` twin: it reads test counters.)
+#[test]
+fn test_flow_path_walks_forward_without_searching() {
+    use crate::flow::path::{at_or_below_seam, PATH_LOOKUPS, PATH_SEARCHES};
+    // The cursor's search against the search it stands for (ruling
+    // R44.7): `partition_point` on the raw table, for tables with runs of
+    // equal values, from a cursor anywhere, for lookups that walk
+    // forward, jump back — as a chord either side of an ink does — and
+    // land at random, so both ways the search gallops are taken.
+    let mut seed = 0x9e37_79b9_u32;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    let (mut backward, mut forward) = (0, 0);
+    for len in [1usize, 2, 3, 17, 300, 4096] {
+        let mut table = Vec::with_capacity(len);
+        let mut v = 0.0_f32;
+        for _ in 0..len {
+            // A step of none now and then: equal distances.
+            v += (next() % 4) as f32 * 0.5;
+            table.push(v);
+        }
+        let top = v + 2.0;
+        let mut cursor = (next() as usize) % len;
+        for k in 0..2_000 {
+            let s = match k % 3 {
+                0 => table[cursor.min(len - 1)] + 0.25,
+                1 => table[cursor.min(len - 1)] - (next() % 64) as f32,
+                _ => (next() % 10_000) as f32 / 10_000.0 * (top + 2.0) - 1.0,
+            };
+            let want = table.partition_point(|&d| d <= s).saturating_sub(1);
+            let (got, moved) = at_or_below_seam(&table, s, cursor);
+            assert_eq!(
+                got, want,
+                "a table of {len} from cursor {cursor} at {s}: {got}, a search finds {want}"
+            );
+            assert_eq!(moved, got, "the cursor is left where the lookup fell");
+            if got < cursor {
+                backward += 1;
+            } else if got > cursor + 1 {
+                forward += 1;
+            }
+            cursor = got;
+        }
+    }
+    assert!(
+        backward > 100 && forward > 100,
+        "precondition: lookups gallop both ways ({backward} back, {forward} on)"
+    );
+    let curve = Curve::Cubic(
+        Vec2::new(0.0, 0.0),
+        Vec2::new(300.0, -400.0),
+        Vec2::new(500.0, 500.0),
+        Vec2::new(900.0, 0.0),
+    );
+    let rounded = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(400.0, 220.0)),
+        Shape::Rectangle {
+            radius: Percent::new(40),
+        },
+    );
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.0,
+    };
+    let open = || ArcPath::open(&curve, 1.0);
+    let closed = || ArcPath::closed(&rounded, start, Direction::Clockwise, 1.0);
+    let paths: [(&str, &dyn Fn() -> ArcPath); 2] = [("a cubic", &open), ("a rounded rectangle", &closed)];
+    for (what, fresh) in paths {
+        let path = fresh();
+        let steps = 4000;
+        let at = |k: usize| path.length() * k as f32 / steps as f32;
+        for counter in [&PATH_LOOKUPS, &PATH_SEARCHES] {
+            counter.with(|count| count.set(0));
+        }
+        let walked: Vec<(Vec2, Vec2)> = (0..=steps).map(|k| path.at(at(k))).collect();
+        let [lookups, searches] =
+            [&PATH_LOOKUPS, &PATH_SEARCHES].map(|counter| counter.with(std::cell::Cell::get));
+        assert!(
+            searches * 100 < lookups,
+            "{what}: {searches} searches in {lookups} lookups"
+        );
+        for (k, got) in walked.iter().enumerate() {
+            let want = fresh().at(at(k));
+            assert!(
+                got.0.to_array().map(f32::to_bits) == want.0.to_array().map(f32::to_bits)
+                    && got.1.to_array().map(f32::to_bits) == want.1.to_array().map(f32::to_bits),
+                "{what} at {}: {got:?}, a search finds {want:?}",
+                at(k)
+            );
+        }
+    }
 }

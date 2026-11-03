@@ -193,10 +193,14 @@ fn classify(before: &DocElement, after: &DocElement) -> Touched {
                 fit,
                 gap,
                 inset,
+                ring_layout,
                 text,
             } = a;
             Touched {
-                style: visible != &b.visible || fit != &b.fit || text != &b.text,
+                style: visible != &b.visible
+                    || fit != &b.fit
+                    || ring_layout != &b.ring_layout
+                    || text != &b.text,
                 placement: start != &b.start
                     || direction != &b.direction
                     || gap != &b.gap

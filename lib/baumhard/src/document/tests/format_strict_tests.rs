@@ -398,7 +398,8 @@ fn test_the_fixtures_use_every_key_the_format_defines() {
 /// their fields, each with the deepest JSON form it accepts: a color, a
 /// hex and a weight are strings or numbers; a shape is at most
 /// `{"rectangle": {"radius": …}}`, a fit `{"fit": {"min", "max"}}` (or
-/// `{"once": {"filler"}}`), a start point `{"edge", "at"}`.
+/// `{"once": {"filler"}}`), a start point `{"edge", "at"}`, a span a
+/// string or a number, sides at most `{"content", "color"}`.
 const HAND_SPELLED: &[(&str, usize)] = &[
     ("ColorDto", 0),
     ("HexDto", 0),
@@ -406,6 +407,8 @@ const HAND_SPELLED: &[(&str, usize)] = &[
     ("ShapeDto", 2),
     ("FitDto", 2),
     ("StartDto", 1),
+    ("LineSpanDto", 0),
+    ("SidesDto", 1),
 ];
 
 /// How a JSON nesting walk over the DTO graph went wrong.

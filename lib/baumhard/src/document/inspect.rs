@@ -105,7 +105,8 @@ pub enum DocField {
     Gap(f32),
     /// A frame's distance from the outline.
     Inset(f32),
-    /// The extra space between a path's glyphs.
+    /// The extra space between a path's glyphs, or between a frame's or
+    /// ring's `repeat` copies.
     Spacing(f32),
     /// Where a path attaches at its start.
     AnchorFrom(Anchor),
@@ -341,11 +342,14 @@ impl Inspect for DocElement {
             }
             DocField::Gap(gap) => number(stored(frame.map(|f| f.gap.as_ref())), *gap, comparator),
             DocField::Inset(inset) => number(stored(frame.map(|f| f.inset.as_ref())), *inset, comparator),
-            DocField::Spacing(spacing) => number(
-                stored(path.map(|p| p.flow.spacing.as_ref())),
-                *spacing,
-                comparator,
-            ),
+            DocField::Spacing(spacing) => {
+                let stored_spacing = match self {
+                    DocElement::Frame(frame) => Some(frame.style.ring_layout.spacing.as_ref()),
+                    DocElement::Ring(ring) => Some(ring.style.ring_layout.spacing.as_ref()),
+                    _ => path.map(|p| p.flow.spacing.as_ref()),
+                };
+                number(stored(stored_spacing), *spacing, comparator)
+            }
             DocField::AnchorFrom(anchor) => {
                 unordered(stored(path.map(|p| Some(&p.anchors.0))), anchor, comparator)
             }
