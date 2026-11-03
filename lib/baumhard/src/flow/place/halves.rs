@@ -1681,6 +1681,7 @@ impl Layout<'_> {
         let (offset, tracked) = solve_offset(
             offset,
             resolved(OFFSET_TOLERANCE, part.1),
+            OFFSET_ROUNDS,
             |offset, _: Option<&Tracked>| self.track(&walk, &run.glyphs, clusters, part, g, offset),
             |tracked| offset_of(tracked, self.outward),
             &|| self.spent_all(),
@@ -1807,6 +1808,7 @@ impl Layout<'_> {
         let (offset, (na, long, _)) = solve_offset(
             self.apex_offset(k, run, &clusters),
             resolved(OFFSET_TOLERANCE, apex),
+            OFFSET_ROUNDS,
             center,
             |(_, _, tracked)| offset_of(tracked, self.outward),
             &|| self.spent_all(),
@@ -2035,6 +2037,7 @@ impl Layout<'_> {
         let (offset, (sa, sb, gap, tracked)) = solve_offset(
             start,
             resolved(OFFSET_TOLERANCE, hi),
+            OFFSET_ROUNDS,
             |offset, last: Option<&(f32, f32, f32, Tracked)>| {
                 let warm_gap = match last {
                     Some((sa, sb, gap, tracked)) => {
@@ -2112,17 +2115,17 @@ impl Layout<'_> {
     /// rather than lines meeting, only not to touch (ruling R35.1) — and,
     /// for each line, how much drawing its
     /// end back at that junction parts the two: how much further apart
-    /// the two ends' centers are, as a share of how far apart they are,
-    /// once its end has moved that far the way it moves as its clearance
-    /// grows — `|u + r| − 1`, of the unit way `u` away from the other end
-    /// and the way `r` its end moves: 1 drawn straight away, none at 120°
-    /// from it, and short of none past that. Two ends on baselines of
-    /// different offsets meet at a junction one off the other along the
-    /// outline's normal, across the way either draws back, which the
-    /// cosine between the two ways read as parting nothing; drawn back as
-    /// far as they are apart, either parts them by 0.41 of that (#308).
-    /// A single line is measured against the junction point on its own
-    /// center line, owing half that.
+    /// their boxes are once its end box has moved the way its end moves
+    /// as its clearance grows, by the break owed where lines meet, as a
+    /// share of that — 1 drawn straight away, none drawn across, short of
+    /// none drawn toward the other. Two ends on baselines of different
+    /// offsets meet at a junction one off the other along the outline's
+    /// normal, across the way either draws back, and round a thin
+    /// outline's tip their boxes lie side by side where the line through
+    /// their centers says they lie end to end: the cosine between the way
+    /// an end moves and the way away from the other's center read both as
+    /// parting nothing (#308). A single line is measured against the
+    /// junction point on its own center line, owing half that.
     fn apart(&self, lines: &[Line]) -> Junctions {
         let words: Vec<f32> = lines.iter().filter_map(|l| l.word).collect();
         let word = if words.is_empty() {
@@ -2136,15 +2139,20 @@ impl Layout<'_> {
         let retreat = |l: &Line, j: usize| l.retreats[j];
         // Ends that touch have no way apart to measure against: each
         // line's drawing back parts them, as at the junction itself.
+        // How far drawing back is measured over: the break owed where
+        // the lines meet.
+        let probe = (JUNCTION_WORD_GAPS * word).max(TOUCH);
         let helps = |l: &Line, j: usize, own: (Vec2, Vec2), other: (Vec2, Vec2)| {
+            let apart = box_gap(own, other);
             if !l.tracks {
                 0.0
-            } else if box_gap(own, other) > 0.0 {
-                let away = (middle(own) - middle(other)).normalize_or_zero();
-                if away == Vec2::ZERO {
-                    1.0
+            } else if apart > 0.0 {
+                let moved = retreat(l, j) * probe;
+                let drawn = box_gap((own.0 + moved, own.1 + moved), other);
+                if drawn.is_finite() {
+                    (drawn - apart) / probe
                 } else {
-                    (away + retreat(l, j)).length() - 1.0
+                    0.0
                 }
             } else {
                 1.0
@@ -4016,6 +4024,7 @@ fn offset_of(tracked: &Tracked, outward: bool) -> f32 {
 fn solve_offset<T: Clone>(
     start: f32,
     tolerance: f32,
+    rounds: usize,
     mut lay: impl FnMut(f32, Option<&T>) -> T,
     wants: impl Fn(&T) -> f32,
     stop: &dyn Fn() -> bool,
@@ -4024,7 +4033,7 @@ fn solve_offset<T: Clone>(
     let mut laid = lay(offset, None);
     let mut best: Option<(f32, f32, T)> = None;
     let mut before: Option<(f32, f32)> = None;
-    for round in 1..=OFFSET_ROUNDS {
+    for round in 1..=rounds {
         let wanted = wants(&laid);
         if !wanted.is_finite() {
             return (offset, laid);
@@ -4033,7 +4042,7 @@ fn solve_offset<T: Clone>(
         if best.as_ref().is_none_or(|(_, least, _)| miss.abs() < *least) {
             best = Some((offset, miss.abs(), laid.clone()));
         }
-        if miss.abs() <= tolerance || round == OFFSET_ROUNDS || stop() {
+        if miss.abs() <= tolerance || round == rounds || stop() {
             break;
         }
         let next = match before {
@@ -4619,15 +4628,13 @@ pub(super) fn place_halves(
                 }
             })
             .collect();
-        // Measured on the longest baseline the line could take over its
-        // room (#308, [`Layout::bound_offset`]), so the look never refuses
-        // a size whose lines fit.
+        // Measured on the line's own baseline laid from its room's start
+        // (#308, [`Layout::settled`]).
         let too_long = |p: &Prepared| {
             let (lo, hi) = lay.room(p.half, seed[p.half]);
             p.clusters.iter().filter(|c| !c.blank).count() >= 2 && {
-                let offset = lay.bound_offset(p.half, &drawn, &p.clusters, (lo, hi));
-                !lay.reach(p.half, &drawn, &p.clusters, lo, p.natural_gap, offset)
-                    .le(&(hi - lo + resolved(SLIDE_TOLERANCE, hi)))
+                let (tracked, _) = lay.settled(p.half, &drawn, &p.clusters, (lo, lo), p.natural_gap, p.offset);
+                !(-tracked.short).le(&(hi - lo + resolved(SLIDE_TOLERANCE, hi)))
             }
         };
         if cheap && prepared.iter().any(too_long) {

@@ -278,16 +278,21 @@ pub(crate) struct ArcPath {
     corners: Vec<Corner>,
 }
 
-/// A sharp corner of a closed path (#308): where one straight stretch
-/// ends and the next begins at an angle, the path having no one normal
-/// there. Its offset curve sweeps round it, from the normal of the side
-/// before to the normal of the side after ([`ArcPath::offset_at`]).
+/// A bend of a closed path between two straight sides (#308): a sharp
+/// corner, where one side ends and the next begins at an angle and the
+/// path has no one normal, or a run of arcs about one center, a rounded
+/// corner ([`ArcPath::offset_at`]).
 #[derive(Copy, Clone, Debug)]
 struct Corner {
-    /// Where along the path it lies, in `0.0..length`.
+    /// Where along the path it begins, in `0.0..length`.
     at: f32,
-    /// The corner's point.
+    /// How long it is along the path: none for a sharp corner, its arcs'
+    /// for a rounded one.
+    bend: f32,
+    /// The corner's point, or its arcs' center.
     point: Vec2,
+    /// Its arcs' radius: none for a sharp corner.
+    radius: f32,
     /// The direction of travel along the side before it and the side
     /// after it.
     before: Vec2,
@@ -361,27 +366,54 @@ impl ArcPath {
         }
         let mut corners = Vec::new();
         for i in 0..n {
-            let j = (i + 1) % n;
-            let (
-                Stretch::Line {
-                    from,
-                    dir: before,
-                    len: side_before,
-                },
-                Stretch::Line {
-                    dir: after,
-                    len: side_after,
-                    ..
-                },
-            ) = (&self.stretches[i], &self.stretches[j])
+            let Stretch::Line {
+                from,
+                dir: before,
+                len: side_before,
+            } = &self.stretches[i]
             else {
                 continue;
             };
-            let turn = before.perp_dot(*after).atan2(before.dot(*after));
-            if turn.abs() > CORNER_TURN && turn.is_finite() {
+            // The arcs after the side, about one center, and the side
+            // after them.
+            let mut j = (i + 1) % n;
+            let (mut bend, mut center, mut radius, mut arced) = (0.0_f32, None::<Vec2>, 0.0_f32, 0.0_f32);
+            while let Stretch::Arc {
+                center: c,
+                radius: r,
+                turn,
+                len,
+                ..
+            } = &self.stretches[j]
+            {
+                if center.is_some_and(|was| was.distance(*c) > CORNER_TURN * r.max(1.0)) || j == i {
+                    break;
+                }
+                (bend, center, radius) = (bend + len, Some(*c), *r);
+                arced += turn * len / r;
+                j = (j + 1) % n;
+            }
+            let Stretch::Line {
+                dir: after,
+                len: side_after,
+                ..
+            } = &self.stretches[j]
+            else {
+                continue;
+            };
+            let sharp = center.is_none();
+            let turn = if sharp {
+                before.perp_dot(*after).atan2(before.dot(*after))
+            } else {
+                arced
+            };
+            if turn.is_finite() && (!sharp || turn.abs() > CORNER_TURN) {
+                let start = (i + 1) % n;
                 corners.push(Corner {
-                    at: if j == 0 { 0.0 } else { self.starts[j] },
-                    point: *from + *before * *side_before,
+                    at: if start == 0 { 0.0 } else { self.starts[start] },
+                    bend,
+                    point: center.unwrap_or(*from + *before * *side_before),
+                    radius,
                     before: *before,
                     after: *after,
                     turn,
@@ -797,42 +829,78 @@ impl ArcPath {
 
     /// The point at `s` of the path's offset curve at `offset` along its
     /// outward normal (inward for a negative `offset`, #308): `p(s) +
-    /// offset · n(s)`, exactly, wherever the path has one normal — its
-    /// sides, its arcs, an ellipse's table, whose points and directions
-    /// are the curve's own. The curve is the path's parallel curve taken
-    /// as a parametric one: where an offset inward passes a bend's radius
-    /// it folds back on itself, as a parallel curve does, rather than
-    /// being trimmed.
+    /// offset · n(s)`, exactly, wherever the path has one normal and the
+    /// offset does not pass the radius of a bend inward — its sides, its
+    /// arcs, an ellipse's table, whose points and directions are the
+    /// curve's own. An offset inward past an ellipse's radius of curvature,
+    /// at the tips of one fifty times as wide as tall, folds back there as
+    /// a parallel curve does.
     ///
-    /// At a sharp corner ([`Corner`]) the path has no one normal, and
-    /// the curve sweeps round the corner at `offset` from it, from the
-    /// side before's normal to the side after's. That sweep has no length
-    /// along the path, so it is given some: the stretch within `w` of the
-    /// corner — `w` half the sweep's own length, at most half of either
-    /// side — walks the offset curve's side before, its sweep and its side
-    /// after at one speed, `(2w + |offset|·|turn|) / 2w`. So the point
-    /// moves continuously as `s` moves through a corner, never jumping
-    /// from one side's offset to the other's, and every point lies on the
-    /// curve. With no offset it is the path itself.
+    /// **Sharp corners, outward.** At a sharp corner ([`Corner`]) the path
+    /// has no one normal, and the curve sweeps round the corner at `offset`
+    /// from it, from the side before's normal to the side after's. That
+    /// sweep has no length along the path, so it is given some: the stretch
+    /// within `w` of the corner — `w` half the sweep's own length, at most
+    /// half of either side — walks the offset curve's side before, its
+    /// sweep and its side after at one speed, `(2w + |offset|·|turn|) /
+    /// 2w`. So the point moves continuously as `s` moves through a corner,
+    /// never jumping from one side's offset to the other's, and every point
+    /// lies on the curve.
+    ///
+    /// **Bends, inward.** Inside a corner — a sharp one, or a rounded one
+    /// whose radius the offset passes — the two sides' offsets cross before
+    /// they reach it, at the corner of the curve inside, `X`, and what lies
+    /// past it of either, and round the bend between, folds back over the
+    /// outline: the stretch of the path from where either side's offset
+    /// reaches `X`, `|radius + offset|·tan(|turn| / 2)` before the bend and
+    /// after it, at most half of either side, is the point `X` throughout,
+    /// its normal turning from the side before's to the side after's. A
+    /// bend that turns by half a turn or more, the end of an outline thinner
+    /// than twice the offset, has no such corner, and folds.
+    ///
+    /// With no offset it is the path itself.
     ///
     /// Cost: one path lookup; within a corner's stretch none, but its
     /// arithmetic, counted as one.
     pub(crate) fn offset_at(&self, s: f32, offset: f32) -> OffsetPoint {
         if self.winding != 0.0 && offset != 0.0 && self.length > 0.0 {
             let s = s.rem_euclid(self.length);
+            // Signed, across the seam, from `at`.
+            let from_at = |at: f32| {
+                let from = s - at;
+                if from > 0.5 * self.length {
+                    from - self.length
+                } else if from < -0.5 * self.length {
+                    from + self.length
+                } else {
+                    from
+                }
+            };
             for corner in &self.corners {
-                let sweep = offset.abs() * corner.turn.abs();
+                let half_turn = 0.5 * corner.turn.abs();
+                let inside = corner.radius + offset;
+                if offset < 0.0 && inside < 0.0 && half_turn < INSIDE_TURN {
+                    let t = (-inside * half_turn.tan())
+                        .min(0.5 * corner.sides.0)
+                        .min(0.5 * corner.sides.1);
+                    let reach = 0.5 * corner.bend + t;
+                    let from = from_at(corner.at + 0.5 * corner.bend);
+                    if reach > 0.0 && from.abs() < reach && reach.is_finite() {
+                        #[cfg(test)]
+                        PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
+                        return self.inside(corner, inside, half_turn, (from + reach) / (2.0 * reach));
+                    }
+                    continue;
+                }
+                if corner.radius > 0.0 || offset < 0.0 {
+                    continue;
+                }
+                let sweep = offset * corner.turn.abs();
                 let w = (0.5 * sweep).min(0.5 * corner.sides.0).min(0.5 * corner.sides.1);
                 if !(w > 0.0 && sweep.is_finite()) {
                     continue;
                 }
-                // Signed, across the seam, from the corner.
-                let mut from = s - corner.at;
-                if from > 0.5 * self.length {
-                    from -= self.length;
-                } else if from < -0.5 * self.length {
-                    from += self.length;
-                }
+                let from = from_at(corner.at);
                 if from.abs() >= w {
                     continue;
                 }
@@ -850,8 +918,23 @@ impl ArcPath {
         }
     }
 
-    /// [`offset_at`](Self::offset_at) within `w` of `corner`, `from` past
-    /// it (negative before it), its sweep `sweep` long.
+    /// [`offset_at`](Self::offset_at) inside `corner`, its offset past the
+    /// bend's radius by `inside` (negative), `frac` of the way through the
+    /// stretch that is the inside curve's corner `X`.
+    fn inside(&self, corner: &Corner, inside: f32, half_turn: f32, frac: f32) -> OffsetPoint {
+        let (n1, n2) = (self.outward(corner.before), self.outward(corner.after));
+        let bisector = (n1 + n2).normalize_or_zero();
+        let point = corner.point + bisector * (inside / half_turn.cos());
+        OffsetPoint {
+            point,
+            moves: (corner.before + corner.after).normalize_or_zero(),
+            normal: n1.lerp(n2, frac.clamp(0.0, 1.0)).normalize_or_zero(),
+        }
+    }
+
+    /// [`offset_at`](Self::offset_at) within `w` of the sharp `corner`
+    /// outward, `from` past it (negative before it), its sweep `sweep`
+    /// long.
     fn swept(&self, corner: &Corner, offset: f32, w: f32, sweep: f32, from: f32) -> OffsetPoint {
         // How far along the offset curve's stretch round the corner.
         let along = (from + w) / (2.0 * w) * (2.0 * w + sweep);
@@ -876,8 +959,7 @@ impl ArcPath {
             let normal = self.outward(turned);
             OffsetPoint {
                 point: corner.point + normal * offset,
-                // An offset inside the corner sweeps it backward.
-                moves: if offset > 0.0 { turned } else { -turned },
+                moves: turned,
                 normal,
             }
         }
@@ -889,6 +971,13 @@ impl ArcPath {
 /// ([`ArcPath::offset_at`]): a millionth, past the float error of two
 /// stretches of one straight side.
 const CORNER_TURN: f32 = 1e-6;
+
+/// The most half a bend's turn may be, in radians, for the offsets of its
+/// sides inside it to cross at a corner of the inside curve
+/// ([`ArcPath::offset_at`]): a hair short of a quarter turn, past which
+/// the two sides run back side by side and their offsets inside meet far
+/// off or never.
+const INSIDE_TURN: f32 = 0.49 * std::f32::consts::PI;
 
 /// `v`'s length, finite wherever it is: [`Vec2::length`], or, for a
 /// vector longer than `√f32::MAX` (about `1.8e19`) — whose squared
