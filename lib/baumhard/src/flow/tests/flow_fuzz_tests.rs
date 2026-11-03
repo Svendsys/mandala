@@ -1476,6 +1476,71 @@ fn test_a_committed_structured_finding_replays_the_text_it_was_found_with() {
     }
 }
 
+/// The flow_structured finding of CI's run at 3e767241 (ruling R52): a
+/// `Fit { min: 3.56e-22, max: 141 }` line of 18 glyphs at 16 pt along a
+/// straight path 1.40 long, its natural length 346. The engine shrinks
+/// it to the size floor, `MIN_FONT_SIZE_PT`, where it is some 10.8 long,
+/// and cuts it, as specified (R9.3); the property owed it whole, reading
+/// `natural × min` as what it shrinks to. It owes a text whole now only
+/// where it fits as the engine's own `size_factor` shrinks it. Found on
+/// the compiled faces alone; replays alike on every host, and failed alike
+/// at 289a684f.
+///
+/// Control: with the oracle's natural length scaled by `scale` without
+/// the floor, red.
+#[test]
+fn test_flow_structured_finding_a_curve_fit_shrunk_to_the_size_floor() {
+    let found = include_bytes!("fuzz_findings/structured_curve_fit_shrunk_to_the_size_floor");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
+/// R52.2: the oracle owes a `Fit` text whole exactly where it fits as the
+/// engine shrinks it, no glyph below the size floor: "To see a World" at
+/// 16 pt, `Fit` from a millionth, on a path just longer than the text
+/// shaped at the floor, 0.5 pt, is owed whole, and on one just shorter is
+/// not — though a millionth of its natural length fits both.
+///
+/// Control: with the oracle's natural length scaled by `scale` without
+/// the floor, red.
+#[test]
+fn test_flow_the_whole_text_owed_a_fit_is_measured_at_the_size_floor() {
+    use crate::document::values::FitMode;
+    use crate::flow::tests::flow_fuzz::{natural_length_at, owes_whole};
+    use crate::font::fonts::MIN_FONT_SIZE_PT;
+    let text = "To see a World";
+    let (run, floored) = with_fonts(|fs| {
+        (
+            real_run(text, &style(16.0), fs),
+            real_run(text, &style(MIN_FONT_SIZE_PT), fs),
+        )
+    });
+    // The text shaped at the floor, measured as the oracle measures a text.
+    let at_floor = natural_length_at(&floored, 1.0);
+    let fit = FitMode::Fit { min: 1e-6, max: 1.0 };
+    assert!(
+        natural_length_at(&run, 1.0) * 1e-6 < at_floor * 0.99,
+        "precondition: a millionth of the text's natural length fits a path shorter than it at the floor"
+    );
+    assert!(
+        owes_whole(&run, &fit, at_floor * 1.01),
+        "a path 1% longer than the text at the floor, {at_floor}, does not owe it whole"
+    );
+    assert!(
+        !owes_whole(&run, &fit, at_floor * 0.99),
+        "a path 1% shorter than the text at the floor, {at_floor}, owes it whole"
+    );
+}
+
 /// R50.3, R45.1: a long fuzzed side ornament of the glyphs the compiled
 /// faces hold fits the per-input work bound beside a text cut to
 /// nothing, on every host: in every face a span can name, upright and

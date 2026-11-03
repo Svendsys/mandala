@@ -3173,7 +3173,7 @@ fn fitting_scale(
 /// `shape::scaled` does) — so below
 /// [`MIN_FONT_SIZE_PT`] a glyph stops shrinking. A size that is not a
 /// positive number (never shaped) scales by `scale`.
-fn size_factor(size: f32, scale: f32) -> f32 {
+pub(crate) fn size_factor(size: f32, scale: f32) -> f32 {
     if size > 0.0 && size.is_finite() {
         clamp_font_metric(size * scale, MIN_FONT_SIZE_PT) / size
     } else {
