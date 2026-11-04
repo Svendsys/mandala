@@ -210,10 +210,43 @@ fn center(b: (Vec2, Vec2)) -> Vec2 {
     0.5 * (b.0 + b.1)
 }
 
+/// The x-height of [`style`]'s face a point of its size (#308): the ink
+/// of an `x` shaped alone in it above the baseline, over its size —
+/// measured here through the shaper and the outline, not read from the
+/// engine's band, so a band the engine reads wrong does not agree with
+/// itself (TEST_CONVENTIONS §T13, shape 6).
+pub(crate) fn x_height_per_point() -> f32 {
+    static X: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *X.get_or_init(|| {
+        with_fonts(|fs| {
+            let flow = style(16.0);
+            let run = real_run("x", &flow, fs);
+            let fs: &mut FontSystem = fs;
+            let mut cache = SwashCache::new();
+            let x = run.layout_glyphs().next().cloned().expect("an x is shaped");
+            let (min, _) = glyph_outline_ink(fs, &mut cache, &x).expect("an x has ink");
+            -min.y / x.font_size
+        })
+    })
+}
+
+/// Where glyph `k` of `placed` is anchored on its frame's band curve
+/// (#308, ruling B15.1), its ink `ink` on the canvas: its ink's center
+/// along the line and, across it, halfway between its baseline and its
+/// x-height ([`x_height_per_point`], at its size) — or, a side
+/// ornament's glyph, its ink's center.
+pub(crate) fn band_anchor(run: &ShapedRun, placed: &PlacedRun, k: usize, ink: (Vec2, Vec2)) -> Vec2 {
+    let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
+    if glyph.span == FILLER_SPAN {
+        return center(ink);
+    }
+    let baseline = placed.glyphs[k].pos.y + run.baseline();
+    Vec2::new(center(ink).x, baseline - 0.5 * x_height_per_point() * glyph.size)
+}
+
 /// One line's letter gaps (between neighboring inks of a word) and word
-/// gaps (across a space), and its first and last ink, with their
-/// baseline points: straight below or above each ink's center, on its
-/// glyph's baseline (#308).
+/// gaps (across a space), and its first and last ink, with their anchors
+/// on the frame's band curve ([`band_anchor`], #308).
 struct LineGaps {
     letters: Vec<f32>,
     words: Vec<f32>,
@@ -222,10 +255,10 @@ struct LineGaps {
     centers: Vec<Vec2>,
 }
 
-/// The outline's outward normal under the baseline point `p` of an ink
-/// (#308), `path` walked clockwise: the normal at the point of the
-/// outline nearest `p` — the way from that point to a point of a line's
-/// baseline, which lies along the normal of the point it is offset from
+/// The outline's outward normal under the anchor `p` of an ink (#308),
+/// `path` walked clockwise: the normal at the point of the outline
+/// nearest `p` — the way from that point to a point of the frame's band
+/// curve, which lies along the normal of the point it is offset from
 /// — or, where `p` lies off the outline in no normal of it there, a
 /// degree off or more, the way from that point to `p`: past a sharp
 /// corner, where the nearest point is the corner and the outline has no
@@ -241,6 +274,27 @@ fn normal_under(path: &ArcPath, p: Vec2) -> Vec2 {
     } else {
         along
     }
+}
+
+/// How far, as a cosine, the outline's outward normals under the
+/// anchors `a` and `b` of two end inks turn apart (#308): at the most,
+/// over the normals within a hundredth of a point along the outline of
+/// where each lies ([`normal_under`]). An anchor on the outline at a
+/// sharp corner — the band curve at no offset, inward, where a line's
+/// last letter can come to rest on the corner — lies where the outline
+/// has no one normal, and the engine reads it as facing whichever side
+/// it is set on, which a float's error in its position here would turn
+/// the other way.
+fn turn_cos(path: &ArcPath, a: Vec2, b: Vec2) -> f32 {
+    let near = |p: Vec2| {
+        let s = path.nearest(p);
+        let side = |s: f32| path.outward(path.at(s).1);
+        [normal_under(path, p), side(s - 1e-2), side(s + 1e-2)]
+    };
+    let (na, nb) = (near(a), near(b));
+    na.iter()
+        .flat_map(|u| nb.iter().map(move |v| u.dot(*v)))
+        .fold(f32::INFINITY, f32::min)
 }
 
 fn line_gaps(
@@ -268,7 +322,7 @@ fn line_gaps(
             }
         }
         first.get_or_insert(ink);
-        let anchor = Vec2::new(center(ink).x, placed.glyphs[k].pos.y + run.baseline());
+        let anchor = band_anchor(run, placed, k, ink);
         anchors = Some((anchors.map_or(anchor, |(a, _)| a), anchor));
         centers.push(center(ink));
         previous = Some(ink);
@@ -1236,9 +1290,9 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
         at: 0.5,
     };
     for (name, shape, height, points) in &outlines {
-        // The outline's outward normal nearest `p`.
+        // The outline, walked clockwise: what a junction's ends' normals
+        // are read from (`turn_cos`).
         let path = ArcPath::closed(shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
-        let normal = |p: Vec2| normal_under(&path, p);
         for text in [ECCLESIASTES, QUATRAIN] {
             let (fitted, r27_cut) = with_fonts(|fs| {
                 let flow = style(*points);
@@ -1283,6 +1337,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                 faults.push(format!("{what}: {tracks} lines tracked"));
                             }
                             work.frames += 1;
+                            if report { eprintln!("HEAVY {} {} {what}", trace.spent, trace.glyphs); }
                             if trace.spent > work.most_spent {
                                 (work.most_spent, work.worst) = (trace.spent, what.clone());
                             }
@@ -1423,7 +1478,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                         continue;
                                     }
                                     let apart = gap(a, b);
-                                    let turn = normal(anchors.0).dot(normal(anchors.1));
+                                    let turn = turn_cos(&path, anchors.0, anchors.1);
                                     // Stacked past 135°: only not touching.
                                     // Between 130° and 135°, where the
                                     // engine's ink and this projection may
@@ -2076,7 +2131,6 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
         ),
     ] {
         let path = ArcPath::closed(shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
-        let normal = |p: Vec2| normal_under(&path, p);
         for span in spans {
             let layout = RingLayout {
                 span,
@@ -2107,8 +2161,7 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
                 ("bottom-right", lines[0].ends.1, lines[1].ends.1, (lines[0].anchors.1, lines[1].anchors.1)),
             ] {
                 let apart = gap(a, b);
-                let turn = normal(anchors.0)
-                    .dot(normal(anchors.1))
+                let turn = turn_cos(&path, anchors.0, anchors.1)
                     .clamp(-1.0, 1.0)
                     .acos()
                     .to_degrees();

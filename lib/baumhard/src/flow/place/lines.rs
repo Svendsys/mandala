@@ -516,7 +516,6 @@ fn lay_lines(
             from,
             to,
             cut,
-            offset: None,
         });
     }
     let used_filler =

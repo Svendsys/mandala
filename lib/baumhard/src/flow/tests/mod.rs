@@ -15,6 +15,8 @@ pub mod flow_fuzz;
 #[cfg(test)]
 mod flow_fuzz_tests;
 pub mod halves_tests;
+#[cfg(test)]
+mod b15_probe;
 pub mod lines_tests;
 pub mod outline_tests;
 pub mod place_tests;

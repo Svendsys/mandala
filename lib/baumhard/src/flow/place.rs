@@ -609,10 +609,13 @@ pub(crate) struct Trace {
     /// For a text frame, the most pairs its touch checks looked at a box
     /// (rulings R48.2, R51.2).
     pub(crate) looks: halves::Looks,
-    /// For a text frame with sides, each arc of side ornament laid: its
-    /// glyphs, indices into the placement, and the offset off the outline
-    /// its baseline lies at (#308).
-    pub(crate) side_arcs: Vec<(Range<usize>, f32)>,
+    /// For a text frame laid on its halves, the offset off the outline,
+    /// along its outward normal, of its one band curve (#308, ruling
+    /// B15.1): every glyph's anchor — its ink's center along the line,
+    /// its span's band center across it, or a side ornament's own ink
+    /// center — lies on the outline's offset curve there. `None` for a
+    /// frame R27 lays on its level spans.
+    pub(crate) offset: Option<f32>,
 }
 
 /// What a text frame's last resorts — a `Fit` frame's shrink, then the
@@ -667,12 +670,6 @@ pub(crate) struct TracedLine {
     pub(crate) to: f32,
     /// Whether it was cut to fit its span.
     pub(crate) cut: bool,
-    /// The offset off the outline its baseline lies at, along the
-    /// outline's outward normal (#308): every ink's baseline point lies
-    /// on the outline's offset curve there. `None` for a line R27 lays
-    /// on its level span, a frame's lines only where its halves cannot
-    /// be measured.
-    pub(crate) offset: Option<f32>,
 }
 
 /// One stretch of a [`Trace`].

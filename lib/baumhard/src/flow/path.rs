@@ -746,80 +746,6 @@ impl ArcPath {
         best.map(|(_, s)| s)
     }
 
-    /// Where along the path within `reach` of `guess` the point nearest
-    /// `p` lies: [`NEAR_SAMPLES`] samples across `guess ± reach`, then a
-    /// golden-section search between the best sample's neighbors, each of
-    /// its rounds one lookup, until the bracket is within [`NEAR_WIDTH`].
-    /// On a closed path the result is in `0.0..length`; on an open one
-    /// within its ends. What a point set near `guess` is looked for with
-    /// — a text ink set at `guess` along a convex outline and pushed off
-    /// it by no more than its own half size, whose nearest point is
-    /// within its diagonal of where it is set — at a cost that is the
-    /// ink's, not the path's: [`nearest`](Self::nearest) samples the
-    /// whole path (ruling R43). `guess`, held to the path, where `reach`
-    /// is not a positive number or the path is empty; `0.0` where `guess`
-    /// is not a number either.
-    ///
-    /// Cost: [`NEAR_SAMPLES`] `+ 1` path lookups and [`NEAR_ROUNDS`] more
-    /// at most.
-    pub(crate) fn nearest_near(&self, p: Vec2, guess: f32, reach: f32) -> f32 {
-        let closed = self.winding != 0.0;
-        let held = |s: f32| {
-            if closed {
-                s.rem_euclid(self.length)
-            } else {
-                s.clamp(0.0, self.length)
-            }
-        };
-        if !guess.is_finite() {
-            return 0.0;
-        }
-        // A length or a reach that is not a positive number is none.
-        let positive = |v: f32| v.partial_cmp(&0.0) == Some(std::cmp::Ordering::Greater);
-        if self.stretches.is_empty() || !positive(self.length) || !positive(reach) || !reach.is_finite() {
-            return if self.stretches.is_empty() {
-                0.0
-            } else {
-                held(guess)
-            };
-        }
-        let distance = |s: f32| length_of(self.at(s).0 - p);
-        let step = 2.0 * reach / NEAR_SAMPLES as f32;
-        let from = guess - reach;
-        let mut best = (f32::INFINITY, guess);
-        for k in 0..=NEAR_SAMPLES {
-            let s = from + step * k as f32;
-            let d = distance(s);
-            if d < best.0 {
-                best = (d, s);
-            }
-        }
-        let (mut low, mut high) = (best.1 - step, best.1 + step);
-        if !closed {
-            (low, high) = (low.max(0.0), high.min(self.length));
-        }
-        // Golden section, the inner point the round keeps reused.
-        let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
-        let mut a = high - ratio * (high - low);
-        let mut b = low + ratio * (high - low);
-        let (mut da, mut db) = (distance(a), distance(b));
-        for _ in 0..NEAR_ROUNDS {
-            if !(high - low).gt(&NEAR_WIDTH) {
-                break;
-            }
-            if da <= db {
-                (high, b, db) = (b, a, da);
-                a = high - ratio * (high - low);
-                da = distance(a);
-            } else {
-                (low, a, da) = (a, b, db);
-                b = low + ratio * (high - low);
-                db = distance(b);
-            }
-        }
-        held(low.midpoint(high))
-    }
-
     /// The outward unit normal beside `tangent`, for a closed path: the
     /// direction of travel turned a quarter toward the outside. Zero for
     /// an open path, which has no outside.
@@ -1021,20 +947,6 @@ pub(crate) const NEAREST_SAMPLES: usize = 2048;
 /// its best sample with: a bracket of two samples closes by a factor of
 /// about 10⁷.
 pub(crate) const NEAREST_ROUNDS: usize = 34;
-
-/// How many samples [`ArcPath::nearest_near`] takes across its reach.
-pub(crate) const NEAR_SAMPLES: usize = 8;
-
-/// The most rounds of golden-section search [`ArcPath::nearest_near`]
-/// refines its best sample with, one lookup each: a bracket of two
-/// samples closes by a factor of about 10⁷.
-pub(crate) const NEAR_ROUNDS: usize = 34;
-
-/// How narrow [`ArcPath::nearest_near`] closes its bracket, by arc
-/// length: a thousandth of a point turns an outline's normal there by
-/// a thousandth of its curvature, nothing a junction's 135° test or an
-/// arc's ends can tell.
-pub(crate) const NEAR_WIDTH: f32 = 1e-3;
 
 /// A table walking `param` from `from` to `to`, its samples close
 /// enough that no neighbors are more than `spacing` apart, given that the

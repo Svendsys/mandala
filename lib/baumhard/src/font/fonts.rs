@@ -1226,6 +1226,42 @@ pub fn glyph_outline_ink(
     (min.is_finite() && max.is_finite()).then_some((min, max))
 }
 
+/// The ink of the character `ch` in the face a laid-out glyph `of` is
+/// drawn in, at its size and weight, as [`glyph_outline_ink`] measures a
+/// glyph's — relative to the pen on the baseline, `y` pointing down — but
+/// for the glyph the face's own character map gives `ch`, unshaped. `None`
+/// where the face maps no glyph to `ch`, or draws nothing for it. What a
+/// frame's text reads its x-height from, the ink of an `x` (#308).
+///
+/// Cost: one character-map lookup, and one outline scale through
+/// `swash_cache`'s scaler, uncached.
+pub fn face_char_ink(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    of: &cosmic_text::LayoutGlyph,
+    ch: char,
+) -> Option<(Vec2, Vec2)> {
+    let font = font_system.get_font(of.font_id, of.font_weight)?;
+    let glyph_id = font.as_swash().charmap().map(ch);
+    if glyph_id == 0 {
+        return None;
+    }
+    let (key, _, _) = CacheKey::new(
+        of.font_id,
+        glyph_id,
+        of.font_size,
+        (0.0, 0.0),
+        of.font_weight,
+        CacheKeyFlags::DISABLE_HINTING,
+    );
+    let commands = swash_cache.get_outline_commands_uncached(font_system, key)?;
+    let (low, high) = outline_bounds(&commands)?;
+    // An outline's `y` points up, the canvas's down.
+    let min = Vec2::new(low.x, -high.y);
+    let max = Vec2::new(high.x, -low.y);
+    (min.is_finite() && max.is_finite()).then_some((min, max))
+}
+
 /// The bounding box of an outline's commands, `(min, max)` in its own
 /// coordinates: every point the path passes through, a curve's own
 /// extrema included, and not the control points it bends toward. `None`
