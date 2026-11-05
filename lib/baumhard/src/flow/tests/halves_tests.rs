@@ -3527,6 +3527,119 @@ fn test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve() {
     }
 }
 
+#[test]
+fn test_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
+    do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline();
+}
+
+/// #308, ruling B15.1: a line whose letters climb and fall — ascenders on
+/// the lower half, descenders on the upper, each pointing at the outline
+/// — sits on one baseline, as an artist sets it: round a 600 × 120
+/// rectangle with 20% corners, outward, `Once` at span whole, the upper
+/// line `a gypsy yogi pray` and the lower `hold all the bold hills`, each
+/// glyph whose anchor lies over a straight side of the outline has its
+/// baseline within [`BAND_RESIDUAL`] of every other's there, its
+/// ascender or descender hanging free of it: toward the outline, the
+/// nearest of the line's inks there, and its edge facing the outline
+/// clear of it (outward, the outline already its gap from what it
+/// frames; along a straight side an ink's reach is its box's).
+/// Preconditions: each straight stretch holds letters of the x-height
+/// alone and letters past it — ascenders below, descenders above.
+///
+/// Control: every glyph anchored at its own ink's center, the per-glyph
+/// anchor before B15.1, red: each ascender's baseline drops below its
+/// neighbors' and each descender's rises — over the bottom side the
+/// baselines lie 4.67 apart, over the top 7.82.
+pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 120.0)),
+        Shape::Rectangle {
+            radius: Percent::new(20),
+        },
+    );
+    let left = StartPoint {
+        edge: Edge::Left,
+        at: 0.5,
+    };
+    let path = ArcPath::closed(&shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
+    let text = "a gypsy yogi pray\nhold all the bold hills";
+    let (run, placed, trace) = frame(text, 18.0, &shape, &RingLayout::whole());
+    assert_eq!(trace.lines.len(), 2, "precondition: two lines");
+    let inks = inks(&run, &placed);
+    let x = x_height_per_point();
+    for line in &trace.lines {
+        // Each inked glyph over a straight side, by the side's outward
+        // normal: its baseline, and how far its ink rises past the
+        // x-height and falls past the baseline, a point of its size.
+        let mut sides: Vec<(Vec2, Vec<(f32, f32, f32, (Vec2, Vec2))>)> = Vec::new();
+        for k in line.glyphs.clone() {
+            let Some(ink) = inks[k] else { continue };
+            let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
+            let anchor = band_anchor(&run, &placed, k, ink);
+            let s = path.nearest(anchor);
+            let normal = path.outward(path.at(s).1);
+            let straight = [s - 1.0, s + 1.0]
+                .iter()
+                .all(|&t| path.outward(path.at(t).1).dot(normal) > 1.0 - 1e-6);
+            if !straight {
+                continue;
+            }
+            let baseline = placed.glyphs[k].pos.y + run.baseline();
+            let rises = (baseline - ink.0.y) / glyph.size - x;
+            let falls = (ink.1.y - baseline) / glyph.size;
+            match sides.iter_mut().find(|(n, _)| n.dot(normal) > 1.0 - 1e-6) {
+                Some((_, glyphs)) => glyphs.push((baseline, rises, falls, ink)),
+                None => sides.push((normal, vec![(baseline, rises, falls, ink)])),
+            }
+        }
+        let horizontal: Vec<&(Vec2, Vec<(f32, f32, f32, (Vec2, Vec2))>)> =
+            sides.iter().filter(|(n, _)| n.x.abs() < 1e-3).collect();
+        assert!(
+            !horizontal.is_empty(),
+            "precondition, half {}: the line lies over a straight side",
+            line.half
+        );
+        for (normal, glyphs) in horizontal {
+            let below = normal.y > 0.0;
+            let plain = glyphs.iter().filter(|g| g.1 < 0.05 && g.2 < 0.05).count();
+            let hanging = glyphs
+                .iter()
+                .filter(|g| if below { g.1 > 0.2 } else { g.2 > 0.15 })
+                .count();
+            assert!(
+                plain >= 2 && hanging >= 2,
+                "precondition, half {}: x-height letters ({plain}) and {} ({hanging}) over the side facing {normal}",
+                line.half,
+                if below { "ascenders" } else { "descenders" }
+            );
+            let (low, high) = spread(&glyphs.iter().map(|g| g.0).collect::<Vec<_>>());
+            assert!(
+                high - low <= BAND_RESIDUAL,
+                "half {}: the baselines over the side facing {normal} lie {low}..{high}, {} apart, at most {BAND_RESIDUAL}",
+                line.half,
+                high - low
+            );
+            // Each ink's edge facing the outline, and how far it clears it.
+            let clear = |g: &(f32, f32, f32, (Vec2, Vec2))| {
+                let (min, max) = g.3;
+                let facing = if below { min.y } else { max.y };
+                signed_distance(&path, Vec2::new(0.5 * (min.x + max.x), facing))
+            };
+            let nearest = glyphs.iter().map(clear).fold(f32::INFINITY, f32::min);
+            let nearest_plain = glyphs
+                .iter()
+                .filter(|g| g.1 < 0.05 && g.2 < 0.05)
+                .map(clear)
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                nearest >= -BAND_RESIDUAL && nearest < nearest_plain,
+                "half {}: over the side facing {normal}, the nearest ink {nearest} from the outline, the nearest of the x-height alone {nearest_plain}: the hanging letters point at it, and none crosses it",
+                line.half
+            );
+        }
+    }
+}
+
 /// R44.3: filling a frame's sides is work in proportion to what it
 /// places, counted against its budget: the reviewer's case, a 200-byte
 /// ornament at span natural round a 200,000 ellipse, and the same round a
