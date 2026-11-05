@@ -22,6 +22,23 @@
 //! line carries its half with it: a text that opens with a line break
 //! has one line, on the second half.
 //!
+//! **The band curve** (#308, rulings B15.1, B15.4). Every ink of a
+//! frame — both lines' letters and the side ornament's copies — is
+//! anchored on one offset curve of the outline, at one distance `d` from
+//! it all round ([`Band`], [`ArcPath::offset_at`]), so the ring of text
+//! is one even offset of the node's shape and nothing steps where the
+//! lines meet. A letter's anchor is its ink's center along the line and,
+//! across it, its span's band center: halfway between its baseline and
+//! its x-height, a property of its font and size, so a span's letters
+//! share a baseline and their ascenders and descenders hang free of it
+//! ([`inked_with_bands`]). A side ornament's copy is anchored at its
+//! own ink's center. `d` is solved once a frame, with its clearance
+//! ([`Layout::lay_clear`]): outward, the least at which every ink
+//! clears the outline; inward, the frame's ink band centered on it.
+//! Inward, where the outline is thinner than `2d` across — the tips of
+//! a long, thin ellipse — no curve lies `d` inside it all round, and the
+//! curve folds over the far side there.
+//!
 //! **The lines** (rulings R27, R34). R27 parts the text and sizes a
 //! `Fit` frame ([`place_lines`]); a `Once` or `Spread` frame's lines are
 //! parted as R27 parts them but not cut to its level span
@@ -112,8 +129,9 @@
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most
 //! [`MAX_SIDE_COPIES`], every gap and both joins to the text equal
-//! (ruling R31's lay, seeded by the text's end inks), on the text's own
-//! center line, the ornament's ink no taller than the text's x-height.
+//! (ruling R31's lay, seeded by the text's end inks), on the frame's band
+//! curve at each copy's ink center, the ornament's ink no taller than the
+//! text's x-height.
 //! The ornament is shaped into the run as a line of its own, the way a
 //! `Once` filler is.
 
