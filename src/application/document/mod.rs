@@ -859,8 +859,11 @@ impl MindMapDocument {
     /// behind the canvas for an alpha to blend with. A spelling that
     /// is not a color is black, the format's default, so a typo in a
     /// theme cannot leave the app on a glitched background. Both
-    /// targets' load paths hand the renderer this one value
-    /// (CODE_CONVENTIONS §4). O(1).
+    /// targets hand the renderer this one value (CODE_CONVENTIONS §4):
+    /// at load, and after every rebuild of the canvas
+    /// (`app::scene_rebuild::rebuild_scene_only`), so a theme-variant
+    /// switch, its undo and a document swap move the clear with it.
+    /// O(1).
     pub fn background(&self) -> [u8; 4] {
         let canvas = &self.mindmap.canvas;
         let resolved = baumhard::util::color::resolve_var(&canvas.background_color, &canvas.theme_variables);

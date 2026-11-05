@@ -835,6 +835,138 @@ fn test_the_clear_color_holds_the_background_on_either_target() {
     }
 }
 
+/// **A glyph colored like the background matches it exactly, on every
+/// target** (CODE_CONVENTIONS §4, D12). For each surface format a
+/// bootstrap can pick — native's and the headless renderer's
+/// `Bgra8UnormSrgb`, the WebGL2 surface's `Rgba8UnormSrgb`, and the
+/// WebGPU surface's `Bgra8Unorm` / `Rgba8Unorm` / `Rgba16Float`, none of
+/// them sRGB — and for every authored byte, the byte each pass leaves in
+/// the target is the authored byte:
+///
+/// - **the clear**, `clear_color_for`;
+/// - **glyphon's text**, through the color mode the renderer gives its
+///   atlas, the shader's per-mode handling of a glyph's color written
+///   out here from glyphon 0.12.0's `shader.wgsl` (`ConvertToLinear`
+///   applies its `srgb_to_linear`, `None` divides by 255);
+/// - **the glyph-run pass's mask glyphs**, the real `instance`;
+/// - **its color glyphs** (emoji), sampled from a page of the format the
+///   pass gives it: an sRGB page decodes the stored byte, a linear one
+///   returns it as it is.
+///
+/// "Leaves in the target" is the target's own write, written out from
+/// its definition: an sRGB format encodes by the sRGB transfer function
+/// (IEC 61966-2-1) and rounds; a linear one rounds the value as it is.
+/// Controls: a pass that decodes on a linear target, or does not on an
+/// sRGB one, leaves a darker or brighter byte for every byte but the
+/// two ends — `0x80` lands as `0x37` or `0xbc` — which the last loop
+/// asserts of the two wrong choices, so the agreement is not a model
+/// that cannot tell them apart.
+#[test]
+fn test_the_three_color_passes_agree_on_every_target() {
+    use super::glyph_runs::atlas::{Page, Slot};
+    use super::glyph_runs::emit::GlyphSprite;
+    use super::glyph_runs::instance;
+    use super::target_encoding::TargetEncoding;
+    use wgpu::TextureFormat::{Bgra8Unorm, Bgra8UnormSrgb, Rgba16Float, Rgba8Unorm, Rgba8UnormSrgb};
+
+    let decode = |c: f64| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let encode = |l: f64| {
+        if l <= 0.003_130_8 {
+            l * 12.92
+        } else {
+            1.055 * l.powf(1.0 / 2.4) - 0.055
+        }
+    };
+    // The byte a target of `format` keeps for a pass's output `value`.
+    let stored = |format: wgpu::TextureFormat, value: f64| -> u8 {
+        let written = if format.is_srgb() { encode(value) } else { value };
+        (written.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    // glyphon's shader: a glyph's color byte as the vertex stage hands
+    // it on, per the conversion its color mode tags the glyph with.
+    let glyphon = |mode: glyphon::ColorMode, byte: u8| -> f64 {
+        let c = f32::from(byte) / 255.0;
+        f64::from(match mode {
+            glyphon::ColorMode::Accurate => {
+                if c <= 0.04045 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            }
+            glyphon::ColorMode::Web => c,
+        })
+    };
+    // A texture sample of a stored byte from a page of `format`.
+    let sample = |format: wgpu::TextureFormat, byte: u8| -> f64 {
+        let c = f64::from(byte) / 255.0;
+        if format.is_srgb() {
+            decode(c)
+        } else {
+            c
+        }
+    };
+    let (key, _, _) = glyphon::CacheKey::new(
+        glyphon::fontdb::ID::dummy(),
+        0,
+        16.0,
+        (0.0, 0.0),
+        glyphon::Weight::NORMAL,
+        glyphon::cosmic_text::CacheKeyFlags::empty(),
+    );
+    let mask = Slot {
+        page: Page::Mask,
+        uv: (0, 0),
+        size: (1, 1),
+        left: 0,
+        top: 0,
+    };
+
+    for format in [Bgra8UnormSrgb, Rgba8UnormSrgb, Bgra8Unorm, Rgba8Unorm, Rgba16Float] {
+        let encoding = TargetEncoding::of(format);
+        let mode = encoding.glyphon_color_mode();
+        let page = encoding.color_page_format();
+        for byte in 0..=255u8 {
+            let clear = clear_color_for([byte, byte, byte, 255], format);
+            let sprite = GlyphSprite {
+                key,
+                pen: (0, 0),
+                color: [byte, byte, byte, 255],
+                opacity: 1.0,
+            };
+            let run_glyph = instance(&sprite, mask, encoding).color;
+            let left = [
+                ("the clear", stored(format, clear.r)),
+                ("glyphon's text", stored(format, glyphon(mode, byte))),
+                ("a run's mask glyph", stored(format, f64::from(run_glyph[0]))),
+                ("a run's color glyph", stored(format, sample(page, byte))),
+            ];
+            for (pass, got) in left {
+                assert_eq!(
+                    got, byte,
+                    "{format:?}: {pass} leaves 0x{got:02x} for the authored 0x{byte:02x}"
+                );
+            }
+        }
+    }
+
+    // The controls: on each kind of target, the other kind's choice
+    // leaves a different byte, for every byte but the two ends.
+    assert_eq!(stored(Bgra8Unorm, decode(128.0 / 255.0)), 0x37, "a decode on a linear target darkens");
+    assert_eq!(stored(Bgra8UnormSrgb, 128.0 / 255.0), 0xbc, "no decode on an sRGB target brightens");
+    for byte in 1..255u8 {
+        let c = f64::from(byte) / 255.0;
+        assert_ne!(stored(Bgra8Unorm, decode(c)), byte, "0x{byte:02x}: decoded on a linear target");
+        assert_ne!(stored(Bgra8UnormSrgb, c), byte, "0x{byte:02x}: not decoded on an sRGB target");
+    }
+}
+
 // --- FrameIntervalRing --------------------------------------------------
 // Fundamentals coverage for the sum invariant backing
 // `FpsDisplayMode::Debug`'s rolling average. Pure arithmetic, no clock.

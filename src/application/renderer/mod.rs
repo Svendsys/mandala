@@ -20,12 +20,16 @@
 //!   per-frame driver over it (`Renderer::process`); composes the
 //!   buffer layers in draw order.
 //! - [`tree_buffers`] / [`tree_walker`] — `GfxElement` tree
-//!   → text-buffer + rect-buffer projection. The tree walker
+//!   → text-buffer projection. The tree walker
 //!   is where the bulk of canvas-content shaping happens.
 //! - [`glyph_runs`] — the positioned-glyph pass: every glyph of a
 //!   `GlyphRun` at its own canvas position, from the run's one
 //!   shaped buffer, through an atlas and a pipeline of its own, in
 //!   one draw call per frame (design §13.2).
+//! - [`target_encoding`] — how an authored color is written to a
+//!   target of a given format: the one answer the clear, glyphon's
+//!   text and the glyph-run pass share, so a glyph colored like the
+//!   background matches it on every target.
 //! - [`selection_overlay`] — the rubber-band selection
 //!   rectangle, the one canvas visual with no model behind it.
 //! - [`borders`] — node-frame buffers (the box-drawing
@@ -81,6 +85,9 @@ mod overlay_dispatch;
 mod pipeline;
 mod render;
 mod scene_shape_cache;
+// How an authored color is written to a target of a given format: the
+// one answer the clear, glyphon and the glyph-run pass share.
+mod target_encoding;
 // Test-only reach-through to the shared scene shape pass. The pass
 // takes a `&Scene` rather than a `&mut Renderer` precisely so its
 // granularity can be asserted without a live device (§T8), and that
@@ -157,6 +164,7 @@ use web_time::Instant;
 
 use baumhard::font::{Attrs, Buffer};
 use glyphon::{Cache, SwashCache, TextAtlas, TextRenderer, Viewport};
+use target_encoding::TargetEncoding;
 use log::{error, info, warn};
 
 use rustc_hash::FxHashMap;
@@ -733,35 +741,25 @@ const HEADLESS_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
 /// The render-pass clear value that leaves `background` in a target of
 /// `format`, opaque.
 ///
-/// A clear value is linear: on an sRGB target the GPU encodes it to
-/// sRGB as it writes, as it does every color a shader returns. So on
-/// an sRGB target each channel is the sRGB byte decoded to linear
-/// light — the same decode the glyph passes apply to a glyph's color
-/// — and the frame holds the authored byte. On a linear (`Unorm`)
-/// target, which the browser's WebGL2 surface may be, the byte goes in
-/// as it is, which that target stores unchanged. Either way the frame
-/// shows `#rrggbb` as written, on native and in the browser alike
+/// A clear value is written to the target the way a shader's output
+/// is, so it takes the target's [`TargetEncoding`]: on an sRGB target
+/// each channel is the authored byte decoded to linear light, which the
+/// GPU encodes back as it writes; on a linear (`Unorm`) target — the
+/// browser's WebGPU surface, which is never sRGB — the byte goes in as
+/// it is, which that target keeps. Glyphon's text and the glyph-run
+/// pass make the same choice from the same type, so the frame holds
+/// `#rrggbb` as written behind glyphs that hold their own colors as
+/// written, on native and on both browser backends alike
 /// (CODE_CONVENTIONS §4). The alpha is always 1.
 ///
 /// Pure, so the renderer-free tier pins it (§T8). O(1).
 pub(super) fn clear_color_for(background: [u8; 4], format: TextureFormat) -> Color {
     let [r, g, b, _] = background;
-    let channel = |byte: u8| -> f64 {
-        let value = f64::from(byte) / 255.0;
-        if format.is_srgb() {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        } else {
-            value
-        }
-    };
+    let encoding = TargetEncoding::of(format);
     Color {
-        r: channel(r),
-        g: channel(g),
-        b: channel(b),
+        r: encoding.channel(r),
+        g: encoding.channel(g),
+        b: encoding.channel(b),
         a: 1.0,
     }
 }
@@ -894,7 +892,16 @@ impl Renderer {
     ) -> Renderer {
         let glyphon_cache = Cache::new(&device);
 
-        let mut atlas = TextAtlas::new(&device, &queue, &glyphon_cache, surface_format);
+        // glyphon decodes a glyph's color for an sRGB target and writes
+        // it as it is for a linear one, as the clear and the glyph-run
+        // pass do (`target_encoding`).
+        let mut atlas = TextAtlas::with_color_mode(
+            &device,
+            &queue,
+            &glyphon_cache,
+            surface_format,
+            TargetEncoding::of(surface_format).glyphon_color_mode(),
+        );
         let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
@@ -1087,8 +1094,10 @@ impl Renderer {
 
     /// Clear every frame to `background`, the map's one background
     /// color (V1-B12), so the frame shows exactly that color behind
-    /// everything the map draws. Called by the event loop when a map
-    /// loads, on both targets.
+    /// everything the map draws. Called on both targets when a map
+    /// loads and after every rebuild of the canvas, so the clear
+    /// follows the document's background through a theme-variant
+    /// switch, an undo or a document swap.
     ///
     /// Opaque whatever `background` says: nothing is behind the
     /// canvas for an alpha to blend with. See [`clear_color_for`] for

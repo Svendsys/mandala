@@ -109,9 +109,20 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     let mut named = 0;
     let mut bounded_seeds: BTreeSet<String> = BTreeSet::new();
     let mut past_seeds: BTreeSet<String> = BTreeSet::new();
+    let (mut reordered, mut tampered, mut reordered_backgrounds) = (Vec::new(), Vec::new(), Vec::new());
     for (name, bytes) in &seeds {
+        let got = format_fuzz::check_generated(&mut Choices::new(bytes), MAX_GENERATED_ROWS)
+            .unwrap_or_else(|why| panic!("{name}: {why}"));
+        if got.reordered {
+            reordered.push(name.as_str());
+            if name.starts_with("background_") {
+                reordered_backgrounds.push(name.as_str());
+            }
+        }
+        if got.tampered {
+            tampered.push(name.as_str());
+        }
         if let Some(outcome) = name.strip_prefix("outcome_") {
-            let got = format_fuzz::check_generated(&mut Choices::new(bytes), MAX_GENERATED_ROWS).unwrap();
             assert_eq!(got.outcome.replacen(": ", "_", 1), outcome, "{name}");
             named += 1;
             continue;
@@ -141,14 +152,15 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
             }
             "random_tree_1024" => nodes.len() == 1024,
             // A map with a background that loads (V1-B12): a literal,
-            // and a theme variable.
+            // and a theme variable. `check_generated` draws the
+            // background, after its own steps, so it is read from there.
             "background_literal" => {
-                matches!(spec.background, Some(format_fuzz::Background::Literal(_)))
-                    && spec.fault == format_fuzz::Fault::None
+                matches!(got.background, Some(format_fuzz::Background::Literal(_)))
+                    && got.outcome == "none: loaded"
             }
             "background_var" => {
-                matches!(spec.background, Some(format_fuzz::Background::Var(_)))
-                    && spec.fault == format_fuzz::Fault::None
+                matches!(got.background, Some(format_fuzz::Background::Var(_)))
+                    && got.outcome == "none: loaded"
             }
             // A bounded field written past its bound, refused as `Bound`
             // at its path, so a dropped check fails on the seed itself.
@@ -174,6 +186,15 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     }
     assert_eq!(named, seeds.len());
     assert!(named >= 20, "precondition: the seeds are read ({named})");
+    // The steps after the map are a seed's to take too: the corpus keeps
+    // a seed that loads the map again in another key order, one that
+    // tampers with the loaded document, and a background whose place in
+    // the key order is shuffled — so a change to the choice sequence
+    // that drops one of them fails here, not only in a fuzzing run.
+    assert!(
+        !reordered.is_empty() && !tampered.is_empty() && !reordered_backgrounds.is_empty(),
+        "the corpus reorders {reordered:?}, tampers {tampered:?}, and reorders a background in {reordered_backgrounds:?}"
+    );
     let fields: BTreeSet<String> = format_fuzz::BOUNDED_FIELDS
         .iter()
         .map(|field| field.name.replace('_', " "))
@@ -633,4 +654,44 @@ fn test_every_fuzz_input_fits_its_targets_max_len() {
         longest > 32_768,
         "precondition: the deep-chain seeds are read ({longest} bytes the longest)"
     );
+}
+
+#[test]
+#[ignore]
+fn zz_probe_seeds() {
+    let base: Vec<String> = std::fs::read_to_string("/tmp/claude-0/-home-user-mandala/11177a67-fe74-5d6e-8204-aad9292d8de2/scratchpad/base_seeds.txt").unwrap().lines().map(str::to_string).collect();
+    let dir = repo_path("fuzz/seeds/load_structured");
+    let (mut r, mut t) = (0, 0);
+    for name in &base {
+        let bytes = std::fs::read(dir.join(name)).unwrap();
+        let got = format_fuzz::check_generated(&mut Choices::new(&bytes), MAX_GENERATED_ROWS).unwrap();
+        let mut c = Choices::new(&bytes);
+        let _ = generate(&mut c, MAX_GENERATED_ROWS);
+        c.below(u32::MAX - 1); c.one_in(4); if c.one_in(4) { for _ in 0..c.below(3) { c.next_u32(); c.next_u32(); c.next_u32(); } c.next_u32(); }
+        r += usize::from(got.reordered); t += usize::from(got.tampered);
+        println!("PROBE {name}: reordered={} tampered={} background={:?} exhausted_at_draw={} outcome={}", got.reordered, got.tampered, got.background.is_some(), c.exhausted(), got.outcome);
+    }
+    println!("PROBE totals over {} base seeds: reordered {r} tampered {t}", base.len());
+    let want: [(&str, fn(&format_fuzz::Generated) -> bool); 4] = [
+        ("background_literal", |g| matches!(g.background, Some(format_fuzz::Background::Literal(_))) && g.outcome == "none: loaded" && g.reordered),
+        ("background_var", |g| matches!(g.background, Some(format_fuzz::Background::Var(_))) && g.outcome == "none: loaded" && g.reordered),
+        ("outcome_content_TranslucentBackground", |g| g.outcome == "content: TranslucentBackground"),
+        ("outcome_content_UnknownVariable", |g| g.outcome == "content: UnknownVariable"),
+    ];
+    for (name, ok) in want {
+        let mut best: Option<(usize, u64, Vec<u8>)> = None;
+        for seed in 1..3000u64 {
+            let mut c = Choices::seeded(seed);
+            let Ok(g) = format_fuzz::check_generated(&mut c, MAX_GENERATED_ROWS) else { panic!("seed {seed} fails") };
+            if ok(&g) {
+                let bytes = c.replay();
+                if best.as_ref().map_or(true, |(len, _, _)| bytes.len() < *len) {
+                    best = Some((bytes.len(), seed, bytes));
+                }
+            }
+        }
+        let (len, seed, bytes) = best.expect(name);
+        std::fs::write(format!("/tmp/claude-0/-home-user-mandala/11177a67-fe74-5d6e-8204-aad9292d8de2/scratchpad/newseed_{name}"), &bytes).unwrap();
+        println!("PROBE new {name}: seed {seed}, {len} bytes");
+    }
 }

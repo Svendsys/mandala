@@ -16,8 +16,12 @@
 //! it.
 //!
 //! **Two pages**, as glyphon has: an `R8Unorm` page for coverage masks
-//! (ordinary glyphs, tinted by their color) and an `Rgba8UnormSrgb`
-//! page for color glyphs (emoji), which keep their own colors. Each
+//! (ordinary glyphs, tinted by their color) and an RGBA page for color
+//! glyphs (emoji), which keep their own colors — `Rgba8UnormSrgb` on an
+//! sRGB target and `Rgba8Unorm` on a linear one
+//! ([`TargetEncoding::color_page_format`], as glyphon's two color modes
+//! choose for their own color page), so an emoji shows its stored
+//! colors on every target. Each
 //! page is packed by an [`etagere`] bucketed allocator, starts at
 //! [`INITIAL_SIDE`] and doubles up to the device's
 //! `max_texture_dimension_2d`.
@@ -63,6 +67,8 @@ use etagere::{size2, AllocId, BucketedAtlasAllocator};
 use glyphon::{CacheKey, FontSystem, SwashCache, SwashContent};
 use rustc_hash::FxHashMap;
 
+use crate::application::renderer::target_encoding::TargetEncoding;
+
 /// The side, in texels, a page starts at: glyphon's own starting size.
 const INITIAL_SIDE: u32 = 256;
 
@@ -74,16 +80,18 @@ const PROTECTED_FRAMES: u64 = 2;
 /// Which page a glyph lives on.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Page {
-    /// Full-color glyphs (emoji): RGBA, sRGB-encoded.
+    /// Full-color glyphs (emoji): RGBA, sRGB-encoded, on a page whose
+    /// format follows the target's encoding.
     Color,
     /// Coverage masks: one channel, tinted by the glyph's color.
     Mask,
 }
 
 impl Page {
-    fn format(self) -> wgpu::TextureFormat {
+    /// The page's texture format for a target of `encoding`.
+    fn format(self, encoding: TargetEncoding) -> wgpu::TextureFormat {
         match self {
-            Page::Color => wgpu::TextureFormat::Rgba8UnormSrgb,
+            Page::Color => encoding.color_page_format(),
             Page::Mask => wgpu::TextureFormat::R8Unorm,
         }
     }
@@ -145,8 +153,8 @@ struct AtlasPage {
 }
 
 impl AtlasPage {
-    fn new(device: &wgpu::Device, page: Page, side: u32) -> Self {
-        let (texture, view) = Self::texture(device, page, side);
+    fn new(device: &wgpu::Device, page: Page, encoding: TargetEncoding, side: u32) -> Self {
+        let (texture, view) = Self::texture(device, page, encoding, side);
         AtlasPage {
             page,
             side,
@@ -157,7 +165,12 @@ impl AtlasPage {
         }
     }
 
-    fn texture(device: &wgpu::Device, page: Page, side: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    fn texture(
+        device: &wgpu::Device,
+        page: Page,
+        encoding: TargetEncoding,
+        side: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(match page {
                 Page::Color => "glyph_runs color atlas",
@@ -171,7 +184,7 @@ impl AtlasPage {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: page.format(),
+            format: page.format(encoding),
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -254,6 +267,9 @@ enum Placed {
 pub(crate) struct GlyphAtlas {
     color: AtlasPage,
     mask: AtlasPage,
+    /// The encoding of the target the atlas is drawn into, which picks
+    /// the color page's format at creation and at every growth.
+    encoding: TargetEncoding,
     entries: FxHashMap<CacheKey, Entry>,
     max_side: u32,
     frame: u64,
@@ -271,12 +287,13 @@ pub(crate) struct GlyphAtlas {
 }
 
 impl GlyphAtlas {
-    /// An empty atlas of two [`INITIAL_SIDE`] pages on `device`.
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    /// An empty atlas of two [`INITIAL_SIDE`] pages on `device`, for a
+    /// target of `encoding`.
+    pub(crate) fn new(device: &wgpu::Device, encoding: TargetEncoding) -> Self {
         let max_side = device.limits().max_texture_dimension_2d;
         let side = INITIAL_SIDE.min(max_side);
-        let color = AtlasPage::new(device, Page::Color, side);
-        let mask = AtlasPage::new(device, Page::Mask, side);
+        let color = AtlasPage::new(device, Page::Color, encoding, side);
+        let mask = AtlasPage::new(device, Page::Mask, encoding, side);
         // Nearest: a glyph quad covers exactly its bitmap's texels on
         // whole surface pixels, so there is nothing to filter.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -313,6 +330,7 @@ impl GlyphAtlas {
         GlyphAtlas {
             color,
             mask,
+            encoding,
             entries: FxHashMap::default(),
             max_side,
             frame: 0,
@@ -550,7 +568,7 @@ impl GlyphAtlas {
         }
         let side = (target.side * 2).min(max_side);
         target.packer.grow(size2(side as i32, side as i32));
-        let (texture, view) = AtlasPage::texture(device, page, side);
+        let (texture, view) = AtlasPage::texture(device, page, self.encoding, side);
         target.texture = texture;
         target.view = view;
         target.side = side;

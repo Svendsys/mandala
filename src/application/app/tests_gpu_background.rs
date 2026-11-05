@@ -19,6 +19,8 @@ use wgpu::Color;
 use super::gpu_harness::{headless_app, HARNESS_SIZE};
 use super::ipc_target::IpcCommandTarget;
 use super::run_native_init::InitState;
+use super::step::Beat;
+use super::tests_gpu::TempFile;
 use crate::application::ipc::run_attached;
 use crate::application::renderer::{CanvasSource, CaptureFailure, FrameSkip, ModalLayer};
 
@@ -137,6 +139,121 @@ fn test_the_frame_is_cleared_to_the_maps_resolved_background() {
         init.renderer.clear_color(),
         srgb_clear([0xf0, 0xe0, 0xd0]),
         "var(bg) in the light variant",
+    );
+}
+
+/// One IPC request through the app's own command target, its reply
+/// asserted ok, then one frame's drain, as a hand's input lands.
+fn act(init: &mut InitState, request: serde_json::Value) -> serde_json::Value {
+    let (reply, _) = run_attached(&request.to_string(), &mut IpcCommandTarget::new(init));
+    assert_eq!(reply["ok"], json!(true), "{request} is answered ok: {reply}");
+    init.input_context().drain_frame(Beat::Loop);
+    reply
+}
+
+/// **The clear follows the background through the app's own routes**,
+/// not only at load: a theme-variant switch fired by a click on
+/// `theme_demo`'s "light" node (its `OnClick` binding to the map's
+/// `switch-light` mutation, whose one document action is
+/// `SetThemeVariant`), the undo of that switch, and a reload of another
+/// map through the console's `open`. `theme_demo`'s background is
+/// `var(--bg)`, so the variant is what moves it. (The document has no
+/// redo to exercise.)
+///
+/// Controls: each step's expectation is checked against the clear the
+/// step before it left, and the two differ, so a clear that stayed
+/// where load put it — the defect this pins — fails at the first step;
+/// the document's own background is asserted to have moved first, so a
+/// click that missed the node cannot pass as a clear that did not
+/// follow.
+#[test]
+fn test_the_clear_follows_a_theme_variant_switch_its_undo_and_a_reload() {
+    let Some(mut app) = headless_app(&map_path("theme_demo.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    let background = |init: &InitState| init.document.as_ref().expect("the harness builds a document").background();
+
+    draw(init);
+    let dark = srgb_clear([0x14, 0x14, 0x14]);
+    assert_clear(init.renderer.clear_color(), dark, "the control: theme_demo's dark variant at load");
+
+    // The click: node 2's body, the "light" switch.
+    let light_node = init
+        .document
+        .as_ref()
+        .expect("document")
+        .mindmap
+        .nodes
+        .get("2")
+        .expect("theme_demo has node 2");
+    assert!(
+        light_node
+            .trigger_bindings
+            .iter()
+            .any(|binding| binding.mutation_id == "switch-light"),
+        "precondition: node 2 is the light switch"
+    );
+    let center = glam::Vec2::new(
+        light_node.position.x as f32 + light_node.size.width as f32 / 2.0,
+        light_node.position.y as f32 + light_node.size.height as f32 / 2.0,
+    );
+    act(
+        init,
+        json!({"id": 1, "cmd": "input.mouse_move", "x": center.x, "y": center.y, "space": "canvas"}),
+    );
+    act(
+        init,
+        json!({"id": 2, "cmd": "input.mouse_button", "button": "left", "state": "click"}),
+    );
+    assert_eq!(
+        background(init),
+        [0xf5, 0xf1, 0xe8, 0xff],
+        "precondition: the click switched the document to the light variant"
+    );
+    draw(init);
+    let light = srgb_clear([0xf5, 0xf1, 0xe8]);
+    assert_clear(
+        init.renderer.clear_color(),
+        light,
+        "the light variant, switched by a click (the control is the dark clear above)",
+    );
+
+    // The undo restores the dark variant, and the clear with it.
+    act(init, json!({"id": 3, "cmd": "act.action", "action": "Undo"}));
+    assert_eq!(
+        background(init),
+        [0x14, 0x14, 0x14, 0xff],
+        "precondition: the undo restored the dark variant"
+    );
+    draw(init);
+    assert_clear(
+        init.renderer.clear_color(),
+        dark,
+        "the dark variant after the undo (the control is the light clear above)",
+    );
+
+    // A reload: another map, through the console. The switch dirtied the
+    // map, so it is saved first, as the dirty guard asks.
+    let saved = TempFile::new("background-reload", "mindmap.json");
+    act(
+        init,
+        json!({"id": 4, "cmd": "act.console", "line": format!("save {}", saved.as_str())}),
+    );
+    act(
+        init,
+        json!({"id": 5, "cmd": "act.console", "line": format!("open {}", map_path("testament.mindmap.json"))}),
+    );
+    assert_eq!(
+        background(init),
+        [0, 0, 0, 0xff],
+        "precondition: testament is open, and its background is black"
+    );
+    draw(init);
+    assert_clear(
+        init.renderer.clear_color(),
+        srgb_clear([0, 0, 0]),
+        "testament's black after the reload (the control is the dark clear above)",
     );
 }
 

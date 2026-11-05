@@ -467,8 +467,20 @@ pub(in crate::application::app) fn selection_highlight_entries(
 
 /// Narrower cousin of `rebuild_all` that rebuilds every canvas
 /// role (connections, borders, portals, labels, section frames,
-/// handles) but **not** the node tree (node text buffers, node
-/// backgrounds).
+/// handles) but **not** the node tree (node text buffers), and
+/// re-applies the map's one background to the renderer's clear.
+///
+/// **The background is re-applied here because every canvas change
+/// reaches here.** `rebuild_all` runs this body, and so does
+/// `click::rebuild_all_with_mode`; between them they are what a
+/// document action (a theme-variant switch, from a click trigger, a
+/// key binding or a macro), an undo, a console line and a document
+/// swap (`open`, `new`) end in, on both targets. So the clear follows
+/// `MindMapDocument::background` whenever the canvas can have moved,
+/// without a call beside each of those routes for one of them to
+/// forget. It is O(1) — one variable lookup and one hex parse — so the
+/// scene-only callers that cannot have changed it (a picker hover, a
+/// selection move) lose nothing by sharing it.
 ///
 /// Used by the glyph-wheel color picker's hover path: a per-frame
 /// color preview doesn't change node text, borders, or positions,
@@ -496,6 +508,7 @@ pub(in crate::application::app) fn rebuild_scene_only(
     );
     frame.update_all(scene_cache, app_scene);
     flush_canvas_scene_buffers(app_scene, renderer);
+    renderer.set_background(doc.background());
 }
 
 /// Re-project the **zoom-dependent** canvas roles after a camera

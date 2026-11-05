@@ -835,7 +835,7 @@ pub struct MapSpec {
 }
 
 /// A generated map's `background` (V1-B12).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Background {
     /// A literal, as JSON text: `"#rrggbb"`, or `"#rrggbbaa"` for a
     /// translucent one, which is refused.
@@ -1092,16 +1092,14 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
         3 => inject(choices, &mut nodes, &mut defaults),
         _ => (Fault::None, None),
     };
-    // Drawn last, so that every seed written before the background was
-    // reads as it did, with no background: a choice past the end of an
-    // input is zero.
-    let (background, fault) = background(choices, fault);
+    // No background here: `check_generated` draws it after its own
+    // steps' choices ([`draw_background`] says why).
     MapSpec {
         nodes,
         fault,
         bounded,
         defaults,
-        background,
+        background: None,
     }
 }
 
@@ -1114,6 +1112,32 @@ fn hex(choices: &mut crate::util::tests::choices::Choices<'_>, translucent: bool
     } else {
         format!("\"#{rgb:06x}\"")
     }
+}
+
+/// Give `spec` a background drawn from `choices` (V1-B12), and the fault
+/// the map then carries ([`background`]).
+///
+/// **Drawn after every choice an input made before backgrounds
+/// existed**, which is why it is not part of [`generate`]:
+/// [`check_generated`] draws it after its key order, its reorder and
+/// tamper flags and the tamper step's own choices ([`Tamper`]), and
+/// before the map is rendered. So a seed written before the background
+/// reads every one of its choices where it read them — the same nodes,
+/// fault, key order and tamper edits, reordered and tampered as it was —
+/// and its background is the zero past its end, which is none. Every
+/// seed a sweep wrote ends where its choices did (`Choices::replay`),
+/// and each of the 21 committed before the background ends by this
+/// draw. Before this draw moved here it
+/// sat inside `generate`, where it took the bytes the steps after it had
+/// read: across the 21 seeds committed before it, 15 reordered and 2
+/// tampered seeds became 3 and 0.
+/// `test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for`
+/// holds the corpus to keeping a reordered seed, a tampered one and a
+/// reordered background among them.
+fn draw_background(choices: &mut crate::util::tests::choices::Choices<'_>, spec: &mut MapSpec) {
+    let (drawn, fault) = background(choices, spec.fault.clone());
+    spec.background = drawn;
+    spec.fault = fault;
 }
 
 /// The map's background, and the fault the map then carries: none, a
@@ -2857,6 +2881,8 @@ pub struct Generated {
     /// Whether it loaded and its document was tampered with and checked
     /// again.
     pub tampered: bool,
+    /// The background it was drawn with, if any.
+    pub background: Option<Background>,
 }
 
 /// [`check_structured`] for a map drawn from `choices`, whatever their
@@ -2865,10 +2891,11 @@ pub fn check_generated(
     choices: &mut crate::util::tests::choices::Choices<'_>,
     most: u32,
 ) -> Result<Generated, String> {
-    let spec = generate(choices, most);
+    let mut spec = generate(choices, most);
     let order = 1 + choices.below(u32::MAX - 1);
     let reordered = choices.one_in(4);
-    let tamper = choices.one_in(4);
+    let tamper = choices.one_in(4).then(|| Tamper::draw(choices));
+    draw_background(choices, &mut spec);
     let text = render(&spec, 0);
     let result = load(&text);
     let context = |why: String| format!("{why}\n{text}");
@@ -2946,10 +2973,11 @@ pub fn check_generated(
     };
     let (outcome, tampered) = match result {
         Ok(doc) => {
-            if tamper {
-                tampered_documents_agree(choices, doc)?;
+            let tampered = tamper.is_some();
+            if let Some(tamper) = &tamper {
+                tampered_documents_agree(tamper, doc)?;
             }
-            (format!("{fault}: loaded"), tamper)
+            (format!("{fault}: loaded"), tampered)
         }
         Err(error) => (format!("{fault}: {}", kind_name(&error.kind)), false),
     };
@@ -2957,19 +2985,51 @@ pub fn check_generated(
         outcome,
         reordered,
         tampered,
+        background: spec.background,
     })
+}
+
+/// The tamper step's choices, drawn before the map is loaded.
+///
+/// They are drawn up front, in the order [`tampered_documents_agree`]
+/// reads them — how many edits, then each edit's target, other node and
+/// fault, then the small element bound — and reduced against the loaded
+/// document's ids only when they are applied. That keeps them where they
+/// were in the input before the background existed: the background
+/// ([`draw_background`]) is drawn after them, but must be part of the
+/// map before it can be loaded. Every raw choice is drawn whether or not
+/// the map then loads, so an input that does not load reads its zero
+/// past the end of the input or a choice nothing else reads.
+struct Tamper {
+    /// Each edit's raw target, other-node and fault choices.
+    edits: Vec<[u32; 3]>,
+    /// The raw choice of the small element bound.
+    small: u32,
+}
+
+impl Tamper {
+    fn draw(choices: &mut crate::util::tests::choices::Choices<'_>) -> Self {
+        let edits = (0..choices.below(3))
+            .map(|_| [choices.next_u32(), choices.next_u32(), choices.next_u32()])
+            .collect();
+        Tamper {
+            edits,
+            small: choices.next_u32(),
+        }
+    }
 }
 
 /// `doc` with up to two values a buggy writer could leave — a second
 /// node with one id, a fresh id, a position or opacity out of bounds, a
 /// size in the wrong unit, a link to itself or to no node — each drawn
-/// from `choices`; then `check_savable` must agree with the full build,
+/// from `tamper`; then `check_savable` must agree with the full build,
 /// under this target's limits and under an element bound small enough
 /// to be reached, and a document it passes must round-trip.
-fn tampered_documents_agree(
-    choices: &mut crate::util::tests::choices::Choices<'_>,
-    doc: Document,
-) -> Result<(), String> {
+///
+/// Each raw choice is reduced as `Choices` reduces one — modulo the
+/// count it chooses among — so a seed reads the same edits it read when
+/// this step drew them itself.
+fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<(), String> {
     use crate::document::ids::{get, IdentIndex, NodeIdent};
     let mut tree = doc.tree().clone();
     let ids: Vec<crate::arena::NodeId> = tree.descendants().collect();
@@ -2981,14 +3041,15 @@ fn tampered_documents_agree(
     if nodes.is_empty() {
         return Ok(());
     }
-    for _ in 0..choices.below(3) {
-        let target = *choices.pick(&ids);
-        let other = *choices.pick(&nodes);
+    let pick = |raw: u32, from: &[crate::arena::NodeId]| from[raw as usize % from.len()];
+    for &[target, other, fault] in &tamper.edits {
+        let target = pick(target, &ids);
+        let other = pick(other, &nodes);
         let other_ident = match get(&tree, other) {
             Some(DocElement::Node(node)) => node.ident,
             _ => NodeIdent(1),
         };
-        let fault = choices.below(7);
+        let fault = fault % 7;
         let _ = tree.update(target, |element| match (fault, element) {
             (0, DocElement::Node(node)) => node.ident = other_ident,
             (1, DocElement::Node(node)) => node.ident = NodeIdent(bounds::MAX_NODE_IDENT),
@@ -3021,7 +3082,7 @@ fn tampered_documents_agree(
     savable_checks_agree(&tampered, LIMITS)?;
     let small = Limits {
         bytes: None,
-        elements: Some(u64::from(choices.below(64))),
+        elements: Some(u64::from(tamper.small % 64)),
     };
     savable_checks_agree(&tampered, small)?;
     if check_savable_under(&tampered, LIMITS).is_ok() {

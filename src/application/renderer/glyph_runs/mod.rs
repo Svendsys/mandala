@@ -18,7 +18,8 @@
 //! What it shares with glyphon's path: the `FontSystem` (under the
 //! guard the frame already holds for glyphon's prepare), cosmic-text's
 //! `SwashCache` (the rasterizer's scratch state), the render pass, the
-//! surface format and the camera. What it does not share is the atlas,
+//! surface format, the way a color is written to it
+//! ([`TargetEncoding`]) and the camera. What it does not share is the atlas,
 //! because glyphon's is not reachable from outside it ([`atlas`]
 //! explains). Instance data is plain floats, so the pipeline needs no
 //! integer vertex attribute (a WebGL2 gap on some browsers, as the rect
@@ -43,6 +44,7 @@ use glyphon::{FontSystem, LayoutGlyph, SwashCache};
 
 use self::atlas::{AtlasCounts, GlyphAtlas, Page};
 use self::emit::{emit_run, GlyphSprite};
+use super::target_encoding::TargetEncoding;
 
 /// The glyph pipeline's shader. One instance per glyph, drawn as a
 /// four-vertex triangle strip; the instance carries the bitmap's
@@ -193,6 +195,9 @@ pub(crate) struct GlyphRunCounts {
 /// instance buffer one frame's runs are flattened into.
 pub(crate) struct GlyphRunPass {
     atlas: GlyphAtlas,
+    /// The encoding of the target this pass draws into: whether a mask
+    /// glyph's color is decoded to linear light ([`instance`]).
+    encoding: TargetEncoding,
     pipeline: wgpu::RenderPipeline,
     params: Params,
     params_buffer: wgpu::Buffer,
@@ -207,7 +212,8 @@ impl GlyphRunPass {
     /// The pass for frames of `format` on `device`: an empty atlas, the
     /// pipeline, and the buffers at their starting sizes.
     pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let atlas = GlyphAtlas::new(device);
+        let encoding = TargetEncoding::of(format);
+        let atlas = GlyphAtlas::new(device, encoding);
         let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("glyph_runs params layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -283,6 +289,7 @@ impl GlyphRunPass {
         let instance_buffer = Self::instance_buffer(device, INITIAL_INSTANCE_CAPACITY);
         GlyphRunPass {
             atlas,
+            encoding,
             pipeline,
             params,
             params_buffer,
@@ -349,6 +356,7 @@ impl GlyphRunPass {
         let mut layout: Vec<&'r LayoutGlyph> = Vec::new();
         let atlas = &mut self.atlas;
         let instances = &mut self.instances;
+        let encoding = self.encoding;
         for (run, offset) in runs {
             frame.runs += 1;
             let mut nothing_to_draw = 0;
@@ -358,7 +366,7 @@ impl GlyphRunPass {
                 camera,
                 &mut layout,
                 &mut |sprite: GlyphSprite| match atlas.slot(device, queue, font_system, swash, sprite.key) {
-                    Some(slot) => instances.push(instance(&sprite, slot)),
+                    Some(slot) => instances.push(instance(&sprite, slot, encoding)),
                     None => nothing_to_draw += 1,
                 },
             );
@@ -402,23 +410,29 @@ impl GlyphRunPass {
     }
 }
 
-/// The instance that draws `sprite` from `slot`: the bitmap's rectangle
-/// placed by its bearing from the pen, and its color.
+/// The instance that draws `sprite` from `slot` into a target of
+/// `encoding`: the bitmap's rectangle placed by its bearing from the
+/// pen, and its color.
 ///
-/// A mask glyph takes the sprite's color, decoded to linear, alpha and
-/// all. A color glyph (an emoji) keeps its own colors, so its text color
-/// and any override color do not reach it — their alpha included — and
-/// its alpha is the run's opacity alone. Decided here because it is the
-/// slot, not the sprite, that knows which page a glyph is on.
-pub(crate) fn instance(sprite: &GlyphSprite, slot: atlas::Slot) -> GlyphInstance {
+/// A mask glyph takes the sprite's color, alpha and all, written for
+/// the target the way the clear and glyphon write theirs
+/// ([`TargetEncoding::channel`]): decoded to linear light on an sRGB
+/// target, as it is on a linear one. So a glyph colored like the
+/// background matches it on every target. A color glyph (an emoji)
+/// keeps its own colors, so its text color and any override color do
+/// not reach it — their alpha included — and its alpha is the run's
+/// opacity alone; its page's format follows the same encoding
+/// ([`TargetEncoding::color_page_format`]). Decided here because it is
+/// the slot, not the sprite, that knows which page a glyph is on.
+pub(crate) fn instance(sprite: &GlyphSprite, slot: atlas::Slot, encoding: TargetEncoding) -> GlyphInstance {
     let [r, g, b, a] = sprite.color;
     let (color, page) = match slot.page {
         Page::Color => ([1.0, 1.0, 1.0, sprite.opacity], 0.0),
         Page::Mask => (
             [
-                srgb_to_linear(r),
-                srgb_to_linear(g),
-                srgb_to_linear(b),
+                encoding.channel(r) as f32,
+                encoding.channel(g) as f32,
+                encoding.channel(b) as f32,
                 f32::from(a) / 255.0,
             ],
             1.0,
@@ -433,16 +447,5 @@ pub(crate) fn instance(sprite: &GlyphSprite, slot: atlas::Slot) -> GlyphInstance
         uv: [slot.uv.0 as f32, slot.uv.1 as f32],
         color,
         page,
-    }
-}
-
-/// One sRGB-encoded channel as linear light, the decode glyphon's
-/// shader applies to a mask glyph's color for an sRGB target.
-fn srgb_to_linear(channel: u8) -> f32 {
-    let c = f32::from(channel) / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
     }
 }
