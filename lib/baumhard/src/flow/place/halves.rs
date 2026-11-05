@@ -889,6 +889,13 @@ thread_local! {
     /// short text.
     #[cfg(test)]
     pub(crate) static CAP_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test seam (#308, ruling B15.1): the bits of an `f32`
+    /// ([`f32::to_bits`]) that a frame's band curve is pinned at in place
+    /// of the offset its inks want ([`Layout::clear_at`]), so a test can
+    /// lay frames at different spans on the very same curve — each frame
+    /// otherwise solves its own.
+    #[cfg(test)]
+    pub(crate) static OFFSET_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     /// Test counter (#294, ruling R46.1): the times R27's fit has
     /// reshaped a frame's text on this thread (`lines::fit_reshape`).
     #[cfg(test)]
@@ -2910,6 +2917,11 @@ impl Layout<'_> {
         seed: Clear,
         search: &mut Search,
     ) -> Cleared {
+        #[cfg(test)]
+        if let Some(bits) = OFFSET_OVERRIDE.with(Cell::get) {
+            self.offset.set(f32::from_bits(bits as u32));
+            return self.grow(run, lines, side, span, seed, search);
+        }
         let tolerance = resolved(OFFSET_TOLERANCE, self.halves.length);
         let start_offset = self.offset.get();
         let (settled, _) = solve_offset(

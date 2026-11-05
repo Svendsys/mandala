@@ -35,7 +35,7 @@ const ECCLESIASTES: &str = "and a time to every purpose under the heaven: ";
 const ROUNDED: &str = "A frame of text around a rounded rectangle, shaped once and placed glyph by glyph. ";
 
 /// The README's outlines, each with the text and size it holds there.
-fn scenes() -> Vec<(&'static str, Outline, &'static str, f32)> {
+pub(crate) fn scenes() -> Vec<(&'static str, Outline, &'static str, f32)> {
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     vec![
         (
@@ -89,7 +89,7 @@ const FIT: FitMode = FitMode::Fit { min: 0.5, max: 2.0 };
 
 /// `text` at `points` laid round `outline` as a `Fit` frame, outward,
 /// with `layout`.
-fn frame(text: &str, points: f32, outline: &Outline, layout: &RingLayout) -> (ShapedRun, PlacedRun, Trace) {
+pub(crate) fn frame(text: &str, points: f32, outline: &Outline, layout: &RingLayout) -> (ShapedRun, PlacedRun, Trace) {
     frame_with(text, points, outline, &FIT, layout, true)
 }
 
@@ -1605,11 +1605,6 @@ pub fn do_flow_halves_a_crowded_frame_shrinks_or_cuts() {
     }
 }
 
-#[test]
-fn test_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
-    do_flow_halves_span_half_is_the_mean_of_natural_and_whole();
-}
-
 /// Span ½ lays each end halfway between its natural place and its place
 /// at whole (ruling R33): by arc length, the part's ends — where along
 /// the path the end inks are set — exactly so; and each end ink's
@@ -1620,7 +1615,21 @@ fn test_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
 /// place). Precondition: each scene's clearance is not nothing — a
 /// line's end at whole is short of its junction — so the ½ end is not
 /// also halfway to the junction.
-pub fn do_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
+///
+/// **On one band curve** (#308, ruling B15.1). Each frame solves its own
+/// band curve from where its inks lie, and a line's natural ends — at its
+/// font's gap, centered on its half's apex on that curve — move with the
+/// curve's offset: the psalm's natural frame lies at 21.1764 and its ½
+/// and whole frames at 21.1953, and its natural end on the first half
+/// at 911.0593 on the one, 911.0309 on the other. So the three spans are
+/// laid on the ½ frame's own curve (`OFFSET_OVERRIDE`), each frame
+/// held to having laid there (a precondition), and the mean is exact.
+/// Control: with the natural frame laid on its own curve again, the
+/// psalm's end at 989.3153 misses the mean of 911.0593 and 1067.5997 by
+/// 0.014, past the hundredth. (No `do_*` twin: it reads a test seam.)
+#[test]
+fn test_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
+    use crate::flow::place::halves::OFFSET_OVERRIDE;
     for (name, shape, text, points) in scenes() {
         let (junctions, _, length) = halves_seam(&shape);
         let left = StartPoint {
@@ -1631,12 +1640,31 @@ pub fn do_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
             ArcPath::closed(&shape, left, Direction::Clockwise, MIN_TABLE_SPACING),
             ArcPath::closed(&shape, left, Direction::CounterClockwise, MIN_TABLE_SPACING),
         ];
+        let half_span = LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE);
+        let own = frame(
+            text,
+            points,
+            &shape,
+            &RingLayout {
+                span: half_span,
+                ..RingLayout::whole()
+            },
+        )
+        .2
+        .offset
+        .expect("a frame on its halves has a band curve");
         let at = |span: LineSpan| {
             let layout = RingLayout {
                 span,
                 ..RingLayout::whole()
             };
-            let (run, placed, trace) = frame(text, points, &shape, &layout);
+            let (run, placed, trace) =
+                with_seam(&OFFSET_OVERRIDE, own.to_bits() as usize, || frame(text, points, &shape, &layout));
+            assert_eq!(
+                trace.offset.map(f32::to_bits),
+                Some(own.to_bits()),
+                "precondition, {name} at {span:?}: the frame lies on the ½ frame's band curve"
+            );
             let inks = inks(&run, &placed);
             trace
                 .lines
@@ -1655,11 +1683,7 @@ pub fn do_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
                 })
                 .collect::<Vec<_>>()
         };
-        let (natural, half, whole) = (
-            at(LineSpan::NATURAL),
-            at(LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE)),
-            at(LineSpan::WHOLE),
-        );
+        let (natural, half, whole) = (at(LineSpan::NATURAL), at(half_span), at(LineSpan::WHOLE));
         for ((n, h), w) in natural.iter().zip(&half).zip(&whole) {
             let what = format!("{name} half {}", n.0);
             let (ja, jb) = junctions[w.0];

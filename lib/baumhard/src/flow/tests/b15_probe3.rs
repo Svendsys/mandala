@@ -92,3 +92,17 @@ fn b15_probe3_cut_apart() {
         trace.cut_apart
     );
 }
+
+#[test]
+fn b15_probe3_span_offsets() {
+    use crate::flow::tests::halves_tests::{frame, scenes};
+    for (name, shape, text, points) in scenes() {
+        let mut row = Vec::new();
+        for span in [LineSpan::NATURAL, LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE), LineSpan::WHOLE] {
+            let layout = RingLayout { span, ..RingLayout::whole() };
+            let (_, _, trace) = frame(text, points, &shape, &layout);
+            row.push((trace.offset, trace.lines.iter().map(|l| (l.from, l.to)).collect::<Vec<_>>()));
+        }
+        eprintln!("PROBE span-offsets {name}: {row:?}");
+    }
+}
