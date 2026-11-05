@@ -3519,6 +3519,9 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
     // the few inks either side of each along the axis.
     let most = boxes.len().saturating_add(1).saturating_mul(SWEEP_PAIRS);
     let mut swept = 0;
+    // The boxes the sweep has weighed against every box after them in its
+    // order that starts within their reach: a prefix of its order.
+    let mut done = vec![false; boxes.len()];
     let whole = 'sweep: {
         for (at, &i) in order.iter().enumerate() {
             let end = boxes[i].1 .1[axis];
@@ -3535,6 +3538,7 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
                     return true;
                 }
             }
+            done[i] = true;
         }
         true
     };
@@ -3542,7 +3546,7 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
     if whole {
         return false;
     }
-    stripped(boxes, axis, exempt, looked)
+    stripped(boxes, axis, exempt, &done, looked)
 }
 
 /// Whether two of `boxes` touch, as [`touch_scan`] asks, looked at in
@@ -3581,12 +3585,29 @@ fn touch_scan<K: Copy>(boxes: &[(K, InkBox)], exempt: &impl Fn(K, K) -> bool, lo
 /// places no more boxes than the finer class has, nor than its own
 /// boxes' copies.
 ///
+/// **What the sweep weighed is not weighed again** (#308, ruling
+/// B15.2). The strips sweep in [`touch_scan`]'s order, by the same
+/// reach, and weigh each pair once, from the box before the other in
+/// that order: so a box `done` holds — one the sweep before them weighed
+/// against every box after it within its reach before it stopped, a
+/// prefix of its order — has no pair left to weigh, and never scans. A
+/// box after it still weighs it, from its own side. Where lines are
+/// stacked across the axis the sweep stops at [`SWEEP_PAIRS`] looks a
+/// box with most of its boxes done, and the strips once weighed all of
+/// them again: the quatrain outward round the 1,000 × 20 ellipse, `Fit`
+/// at span ½ with a 40-byte ornament, its budget of 20,000 spent with
+/// its 102 inks laid, looked at 537 pairs, 5.26 a box — the sweep's 207
+/// and the strips' 330, 120 weighed and 210 at the end of a box's reach,
+/// nearly all from boxes the sweep had done; with those left out, the
+/// strips' 330 are 40, and the check's 247, 2.42 a box.
+///
 /// Cost: a sort of each class's boxes, and of the boxes each pair of
 /// classes places, and the looks.
 fn stripped<K: Copy>(
     boxes: &[(K, InkBox)],
     axis: usize,
     exempt: &impl Fn(K, K) -> bool,
+    done: &[bool],
     looked: &mut Looked,
 ) -> bool {
     let across = 1 - axis;
@@ -3609,6 +3630,9 @@ fn stripped<K: Copy>(
     // while they start within its reach.
     let looks = Cell::new(0_usize);
     let scan = &mut |a: &Swept, after: &[Swept]| {
+        if done[a.i] {
+            return false;
+        }
         for b in after {
             looks.set(looks.get() + 1);
             if !within_reach(a.end, b.start) {
@@ -5210,7 +5234,7 @@ pub(crate) fn touch_seam<K: Copy>(
 ) -> (bool, usize, usize) {
     let mut looked = Looked::default();
     let touches = match strips {
-        Some(axis) => stripped(boxes, axis, exempt, &mut looked),
+        Some(axis) => stripped(boxes, axis, exempt, &vec![false; boxes.len()], &mut looked),
         None => touch_scan(boxes, exempt, &mut looked),
     };
     (touches, looked.swept, looked.stripped)

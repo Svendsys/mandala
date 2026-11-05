@@ -106,3 +106,19 @@ fn b15_probe3_span_offsets() {
         eprintln!("PROBE span-offsets {name}: {row:?}");
     }
 }
+
+#[test]
+fn b15_probe3_thin_looks() {
+    use crate::flow::place::halves::BUDGET_OVERRIDE;
+    use crate::flow::tests::halves_tests::{frame_with, with_seam, QUATRAIN};
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(1_000.0, 20.0)), Shape::Ellipse);
+    let layout = RingLayout {
+        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+        sides: Some(("-=".repeat(20), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    let (_, _, trace) = with_seam(&BUDGET_OVERRIDE, 20_000, || {
+        frame_with(QUATRAIN, 22.0, &shape, &FitMode::Fit { min: 0.5, max: 2.0 }, &layout, true)
+    });
+    eprintln!("PROBE thin looks {:?}", trace.looks);
+}

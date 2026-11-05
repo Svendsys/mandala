@@ -22,8 +22,16 @@ use crate::flow::{outline, Outline, Rect, RingLayout};
 const POINTS: f32 = 22.0;
 
 /// The budgets the grid lays each frame with round a small outline: one
-/// already spent when the frame starts, and two it spends partway.
-const BUDGETS: [usize; 3] = [1, 2_000, 20_000];
+/// already spent when the frame starts, and eleven it spends partway —
+/// so many that the grid stops frames at the points of their work where
+/// `untouched` runs and where a touch check is densest (#308, ruling
+/// B15.2), which three budgets, `[1, 2_000, 20_000]`, never reached: at
+/// d7242d38 `untouched` took up to 331 glyph steps of the 64 held back
+/// for it (round the 600 ellipse at 15,000), and a check looked at 5.15
+/// pairs a box (round the 600 × 12 rectangle at 18,000).
+const BUDGETS: [usize; 12] = [
+    1, 2_000, 6_000, 8_000, 10_000, 12_000, 14_000, 15_000, 16_000, 16_535, 18_000, 20_000,
+];
 
 /// The budgets round a large outline, whose side ornament's copies take
 /// most of a frame's work: these spend it partway through laying them,
@@ -316,7 +324,13 @@ fn holds_the_bound(shape: &Outline, name: &str, outline: Size) {
 /// floor build unread (round the three small outlines); the side fill's
 /// floor row unread (round the two large ones); `falsi`'s own read
 /// removed (round the 1,000 × 50 ellipse); `untouched_steps` halved
-/// (round the 600 × 12 rectangle).
+/// (round the 600 × 12 rectangle); `untouched_steps` weighing each look's
+/// touch check as one weighing of its boxes again, as before #308 (2
+/// frames round the 600 × 12 rectangle and 26 round the 600 ellipse,
+/// `untouched` taking 73 to 85 of the 64 held back for it); the strips
+/// weighing again the boxes the sweep before them did (ruling B15.2: 10
+/// frames round the 1,000 × 20 ellipse, 5.12 to 5.26 pairs a box in the
+/// sweeps and own strips, past the measured 5).
 #[test]
 fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_flat() {
     holds_the_bound(&flat(), "600 × 12 sharp", Size::Small);

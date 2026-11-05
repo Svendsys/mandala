@@ -3681,8 +3681,10 @@ fn touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> Vec<((u
 /// a coarser box's copies without the strip either side; the strips'
 /// two-list sweep in one direction only; `stripped`'s strips round a
 /// box at a plain `- 1` and `+ 1` (a panic, `attempt to add with
-/// overflow`, among the far cases before the repro). (No `do_*` twin: it
-/// reads a test seam.)
+/// overflow`, among the far cases before the repro); and, of the strips
+/// leaving out what the sweep before them weighed (#308, ruling B15.2),
+/// the box the sweep stopped in read as done (case 1,507), and the box
+/// after it (case 2,065). (No `do_*` twin: it reads a test seam.)
 #[test]
 fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
     use crate::flow::place::halves::{touch_seam, touching_seam, TOUCH};
