@@ -1271,7 +1271,12 @@ impl<'w> InkLay<'w> {
                     let Some(e) = self.earlier.iter().flatten().find(|e| near(e)).copied() else {
                         break;
                     };
-                    if rounds == 0 {
+                    // `pair`'s first try is the center the letter has,
+                    // which is too near: a round with one try left would
+                    // only set it there again (ruling R44.7) — as round a
+                    // sharp corner inward on the band curve, where the
+                    // neighbor's own pairing takes all but one (#308).
+                    if rounds < 2 {
                         break;
                     }
                     #[cfg(test)]

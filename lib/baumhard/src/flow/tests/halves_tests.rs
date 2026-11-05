@@ -3418,8 +3418,11 @@ const CUT_APART_TRACKS: usize = 700;
 /// what the rule accepts — so no such round over the aspect sweep leaves
 /// a letter where it was, and three lookups for nothing.
 ///
-/// Control: with an ink nearer than the gap itself moved from, as before
-/// R44.7, rounds that leave the letter where it was. (No `do_*` twin: it
+/// Controls: with an ink nearer than the gap itself moved from, as before
+/// R44.7, rounds that leave the letter where it was; with a round begun
+/// on the last try a letter's pairing has left (#308), whose one try is
+/// the center the letter has, 17 of 4,713 rounds of the sweep's inward
+/// frames round sharp corners on the band curve. (No `do_*` twin: it
 /// reads test counters.)
 #[test]
 fn test_flow_halves_a_letter_never_spends_a_round_where_it_stands() {
