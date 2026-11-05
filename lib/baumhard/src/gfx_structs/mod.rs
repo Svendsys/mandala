@@ -41,8 +41,8 @@ pub mod run;
 /// `Scene` — composes multiple `Tree`s at per-layer offsets into a
 /// single rendered frame.
 pub mod scene;
-/// Per-node background / hit-test shape enum shared by the
-/// renderer (SDF) and the BVH hit test.
+/// Per-node hit-test shape enum shared by the BVH hit test and the
+/// border builder.
 pub mod shape;
 /// `CellField` — the glyph payload's builder template — and the
 /// helpers that resolve one into an `AreaDelta`.

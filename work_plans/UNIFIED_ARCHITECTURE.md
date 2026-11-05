@@ -1793,7 +1793,7 @@ canvas tree, every glyph of its one shaped buffer is emitted at its
 own position (`emit`), rasterized once into an atlas the pass holds
 (`atlas`), and drawn as one instanced quad, every glyph of every run
 in **one draw call per frame**, between glyphon's main text pass and
-the palette backdrop. Nothing is shaped to draw a run and nothing is
+its chrome pass (the console or the picker, over its backdrop). Nothing is shaped to draw a run and nothing is
 rotated; a pan or a zoom touches no run. Proven on lavapipe through
 the frame every window and capture draws: 500 glyphs on a circle are
 one run, 500 instances and one draw call, add no glyphon buffer, and
@@ -1934,10 +1934,17 @@ drawn (D12).
 
 **The background is the clear color** (D12). Every frame's render pass
 is cleared to the map's resolved background, the same value on native
-and in the browser: on an sRGB target each byte is decoded to linear
-light, so the frame holds the authored color, and the clear is opaque.
-No pass draws a rect for anything the map holds; the rect pipeline
-draws only the screen-space chrome backdrops.
+and in the browser, and the clear is opaque. Every pass writes a color
+for its target the same way (`renderer::target_encoding`): on an sRGB
+target — native's, and the browser's on WebGL2 — each authored byte is
+decoded to linear light, which the GPU encodes back; on a linear one —
+the browser's on WebGPU, which is never offered an sRGB surface — it is
+written as it is. The clear, glyphon's text and the glyph-run pass make
+that one choice, so the frame holds the authored color and a glyph
+colored like the background matches it, on every target. No pass draws
+a rect: the screen-space chrome backdrops (the console's and the color
+picker's) are full-block glyphs at the bottom of the chrome pass, so a
+frame is its clear and glyphs.
 
 ---
 

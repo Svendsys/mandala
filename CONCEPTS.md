@@ -864,26 +864,19 @@ path, so enable only when background legibility demands it.
 ### `NodeShape`
 
 A pluggable hit-test shape — `Rectangle` or
-`Ellipse` — shared between the renderer SDF and the BVH
-descent.
+`Ellipse` — shared between the BVH descent and the border builder.
 
-A node's visual silhouette and its clickable
-silhouette must agree. `NodeShape` names the two today
-(rectangle, ellipse) and gives both pipelines one source of
-truth for "is this point inside?". Adding a new shape is one
-enum variant, the match arms the compiler then demands, and a
-`SHAPE_*` constant plus a `case` arm in the WGSL shader;
-`shape.rs`'s own module header is the recipe. What makes it safe
-to follow is that the arms are not remembered: four `match`es over
-`NodeShape` in `shape.rs` are exhaustive — `shader_id`,
-`style_spellings`, `contains_local`, `intersects_local_aabb` — so a
-planted variant is four E0004s, and once those are answered a
-fifth lands in the mandala crate, `wgsl_shape_const_name` in
-`renderer/tests.rs`. The shader half is not a `match` and is
-forced by a test instead:
-`test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
-reads the WGSL as text and fails on a variant with no constant, a
-constant carrying the wrong id, and a missing `case` arm.
+A node's clickable silhouette and what is drawn around it must
+agree. `NodeShape` names the two shapes today (rectangle, ellipse)
+and gives the hit test one source of truth for "is this point
+inside?"; the border builder resolves the same spelling to the same
+variant and frames only a rectangle. Nothing draws the shape itself:
+a node draws no fill (V1-B12). Adding a new shape is one enum variant
+and the match arms the compiler then demands; `shape.rs`'s own
+module header is the recipe. What makes it safe to follow is that
+the arms are not remembered: three `match`es over `NodeShape` in
+`shape.rs` are exhaustive — `style_spellings`, `contains_local`,
+`intersects_local_aabb` — so a planted variant is three E0004s.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
@@ -895,7 +888,7 @@ The format's shape vocabulary (`KNOWN_SHAPES`, published in
 `format/enums.md` and enforced by `maptool verify`) is wider
 than the variant set: `"hexagon"`, `"diamond"`,
 `"parallelogram"` and `"rounded_rectangle"` are canonical but
-have no shader case yet. `ShapeSpelling` is the pure
+have no variant yet. `ShapeSpelling` is the pure
 classifier that separates those from a genuine typo —
 `Rendered` / `KnownNotYetRendered` / `Unrecognized` /
 `Unspecified` — and `is_author_error` / `is_quiet_fallback`
@@ -3898,13 +3891,16 @@ buffers, and submits to the GPU. It never holds a reference to
 the document.
 
 `src/application/renderer/mod.rs` (`struct Renderer`).
-The dual pipeline lives here:
-- **Rect / SDF pipeline** — the screen-space backdrops of the
-  console and the color picker, and nothing of the map's (V1-B12: a
-  map draws no rect; its one background is the frame's clear color,
-  `Renderer::set_background`).
+A frame is its clear — the map's one background,
+`Renderer::set_background` (V1-B12) — and glyphs, drawn by two
+pipelines:
 - **Glyph pipeline** — every visible character, via
-  cosmic-text + glyphon atlas.
+  cosmic-text + glyphon atlas, in two passes: the canvas's, and the
+  screen-space chrome's over it. The opaque backdrops behind the
+  console and the color picker are glyphs too: a grid of full blocks
+  (`█`, Public Pixel's, which is the whole em square) at the bottom of
+  the chrome pass, laid out in the target's own pixels so the cells
+  abut without a seam (`renderer/backdrop.rs`).
 - **Positioned-glyph pipeline** (`glyph_runs/`) — every glyph of a
   [`GlyphRun`](#glyphrun) at its own canvas position, rasterized by
   cosmic-text into an atlas of its own (glyphon's cannot be reached

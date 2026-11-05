@@ -30,10 +30,10 @@ mod tests;
 /// rectangle the renderer needs to draw underneath it.
 ///
 /// `backdrop` is `None` when the picker spec's `transparent_backdrop`
-/// flag is set (no opaque rect drawn; per-glyph halos handle
+/// flag is set (no opaque backdrop drawn; per-glyph halos handle
 /// legibility) or when the layout yields no backdrop for this
-/// geometry — the renderer treats both cases the same: skip the
-/// fill-rect pass.
+/// geometry — the renderer treats both cases the same: it draws no
+/// backdrop cells.
 pub(crate) struct ColorPickerOverlayBuild {
     pub tree: GfxTree,
     pub backdrop: Option<(f32, f32, f32, f32)>,

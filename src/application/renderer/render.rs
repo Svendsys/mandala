@@ -513,9 +513,9 @@ impl Renderer {
     }
 
     /// Pre-warm the render pipeline during map load: run one full
-    /// `render()` cycle (rect-vertex prep → glyph atlas upload →
-    /// `pass.set_pipeline(rect_pipeline)` → text pipeline bind →
-    /// `surface.get_current_texture()` → `frame.present()`). Forces
+    /// `render()` cycle (glyph atlas upload → text and glyph-run
+    /// pipeline binds → `surface.get_current_texture()` →
+    /// `frame.present()`). Forces
     /// the wgpu driver to compile pipeline shaders and the
     /// swapchain to allocate its first backing image — both are
     /// commonly 50-300ms costs (Vulkan/Metal/D3D12 lazily compile

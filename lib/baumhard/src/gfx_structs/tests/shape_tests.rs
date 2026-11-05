@@ -7,16 +7,14 @@
 //! [`TEST_CONVENTIONS.md §T2.2`] so the criterion bench harness at
 //! `lib/baumhard/benches/test_bench.rs` can reuse each body as a
 //! micro-benchmark. The shape math sits on the BVH hot path
-//! (`bvh_find`), so the rect-pipeline SDF in the renderer and
-//! the lasso / editor hit-tests all pay for it every interaction
-//! frame — benching is §B8-mandatory, not optional.
+//! (`bvh_find`), so the click, lasso and editor hit-tests all pay
+//! for it every interaction frame — benching is §B8-mandatory, not
+//! optional.
 
 use glam::Vec2;
 use strum::IntoEnumIterator;
 
-use crate::gfx_structs::shape::{
-    NodeShape, ShapeReport, ShapeSpelling, KNOWN_SHAPES, SHAPE_ID_ELLIPSE, SHAPE_ID_RECTANGLE,
-};
+use crate::gfx_structs::shape::{NodeShape, ShapeReport, ShapeSpelling, KNOWN_SHAPES};
 
 /// Parse every documented shape spelling, plus the `"circle"`
 /// alias and the empty-string fallback. Pins the author-facing
@@ -117,7 +115,7 @@ pub fn do_shape_classification_partitions_by_warning() {
     }
     // Both halves must be non-empty, or the partition above is
     // asserting nothing about one of them. Today: three rendered
-    // spellings, four awaiting a shader case.
+    // spellings, four awaiting a variant.
     let rendered = KNOWN_SHAPES
         .iter()
         .filter(|known| matches!(ShapeSpelling::classify(known), ShapeSpelling::Rendered(_)))
@@ -397,7 +395,7 @@ pub fn do_shape_report_levels_are_warn_and_trace() {
     );
     assert!(
         ShapeReport::RectangleSubstituted.level() > log::Level::Warn,
-        "a canonical spelling awaiting its shader case is the format working \
+        "a canonical spelling awaiting its variant is the format working \
          as designed; reporting it above the release cap is issue #118"
     );
 }
@@ -892,28 +890,6 @@ pub fn do_shape_ellipse_intersects_aabb_fully_outside() {
     let min = Vec2::new(200.0, 200.0);
     let max = Vec2::new(300.0, 300.0);
     assert!(!NodeShape::Ellipse.intersects_local_aabb(min, max, b));
-}
-
-/// The `shader_id` values are wire-format: the fragment shader
-/// matches on the same integers via `SHAPE_RECT` / `SHAPE_ELLIPSE`
-/// WGSL constants. Pinning them here catches the silent-breakage
-/// case where a future reorder of the enum variants reassigns the
-/// ids and every ellipse in every map quietly renders as a
-/// rectangle.
-#[test]
-pub fn test_shape_shader_ids_are_stable() {
-    do_shape_shader_ids_are_stable();
-}
-
-pub fn do_shape_shader_ids_are_stable() {
-    assert_eq!(NodeShape::Rectangle.shader_id(), SHAPE_ID_RECTANGLE);
-    assert_eq!(NodeShape::Ellipse.shader_id(), SHAPE_ID_ELLIPSE);
-    // The absolute values are also part of the wire format — the
-    // WGSL fragment shader hard-codes `0u` / `1u` in its `switch`
-    // arms. Keeping the numeric assertion here means a rename
-    // alone can't drift them.
-    assert_eq!(NodeShape::Rectangle.shader_id(), 0);
-    assert_eq!(NodeShape::Ellipse.shader_id(), 1);
 }
 
 /// **The reporting half of `from_style_string`, pinned by parsing
