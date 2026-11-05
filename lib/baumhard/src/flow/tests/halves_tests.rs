@@ -248,6 +248,7 @@ pub(crate) fn band_anchor(run: &ShapedRun, placed: &PlacedRun, k: usize, ink: (V
 /// (#308): the ink of an `x` shaped alone in it above the baseline, over
 /// its size, measured through the shaper and the outline as
 /// [`x_height_per_point`] measures [`style`]'s.
+#[cfg(test)]
 pub(crate) fn x_height_of(style: &crate::document::resolve::ResolvedText) -> f32 {
     with_fonts(|fs| {
         let run = crate::flow::shape_run(
