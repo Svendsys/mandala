@@ -173,6 +173,19 @@ fn resolved(tolerance: f32, at: f32) -> f32 {
     }
 }
 
+/// How many float steps apart two starts of a slide may be for a jump in
+/// its line's end between them to be read as a step in the end, not a
+/// slope the secant has yet to close on ([`Layout::slid`], #308): eight,
+/// past which the secant is still moving the start by more than its
+/// floats resolve.
+const SLIDE_ULPS: f32 = 8.0;
+
+/// A float step of a position `at`: [`f32::EPSILON`] of it, the least
+/// positive `f32` at none.
+fn ulp(at: f32) -> f32 {
+    (at.abs() * f32::EPSILON).max(f32::MIN_POSITIVE)
+}
+
 /// The rounds a junction's clearance is grown in.
 const CLEAR_ROUNDS: usize = 16;
 
@@ -864,6 +877,10 @@ thread_local! {
     /// what a frame's work is counted in.
     #[cfg(test)]
     pub(crate) static TRACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#308, ruling B15.3): the lines a slide has tracked
+    /// on this thread ([`Layout::slid`]).
+    #[cfg(test)]
+    pub(crate) static SLIDE_TRACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#294, ruling R46.2): the glyph steps the weights
     /// give every shaping on this thread (`shape_run`, `reshape`),
     /// counted where it is shaped, not where a frame counts it.
@@ -2028,8 +2045,23 @@ impl Layout<'_> {
     /// top-left clearance, slid back from the bottom-right one. A line
     /// longer than `hi − lo` at its gap starts at `lo` and ends at `hi`.
     /// It is measured on the frame's band curve as it stands.
+    ///
+    /// **A step in the line's end** (#308, ruling B15.3). Round a tight
+    /// bend a letter crossing it moves the line's end by a jump as the
+    /// start moves by an ulp, and no start ends the line within the
+    /// tolerance of `hi`: the secant then circles the jump in starts a
+    /// few ulps apart. Once the starts tried bracket `hi` — one whose line
+    /// ends short of it, one whose ends past — within [`SLIDE_ULPS`] ulps
+    /// of the start, and the end moves across them by more than a line
+    /// that moves with its start nearly one for one could (twice the
+    /// bracket and the tolerance), the slide stops at the start whose line
+    /// ends short of `hi`: within its room.
     fn slid(&self, run: &ShapedRun, p: &Prepared, (lo, hi): (f32, f32)) -> (f32, f32) {
-        let reach = |from: f32| self.reach(p.half, run, &p.clusters, from, p.natural_gap);
+        let reach = |from: f32| {
+            #[cfg(test)]
+            SLIDE_TRACKS.with(|count| count.set(count.get() + 1));
+            self.reach(p.half, run, &p.clusters, from, p.natural_gap)
+        };
         let (mut na, mut nb) = self.natural(run, p);
         if na < lo {
             na = lo;
@@ -2045,6 +2077,11 @@ impl Layout<'_> {
             let mut long = reach(na);
             let mut last: Option<(f32, f32)> = None;
             let mut next = hi - long;
+            let tolerance = resolved(SLIDE_TOLERANCE, hi);
+            // The nearest starts tried whose lines end short of `hi` and
+            // past it: each its start, its line's length and its miss.
+            let mut short: Option<(f32, f32, f32)> = None;
+            let mut past: Option<(f32, f32, f32)> = None;
             for _ in 0..SLIDE_ROUNDS {
                 if self.spent_all() {
                     break;
@@ -2052,8 +2089,25 @@ impl Layout<'_> {
                 na = next;
                 long = reach(na);
                 let miss = na + long - hi;
-                if miss.abs() <= resolved(SLIDE_TOLERANCE, hi) {
+                if miss.abs() <= tolerance {
                     break;
+                }
+                if miss < 0.0 {
+                    if short.is_none_or(|(at, _, _)| na > at) {
+                        short = Some((na, long, miss));
+                    }
+                } else if miss > 0.0 && past.is_none_or(|(at, _, _)| na < at) {
+                    past = Some((na, long, miss));
+                }
+                if let (Some((a, la, ma)), Some((b, _, mb))) = (short, past) {
+                    let width = b - a;
+                    if width > 0.0
+                        && width <= SLIDE_ULPS * ulp(a.abs().max(b.abs()))
+                        && mb - ma > 2.0 * width + tolerance
+                    {
+                        (na, long) = (a, la);
+                        break;
+                    }
                 }
                 let secant = last.map(|(at, was)| na - miss * (na - at) / (miss - was));
                 next = match secant {

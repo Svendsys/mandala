@@ -185,3 +185,16 @@ fn b15_probe3_heavy2() {
     }
 }
 
+
+#[test]
+fn b15_probe3_slides() {
+    use crate::flow::place::halves::SLIDE_TRACKS;
+    let text = "and a time to every purpose under the heaven: ";
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
+    for span in [LineSpan::NATURAL, LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE)] {
+        let layout = RingLayout { span, ..RingLayout::whole() };
+        SLIDE_TRACKS.with(|c| c.set(0));
+        let (_, _, trace) = frame_with(text, 18.0, &shape, &FitMode::Fit { min: 0.5, max: 2.0 }, &layout, false);
+        eprintln!("PROBE slides {span:?}: spent {} per glyph {} slide tracks {}", trace.spent, trace.spent.div_ceil(trace.glyphs), SLIDE_TRACKS.with(|c| c.get()));
+    }
+}

@@ -3221,9 +3221,12 @@ fn test_flow_halves_a_frames_shaping_inking_and_tracking_are_all_counted() {
 /// least 400,000 — ten times the most a frame of the aspect sweep took
 /// a glyph, rounded up, while a step counted tracking alone — and, as
 /// R47.1 restates it now that a step counts all of a frame's work (R46),
-/// at least five times the sweep's most a glyph: 3,000 over 597, ×5.0.
-/// Control: with the sweep's most a glyph past 600, red. (No `do_*` twin:
-/// it reads test counters.)
+/// at least five times the sweep's most a glyph: 3,000 over 599, ×5.0
+/// (597 at d7242d38; on the frame's band curve 604 with the slide's stop
+/// at a step in its line's end removed, ruling B15.3 — the Ecclesiastes
+/// line inward round the 50:1 ellipse, `Fit`, both times). Control: with
+/// the sweep's most a glyph past 600, red — as it is with that stop
+/// removed. (No `do_*` twin: it reads test counters.)
 #[test]
 fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
     use crate::flow::place::halves::{frame_budget, STEPS_PER_GLYPH};
@@ -3443,6 +3446,53 @@ fn test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines() {
         "the frame cut apart takes {tracks} tracks, at most {CUT_APART_TRACKS}"
     );
 }
+
+/// A slide whose line's end steps as its start crosses a float step
+/// stops there (ruling B15.3, `Layout::slid`): the Ecclesiastes line
+/// at 18 pt inward round the 50:1 ellipse, `Fit` — the aspect sweep's
+/// frame of the most glyph steps a glyph — whose second line, at its
+/// font's gap, all but fills its room, its end in the ellipse's tight
+/// bend. Its slides track 8 lines in all, and the frame takes 599 glyph
+/// steps a glyph; its lines are laid at their font's gap, none pressed.
+///
+/// Control: with the stop removed, the secant circles the step in starts
+/// an ulp or two apart, never within its tolerance, and the slides track
+/// 16 lines (604 glyph steps a glyph). (No `do_*` twin: it reads a test
+/// counter.)
+#[test]
+fn test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end() {
+    use crate::flow::place::halves::SLIDE_TRACKS;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
+    let layout = RingLayout {
+        span: LineSpan::NATURAL,
+        ..RingLayout::whole()
+    };
+    SLIDE_TRACKS.with(|count| count.set(0));
+    let (_, placed, trace) = frame_with(
+        ECCLESIASTES,
+        18.0,
+        &shape,
+        &FitMode::Fit { min: 0.5, max: 2.0 },
+        &layout,
+        false,
+    );
+    let slides = SLIDE_TRACKS.with(std::cell::Cell::get);
+    assert!(
+        slides > 0 && trace.lines.len() == 2 && trace.unheld == crate::flow::place::Unheld::default() && !placed.truncated,
+        "precondition: the frame slides ({slides} tracks) and holds both lines whole ({:?})",
+        trace.unheld
+    );
+    assert!(
+        slides <= SLIDE_STEP_TRACKS,
+        "the frame's slides track {slides} lines, at most {SLIDE_STEP_TRACKS}"
+    );
+}
+
+/// The most lines [`test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end`]'s
+/// slides may track: its 8, and a margin short of the 16 they track
+/// circling the step.
+#[cfg(test)]
+const SLIDE_STEP_TRACKS: usize = 10;
 
 /// The most `track`s [`test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines`]'s
 /// frame may take.
