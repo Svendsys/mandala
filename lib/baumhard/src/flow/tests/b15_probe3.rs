@@ -198,3 +198,16 @@ fn b15_probe3_slides() {
         eprintln!("PROBE slides {span:?}: spent {} per glyph {} slide tracks {}", trace.spent, trace.spent.div_ceil(trace.glyphs), SLIDE_TRACKS.with(|c| c.get()));
     }
 }
+
+#[test]
+fn b15_probe3_band_sweep() {
+    let work = crate::flow::tests::halves_tests::do_flow_halves_hold_on_every_aspect();
+    eprintln!("PROBE band sweep {:?} {:?} anchors {} folded {}", work.band, work.band_worst, work.anchors, work.folded);
+}
+
+#[test]
+fn b15_probe3_band_demo() {
+    for (name, _, _, _, band) in crate::flow::tests::halves_tests::demo_map_frames() {
+        eprintln!("PROBE band demo {name}: {band:?}");
+    }
+}
