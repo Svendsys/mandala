@@ -3245,32 +3245,43 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 /// 200,000 sharp square (review 5739829769).
 ///
 /// With a budget that holds it (a floor of 2,000,000, the test seam;
-/// some 720,000 and 1,256,000 glyph steps), each fills both arcs, some
+/// some 515,000 and 805,000 glyph steps), each fills both arcs, some
 /// 65,000 glyphs, in at most [`SIDE_LOOKUPS_A_GLYPH`] path lookups a glyph
-/// placed (128 round the ellipse, 146 round the square; 784 at dd04a8f5,
-/// when each fill bisected its gap in 30 lays of every copy), and looks at most at
-/// [`PAIRS_A_BOX`] pairs of boxes a glyph for touching (6.5 round the
-/// ellipse and 6.8 round the square, each box placed or copied into a
-/// class's strips counted a look; 7.3 and 8.1 at 289a684f, when every
+/// placed (35.7 round the ellipse, 37.7 round the square, each copy set
+/// on the frame's band curve in one lookup, #308; 128 and 146 at
+/// d7242d38, three a copy pushed off the outline by its ink; 784 at
+/// dd04a8f5, when each fill bisected its gap in 30 lays of every copy),
+/// and looks at most at [`PAIRS_A_BOX`] pairs of boxes a glyph for
+/// touching (5.33 round the ellipse and 6.86 round the square, each box
+/// placed or copied into a class's strips counted a look; 6.5 and 6.8 at
+/// d7242d38; 7.3 and 8.1 at 289a684f, when every
 /// box shared the tallest's strip height; every pair, some two billion,
 /// at dd04a8f5; round the square 5,272 a glyph at 1f1b3f8e, when a
 /// sweep along one axis weighed every copy down a straight side against
 /// every other).
 ///
-/// At its own budget, 400,000, neither can afford its arcs and the touch
+/// At a budget of 200,000, neither can afford its arcs and the touch
 /// check of them (some 34,000 copies each, the check held back at
-/// `TOUCH_LOOKS_A_BOX` looks a box): each lays its text whole, leaves both
-/// arcs empty and reported — a frame loses its sides before its text
-/// (ruling R48.3) — and takes no more past its budget than
-/// `overshoot_steps` (rulings R44.2, R47.2, R48.2).
+/// `touch_looks` looks a box of its classes): each lays its text whole,
+/// leaves both arcs empty and reported — a frame loses its sides before
+/// its text (ruling R48.3) — and takes no more past its budget than
+/// `overshoot_steps` (rulings R44.2, R47.2, R48.2). At its own budget,
+/// 400,000, it can afford its first arc and not its second: on its band
+/// curve each copy's gap is solved in fewer lays than at d7242d38, which
+/// spent 339,200 and 294,560 there on a first arc it then left empty
+/// (#308; 296,000 and 283,000 now, both arcs at the floor of 2,000,000
+/// 515,000 and 805,000 where they took 761,000 and 1,299,000), so it
+/// lays its text whole and its first arc as far as it affords — filled
+/// round the ellipse, kept short round the square — and leaves the
+/// second empty and reported, within the same bound.
 ///
 /// Controls: with the gap bisected in 30 lays again, past the lookups'
 /// bound; with the sweep along one axis again, past the pairs' round the
 /// square; with a side's lay unread past its first copy, past the
 /// overshoot. (No `do_*` twin: it reads test counters.)
 #[cfg(test)]
-fn a_long_side_ornament(shape: Shape, what: &str) {
-    use crate::flow::place::halves::{overshoot_steps, BOXES_WEIGHED, FLOOR_OVERRIDE, PAST_BUDGET};
+fn a_long_side_ornament(shape: Shape, what: &str, own: &[(usize, crate::flow::place::SideLoss)]) {
+    use crate::flow::place::halves::{overshoot_steps, BOXES_WEIGHED, BUDGET_OVERRIDE, FLOOR_OVERRIDE, PAST_BUDGET};
     use crate::flow::place::SideLoss;
     use crate::flow::tests::flow_fuzz::ornament_run;
     use crate::flow::tests::support::style;
@@ -3310,29 +3321,45 @@ fn a_long_side_ornament(shape: Shape, what: &str) {
         let ornament = ornament_run(&layout, &flow, 1.0, fs);
         overshoot_steps(&real_run(text, &flow, fs), ornament.as_ref(), false)
     });
-    PAST_BUDGET.with(|past| past.set(0));
-    let (_, placed, trace) = lay();
-    let past = PAST_BUDGET.with(std::cell::Cell::get);
-    assert!(
-        placed.glyphs.len() >= text.chars().filter(|c| !c.is_whitespace()).count()
-            && trace.unheld.sides == [(0, SideLoss::Empty), (1, SideLoss::Empty)]
-            && !placed.truncated,
-        "{what}: at its own budget, which cannot hold the check of either arc, the text is laid whole and both arcs are left empty and reported ({} glyphs, {:?})",
-        placed.glyphs.len(),
-        trace.unheld
-    );
-    assert!(
-        past <= allowed && trace.spent <= trace.budget + allowed,
-        "{what}: {past} glyph steps past a spent budget, {} in all against {}, at most {allowed} past it",
-        trace.spent,
-        trace.budget
-    );
+    let letters = text.chars().filter(|c| !c.is_whitespace()).count();
+    for (budget, sides, why) in [
+        (
+            None,
+            own,
+            "at its own budget, which holds the first arc and its check and not the second's, the text is laid whole, the first arc as far as it affords, and the second left empty",
+        ),
+        (
+            Some(200_000),
+            &[(0, SideLoss::Empty), (1, SideLoss::Empty)][..],
+            "at 200,000, which cannot hold the check of either arc, the text is laid whole and both arcs are left empty",
+        ),
+    ] {
+        PAST_BUDGET.with(|past| past.set(0));
+        let (_, placed, trace) = match budget {
+            Some(budget) => with_seam(&BUDGET_OVERRIDE, budget, lay),
+            None => lay(),
+        };
+        let past = PAST_BUDGET.with(std::cell::Cell::get);
+        assert!(
+            placed.glyphs.len() >= letters && trace.unheld.sides == sides && !placed.truncated,
+            "{what}: {why}, and reported ({} glyphs, {:?})",
+            placed.glyphs.len(),
+            trace.unheld
+        );
+        assert!(
+            past <= allowed && trace.spent <= trace.budget + allowed,
+            "{what}: {past} glyph steps past a spent budget, {} in all against {}, at most {allowed} past it",
+            trace.spent,
+            trace.budget
+        );
+    }
 }
 
 /// [`a_long_side_ornament`] round the ellipse.
 #[test]
 fn test_flow_halves_a_long_side_ornament_is_filled_in_few_lays() {
-    a_long_side_ornament(Shape::Ellipse, "ellipse");
+    use crate::flow::place::SideLoss;
+    a_long_side_ornament(Shape::Ellipse, "ellipse", &[(1, SideLoss::Empty)]);
 }
 
 /// [`a_long_side_ornament`] round the sharp square.
@@ -3343,24 +3370,31 @@ fn test_flow_halves_a_long_side_ornament_round_a_sharp_square_is_filled_in_few_l
             radius: Percent::new(0),
         },
         "sharp square",
+        &[
+            (0, crate::flow::place::SideLoss::Short),
+            (1, crate::flow::place::SideLoss::Empty),
+        ],
     );
 }
 
 /// The most path lookups [`a_long_side_ornament`]'s frames may take a
-/// glyph they place, both arcs filled: a few lays of each copy at a dozen
-/// lookups a glyph, with a margin past the 128 (ellipse) and 146 (sharp
-/// square) they take. (At 1f1b3f8e the ellipse's frame took 78 at its own
-/// budget, where its second arc's floor row was laid, unread, after the
-/// budget was spent and its gap never solved; with each copy's gap solved
-/// by bisection, 784.)
+/// glyph they place, both arcs filled: a few lays of each copy at a few
+/// lookups a glyph, with a margin of ×1.59 past the 35.7 (ellipse) and
+/// 37.7 (sharp square) they take, each copy set on the frame's band curve
+/// in one lookup (#308). (Till #308, 200, past the 128 and 146 they took
+/// when each copy was pushed off the outline by its ink in three: the
+/// control. At 1f1b3f8e the ellipse's frame took 78 at its own budget,
+/// where its second arc's floor row was laid, unread, after the budget
+/// was spent and its gap never solved; with each copy's gap solved by
+/// bisection, 784.)
 #[cfg(test)]
-const SIDE_LOOKUPS_A_GLYPH: usize = 200;
+const SIDE_LOOKUPS_A_GLYPH: usize = 60;
 
 /// The most pairs of boxes the same frames may look at for touching a
 /// glyph they place: the few inks near each, in the strips of its class
-/// and the coarser ones round it — 6.5 a glyph round the ellipse and 6.8
-/// round the square, so a margin of ×1.46 (7.3 and 8.1 at 289a684f, a
-/// margin of ×1.24).
+/// and the coarser ones round it — 5.33 a glyph round the ellipse and
+/// 6.86 round the square, so a margin of ×1.46 (6.5 and 6.8 at d7242d38;
+/// 7.3 and 8.1 at 289a684f, a margin of ×1.24).
 #[cfg(test)]
 const PAIRS_A_BOX: usize = 10;
 

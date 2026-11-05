@@ -122,3 +122,40 @@ fn b15_probe3_thin_looks() {
     });
     eprintln!("PROBE thin looks {:?}", trace.looks);
 }
+
+#[test]
+fn b15_probe3_nosides() {
+    let text = "To see a World in a Grain of Sand";
+    for (name, shape) in [
+        ("ellipse", Shape::Ellipse),
+        ("square", Shape::Rectangle { radius: Percent::new(0) }),
+    ] {
+        let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(200_000.0)), shape);
+        let layout = RingLayout { span: LineSpan::NATURAL, ..RingLayout::whole() };
+        let before = TRACKS.with(std::cell::Cell::get);
+        let (_, placed, trace) = frame_with(text, 16.0, &shape, &FitMode::Once { filler: None }, &layout, true);
+        eprintln!("PROBE nosides {name}: spent {} tracks {} glyphs {} clear {:?}", trace.spent, TRACKS.with(std::cell::Cell::get) - before, placed.glyphs.len(), trace.clear);
+    }
+}
+
+#[test]
+fn b15_probe3_sides_budgets() {
+    let text = "To see a World in a Grain of Sand";
+    for (name, shape) in [
+        ("ellipse", Shape::Ellipse),
+        ("square", Shape::Rectangle { radius: Percent::new(0) }),
+    ] {
+        let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(200_000.0)), shape);
+        let layout = RingLayout {
+            span: LineSpan::NATURAL,
+            sides: Some(("x".repeat(200), Rgba::opaque(0, 0, 0))),
+            ..RingLayout::whole()
+        };
+        for budget in [100_000, 150_000, 200_000, 250_000, 300_000, 350_000] {
+            let (_, placed, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
+                frame_with(text, 16.0, &shape, &FitMode::Once { filler: None }, &layout, true)
+            });
+            eprintln!("PROBE sides-budget {name} {budget}: spent {} glyphs {} sides {:?}", trace.spent, placed.glyphs.len(), trace.unheld.sides);
+        }
+    }
+}
