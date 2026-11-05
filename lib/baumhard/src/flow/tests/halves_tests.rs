@@ -35,7 +35,7 @@ const ECCLESIASTES: &str = "and a time to every purpose under the heaven: ";
 const ROUNDED: &str = "A frame of text around a rounded rectangle, shaped once and placed glyph by glyph. ";
 
 /// The README's outlines, each with the text and size it holds there.
-pub(crate) fn scenes() -> Vec<(&'static str, Outline, &'static str, f32)> {
+fn scenes() -> Vec<(&'static str, Outline, &'static str, f32)> {
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     vec![
         (
@@ -89,7 +89,7 @@ const FIT: FitMode = FitMode::Fit { min: 0.5, max: 2.0 };
 
 /// `text` at `points` laid round `outline` as a `Fit` frame, outward,
 /// with `layout`.
-pub(crate) fn frame(text: &str, points: f32, outline: &Outline, layout: &RingLayout) -> (ShapedRun, PlacedRun, Trace) {
+fn frame(text: &str, points: f32, outline: &Outline, layout: &RingLayout) -> (ShapedRun, PlacedRun, Trace) {
     frame_with(text, points, outline, &FIT, layout, true)
 }
 
@@ -286,6 +286,11 @@ pub(crate) fn signed_distance(path: &ArcPath, p: Vec2) -> f32 {
     }
 }
 
+/// What [`band_residual`] measures of a frame: the most an anchor lies
+/// off its band curve, the least and most distance from the outline, the
+/// anchors measured, and of them those [`folded`].
+pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize);
+
 /// How a frame's glyphs lie on its band curve (#308, ruling B15.1),
 /// measured from the placement alone: each cluster's anchor — its ink's
 /// center along the line and, across it, its baseline less half its
@@ -305,7 +310,7 @@ pub(crate) fn band_residual(
     path: &ArcPath,
     offset: f32,
     x_per_pt: &dyn Fn(usize) -> f32,
-) -> (f32, (f32, f32), usize, usize) {
+) -> BandMeasure {
     let inks = inks(run, placed);
     let mut clusters: Vec<(usize, Option<(Vec2, Vec2)>)> = Vec::new();
     for (k, g) in placed.glyphs.iter().enumerate() {
@@ -320,7 +325,8 @@ pub(crate) fn band_residual(
             _ => clusters.push((k, inks[k])),
         }
     }
-    let (mut worst, mut least, mut most, mut measured, mut fold) = (0.0_f32, f32::INFINITY, f32::NEG_INFINITY, 0, 0);
+    let (mut worst, mut least, mut most, mut measured, mut fold) =
+        (0.0_f32, f32::INFINITY, f32::NEG_INFINITY, 0, 0);
     for (k, ink) in clusters {
         let Some(ink) = ink else { continue };
         let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
@@ -1489,7 +1495,6 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                 faults.push(format!("{what}: {tracks} lines tracked"));
                             }
                             work.frames += 1;
-                            if report { eprintln!("HEAVY {} {} {what}", trace.spent, trace.glyphs); }
                             if trace.spent > work.most_spent {
                                 (work.most_spent, work.worst) = (trace.spent, what.clone());
                             }
@@ -1523,7 +1528,8 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                         .iter()
                                         .map(|l| {
                                             let g = line_gaps(&run, &placed, &inks_of, l.glyphs.clone());
-                                            let (a, b) = (path.nearest(g.anchors.0), path.nearest(g.anchors.1));
+                                            let (a, b) =
+                                                (path.nearest(g.anchors.0), path.nearest(g.anchors.1));
                                             if l.half == 0 {
                                                 (a, b)
                                             } else {
@@ -1670,7 +1676,12 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                 let word = if words.is_empty() { 0.0 } else { mean(&words) };
                                 for (j, (junction, a, b, anchors)) in [
                                     ("top-left", one.ends.0, two.ends.0, (one.anchors.0, two.anchors.0)),
-                                    ("bottom-right", one.ends.1, two.ends.1, (one.anchors.1, two.anchors.1)),
+                                    (
+                                        "bottom-right",
+                                        one.ends.1,
+                                        two.ends.1,
+                                        (one.anchors.1, two.anchors.1),
+                                    ),
                                 ]
                                 .into_iter()
                                 .enumerate()
@@ -1859,8 +1870,9 @@ fn test_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
                 span,
                 ..RingLayout::whole()
             };
-            let (run, placed, trace) =
-                with_seam(&OFFSET_OVERRIDE, own.to_bits() as usize, || frame(text, points, &shape, &layout));
+            let (run, placed, trace) = with_seam(&OFFSET_OVERRIDE, own.to_bits() as usize, || {
+                frame(text, points, &shape, &layout)
+            });
             assert_eq!(
                 trace.offset.map(f32::to_bits),
                 Some(own.to_bits()),
@@ -2382,8 +2394,18 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
             );
             let word = word_gap(&lines);
             for (junction, a, b, anchors) in [
-                ("top-left", lines[0].ends.0, lines[1].ends.0, (lines[0].anchors.0, lines[1].anchors.0)),
-                ("bottom-right", lines[0].ends.1, lines[1].ends.1, (lines[0].anchors.1, lines[1].anchors.1)),
+                (
+                    "top-left",
+                    lines[0].ends.0,
+                    lines[1].ends.0,
+                    (lines[0].anchors.0, lines[1].anchors.0),
+                ),
+                (
+                    "bottom-right",
+                    lines[0].ends.1,
+                    lines[1].ends.1,
+                    (lines[0].anchors.1, lines[1].anchors.1),
+                ),
             ] {
                 let apart = gap(a, b);
                 let turn = turn_cos(&path, anchors.0, anchors.1)
@@ -2738,7 +2760,7 @@ pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
 /// its own style, #308). `Repeat` rings take no glyph step and are left
 /// out.
 #[cfg(test)]
-pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks, (f32, (f32, f32), usize, usize))> {
+pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks, BandMeasure)> {
     use crate::arena::NodeId;
     use crate::document::element::{DocElement, DocKind};
     use crate::document::format::load;
@@ -2872,7 +2894,8 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks, (f32, (f32,
                         let band = match (trace.offset, &laid) {
                             (Some(offset), Some((run, placed))) => {
                                 let walked = ArcPath::closed(&path, f.start, f.direction, MIN_TABLE_SPACING);
-                                let heights: Vec<f32> = spans.iter().map(|(_, style)| x_height_of(style)).collect();
+                                let heights: Vec<f32> =
+                                    spans.iter().map(|(_, style)| x_height_of(style)).collect();
                                 band_residual(run, placed, &walked, offset, &|span| {
                                     heights.get(span).copied().unwrap_or(f32::NAN)
                                 })
@@ -3519,7 +3542,10 @@ fn test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve() {
         "the aspect sweep's anchors where the band curve folds, and the frames round an outline too thin along its lines that hold them"
     );
     let frames = demo_map_frames();
-    assert!(frames.len() >= 5, "precondition: the demo maps' five frames are laid");
+    assert!(
+        frames.len() >= 5,
+        "precondition: the demo maps' five frames are laid"
+    );
     for (name, _, _, _, (off, (least, most), measured, fold)) in frames {
         assert!(
             measured > 0 && off <= BAND_RESIDUAL && most - least <= BAND_RESIDUAL && fold == 0,
@@ -3572,7 +3598,9 @@ pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
         // Each inked glyph over a straight side, by the side's outward
         // normal: its baseline, and how far its ink rises past the
         // x-height and falls past the baseline, a point of its size.
-        let mut sides: Vec<(Vec2, Vec<(f32, f32, f32, (Vec2, Vec2))>)> = Vec::new();
+        // A glyph's baseline, its rise and fall, and its ink.
+        type Hung = (f32, f32, f32, (Vec2, Vec2));
+        let mut sides: Vec<(Vec2, Vec<Hung>)> = Vec::new();
         for k in line.glyphs.clone() {
             let Some(ink) = inks[k] else { continue };
             let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
@@ -3593,8 +3621,7 @@ pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
                 None => sides.push((normal, vec![(baseline, rises, falls, ink)])),
             }
         }
-        let horizontal: Vec<&(Vec2, Vec<(f32, f32, f32, (Vec2, Vec2))>)> =
-            sides.iter().filter(|(n, _)| n.x.abs() < 1e-3).collect();
+        let horizontal: Vec<&(Vec2, Vec<Hung>)> = sides.iter().filter(|(n, _)| n.x.abs() < 1e-3).collect();
         assert!(
             !horizontal.is_empty(),
             "precondition, half {}: the line lies over a straight side",
@@ -3621,7 +3648,7 @@ pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
                 high - low
             );
             // Each ink's edge facing the outline, and how far it clears it.
-            let clear = |g: &(f32, f32, f32, (Vec2, Vec2))| {
+            let clear = |g: &Hung| {
                 let (min, max) = g.3;
                 let facing = if below { min.y } else { max.y };
                 signed_distance(&path, Vec2::new(0.5 * (min.x + max.x), facing))
@@ -3683,7 +3710,9 @@ pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
 /// overshoot. (No `do_*` twin: it reads test counters.)
 #[cfg(test)]
 fn a_long_side_ornament(shape: Shape, what: &str, own: &[(usize, crate::flow::place::SideLoss)]) {
-    use crate::flow::place::halves::{overshoot_steps, BOXES_WEIGHED, BUDGET_OVERRIDE, FLOOR_OVERRIDE, PAST_BUDGET};
+    use crate::flow::place::halves::{
+        overshoot_steps, BOXES_WEIGHED, BUDGET_OVERRIDE, FLOOR_OVERRIDE, PAST_BUDGET,
+    };
     use crate::flow::place::SideLoss;
     use crate::flow::tests::flow_fuzz::ornament_run;
     use crate::flow::tests::support::style;
@@ -3877,7 +3906,10 @@ fn test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end() {
     );
     let slides = SLIDE_TRACKS.with(std::cell::Cell::get);
     assert!(
-        slides > 0 && trace.lines.len() == 2 && trace.unheld == crate::flow::place::Unheld::default() && !placed.truncated,
+        slides > 0
+            && trace.lines.len() == 2
+            && trace.unheld == crate::flow::place::Unheld::default()
+            && !placed.truncated,
         "precondition: the frame slides ({slides} tracks) and holds both lines whole ({:?})",
         trace.unheld
     );

@@ -826,14 +826,11 @@ fn inked_with_bands(run: &ShapedRun, fs: &mut FontSystem) -> (ShapedRun, Vec<f32
                 }
             }
             let most = faces.iter().map(|f| f.1).max().unwrap_or(0);
-            let measured = faces
-                .iter()
-                .find(|f| f.1 == most)
-                .and_then(|&(_, _, glyph)| {
-                    let (min, _) = face_char_ink(fs, &mut cache, glyph, 'x')?;
-                    let per = -min.y / glyph.font_size;
-                    (per.is_finite() && per > 0.0).then_some(-0.5 * per)
-                });
+            let measured = faces.iter().find(|f| f.1 == most).and_then(|&(_, _, glyph)| {
+                let (min, _) = face_char_ink(fs, &mut cache, glyph, 'x')?;
+                let per = -min.y / glyph.font_size;
+                (per.is_finite() && per > 0.0).then_some(-0.5 * per)
+            });
             let em = || {
                 let (glyph, _) = of_span().next()?;
                 let per = 0.5 * (glyph.descent - glyph.ascent) / glyph.size;
@@ -1407,7 +1404,14 @@ fn note_step(before: usize) {
 ///
 /// Cost: one [`InkLay::set_at`] where `guess` holds, a few where the
 /// path bends, [`PAIR_ROUNDS`] at most.
-fn pair(lay: &InkLay<'_>, last: Set, (half, rise): (Vec2, f32), guess: f32, owed: f32, rounds: &mut usize) -> Set {
+fn pair(
+    lay: &InkLay<'_>,
+    last: Set,
+    (half, rise): (Vec2, f32),
+    guess: f32,
+    owed: f32,
+    rounds: &mut usize,
+) -> Set {
     let reach = last.half + half;
     let set_at = |c: f32| lay.set_at(c, half, rise);
     let gap_of = |set: &Set| ((set.at - last.at).abs() - reach).max(Vec2::ZERO).length();
@@ -1873,13 +1877,19 @@ impl Layout<'_> {
         for (k, clusters) in lines {
             let walk = self.walk(k, run);
             let normal = walk.path.offset_at(self.halves.apexes[k], 0.0).normal;
-            reaches.extend(clusters.iter().filter(|c| !c.blank).filter_map(|c| match walk.body_of(c) {
-                Body::Inked { ink, .. } => {
-                    let rise = 0.5 * (ink.min.y + ink.max.y) - band.anchor(&run.glyphs[c.glyphs.start], ink);
-                    Some(Reach::of(rise, (ink.max - ink.min) * 0.5, normal))
-                }
-                Body::Boxed { .. } => None,
-            }));
+            reaches.extend(
+                clusters
+                    .iter()
+                    .filter(|c| !c.blank)
+                    .filter_map(|c| match walk.body_of(c) {
+                        Body::Inked { ink, .. } => {
+                            let rise =
+                                0.5 * (ink.min.y + ink.max.y) - band.anchor(&run.glyphs[c.glyphs.start], ink);
+                            Some(Reach::of(rise, (ink.max - ink.min) * 0.5, normal))
+                        }
+                        Body::Boxed { .. } => None,
+                    }),
+            );
         }
         self.work.walked(reaches.len());
         let offset = offset_from(&reaches, self.outward, None);
@@ -1902,7 +1912,10 @@ impl Layout<'_> {
     /// ([`weighing_steps`]), whose sort and sweep take more a box.
     fn wants(&self, lines: &[Line]) -> f32 {
         let side = *self.sides.borrow();
-        let reaches: Vec<Reach> = lines.iter().flat_map(|l| l.tracked.reaches.iter().copied()).collect();
+        let reaches: Vec<Reach> = lines
+            .iter()
+            .flat_map(|l| l.tracked.reaches.iter().copied())
+            .collect();
         self.work.take(weighing_steps(reaches.len()));
         offset_from(&reaches, self.outward, side)
     }
@@ -1969,7 +1982,14 @@ impl Layout<'_> {
     /// Cost: one [`track`] at the apex and [`CENTER_ROUNDS`] at most, one
     /// on a straight path; from `from`, one where it is centered still,
     /// two where the line is near straight, [`CENTER_ROUNDS`] at most.
-    fn centered(&self, run: &ShapedRun, k: usize, clusters: &[Cluster], g: f32, from: Option<f32>) -> (f32, f32) {
+    fn centered(
+        &self,
+        run: &ShapedRun,
+        k: usize,
+        clusters: &[Cluster],
+        g: f32,
+        from: Option<f32>,
+    ) -> (f32, f32) {
         let apex = self.halves.apexes[k];
         let walk = self.walk(k, run);
         let reach = |from: f32| -self.track(&walk, &run.glyphs, clusters, (from, from), g).short;
@@ -2574,7 +2594,14 @@ impl<'s> SideArc<'s> {
     /// A lay of copies at `gap` begun past the text ink the arc starts
     /// from, on the frame's band curve.
     fn begun(&self, gap: f32) -> InkLay<'_> {
-        InkLay::new(&self.side.walk, self.side.glyphs, self.ca, gap, self.side.band.clone()).after(self.start)
+        InkLay::new(
+            &self.side.walk,
+            self.side.glyphs,
+            self.ca,
+            gap,
+            self.side.band.clone(),
+        )
+        .after(self.start)
     }
 
     /// How far the last ink `lay` set is from `to`, and where along the
@@ -3016,13 +3043,11 @@ impl Layout<'_> {
             return self.grow(run, lines, side, span, seed, search);
         }
         let tolerance = resolved(OFFSET_TOLERANCE, self.halves.length);
-        let start_offset = self.offset.get();
         let (settled, _) = solve_offset(
             self.offset.get(),
             tolerance,
             OFFSET_ROUNDS,
             |offset, _: Option<&Vec<Line>>| {
-                if std::env::var_os("B15DBG").is_some() { eprintln!("DBG settle lay span {span} offset {offset} (start {start_offset}) spent {}", self.work.spent.get()); }
                 self.offset.set(offset);
                 self.lay(run, lines, seed, span, &mut search.memo)
             },
@@ -3032,15 +3057,15 @@ impl Layout<'_> {
         self.offset.set(settled);
         let mut last: Option<(f32, f32)> = None;
         let mut round = 0;
-        let dbg = std::env::var_os("B15DBG").is_some();
-        let spent0 = self.work.spent.get();
         loop {
             let cleared = self.grow(run, lines, side, span, seed, search);
             round += 1;
             let offset = self.offset.get();
             let miss = self.wants(&cleared.lines) - offset;
-            if dbg { eprintln!("DBG clear_at span {span} round {round} offset {offset} miss {miss} spent {} (from {spent0}) settle-start-spent", self.work.spent.get()); }
-            if !(miss.abs() > tolerance) || round >= OFFSET_ROUNDS || self.spent_all() {
+            if miss.abs().partial_cmp(&tolerance) != Some(Ordering::Greater)
+                || round >= OFFSET_ROUNDS
+                || self.spent_all()
+            {
                 return cleared;
             }
             let next = match last {
@@ -3048,7 +3073,8 @@ impl Layout<'_> {
                 _ => offset + miss,
             };
             last = Some((offset, miss));
-            self.offset.set(if next.is_finite() { next } else { offset + miss });
+            self.offset
+                .set(if next.is_finite() { next } else { offset + miss });
         }
     }
 
@@ -3117,7 +3143,6 @@ impl Layout<'_> {
             let mut met_here = [false; 2];
             let mut measured_helps = [[0.0_f32; 2]; 2];
             let measures = [0, 1].map(|j| self.met(&laid, side, j));
-            if std::env::var_os("B15DBG").is_some() { eprintln!("DBG grow span {span} clear {clear:?} met {:?} apart {:?} want {:?} depth {:?} helps {:?} pressed {:?} slack {:?} spent {}", [measures[0].0, measures[1].0], measures[0].1.apart, measures[0].1.want, measures[0].1.depth, measures[0].1.helps, laid.iter().map(|l| l.pressed).collect::<Vec<_>>(), laid.iter().map(|l| l.slack).collect::<Vec<_>>(), self.work.spent.get()); }
             for j in 0..2 {
                 let (met, measured) = &measures[j];
                 let met = *met;
@@ -3331,13 +3356,11 @@ impl Layout<'_> {
                     scale *= 0.5;
                     continue;
                 }
-                let sp0 = self.work.spent.get();
                 let tried = self.lay(run, lines, next, span, memo);
                 let presses = tried.iter().zip(&pressed).any(|(l, was)| l.pressed && !was);
                 if scale == 1.0 {
                     full_pressed = presses;
                 }
-                if std::env::var_os("B15DBG").is_some() { eprintln!("DBG try scale {scale} grow {grow:?} presses {presses} last {last} cost {} slack {:?} foreseen {foreseen}", self.work.spent.get() - sp0, tried.iter().map(|l| l.slack).collect::<Vec<_>>()); }
                 if !presses || last {
                     clear = next;
                     laid = tried;
@@ -4973,8 +4996,9 @@ pub(super) fn place_halves(
         lay.centers.replace(centers.into());
         // `untouched`'s share, for the classes of height the text's inks
         // hold (ruling R46.1).
-        lay.work
-            .hold_for(height_classes(drawn.glyphs.iter().filter_map(|g| g.ink.map(|i| i.max - i.min))));
+        lay.work.hold_for(height_classes(
+            drawn.glyphs.iter().filter_map(|g| g.ink.map(|i| i.max - i.min)),
+        ));
         // The glyphs the text may still place (ruling R44.1): a frame's
         // text and its sides together place at most `MAX_PLACED_GLYPHS`,
         // so a text longer is cut at a cluster, its end left out.
@@ -5186,11 +5210,6 @@ pub(super) fn place_halves(
         truncated = true;
     }
     let mut unheld = unheld_of(&lines, met, overlap);
-    if std::env::var_os("B15DBG").is_some() {
-        let m = lay.apart(&lines);
-        for l in &lines { eprintln!("DBG line half {} short {} centers {:?} gap {} steps {} pressed {} slack {}", l.half, l.tracked.short, l.tracked.centers, l.gap, l.steps, l.pressed, l.slack); }
-        eprintln!("DBG final offset {} met {:?} apart {:?} want {:?} normals {:?} parts {:?} scale {}", lay.offset.get(), met, m.apart, m.want, lines.iter().map(|l| l.normals).collect::<Vec<_>>(), lines.iter().map(|l| l.part).collect::<Vec<_>>(), scale);
-    }
 
     // The side ornament round the junctions, and its share of the frame's
     // offset (#308, ruling B15.1): every ink of the frame, its sides'
@@ -5209,10 +5228,13 @@ pub(super) fn place_halves(
             break;
         };
         let offset = lay.offset.get();
-        let reaches: Vec<Reach> = lines.iter().flat_map(|l| l.tracked.reaches.iter().copied()).collect();
+        let reaches: Vec<Reach> = lines
+            .iter()
+            .flat_map(|l| l.tracked.reaches.iter().copied())
+            .collect();
         lay.work.walked(reaches.len());
         let wanted = offset_from(&reaches, outward, want);
-        if !((wanted - offset).abs() > tolerance) || lay.spent_all() {
+        if (wanted - offset).abs().partial_cmp(&tolerance) != Some(Ordering::Greater) || lay.spent_all() {
             break;
         }
         let kept = lay.sides.replace(want);
@@ -5357,7 +5379,12 @@ pub(crate) fn track_seam(run: &ShapedRun, outline: &Outline, gaps: &[f32], fs: &
 /// of `run` (inked) on the first half: its band centers measured, its
 /// band curve at the offset the clusters want set at the half's apex
 /// ([`Layout::estimate`], #308).
-fn seam_layout<'h>(halves: &'h Halves, run: &ShapedRun, clusters: &[Cluster], fs: &mut FontSystem) -> Layout<'h> {
+fn seam_layout<'h>(
+    halves: &'h Halves,
+    run: &ShapedRun,
+    clusters: &[Cluster],
+    fs: &mut FontSystem,
+) -> Layout<'h> {
     let work = Work::new(0);
     let (_, centers) = inked_with_bands(run, fs);
     let lay = Layout::new(halves, true, work, centers);

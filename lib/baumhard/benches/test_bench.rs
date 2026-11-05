@@ -2448,9 +2448,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_crowded_frame_shrinks_or_cuts", |b| {
         b.iter(do_flow_halves_a_crowded_frame_shrinks_or_cuts)
     });
-    c.bench_function("flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline", |b| {
-        b.iter(do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline)
-    });
+    c.bench_function(
+        "flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline",
+        |b| b.iter(do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline),
+    );
     c.bench_function("flow_halves_a_line_keeps_its_half", |b| {
         b.iter(do_flow_halves_a_line_keeps_its_half)
     });
