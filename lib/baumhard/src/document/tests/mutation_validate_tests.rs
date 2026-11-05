@@ -1346,8 +1346,8 @@ fn test_document_background_is_opaque_or_a_variable() {
     do_document_background_is_opaque_or_a_variable();
 }
 
-/// A literal background is opaque (V1-B12): any alpha below 255 is
-/// refused, naming the alpha, as the loader refuses it — nothing is drawn
+/// A literal background is opaque (V1-B12): every alpha below 255 — all
+/// 255 of them — is refused, naming the alpha, as the loader refuses it — nothing is drawn
 /// behind the canvas for it to blend with. Controls: the same color
 /// opaque passes, and so does a variable, whatever alpha the variable's
 /// value has (the glyphs that name it use it; the background is drawn
@@ -1355,7 +1355,7 @@ fn test_document_background_is_opaque_or_a_variable() {
 pub fn do_document_background_is_opaque_or_a_variable() {
     let (doc, _) = document();
     let map = |background| at_root(DocKind::Map, DocMutation::Map(MapOp::SetBackground(background)));
-    for alpha in [0u8, 1, 0x80, 254] {
+    for alpha in 0..=254u8 {
         assert_eq!(
             validate(&map(PlainColor::Rgba(Rgba::new(10, 20, 30, alpha))), &doc),
             Err(MutationError::TranslucentBackground {
@@ -1365,6 +1365,16 @@ pub fn do_document_background_is_opaque_or_a_variable() {
             "alpha {alpha}"
         );
     }
+    // The alpha is spelled as the file spells it, and as the loader's
+    // refusal of the same value spells it: in hex.
+    let refused = validate(&map(PlainColor::Rgba(Rgba::new(10, 20, 30, 0x80))), &doc)
+        .expect_err("a translucent background is refused")
+        .to_string();
+    let loaded = crate::document::format::LoadErrorKind::TranslucentBackground { alpha: 0x80 }.to_string();
+    assert!(
+        refused.contains("alpha 0x80") && loaded.contains("alpha 0x80"),
+        "one spelling of the alpha: {refused} / {loaded}"
+    );
     assert_eq!(
         validate(&map(PlainColor::Rgba(Rgba::opaque(10, 20, 30))), &doc),
         Ok(()),

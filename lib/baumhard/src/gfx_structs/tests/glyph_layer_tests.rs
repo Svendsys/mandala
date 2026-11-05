@@ -19,6 +19,7 @@ use glam::Vec2;
 use crate::core::primitives::{Flag, Flaggable};
 use crate::document::values::{Rgba, ZoomWindow};
 use crate::engine::anchor::Anchors;
+use crate::engine::builder::MutatorNode;
 use crate::engine::element::TreeElement;
 use crate::engine::interpolate::{Interpolable, Snap};
 use crate::engine::journal::JournalBuilder;
@@ -914,8 +915,10 @@ fn test_authored_glyph_layer_mutations_have_the_wire_shape() {
 /// one is an error and no file can spell one. The glyph layer has no
 /// fill (V1-B12), so a mutation that names one — the three a fill had,
 /// and the projection's replacement — is refused as an unknown variant,
-/// and a mutator tree that holds one does not parse. The control is a
-/// run mutation in the same tree, which does.
+/// and the authored mutator a map carries
+/// (`MutatorNode<GfxElement, GfxMutation>`) that holds one does not
+/// parse. The control is a run mutation in the same mutator, which
+/// does.
 pub fn do_authored_glyph_layer_mutations_have_the_wire_shape() {
     let authored = authored_glyph_layer_mutations();
     for (mutation, wire) in &authored {
@@ -939,28 +942,36 @@ pub fn do_authored_glyph_layer_mutations_have_the_wire_shape() {
         r#"{"FillRect":{"origin":[0.0,0.0],"size":[120.0,60.0]}}"#,
         r#"{"FillSet":{}}"#,
     ] {
+        // The variant the spelling names, `FillColor` in `{"FillColor":…}`:
+        // the refusal must be of it, not of anything around it.
+        let variant = fill[2..].split('"').next().expect("a variant name");
+        let unknown = format!("unknown variant `{variant}`");
         let refused = serde_json::from_str::<GfxMutation>(fill)
             .expect_err("a fill mutation has no spelling")
             .to_string();
         assert!(
-            refused.contains("unknown variant"),
+            refused.contains(&unknown),
             "{fill} is refused as an unknown variant, not for its value: {refused}"
         );
-        // A mutator tree naming one is refused whole; the same tree with
-        // a run mutation in its place reads (the negative control).
-        let tree = |mutation: &str| format!(r#"{{"mutations":[{{"RunOpacity":0.5}},{mutation}]}}"#);
-        #[derive(serde::Deserialize, Debug)]
-        #[allow(dead_code)]
-        struct Authored {
-            mutations: Vec<GfxMutation>,
-        }
+        // The authored mutator a map carries — a custom mutation's
+        // `mutator`, `MutatorNode<GfxElement, GfxMutation>` — naming one
+        // is refused whole, for the variant; the same node with a run
+        // mutation in its place reads (the negative control).
+        let node = |mutation: &str| {
+            format!(
+                r#"{{"Macro":{{"kind":null,"channel":0,"mutations":{{"Literal":[{{"RunOpacity":0.5}},{mutation}]}}}}}}"#
+            )
+        };
+        let refused = serde_json::from_str::<MutatorNode<GfxElement, GfxMutation>>(&node(fill))
+            .expect_err("a mutator naming a fill does not parse")
+            .to_string();
         assert!(
-            serde_json::from_str::<Authored>(&tree(fill)).is_err(),
-            "a list naming {fill} is refused"
+            refused.contains(&unknown),
+            "a mutator naming {fill} is refused for the variant: {refused}"
         );
         assert!(
-            serde_json::from_str::<Authored>(&tree(r#"{"RunOpacity":0.25}"#)).is_ok(),
-            "the same list with a run mutation in its place reads"
+            serde_json::from_str::<MutatorNode<GfxElement, GfxMutation>>(&node(r#"{"RunOpacity":0.25}"#)).is_ok(),
+            "the same mutator with a run mutation in its place reads"
         );
     }
 }

@@ -67,8 +67,12 @@ pub enum PaletteField {
 /// A color a palette group or the map's background may hold: a
 /// literal or a theme variable. A palette never refers to another
 /// palette, and the background belongs to no node a palette could be
-/// bound to, so this has no `Palette` arm.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// bound to, so this has no `Palette` arm. Serialized as [`ColorRef`]'s
+/// two arms are, `{"rgba": [r, g, b, a]}` and `{"var": n}`, for the
+/// predicate field that tests the background
+/// ([`DocField::Background`](crate::document::inspect::DocField::Background)).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PlainColor {
     /// A literal color.
     Rgba(Rgba),

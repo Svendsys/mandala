@@ -300,11 +300,12 @@ fn test_a_float_survives_the_text_exactly() {
     };
     let mut checked = 0;
     // Random bit patterns, and the neighbors of the interesting values,
-    // read and written as a zoom bound: a number with no upper bound,
-    // above zero.
+    // read and written as a frame's `gap`: any finite number `>= 0`, with
+    // no upper bound — so both zeros, `0.0` and `-0.0`, are among them.
     let mut values: Vec<f32> = (0..200_000)
         .map(|_| f32::from_bits((next() >> 32) as u32))
-        .filter(|v| v.is_finite() && *v > 0.0)
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .chain([0.0, -0.0])
         .collect();
     for base in [
         0.1_f32,
@@ -324,19 +325,28 @@ fn test_a_float_survives_the_text_exactly() {
     }
     for value in values {
         let json = map_of(&format!(
-            r#","zoom":{{"min":{}}}"#,
+            r#","frame":{{"gap":{}}}"#,
             serde_json::to_string(&value).unwrap()
         ));
         let doc = load(&json).unwrap_or_else(|e| panic!("{value:e}: {e}"));
-        let (_, data) = node(&doc, 1);
+        let (one, _) = node(&doc, 1);
+        let crate::document::element::DocElement::Frame(frame) =
+            crate::document::tests::format_support::kid(&doc, one, crate::document::element::DocKind::Frame, 0).1
+        else {
+            panic!("{json} has a frame")
+        };
         assert_eq!(
-            data.zoom.and_then(|zoom| zoom.min).map(f32::to_bits),
+            frame.style.gap.map(f32::to_bits),
             Some(value.to_bits()),
             "{value:e} did not survive the text {json}"
         );
         checked += 1;
     }
     assert!(checked > 100_000, "precondition: {checked} values were checked");
+    assert!(
+        (-0.0_f32).to_bits() != 0.0_f32.to_bits(),
+        "precondition: the two zeros differ in their bits, so each is checked as itself"
+    );
 }
 
 #[test]

@@ -287,7 +287,7 @@ impl fmt::Display for MutationError {
             }
             MutationError::TranslucentBackground { at, alpha } => write!(
                 f,
-                "{at}: a background is opaque, and this one has alpha {alpha}; nothing is drawn behind it"
+                "{at}: a background is opaque, and this one has alpha {alpha:#04x}; nothing is drawn behind it"
             ),
             MutationError::Missing { at, what, index } => {
                 write!(f, "{at}: the document has no {what} {index}")

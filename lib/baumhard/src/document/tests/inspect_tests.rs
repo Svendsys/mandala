@@ -7,7 +7,7 @@
 use crate::document::element::{DocElement, DocKind};
 use crate::document::inspect::DocField;
 use crate::document::tests::test_support::example;
-use crate::document::values::{ColorRef, FitMode, FontSize, PaletteField, Rgba, Shape, VarId};
+use crate::document::values::{ColorRef, FitMode, FontSize, PaletteField, PlainColor, Rgba, Shape, VarId};
 use crate::engine::predicate::{Comparator, Inspect, Predicate};
 
 #[test]
@@ -142,12 +142,15 @@ pub fn do_document_inspect_values_are_stored_not_resolved() {
         a.test_field(&DocField::Color(red), &Comparator::greater()),
         Some(false)
     );
-    let black = DocField::Background(ColorRef::Rgba(Rgba::opaque(0, 0, 0)));
+    let black = DocField::Background(PlainColor::Rgba(Rgba::opaque(0, 0, 0)));
     let map = builder.tree().arena()[builder.root()].get();
     assert_eq!(map.test_field(&black, &Comparator::exists()), Some(true));
     assert_eq!(map.test_field(&black, &Comparator::equals()), Some(true));
     assert_eq!(
-        map.test_field(&DocField::Background(red), &Comparator::equals()),
+        map.test_field(
+            &DocField::Background(PlainColor::Rgba(Rgba::opaque(255, 0, 0))),
+            &Comparator::equals()
+        ),
         Some(false),
         "the control: another color is not the stored one"
     );
@@ -250,9 +253,22 @@ pub fn do_document_field_json_spelling() {
         r#"{"kind":"cap_start"}"#
     );
     assert_eq!(
-        serde_json::to_string(&DocField::Background(ColorRef::Var(VarId(1)))).unwrap(),
+        serde_json::to_string(&DocField::Background(PlainColor::Var(VarId(1)))).unwrap(),
         r#"{"background":{"var":1}}"#
     );
+    // A background is a literal or a variable, so a palette color — which
+    // no map stores, and which could never match — has no spelling. The
+    // controls: the two spellings a background has read.
+    let refused = serde_json::from_str::<DocField>(r#"{"background":{"palette":"text"}}"#)
+        .expect_err("a palette background has no spelling")
+        .to_string();
+    assert!(refused.contains("unknown variant"), "{refused}");
+    for spelling in [r#"{"background":{"var":1}}"#, r#"{"background":{"rgba":[0,0,0,255]}}"#] {
+        assert!(
+            serde_json::from_str::<DocField>(spelling).is_ok(),
+            "{spelling} reads"
+        );
+    }
     assert_eq!(
         serde_json::to_string(&DocField::Color(ColorRef::Palette(PaletteField::Title))).unwrap(),
         r#"{"color":{"palette":"title"}}"#

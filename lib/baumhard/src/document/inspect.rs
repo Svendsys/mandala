@@ -41,9 +41,12 @@ use serde::{Deserialize, Serialize};
 pub enum DocField {
     /// The element's kind. Every element.
     Kind(DocKind),
-    /// The map's background: a literal or a theme variable, never a
-    /// palette color, which no map stores.
-    Background(ColorRef),
+    /// The map's background: a literal or a theme variable. A
+    /// [`PlainColor`], so a palette color — which no map stores, and
+    /// which could therefore never match — cannot be spelled:
+    /// `{"background": {"palette": "text"}}` is refused as an unknown
+    /// variant.
+    Background(PlainColor),
     /// The element's channel. Every element.
     Channel(usize),
     /// A node's ident.
@@ -237,13 +240,10 @@ impl Inspect for DocElement {
             DocField::Kind(kind) => unordered(Stored::Value(Some(&self.kind())), kind, comparator),
             DocField::Background(color) => {
                 let stored_background = match self {
-                    DocElement::Map(map) => Some(match map.background {
-                        PlainColor::Rgba(rgba) => ColorRef::Rgba(rgba),
-                        PlainColor::Var(var) => ColorRef::Var(var),
-                    }),
+                    DocElement::Map(map) => Some(Some(&map.background)),
                     _ => None,
                 };
-                unordered(stored(stored_background.as_ref().map(Some)), color, comparator)
+                unordered(stored(stored_background), color, comparator)
             }
             DocField::Channel(channel) => integer(Stored::Value(Some(&self.channel())), *channel, comparator),
             DocField::Ident(ident) => integer(stored(node.map(|n| Some(&n.ident.0))), *ident, comparator),

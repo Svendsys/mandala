@@ -1810,10 +1810,11 @@ fn test_the_fill_keys_are_refused_as_unknown() {
 #[test]
 fn test_a_background_is_opaque_a_variable_and_never_a_palette() {
     let header = |background: &str| map_with(&format!(r#","background":{background}"#), "");
-    // Every alpha below ff is refused, naming it.
-    for (spelled, alpha) in [("00", 0u8), ("01", 1), ("80", 0x80), ("fe", 0xfe)] {
+    // Every alpha below ff is refused, naming it: all 255 of them,
+    // spelled as a file spells them.
+    for alpha in 0..=0xfeu8 {
         rejects(
-            &header(&format!(r##""#102030{spelled}""##)),
+            &header(&format!(r##""#102030{alpha:02x}""##)),
             "background",
             LoadErrorKind::TranslucentBackground { alpha },
         );
