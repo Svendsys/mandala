@@ -970,7 +970,8 @@ pub fn do_authored_glyph_layer_mutations_have_the_wire_shape() {
             "a mutator naming {fill} is refused for the variant: {refused}"
         );
         assert!(
-            serde_json::from_str::<MutatorNode<GfxElement, GfxMutation>>(&node(r#"{"RunOpacity":0.25}"#)).is_ok(),
+            serde_json::from_str::<MutatorNode<GfxElement, GfxMutation>>(&node(r#"{"RunOpacity":0.25}"#))
+                .is_ok(),
             "the same mutator with a run mutation in its place reads"
         );
     }

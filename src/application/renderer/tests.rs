@@ -847,7 +847,7 @@ fn test_the_clear_color_holds_the_background_on_either_target() {
 /// - **glyphon's text**, through the color mode the renderer gives its
 ///   atlas, the shader's per-mode handling of a glyph's color written
 ///   out here from glyphon 0.12.0's `shader.wgsl` (`ConvertToLinear`
-///   applies its `srgb_to_linear`, `None` divides by 255);
+///   applies the shader's sRGB-to-linear decode, `None` divides by 255);
 /// - **the glyph-run pass's mask glyphs**, the real `instance`;
 /// - **its color glyphs** (emoji), sampled from a page of the format the
 ///   pass gives it: an sRGB page decodes the stored byte, a linear one
@@ -928,7 +928,13 @@ fn test_the_three_color_passes_agree_on_every_target() {
         top: 0,
     };
 
-    for format in [Bgra8UnormSrgb, Rgba8UnormSrgb, Bgra8Unorm, Rgba8Unorm, Rgba16Float] {
+    for format in [
+        Bgra8UnormSrgb,
+        Rgba8UnormSrgb,
+        Bgra8Unorm,
+        Rgba8Unorm,
+        Rgba16Float,
+    ] {
         let encoding = TargetEncoding::of(format);
         let mode = encoding.glyphon_color_mode();
         let page = encoding.color_page_format();
@@ -958,12 +964,28 @@ fn test_the_three_color_passes_agree_on_every_target() {
 
     // The controls: on each kind of target, the other kind's choice
     // leaves a different byte, for every byte but the two ends.
-    assert_eq!(stored(Bgra8Unorm, decode(128.0 / 255.0)), 0x37, "a decode on a linear target darkens");
-    assert_eq!(stored(Bgra8UnormSrgb, 128.0 / 255.0), 0xbc, "no decode on an sRGB target brightens");
+    assert_eq!(
+        stored(Bgra8Unorm, decode(128.0 / 255.0)),
+        0x37,
+        "a decode on a linear target darkens"
+    );
+    assert_eq!(
+        stored(Bgra8UnormSrgb, 128.0 / 255.0),
+        0xbc,
+        "no decode on an sRGB target brightens"
+    );
     for byte in 1..255u8 {
         let c = f64::from(byte) / 255.0;
-        assert_ne!(stored(Bgra8Unorm, decode(c)), byte, "0x{byte:02x}: decoded on a linear target");
-        assert_ne!(stored(Bgra8UnormSrgb, c), byte, "0x{byte:02x}: not decoded on an sRGB target");
+        assert_ne!(
+            stored(Bgra8Unorm, decode(c)),
+            byte,
+            "0x{byte:02x}: decoded on a linear target"
+        );
+        assert_ne!(
+            stored(Bgra8UnormSrgb, c),
+            byte,
+            "0x{byte:02x}: not decoded on an sRGB target"
+        );
     }
 }
 
@@ -2701,14 +2723,24 @@ fn test_a_backdrop_cell_is_one_opaque_square_at_its_corner() {
     let cell = BackdropCell::shape(&mut fs);
     let (at, size, content, partial) = ink(cell.buffer(), &mut fs);
     assert_eq!(at, (0, 0), "the block's ink starts at the text area's corner");
-    assert_eq!(size, (CELL_PX as u32, CELL_PX as u32), "the block's ink is the cell");
-    assert!(matches!(content, SwashContent::Mask), "the block is a coverage mask, tinted black");
+    assert_eq!(
+        size,
+        (CELL_PX as u32, CELL_PX as u32),
+        "the block's ink is the cell"
+    );
+    assert!(
+        matches!(content, SwashContent::Mask),
+        "the block is a coverage mask, tinted black"
+    );
     assert_eq!(partial, 0, "every texel of the block is fully covered");
 
     // The controls: a half-pixel-larger block, and the default face's.
     let larger = super::backdrop::shape_block(&mut fs, CELL_PX as f32 + 0.5, Some(AppFont::PublicPixel));
     let (_, _, _, partial) = ink(&larger, &mut fs);
-    assert!(partial > 0, "the control: a block off the pixel grid has partly covered edges");
+    assert!(
+        partial > 0,
+        "the control: a block off the pixel grid has partly covered edges"
+    );
     let default_face = super::backdrop::shape_block(&mut fs, CELL_PX as f32, None);
     let (at, size, _, partial) = ink(&default_face, &mut fs);
     assert!(
@@ -2775,7 +2807,10 @@ fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
                 for x in from_x..to_x {
                     let reference = covered(x0, x1, x) && covered(y0, y1, y);
                     let inside = (rect.left..rect.right).contains(&x) && (rect.top..rect.bottom).contains(&y);
-                    assert_eq!(inside, reference, "({left}, {top}, {width}, {height}) at {ratio}: pixel ({x}, {y})");
+                    assert_eq!(
+                        inside, reference,
+                        "({left}, {top}, {width}, {height}) at {ratio}: pixel ({x}, {y})"
+                    );
                     let held = holding[(y - from_y) as usize * stride + (x - from_x) as usize];
                     assert_eq!(held, u8::from(reference), "pixel ({x}, {y}) of {rect:?}");
                     checked += 1;
@@ -2783,18 +2818,29 @@ fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
             }
         }
     }
-    assert!(checked > 1_000_000, "precondition: the pixels are checked ({checked})");
+    assert!(
+        checked > 1_000_000,
+        "precondition: the pixels are checked ({checked})"
+    );
 
     // The controls: the two plausible wrong snaps each miss the rule.
-    let snaps: [(&str, fn(f32) -> i32); 2] = [("round", |v| v.round() as i32), ("truncate", |v| v as i32)];
+    type Snap = fn(f32) -> i32;
+    let snaps: [(&str, Snap); 2] = [("round", |v| v.round() as i32), ("truncate", |v| v as i32)];
     for (name, snap) in snaps {
         let differs = rects.iter().any(|&(left, top, width, height)| {
             [1.0_f32, 1.5, 2.0].iter().any(|&ratio| {
                 let rect = PixelRect::covered_by((left, top, width, height), ratio);
-                (snap(left * ratio), snap((left + width) * ratio), snap(top * ratio), snap((top + height) * ratio))
-                    != (rect.left, rect.right, rect.top, rect.bottom)
+                (
+                    snap(left * ratio),
+                    snap((left + width) * ratio),
+                    snap(top * ratio),
+                    snap((top + height) * ratio),
+                ) != (rect.left, rect.right, rect.top, rect.bottom)
             })
         });
-        assert!(differs, "the control: snapping by {name} disagrees with the rule somewhere");
+        assert!(
+            differs,
+            "the control: snapping by {name} disagrees with the rule somewhere"
+        );
     }
 }

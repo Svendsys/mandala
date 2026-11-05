@@ -438,7 +438,12 @@ impl Renderer {
                 }
             };
             let fill = backdrop::FillGlyph::of(cell).expect("the backdrop cell lays out its block");
-            let areas = |areas: &[TextArea]| areas.iter().map(|area| fill.in_buffer(area.buffer)).sum::<usize>();
+            let areas = |areas: &[TextArea]| {
+                areas
+                    .iter()
+                    .map(|area| fill.in_buffer(area.buffer))
+                    .sum::<usize>()
+            };
             let runs: usize = super::scene_shape_cache::glyph_runs(canvas_elements())
                 .map(|(run, _)| fill.in_run(run))
                 .sum();

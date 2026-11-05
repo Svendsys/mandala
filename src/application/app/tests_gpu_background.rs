@@ -172,11 +172,20 @@ fn test_the_clear_follows_a_theme_variant_switch_its_undo_and_a_reload() {
         return;
     };
     let init = &mut app.init;
-    let background = |init: &InitState| init.document.as_ref().expect("the harness builds a document").background();
+    let background = |init: &InitState| {
+        init.document
+            .as_ref()
+            .expect("the harness builds a document")
+            .background()
+    };
 
     draw(init);
     let dark = srgb_clear([0x14, 0x14, 0x14]);
-    assert_clear(init.renderer.clear_color(), dark, "the control: theme_demo's dark variant at load");
+    assert_clear(
+        init.renderer.clear_color(),
+        dark,
+        "the control: theme_demo's dark variant at load",
+    );
 
     // The click: node 2's body, the "light" switch.
     let light_node = init
@@ -314,7 +323,10 @@ fn test_a_frame_draws_no_content_fill() {
     let edge = |at: f32| (f64::from(at) - 0.5).ceil() as i64;
     let cells = |from: f32, to: f32| ((edge(to) - edge(from)) as f64 / 64.0).ceil() as usize;
     let expected = cells(left, left + width) * cells(top, top + height);
-    assert!(expected > 1, "precondition: the console's backdrop spans cells ({expected})");
+    assert!(
+        expected > 1,
+        "precondition: the console's backdrop spans cells ({expected})"
+    );
     let census = init.renderer.fill_census_of_last_frame();
     assert_eq!(
         (census.canvas, census.chrome),
@@ -326,18 +338,23 @@ fn test_a_frame_draws_no_content_fill() {
 
     // The canvas half's control: testament with every section's text a
     // fill block in the backdrop's face.
-    let mut map: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(map_path("testament.mindmap.json")).expect("testament"))
-            .expect("testament is JSON");
+    let mut map: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(map_path("testament.mindmap.json")).expect("testament"),
+    )
+    .expect("testament is JSON");
     let mut sections = 0;
     for node in map["nodes"].as_object_mut().expect("nodes").values_mut() {
         for section in node["sections"].as_array_mut().into_iter().flatten() {
             section["text"] = json!("\u{2588}");
-            section["text_runs"] = json!([{"start": 0, "end": 1, "font": "Public Pixel", "size_pt": 74.0, "color": "#ffffff"}]);
+            section["text_runs"] =
+                json!([{"start": 0, "end": 1, "font": "Public Pixel", "size_pt": 74.0, "color": "#ffffff"}]);
             sections += 1;
         }
     }
-    assert!(sections > 100, "precondition: the map's sections are rewritten ({sections})");
+    assert!(
+        sections > 100,
+        "precondition: the map's sections are rewritten ({sections})"
+    );
     let blocks = TempFile::new("fill-census", "mindmap.json");
     std::fs::write(blocks.as_str(), map.to_string()).expect("the temp map is written");
     let Some(mut blocked) = headless_app(blocks.as_str()) else {

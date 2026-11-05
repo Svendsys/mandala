@@ -830,9 +830,9 @@ fn side_pattern_first_grapheme(pattern: &SidePattern) -> String {
 /// hundred megabytes.
 ///
 /// The mean is exact rather than approximate here, because `render`
-/// only ever emits whole copies: `rows / unit` copies of
-/// `total_bytes` is `rows × total_bytes / unit`. Rounded up so the
-/// ceiling never under-charges a row.
+/// only ever emits whole copies: `rows / unit` copies of the
+/// cluster vector's `total` bytes is `rows × total / unit`. Rounded
+/// up so the ceiling never under-charges a row.
 ///
 /// This prices only the **repeating** part. A `PrefixFillSuffix`
 /// pattern also emits a prefix and a suffix once each, which do not

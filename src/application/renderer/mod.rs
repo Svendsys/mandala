@@ -169,15 +169,12 @@ use web_time::Instant;
 
 use baumhard::font::{Attrs, Buffer};
 use glyphon::{Cache, SwashCache, TextAtlas, TextRenderer, Viewport};
-use target_encoding::TargetEncoding;
 use log::{error, info, warn};
+use target_encoding::TargetEncoding;
 
 use rustc_hash::FxHashMap;
 
-use wgpu::{
-    Color, Device, Instance, MultisampleState, Queue, Surface, SurfaceConfiguration,
-    TextureFormat,
-};
+use wgpu::{Color, Device, Instance, MultisampleState, Queue, Surface, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -187,7 +184,6 @@ use baumhard::font::fonts;
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::camera::Camera2D;
 use glam::Vec2;
-
 
 /// How many frames `FpsDisplayMode::Snapshot` waits between readout
 /// refreshes, and how many frames `FpsDisplayMode::Debug` averages
@@ -264,7 +260,6 @@ impl FrameIntervalRing {
         }
     }
 }
-
 
 pub struct Renderer {
     /// Where the window's frames land: a window's swapchain, or — with

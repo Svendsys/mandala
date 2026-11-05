@@ -330,8 +330,13 @@ fn test_a_float_survives_the_text_exactly() {
         ));
         let doc = load(&json).unwrap_or_else(|e| panic!("{value:e}: {e}"));
         let (one, _) = node(&doc, 1);
-        let crate::document::element::DocElement::Frame(frame) =
-            crate::document::tests::format_support::kid(&doc, one, crate::document::element::DocKind::Frame, 0).1
+        let crate::document::element::DocElement::Frame(frame) = crate::document::tests::format_support::kid(
+            &doc,
+            one,
+            crate::document::element::DocKind::Frame,
+            0,
+        )
+        .1
         else {
             panic!("{json} has a frame")
         };

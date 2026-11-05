@@ -263,7 +263,10 @@ pub fn do_document_field_json_spelling() {
         .expect_err("a palette background has no spelling")
         .to_string();
     assert!(refused.contains("unknown variant"), "{refused}");
-    for spelling in [r#"{"background":{"var":1}}"#, r#"{"background":{"rgba":[0,0,0,255]}}"#] {
+    for spelling in [
+        r#"{"background":{"var":1}}"#,
+        r#"{"background":{"rgba":[0,0,0,255]}}"#,
+    ] {
         assert!(
             serde_json::from_str::<DocField>(spelling).is_ok(),
             "{spelling} reads"
