@@ -3121,10 +3121,14 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
             "precondition: the frame's overshoot is within the general bound"
         );
         let held = budget.max(trace.reserve);
+        // Spent as the frame reads it: its budget less the share held
+        // back for `untouched` (ruling R46.1), which is held for the
+        // checks it makes since #308.
         assert!(
-            trace.spent >= budget,
-            "precondition: the budget of {budget} is spent ({})",
-            trace.spent
+            trace.spent.saturating_add(trace.reserve) >= budget,
+            "precondition: the budget of {budget} is spent ({}, {} held back)",
+            trace.spent,
+            trace.reserve
         );
         assert!(
             trace.spent <= held + past,
