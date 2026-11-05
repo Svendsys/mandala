@@ -159,3 +159,29 @@ fn b15_probe3_sides_budgets() {
         }
     }
 }
+
+#[test]
+fn b15_probe3_heavy() {
+    let text = "and a time to every purpose under the heaven: ";
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
+    let layout = RingLayout { span: LineSpan::NATURAL, ..RingLayout::whole() };
+    let before = TRACKS.with(std::cell::Cell::get);
+    let (_, placed, trace) = frame_with(text, 18.0, &shape, &FitMode::Fit { min: 0.5, max: 2.0 }, &layout, false);
+    eprintln!("PROBE heavy spent {} glyphs {} tracks {} placed {} unheld {:?}", trace.spent, trace.glyphs, TRACKS.with(std::cell::Cell::get) - before, placed.glyphs.len(), trace.unheld);
+}
+
+#[test]
+fn b15_probe3_heavy2() {
+    use crate::flow::place::halves::{BUILDS, INKED_STEPS, SHAPED_STEPS, TRACKED_STEPS};
+    let text = "and a time to every purpose under the heaven: ";
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
+    for span in [LineSpan::NATURAL, LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE)] {
+        let layout = RingLayout { span, ..RingLayout::whole() };
+        let get = || (TRACKS.with(|c| c.get()), TRACKED_STEPS.with(|c| c.get()), SHAPED_STEPS.with(|c| c.get()), INKED_STEPS.with(|c| c.get()), BUILDS.with(|c| c.get()));
+        let b = get();
+        let (_, _, trace) = frame_with(text, 18.0, &shape, &FitMode::Fit { min: 0.5, max: 2.0 }, &layout, false);
+        let a = get();
+        eprintln!("PROBE heavy2 {span:?}: spent {} tracks {} tracked {} shaped {} inked {} builds {} looks {:?}", trace.spent, a.0-b.0, a.1-b.1, a.2-b.2, a.3-b.3, a.4-b.4, trace.looks.worst);
+    }
+}
+

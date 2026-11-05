@@ -1880,11 +1880,13 @@ impl Layout<'_> {
     /// ([`offset_from`]). The side ornament's share is its last fill's
     /// ([`Layout::sides`]). Not a number with no ink.
     ///
-    /// Cost: O(inks).
+    /// Cost: O(inks), a fold over the reaches their lay found, with no
+    /// path lookup: weighed as a touch check weighs its boxes
+    /// ([`weighing_steps`]), whose sort and sweep take more a box.
     fn wants(&self, lines: &[Line]) -> f32 {
         let side = *self.sides.borrow();
         let reaches: Vec<Reach> = lines.iter().flat_map(|l| l.tracked.reaches.iter().copied()).collect();
-        self.work.walked(reaches.len());
+        self.work.take(weighing_steps(reaches.len()));
         offset_from(&reaches, self.outward, side)
     }
 
@@ -3041,6 +3043,9 @@ impl Layout<'_> {
         let mut free = [false; 2];
         let mut stuck = [false; 2];
         let mut met_now: Option<[bool; 2]> = None;
+        // Whether the last round's whole step, laid, pressed a line it
+        // left unpressed (#308).
+        let mut full_pressed = false;
         for _ in 0..CLEAR_ROUNDS {
             // A pressed line ends the search: the frame goes to its last
             // resorts from here — a shrink, a cut — and they grow the
@@ -3259,13 +3264,26 @@ impl Layout<'_> {
                 // laid (#308): round a sharp corner a line's length jumps by
                 // a letter as its start moves, and tries that each press it
                 // by the jump, laid in full, cost a clearance search most of
-                // its work.
-                if scale < 1.0 && !last && self.would_press(run, lines, &laid, next) {
+                // its work. So is a whole step held to a line's slack after a
+                // round whose whole step, laid, pressed a line: there the
+                // slack, measured where the line lay, is no measure of where
+                // it would lie, and the step lands on the press round after
+                // round (the quatrain inward round the 600 × 12 sharp
+                // rectangle, cut apart: 750 tracks laid, 657 looked at first).
+                if (scale < 1.0 || (full_pressed && held.iter().any(|h| *h)))
+                    && !last
+                    && self.would_press(run, lines, &laid, next)
+                {
                     scale *= 0.5;
                     continue;
                 }
+                let sp0 = self.work.spent.get();
                 let tried = self.lay(run, lines, next, span, memo);
                 let presses = tried.iter().zip(&pressed).any(|(l, was)| l.pressed && !was);
+                if scale == 1.0 {
+                    full_pressed = presses;
+                }
+                if std::env::var_os("B15DBG").is_some() { eprintln!("DBG try scale {scale} grow {grow:?} presses {presses} last {last} cost {} slack {:?} foreseen {foreseen}", self.work.spent.get() - sp0, tried.iter().map(|l| l.slack).collect::<Vec<_>>()); }
                 if !presses || last {
                     clear = next;
                     laid = tried;

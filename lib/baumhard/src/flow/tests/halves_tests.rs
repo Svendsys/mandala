@@ -3404,10 +3404,12 @@ const PAIRS_A_BOX: usize = 10;
 /// face, so its path through the last resorts is every host's. Its two
 /// lines face each other across the outline, and the later is cut apart
 /// (`Trace::cut_apart`); the cut takes at most [`CUT_APART_TRACKS`]
-/// `track`s.
+/// `track`s: 657 on the frame's band curve (#308), 426 at d7242d38.
 ///
-/// Control: `cut_apart` bisecting its prefix on whole clearance searches
-/// again (C63), past the bound. (No `do_*` twin: it reads test counters.)
+/// Controls: `cut_apart` bisecting its prefix on whole clearance searches
+/// again (C63), past the bound; a clearance round's whole step held to a
+/// line's slack laid without a look first after a round whose whole step
+/// pressed a line (#308), 750. (No `do_*` twin: it reads test counters.)
 #[test]
 fn test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines() {
     use crate::flow::place::halves::TRACKS;
