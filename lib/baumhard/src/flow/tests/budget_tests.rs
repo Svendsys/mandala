@@ -98,7 +98,7 @@ struct Past {
     allowed: usize,
     held: usize,
     overlap: bool,
-    /// The most glyph steps an `untouched` of it took, and its estimate.
+    /// The most glyph steps an `untouched` of it took, and its share.
     untouched: (usize, usize),
     /// The most pairs its touch checks looked at a box.
     looks: Looks,
@@ -158,11 +158,10 @@ fn grid(
                             past: PAST_BUDGET.with(std::cell::Cell::get),
                             spent: trace.spent,
                             allowed,
-                            held: budget.max(untouched_steps(trace.glyphs)),
+                            held: budget.max(trace.reserve),
                             overlap: trace.unheld.overlap,
                             untouched: {
-                                let (taken, inks) = UNTOUCHED_TAKEN.with(std::cell::Cell::get);
-                                (taken, untouched_steps(inks))
+                                UNTOUCHED_TAKEN.with(std::cell::Cell::get)
                             },
                             looks: trace.looks,
                         });
@@ -432,26 +431,30 @@ fn test_flow_budget_a_frame_past_its_budget_takes_its_overshoot_at_most_large_mi
 
 /// R46.1: the share of a frame's budget held back for `untouched` is
 /// held: a frame's work reads as spent once it has taken its budget less
-/// `untouched_steps` of its glyphs, and not one step before.
+/// `untouched_steps` of its glyphs, of the classes of height its text's
+/// inks hold (#308), and not one step before.
 ///
-/// Control: with no share held back, red.
+/// Control: with no share held back, red; with the share held for one
+/// class whatever the text's, red at three.
 #[test]
 fn test_flow_budget_untouched_s_share_is_held_back() {
-    let budget = 1_000_000;
+    let budget = 20_000_000;
     for glyphs in [1, 10, 1_000, 65_536] {
-        let reserve = untouched_steps(glyphs);
-        assert!(
-            reserve > 0 && reserve < budget,
-            "precondition: {glyphs} glyphs hold back {reserve}"
-        );
-        assert!(
-            !spent_seam(glyphs, budget, budget - reserve - 1),
-            "{glyphs} glyphs: spent a step before the budget less its share of {reserve}"
-        );
-        assert!(
-            spent_seam(glyphs, budget, budget - reserve),
-            "{glyphs} glyphs: not spent at the budget less its share of {reserve}"
-        );
+        for classes in [1, 3] {
+            let reserve = untouched_steps(glyphs, classes);
+            assert!(
+                reserve > 0 && reserve < budget,
+                "precondition: {glyphs} glyphs of {classes} classes hold back {reserve}"
+            );
+            assert!(
+                !spent_seam(glyphs, classes, budget, budget - reserve - 1),
+                "{glyphs} glyphs of {classes} classes: spent a step before the budget less its share of {reserve}"
+            );
+            assert!(
+                spent_seam(glyphs, classes, budget, budget - reserve),
+                "{glyphs} glyphs of {classes} classes: not spent at the budget less its share of {reserve}"
+            );
+        }
     }
 }
 
@@ -480,15 +483,14 @@ fn test_flow_budget_untouched_takes_its_share_at_most() {
             false,
         )
     });
-    let (taken, inks) = UNTOUCHED_TAKEN.with(std::cell::Cell::get);
+    let (taken, share) = UNTOUCHED_TAKEN.with(std::cell::Cell::get);
     assert!(
-        taken > 0 && inks > 0,
-        "precondition: the frame reaches `untouched` ({taken} steps over {inks} inks)"
+        taken > 0 && share > 0,
+        "precondition: the frame reaches `untouched` ({taken} steps of its share of {share})"
     );
     assert!(
-        taken <= untouched_steps(inks),
-        "`untouched` took {taken} glyph steps over {inks} inks, past its share of {}",
-        untouched_steps(inks)
+        taken <= share,
+        "`untouched` took {taken} glyph steps, past its share of {share}"
     );
 }
 

@@ -3099,7 +3099,7 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         ..RingLayout::whole()
     };
     use crate::flow::place::halves::{
-        inking_steps, overshoot_steps, untouched_steps, FRAME_STEPS, OVERSHOOT_TRACKS, TRACK_CALL_STEPS,
+        inking_steps, overshoot_steps, FRAME_STEPS, OVERSHOOT_TRACKS, TRACK_CALL_STEPS,
     };
     for budget in [1, 1_000, 10_000] {
         let (run, _, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
@@ -3120,7 +3120,7 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
             past <= overshoot_steps(&run, None, false),
             "precondition: the frame's overshoot is within the general bound"
         );
-        let held = budget.max(untouched_steps(trace.glyphs));
+        let held = budget.max(trace.reserve);
         assert!(
             trace.spent >= budget,
             "precondition: the budget of {budget} is spent ({})",

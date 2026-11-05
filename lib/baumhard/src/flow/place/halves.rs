@@ -572,12 +572,21 @@ fn weighing_steps(boxes: usize) -> usize {
     boxes.div_ceil(BOXES_A_STEP).max(1)
 }
 
-/// The glyph steps [`untouched`] may take over `boxes` inks: a
-/// bisection of looks at them, each with its lines cut again — what a
+/// The glyph steps [`untouched`] may take over `boxes` inks of `classes`
+/// classes of height ([`height_classes`]): a bisection of looks at them,
+/// each with its lines cut again — as much work as weighing them — and
+/// a touch check of them, at most [`check_steps`] while it looks at no
+/// more than [`touch_looks`] pairs a box (rulings R48.2, R51.2). What a
 /// frame's budget holds back for it (ruling R46.1).
-pub(crate) fn untouched_steps(boxes: usize) -> usize {
+///
+/// (Until #308 each look's check was weighed as one more weighing of its
+/// boxes, a check that never reaches its strips: the quatrain outward
+/// round the 600 × 12 sharp rectangle, its 102 inks two lines and sides
+/// apart across the outline, held 64 back and took 75, its checks
+/// looking at 2.04 pairs a box.)
+pub(crate) fn untouched_steps(boxes: usize, classes: usize) -> usize {
     let probes = (usize::BITS - boxes.leading_zeros()) as usize + 1;
-    probes.saturating_mul(2 * weighing_steps(boxes))
+    probes.saturating_mul(weighing_steps(boxes).saturating_add(check_steps(boxes, classes)))
 }
 
 /// The most glyphs a frame places, its text and its sides together
@@ -909,7 +918,9 @@ thread_local! {
     #[cfg(test)]
     pub(crate) static PAST_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#294, ruling R46.1): the most glyph steps one
-    /// [`untouched`] has taken on this thread, and the inks it was given.
+    /// [`untouched`] has taken on this thread, and its share
+    /// ([`untouched_steps`]) for the inks it was given, of the classes of
+    /// height its frame held back for.
     #[cfg(test)]
     pub(crate) static UNTOUCHED_TAKEN: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// Test counter (#294, rulings R44.3, R46.1): the pairs of boxes
@@ -1614,6 +1625,10 @@ pub(super) struct Work {
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
+    /// The classes of height its text's inks hold ([`height_classes`]),
+    /// what [`untouched`]'s share is held back for: one until the text is
+    /// inked.
+    classes: Cell<usize>,
     /// The most pairs its touch checks looked at a box (rulings R48.2,
     /// R51.2).
     looks: Cell<Looks>,
@@ -1633,6 +1648,7 @@ impl Work {
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
+            classes: Cell::new(1),
             looks: Cell::new(Looks::default()),
             last_classes: Cell::new(0),
             #[cfg(test)]
@@ -1706,7 +1722,23 @@ impl Work {
     fn scale(&self, glyphs: usize) {
         self.glyphs.set(glyphs);
         self.budget.set(frame_budget(glyphs));
-        self.reserve.set(untouched_steps(glyphs));
+        self.reserve.set(untouched_steps(glyphs, self.classes.get()));
+    }
+
+    /// Hold back [`untouched`]'s share for a text whose inks hold
+    /// `classes` classes of height ([`height_classes`]), one at the least:
+    /// read from each build's inks, before any of its lines is laid, so
+    /// that every check `untouched` makes — of a part of those inks —
+    /// holds no more (ruling R46.1, #308).
+    fn hold_for(&self, classes: usize) {
+        self.classes.set(classes.max(1));
+        self.reserve
+            .set(untouched_steps(self.glyphs.get(), self.classes.get()));
+    }
+
+    /// The share of the budget held back for [`untouched`].
+    pub(super) fn reserve(&self) -> usize {
+        self.reserve.get()
     }
 }
 
@@ -3859,7 +3891,7 @@ fn untouched(lines: &[Line], work: &Work) -> (Vec<Line>, Vec<usize>) {
         let taken = work.spent.get() - spent;
         UNTOUCHED_TAKEN.with(|most| {
             if taken > most.get().0 {
-                most.set((taken, total));
+                most.set((taken, untouched_steps(total, work.classes.get())));
             }
         });
     }
@@ -4741,6 +4773,7 @@ pub(super) fn place_halves(
             *trace = natural_trace;
             trace.spent = work.spent.get();
             trace.budget = work.budget.get();
+            trace.reserve = work.reserve();
             trace.glyphs = work.glyphs.get();
             trace.looks = work.looks.get();
         }
@@ -4842,6 +4875,10 @@ pub(super) fn place_halves(
         // frame's band curve is read from (#308, ruling B15.1).
         let (drawn, centers) = inked_with_bands(&drawn, fsys);
         lay.centers.replace(centers.into());
+        // `untouched`'s share, for the classes of height the text's inks
+        // hold (ruling R46.1).
+        lay.work
+            .hold_for(height_classes(drawn.glyphs.iter().filter_map(|g| g.ink.map(|i| i.max - i.min))));
         // The glyphs the text may still place (ruling R44.1): a frame's
         // text and its sides together place at most `MAX_PLACED_GLYPHS`,
         // so a text longer is cut at a cluster, its end left out.
@@ -5127,6 +5164,7 @@ pub(super) fn place_halves(
         trace.clear = clear;
         trace.spent = lay.work.spent.get();
         trace.budget = lay.work.budget.get();
+        trace.reserve = lay.work.reserve();
         trace.glyphs = lay.work.glyphs.get();
         trace.looks = lay.work.looks.get();
     }
@@ -5191,8 +5229,9 @@ pub(crate) fn touching_seam<K: Copy>(boxes: Vec<(K, InkBox)>, exempt: impl Fn(K,
 /// scaled by `glyphs` glyphs and then set to `budget`, reads as spent once
 /// it has taken `steps` glyph steps.
 #[cfg(test)]
-pub(crate) fn spent_seam(glyphs: usize, budget: usize, steps: usize) -> bool {
+pub(crate) fn spent_seam(glyphs: usize, classes: usize, budget: usize, steps: usize) -> bool {
     let work = Work::new(glyphs);
+    work.hold_for(classes);
     work.budget.set(budget);
     work.spent.set(0);
     work.take(steps);

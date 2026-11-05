@@ -606,6 +606,10 @@ pub(crate) struct Trace {
     /// scaled by (ruling R44.2).
     pub(crate) budget: usize,
     pub(crate) glyphs: usize,
+    /// For a text frame, the share of its budget held back for its last
+    /// resort's cut to the inks that touch nothing (`halves::untouched_steps`,
+    /// ruling R46.1).
+    pub(crate) reserve: usize,
     /// For a text frame, the most pairs its touch checks looked at a box
     /// (rulings R48.2, R51.2).
     pub(crate) looks: halves::Looks,
