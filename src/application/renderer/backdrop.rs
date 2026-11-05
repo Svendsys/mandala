@@ -38,8 +38,10 @@
 //! every backdrop, so a backdrop costs one text area per cell and no
 //! shaping: O(cells) per frame, `⌈w / 64⌉ × ⌈h / 64⌉` in target pixels.
 
-use baumhard::font::fonts::{self, AppFont};
-use baumhard::font::{buffer, Attrs, Buffer, Family, FontSystem, COLOR_BLACK, SHAPING_ADVANCED};
+use baumhard::core::primitives::ColorFontRegions;
+use baumhard::font::attrs::{rich_text_spans_into, RegionFamilies};
+use baumhard::font::fonts::AppFont;
+use baumhard::font::{buffer, Attrs, Buffer, FontSystem, COLOR_BLACK, SHAPING_ADVANCED};
 use glyphon::{TextArea, TextBounds};
 
 /// The glyph a backdrop is made of: the full block.
@@ -59,17 +61,13 @@ pub(super) struct BackdropCell {
 }
 
 impl BackdropCell {
-    /// Shape the cell. Once per renderer: it never changes, whatever
-    /// the backdrops' extents or the target's ratio.
+    /// Shape the cell, under the caller's font-system guard. Once per
+    /// renderer: it never changes, whatever the backdrops' extents or
+    /// the target's ratio.
     pub(super) fn shape(font_system: &mut FontSystem) -> Self {
-        let family = fonts::family_name_of(AppFont::PublicPixel).map_or(Family::Monospace, Family::Name);
-        let attrs = Attrs::new().family(family).color(COLOR_BLACK);
-        let size = CELL_PX as f32;
-        let mut buffer = buffer::create(font_system, size, size);
-        buffer.set_size(Some(size), Some(size));
-        buffer.set_rich_text([(FILL, attrs.clone())], &attrs, SHAPING_ADVANCED, None);
-        buffer.shape_until_scroll(font_system, false);
-        BackdropCell { buffer }
+        BackdropCell {
+            buffer: shape_block(font_system, CELL_PX as f32, Some(AppFont::PublicPixel)),
+        }
     }
 
     /// The shaped cell, for the tests that pin its geometry.
@@ -77,6 +75,22 @@ impl BackdropCell {
     pub(super) fn buffer(&self) -> &Buffer {
         &self.buffer
     }
+}
+
+/// One [`FILL`] in `font` (the shaper's default face for `None`), opaque
+/// black, at font size and line height `size`. The face is pinned the
+/// way every glyph area pins one, through `baumhard::font::attrs`, which
+/// resolves it from the guard it is handed (CODE_CONVENTIONS §1).
+pub(super) fn shape_block(font_system: &mut FontSystem, size: f32, font: Option<AppFont>) -> Buffer {
+    let regions = ColorFontRegions::single_span(1, Some([0.0, 0.0, 0.0, 1.0]), font);
+    let families = RegionFamilies::resolve(FILL, &regions, font_system);
+    let mut spans = Vec::new();
+    rich_text_spans_into(&families, size, size, None, &mut spans);
+    let mut buffer = buffer::create(font_system, size, size);
+    buffer.set_size(Some(size), Some(size));
+    buffer.set_rich_text(spans, &Attrs::new(), SHAPING_ADVANCED, None);
+    buffer.shape_until_scroll(font_system, false);
+    buffer
 }
 
 /// A rectangle of a target's whole pixels: `left..right` by

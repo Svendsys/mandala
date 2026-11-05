@@ -2706,22 +2706,10 @@ fn test_a_backdrop_cell_is_one_opaque_square_at_its_corner() {
     assert_eq!(partial, 0, "every texel of the block is fully covered");
 
     // The controls: a half-pixel-larger block, and the default face's.
-    let shaped = |fs: &mut baumhard::font::FontSystem, size: f32, family: Option<baumhard::font::Family>| {
-        let mut attrs = Attrs::new();
-        if let Some(family) = family {
-            attrs = attrs.family(family);
-        }
-        let mut buffer = baumhard::font::buffer::create(fs, size, size);
-        buffer.set_size(Some(size), Some(size));
-        buffer.set_rich_text([(super::backdrop::FILL, attrs.clone())], &attrs, baumhard::font::SHAPING_ADVANCED, None);
-        buffer.shape_until_scroll(fs, false);
-        buffer
-    };
-    let pixel = baumhard::font::fonts::family_name_of(AppFont::PublicPixel).map(baumhard::font::Family::Name);
-    let larger = shaped(&mut fs, CELL_PX as f32 + 0.5, pixel);
+    let larger = super::backdrop::shape_block(&mut fs, CELL_PX as f32 + 0.5, Some(AppFont::PublicPixel));
     let (_, _, _, partial) = ink(&larger, &mut fs);
     assert!(partial > 0, "the control: a block off the pixel grid has partly covered edges");
-    let default_face = shaped(&mut fs, CELL_PX as f32, None);
+    let default_face = super::backdrop::shape_block(&mut fs, CELL_PX as f32, None);
     let (at, size, _, partial) = ink(&default_face, &mut fs);
     assert!(
         at != (0, 0) || size != (CELL_PX as u32, CELL_PX as u32) || partial > 0,

@@ -321,6 +321,8 @@ fn test_a_frame_draws_no_content_fill() {
         (0, expected),
         "the control: the console's backdrop is fill blocks, one per cell, all in the chrome pass"
     );
+    // One app at a time (`gpu_harness`): this one goes before the next.
+    drop(app);
 
     // The canvas half's control: testament with every section's text a
     // fill block in the backdrop's face.
