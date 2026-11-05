@@ -2589,874 +2589,6 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
 }
 
 // ====================================================================
-// WGSL <-> Rust shape lock-step
-// ====================================================================
-//
-// `RECT_SHADER_WGSL` and `NodeShape::shader_id` are two halves of one
-// wire format, and until this section existed the only thing holding
-// them together was a pair of comments asking each side to remember
-// the other. `do_shape_shader_ids_are_stable` (baumhard) pins the
-// Rust half against its own constants; nothing read the shader. The
-// checks below close that by reading the shader as text — no wgpu
-// device, no GPU: the renderer-free tier of §T8.
-
-/// The WGSL constant each `NodeShape` variant expects the fragment
-/// shader to declare.
-///
-/// Exhaustive on purpose, and that is the point: a new variant does
-/// not compile until it names its shader constant here, which is step
-/// 3 of the extension recipe in `baumhard::gfx_structs::shape`'s
-/// module header. The mapping is not derivable — `Rectangle` is
-/// `SHAPE_RECT`, not `SHAPE_RECTANGLE` — so it has to be written
-/// somewhere, and a test-local match keeps it out of the production
-/// surface while staying compiler-forced.
-fn wgsl_shape_const_name(shape: baumhard::gfx_structs::shape::NodeShape) -> &'static str {
-    use baumhard::gfx_structs::shape::NodeShape;
-    match shape {
-        NodeShape::Rectangle => "SHAPE_RECT",
-        NodeShape::Ellipse => "SHAPE_ELLIPSE",
-    }
-}
-
-/// Every `const <NAME>: u32 = <n>u;` declaration in `wgsl`, as
-/// `(name, value)` pairs, plus the number of lines that opened with
-/// `const` at all.
-///
-/// The second half of the return is what keeps the parser honest. A
-/// scanner that skips what it cannot read turns a spelling change in
-/// the shader into an empty result set, and an empty set satisfies
-/// every "no orphan constant" assertion vacuously. Callers compare
-/// the two numbers and refuse to proceed when they differ, so an
-/// unreadable declaration is reported rather than dropped.
-fn wgsl_u32_consts(wgsl: &str) -> (Vec<(String, u32)>, usize) {
-    let mut parsed = Vec::new();
-    let mut seen = 0usize;
-    for line in wgsl.lines() {
-        let line = line.trim();
-        let Some(rest) = line.strip_prefix("const ") else {
-            continue;
-        };
-        seen += 1;
-        let Some((name, value)) = rest.split_once(':') else {
-            continue;
-        };
-        let Some(value) = value.trim().strip_prefix("u32") else {
-            continue;
-        };
-        let Some(value) = value.trim().strip_prefix('=') else {
-            continue;
-        };
-        let value = value.trim().trim_end_matches(';').trim().trim_end_matches('u');
-        let Ok(n) = value.trim().parse::<u32>() else {
-            continue;
-        };
-        parsed.push((name.trim().to_string(), n));
-    }
-    (parsed, seen)
-}
-
-/// The scalar kind a vertex attribute delivers, and that a WGSL
-/// vertex input is declared to receive. WebGPU requires the two to
-/// agree — a `Uint32` attribute cannot feed an `f32` input, and no
-/// conversion happens at the boundary — so this is the axis a
-/// "compatible format" check turns on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ShaderScalar {
-    Float,
-    Uint,
-    Sint,
-}
-
-/// `(scalar kind, component count)` for the 32-bit vertex formats.
-///
-/// Those are the only ones the rect table can use: its vertices are
-/// accumulated as a packed `Vec<f32>` (`RECT_VERTEX_FLOATS` slots of
-/// four bytes each), so a `Unorm8x4` or a `Float16x2` would have to
-/// straddle a slot. Any other format therefore panics rather than
-/// returning `None` — the caller is asserting *about* the pair, and
-/// a format that quietly mapped to nothing would take its assertion
-/// down with it.
-///
-/// The component count is written out rather than derived because
-/// `wgpu::VertexFormat` exposes no accessor for it, and it is then
-/// checked against `VertexFormat::size()`, which wgpu does expose.
-/// That is what keeps this table from being a second, drifting copy
-/// of wgpu's own: a wrong count here fails on the next line instead
-/// of silently widening what "compatible" means. Kind cannot be
-/// cross-checked that way — `Float32` and `Uint32` are both four
-/// bytes — so the kinds are the one thing here taken on trust, and
-/// they are the part `wgpu::VertexFormat`'s own variant names state
-/// unambiguously.
-fn attribute_scalar_and_components(format: wgpu::VertexFormat) -> (ShaderScalar, u64) {
-    use wgpu::VertexFormat as F;
-    let (scalar, components) = match format {
-        F::Float32 => (ShaderScalar::Float, 1),
-        F::Float32x2 => (ShaderScalar::Float, 2),
-        F::Float32x3 => (ShaderScalar::Float, 3),
-        F::Float32x4 => (ShaderScalar::Float, 4),
-        F::Uint32 => (ShaderScalar::Uint, 1),
-        F::Uint32x2 => (ShaderScalar::Uint, 2),
-        F::Uint32x3 => (ShaderScalar::Uint, 3),
-        F::Uint32x4 => (ShaderScalar::Uint, 4),
-        F::Sint32 => (ShaderScalar::Sint, 1),
-        F::Sint32x2 => (ShaderScalar::Sint, 2),
-        F::Sint32x3 => (ShaderScalar::Sint, 3),
-        F::Sint32x4 => (ShaderScalar::Sint, 4),
-        other => panic!(
-            "{other:?} has no WGSL spelling recorded here, so this pin cannot say \
-             whether it matches the `VsIn` field it feeds. The rect vertex is a \
-             packed `Vec<f32>`, four bytes per slot, which is why only the 32-bit \
-             formats are listed; a format outside that family needs its WGSL type \
-             written into this match before it can appear in the table."
-        ),
-    };
-    assert_eq!(
-        format.size(),
-        4 * components,
-        "{format:?} is recorded here as {components} × 4 bytes but wgpu reports \
-         {} — the component count above is wrong, and every format comparison \
-         built on it is comparing the wrong width",
-        format.size()
-    );
-    (scalar, components)
-}
-
-/// `(scalar kind, component count)` for the WGSL types a vertex
-/// input may be declared as, or `None` for a spelling that is not one
-/// of them.
-///
-/// `None` rather than a panic, unlike its Rust-side counterpart: the
-/// caller has the field name and the struct it came from, so it can
-/// say *which* declaration it could not read, which the type alone
-/// cannot.
-///
-/// Both spellings of a vector are read: the constructed `vecN<f32>`
-/// and WGSL's predeclared alias for it, `vecNf`. A shader rewritten
-/// in the modern idiom is not a broken shader, and a reader that
-/// returned `None` for `vec2f` would have its caller report the
-/// declaration as one a vertex attribute cannot feed — an accusation
-/// against correct code. The `h` family (`vec2h` = `vec2<f16>`) is
-/// deliberately absent: `f16` needs an `enable` directive and pairs
-/// with no format in `attribute_scalar_and_components`' table, so it
-/// belongs in the caller's "this reader cannot read that" panic.
-fn wgsl_scalar_and_components(ty: &str) -> Option<(ShaderScalar, u64)> {
-    fn scalar(name: &str) -> Option<ShaderScalar> {
-        match name {
-            "f32" => Some(ShaderScalar::Float),
-            "u32" => Some(ShaderScalar::Uint),
-            "i32" => Some(ShaderScalar::Sint),
-            _ => None,
-        }
-    }
-    let ty = ty.trim();
-    for n in 2..=4u64 {
-        if let Some(rest) = ty.strip_prefix(&format!("vec{n}<")) {
-            let inner = rest.strip_suffix('>')?;
-            return scalar(inner.trim()).map(|s| (s, n));
-        }
-        let alias = match ty.strip_prefix(&format!("vec{n}")) {
-            Some("f") => Some(ShaderScalar::Float),
-            Some("u") => Some(ShaderScalar::Uint),
-            Some("i") => Some(ShaderScalar::Sint),
-            _ => None,
-        };
-        if let Some(alias) = alias {
-            return Some((alias, n));
-        }
-    }
-    scalar(ty).map(|s| (s, 1))
-}
-
-/// The `@location(N) name: type` fields of `struct <struct_name>` in
-/// `wgsl`, in declaration order, as `(location, name, type)`.
-///
-/// Anchored to the one struct rather than scanning the shader. A
-/// whole-shader `contains("@location(3) shape_id: f32")` is satisfied
-/// by any struct that happens to declare a field of that name at that
-/// location, and this shader declares `shape_id` twice — `VsIn` takes
-/// it as an `f32` from the vertex stream, `VsOut` carries it on as a
-/// `u32`. Today the two spellings differ, so nothing crosses; the
-/// pin should not depend on that staying true.
-///
-/// Panics — never returns a short list — when the struct is missing,
-/// when its body never closes, or when a field inside it is neither
-/// `@builtin(…)` nor `@location(N) name: type`. Every caller asserts
-/// *over* the list, and a field this reader dropped would shorten it
-/// rather than redden anything: a table pin that skips the slot it
-/// cannot read is exactly the pin that proves nothing.
-fn wgsl_struct_locations(wgsl: &str, struct_name: &str) -> Vec<(u32, String, String)> {
-    use baumhard::util::rust_source::braced_block_after;
-
-    let header = format!("struct {struct_name}");
-    let at = wgsl
-        .find(&header)
-        .unwrap_or_else(|| panic!("the rect shader must still declare `{header}`"));
-    let tail = &wgsl[at..];
-    // `braced_block_after` matches its header as a substring, which
-    // would hand back `struct VsInstance`'s body for a `struct VsIn`
-    // that no longer exists. Require the body to open right after the
-    // name so a longer name is a loud miss rather than a quiet
-    // redirection onto the wrong struct.
-    assert!(
-        tail[header.len()..].trim_start().starts_with('{'),
-        "`{header}` is followed by `{}`, not by its body: the shader declares a \
-         longer name that merely starts the same way, and reading that struct's \
-         fields would pin the wrong one",
-        tail[header.len()..]
-            .trim_start()
-            .chars()
-            .take(24)
-            .collect::<String>()
-    );
-    let block = braced_block_after(tail, &header)
-        .unwrap_or_else(|| panic!("`{header}`'s body never closes in the rect shader"));
-    // `braced_block_after` returns the braces as well; the fields are
-    // what sits between them, comma-separated. A WGSL attribute may
-    // carry an argument list, but none of the ones this shader can
-    // write puts a comma inside it, so splitting on `,` cuts between
-    // fields and nowhere else.
-    let body = block
-        .strip_prefix('{')
-        .and_then(|b| b.strip_suffix('}'))
-        .expect("braced_block_after returns a brace-delimited run");
-
-    let mut fields = Vec::new();
-    for field in body.split(',') {
-        let field = field.trim();
-        if field.is_empty() {
-            continue;
-        }
-        // Peel the leading `@attribute(arg)` run rather than assuming
-        // a lone `@location`. `VsIn` writes only that one today; the
-        // shader's other located struct, `VsOut`, stacks
-        // `@location(2) @interpolate(flat)`, and this reader takes a
-        // struct name so that it can be pointed at either. Only
-        // `"VsIn"` is passed to it today.
-        let mut rest = field;
-        let mut location: Option<u32> = None;
-        let mut is_builtin = false;
-        while let Some(after_at) = rest.strip_prefix('@') {
-            let Some(open) = after_at.find('(') else {
-                panic!("`{field}` in `{header}`: `@` attribute with no argument list — unreadable")
-            };
-            let Some(close) = after_at[open..].find(')') else {
-                panic!("`{field}` in `{header}`: `@` attribute argument list never closes")
-            };
-            let name = after_at[..open].trim();
-            let arg = after_at[open + 1..open + close].trim();
-            match name {
-                "location" => {
-                    location = Some(arg.parse().unwrap_or_else(|_| {
-                        panic!("`{field}` in `{header}`: `@location({arg})` is not a number")
-                    }))
-                }
-                "builtin" => is_builtin = true,
-                _ => {}
-            }
-            rest = after_at[open + close + 1..].trim_start();
-        }
-        if is_builtin {
-            // A `@builtin` field is produced by the stage, not fed
-            // from a vertex buffer, so it holds no slot in the table.
-            continue;
-        }
-        let Some(location) = location else {
-            panic!("`{field}` in `{header}` carries neither `@location` nor `@builtin`, so this reader cannot say which vertex slot feeds it")
-        };
-        let Some((name, ty)) = rest.split_once(':') else {
-            panic!("`{field}` in `{header}` is not `name: type` after its attributes")
-        };
-        fields.push((location, name.trim().to_string(), ty.trim().to_string()));
-    }
-
-    assert!(
-        !fields.is_empty(),
-        "`{header}` parsed to no located fields at all — the reader and the shader \
-         have drifted apart, and every comparison against this list would hold \
-         over an empty set"
-    );
-    fields
-}
-
-/// The expression `Renderer::new` assigns to the descriptor field
-/// `<field>`, as text with its internal whitespace collapsed.
-///
-/// Three facts about the rect pipeline are genuinely source-level —
-/// *which named item* `Renderer::new` hands it: the attribute table,
-/// the stride, and the shader source. Each is a `const` at module
-/// scope that the rest of this file reads as a value, and each can
-/// therefore be orphaned. A second const beside it, a slice of it, or
-/// a literal written in its place all leave every value-level
-/// assertion here holding over data no GPU is ever given.
-///
-/// **Equality, not `contains`.** A substring needle over
-/// `attributes: &RECT_VERTEX_ATTRIBUTES` is satisfied by
-/// `&RECT_VERTEX_ATTRIBUTES_2` and by `&RECT_VERTEX_ATTRIBUTES[..3]`
-/// — the identifier-prefix collision `wgsl_struct_locations` guards
-/// against on the WGSL side of this same file, and the one
-/// `baumhard`'s `test_a_longer_identifier_does_not_satisfy_a_shorter_body`
-/// exists for. Reading the whole expression and comparing it closes
-/// both, and prints what it found when it does not match.
-///
-/// The expression ends at the first `,`, `}` or `]` after the field
-/// name. That is where a struct-literal field ends whether or not it
-/// carries a trailing comma, and it cuts *inside* any nested literal
-/// written there — an inline array grown back in place of the const
-/// reads as a truncated expression and fails the comparison rather
-/// than satisfying it.
-///
-/// The cost, stated because it is a real one: this pins the
-/// expression's spelling. Rewriting it in an equivalent form —
-/// binding the table to a local first, or reaching the shader source
-/// through a different `Cow` constructor — reddens here. That is the
-/// loud direction, and the failure message says which text it wanted.
-///
-/// Panics when the field is absent, and when it appears more than
-/// once: a second occurrence is a second descriptor, and this reader
-/// would report only the first of them.
-fn renderer_new_field_expression(new_body: &str, field: &str) -> String {
-    let needle = format!("{field}:");
-    let found = new_body.matches(needle.as_str()).count();
-    assert_eq!(
-        found, 1,
-        "`Renderer::new` must write `{needle}` exactly once for this pin to know which \
-         descriptor it read; it appears {found} times, and this reader would compare \
-         only the first"
-    );
-    let at = new_body
-        .find(needle.as_str())
-        .expect("just counted one occurrence");
-    let rest = &new_body[at + needle.len()..];
-    let end = rest.find([',', '}', ']']).unwrap_or(rest.len());
-    rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Require `name` to appear exactly once in `Renderer::new`'s body.
-///
-/// [`renderer_new_field_expression`] compares text, so it reads
-/// `&RECT_VERTEX_ATTRIBUTES` as the module-level table on the
-/// strength of the name alone. A `const RECT_VERTEX_ATTRIBUTES`
-/// declared *inside* `Renderer::new` would shadow it: the text the
-/// pin reads is unchanged while the name resolves to something the
-/// test never saw, which is the one silent bypass left after the
-/// three orphans were closed. A renderer-free test (§T8) cannot
-/// resolve a name — that needs a `Renderer`, which only the
-/// GPU-backed tier builds — but a shadowing declaration has to be
-/// *written*, and writing it spends the name a second time.
-///
-/// The input that makes this fail: add `const RECT_VERTEX_SIZE: u64
-/// = 40;` inside `Renderer::new`. Each of the three names occurs
-/// exactly once today, in the expression the pipeline is handed.
-fn assert_name_is_not_shadowed_in_renderer_new(new_body: &str, name: &str) {
-    let found = new_body.matches(name).count();
-    let diagnosis = if found == 0 {
-        "zero mentions means `Renderer::new` no longer hands this item to the pipeline at \
-         all — the assertions below would then hold over data no GPU is given, which is the \
-         orphan the expression pins exist to catch"
-    } else {
-        "more than one means either a shadowing declaration — which leaves the pinned text \
-         intact while the name resolves to something this test never saw — or a second use \
-         a text reader cannot tell apart from one"
-    };
-    assert_eq!(
-        found, 1,
-        "`{name}` must appear exactly once in `Renderer::new`, and appears {found} times. \
-         The pins below read it as text: {diagnosis}."
-    );
-}
-
-/// The per-vertex values the closure in `push_rect_ndc` pushes, in
-/// order, exactly as `renderer/render.rs` spells them.
-///
-/// The one thing about the vertex layout that is genuinely a
-/// source-level property: the slice is an anonymous
-/// `[x, y, u, v, r, g, b, a, sid]`, so neither its width nor its
-/// order is visible to any runtime assertion —
-/// `console_rect_vertices` is a flat `Vec<f32>` that has forgotten where
-/// one vertex ended.
-///
-/// The names are returned as well as counted, and the caller pins
-/// them in order against a literal. **The price is any edit to this
-/// slice, not only a rename**: growing the vertex — #147's own
-/// third acceptance case, where a scalar is added and the WGSL
-/// updated correctly — reddens here until the literal in the test is
-/// updated too. That is one extra edit, it fails loudly, and the
-/// message prints both lists side by side.
-///
-/// It is worth that price because the alternative was worse: reading
-/// only the width let a reorder of this slice alone pass, which is
-/// one line, breaks the layout silently, and was the input that
-/// falsified this function's previous doc. A layout test that has to
-/// be edited when the layout changes is the honest shape; a layout
-/// test that stays green when the layout is scrambled is not.
-/// What it still cannot prove is that `x` is a coordinate; see the
-/// residual named in the test below.
-///
-/// Panics on anything it cannot read, and on a second
-/// `extend_from_slice` in the same body: two pushes of different
-/// widths is a layout this reader would report the first half of.
-fn push_rect_ndc_slots() -> Vec<String> {
-    use baumhard::util::rust_source::{braced_block_after, production_code};
-
-    let source = production_code("src/application/renderer/render.rs");
-    let body = braced_block_after(&source, "fn push_rect_ndc")
-        .expect("`push_rect_ndc` must still be a braced item in renderer/render.rs");
-
-    const PUSH: &str = "extend_from_slice(&[";
-    assert_eq!(
-        body.matches(PUSH).count(),
-        1,
-        "`push_rect_ndc` must build each vertex with exactly one `{PUSH}…]`; \
-         found {} — with more than one, the width this reads is the width of \
-         whichever came first",
-        body.matches(PUSH).count()
-    );
-    let at = body.find(PUSH).expect("just counted one occurrence");
-    let rest = &body[at + PUSH.len()..];
-    let close = rest
-        .find(']')
-        .unwrap_or_else(|| panic!("the `{PUSH}` slice in `push_rect_ndc` never closes"));
-    let slice = &rest[..close];
-    assert!(
-        !slice.contains('['),
-        "the per-vertex slice in `push_rect_ndc` nests another `[`, which this \
-         reader would miscount: `{slice}`"
-    );
-    slice
-        .split(',')
-        .map(str::trim)
-        .filter(|e| !e.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-/// The pipeline's vertex-attribute table and the shader's `VsIn`
-/// describe the same vertex: slot for slot, same `@location`, same
-/// scalar kind and width, offsets tiling `RECT_VERTEX_SIZE` with no
-/// gap and no overlap.
-///
-/// Fails when: `pos`'s and `uv`'s `shader_location` values are
-/// swapped (both are `Float32x2`, so the resulting pipeline is
-/// byte-identical and `createRenderPipeline` cannot object — every
-/// quad would draw into the `[0, 1]²` corner of NDC); `shape_id`'s
-/// format becomes `Uint32` while `VsIn` still declares it `f32`; an
-/// attribute is added, removed or given an offset that is not where
-/// the previous one ended; `RECT_VERTEX_SIZE` stops being the sum of
-/// the formats' sizes; `RECT_VERTEX_FLOATS` stops being that sum in
-/// four-byte slots; or `push_rect_ndc` writes a different number of
-/// values per vertex, or writes them in a different order, than the
-/// table describes.
-///
-/// It fails one step earlier, too, when `Renderer::new` stops handing
-/// the pipeline the three module-level items this test reads as
-/// values. All three are hoisted `const`s, so all three can be
-/// orphaned while every assertion below goes on holding over data no
-/// GPU is given, and each is pinned as the text of the expression
-/// `Renderer::new` writes:
-///
-/// - `attributes: &RECT_VERTEX_ATTRIBUTES` — the table itself. A
-///   decoy `RECT_VERTEX_ATTRIBUTES_2` beside it, or a
-///   `&RECT_VERTEX_ATTRIBUTES[..3]`, is what a substring needle would
-///   have accepted.
-/// - `array_stride: RECT_VERTEX_SIZE` — the running sum below is
-///   called the stride, and this is what makes that true. wgpu
-///   validates only that a stride is a multiple of four and leaves
-///   room for every attribute (`wgpu-core`'s `device/resource.rs`),
-///   so an over-large literal builds cleanly and reads every vertex
-///   after the first from the wrong byte.
-/// - `source: … Cow::Borrowed(RECT_SHADER_WGSL)` — the shader module.
-///   `VsIn` is read out of that const, and a decoy handed to
-///   `create_shader_module` would leave this test, and every
-///   assertion in
-///   `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`,
-///   pinning a string the GPU never compiles.
-///
-/// The join is by `@location`, which is what the hardware joins on —
-/// a `shader_location` names a slot, and the field carrying that
-/// `@location` is the one it feeds. The Rust side has no field names
-/// at all, so `shape_id` is identified here as "the field the
-/// attribute at location 3 lands in" rather than as "the attribute at
-/// byte offset 32", which is what the pin this replaces did: an
-/// offset is a fact about today's layout, and adding one per-vertex
-/// scalar ahead of `shape_id` used to leave that pin green on the
-/// broken shader and red on the corrected one.
-///
-/// Offsets are then anchored by arithmetic rather than by literals:
-/// each is required to be the running sum of the formats declared
-/// before it, and the total to be `RECT_VERTEX_SIZE`. That is what
-/// makes the table describe a *packed* vertex, and it is why the
-/// stride needs no separate literal in this file.
-///
-/// ## What this deliberately does not claim
-///
-/// **That byte 0 is a position.** The chain pinned here runs from the
-/// offsets outward: offsets → `shader_location` → `@location(N) name`
-/// → the field the shader body reads. Its far end is anchored by the
-/// WGSL names; its near end is not. `push_rect_ndc` writes an
-/// anonymous `[x, y, u, v, r, g, b, a, sid]`, and nothing the
-/// compiler can see relates that `x` to `VsIn.pos` — only a human
-/// convention does.
-///
-/// That slice is pinned here element for element, so the reorder of
-/// the slice alone is closed: `&[u, v, x, y, r, g, b, a, sid]`
-/// reddens. The pin holds the names in order, not what the names
-/// hold, and three inputs get past it — each of them swaps two
-/// fields, and each was run against this test and observed green:
-///
-/// - reordering the closure's own parameter list, `|out, y, x, u, v|`
-///   — one line, after which `x` names the coordinate `y` named;
-/// - swapping two arguments at one of that closure's call sites,
-///   `push(out, ry, lx, 0.0, 0.0)` — also one line;
-/// - a reordering applied *consistently* to the table and `VsIn` —
-///   attribute 0 becoming `uv` at location 1 while `VsIn` lists `uv`
-///   first — two declarations, edited in step.
-///
-/// The first two are the residual as it really stands: one line is
-/// still enough, which is why the slice order is now pinned rather
-/// than left to the width alone. What the text pin costs in exchange
-/// is a red run on a rename of `x`, `y`, `u`, `v` or `sid`;
-/// `push_rect_ndc_slots` records that trade.
-///
-/// **That the shader body uses the fields it declares.** A `VsIn`
-/// field bound correctly and then read nowhere in `vs_main` is a
-/// value delivered and thrown away, and every assertion here would
-/// still hold. That is
-/// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`'s
-/// concern — it asserts the forwarding of all three interpolated
-/// fields — not this test's.
-#[test]
-fn test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location() {
-    use baumhard::util::rust_source::{braced_block_after, production_code, strip_comments};
-
-    // Preconditions: the three consts read below are the three the
-    // pipeline is built from. Each is read here as a value, so each
-    // can be orphaned — a decoy beside it, a slice of it, or a
-    // literal in its place — and every assertion after this point
-    // would then be about dead data.
-    let renderer = production_code("src/application/renderer/mod.rs");
-    // `Renderer::new` by its first parameter: the bare `fn new(` would
-    // also find `FrameIntervalRing::new`, which comes first in the file.
-    let new_body = braced_block_after(&renderer, "fn new(\n        device: Device,")
-        .expect("`Renderer::new` must still be a braced item in renderer/mod.rs");
-
-    for name in ["RECT_VERTEX_ATTRIBUTES", "RECT_VERTEX_SIZE", "RECT_SHADER_WGSL"] {
-        assert_name_is_not_shadowed_in_renderer_new(new_body, name);
-    }
-
-    let attributes_expression = renderer_new_field_expression(new_body, "attributes");
-    assert_eq!(
-        attributes_expression, "&RECT_VERTEX_ATTRIBUTES",
-        "`Renderer::new` hands the rect pipeline `{attributes_expression}`, not \
-         `&RECT_VERTEX_ATTRIBUTES`, so the table walked below is not the one the GPU \
-         is given and every assertion here is about dead data. Compared whole rather \
-         than as a substring: a decoy `RECT_VERTEX_ATTRIBUTES_2` with `pos` and `uv` \
-         swapped, and `&RECT_VERTEX_ATTRIBUTES[..3]`, both satisfy a needle that only \
-         asks for the name to appear"
-    );
-
-    let stride_expression = renderer_new_field_expression(new_body, "array_stride");
-    assert_eq!(
-        stride_expression, "RECT_VERTEX_SIZE",
-        "the rect pipeline's `array_stride` is `{stride_expression}`, not \
-         `RECT_VERTEX_SIZE`. The formats are summed below and that sum is called the \
-         stride; wgpu asks only that a stride be a multiple of four and leave room \
-         for every attribute, so a larger literal builds a pipeline that reads every \
-         vertex after the first from the wrong byte, silently"
-    );
-
-    let shader_expression = renderer_new_field_expression(new_body, "source");
-    assert_eq!(
-        shader_expression, "wgpu::ShaderSource::Wgsl(Cow::Borrowed(RECT_SHADER_WGSL))",
-        "the rect shader module is compiled from `{shader_expression}`, not from \
-         `RECT_SHADER_WGSL`. `VsIn` is read out of that const just below, so a decoy \
-         string handed to `create_shader_module` leaves this test — and the \
-         forwarding assertions in \
-         `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm` — pinning \
-         a shader the GPU never compiles"
-    );
-
-    let wgsl = strip_comments(RECT_SHADER_WGSL);
-    let fields = wgsl_struct_locations(&wgsl, "VsIn");
-
-    assert_eq!(
-        RECT_VERTEX_ATTRIBUTES.len(),
-        fields.len(),
-        "the pipeline declares {} vertex attributes but `VsIn` declares {} located \
-         fields ({:?}): one side grew a slot the other does not know about",
-        RECT_VERTEX_ATTRIBUTES.len(),
-        fields.len(),
-        fields.iter().map(|(l, n, _)| (l, n)).collect::<Vec<_>>()
-    );
-
-    let mut offset = 0u64;
-    for (slot, (attribute, (location, name, ty))) in RECT_VERTEX_ATTRIBUTES.iter().zip(&fields).enumerate() {
-        assert_eq!(
-            attribute.shader_location, *location,
-            "vertex slot {slot} is declared at shader_location {} but the {slot}th \
-             field of `VsIn` is `{name}` at @location({location}). Two attributes of \
-             the same format are interchangeable to the pipeline — swapping `pos`'s \
-             and `uv`'s locations builds cleanly and draws every quad into the \
-             [0, 1]² corner of NDC",
-            attribute.shader_location
-        );
-
-        let (attribute_scalar, attribute_components) = attribute_scalar_and_components(attribute.format);
-        let Some((field_scalar, field_components)) = wgsl_scalar_and_components(ty) else {
-            panic!(
-                "`VsIn.{name}` is declared `{ty}`, which `wgsl_scalar_and_components` has no \
-                 scalar kind and width for. It reads `f32`, `u32`, `i32`, `vecN<…>` of those \
-                 and their predeclared aliases `vecNf`/`vecNu`/`vecNi`; a declaration outside \
-                 that set has to be written into that reader before this pin can say whether \
-                 the attribute feeding it matches"
-            )
-        };
-        assert_eq!(
-            (attribute_scalar, attribute_components),
-            (field_scalar, field_components),
-            "vertex slot {slot} delivers {:?} ({attribute_scalar:?} × \
-             {attribute_components}) into `VsIn.{name}: {ty}` ({field_scalar:?} × \
-             {field_components}). WebGPU converts nothing at this boundary: the \
-             kinds and the component counts have to match. `shape_id` is \
-             deliberately `Float32` against `f32` — an integer vertex attribute is \
-             a WebGL2 feature gate on some browsers — and that pairing is a match \
-             here, not an exception to it",
-            attribute.format
-        );
-
-        assert_eq!(
-            attribute.offset, offset,
-            "vertex slot {slot} (`{name}`) claims byte offset {} but the {offset} \
-             bytes before it are exactly the formats of slots 0..{slot}. An offset \
-             that is not the running sum leaves a hole or an overlap in a vertex \
-             `push_rect_ndc` packs solid",
-            attribute.offset
-        );
-        offset += attribute.format.size();
-    }
-
-    assert_eq!(
-        offset, RECT_VERTEX_SIZE,
-        "the attribute formats sum to {offset} bytes but `RECT_VERTEX_SIZE` — the \
-         pipeline's `array_stride` — is {RECT_VERTEX_SIZE}: consecutive vertices \
-         would be read from the wrong byte"
-    );
-    assert_eq!(
-        RECT_VERTEX_SIZE,
-        RECT_VERTEX_FLOATS as u64 * 4,
-        "`RECT_VERTEX_FLOATS` is {RECT_VERTEX_FLOATS} four-byte slots = {} bytes, \
-         against a stride of {RECT_VERTEX_SIZE}. The draw divides the length of a \
-         flat `Vec<f32>` by that constant to get its vertex count, so the two \
-         disagreeing means the wrong number of vertices is drawn",
-        RECT_VERTEX_FLOATS * 4
-    );
-    let push_slots = push_rect_ndc_slots();
-    assert_eq!(
-        push_slots.len(),
-        RECT_VERTEX_FLOATS,
-        "`push_rect_ndc` writes {} values per vertex against `RECT_VERTEX_FLOATS` \
-         = {RECT_VERTEX_FLOATS}: the CPU writer and the table describe vertices of \
-         different widths, and every vertex after the first is read from the wrong \
-         offset",
-        push_slots.len()
-    );
-    assert_eq!(
-        push_slots,
-        ["x", "y", "u", "v", "r", "g", "b", "a", "sid"],
-        "`push_rect_ndc` packs its vertex as {push_slots:?}. The order of that slice \
-         is what decides that bytes 0..8 are the position rather than the texture \
-         coordinate, and nothing the compiler sees ties it to the table above — so a \
-         reorder of this one line swaps two fields, builds cleanly, and every other \
-         assertion in this test stays green. Renaming one of these bindings reddens \
-         here too; the names are the only handle there is"
-    );
-
-    let mut locations: Vec<u32> = RECT_VERTEX_ATTRIBUTES.iter().map(|a| a.shader_location).collect();
-    locations.sort_unstable();
-    let distinct = {
-        let mut d = locations.clone();
-        d.dedup();
-        d.len()
-    };
-    assert_eq!(
-        distinct,
-        locations.len(),
-        "two vertex attributes claim the same shader_location ({locations:?}). The \
-         walk above pairs the two lists position by position, which makes them a \
-         bijection only while the locations are distinct: duplicated on both \
-         sides, two attributes feed one `VsIn` field and the walk still passes"
-    );
-}
-
-/// Every `NodeShape` variant has a WGSL constant carrying exactly its
-/// `shader_id`, the shader declares no shape constant no variant
-/// claims, and every variant's fill is reachable from the `switch` —
-/// by its own `case` arm, or, for the default variant, by the
-/// `default` arm that also catches ids from a future build.
-///
-/// Fails when: a variant is added with no `SHAPE_*` constant, a
-/// constant's value is renumbered on either side, the two names are
-/// swapped so `SHAPE_RECT` carries the ellipse's id, a `case` arm is
-/// deleted (every node of that shape would then silently draw as a
-/// rectangle — the exact failure the module headers warn about), or
-/// the `default` arm goes and unknown ids stop drawing at all.
-///
-/// It fails for that same reason one step earlier, too: both ends of
-/// the `shape_id` wire *inside the shader* are asserted by name. A
-/// `switch (0u)` in the fragment stage, or a vertex stage that writes
-/// a constant into `out.shape_id`, leaves every arm above intact and
-/// correct while every node on screen draws the default fill — a
-/// shader in perfect lock-step with a Rust enum it no longer reads.
-///
-/// `shape_id`'s two neighbors are asserted the same way, because the
-/// same mutation is available to them and one of them is just as
-/// quiet: a vertex stage that stops forwarding `uv` discards every
-/// ellipse — the SDF reads `uv` as the quad's local frame — while the
-/// rectangles, which never look at it, go on drawing. Losing `pos`
-/// is the loud one; it is asserted next to the others rather than
-/// left to the eye.
-///
-/// Upstream of that, where the attribute enters `VsIn` at all, is
-/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`'s
-/// concern and not this test's. Nothing here reads a
-/// `shader_location`. That test also pins the one fact this one reads
-/// by value and cannot check for itself: that `RECT_SHADER_WGSL` is
-/// the string `Renderer::new` compiles. Without it a decoy shader
-/// module would leave every assertion below asserting over a string
-/// no GPU sees.
-///
-/// Comments are stripped before anything is matched, so a `case
-/// SHAPE_X:` written in prose cannot satisfy an arm assertion — the
-/// shader carries one such mention today, naming `SHAPE_RECT` in the
-/// comment above the `default` arm.
-#[test]
-fn test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm() {
-    use baumhard::gfx_structs::shape::NodeShape;
-    use baumhard::util::rust_source::strip_comments;
-    use strum::IntoEnumIterator;
-
-    let wgsl = strip_comments(RECT_SHADER_WGSL);
-    let (consts, const_lines) = wgsl_u32_consts(&wgsl);
-
-    // Preconditions. Without these the assertions below hold over an
-    // empty set and prove nothing about the shader.
-    assert!(
-        !consts.is_empty(),
-        "no `const <NAME>: u32 = <n>u;` found in the rect shader — the parser \
-         and the shader have drifted apart, and every check below is vacuous"
-    );
-    assert_eq!(
-        consts.len(),
-        const_lines,
-        "{} of the shader's {const_lines} `const` declarations did not parse; \
-         a declaration this scanner cannot read must be reported, not skipped",
-        const_lines - consts.len()
-    );
-    assert!(
-        wgsl.contains("default: {"),
-        "the fragment switch must keep a `default` arm: it is the fill for the \
-         default shape and the safe landing for an id this build does not know"
-    );
-    // The arms are only worth checking if something selects between
-    // them. Both ends of the wire, in the same literal-string style:
-    // the vertex stage forwards the per-instance attribute, and the
-    // fragment stage switches on what it forwarded.
-    assert!(
-        wgsl.contains("out.shape_id = u32(round(in.shape_id));"),
-        "the vertex stage must forward the per-vertex `shape_id` attribute as exactly \
-         `out.shape_id = u32(round(in.shape_id));` — a constant written here reaches \
-         every fragment with the same value and the `case` arms below stop being \
-         reachable. The trailing `;` is load-bearing: without it the needle is a \
-         prefix, and `… * 0u;` satisfies it while sending every fragment the \
-         rectangle id"
-    );
-    assert!(
-        wgsl.contains("switch (in.shape_id)"),
-        "the fragment switch must select on `in.shape_id`: switching on anything \
-         else draws one fill for every node while each arm still matches its \
-         `NodeShape` constant perfectly"
-    );
-    // `shape_id`'s two neighbors on the same journey. Binding an
-    // attribute correctly and then not forwarding it is invisible to
-    // the table pin, which stops at `VsIn`.
-    assert!(
-        wgsl.contains("out.uv = in.uv;"),
-        "the vertex stage must forward `uv` as exactly `out.uv = in.uv;`: the ellipse \
-         arm's SDF reads it as the quad's local frame, so anything written here that \
-         is not the coordinate itself discards every ellipse while the rectangles — \
-         which never look at `uv` — keep drawing. The needle is that whole statement, \
-         terminator included, because `out.uv = in.uv * 0.0;` satisfies the prefix"
-    );
-    assert!(
-        wgsl.contains("out.pos = vec4<f32>(in.pos, 0.0, 1.0);"),
-        "the vertex stage must forward `pos` into clip space as exactly \
-         `out.pos = vec4<f32>(in.pos, 0.0, 1.0);`. This is a text pin on that one \
-         statement, so an equivalent spelling reddens here too and the fix is to \
-         update the needle; what it exists to catch is the inequivalent one — a \
-         constant, or `in.pos` scaled or transposed — which collapses every quad and \
-         leaves nothing on the canvas with a background. The terminator is part of \
-         the needle: `out.pos = vec4<f32>(in.pos, 0.0, 1.0) * 0.0;` satisfies the \
-         prefix and collapses every quad to a point"
-    );
-
-    let mut claimed: Vec<&str> = Vec::new();
-    let mut ids: Vec<u32> = Vec::new();
-    for shape in NodeShape::iter() {
-        let name = wgsl_shape_const_name(shape);
-        claimed.push(name);
-        ids.push(shape.shader_id());
-
-        let declared = consts
-            .iter()
-            .find(|(n, _)| n == name)
-            .unwrap_or_else(|| panic!("{shape:?} expects the shader to declare `{name}`"));
-        assert_eq!(
-            declared.1,
-            shape.shader_id(),
-            "`{name}` is {} in the shader but {shape:?}::shader_id() is {}",
-            declared.1,
-            shape.shader_id()
-        );
-
-        if shape == NodeShape::default() {
-            // The default variant is what the `default` arm draws;
-            // asserting a `case` arm for it would fail against the
-            // shader as designed.
-            continue;
-        }
-        assert!(
-            wgsl.contains(&format!("case {name}:")),
-            "{shape:?} has a shader id but no `case {name}:` arm — every node \
-             of this shape would draw as the default shape instead"
-        );
-    }
-
-    ids.sort_unstable();
-    let distinct = {
-        let mut d = ids.clone();
-        d.dedup();
-        d.len()
-    };
-    assert_eq!(
-        distinct,
-        ids.len(),
-        "two NodeShape variants share a shader id, so one of them cannot be \
-         selected: {ids:?}"
-    );
-
-    for (name, value) in &consts {
-        if !name.starts_with("SHAPE_") {
-            continue;
-        }
-        assert!(
-            claimed.contains(&name.as_str()),
-            "the shader declares `{name}` = {value} but no NodeShape variant \
-             claims it — either a variant was removed without its constant, or \
-             wgsl_shape_const_name is a name behind"
-        );
-    }
-}
-
-// ====================================================================
 // Selection-highlight single-sourcing
 // ====================================================================
 
@@ -3519,4 +2651,162 @@ fn test_every_selection_highlight_form_carries_one_rgb_triple() {
         "the rubber band is deliberately translucent; an opaque one means the alpha was lost \
          on the way through the shared definition"
     );
+}
+
+// ====================================================================
+// Backdrops as glyphs
+// ====================================================================
+
+/// **A backdrop cell is one opaque square at its text area's corner**,
+/// which is what lets a grid of them tile a rectangle with no seam
+/// (`backdrop`'s module docs). The cell is shaped as the renderer shapes
+/// it, rasterized as glyphon rasterizes it (`SwashCache::get_image_uncached`
+/// on the glyph's physical cache key, at scale 1 and a whole-pixel
+/// corner), and placed by glyphon 0.12.0's own arithmetic from
+/// `text_render.rs`: `x = physical.x + placement.left`, `y =
+/// round(line_y) + physical.y − placement.top`. It must land at `(0, 0)`,
+/// `CELL_PX` square, a coverage mask with every texel full — so a cell
+/// at `(x, y)` covers exactly `x..x + 64` by `y..y + 64`, wholly.
+///
+/// Controls: the same block shaped half a pixel larger lands with
+/// partial edge texels, and the default face's `█` is not a full square
+/// — so the assertions tell a seamless cell from one that is not.
+#[test]
+fn test_a_backdrop_cell_is_one_opaque_square_at_its_corner() {
+    use super::backdrop::{BackdropCell, CELL_PX};
+    use glyphon::{SwashCache, SwashContent};
+
+    baumhard::font::fonts::init();
+    let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (backdrop cell)");
+    // What glyphon draws of `buffer`'s one glyph at a text area whose
+    // corner is the origin: where its ink lands, its size, its kind, and
+    // how many of its texels are not fully covered.
+    let mut swash = SwashCache::new();
+    let mut ink = |buffer: &Buffer, fs: &mut baumhard::font::FontSystem| {
+        let run = buffer.layout_runs().next().expect("the cell lays out a line");
+        assert_eq!(run.glyphs.len(), 1, "the cell is one glyph");
+        let physical = run.glyphs[0].physical((0.0, 0.0), 1.0);
+        let image = swash
+            .get_image_uncached(fs, physical.cache_key)
+            .expect("the block rasterizes");
+        let at = (
+            physical.x + image.placement.left,
+            run.line_y.round() as i32 + physical.y - image.placement.top,
+        );
+        let size = (image.placement.width, image.placement.height);
+        let partial = image.data.iter().filter(|&&texel| texel != u8::MAX).count();
+        (at, size, image.content, partial)
+    };
+
+    let cell = BackdropCell::shape(&mut fs);
+    let (at, size, content, partial) = ink(cell.buffer(), &mut fs);
+    assert_eq!(at, (0, 0), "the block's ink starts at the text area's corner");
+    assert_eq!(size, (CELL_PX as u32, CELL_PX as u32), "the block's ink is the cell");
+    assert!(matches!(content, SwashContent::Mask), "the block is a coverage mask, tinted black");
+    assert_eq!(partial, 0, "every texel of the block is fully covered");
+
+    // The controls: a half-pixel-larger block, and the default face's.
+    let shaped = |fs: &mut baumhard::font::FontSystem, size: f32, family: Option<baumhard::font::Family>| {
+        let mut attrs = Attrs::new();
+        if let Some(family) = family {
+            attrs = attrs.family(family);
+        }
+        let mut buffer = baumhard::font::buffer::create(fs, size, size);
+        buffer.set_size(Some(size), Some(size));
+        buffer.set_rich_text([(super::backdrop::FILL, attrs.clone())], &attrs, baumhard::font::SHAPING_ADVANCED, None);
+        buffer.shape_until_scroll(fs, false);
+        buffer
+    };
+    let pixel = baumhard::font::fonts::family_name_of(AppFont::PublicPixel).map(baumhard::font::Family::Name);
+    let larger = shaped(&mut fs, CELL_PX as f32 + 0.5, pixel);
+    let (_, _, _, partial) = ink(&larger, &mut fs);
+    assert!(partial > 0, "the control: a block off the pixel grid has partly covered edges");
+    let default_face = shaped(&mut fs, CELL_PX as f32, None);
+    let (at, size, _, partial) = ink(&default_face, &mut fs);
+    assert!(
+        at != (0, 0) || size != (CELL_PX as u32, CELL_PX as u32) || partial > 0,
+        "the control: the default face's block is not a full cell ({at:?}, {size:?}, {partial} partial)"
+    );
+}
+
+/// **A backdrop covers the pixels its rectangle covered, each once.**
+/// For rectangles at fractional edges, `.5` ties and ratios of 1, 1.5
+/// and 2, against a reference written from the rasterization rule
+/// itself — a pixel is covered when its center lies in `[x0, x1)` —
+/// checked pixel by pixel: `PixelRect::covered_by` is the set of pixels
+/// whose centers the rectangle holds, its cells clipped to it cover each
+/// of them exactly once and nothing else, and `cell_count` is how many
+/// cells there are.
+///
+/// Controls: rounding the edges to the nearest pixel, or truncating
+/// them, disagrees with the reference on some rectangle below — the
+/// last loop asserts both — so the agreement is not a reference that
+/// cannot tell them apart.
+#[test]
+fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
+    use super::backdrop::{PixelRect, CELL_PX};
+
+    let rects = [
+        (0.0_f32, 0.0_f32, 10.0_f32, 10.0_f32),
+        (8.0, 597.25, 1264.0, 194.75),
+        (10.5, 20.5, 129.0, 70.5),
+        (0.25, 0.75, 63.5, 64.5),
+        (100.4, 3.6, 200.2, 130.1),
+        (-5.0, -5.0, 20.0, 20.0),
+        (3.0, 3.0, 0.0, 9.0),
+    ];
+    // The reference: pixel `i` is covered when its center `i + 0.5` is
+    // in `[from, to)`.
+    let covered = |from: f32, to: f32, i: i32| {
+        let center = f64::from(i) + 0.5;
+        f64::from(from) <= center && center < f64::from(to)
+    };
+    let mut checked = 0;
+    for (left, top, width, height) in rects {
+        for ratio in [1.0_f32, 1.5, 2.0] {
+            let (x0, x1) = (left * ratio, (left + width) * ratio);
+            let (y0, y1) = (top * ratio, (top + height) * ratio);
+            let rect = PixelRect::covered_by((left, top, width, height), ratio);
+            let cells: Vec<(i32, i32)> = rect.cells().collect();
+            assert_eq!(cells.len(), rect.cell_count(), "{rect:?}: the cell count");
+            // How many cells hold each pixel of a margin around the
+            // rectangle, each cell clipped to the rectangle as glyphon
+            // clips a glyph to its text area's bounds.
+            let (from_x, to_x) = (-20, x1.ceil() as i32 + 20);
+            let (from_y, to_y) = (-20, y1.ceil() as i32 + 20);
+            let stride = (to_x - from_x) as usize;
+            let mut holding = vec![0u8; stride * (to_y - from_y) as usize];
+            for &(cx, cy) in &cells {
+                for y in cy.max(rect.top)..(cy + CELL_PX).min(rect.bottom) {
+                    for x in cx.max(rect.left)..(cx + CELL_PX).min(rect.right) {
+                        holding[(y - from_y) as usize * stride + (x - from_x) as usize] += 1;
+                    }
+                }
+            }
+            for y in from_y..to_y {
+                for x in from_x..to_x {
+                    let reference = covered(x0, x1, x) && covered(y0, y1, y);
+                    let inside = (rect.left..rect.right).contains(&x) && (rect.top..rect.bottom).contains(&y);
+                    assert_eq!(inside, reference, "({left}, {top}, {width}, {height}) at {ratio}: pixel ({x}, {y})");
+                    let held = holding[(y - from_y) as usize * stride + (x - from_x) as usize];
+                    assert_eq!(held, u8::from(reference), "pixel ({x}, {y}) of {rect:?}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 1_000_000, "precondition: the pixels are checked ({checked})");
+
+    // The controls: the two plausible wrong snaps each miss the rule.
+    let snaps: [(&str, fn(f32) -> i32); 2] = [("round", |v| v.round() as i32), ("truncate", |v| v as i32)];
+    for (name, snap) in snaps {
+        let differs = rects.iter().any(|&(left, top, width, height)| {
+            [1.0_f32, 1.5, 2.0].iter().any(|&ratio| {
+                let rect = PixelRect::covered_by((left, top, width, height), ratio);
+                (snap(left * ratio), snap((left + width) * ratio), snap(top * ratio), snap((top + height) * ratio))
+                    != (rect.left, rect.right, rect.top, rect.bottom)
+            })
+        });
+        assert!(differs, "the control: snapping by {name} disagrees with the rule somewhere");
+    }
 }

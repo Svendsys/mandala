@@ -3,8 +3,8 @@
 //! Color-picker overlay helpers split out of `Renderer`. Wrappers in
 //! `Renderer` call these free fns and then
 //! `rebuild_overlay_scene_buffers`. The backdrop rect is returned to
-//! the wrapper rather than relocated here, so `Renderer` keeps it for
-//! the rect-pipeline pass.
+//! the wrapper rather than relocated here, so `Renderer` keeps it and
+//! draws it as full-block cells in the chrome pass (`backdrop`).
 
 use crate::application::color_picker::{ColorPickerLayout, ColorPickerOverlayGeometry};
 use crate::application::color_picker_overlay;
@@ -12,7 +12,8 @@ use crate::application::scene_host::{AppScene, OverlayRole};
 
 /// Register the picker overlay tree (build-or-unregister depending
 /// on whether geometry+layout are provided) and return the backdrop
-/// rect the rect pipeline should paint underneath the glyphs.
+/// rect the chrome pass fills with full-block cells underneath the
+/// glyphs.
 ///
 /// Caller (a thin `Renderer` wrapper) owns:
 /// - assigning the returned `Option<(f32,f32,f32,f32)>` to

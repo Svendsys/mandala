@@ -257,13 +257,21 @@ fn test_the_clear_follows_a_theme_variant_switch_its_undo_and_a_reload() {
     );
 }
 
-/// A map draws no rect: the content fill pass is gone (V1-B12), so a
-/// frame of `testament` — whose every node carries a
-/// `style.background_color`, which the old pass drew one rect for —
-/// draws none. The control re-adds a fill through the one route left,
-/// the console's screen-space backdrop: opening the console draws
-/// exactly one rect, so the zero is the absence of a pass and not a
-/// counter that never moves.
+/// A map draws no fill (V1-B12): a frame of `testament` — whose every
+/// node carries a `style.background_color`, which the old content pass
+/// drew one rect for — hands no pass a single fill block. The frame has
+/// no rect pipeline left to draw a fill through, so a fill would come
+/// back as glyphs, the backdrops' own (Public Pixel's `█`); the census
+/// counts those in every list the three glyph passes are handed
+/// (`backdrop::FillCensus`), the canvas's and the chrome's, so it sees
+/// a fill whichever pass and whichever batch it came back in.
+///
+/// Controls, one per half, so neither zero is a counter that never
+/// moves: opening the console hands the chrome exactly the cells its
+/// backdrop's rectangle needs, `⌈w / 64⌉ × ⌈h / 64⌉` of the pixels it
+/// covers, while the canvas stays at zero; and the same map with every
+/// section's text a Public Pixel `█` hands the canvas one block per
+/// section on screen — a content fill, counted.
 #[test]
 fn test_a_frame_draws_no_content_fill() {
     let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
@@ -283,10 +291,11 @@ fn test_a_frame_draws_no_content_fill() {
     );
 
     draw(init);
+    let census = init.renderer.fill_census_of_last_frame();
     assert_eq!(
-        init.renderer.rect_quads_in_last_frame(),
-        0,
-        "no node, section or other element of the map draws a rect"
+        (census.canvas, census.chrome),
+        (0, 0),
+        "no node, section or other element of the map draws a fill, and no chrome is open"
     );
 
     let (reply, _) = run_attached(
@@ -296,9 +305,46 @@ fn test_a_frame_draws_no_content_fill() {
     assert_eq!(reply["ok"], json!(true), "the console opens: {reply}");
     assert!(init.console_state.is_open(), "precondition: the console is open");
     draw(init);
+    let (left, top, width, height) = init
+        .renderer
+        .console_backdrop_extent()
+        .expect("an open console has a backdrop");
+    // The pixels whose centers the rectangle holds, at the window's ratio
+    // of one, and the 64-pixel cells that cover them.
+    let edge = |at: f32| (f64::from(at) - 0.5).ceil() as i64;
+    let cells = |from: f32, to: f32| ((edge(to) - edge(from)) as f64 / 64.0).ceil() as usize;
+    let expected = cells(left, left + width) * cells(top, top + height);
+    assert!(expected > 1, "precondition: the console's backdrop spans cells ({expected})");
+    let census = init.renderer.fill_census_of_last_frame();
     assert_eq!(
-        init.renderer.rect_quads_in_last_frame(),
-        1,
-        "the control: the console's backdrop is a rect, and the frame counts it"
+        (census.canvas, census.chrome),
+        (0, expected),
+        "the control: the console's backdrop is fill blocks, one per cell, all in the chrome pass"
+    );
+
+    // The canvas half's control: testament with every section's text a
+    // fill block in the backdrop's face.
+    let mut map: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(map_path("testament.mindmap.json")).expect("testament"))
+            .expect("testament is JSON");
+    let mut sections = 0;
+    for node in map["nodes"].as_object_mut().expect("nodes").values_mut() {
+        for section in node["sections"].as_array_mut().into_iter().flatten() {
+            section["text"] = json!("\u{2588}");
+            section["text_runs"] = json!([{"start": 0, "end": 1, "font": "Public Pixel", "size_pt": 74.0, "color": "#ffffff"}]);
+            sections += 1;
+        }
+    }
+    assert!(sections > 100, "precondition: the map's sections are rewritten ({sections})");
+    let blocks = TempFile::new("fill-census", "mindmap.json");
+    std::fs::write(blocks.as_str(), map.to_string()).expect("the temp map is written");
+    let Some(mut blocked) = headless_app(blocks.as_str()) else {
+        return;
+    };
+    draw(&mut blocked.init);
+    let census = blocked.init.renderer.fill_census_of_last_frame();
+    assert!(
+        census.canvas > 0 && census.chrome == 0,
+        "the control: a map whose text is fill blocks hands the canvas passes fill blocks ({census:?})"
     );
 }
