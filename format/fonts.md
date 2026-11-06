@@ -137,10 +137,13 @@ How it holds:
   tries before the common one.
 - **At every weight.** cosmic-text matches a fallback family only at the
   exact weight a span asks for, so each face is registered at every CSS
-  weight from 100 to 900: the same outlines under each, nothing
+  weight from 100 to 900: the same outlines under each, no weight
   synthesized, as a single-weight family draws every weight at its own
   (R30). A bold span's ornament is drawn in the compiled face, not in
-  the host's bold.
+  the host's bold. The slant needs no registering, since the matcher
+  does not filter on it: an italic span's ornament is drawn by the
+  upright face, which cosmic-text skews by 14° (`FAKE_ITALIC`), as it
+  skewed the host's upright DejaVu Sans before.
 - **By name** (R30.1). A host face that took one of the two names would
   be removed like any other face bearing a compiled family's name.
 

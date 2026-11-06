@@ -25,8 +25,12 @@
 //! cosmic-text matches a fallback family only at the exact weight a span
 //! asks for (or within a variable face's `wght` axis), so each fallback
 //! face is registered at every CSS weight (`register_every_weight`): the
-//! same outlines under each weight, nothing synthesized, as a
-//! single-weight family draws every weight at its own (ruling R30).
+//! same outlines under each weight, no weight synthesized, as a
+//! single-weight family draws every weight at its own (ruling R30). The
+//! slant needs no registering, since the matcher does not filter on it:
+//! an italic span's ornament is drawn by the upright face, which
+//! cosmic-text skews by 14° (`CacheKeyFlags::FAKE_ITALIC`), as it skewed
+//! the host's upright DejaVu Sans before.
 //!
 //! What this cannot reach is a span's own family when that is a host
 //! face: a span that pins no compiled family asks for cosmic-text's

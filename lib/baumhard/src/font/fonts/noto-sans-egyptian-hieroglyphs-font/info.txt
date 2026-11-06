@@ -1,2 +1,2 @@
-license: SIL Open Font License (OFL) 1.1, as the face's own name table states
+license: SIL Open Font License (OFL) 1.1 (misc/OFL.txt)
 link: https://fonts.google.com/noto/specimen/Noto+Sans+Egyptian+Hieroglyphs

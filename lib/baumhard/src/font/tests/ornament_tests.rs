@@ -190,10 +190,9 @@ fn test_each_ornament_fallback_names_its_faces_family_at_every_weight() {
 /// the face is registered at every one of [`FALLBACK_WEIGHTS`], which a
 /// fallback family is matched at.
 pub fn do_each_ornament_fallback_names_its_faces_family_at_every_weight() {
-    assert_eq!(
-        ORNAMENT_FALLBACK.len(),
-        2,
-        "precondition: the fallback lists the ornament and the emoji face"
+    assert!(
+        !ORNAMENT_FALLBACK.is_empty(),
+        "precondition: the fallback lists a face, else this passes over none"
     );
     fonts::init();
     // Read under the guard and assert once it is released, so that a

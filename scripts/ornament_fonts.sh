@@ -7,7 +7,7 @@
 #
 # The faces are what the shaper reaches first, after a span's own face,
 # for the ornament glyphs the demo maps and the built-in styles draw
-# (`baumhard::font::fonts::ORNAMENT_FALLBACK`, `format/fonts.md`
+# (`baumhard::font::fallback::ORNAMENT_FALLBACK`, `format/fonts.md`
 # "Ornament fallback"), so that every install, and the browser, draws
 # the same glyph for them instead of whatever host face holds one:
 #
