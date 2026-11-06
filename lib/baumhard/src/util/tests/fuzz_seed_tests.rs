@@ -166,8 +166,9 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                 matches!(got.background, Some(format_fuzz::Background::Var(_)))
                     && got.outcome == "none: loaded"
             }
-            // A map that loads and is tampered with twice, at two
-            // different fault arms, so the tamper step's edits are
+            // A map that loads and whose two tamper edits both fire, at
+            // two different arms (`TamperRead::faults` lists only the
+            // edits that changed the document), so the step's edits are
             // reached from a committed seed and not only in a fuzzing run.
             "tamper_two_edits" => {
                 got.outcome == "none: loaded"
@@ -209,21 +210,22 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
         !reordered.is_empty() && !tampered.is_empty() && !reordered_backgrounds.is_empty(),
         "the corpus reorders {reordered:?}, tampers {tampered:?}, and reorders a background in {reordered_backgrounds:?}"
     );
-    // A tampered seed makes edits, not only draws the step: one with no
-    // edit reaches none of its fault arms.
+    // A tampered seed makes edits that fire, not only draws the step: an
+    // edit whose fault has no arm for its target's kind changes nothing,
+    // and a corpus of those reaches none of the step's arms.
     assert!(
         tamper_reads.values().any(|read| !read.faults.is_empty()),
-        "a tampered seed makes at least one edit: {tamper_reads:?}"
+        "a tampered seed makes at least one edit that fires: {tamper_reads:?}"
     );
-    // **A seed reads the edits it read.** The named seeds' tamper reads,
-    // as they were when each seed was written — the two `outcome_*`
-    // seeds before backgrounds existed — so a change to the order the
-    // tamper step draws its choices in, which reads other edits and
-    // another bound from the same bytes, fails here.
+    // **A seed makes the edits it made.** The named seeds' fired arms and
+    // bounds, as they were when each seed was written — the two
+    // `outcome_*` seeds before backgrounds existed — so a change to the
+    // order the tamper step draws its choices in, which reads other edits
+    // and another bound from the same bytes, fails here.
     for (seed, faults, small) in [
         ("outcome_none_loaded", vec![], 42),
         ("outcome_structure_loaded", vec![], 40),
-        ("tamper_two_edits", vec![1, 3], 13),
+        ("tamper_two_edits", vec![5, 1], 25),
     ] {
         assert_eq!(
             tamper_reads.get(seed),
@@ -691,3 +693,4 @@ fn test_every_fuzz_input_fits_its_targets_max_len() {
         "precondition: the deep-chain seeds are read ({longest} bytes the longest)"
     );
 }
+

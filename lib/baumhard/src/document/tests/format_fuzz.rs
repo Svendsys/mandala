@@ -2887,15 +2887,17 @@ pub struct Generated {
     pub tamper: Option<TamperRead>,
 }
 
-/// What the tamper step read from an input it tampered with: each
-/// edit's fault arm (`0..7`, in the order the edits apply) and the
-/// small element bound (`0..64`), each reduced as the step reduces it.
+/// What the tamper step did to an input it tampered with: the arm each
+/// edit **fired** (`0..7` its fault's, [`SECTION_ARM`] for a section's
+/// offset, in the order the edits apply — an edit with no arm for its
+/// target's kind changes nothing and is not listed) and the small
+/// element bound (`0..64`) it read, reduced as the step reduces it.
 /// Carried so that the seed corpus can pin a seed to reading the edits
 /// it read: a change to the order the step draws its choices in reads
 /// other edits from the same bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TamperRead {
-    /// Each edit's fault arm.
+    /// The arm each edit that changed the document fired.
     pub faults: Vec<u32>,
     /// The small element bound the tampered document is checked under.
     pub small: u32,
@@ -2987,18 +2989,19 @@ pub fn check_generated(
         Fault::Structure => "structure",
         Fault::Content { .. } => "content",
     };
-    let (outcome, tampered) = match result {
+    let (outcome, tampered, fired) = match result {
         Ok(doc) => {
             let tampered = tamper.is_some();
-            if let Some(tamper) = &tamper {
-                tampered_documents_agree(tamper, doc)?;
-            }
-            (format!("{fault}: loaded"), tampered)
+            let fired = match &tamper {
+                Some(tamper) => tampered_documents_agree(tamper, doc)?,
+                None => Vec::new(),
+            };
+            (format!("{fault}: loaded"), tampered, fired)
         }
-        Err(error) => (format!("{fault}: {}", kind_name(&error.kind)), false),
+        Err(error) => (format!("{fault}: {}", kind_name(&error.kind)), false, Vec::new()),
     };
     let tamper = tamper.filter(|_| tampered).map(|tamper| TamperRead {
-        faults: tamper.edits.iter().map(|&[_, _, fault]| fault % 7).collect(),
+        faults: fired,
         small: tamper.small % 64,
     });
     Ok(Generated {
@@ -3050,7 +3053,11 @@ impl Tamper {
 /// Each raw choice is reduced as `Choices` reduces one — modulo the
 /// count it chooses among — so a seed reads the same edits it read when
 /// this step drew them itself.
-fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<(), String> {
+///
+/// Returns the arm each edit **fired** — `0..7` its fault's, [`SECTION_ARM`]
+/// for a section's offset — in the order the edits apply: an edit whose
+/// fault has no arm for its target's kind changes nothing and is left out.
+fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<Vec<u32>, String> {
     use crate::document::ids::{get, IdentIndex, NodeIdent};
     let mut tree = doc.tree().clone();
     let ids: Vec<crate::arena::NodeId> = tree.descendants().collect();
@@ -3060,9 +3067,10 @@ fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<(), String
         .filter(|id| matches!(get(&tree, *id), Some(DocElement::Node(_))))
         .collect();
     if nodes.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let pick = |raw: u32, from: &[crate::arena::NodeId]| from[raw as usize % from.len()];
+    let mut fired = Vec::new();
     for &[target, other, fault] in &tamper.edits {
         let target = pick(target, &ids);
         let other = pick(other, &nodes);
@@ -3071,17 +3079,42 @@ fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<(), String
             _ => NodeIdent(1),
         };
         let fault = fault % 7;
-        let _ = tree.update(target, |element| match (fault, element) {
-            (0, DocElement::Node(node)) => node.ident = other_ident,
-            (1, DocElement::Node(node)) => node.ident = NodeIdent(bounds::MAX_NODE_IDENT),
-            (2, DocElement::Node(node)) => node.position = glam::Vec2::new(f32::NAN, 0.0),
-            (3, DocElement::Node(node)) => node.opacity = 1.5,
-            (4, DocElement::Span(span)) => span.style.size = Some(FontSize::Rel(0.5)),
-            (5, DocElement::Link(link)) => link.to = target,
-            (6, DocElement::Link(link)) => link.to = other,
-            (_, DocElement::Section(section)) => section.offset.y = 2.0e9,
-            _ => {}
+        let arm = tree.update(target, |element| match (fault, element) {
+            (0, DocElement::Node(node)) => {
+                node.ident = other_ident;
+                Some(0)
+            }
+            (1, DocElement::Node(node)) => {
+                node.ident = NodeIdent(bounds::MAX_NODE_IDENT);
+                Some(1)
+            }
+            (2, DocElement::Node(node)) => {
+                node.position = glam::Vec2::new(f32::NAN, 0.0);
+                Some(2)
+            }
+            (3, DocElement::Node(node)) => {
+                node.opacity = 1.5;
+                Some(3)
+            }
+            (4, DocElement::Span(span)) => {
+                span.style.size = Some(FontSize::Rel(0.5));
+                Some(4)
+            }
+            (5, DocElement::Link(link)) => {
+                link.to = target;
+                Some(5)
+            }
+            (6, DocElement::Link(link)) => {
+                link.to = other;
+                Some(6)
+            }
+            (_, DocElement::Section(section)) => {
+                section.offset.y = 2.0e9;
+                Some(SECTION_ARM)
+            }
+            _ => None,
         });
+        fired.extend(arm.ok().flatten());
     }
     // The index a loader would build from this tree: each node under its
     // ident, the later of two with one ident winning.
@@ -3098,7 +3131,7 @@ fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<(), String
         .collect();
     let derived = Derived::scan(&tree, doc.definitions());
     let Ok(tampered) = Document::from_loaded(tree, doc.definitions().clone(), index, highest, derived) else {
-        return Ok(());
+        return Ok(fired);
     };
     savable_checks_agree(&tampered, LIMITS)?;
     let small = Limits {
@@ -3109,5 +3142,10 @@ fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<(), String
     if check_savable_under(&tampered, LIMITS).is_ok() {
         round_trips(&tampered)?;
     }
-    Ok(())
+    Ok(fired)
 }
+
+/// The arm the tamper step reports for an edit that moved a section's
+/// offset, which any fault does to a section: one past the seven fault
+/// arms.
+pub const SECTION_ARM: u32 = 7;
