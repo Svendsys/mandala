@@ -890,7 +890,10 @@ leave their shaping and inking room within the per-input bound below
 host face holds it, or as a `.notdef`, weighed 2,200 steps, where none
 does — on CI, which has few host faces — so a harness counts what it
 shapes on the host it runs on, and a fixture names glyphs the compiled
-faces hold. To see what CI sees, point `FONTCONFIG_FILE` at a config
+faces hold. The ornament fallback's glyphs are among them since #297
+(the space, `+ ~ · ∙ ◈ ♪ ✦ ❦` and `🌸`, `format/fonts.md` "Ornament
+fallback"): a span whose face lacks one draws it in a compiled ornament
+face on every host, before any host face. To see what CI sees, point `FONTCONFIG_FILE` at a config
 whose one `<dir>` is empty: the host's faces are then not indexed, and
 the compiled ones alone remain. A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times

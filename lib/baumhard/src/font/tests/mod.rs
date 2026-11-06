@@ -7,3 +7,4 @@ pub mod hex_tests;
 pub mod metric_cache_tests;
 pub mod metrics_tests;
 pub mod name_rules_tests;
+pub mod ornament_tests;

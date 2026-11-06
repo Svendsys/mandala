@@ -634,6 +634,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             CannotCompileIntoTheLibrary,
         ),
         (
+            "font/tests/ornament_tests.rs",
+            "test_a_pinned_span_draws_each_ornament_in_its_compiled_face_before_a_host_face",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "font/tests/fonts_tests.rs",
             "test_acquire_font_system_write_panics_on_timeout",
             DrivesAPanic,
