@@ -897,11 +897,16 @@ it is held to `INPUT_WORK_MICROS`, 15 s, three quarters of the 20 s
 take 25.8 s, so each flow target lays one frame an input
 (`RAW_FRAMES`, `STRUCTURED_FRAMES`; flow_raw draws the frame's fit mode
 from its input). A `Repeat` ring round an outline is budgeted as a
-frame is (#310) — its work counted in its path's reads and the glyphs
-it sets, its reading-order lay held back for as its copies are laid,
-past its budget at most one cluster (`ring_work_steps`) — so it is an
-input's one frame too: flow_structured lays it as its outline's, and
-flow_raw draws it in place of its frame one input in four. The frame's
+frame is (#310) — by the glyphs it will lay, its work counted in its
+path's reads and the glyphs it sets, its reading-order lay held back
+for as its copies are laid, past its budget at most its setup and one
+cluster (`ring_work_steps`) — so it is an input's one frame too:
+flow_structured lays it as its outline's, and flow_raw draws it in
+place of its frame one input in four. The harnesses lay it at most
+`MAX_RING_GLYPHS` (154) glyphs, the most whose budget fits an input
+(rulings B17.2a, B17.2b): its whole text round its whole outline, so
+that a ring far from the origin is walked there, over fewer glyphs,
+where a map's cap would budget it 196,608,000 steps. The frame's
 text is cut until the frame's work fits
 (`fits_in_time`): at most `MAX_FRAME_GLYPHS` (150) glyphs of a text in
 one face, 462,949 steps, 14.95 s, and fewer of a text the shaper must

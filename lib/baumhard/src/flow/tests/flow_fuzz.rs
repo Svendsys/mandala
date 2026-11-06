@@ -53,7 +53,7 @@ use crate::document::values::{
 };
 use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks};
 use crate::flow::place::ring::ring_work_steps;
-use crate::flow::place::{frame_halves, place_on_closed_traced, size_factor, Trace, MIN_TABLE_SPACING};
+use crate::flow::place::{frame_halves, place_on_closed_capped, size_factor, Trace, MIN_TABLE_SPACING};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
     PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
@@ -83,6 +83,36 @@ pub const MAX_SPAN_CHARS: u32 = 64;
 /// bounded by its glyphs; a fuzz input is held to what it can lay
 /// inside the timeout.
 pub const MAX_FRAME_GLYPHS: usize = 150;
+
+/// The most glyphs a `Repeat` ring the harnesses lay lays (rulings
+/// B17.2a, B17.2b): the most whose budget, its overshoot past it for a
+/// copy of [`MAX_FRAME_GLYPHS`] glyphs beside it (`ring_work_steps`), fits
+/// [`INPUT_STEPS`] — the ring is an input's one budgeted placement — 154
+/// glyphs, 462,479 steps. A ring's budget is scaled by the glyphs it will
+/// lay, at most its cap: in a map 65,536, by which a ring far from the
+/// origin, its glyphs reading its path a thousand times each, takes
+/// 196,608,000 steps (seed 2771). The harnesses lay it with this cap
+/// instead (`place_on_closed_capped`), its whole text and its whole path,
+/// so its far-out floats are still walked, over fewer glyphs; cutting its
+/// text cannot, since a path some 10²¹ long holds the cap's glyphs of any
+/// copy. Its copy is a frame's text, cut to fit as a frame's
+/// ([`framed`]), so one copy always fits the cap.
+/// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
+/// holds it to that: the most, and no more.
+pub const MAX_RING_GLYPHS: usize = 154;
+
+/// The cap a harness lays a `Repeat` ring of `copy` glyphs a copy with:
+/// [`MAX_RING_GLYPHS`] held to the timeout (`bounded`); replaying a
+/// finding, as many glyphs as one copy at least, as a finding's frame
+/// text is laid as found ([`FOUND_FRAME_GLYPHS`]), so that its ring is
+/// laid once whole.
+pub(crate) fn ring_cap(copy: usize, bounded: bool) -> usize {
+    if bounded {
+        MAX_RING_GLYPHS
+    } else {
+        MAX_RING_GLYPHS.max(copy)
+    }
+}
 
 /// The most glyphs a frame's text was shaped to when the committed flow
 /// findings were found (ruling R44.2): what their replays lay, so that
@@ -227,25 +257,43 @@ impl InputWork {
         Ok(())
     }
 
-    /// Count a `Repeat` ring of `run`, laid with `trace`: the most it may
-    /// take, `ring_work_steps` (#310). The engine scales a ring's budget
-    /// by its run's glyphs, a copy's, as a frame's by its text's, and
-    /// spends no more than its budget and the one cluster past it that
-    /// found it spent: properties.
-    pub(crate) fn ring(&mut self, run: &ShapedRun, trace: &Trace, what: &str) -> Result<(), String> {
-        let budget = frame_budget(run.glyphs.len());
-        let most = ring_work_steps(run.glyphs.len());
-        if trace.budget > budget {
+    /// Count a `Repeat` ring of copies of `run`, laid at most `cap`
+    /// glyphs as `placed`, with `trace`: the most it may take,
+    /// `ring_work_steps` of its cap (#310, rulings B17.1a, B17.2b). The
+    /// engine scales a ring's budget by the glyphs it will lay, never more
+    /// than its cap, spends no more than its budget and the one cluster
+    /// past it that found it spent, and reports a ring its cap or its
+    /// budget cut short: properties. A ring cut (`PlacedRun::truncated`)
+    /// that kept a whole copy was stopped by one or the other, and says
+    /// how: the one cut that reports nothing is the path's, of a ring too
+    /// short for one copy, which keeps less than a copy.
+    pub(crate) fn ring(
+        &mut self,
+        run: &ShapedRun,
+        cap: usize,
+        placed: &PlacedRun,
+        trace: &Trace,
+        what: &str,
+    ) -> Result<(), String> {
+        let copy = run.glyphs.len();
+        let budget = frame_budget(cap);
+        let most = ring_work_steps(cap, copy);
+        if trace.glyphs > cap || trace.budget > budget {
             return Err(format!(
-                "{what}: a ring budgeted {} glyph steps, past the {budget} its {} glyphs a copy give",
-                trace.budget,
-                run.glyphs.len()
+                "{what}: a ring budgeted {} glyph steps for {} glyphs, past the {budget} its cap of {cap} gives",
+                trace.budget, trace.glyphs
             ));
         }
         if trace.spent > most {
             return Err(format!(
                 "{what}: a ring took {} glyph steps, past its budget of {} and its overshoot, {most} in all ({:?})",
                 trace.spent, trace.budget, trace.ring
+            ));
+        }
+        if placed.truncated && copy > 0 && placed.glyphs.len() >= copy && trace.ring.is_none() {
+            return Err(format!(
+                "{what}: a ring cut at {} glyphs of {copy} a copy, its cap {cap}, reported nothing: capped silently",
+                placed.glyphs.len()
             ));
         }
         self.frames += 1;
@@ -499,6 +547,9 @@ fn frames_round_a_rectangle(
     } else {
         std::iter::once(&FitMode::Repeat).chain(fits).collect()
     };
+    // A ring's cap (rulings B17.2a, B17.2b): what fits the timeout, or
+    // replaying a finding, a copy at least.
+    let cap = ring_cap(frame_run.glyphs.len(), bounded);
     for fit in laid {
         let path = outline(
             rect,
@@ -507,7 +558,7 @@ fn frames_round_a_rectangle(
             },
         );
         let mut trace = Trace::default();
-        let placed = place_on_closed_traced(
+        let placed = place_on_closed_capped(
             &frame_run,
             &path,
             start,
@@ -517,10 +568,11 @@ fn frames_round_a_rectangle(
             true,
             style,
             fs,
+            cap,
             Some(&mut trace),
         );
         if matches!(fit, FitMode::Repeat) {
-            work.ring(&frame_run, &trace, "around a rectangle")?;
+            work.ring(&frame_run, cap, &placed.1, &trace, "around a rectangle")?;
         } else {
             let sized = matches!(fit, FitMode::Fit { .. });
             work.frame(&frame_run, ornament.as_ref(), sized, &trace, "around a rectangle")?;
@@ -707,7 +759,9 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                             shape_run(&frame_spans, scale, &mut fs)
                         };
                         let mut trace = Trace::default();
-                        let placed = place_on_closed_traced(
+                        // A ring's cap (rulings B17.2a, B17.2b).
+                        let cap = ring_cap(run.glyphs.len(), bounded);
+                        let placed = place_on_closed_capped(
                             &run,
                             &path,
                             start,
@@ -717,6 +771,7 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                             outward,
                             &flow,
                             &mut fs,
+                            cap,
                             Some(&mut trace),
                         );
                         // A frame that cannot hold its lines without two
@@ -729,7 +784,7 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                         let mut work = InputWork::default();
                         let sized = matches!(fit, FitMode::Fit { .. });
                         let counted = if matches!(fit, FitMode::Repeat) {
-                            work.ring(&run, &trace, "around an outline")
+                            work.ring(&run, cap, &placed.1, &trace, "around an outline")
                         } else {
                             work.frame(&run, ornament.as_ref(), sized, &trace, "around an outline")
                         };

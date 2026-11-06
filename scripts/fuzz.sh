@@ -76,7 +76,8 @@ fi
 # frame an input, its text cut until that frame's work fits: at most
 # MAX_FRAME_GLYPHS (150) glyphs in one face, 462,949 steps, 14.95 s.
 # A Repeat ring round an outline is budgeted as a frame is (#310), and
-# laid as an input's one frame (ring_work_steps).
+# laid as an input's one frame (ring_work_steps), at most MAX_RING_GLYPHS
+# glyphs (rulings B17.2a, B17.2b).
 # Every input this script feeds a target
 # fits its ceiling, which `test_every_fuzz_input_fits_its_targets_max_len`
 # holds.

@@ -43,8 +43,9 @@ use crate::util::tests::choices::Choices;
 /// its copies closed for past 18 minutes; its count is held by
 /// `test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks`, and
 /// the input it drew then, which R51.2's mixed sizes draw otherwise now,
-/// is replayed within its ring's budget (#310) by
-/// `test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays_within_its_budget`.
+/// is replayed at the harnesses' ring cap, short and within its budget
+/// (#310, ruling B17.2c), by
+/// `test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays_short_at_its_cap`.
 ///
 /// Controls: with the speed bound not saturated, red at 1021 ("its natural
 /// length fits, and it was cut"); without both the tracking solve's stop
@@ -1785,7 +1786,11 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
 /// 14.95 s; 151 take 466,014, 15.05 s.
 ///
 /// A `Repeat` ring's work (#310) fits an input's as its one budgeted
-/// placement, and not beside a frame.
+/// placement, and not beside a frame; and [`MAX_RING_GLYPHS`] is the most
+/// glyphs whose ring, its budget scaled by them and its overshoot past it
+/// for a copy of [`MAX_FRAME_GLYPHS`] glyphs, fits (rulings B17.2a,
+/// B17.2b): 154, 462,479 glyph steps, 14.94 s; 155 take 465,479, 15.03 s
+/// — and no fewer than a copy's, so one copy always fits.
 ///
 /// Control: flow_raw's three frames an input, as before R45, red — three
 /// floor frames take 1,206,315 steps, 38.96 s.
@@ -1793,6 +1798,7 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
 /// [`RAW_FRAMES`]: crate::flow::tests::flow_fuzz::RAW_FRAMES
 /// [`STRUCTURED_FRAMES`]: crate::flow::tests::flow_fuzz::STRUCTURED_FRAMES
 /// [`MAX_FRAME_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS
+/// [`MAX_RING_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_RING_GLYPHS
 /// [`ASAN_STEP_NANOS`]: crate::flow::tests::flow_fuzz::ASAN_STEP_NANOS
 /// [`INPUT_WORK_MICROS`]: crate::flow::tests::flow_fuzz::INPUT_WORK_MICROS
 /// [`INPUT_STEPS`]: crate::flow::tests::flow_fuzz::INPUT_STEPS
@@ -1849,17 +1855,26 @@ fn test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout() {
         seconds(past),
         frame_steps(1)
     );
-    // A `Repeat` ring is budgeted as a frame is (#310): laid as an input's
-    // one budgeted placement, any copy a frame's cut leaves it fits, and
-    // laid beside a frame, as flow_raw laid it until then, the two do not.
-    let ring = crate::flow::place::ring::ring_work_steps(MAX_FRAME_GLYPHS);
-    assert!(
-        ring <= frame_steps(1),
-        "a ring of {MAX_FRAME_GLYPHS} glyphs a copy takes {ring} glyph steps, {:.2} s, past the {:.2} s an input may take",
-        seconds(ring),
-        seconds(INPUT_STEPS)
+    // A `Repeat` ring is budgeted as a frame is (#310), by the glyphs it
+    // will lay at most its cap (rulings B17.1a, B17.2a): laid as an
+    // input's one budgeted placement at the harnesses' cap, with any copy a
+    // frame's cut leaves it, it fits, and at one glyph more it does not;
+    // and laid beside a frame, as flow_raw laid it until then, the two do
+    // not.
+    use crate::flow::place::ring::ring_work_steps;
+    use crate::flow::tests::flow_fuzz::MAX_RING_GLYPHS;
+    let (ring, more) = (
+        ring_work_steps(MAX_RING_GLYPHS, MAX_FRAME_GLYPHS),
+        ring_work_steps(MAX_RING_GLYPHS + 1, MAX_FRAME_GLYPHS),
     );
-    let beside = floor + crate::flow::place::ring::ring_work_steps(0);
+    assert!(
+        ring <= frame_steps(1) && more > frame_steps(1) && MAX_RING_GLYPHS >= MAX_FRAME_GLYPHS,
+        "a ring of {MAX_RING_GLYPHS} glyphs, {MAX_FRAME_GLYPHS} a copy, takes {ring} glyph steps, {:.2} s, and one more {more}, {:.2} s, against the {} an input may take: the most that fit, and a copy's glyphs at least, is the cap",
+        seconds(ring),
+        seconds(more),
+        frame_steps(1)
+    );
+    let beside = floor + ring_work_steps(0, 0);
     assert!(
         beside > INPUT_STEPS,
         "a ring beside a frame takes {beside} glyph steps, {:.2} s, within an input's {:.2} s: lay it besides",
@@ -2011,39 +2026,76 @@ fn test_the_flow_properties_find_a_frame_past_its_work() {
     );
 }
 
-/// #310's property: a `Repeat` ring that takes more than its budget and
-/// the overshoot past it (`ring_work_steps`) fails, as does one the
-/// engine budgets more than its glyphs a copy give.
+/// #310's property (rulings B17.1a, B17.2b): a `Repeat` ring that takes
+/// more than its cap's budget and the overshoot past it
+/// (`ring_work_steps`) fails, as does one the engine budgets past its cap,
+/// and one cut past its first copy that reports nothing — capped
+/// silently. A ring cut before one copy is the path's cut, owed no report.
 ///
-/// Control: with the property never failing, red.
+/// Control: with each of the three never failing, red (that one).
 #[test]
 fn test_the_flow_properties_find_a_ring_past_its_work() {
     use crate::flow::place::halves::frame_budget;
-    use crate::flow::place::ring::ring_work_steps;
+    use crate::flow::place::ring::{ring_work_steps, RingLoss};
     use crate::flow::place::Trace;
-    use crate::flow::tests::flow_fuzz::InputWork;
+    use crate::flow::tests::flow_fuzz::{InputWork, MAX_RING_GLYPHS};
     let flow = style(16.0);
     let run = with_fonts(|fs| real_run("· ", &flow, fs));
-    let (budget, most) = (frame_budget(run.glyphs.len()), ring_work_steps(run.glyphs.len()));
+    let cap = MAX_RING_GLYPHS;
+    let (budget, most) = (frame_budget(cap), ring_work_steps(cap, run.glyphs.len()));
+    let glyph = PlacedGlyph {
+        glyph: 0,
+        pos: Vec2::ZERO,
+    };
+    let laid = |glyphs: usize, truncated: bool| PlacedRun {
+        glyphs: vec![glyph; glyphs],
+        truncated,
+    };
+    let whole = laid(cap, false);
     let mut trace = Trace {
         spent: most,
         budget,
+        glyphs: cap,
         ..Trace::default()
     };
+    let ring =
+        |placed: &PlacedRun, trace: &Trace| InputWork::default().ring(&run, cap, placed, trace, "a ring");
     assert!(
-        InputWork::default().ring(&run, &trace, "a ring").is_ok(),
+        ring(&whole, &trace).is_ok(),
         "precondition: a ring that takes its budget and its overshoot holds"
     );
     trace.spent = most + 1;
     assert!(
-        InputWork::default().ring(&run, &trace, "a ring").is_err(),
+        ring(&whole, &trace).is_err(),
         "a ring past its budget and its overshoot fails"
     );
     trace.spent = most;
     trace.budget = budget + 1;
     assert!(
-        InputWork::default().ring(&run, &trace, "a ring").is_err(),
-        "a ring budgeted past its glyphs fails"
+        ring(&whole, &trace).is_err(),
+        "a ring budgeted past its cap fails"
+    );
+    trace.budget = budget;
+    trace.glyphs = cap + 1;
+    assert!(
+        ring(&whole, &trace).is_err(),
+        "a ring scaled by more glyphs than its cap fails"
+    );
+    trace.glyphs = cap;
+    let capped = laid(cap - cap % run.glyphs.len(), true);
+    assert!(
+        ring(&capped, &trace).is_err(),
+        "a ring cut past its first copy, reporting nothing, fails"
+    );
+    trace.ring = Some(RingLoss::Short);
+    assert!(
+        ring(&capped, &trace).is_ok(),
+        "precondition: a ring cut and reported holds"
+    );
+    trace.ring = None;
+    assert!(
+        ring(&laid(run.glyphs.len() - 1, true), &trace).is_ok(),
+        "precondition: a ring the path cut before one copy, reporting nothing, holds"
     );
 }
 
@@ -2076,19 +2128,38 @@ fn test_the_flow_properties_find_an_input_past_the_timeout() {
 /// million reads, 26.7 s in a debug build with the compiled faces alone
 /// (review 5751828253 found 25.6 s, and 141 s with host faces, and read
 /// it as the ring's close; the close never ran, the walk being capped).
-/// Its ring is budgeted as a frame is now (#310): it counts its path's
-/// reads, so its walk stops once what its budget has left after holding
-/// back phase 2's lay of it is spent, short, and says so; the replay,
-/// held to the fuzz property's bound, passes within its budget.
 ///
-/// Precondition: the ring is laid and its budget stops it. Control: with
-/// the budget never read (`RingWork::affords` always `true`), red, 82.7
-/// million path lookups.
+/// Its ring is budgeted as a frame is (#310), by the glyphs it will lay,
+/// at most its cap (rulings B17.1a, B17.2a), and both sides of that are
+/// pinned here (ruling B17.2c). **At the harness's cap**
+/// ([`MAX_RING_GLYPHS`]), its whole text round its whole path, its first
+/// walk stops at the cap, short, and says so; its work is within that
+/// cap's budget and its overshoot, its path lookups within what they read
+/// as, and the replay is quick — a few hundredths of the 15 s an input may
+/// take. **In a map**, at [`MAX_PLACED_GLYPHS`], the path holds the
+/// cap's glyphs of its copy, so its budget is 196,608,000 steps: by the
+/// estimate the engine scales it by, computed from what the replay's ring
+/// estimated from, not by laying it there, which would take some 20 s.
+///
+/// Precondition: the ring is laid, its estimate past the harness's cap,
+/// and its cap, not its budget, stops it. Controls: with the cap not read
+/// by its first walk, red (its budget stops it instead, 4,272 glyphs
+/// placed, past the cap of 154); with the cap's stop not reported, red
+/// (the fuzz property: "a ring cut at 153 glyphs of 3 a copy, its cap
+/// 154, reported nothing: capped silently"); with its budget scaled past
+/// its cap, red (the fuzz property: 196,608,000 glyph steps budgeted for
+/// 65,536 glyphs, past the 462,000 its cap gives).
+///
+/// [`MAX_RING_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_RING_GLYPHS
+/// [`MAX_PLACED_GLYPHS`]: crate::flow::MAX_PLACED_GLYPHS
 #[test]
-fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays_within_its_budget() {
+fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays_short_at_its_cap() {
     use crate::flow::path::PATH_LOOKUPS;
-    use crate::flow::place::ring::{ring_work_steps, READS_A_STEP};
-    use crate::flow::place::{LAST_RING, RINGS_STOPPED};
+    use crate::flow::place::halves::frame_budget;
+    use crate::flow::place::ring::{ring_glyphs, ring_work_steps, RingLoss, READS_A_STEP};
+    use crate::flow::place::{LAST_RING, LAST_RING_ESTIMATE, RINGS_STOPPED, RING_CROSSED};
+    use crate::flow::tests::flow_fuzz::MAX_RING_GLYPHS;
+    use crate::flow::MAX_PLACED_GLYPHS;
     let found = include_bytes!("fuzz_findings/structured_ring_whose_inks_its_floats_cannot_part");
     for counter in [&PATH_LOOKUPS, &RINGS_STOPPED] {
         counter.with(|count| count.set(0));
@@ -2098,17 +2169,43 @@ fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays
         panic!("the fuzzer's input: {why}");
     }
     let lookups = PATH_LOOKUPS.with(std::cell::Cell::get);
-    let Some((glyphs, loss)) = LAST_RING.with(std::cell::Cell::get) else {
+    let Some(ring) = LAST_RING.with(std::cell::Cell::get) else {
         panic!("precondition: the input lays a ring");
     };
     assert!(
-        loss.is_some() && RINGS_STOPPED.with(std::cell::Cell::get) == 1,
-        "precondition: the ring's budget stops it ({loss:?})"
+        ring.cap == MAX_RING_GLYPHS && ring.glyphs == ring.cap,
+        "precondition: the ring is laid at the harness's cap, its estimate past it ({ring:?})"
     );
-    let most = ring_work_steps(glyphs) * READS_A_STEP;
     assert!(
-        lookups <= most,
-        "the ring of {glyphs} glyphs a copy looked up {lookups} points, past the {most} its budget reads as"
+        ring.loss == Some(RingLoss::Short)
+            && RINGS_STOPPED.with(std::cell::Cell::get) == 1
+            && RING_CROSSED.with(std::cell::Cell::get).is_none(),
+        "precondition: the ring's cap stops it, not its budget, and it is short ({ring:?})"
+    );
+    assert!(
+        ring.placed <= ring.cap,
+        "the ring placed {} glyphs, past its cap of {}",
+        ring.placed,
+        ring.cap
+    );
+    let most = ring_work_steps(ring.cap, ring.copy);
+    assert!(
+        ring.spent <= most && lookups <= most * READS_A_STEP,
+        "the ring of {} glyphs a copy took {} glyph steps and looked up {lookups} points, past the {most} steps its cap's budget and overshoot give, {} lookups",
+        ring.copy,
+        ring.spent,
+        most * READS_A_STEP
+    );
+    // In a map: the budget its estimate gives at the engine's cap,
+    // arithmetic from what the replay's ring estimated from.
+    let Some((copy, advance, length)) = LAST_RING_ESTIMATE.with(std::cell::Cell::get) else {
+        panic!("precondition: the ring was estimated");
+    };
+    let glyphs = ring_glyphs(copy, advance, length, MAX_PLACED_GLYPHS);
+    assert_eq!(
+        (glyphs, frame_budget(glyphs)),
+        (MAX_PLACED_GLYPHS, 196_608_000),
+        "in a map the ring's estimate is the cap, its budget 196,608,000 glyph steps ({copy} glyphs a copy, {advance} along a path {length} long)"
     );
     if let Err(why) = check_flow_structured_as_found(found) {
         panic!("as found: {why}");

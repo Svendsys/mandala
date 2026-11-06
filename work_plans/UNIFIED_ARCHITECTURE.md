@@ -924,19 +924,25 @@ below). A ring too short for one whole repetition is cut as a connector
 is. Along an open path `repeat` is unchanged.
 
 A ring's work is budgeted as a frame's is (#310): `max(TRACK_BUDGET,
-STEPS_PER_GLYPH × glyphs)` glyph steps for a pattern of `glyphs`
-glyphs, its copies counted against it, and counted in its path's reads
-(`READS_A_STEP` to a step) and the glyphs it sets (`GLYPHS_A_STEP`) —
-an ornament's glyph set by its ink where the outline's floats barely
-move it reads the path a thousand times or more. The budget is read
-before every cluster the ring's walks lay or measure and before every
-probe of the reading-order lay's spacing solves, and what that lay
-takes whatever is spent is held back as the copies are laid
-(`phase_two_steps`), so a ring takes at most its budget and one
-cluster more (`ring_overshoot`). A ring whose budget is spent is laid
-as far as it got — short of the outline, or round it unclosed, or
-closed but uneven — and its trace says which; it is never capped
-silently.
+STEPS_PER_GLYPH × glyphs)` glyph steps for the `glyphs` glyphs it will
+lay, as a frame's for its text's (rulings B17.1a, B17.2a) — estimated
+before it is laid, the outline's length over one copy's advance,
+rounded up, times a copy's glyphs, and at most its cap, the most
+glyphs it lays: `MAX_PLACED_GLYPHS` in a map, and in the flow fuzzers
+the most that fit what an input may take (`MAX_RING_GLYPHS`). Its work
+is counted in its path's reads (`READS_A_STEP` to a step) and the
+glyphs it sets (`GLYPHS_A_STEP`) — an ornament's glyph set by its ink
+where the outline's floats barely move it reads the path a thousand
+times or more. The budget is read before every cluster the ring's
+walks lay or measure and before every probe of the reading-order lay's
+spacing solves and round of its regrouping, and what that lay takes
+whatever is spent is held back as the copies are laid
+(`phase_two_steps`, and the run on a walk stopped there would take,
+`run_on_reads`), so a ring takes at most its budget, its setup and one
+cluster more (`ring_overshoot`). A ring whose budget is spent, or whose
+cap is reached, is laid as far as it got — short of the outline, or
+round it unclosed, or closed but uneven — and its trace says which; it
+is never capped silently.
 
 An ornament — a flow with no letter or digit, such as `✦ ·` or `─` —
 has no reading direction, so no part of it is reversed (§6.2 step 4):
