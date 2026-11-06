@@ -1520,7 +1520,8 @@ fn test_flow_structured_finding_a_curve_fit_shrunk_to_the_size_floor() {
 /// replays alike on every host.
 ///
 /// Control: with a side copy's growth pressing a line as the words' does,
-/// red ("its natural length fits, and it was cut").
+/// and no frame laid again without its sides where they cut it (either
+/// holds the finding), red ("its natural length fits, and it was cut").
 #[test]
 fn test_flow_structured_finding_a_frame_of_one_line_round_an_outline_of_no_height() {
     let found = include_bytes!("fuzz_findings/structured_frame_one_line_round_an_outline_of_no_height");

@@ -402,6 +402,7 @@ pub(crate) fn folded(path: &ArcPath, p: Vec2, offset: f32) -> bool {
 /// How near the most any ink of a frame laid outward reaches toward the
 /// outline must lie to its offset, in points (#308, ruling B15.1): a
 /// hundredth, what the engine solves the offset to (`OFFSET_TOLERANCE`).
+#[cfg(test)]
 pub(crate) const REACH_TOLERANCE: f32 = 0.01;
 
 /// The most a glyph's anchor may lie off its frame's band curve, and the
@@ -1335,10 +1336,6 @@ pub struct SweepWork {
     /// folds (`folded`).
     pub anchors: usize,
     pub folded: usize,
-    /// The frames with sides that kept copies, and each that placed
-    /// fewer glyphs of its text than without sides (ruling R48.3, B15.5).
-    pub sides_kept: usize,
-    pub text_lost_to_sides: Vec<String>,
     /// The frames with anchors so, each round an outline thinner than
     /// twice its offset along its lines (`thin_along`).
     pub thin_folded: usize,
@@ -1404,16 +1401,11 @@ pub(crate) fn most_step_lookups(to: usize) -> usize {
 /// frame laid inward whose two lines' inks are together taller than the
 /// outline may, and the rest must hold. Only such a frame may have a
 /// line cut apart (ruling R38.1), and some here are.
-pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
-    /// The most lines a frame here may track (rulings R35.3, R38.3): the
-    /// most any does is 598 (6,164 at 30411a6e, 10,534 before the shrink
-    /// stopped at a useful precision, ruling R42.2; 17,031 when a line's
-    /// gap was bisected). Ruling R43's bounds, in glyph steps and path
-    /// lookups, are the sweep's tests below ([`SWEEP_MOST_STEPS`]).
-    const MOST_TRACKS: usize = 12_000;
-    // Opt-in: the sweep's tallies, for reading the counts this test's
-    // bounds are set from.
-    let report = std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some();
+/// The aspect sweep's outlines ([`do_flow_halves_hold_on_every_aspect`]):
+/// each, its name, its height, and the size its text is set at — an
+/// ellipse and a sharp and a rounded rectangle at 1:1, 10:1 and 50:1, and
+/// the 600 × 12 sharp rectangle.
+pub(crate) fn sweep_outlines() -> Vec<(String, Outline, f32, f32)> {
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     // Each outline, its height, and the size its text is set at.
     let mut outlines: Vec<(String, Outline, f32, f32)> = Vec::new();
@@ -1450,6 +1442,20 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
         12.0,
         22.0,
     ));
+    outlines
+}
+
+pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
+    /// The most lines a frame here may track (rulings R35.3, R38.3): the
+    /// most any does is 598 (6,164 at 30411a6e, 10,534 before the shrink
+    /// stopped at a useful precision, ruling R42.2; 17,031 when a line's
+    /// gap was bisected). Ruling R43's bounds, in glyph steps and path
+    /// lookups, are the sweep's tests below ([`SWEEP_MOST_STEPS`]).
+    const MOST_TRACKS: usize = 12_000;
+    // Opt-in: the sweep's tallies, for reading the counts this test's
+    // bounds are set from.
+    let report = std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some();
+    let outlines = sweep_outlines();
     let mut faults: Vec<String> = Vec::new();
     // How many frames reached a last resort: a `Fit` frame shrunk below
     // R27's size, a `Once` frame cut, and one that reports what is left
@@ -1494,10 +1500,6 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                     // Inward, sides round an outline its lines fill are
                     // left out (and reported); outward they are laid.
                     let sides_tried = if outward { 2 } else { 1 };
-                    // The text glyphs each span's frame placed without
-                    // sides: what it places with them, while they keep
-                    // copies, holds (ruling R48.3, B15.5).
-                    let mut bare: Vec<(u32, usize)> = Vec::new();
                     for sides in [None, Some(("·".to_owned(), Rgba::opaque(9, 9, 9)))]
                         .into_iter()
                         .take(sides_tried)
@@ -1525,28 +1527,6 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                             let (run, placed, trace) =
                                 frame_with(text, *points, shape, &fit, &layout, outward);
                             let tracks = tracks_so_far() - before;
-                            let text_placed = placed
-                                .glyphs
-                                .iter()
-                                .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
-                                .count();
-                            let copies = placed.glyphs.len() - text_placed;
-                            match &sides {
-                                None => bare.push((span.get().to_bits(), text_placed)),
-                                Some(_) if copies > 0 => {
-                                    work.sides_kept += 1;
-                                    let without = bare
-                                        .iter()
-                                        .find(|(at, _)| *at == span.get().to_bits())
-                                        .map_or(0, |b| b.1);
-                                    if text_placed < without {
-                                        work.text_lost_to_sides.push(format!(
-                                            "{what}: {text_placed} text glyphs beside {copies} copies, {without} without sides"
-                                        ));
-                                    }
-                                }
-                                Some(_) => {}
-                            }
                             most_tracks = most_tracks.max(tracks);
                             if tracks > MOST_TRACKS {
                                 faults.push(format!("{what}: {tracks} lines tracked"));
@@ -4223,9 +4203,11 @@ fn test_flow_halves_a_mixed_size_frame_s_touch_check_looks_within_its_classes() 
 /// pressed and cut there (ruling R34) — its half less the break cannot
 /// hold it.
 ///
-/// Control: with a side copy's room grown as the words' is, pressing the
-/// line, the frame with sides places 71 glyphs of its text. (No `do_*`
-/// twin: it reads a frame's placement.)
+/// Controls: with a side copy's room grown as the words' is, pressing the
+/// line, the frame with sides is laid again without them, and keeps no
+/// copy; with neither that nor the frame laid again without its sides
+/// where they cut it, it places 71 glyphs of its text. (No `do_*` twin:
+/// it reads a frame's placement.)
 #[test]
 fn test_flow_halves_a_frames_sides_cost_none_of_its_text() {
     let square = outline(
@@ -4282,30 +4264,82 @@ fn test_flow_halves_a_frames_sides_cost_none_of_its_text() {
     );
 }
 
-/// R48.3, ruling B15.5: over the aspect sweep, every frame whose sides
-/// keep copies places as many glyphs of its text as it does without
-/// sides: its sides cost it none.
+/// R48.3, ruling B15.5 (review 5801763546): a frame loses its sides
+/// before its text. Over the aspect sweep's outlines and texts
+/// ([`sweep_outlines`]), `Once` at each span, outward and inward, every
+/// frame whose sides keep a copy places as many glyphs of its text as it
+/// does without sides — with a `·` on its sides, which asks little room,
+/// and with forty of them, whose one copy asks more room at a junction
+/// than a thin outline's lines can leave beside it. And 188 of them keep
+/// their copies: the sides are left out only where the frame's text
+/// needs it.
 ///
-/// The sweep's sides, `·`, want little room, and its frames lost none at
-/// d7242d38 either. Control: with a side copy's room grown as the
-/// words' is, pressing a line, and each junction asking room for 40
-/// copies, three frames lose text — the 600 × 12 rectangle outward,
-/// `Once`, 114 glyphs of its text beside 21 copies where it places 124
-/// without sides — while with the copies' growth held to the slack the
-/// same 40 lose none. (No `do_*` twin: it reads the sweep.)
+/// Controls, each red: with a side copy's room grown as the words' is,
+/// pressing a line (B15.5's hold removed), 186 keep their copies — the
+/// frame laid again without sides keeps the text, and leaves two frames'
+/// sides out the hold keeps; with no frame laid again without its sides
+/// where they cut it, 6 frames lose text, inward round the 600 × 12
+/// rectangle, their later line cut apart the shorter beside lines drawn
+/// in for the sides' room (the Ecclesiastes line at span whole: 29
+/// glyphs of its text beside 40-dot sides, 30 without); with neither, 41.
+/// (No `do_*` twin: it reads a test helper's frames.)
 #[test]
 fn test_flow_halves_no_frame_of_the_sweep_loses_text_to_its_sides() {
-    let sweep = the_sweep();
+    let fit = FitMode::Once { filler: None };
+    let (mut kept, mut lost) = (0, Vec::new());
+    for (name, shape, _, points) in sweep_outlines() {
+        for text in [ECCLESIASTES, QUATRAIN] {
+            for outward in [true, false] {
+                for span in [
+                    LineSpan::WHOLE,
+                    LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+                    LineSpan::NATURAL,
+                ] {
+                    // Its text's glyphs placed, and its side copies'.
+                    let laid = |sides: Option<(String, Rgba)>| {
+                        let layout = RingLayout {
+                            span,
+                            sides,
+                            ..RingLayout::whole()
+                        };
+                        let (run, placed, _) = frame_with(text, points, &shape, &fit, &layout, outward);
+                        let text_placed = placed
+                            .glyphs
+                            .iter()
+                            .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+                            .count();
+                        (text_placed, placed.glyphs.len() - text_placed)
+                    };
+                    let (bare, _) = laid(None);
+                    for ornament in ["·".to_string(), "·".repeat(40)] {
+                        let (beside, copies) = laid(Some((ornament.clone(), Rgba::opaque(9, 9, 9))));
+                        if copies == 0 {
+                            continue;
+                        }
+                        kept += 1;
+                        if beside < bare {
+                            lost.push(format!(
+                                "{name} {:.8} {} span {} sides of {} bytes: {beside} glyphs of its text beside {copies} copies, {bare} without sides",
+                                text,
+                                if outward { "outward" } else { "inward" },
+                                span.get(),
+                                ornament.len()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
     assert!(
-        sweep.sides_kept >= 50,
-        "precondition: the sweep's frames keep their sides' copies ({})",
-        sweep.sides_kept
+        kept >= 188,
+        "{kept} frames keep their sides' copies, at least 188: a side left out where the frame's text does not need it"
     );
     assert!(
-        sweep.text_lost_to_sides.is_empty(),
+        lost.is_empty(),
         "{} frames lose text to their sides:\n{}",
-        sweep.text_lost_to_sides.len(),
-        sweep.text_lost_to_sides.join("\n")
+        lost.len(),
+        lost.join("\n")
     );
 }
 

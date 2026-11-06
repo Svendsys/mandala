@@ -135,6 +135,11 @@
 //! (ruling R31's lay, seeded by the text's end inks), on the frame's band
 //! curve at each copy's ink center, the ornament's ink no taller than the
 //! text's x-height.
+//! A frame loses its sides before its text (rulings R48.3, B15.5): a
+//! junction grows for a copy's room only within its lines' slack, and a
+//! frame that its sides' room leaves cut is laid again without them,
+//! keeping that lay, its arcs empty and reported, where it keeps more of
+//! its text.
 //! The ornament is shaped into the run as a line of its own, the way a
 //! `Once` filler is.
 
@@ -5175,86 +5180,138 @@ pub(super) fn place_halves(
         offset,
         drawn,
         side,
-        mut prepared,
-        mut lines,
-        mut clear,
-        mut met,
-        mut overlap,
+        prepared,
+        lines,
+        clear,
+        met,
+        overlap,
     } = built;
     // The frame's band curve where the size kept laid it, a later probe's
     // laid elsewhere (#308).
     lay.offset.set(offset);
     let side_of = side.as_ref().map(|range| (&drawn, range));
 
-    // A frame its halves hold even so by nothing is cut (rulings R34,
-    // R35.2): a line its half less the clearance cannot hold at its
-    // font's gap — a `Once` or `Spread` line at its size, a `Fit` line at
-    // its least — to what it can. A line its half holds is never cut
-    // (ruling R34): a junction short of a break, or two inks touching,
-    // where no line is pressed, is reported in the trace instead.
-    let mut truncated = (natural.truncated && sized) || prepared.iter().any(|p| p.cut);
-    for _ in 0..CUT_ROUNDS {
-        let holds = !lines.iter().any(|l| l.pressed) && met.iter().all(|&m| m) && !overlap;
-        if holds || lay.spent_all() {
-            break;
-        }
-        let mut changed = false;
-        for (p, line) in prepared.iter_mut().zip(&lines) {
-            if !line.pressed {
-                continue;
+    // The frame's last resorts, from its lines as laid with `clear` kept
+    // at each junction and `side_of` the ornament its junctions make room
+    // for: what it keeps, and whether it cut its text.
+    let resorts = |mut prepared: Vec<Prepared>,
+                   mut lines: Vec<Line>,
+                   mut clear: Clear,
+                   mut met: [bool; 2],
+                   mut overlap: bool,
+                   side_of: Option<(&ShapedRun, &Range<usize>)>| {
+        // A frame its halves hold even so by nothing is cut (rulings R34,
+        // R35.2): a line its half less the clearance cannot hold at its
+        // font's gap — a `Once` or `Spread` line at its size, a `Fit` line at
+        // its least — to what it can. A line its half holds is never cut
+        // (ruling R34): a junction short of a break, or two inks touching,
+        // where no line is pressed, is reported in the trace instead.
+        let mut truncated = (natural.truncated && sized) || prepared.iter().any(|p| p.cut);
+        for _ in 0..CUT_ROUNDS {
+            let holds = !lines.iter().any(|l| l.pressed) && met.iter().all(|&m| m) && !overlap;
+            if holds || lay.spent_all() {
+                break;
             }
-            if let Some(shorter) = lay.cut(&drawn, p, clear[p.half]) {
-                *p = shorter;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-        truncated = true;
-        // The clearance grown again from a share of the last: a cut
-        // line, stretched wider, wants as much or more (ruling R38.3).
-        let seed = clear.map(|half| half.map(|c| c * SEED_SHARE));
-        let cleared = lay.lay_clear(&drawn, &prepared, side_of, span, seed, BACKTRACKS);
-        (lines, clear, met) = (cleared.lines, cleared.clear, cleared.met);
-        overlap = overlapping(&lines, &lay.work);
-    }
-    // Two inks that still touch, every line its half holds: an outline
-    // too thin to hold the lines apart — inward round a flat outline,
-    // the two lines facing across it. The line that cannot be held
-    // beside the others is cut, the last first, to the longest prefix
-    // that touches nothing, or left out (ruling R38.1); a `Once` frame
-    // is not shrunk.
-    let mut cut_apart = Vec::new();
-    for i in (0..prepared.len()).rev() {
-        if !overlap || lay.spent_all() {
-            break;
-        }
-        if let Some((kept, cleared)) = lay.cut_apart(&drawn, &prepared, i, side_of, span, clear) {
-            cut_apart.push(prepared[i].half);
-            match kept {
-                Some(p) => prepared[i] = p,
-                None => {
-                    prepared.remove(i);
+            let mut changed = false;
+            for (p, line) in prepared.iter_mut().zip(&lines) {
+                if !line.pressed {
+                    continue;
+                }
+                if let Some(shorter) = lay.cut(&drawn, p, clear[p.half]) {
+                    *p = shorter;
+                    changed = true;
                 }
             }
-            (lines, met) = (cleared.lines, cleared.met);
-            overlap = false;
+            if !changed {
+                break;
+            }
+            truncated = true;
+            // The clearance grown again from a share of the last: a cut
+            // line, stretched wider, wants as much or more (ruling R38.3).
+            let seed = clear.map(|half| half.map(|c| c * SEED_SHARE));
+            let cleared = lay.lay_clear(&drawn, &prepared, side_of, span, seed, BACKTRACKS);
+            (lines, clear, met) = (cleared.lines, cleared.clear, cleared.met);
+            overlap = overlapping(&lines, &lay.work);
+        }
+        // Two inks that still touch, every line its half holds: an outline
+        // too thin to hold the lines apart — inward round a flat outline,
+        // the two lines facing across it. The line that cannot be held
+        // beside the others is cut, the last first, to the longest prefix
+        // that touches nothing, or left out (ruling R38.1); a `Once` frame
+        // is not shrunk.
+        let mut cut_apart = Vec::new();
+        for i in (0..prepared.len()).rev() {
+            if !overlap || lay.spent_all() {
+                break;
+            }
+            if let Some((kept, cleared)) = lay.cut_apart(&drawn, &prepared, i, side_of, span, clear) {
+                cut_apart.push(prepared[i].half);
+                match kept {
+                    Some(p) => prepared[i] = p,
+                    None => {
+                        prepared.remove(i);
+                    }
+                }
+                (lines, met) = (cleared.lines, cleared.met);
+                overlap = false;
+                truncated = true;
+            }
+        }
+        // A frame whose budget was spent while two of its inks still touch is
+        // cut to the inks that touch nothing (rulings R38.1, R44.2): never
+        // overlap wins over never cut, and a spent budget is no exception.
+        if overlap {
+            let (kept, halves_cut) = untouched(&lines, &lay.work);
+            lines = kept;
+            prepared.truncate(lines.len());
+            cut_apart.extend(halves_cut);
+            met = [0, 1].map(|j| lay.met(&lines, side_of, j).0);
+            overlap = overlapping(&lines, &lay.work);
             truncated = true;
         }
-    }
-    // A frame whose budget was spent while two of its inks still touch is
-    // cut to the inks that touch nothing (rulings R38.1, R44.2): never
-    // overlap wins over never cut, and a spent budget is no exception.
-    if overlap {
-        let (kept, halves_cut) = untouched(&lines, &lay.work);
-        lines = kept;
-        prepared.truncate(lines.len());
-        cut_apart.extend(halves_cut);
-        met = [0, 1].map(|j| lay.met(&lines, side_of, j).0);
-        overlap = overlapping(&lines, &lay.work);
-        truncated = true;
-    }
+        (prepared, lines, clear, met, overlap, truncated, cut_apart)
+    };
+    let bare_prepared = prepared.clone();
+    let (mut prepared, mut lines, mut clear, mut met, overlap, truncated, cut_apart) =
+        resorts(prepared, lines, clear, met, overlap, side_of);
+    // A frame loses its sides before its text (rulings R48.3, B15.5):
+    // where the frame its sides make room for is cut, it is laid again
+    // with no room made for them, and where that keeps more of its text,
+    // the sides are left out — every arc empty, and reported — and the
+    // frame keeps that text. A side copy's room grown within the lines'
+    // slack presses no line, but draws the lines in, and inward round an
+    // outline too thin for both, lines drawn in touch the more, and the
+    // one cut apart keeps the less (#308, review 5801763546: the
+    // Ecclesiastes line inward round the 600 × 12 rectangle, 29 glyphs of
+    // its text beside 40-dot sides, 30 without).
+    let kept_text = |lines: &[Line]| lines.iter().map(|l| l.tracked.glyphs.len()).sum::<usize>();
+    let mut sides_left_out = false;
+    let (overlap, truncated, cut_apart) = if side_of.is_some() && truncated && !lay.spent_all() {
+        let held = lay.sides.replace(None);
+        let sided_offset = lay.offset.get();
+        let zero: Clear = [[0.0; 2]; 2];
+        let cleared = lay.lay_clear(&drawn, &bare_prepared, None, span, zero, BACKTRACKS);
+        let bare_overlap = overlapping(&cleared.lines, &lay.work);
+        let bare = resorts(
+            bare_prepared,
+            cleared.lines,
+            cleared.clear,
+            cleared.met,
+            bare_overlap,
+            None,
+        );
+        if kept_text(&bare.1) > kept_text(&lines) {
+            sides_left_out = true;
+            (prepared, lines, clear, met) = (bare.0, bare.1, bare.2, bare.3);
+            (bare.4, bare.5, bare.6)
+        } else {
+            lay.offset.set(sided_offset);
+            lay.sides.replace(held);
+            (overlap, truncated, cut_apart)
+        }
+    } else {
+        (overlap, truncated, cut_apart)
+    };
     let mut unheld = unheld_of(&lines, met, overlap);
 
     // The side ornament round the junctions, and its share of the frame's
@@ -5268,7 +5325,14 @@ pub(super) fn place_halves(
     // times at most — unless that would press a line or touch two inks
     // the curve before did not, where the frame keeps the curve before.
     let tolerance = resolved(OFFSET_TOLERANCE, halves.length);
-    let mut laid_sides = side.as_ref().map(|range| lay.lay_sides(&drawn, range, &lines));
+    let mut laid_sides = side
+        .as_ref()
+        .filter(|_| !sides_left_out)
+        .map(|range| lay.lay_sides(&drawn, range, &lines));
+    if sides_left_out {
+        let arcs = side_arcs(&lines, halves.length).len();
+        unheld.sides.extend((0..arcs).map(|arc| (arc, SideLoss::Empty)));
+    }
     for _ in 0..OFFSET_ROUNDS {
         let Some(want) = laid_sides.as_ref().map(|laid| laid.want) else {
             break;
