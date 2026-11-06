@@ -25,3 +25,6 @@ mod ring_budget_tests;
 pub mod shape_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;
+/// A frame's work counted by kind of outline (#309).
+#[cfg(test)]
+mod work_tests;
