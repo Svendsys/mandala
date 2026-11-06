@@ -10,8 +10,8 @@ use glam::Vec2;
 
 use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
 use crate::flow::place::halves::{BUDGET_OVERRIDE, PAST_BUDGET};
-use crate::flow::place::ring::{ring_overshoot, RingLoss};
-use crate::flow::place::{place_on_closed_capped, Trace, RING_CROSSED, RING_LATE};
+use crate::flow::place::ring::{phase_two_steps, ring_overshoot, RingLoss};
+use crate::flow::place::{place_on_closed_capped, Trace, LAST_RING, RING_CROSSED, RING_LATE};
 use crate::flow::tests::halves_tests::with_seam;
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{outline, Outline, PlacedRun, Rect, RingLayout, MAX_PLACED_GLYPHS};
@@ -51,6 +51,10 @@ const CAPS: [usize; 4] = [1, 3, 64, 1_024];
 /// runs out of budget, between 880 and 900 glyph steps, its every probe
 /// found spent before one fit below.
 const FINE: std::ops::RangeInclusive<usize> = 700..=1_100;
+
+/// The budgets review 5800041728 found the long bidi copy's cut kept a
+/// part copy out of reading order at, between [`FINE`]'s fifths.
+const REVIEW_BUDGETS: [usize; 2] = [861, 867];
 
 /// The grid's outlines: an ellipse, a sharp rectangle and a rounded one,
 /// each 2,000 across at the origin, 2,000 across 10⁷ from it — where an
@@ -109,6 +113,11 @@ struct Laid {
     /// The probes and rounds of phase 2 it began with its budget spent
     /// (`RING_LATE`).
     late: usize,
+    /// What was held back for phase 2 when it began, whether the ring had
+    /// closed then (`RingWork::held_again`), and whether its copy has a
+    /// letter in it, which phase 2 lays in reading order.
+    held: (usize, bool),
+    letters: bool,
     loss: Option<RingLoss>,
     placed: PlacedRun,
 }
@@ -147,6 +156,11 @@ fn ring(text: &str, shape: &Outline, outward: bool, budget: Option<usize>, cap: 
                 glyphs: trace.glyphs,
                 crossed: RING_CROSSED.with(std::cell::Cell::get),
                 late: RING_LATE.with(std::cell::Cell::get),
+                held: LAST_RING
+                    .with(std::cell::Cell::get)
+                    .expect("a ring round a closed outline is recorded")
+                    .held,
+                letters: run.glyphs.iter().any(|glyph| glyph.letter),
                 loss: trace.ring,
                 placed,
             }
@@ -159,33 +173,42 @@ fn ring(text: &str, shape: &Outline, outward: bool, budget: Option<usize>, cap: 
 }
 
 /// One case of the grid: a ring laid at each of its budgets and caps,
-/// the last at its own, and whether its outline is one of those 10²²
-/// across.
+/// the last at its own, whether its outline is one of those 10²²
+/// across, and its text.
 struct Case {
     far: bool,
+    text: String,
     rings: Vec<Laid>,
 }
 
 /// Every ring of the grid: each of [`CONTENTS`] round each of
 /// [`outlines`], outward and inward, at [`GRID_CAP`] and each of
 /// [`BUDGETS`], at its own budget and each of [`CAPS`], and last at its
-/// own — and the long copy ([`long_copy`]). Laid once, by whichever test
+/// own — and the long copies ([`long_copies`]). Laid once, by whichever test
 /// asks first.
 fn grid() -> &'static [Case] {
     static GRID: std::sync::OnceLock<Vec<Case>> = std::sync::OnceLock::new();
     GRID.get_or_init(lay_grid)
 }
 
-/// A copy longer than its outline (ruling B17.1b): "MANDALA " sixty
-/// times, 480 glyphs, round an ellipse 300 across at the origin, outward
-/// — a ring too short for one copy, whose walk cuts the copy to the
-/// longest prefix in reading order that fits, by a binary search of lays
-/// that its budget reads before each cluster of.
-fn long_copy() -> (String, Outline) {
-    (
-        "MANDALA ".repeat(60),
-        outline(Rect::new(Vec2::ZERO, Vec2::splat(300.0)), Shape::Ellipse),
-    )
+/// The copies longer than their outline (ruling B17.1b): "MANDALA "
+/// sixty times, 480 glyphs, and a text of Latin and Hebrew words sixty
+/// times, 480 glyphs, whose visual order is not its reading order (review
+/// 5800041728) — each round [`long_copy_outline`], a ring too short for
+/// one copy, whose walk cuts the copy to the longest prefix in reading
+/// order that fits, by a binary search of lays that its budget reads
+/// before each cluster of.
+fn long_copies() -> [(&'static str, String); 2] {
+    [
+        ("a long copy", "MANDALA ".repeat(60)),
+        ("a long bidi copy", "abc אבג ".repeat(60)),
+    ]
+}
+
+/// The outline the long copies are laid round: an ellipse 300 across at
+/// the origin.
+fn long_copy_outline() -> Outline {
+    outline(Rect::new(Vec2::ZERO, Vec2::splat(300.0)), Shape::Ellipse)
 }
 
 /// One case's rings: `text` round `shape`, `outward` or not, at
@@ -228,24 +251,39 @@ fn lay_grid() -> Vec<Case> {
                 );
                 cases.push(Case {
                     far,
+                    text: text.to_string(),
                     rings: lay_case(&what, text, &shape, outward, &BUDGETS),
                 });
             }
         }
     }
-    let (text, shape) = long_copy();
-    let fine: Vec<usize> = FINE.step_by(5).collect();
-    cases.push(Case {
-        far: false,
-        rings: lay_case(
-            "a long copy round a 300 ellipse, outward",
-            &text,
-            &shape,
-            true,
-            &fine,
-        ),
-    });
+    for (k, (what, text)) in long_copies().into_iter().enumerate() {
+        let shape = long_copy_outline();
+        // The bidi copy at the two budgets review 5800041728 found its cut
+        // out of reading order at, too.
+        let review: &[usize] = if k == 1 { &REVIEW_BUDGETS } else { &[] };
+        let fine: Vec<usize> = FINE.step_by(5).chain(review.iter().copied()).collect();
+        cases.push(Case {
+            far: false,
+            rings: lay_case(
+                &format!("{what} round a 300 ellipse, outward"),
+                &text,
+                &shape,
+                true,
+                &fine,
+            ),
+            text,
+        });
+    }
     cases
+}
+
+/// The case of the grid laid of `text`.
+fn case_of(text: &str) -> &'static Case {
+    grid()
+        .iter()
+        .find(|case| case.text == text)
+        .expect("the grid lays every text it names")
 }
 
 /// #310: a ring reads its budget before every cluster its walks lay or
@@ -283,6 +321,12 @@ fn test_flow_ring_budget_a_ring_past_its_budget_takes_its_overshoot_at_most() {
         "precondition: a quarter of the rings or more have a walk stopped by their budget ({stopped} of {})",
         rings.len()
     );
+    let closed = rings.iter().filter(|r| r.held.1).count();
+    assert!(
+        closed * 8 >= rings.len(),
+        "precondition: an eighth of the rings or more close ({closed} of {})",
+        rings.len()
+    );
     let mut broken = Vec::new();
     for case in cases {
         let own = case
@@ -313,6 +357,14 @@ fn test_flow_ring_budget_a_ring_past_its_budget_takes_its_overshoot_at_most() {
                 broken.push(format!(
                     "{}: phase 2 began {} probes or rounds with its budget spent (late)",
                     laid.what, laid.late
+                ));
+            }
+            let (held, closed) = laid.held;
+            let owed = phase_two_steps(laid.placed.glyphs.len(), laid.letters);
+            if closed && held != owed {
+                broken.push(format!(
+                    "{}: closed, it held back {held} glyph steps for phase 2, where its work on its glyphs is {owed} and it runs on not at all (held)",
+                    laid.what
                 ));
             }
             if laid.loss.is_none() && (own.loss.is_some() || laid.placed != own.placed) {
@@ -346,7 +398,7 @@ fn test_flow_ring_budget_a_ring_past_its_budget_takes_its_overshoot_at_most() {
 /// lay's stop alone, red (8 rings).
 #[test]
 fn test_flow_ring_budget_a_copy_longer_than_its_outline_cut_short_says_so() {
-    let case = grid().last().expect("the grid lays the long copy last");
+    let case = case_of(&long_copies()[0].1);
     let own = case
         .rings
         .last()
@@ -409,11 +461,21 @@ fn test_flow_ring_budget_a_spent_ring_says_how_it_was_left() {
 
 /// The rings of the margin sweep (ruling B17.1a): a box-drawing border, a
 /// dot and a text, round the outlines review 5761697746 found ordinary
-/// rings ran out on and smaller ones, from 1,000 across to 200,000.
-const SWEEP: [(&str, &[f32]); 3] = [
+/// rings ran out on and smaller ones, from 1,000 across to 200,000; and
+/// two ornaments of sparse ink, a bar alone and a bar, a space and a dot
+/// (review 5800041728) — set by their ink, which is narrow beside their
+/// advance, so their steps are shorter than the advance their glyphs are
+/// estimated by, and each glyph works more. The review measured `✦ ·`,
+/// the ornament UNIFIED_ARCHITECTURE §6.2 names; no compiled face holds
+/// `✦`, so it is shaped by whatever face a host has (§T14), and the bar
+/// is the compiled faces' glyph of the same kind: ink a fifth of its
+/// advance.
+const SWEEP: [(&str, &[f32]); 5] = [
     ("─═", &[1_000.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0]),
     ("· ", &[1_000.0, 5_000.0, 15_000.0, 20_000.0]),
     ("MANDALA ", &[1_000.0, 10_000.0, 100_000.0, 200_000.0]),
+    ("|", &[5_000.0, 10_000.0, 20_000.0]),
+    ("| ·", &[5_000.0, 10_000.0, 20_000.0]),
 ];
 
 /// Ruling B17.1a: a ring's budget scales with the glyphs it will lay, as
@@ -424,8 +486,9 @@ const SWEEP: [(&str, &[f32]); 3] = [
 /// them takes: the margin R47.1 pins for frames. A ring's glyphs are the
 /// fewer of those it placed and those its budget was scaled by, so that
 /// neither an estimate past what it lays nor one short of it hides a
-/// ring's cost. 10.35 times, at this head: `─═` round an ellipse 15,000
-/// across, outward, 290.0 steps a glyph.
+/// ring's cost. 6.57 times, at this head: `| ·` round an ellipse 10,000
+/// across, outward, 456.8 steps a glyph (the review's `✦ ·` there, in its
+/// host's faces, 5.60).
 ///
 /// Control: with the budget scaled by one copy's glyphs, as before, red:
 /// twelve rings of the sweep — `─═` round the ellipses 10,000 to 20,000
@@ -516,5 +579,121 @@ fn test_flow_ring_budget_a_solve_no_gap_moves_stops_at_the_path_s_length() {
     assert!(
         (gap - 0.5).abs() < 0.01 && grained(gap) <= 0.0,
         "a miss that moves past the floats' grain is solved: {gap}"
+    );
+}
+
+/// Review 5800041728: a cut of a copy longer than its outline keeps the
+/// longest prefix of the copy in reading order (ruling R9.4), at every
+/// budget about where its budget runs out — those whose whole lay of the
+/// copy the budget stopped part way included, which kept what it had
+/// reached in visual order: for a text of Latin and Hebrew words, not a
+/// prefix in reading order (13 and 37 glyphs, at budgets 861 and 867,
+/// [`REVIEW_BUDGETS`], and 29 at 865) — and at every cap.
+///
+/// Precondition: the row's budgets lie on both sides of where the cut
+/// runs out, and some cut keeps glyphs of both directions. Control: with
+/// `lay_or_cut`'s whole lay keeping what it reached when the budget stops
+/// it, red (3 cuts).
+#[test]
+fn test_flow_ring_budget_a_cut_short_keeps_a_prefix_in_reading_order() {
+    let text = &long_copies()[1].1;
+    let case = case_of(text);
+    let run = with_fonts(|fs| real_run(text, &style(POINTS), fs));
+    // Each glyph's place in reading order: its span, and where its
+    // cluster starts in the span's text.
+    let reading = |index: u32| {
+        let glyph = &run.glyphs[index as usize];
+        (glyph.span, glyph.bytes.start)
+    };
+    let mut broken = Vec::new();
+    for laid in &case.rings {
+        let kept: std::collections::BTreeSet<u32> = laid.placed.glyphs.iter().map(|g| g.glyph).collect();
+        let last_kept = kept.iter().map(|&g| reading(g)).max();
+        let first_dropped = (0..run.glyphs.len() as u32)
+            .filter(|g| !kept.contains(g))
+            .map(reading)
+            .min();
+        if let (Some(last), Some(first)) = (last_kept, first_dropped) {
+            if first < last {
+                broken.push(format!(
+                    "{}: kept {} glyphs, one read after one it dropped (loss {:?})",
+                    laid.what,
+                    kept.len(),
+                    laid.loss
+                ));
+            }
+        }
+    }
+    let fine = || case.rings.iter().filter(|r| r.what.contains(", budget "));
+    let own = case
+        .rings
+        .last()
+        .expect("every case lays its ring at its own budget");
+    assert!(
+        fine().any(|r| r.placed.glyphs.is_empty()) && fine().any(|r| r.placed == own.placed),
+        "precondition: the row's budgets lie on both sides of where the cut runs out"
+    );
+    let hebrew = |g: &crate::flow::PlacedGlyph| {
+        text[run.glyphs[g.glyph as usize].bytes.start..]
+            .starts_with(|c: char| ('\u{5D0}'..='\u{5EA}').contains(&c))
+    };
+    assert!(
+        own.placed.glyphs.iter().any(hebrew) && !own.placed.glyphs.iter().all(hebrew),
+        "precondition: the cut keeps glyphs of both directions"
+    );
+    assert!(
+        broken.is_empty(),
+        "{} cuts are not a prefix in reading order:\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
+}
+
+/// The budget the run on is pinned at (ruling B17.1d): within the
+/// 4,096 glyph steps between the least budget at which [`RUN_ON_RING`]
+/// closes holding back the run on of where its walk would end, 269,158,
+/// and the least at which it closes holding back the run on of its whole
+/// path, 273,254.
+const RUN_ON_BUDGET: usize = 271_200;
+
+/// A ring whose path is long beside its line height, so that the run on
+/// of the whole of it is thousands of glyph steps: a text round an
+/// ellipse 100,000 across, outward.
+const RUN_ON_RING: (&str, f32) = ("MANDALA ", 100_000.0);
+
+/// Ruling B17.1d: a ring holds back the run on phase 2 would take of it
+/// left unclosed where its walk is, not of its whole path — so a ring
+/// whose budget covers its walk, its close and phase 2 with that hold
+/// closes, where the hold of its whole path would have stopped it.
+/// (Every closed ring of the grid holds back no run on in phase 2: the
+/// grid's bound, `held`.)
+///
+/// Precondition: 2 percent less, the ring does not close. Control: with
+/// the run on held from the path's start whatever the walk has laid
+/// (`RingWork::ends_by` doing nothing), red.
+#[test]
+fn test_flow_ring_budget_a_ring_holds_back_the_run_on_its_walk_leaves() {
+    let (text, size) = RUN_ON_RING;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(size)), Shape::Ellipse);
+    let closes = |laid: &Laid| !matches!(laid.loss, Some(RingLoss::Short | RingLoss::Unclosed));
+    let less = ring(
+        text,
+        &shape,
+        true,
+        Some(RUN_ON_BUDGET * 98 / 100),
+        MAX_PLACED_GLYPHS,
+    );
+    assert!(
+        !closes(&less),
+        "precondition: at {} glyph steps the ring does not close ({:?})",
+        RUN_ON_BUDGET * 98 / 100,
+        less.loss
+    );
+    let laid = ring(text, &shape, true, Some(RUN_ON_BUDGET), MAX_PLACED_GLYPHS);
+    assert!(
+        closes(&laid),
+        "at {RUN_ON_BUDGET} glyph steps the ring does not close ({:?}, {} spent): its walk held back more run on than its path leaves",
+        laid.loss,
+        laid.spent
     );
 }

@@ -28,8 +28,9 @@
 //! a budget scaled by one copy's glyphs ran out on ordinary rings —
 //! `─═` round an ellipse 10,000 across, `· ` round one 20,000 across
 //! (review 5761697746) — where a budget scaled by the ring's glyphs closes
-//! every ring of a sweep of ordinary ones with ten times the steps a
-//! glyph they take
+//! every ring of a sweep of ordinary ones, and holds six and a half times
+//! the most steps a glyph any of them takes: an ornament of sparse ink,
+//! whose glyphs step shorter than the advance they are estimated by
 //! (`test_flow_ring_budget_ordinary_rings_close_within_a_fifth_of_their_budget_a_glyph`).
 //!
 //! **Its cap.** The most glyphs the ring lays is an argument of its
@@ -359,6 +360,12 @@ pub(crate) struct RingWork {
     /// regrouping, begun with the budget spent ([`late`](Self::late)).
     #[cfg(test)]
     late: Cell<usize>,
+    /// What was held back for phase 2 when it began, and whether the ring
+    /// had closed then ([`held_again`](Self::held_again)).
+    #[cfg(test)]
+    held_again: Cell<(usize, bool)>,
+    #[cfg(test)]
+    was_closed: Cell<bool>,
 }
 
 impl RingWork {
@@ -394,6 +401,10 @@ impl RingWork {
             crossed: Cell::new(None),
             #[cfg(test)]
             late: Cell::new(0),
+            #[cfg(test)]
+            held_again: Cell::new((0, false)),
+            #[cfg(test)]
+            was_closed: Cell::new(false),
         }
     }
 
@@ -445,6 +456,16 @@ impl RingWork {
     /// with what its walk laid, its work held back for.
     pub(crate) fn lay_again(&self) {
         self.again.set(true);
+        #[cfg(test)]
+        self.held_again.set((self.held(), self.was_closed.get()));
+    }
+
+    /// What was held back for phase 2 when it began, and whether the ring
+    /// had closed then (ruling B17.1d): for a closed ring, phase 2's work
+    /// on its glyphs ([`phase_two_steps`]) and no run on.
+    #[cfg(test)]
+    pub(crate) fn held_again(&self) -> (usize, bool) {
+        self.held_again.get()
     }
 
     /// Whether the ring may lay a cluster that brings it to `glyphs`
@@ -478,6 +499,8 @@ impl RingWork {
     pub(crate) fn closed(&self, glyphs: usize) {
         self.reserve.set(phase_two_steps(glyphs, self.letters));
         self.run_on.set(0);
+        #[cfg(test)]
+        self.was_closed.set(true);
     }
 
     /// Note that a probe of phase 2's spacing solves, or a round of its

@@ -2029,10 +2029,11 @@ fn test_the_flow_properties_find_a_frame_past_its_work() {
 /// #310's property (rulings B17.1a, B17.2b): a `Repeat` ring that takes
 /// more than its cap's budget and the overshoot past it
 /// (`ring_work_steps`) fails, as does one the engine budgets past its cap,
-/// and one cut past its first copy that reports nothing — capped
-/// silently. A ring cut before one copy is the path's cut, owed no report.
+/// one that places more glyphs than its cap, and one cut past its first
+/// copy that reports nothing — capped silently. A ring cut before one
+/// copy is the path's cut, owed no report.
 ///
-/// Control: with each of the three never failing, red (that one).
+/// Control: with each of the four never failing, red (that one).
 #[test]
 fn test_the_flow_properties_find_a_ring_past_its_work() {
     use crate::flow::place::halves::frame_budget;
@@ -2082,6 +2083,10 @@ fn test_the_flow_properties_find_a_ring_past_its_work() {
         "a ring scaled by more glyphs than its cap fails"
     );
     trace.glyphs = cap;
+    assert!(
+        ring(&laid(cap + 1, false), &trace).is_err(),
+        "a ring placing more glyphs than its cap fails"
+    );
     let capped = laid(cap - cap % run.glyphs.len(), true);
     assert!(
         ring(&capped, &trace).is_err(),

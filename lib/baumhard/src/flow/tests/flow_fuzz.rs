@@ -261,12 +261,15 @@ impl InputWork {
     /// glyphs as `placed`, with `trace`: the most it may take,
     /// `ring_work_steps` of its cap (#310, rulings B17.1a, B17.2b). The
     /// engine scales a ring's budget by the glyphs it will lay, never more
-    /// than its cap, spends no more than its budget and the one cluster
-    /// past it that found it spent, and reports a ring its cap or its
-    /// budget cut short: properties. A ring cut (`PlacedRun::truncated`)
-    /// that kept a whole copy was stopped by one or the other, and says
-    /// how: the one cut that reports nothing is the path's, of a ring too
-    /// short for one copy, which keeps less than a copy.
+    /// than its cap, places no more than its cap, spends no more than its
+    /// budget and the one cluster past it that found it spent, and reports
+    /// a ring its cap cut short: properties. A ring cut
+    /// (`PlacedRun::truncated`) that kept a whole copy was stopped by its
+    /// cap, and says so: the one cut that reports nothing is the path's,
+    /// of a ring too short for one copy, which keeps less than a copy. A
+    /// ring its budget stopped after whole copies is not cut — it keeps
+    /// them, unclosed — so this does not see it; the ring grid's silence
+    /// check does (`ring_budget_tests`, ruling B17.1c).
     pub(crate) fn ring(
         &mut self,
         run: &ShapedRun,
@@ -288,6 +291,12 @@ impl InputWork {
             return Err(format!(
                 "{what}: a ring took {} glyph steps, past its budget of {} and its overshoot, {most} in all ({:?})",
                 trace.spent, trace.budget, trace.ring
+            ));
+        }
+        if placed.glyphs.len() > cap {
+            return Err(format!(
+                "{what}: a ring placed {} glyphs, past its cap of {cap} (ruling B17.2a)",
+                placed.glyphs.len()
             ));
         }
         if placed.truncated && copy > 0 && placed.glyphs.len() >= copy && trace.ring.is_none() {

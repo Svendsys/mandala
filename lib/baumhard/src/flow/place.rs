@@ -196,6 +196,17 @@ const LEVEL_ROUNDS: usize = 4;
 /// [`PlacedRun::truncated`].
 pub const MAX_PLACED_GLYPHS: usize = 1 << 16;
 
+/// The most glyphs a walk lays but a ring's, which has a cap of its own
+/// ([`RingWork::cap`]): [`MAX_PLACED_GLYPHS`] — in a test, the frame's
+/// cap seam's (`halves::CAP_OVERRIDE`), so that a short text reaches it.
+fn placed_cap() -> usize {
+    #[cfg(test)]
+    if let Some(cap) = halves::CAP_OVERRIDE.with(Cell::get) {
+        return cap;
+    }
+    MAX_PLACED_GLYPHS
+}
+
 /// How far inside its end condition a solved spacing lands: `Spread`
 /// and `Fit` end their last cluster's step within this of the path's
 /// length, and never past it.
@@ -755,6 +766,9 @@ pub(crate) struct LastRing {
     pub(crate) spent: usize,
     pub(crate) budget: usize,
     pub(crate) loss: Option<RingLoss>,
+    /// What was held back for phase 2 when it began, and whether the ring
+    /// had closed then (`RingWork::held_again`).
+    pub(crate) held: (usize, bool),
 }
 
 /// The extent a `w × h` box spans along unit direction `dir`.
@@ -1784,7 +1798,7 @@ impl PathWalk<'_> {
             if end.is_nan() || end > self.limit {
                 return Laid::Overran;
             }
-            if out.glyphs.len() + cluster.glyphs.len() > self.work.map_or(MAX_PLACED_GLYPHS, RingWork::cap) {
+            if out.glyphs.len() + cluster.glyphs.len() > self.work.map_or_else(placed_cap, RingWork::cap) {
                 return Laid::Capped;
             }
             let corner = match (body, center) {
@@ -2376,7 +2390,10 @@ impl PathWalk<'_> {
     /// [`Laid::Capped`], whatever its final lay, which keeps the prefix
     /// that fit (ruling B17.1b; review 5761697746: a ring whose every probe
     /// found its budget spent kept no cluster and reported nothing). Every
-    /// other walk's search reads a capped probe as one that overran.
+    /// other walk's search reads a capped probe as one that overran. On
+    /// every walk, clusters that pass the cap are cut as clusters that
+    /// pass the path's end are — the longest prefix in reading order that
+    /// fits under it — and the cut says so ([`Laid::Capped`]).
     ///
     /// Cost: one lay when everything fits; otherwise a sort of the
     /// clusters by reading order and a binary search over the prefix
@@ -2390,8 +2407,24 @@ impl PathWalk<'_> {
         out: &mut Laying,
     ) -> (Laid, bool) {
         let mark = out.mark();
+        // The worst stop of a lay below that a ring's budget or the cap
+        // stopped, not the path.
+        let mut stopped = None;
         match self.lay(glyphs, clusters, s, gap, out) {
             Laid::Overran => {}
+            // The cap reached part way through the whole lay: what it
+            // reached is a prefix in visual order too, so the cap cuts as
+            // the path does — the longest prefix in reading order that
+            // fits under it — and says so (`Laid::Capped`).
+            Laid::Capped => stopped = Some(Laid::Capped),
+            // A ring's budget spent part way through the whole lay leaves
+            // none of it, as below: what it reached is a prefix in visual
+            // order, which need not be one in reading order (review
+            // 5800041728).
+            Laid::Spent => {
+                out.truncate(mark);
+                return (Laid::Spent, false);
+            }
             laid => return (laid, false),
         }
         let mut order: Vec<usize> = (0..clusters.len()).collect();
@@ -2413,7 +2446,6 @@ impl PathWalk<'_> {
         // one that does not (all of them, just seen), or that a ring's
         // budget or its cap stopped: `stopped`, the worst such stop.
         let (mut fits, mut overruns) = (0usize, clusters.len());
-        let mut stopped = None;
         while overruns - fits > 1 {
             let middle = fits + (overruns - fits) / 2;
             match lay_prefix(middle, out) {
@@ -2900,6 +2932,7 @@ fn place(
                     spent,
                     budget,
                     loss: ring.loss(),
+                    held: ring.held_again(),
                 }))
             });
             RING_CROSSED.with(|crossed| crossed.set(ring.crossed()));

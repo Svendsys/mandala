@@ -369,6 +369,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             CannotCompileIntoTheLibrary,
         ),
         (
+            "flow/tests/place_tests.rs",
+            "test_flow_a_text_past_the_glyph_cap_keeps_a_prefix_in_reading_order",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "flow/tests/halves_tests.rs",
             "test_flow_halves_a_long_side_ornament_round_a_sharp_square_is_filled_in_few_lays",
             CannotCompileIntoTheLibrary,
