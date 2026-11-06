@@ -389,6 +389,15 @@ impl GlyphAtlas {
         self.max_side = self.color.side.max(self.mask.side);
     }
 
+    /// The format the color page was created in: the one
+    /// [`TargetEncoding::color_page_format`] picked for this atlas's
+    /// target. For the GPU-backed test that holds the pass to its
+    /// target's encoding.
+    #[cfg(test)]
+    pub(crate) fn color_page_format(&self) -> wgpu::TextureFormat {
+        self.color.texture.format()
+    }
+
     /// Running totals.
     pub(crate) fn counts(&self) -> AtlasCounts {
         self.counts

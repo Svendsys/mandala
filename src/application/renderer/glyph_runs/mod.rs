@@ -209,10 +209,12 @@ pub(crate) struct GlyphRunPass {
 }
 
 impl GlyphRunPass {
-    /// The pass for frames of `format` on `device`: an empty atlas, the
-    /// pipeline, and the buffers at their starting sizes.
-    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let encoding = TargetEncoding::of(format);
+    /// The pass for frames of `format` on `device`, whose colors are
+    /// written for `encoding` — `TargetEncoding::of(format)`, derived
+    /// once by `Renderer::new` for this pass and glyphon's atlas alike:
+    /// an empty atlas, the pipeline, and the buffers at their starting
+    /// sizes.
+    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat, encoding: TargetEncoding) -> Self {
         let atlas = GlyphAtlas::new(device, encoding);
         let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("glyph_runs params layout"),
@@ -315,6 +317,14 @@ impl GlyphRunPass {
     #[cfg(test)]
     pub(crate) fn freeze_atlas_growth(&mut self) {
         self.atlas.freeze_growth();
+    }
+
+    /// The encoding the pass writes colors for, and the format its
+    /// color page was created in. For the GPU-backed test that holds
+    /// both to the renderer's target.
+    #[cfg(test)]
+    pub(crate) fn encoding(&self) -> (TargetEncoding, wgpu::TextureFormat) {
+        (self.encoding, self.atlas.color_page_format())
     }
 
     /// What the last prepared frame held, and the running totals.

@@ -75,7 +75,7 @@ use super::run_native_init::{self, InitState};
 use super::shell::Shell;
 use super::Options;
 use crate::application::keybinds::KeybindConfig;
-use crate::application::renderer::{probe_adapter, AdapterPolicy};
+use crate::application::renderer::{probe_adapter, AdapterPolicy, Renderer};
 
 /// Set to make a missing adapter a failure rather than a skip.
 pub(super) const REQUIRE_ENV: &str = "MANDALA_REQUIRE_GPU";
@@ -91,6 +91,16 @@ pub(super) const HARNESS_SIZE: (u32, u32) = run_native_init::HEADLESS_SURFACE_SI
 fn probe() -> &'static Result<String, String> {
     static PROBE: OnceLock<Result<String, String>> = OnceLock::new();
     PROBE.get_or_init(|| block_on(probe_adapter(AdapterPolicy::Auto)))
+}
+
+/// The one GPU-backed fixture at a time, app or bare renderer. A
+/// poisoned lock means an earlier GPU-backed test panicked while
+/// holding its fixture, which is that test's failure, not this one's.
+fn one_at_a_time() -> MutexGuard<'static, ()> {
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// A missing adapter: skip with a note, or fail when CI demands that
@@ -118,6 +128,31 @@ pub(super) struct GpuApp {
     _one_at_a_time: MutexGuard<'static, ()>,
 }
 
+/// A bare renderer, headless, drawing in `format`, on this machine's
+/// adapter — for a test about a target the app's own launch never
+/// picks. `None`, after a `SKIPPED:` note, when no adapter can open a
+/// device and [`REQUIRE_ENV`] is unset. Holds the one-at-a-time guard
+/// for as long as it lives, as [`GpuApp`] does.
+pub(super) struct GpuRenderer {
+    pub(super) renderer: Renderer,
+    _one_at_a_time: MutexGuard<'static, ()>,
+}
+
+/// Build a [`GpuRenderer`] at [`HARNESS_SIZE`] in `format`.
+pub(super) fn headless_renderer_in(format: wgpu::TextureFormat) -> Option<GpuRenderer> {
+    if let Err(why) = probe() {
+        unavailable(why);
+        return None;
+    }
+    let guard = one_at_a_time();
+    let size = winit::dpi::PhysicalSize::new(HARNESS_SIZE.0, HARNESS_SIZE.1);
+    let renderer = block_on(Renderer::headless_in(size, format)).expect("the probed adapter opens a device");
+    Some(GpuRenderer {
+        renderer,
+        _one_at_a_time: guard,
+    })
+}
+
 /// Build the app on `map`, as `mandala --headless <map>` would build
 /// it, with the default keybinds: `None`, after a `SKIPPED:` note,
 /// when no adapter can open a device and [`REQUIRE_ENV`] is unset. The
@@ -136,12 +171,7 @@ pub(super) fn headless_app_with(map: &str, keybind_config: KeybindConfig) -> Opt
             return None;
         }
     };
-    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
-    // A poisoned lock means an earlier GPU-backed test panicked while
-    // holding its app, which is that test's failure, not this one's.
-    let guard = ONE_AT_A_TIME
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = one_at_a_time();
     eprintln!("gpu_harness: building the app on adapter {adapter:?}");
     let options = Options {
         mindmap_path: map.to_string(),

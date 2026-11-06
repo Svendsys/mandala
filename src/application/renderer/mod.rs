@@ -170,7 +170,9 @@ use web_time::Instant;
 use baumhard::font::{Attrs, Buffer};
 use glyphon::{Cache, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
-use target_encoding::TargetEncoding;
+// Also read by the GPU-backed test that checks what a renderer handed
+// its passes.
+pub(crate) use target_encoding::TargetEncoding;
 
 use rustc_hash::FxHashMap;
 
@@ -484,6 +486,11 @@ pub struct Renderer {
     /// GPU-backed tests (`Renderer::fill_census_of_last_frame`).
     #[cfg(test)]
     fill_census: backdrop::FillCensus,
+    /// The color mode glyphon's atlas was built with, kept by the test
+    /// build so the GPU-backed test can read what `Renderer::new` handed
+    /// it (glyphon keeps its own copy private).
+    #[cfg(test)]
+    glyphon_color_mode: glyphon::ColorMode,
     /// Clear color for the render pass: the map's resolved
     /// background, the one color drawn behind the whole canvas
     /// ([`Self::set_background`]). Starts as opaque black — the
@@ -702,20 +709,18 @@ impl Renderer {
     ) -> Renderer {
         let glyphon_cache = Cache::new(&device);
 
-        // glyphon decodes a glyph's color for an sRGB target and writes
-        // it as it is for a linear one, as the clear and the glyph-run
-        // pass do (`target_encoding`).
-        let mut atlas = TextAtlas::with_color_mode(
-            &device,
-            &queue,
-            &glyphon_cache,
-            surface_format,
-            TargetEncoding::of(surface_format).glyphon_color_mode(),
-        );
+        // How every pass writes a color to this target, derived once and
+        // handed to both glyph passes: glyphon decodes a glyph's color for
+        // an sRGB target and writes it as it is for a linear one, as the
+        // clear and the glyph-run pass do (`target_encoding`).
+        let encoding = TargetEncoding::of(surface_format);
+        let glyphon_color_mode = encoding.glyphon_color_mode();
+        let mut atlas =
+            TextAtlas::with_color_mode(&device, &queue, &glyphon_cache, surface_format, glyphon_color_mode);
         let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
-        let glyph_runs = glyph_runs::GlyphRunPass::new(&device, surface_format);
+        let glyph_runs = glyph_runs::GlyphRunPass::new(&device, surface_format, encoding);
         let camera = Camera2D::new(size.width, size.height);
 
         Renderer {
@@ -757,6 +762,8 @@ impl Renderer {
             backdrop_cell: None,
             #[cfg(test)]
             fill_census: backdrop::FillCensus::default(),
+            #[cfg(test)]
+            glyphon_color_mode,
             clear_color: Color {
                 r: 0.0,
                 g: 0.0,
@@ -871,6 +878,26 @@ impl Renderer {
     #[cfg(test)]
     pub(crate) fn fill_census_of_last_frame(&self) -> backdrop::FillCensus {
         self.fill_census
+    }
+
+    /// What `Renderer::new` handed the two glyph passes for this
+    /// renderer's target: glyphon's color mode, and the glyph-run pass's
+    /// encoding with the format of its color page. For the GPU-backed
+    /// test that builds a renderer on a linear target.
+    #[cfg(test)]
+    pub(crate) fn glyph_pass_encodings(&self) -> (glyphon::ColorMode, (TargetEncoding, TextureFormat)) {
+        (self.glyphon_color_mode, self.glyph_runs.encoding())
+    }
+
+    /// A headless renderer like `bootstrap_headless`'s, but drawing in
+    /// `format`, so a GPU-backed test can stand on a target the app's
+    /// own headless launch never picks — a linear one, the browser's
+    /// WebGPU case. `None` when no adapter opens a device.
+    #[cfg(test)]
+    pub(crate) async fn headless_in(size: PhysicalSize<u32>, format: TextureFormat) -> Option<Renderer> {
+        let instance = Instance::new(adapter::instance_descriptor());
+        let (_adapter, device, queue) = adapter::acquire(&instance, None, AdapterPolicy::Auto).await.ok()?;
+        Some(Self::new(device, queue, Sink::Headless, format, size))
     }
 
     /// The console's backdrop rectangle, in window pixels, while the

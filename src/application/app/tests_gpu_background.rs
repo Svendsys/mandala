@@ -413,3 +413,61 @@ fn test_a_resize_lays_the_open_console_out_again() {
     );
     draw(init);
 }
+
+/// **A renderer on a linear target hands both glyph passes the linear
+/// encoding**: built in `Bgra8Unorm` — the kind of target the browser's
+/// WebGPU surface always is, and one lavapipe renders to — glyphon's
+/// atlas is given `ColorMode::Web`, the glyph-run pass writes for
+/// `Linear`, and its color page is `Rgba8Unorm`, so a glyph colored like
+/// the background matches it there as on native. Then one frame is
+/// prepared and encoded into a texture of that format, so the pipelines
+/// built for it are the ones a frame uses.
+///
+/// Control: the app's own headless renderer, on its sRGB target, is
+/// handed the other answer for each — `Accurate`, `Srgb`,
+/// `Rgba8UnormSrgb` — so the linear answers are the target's and not
+/// constants.
+#[test]
+fn test_a_linear_target_hands_both_glyph_passes_the_linear_encoding() {
+    use super::gpu_harness::headless_renderer_in;
+    use crate::application::renderer::TargetEncoding;
+    use glyphon::ColorMode;
+    use wgpu::TextureFormat::{Bgra8Unorm, Rgba8Unorm, Rgba8UnormSrgb};
+
+    // The control first: the app's own renderer.
+    {
+        let Some(app) = headless_app(&map_path("testament.mindmap.json")) else {
+            return;
+        };
+        assert_eq!(
+            app.init.renderer.glyph_pass_encodings(),
+            (ColorMode::Accurate, (TargetEncoding::Srgb, Rgba8UnormSrgb)),
+            "the control: the app's sRGB target is handed the sRGB answers"
+        );
+    }
+    let Some(mut linear) = headless_renderer_in(Bgra8Unorm) else {
+        return;
+    };
+    assert_eq!(
+        linear.renderer.glyph_pass_encodings(),
+        (ColorMode::Web, (TargetEncoding::Linear, Rgba8Unorm)),
+        "a Bgra8Unorm renderer hands glyphon `Web`, and the run pass `Linear` with a linear color page"
+    );
+    linear
+        .renderer
+        .process_decree(crate::application::common::RenderDecree::StartRender);
+    let camera = Camera2D::new(HARNESS_SIZE.0, HARNESS_SIZE.1);
+    let deadline = Instant::now() + baumhard::font::fonts::FONT_SYSTEM_LOCK_TIMEOUT;
+    loop {
+        match linear
+            .renderer
+            .capture_frame(&camera, ModalLayer::Drawn, CanvasSource::Live, &mut || {})
+        {
+            Ok(_) => break,
+            Err(CaptureFailure::Skipped(FrameSkip::FontSystemContended)) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(other) => panic!("a frame on the linear target is drawn: {other:?}"),
+        }
+    }
+}
