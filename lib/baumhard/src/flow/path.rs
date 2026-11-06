@@ -272,6 +272,9 @@ pub(crate) struct ArcPath {
     table_samples: usize,
     /// The stretch the last lookup fell in ([`at_or_below`]).
     cursor: Cell<usize>,
+    /// The reads walked off this path so far ([`reads`](Self::reads)):
+    /// what a `Repeat` ring's work is counted in (#310).
+    reads: Cell<usize>,
 }
 
 impl ArcPath {
@@ -290,6 +293,7 @@ impl ArcPath {
             winding,
             table_samples: 0,
             cursor: Cell::new(0),
+            reads: Cell::new(0),
         };
         for stretch in stretches {
             if let Stretch::Table { params, .. } = &stretch {
@@ -460,6 +464,27 @@ impl ArcPath {
         self.table_samples
     }
 
+    /// How many times this path has been read: each point it has looked
+    /// up ([`at`](Self::at)), and each step a walk's memo answered in place
+    /// of the lookups it would have taken ([`read`](Self::read)). What a
+    /// `Repeat` ring's work is counted in (#310): every walk, measure and
+    /// lay of a placement reads its path, a few times a cluster where the
+    /// path runs straight and up to some thousands for an ornament's glyph
+    /// whose ink is set where the path's floats barely move it.
+    ///
+    /// Cost: O(1).
+    pub(crate) fn reads(&self) -> usize {
+        self.reads.get()
+    }
+
+    /// Count one read of the path: a lookup, or a step answered from a
+    /// walk's memo ([`reads`](Self::reads)).
+    ///
+    /// Cost: O(1).
+    pub(crate) fn read(&self) {
+        self.reads.set(self.reads.get().saturating_add(1));
+    }
+
     /// The point `s` along the path and the unit direction of travel
     /// there. A closed path wraps around (`s` past its length is a
     /// second lap); an open path holds its ends, so walking off one
@@ -469,6 +494,7 @@ impl ArcPath {
     pub(crate) fn at(&self, s: f32) -> (Vec2, Vec2) {
         #[cfg(test)]
         PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
+        self.read();
         if self.stretches.is_empty() {
             return (self.origin, Vec2::X);
         }

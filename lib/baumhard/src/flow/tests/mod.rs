@@ -19,6 +19,9 @@ pub mod lines_tests;
 pub mod outline_tests;
 pub mod place_tests;
 pub mod readable_tests;
+/// A `Repeat` ring's work budget: past it, and what it holds back.
+#[cfg(test)]
+mod ring_budget_tests;
 pub mod shape_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;
