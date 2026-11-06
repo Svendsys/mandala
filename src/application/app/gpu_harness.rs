@@ -146,7 +146,7 @@ pub(super) fn headless_renderer_in(format: wgpu::TextureFormat) -> Option<GpuRen
     }
     let guard = one_at_a_time();
     let size = winit::dpi::PhysicalSize::new(HARNESS_SIZE.0, HARNESS_SIZE.1);
-    let renderer = block_on(Renderer::headless_in(size, format)).expect("the probed adapter opens a device");
+    let renderer = block_on(Renderer::headless_in(size, format));
     Some(GpuRenderer {
         renderer,
         _one_at_a_time: guard,

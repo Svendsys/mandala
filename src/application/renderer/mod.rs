@@ -897,14 +897,18 @@ impl Renderer {
     /// A headless renderer like `bootstrap_headless`'s, but drawing in
     /// `format`, so a GPU-backed test can stand on a target the app's
     /// own headless launch never picks — a linear one, the browser's
-    /// WebGPU case. `None` when no adapter opens a device.
+    /// WebGPU case. The caller has probed for an adapter first
+    /// (`app::gpu_harness`), so one that then opens no device dies saying
+    /// so, as the headless bootstrap does.
     #[cfg(test)]
-    pub(crate) async fn headless_in(size: PhysicalSize<u32>, format: TextureFormat) -> Option<Renderer> {
+    pub(crate) async fn headless_in(size: PhysicalSize<u32>, format: TextureFormat) -> Renderer {
         let instance = Instance::new(adapter::instance_descriptor());
         let (_adapter, device, queue) = adapter::acquire(&instance, None, AdapterPolicy::Auto)
             .await
-            .ok()?;
-        Some(Self::new(device, queue, Sink::Headless, format, size))
+            .unwrap_or_else(|why| {
+                panic!("renderer: no GPU adapter could be used for a test's target: {why}")
+            });
+        Self::new(device, queue, Sink::Headless, format, size)
     }
 
     /// The console's backdrop rectangle, in window pixels, while the
