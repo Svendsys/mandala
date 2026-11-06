@@ -1304,11 +1304,11 @@ pub struct SweepWork {
     pub earlier: (usize, usize),
     /// The most an anchor lay off its frame's band curve, and the most a
     /// frame's anchors' distance from its outline spread (#308, ruling
-    /// B15.1, [`band_residual`]), and the frames each was the most of.
+    /// B15.1, `band_residual`), and the frames each was the most of.
     pub band: (f32, f32),
     pub band_worst: (String, String),
     /// The anchors measured so, and of them those where the band curve
-    /// folds ([`folded`]).
+    /// folds (`folded`).
     pub anchors: usize,
     pub folded: usize,
     /// The frames with sides that kept copies, and each that placed
@@ -1316,7 +1316,7 @@ pub struct SweepWork {
     pub sides_kept: usize,
     pub text_lost_to_sides: Vec<String>,
     /// The frames with anchors so, each round an outline thinner than
-    /// twice its offset along its lines ([`thin_along`]).
+    /// twice its offset along its lines (`thin_along`).
     pub thin_folded: usize,
 }
 
@@ -3595,7 +3595,7 @@ fn test_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
 /// rectangle with 20% corners, outward, `Once` at span whole, the upper
 /// line `a gypsy yogi pray` and the lower `hold all the bold hills`, each
 /// glyph whose anchor lies over a straight side of the outline has its
-/// baseline within [`BAND_RESIDUAL`] of every other's there, its
+/// baseline within `BAND_RESIDUAL` of every other's there, its
 /// ascender or descender hanging free of it: toward the outline, the
 /// nearest of the line's inks there, and its edge facing the outline
 /// clear of it (outward, the outline already its gap from what it

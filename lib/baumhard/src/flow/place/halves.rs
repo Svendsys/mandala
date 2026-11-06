@@ -1033,8 +1033,8 @@ struct Set {
     /// ([`ArcPath::offset_at`]).
     moves: Vec2,
     /// The outline's outward normal its anchor is offset along
-    /// ([`OffsetPoint::normal`]): at a sharp corner, the way from the
-    /// corner to it.
+    /// ([`OffsetPoint::normal`](crate::flow::path::OffsetPoint::normal)):
+    /// at a sharp corner, the way from the corner to it.
     normal: Vec2,
     /// How far it reaches toward and away from the outline (#308).
     reach: Reach,
