@@ -2794,7 +2794,9 @@ fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
     // at `scale = 4` into a 64-pixel image, a picker-sized rectangle
     // overhanging a small target on all four sides, and one wholly
     // outside its target.
-    let mut cases: Vec<((f32, f32, f32, f32), f32, (i32, i32))> = Vec::new();
+    // A window-pixel rectangle, the camera's ratio, and the target's size.
+    type Case = ((f32, f32, f32, f32), f32, (i32, i32));
+    let mut cases: Vec<Case> = Vec::new();
     for rect in rects {
         for ratio in [1.0_f32, 1.5, 2.0] {
             cases.push((rect, ratio, (4000, 3000)));

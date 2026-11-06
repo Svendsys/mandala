@@ -171,9 +171,10 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
             // reached from a committed seed and not only in a fuzzing run.
             "tamper_two_edits" => {
                 got.outcome == "none: loaded"
-                    && got.tamper.as_ref().is_some_and(|read| {
-                        read.faults.len() == 2 && read.faults[0] != read.faults[1]
-                    })
+                    && got
+                        .tamper
+                        .as_ref()
+                        .is_some_and(|read| read.faults.len() == 2 && read.faults[0] != read.faults[1])
             }
             // A bounded field written past its bound, refused as `Bound`
             // at its path, so a dropped check fails on the seed itself.
@@ -690,4 +691,3 @@ fn test_every_fuzz_input_fits_its_targets_max_len() {
         "precondition: the deep-chain seeds are read ({longest} bytes the longest)"
     );
 }
-

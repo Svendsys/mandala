@@ -385,15 +385,27 @@ fn test_a_resize_lays_the_open_console_out_again() {
         return;
     };
     let init = &mut app.init;
-    act(init, json!({"id": 1, "cmd": "act.action", "action": "OpenConsole"}));
+    act(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "OpenConsole"}),
+    );
     assert!(init.console_state.is_open(), "precondition: the console is open");
     draw(init);
-    let before = init.renderer.console_backdrop_extent().expect("an open console has a backdrop");
+    let before = init
+        .renderer
+        .console_backdrop_extent()
+        .expect("an open console has a backdrop");
 
     let (width, height) = (HARNESS_SIZE.0 + 320, HARNESS_SIZE.1 + 240);
     init.resize_surface(width, height);
-    let after = init.renderer.console_backdrop_extent().expect("the console is still open");
-    assert_ne!(after, before, "the resize moves the console's backdrop to the new size, where a kept layout leaves it");
+    let after = init
+        .renderer
+        .console_backdrop_extent()
+        .expect("the console is still open");
+    assert_ne!(
+        after, before,
+        "the resize moves the console's backdrop to the new size, where a kept layout leaves it"
+    );
 
     // A fresh rebuild at the new size, as the next keystroke would make.
     let doc = init.document.as_ref().expect("the harness builds a document");
@@ -404,8 +416,14 @@ fn test_a_resize_lays_the_open_console_out_again() {
         &mut init.renderer,
         &init.keybinds,
     );
-    let fresh = init.renderer.console_backdrop_extent().expect("the console is still open");
-    assert_eq!(after, fresh, "the resize lays the console out as a rebuild at the new size does");
+    let fresh = init
+        .renderer
+        .console_backdrop_extent()
+        .expect("the console is still open");
+    assert_eq!(
+        after, fresh,
+        "the resize lays the console out as a rebuild at the new size does"
+    );
     let (_, top, _, h) = after;
     assert!(
         (top + h) <= height as f32 && (height as f32 - (top + h)) < 64.0,

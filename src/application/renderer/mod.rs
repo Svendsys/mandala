@@ -715,8 +715,13 @@ impl Renderer {
         // clear and the glyph-run pass do (`target_encoding`).
         let encoding = TargetEncoding::of(surface_format);
         let glyphon_color_mode = encoding.glyphon_color_mode();
-        let mut atlas =
-            TextAtlas::with_color_mode(&device, &queue, &glyphon_cache, surface_format, glyphon_color_mode);
+        let mut atlas = TextAtlas::with_color_mode(
+            &device,
+            &queue,
+            &glyphon_cache,
+            surface_format,
+            glyphon_color_mode,
+        );
         let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
@@ -896,7 +901,9 @@ impl Renderer {
     #[cfg(test)]
     pub(crate) async fn headless_in(size: PhysicalSize<u32>, format: TextureFormat) -> Option<Renderer> {
         let instance = Instance::new(adapter::instance_descriptor());
-        let (_adapter, device, queue) = adapter::acquire(&instance, None, AdapterPolicy::Auto).await.ok()?;
+        let (_adapter, device, queue) = adapter::acquire(&instance, None, AdapterPolicy::Auto)
+            .await
+            .ok()?;
         Some(Self::new(device, queue, Sink::Headless, format, size))
     }
 

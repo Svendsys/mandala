@@ -223,7 +223,11 @@ impl InitState {
         self.renderer
             .process_decree(RenderDecree::SetSurfaceSize(width, height));
         if self.color_picker_state.is_open() {
-            rebuild_color_picker_overlay(&mut self.color_picker_state, &mut self.app_scene, &mut self.renderer);
+            rebuild_color_picker_overlay(
+                &mut self.color_picker_state,
+                &mut self.app_scene,
+                &mut self.renderer,
+            );
         }
         if self.console_state.is_open() {
             if let Some(doc) = self.document.as_ref() {
