@@ -767,7 +767,7 @@ fn test_flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_si
 }
 
 /// #308 (review 5801763546): a closed path's offset curve
-/// ([`ArcPath::offset_at`]) lies its offset from the outline all round,
+/// (`ArcPath::offset_at`) lies its offset from the outline all round,
 /// and moves on continuously, inside a sharp corner whose side the path's
 /// seam cuts in two as well as anywhere: round a 200 × 20 rectangle
 /// started at the middle of its left side, as a frame's halves are, and

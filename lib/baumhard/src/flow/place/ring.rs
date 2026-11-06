@@ -146,7 +146,7 @@ pub(crate) const RING_STEPS: usize = 256;
 const PHASE_TWO_GLYPH_PASSES: usize = 3;
 
 /// The most reads one point an ornament's ink is set at takes
-/// ([`PathWalk::ink_point`](super::PathWalk::ink_point)): the point, and
+/// ([`PathWalk::ink_at`](super::PathWalk::ink_at)): the point, and
 /// pushed outward, the two ends of the chord it is pushed off along.
 const INK_READS: usize = 3;
 

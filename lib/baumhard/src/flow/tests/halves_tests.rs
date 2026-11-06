@@ -1341,7 +1341,7 @@ pub struct SweepWork {
     pub band: (f32, f32),
     pub band_worst: (String, String),
     /// Over the frames laid outward, the most and least the most reach of
-    /// a frame's inks toward the outline ([`band_residual`]) lies past its
+    /// a frame's inks toward the outline (`band_residual`) lies past its
     /// offset, and the frames each was of.
     pub reach: (f32, f32),
     pub reach_worst: (String, String),
@@ -4024,7 +4024,10 @@ fn test_flow_halves_a_slide_stops_at_a_step_and_nowhere_else() {
     use crate::flow::place::halves::steps_between_seam;
     let at = 1e30_f32;
     let step = at * f32::EPSILON;
-    let rows: [(&str, (f32, f32), (f32, f32), f32, bool); 13] = [
+    // What each row is, its start short of the clearance and its miss,
+    // its start past it, the tolerance, and whether its end steps.
+    type Row = (&'static str, (f32, f32), (f32, f32), f32, bool);
+    let rows: [Row; 13] = [
         (
             "the 50:1 ellipse's step",
             (1301.0331, -0.0011),
