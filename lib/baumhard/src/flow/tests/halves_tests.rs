@@ -1884,6 +1884,9 @@ pub fn do_flow_halves_a_crowded_frame_shrinks_or_cuts() {
 /// at 911.0593 on the one, 911.0309 on the other. So the three spans are
 /// laid on the ½ frame's own curve (`OFFSET_OVERRIDE`), each frame
 /// held to having laid there (a precondition), and the mean is exact.
+/// As ruled on review 5801763546: R33's mean holds within a frame, on
+/// that frame's own curve; ends on curves at different offsets are not
+/// one quantity.
 /// Control: with the natural frame laid on its own curve again, the
 /// psalm's end at 989.3153 misses the mean of 911.0593 and 1067.5997 by
 /// 0.014, past the hundredth. (No `do_*` twin: it reads a test seam.)
