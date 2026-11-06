@@ -227,7 +227,7 @@ const SCRIPT_RUNS: [(AppFont, char); 1] = [(AppFont::MandalaOrnaments, 'ب')];
 
 /// What `text`, shaped alone at `weight` in the family `family`, is
 /// drawn in: each glyph's face, PostScript name and glyph id. Test builds
-/// only, as its one caller is.
+/// only, as its callers are.
 #[cfg(test)]
 fn drawn(
     fs: &mut cosmic_text::FontSystem,
@@ -238,8 +238,19 @@ fn drawn(
     let attrs = cosmic_text::Attrs::new()
         .family(cosmic_text::Family::Name(family))
         .weight(cosmic_text::Weight(weight));
+    drawn_with(fs, text, &attrs)
+}
+
+/// What `text`, shaped alone with `attrs`, is drawn in, as [`drawn`]
+/// reads it.
+#[cfg(test)]
+fn drawn_with(
+    fs: &mut cosmic_text::FontSystem,
+    text: &str,
+    attrs: &cosmic_text::Attrs<'_>,
+) -> Vec<(cosmic_text::fontdb::ID, String, u16)> {
     let mut buffer = cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(16.0, 20.0));
-    buffer.set_text(text, &attrs, cosmic_text::Shaping::Advanced, None);
+    buffer.set_text(text, attrs, cosmic_text::Shaping::Advanced, None);
     buffer.shape_until_scroll(fs, false);
     let glyphs: Vec<(cosmic_text::fontdb::ID, u16)> = buffer
         .layout_runs()
@@ -353,6 +364,119 @@ fn test_a_pinned_span_draws_each_ornament_in_its_compiled_face_before_a_host_fac
                 "{c:?} in {text:?} at {weight}: drawn in {name} (glyph {glyph})"
             )),
             None => faults.push(format!("{c:?} in {text:?} at {weight}: {count} glyphs")),
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} ornaments not drawn in their compiled face:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// #297 at every weight and both slants: a span that pins no family, as
+/// `flow::span_attrs` shapes an `AppFont::Any` span (cosmic-text's
+/// default attributes, the span's weight as written), draws `✦ ❦ ♪ ∙ ◈`
+/// and `🌸` in their compiled faces at each of [`FALLBACK_WEIGHTS`],
+/// upright and italic, though a host face holding them is reached first
+/// at that weight: the test build's decoys in `FreeSans` and `Noto Color
+/// Emoji` at every weight (`fonts::ORNAMENT_DECOYS`). A pinned span asks
+/// for the weights its family has (R30); an unpinned one asks for any.
+///
+/// The span's own face comes first, and for an unpinned span that is the
+/// host's default sans-serif face where it has one, so a code point that
+/// face holds is not a case; none on this machine or CI, and `✦` and
+/// `🌸` must be cases everywhere. The italic half holds the matcher's
+/// not filtering on slant, which the fallback relies on: the upright face
+/// draws an italic span's ornament, skewed. Plain, not a `do_*()` pair:
+/// it reads the test build's decoys.
+///
+/// Control: with the faces at their own weight only (no
+/// `register_every_weight`), red at the eight weights but 400, the faces'
+/// own, upright and italic, in the decoys or a host face of that weight.
+#[test]
+fn test_an_unpinned_span_draws_each_ornament_in_its_compiled_face_at_every_weight() {
+    use cosmic_text::fontdb::{Family, Query, Stretch, Style, Weight};
+    fonts::init();
+    let candidates: [(char, AppFont); 6] = [
+        ('✦', AppFont::MandalaOrnaments),
+        ('❦', AppFont::MandalaOrnaments),
+        ('♪', AppFont::MandalaOrnaments),
+        ('∙', AppFont::MandalaOrnaments),
+        ('◈', AppFont::MandalaOrnaments),
+        ('🌸', AppFont::MandalaEmoji),
+    ];
+    let (decoys, defaults_hold, results) = {
+        let mut fs = acquire_font_system_write("ornament_tests::unpinned");
+        let names: Vec<String> = fs.db().faces().map(|f| f.post_script_name.clone()).collect();
+        let decoys: Vec<(String, bool)> = fonts::ORNAMENT_DECOYS
+            .iter()
+            .map(|(font, family, weight)| {
+                let name = fonts::ornament_decoy_name(*font, family, *weight);
+                let found = names.contains(&name);
+                (name, found)
+            })
+            .collect();
+        let mut defaults_hold: Vec<(char, u16, String)> = Vec::new();
+        let mut results = Vec::new();
+        for weight in FALLBACK_WEIGHTS {
+            for style in [Style::Normal, Style::Italic] {
+                let query = Query {
+                    families: &[Family::SansSerif],
+                    weight: Weight(weight),
+                    stretch: Stretch::Normal,
+                    style,
+                };
+                let default = fs.db().query(&query);
+                for (c, font) in candidates {
+                    let held = default.is_some_and(|id| {
+                        fs.db()
+                            .with_face_data(id, |data, index| {
+                                FontRef::from_index(data, index)
+                                    .ok()
+                                    .and_then(|face| face.charmap().map(c))
+                                    .is_some()
+                            })
+                            .unwrap_or(false)
+                    });
+                    if held {
+                        let name = default
+                            .and_then(|id| fs.db().face(id))
+                            .map_or_else(String::new, |f| f.post_script_name.clone());
+                        defaults_hold.push((c, weight, name));
+                        continue;
+                    }
+                    let attrs = cosmic_text::Attrs::new().weight(Weight(weight)).style(style);
+                    let glyphs = drawn_with(&mut fs, &c.to_string(), &attrs);
+                    results.push((c, font, weight, style, glyphs.first().cloned(), glyphs.len()));
+                }
+            }
+        }
+        (decoys, defaults_hold, results)
+    };
+    for (name, found) in &decoys {
+        assert!(found, "precondition: the host decoy {name} is registered");
+    }
+    for c in ['✦', '🌸'] {
+        assert!(
+            !defaults_hold.iter().any(|(held, _, _)| *held == c),
+            "precondition: no host default face holds {c:?}, so it falls back ({defaults_hold:?})"
+        );
+    }
+    assert!(
+        results.len() >= 2 * FALLBACK_WEIGHTS.len() * 2,
+        "precondition: every weight and both slants are shaped ({} cases)",
+        results.len()
+    );
+    let mut faults = Vec::new();
+    for (c, font, weight, style, glyph, count) in results {
+        let ids = &fonts::COMPILED_FONT_ID_MAP[&font];
+        match glyph {
+            Some((id, _, glyph)) if ids.contains(&id) && glyph != 0 => {}
+            Some((_, name, glyph)) => faults.push(format!(
+                "{c:?} at {weight} {style:?}: drawn in {name} (glyph {glyph})"
+            )),
+            None => faults.push(format!("{c:?} at {weight} {style:?}: {count} glyphs")),
         }
     }
     assert!(

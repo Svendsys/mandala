@@ -152,24 +152,52 @@ pub(crate) const DECOY_FAMILY: &str = "Noto Sans";
 
 /// Where [`register_host_decoys`] registers a copy of each ornament
 /// fallback face (#297), as `(face, family, weight)`: a host face that
-/// holds the ornaments, in a common fallback family of cosmic-text's at
-/// the regular and the bold weight (the weights the compiled text faces
-/// have, which no R30 decoy takes), and, for the ornaments, in the script
-/// fallback family a run of Arabic tries first (an emoji is shaped as a
-/// word of its own, with no script). Without the ornament fallback a span
-/// whose face lacks an ornament is drawn in one of these on every
-/// machine, as it is drawn in DejaVu Sans or Noto Color Emoji on a
-/// desktop. Each face has families of its own: cosmic-text tries one face
-/// of a family, and sorts a color face first, so an emoji copy would
-/// shadow an ornament copy beside it.
+/// holds the ornaments, in cosmic-text's common fallback families, and,
+/// for the ornaments, in the script fallback family a run of Arabic
+/// tries first (an emoji is shaped as a word of its own, with no script).
+/// Without the ornament fallback a span whose face lacks an ornament is
+/// drawn in one of these on every machine, as it is drawn in DejaVu Sans
+/// or Noto Color Emoji on a desktop.
+///
+/// - The ornaments in [`DECOY_FAMILY`] at the regular and the bold weight,
+///   the weights a pinned compiled text face asks for, which no R30 decoy
+///   takes; and in `FreeSans`, which no R30 decoy takes at all, at every
+///   one of [`fallback::FALLBACK_WEIGHTS`], the weights an unpinned span
+///   asks for as written.
+/// - The emoji in `Noto Color Emoji`, at every one of them.
+///
+/// Each face has families of its own: cosmic-text tries one face of a
+/// family, and sorts a color face first, so an emoji copy would shadow an
+/// ornament copy beside it.
 #[cfg(test)]
-pub(crate) const ORNAMENT_DECOYS: [(AppFont, &str, u16); 5] = [
-    (AppFont::MandalaOrnaments, DECOY_FAMILY, 400),
-    (AppFont::MandalaOrnaments, DECOY_FAMILY, 700),
-    (AppFont::MandalaOrnaments, "Noto Sans Arabic", 400),
-    (AppFont::MandalaEmoji, "Noto Color Emoji", 400),
-    (AppFont::MandalaEmoji, "Noto Color Emoji", 700),
-];
+pub(crate) const ORNAMENT_DECOYS: [(AppFont, &str, u16); 21] = {
+    use AppFont::{MandalaEmoji as E, MandalaOrnaments as O};
+    const FREE: &str = "FreeSans";
+    const EMOJI: &str = "Noto Color Emoji";
+    [
+        (O, DECOY_FAMILY, 400),
+        (O, DECOY_FAMILY, 700),
+        (O, "Noto Sans Arabic", 400),
+        (O, FREE, 100),
+        (O, FREE, 200),
+        (O, FREE, 300),
+        (O, FREE, 400),
+        (O, FREE, 500),
+        (O, FREE, 600),
+        (O, FREE, 700),
+        (O, FREE, 800),
+        (O, FREE, 900),
+        (E, EMOJI, 100),
+        (E, EMOJI, 200),
+        (E, EMOJI, 300),
+        (E, EMOJI, 400),
+        (E, EMOJI, 500),
+        (E, EMOJI, 600),
+        (E, EMOJI, 700),
+        (E, EMOJI, 800),
+        (E, EMOJI, 900),
+    ]
+};
 
 /// The PostScript name of the copy of the ornament fallback face `font`
 /// that [`register_host_decoys`] registers under `family` at `weight`.
