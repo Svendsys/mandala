@@ -60,6 +60,11 @@ tinyvec = "1.13.3"
 # this version, through cosmic-text and parking_lot.
 smallvec = "1.16.3"
 unicode-segmentation = "1.13.3"
+# The type `cosmic_text::Fallback::script_fallback` takes, which
+# cosmic-text does not re-export: `font::fallback` implements the trait
+# to put the compiled ornament faces first (#297). Already in the
+# lockfile, at this version, through cosmic-text.
+unicode-script = "0.5.8"
 rustc-hash.workspace = true
 strum.workspace = true
 strum_macros.workspace = true

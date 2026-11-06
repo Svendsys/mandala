@@ -836,7 +836,8 @@ pub fn do_flow_halves_sides_hold_the_junctions() {
     // One-glyph ornaments, at whole and ½; then copies of several glyphs
     // (`"¤ ¤"`, `"<·>"`), one with spaces round it (`" · "`) and one with
     // no side bearings (`"_"`), at whole: each a glyph the compiled faces
-    // hold (§T14; `✦` and `─` once, which no compiled face inks).
+    // hold (§T14; `✦` and `─` once, which no compiled face inked then;
+    // `✦` is the ornament fallback's since #297).
     let ornaments: [(&str, &[LineSpan]); 7] = [
         ("·", &[LineSpan::WHOLE, half]),
         ("¤", &[LineSpan::WHOLE, half]),
@@ -1097,7 +1098,7 @@ pub fn do_flow_halves_a_repeat_ring_takes_its_spacing() {
         let (run, placed) = ring(pattern, spacing);
         let inks: Vec<(Vec2, Vec2)> = inks(&run, &placed).into_iter().flatten().collect();
         // A ring of a glyph with no outline has no ink to measure its gaps
-        // by (`✦` on the compiled faces alone, which have no such glyph).
+        // by (`✦` on the compiled faces alone, before #297 gave them one).
         let (Some(&first), Some(&last)) = (inks.first(), inks.last()) else {
             panic!(
                 "precondition: a {pattern:?} ring at spacing {spacing} lays inked copies ({} glyphs, none inked)",

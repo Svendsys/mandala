@@ -72,6 +72,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "flow_structured_every_face"
+path = "fuzz_targets/flow_structured_every_face.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "glyph_mutation_raw"
 path = "fuzz_targets/glyph_mutation_raw.rs"
 test = false

@@ -12,7 +12,7 @@ use crate::document::values::Align;
 use crate::document::values::{FontSize, Rgba, Weight};
 use crate::flow::tests::flow_fuzz::{
     check_box, check_flow_bytes, check_flow_bytes_in_every_fit, check_flow_generated,
-    check_flow_structured_as_found, check_placement, check_run,
+    check_flow_generated_in, check_flow_structured_as_found, check_placement, check_run, every_face,
 };
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{shape_box, shape_run, FlowSpan, PlacedGlyph, PlacedRun, RingLayout, FILLER_SPAN};
@@ -66,6 +66,38 @@ fn test_generated_flows_hold_every_flow_property() {
         if let Err(why) = check_flow_generated(&mut Choices::seeded(seed)) {
             panic!("seed {seed}: {why}");
         }
+    }
+}
+
+/// The sweep above over [`every_face`]: `faces()` and the ornament
+/// fallback's two (#297), which a map's `font` can pin as it pins any
+/// other. `faces()` stays as it is, since every committed structured seed
+/// and finding chose its faces from that list; this sweep and the
+/// flow_structured_every_face target are where a span pins `Mandala
+/// Ornaments` or `Mandala Emoji`, the second the first compiled face with
+/// no outline and no space. The seeds are other inputs than the sweep
+/// above's, the list being longer.
+///
+/// Precondition: each fallback face is pinned by some seed's spans or
+/// flow, so the sweep cannot pass without meeting them. Control: with
+/// `every_face` returning `faces()` alone, red on it.
+#[test]
+fn test_generated_flows_over_every_face_hold_every_flow_property() {
+    let faces = every_face();
+    let mut pinned: Vec<AppFont> = Vec::new();
+    for seed in 0..100 {
+        match check_flow_generated_in(&mut Choices::seeded(seed), &faces) {
+            Ok(fonts) => pinned.extend(fonts),
+            Err(why) => panic!("seed {seed}: {why}"),
+        }
+    }
+    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK {
+        let times = pinned.iter().filter(|pin| *pin == font).count();
+        assert!(
+            times > 0,
+            "precondition: a span of the sweep pins {font:?} (pinned {} faces)",
+            pinned.len()
+        );
     }
 }
 

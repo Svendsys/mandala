@@ -99,6 +99,7 @@ dependencies = [
  "strum_macros",
  "tinyvec",
  "ttf-parser",
+ "unicode-script",
  "unicode-segmentation",
  "walkdir",
  "workspace-hack",

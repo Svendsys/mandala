@@ -611,23 +611,53 @@ pub fn check_flow_structured(bytes: &[u8]) -> Result<(), String> {
 /// in. It is not held to the per-input work bound, which is the fuzz
 /// timeout's, and a test has none.
 pub fn check_flow_structured_as_found(bytes: &[u8]) -> Result<(), String> {
-    check_generated(&mut Choices::new(bytes), false)
+    check_generated(&mut Choices::new(bytes), false, &faces())
 }
 
 /// [`check_flow_structured`] for choices from any source.
 pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
-    check_generated(choices, true)
+    check_generated(choices, true, &faces())
 }
 
-/// [`check_flow_generated`]'s body, a frame's text held to what it lays
-/// inside the fuzz timeout with `bounded`, and to what it laid when the
-/// findings were found without.
-fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), String> {
+/// Every property of the flow `bytes` choose, its spans' faces drawn
+/// from [`every_face`]: the flow_structured_every_face target's whole
+/// body (#297). The same generator as [`check_flow_structured`], over a
+/// list that also holds the ornament fallback's faces, so an input pins
+/// `Mandala Ornaments` or `Mandala Emoji` as a map may; a finding here
+/// replays in the face it was found in, as a flow_structured one does in
+/// `faces()`.
+pub fn check_flow_structured_every_face(bytes: &[u8]) -> Result<(), String> {
+    check_generated(&mut Choices::new(bytes), true, &every_face())
+}
+
+/// [`check_flow_generated`] over `faces`, and the faces its spans and
+/// its flow's own style were pinned to, in the order drawn: what a sweep
+/// over [`every_face`] reads to know it met each fallback face.
+pub fn check_flow_generated_in(choices: &mut Choices<'_>, faces: &[AppFont]) -> Result<Vec<AppFont>, String> {
+    let mut pinned = Vec::new();
+    check_generated_pinning(choices, true, faces, &mut pinned)?;
+    Ok(pinned)
+}
+
+/// [`check_flow_generated`]'s body over `faces`, a frame's text held to
+/// what it lays inside the fuzz timeout with `bounded`, and to what it
+/// laid when the findings were found without.
+fn check_generated(choices: &mut Choices<'_>, bounded: bool, faces: &[AppFont]) -> Result<(), String> {
+    check_generated_pinning(choices, bounded, faces, &mut Vec::new())
+}
+
+/// [`check_generated`], recording in `pinned` the face of each span's
+/// style and of the flow's own, once they are drawn.
+fn check_generated_pinning(
+    choices: &mut Choices<'_>,
+    bounded: bool,
+    faces: &[AppFont],
+    pinned: &mut Vec<AppFont>,
+) -> Result<(), String> {
     fonts::init();
-    let faces = faces();
     let count = choices.below(4) as usize;
     let texts: Vec<String> = (0..count).map(|_| text(choices)).collect();
-    let styles: Vec<ResolvedText> = (0..count).map(|_| style(choices, &faces)).collect();
+    let styles: Vec<ResolvedText> = (0..count).map(|_| style(choices, faces)).collect();
     let spans: Vec<FlowSpan<'_>> = texts
         .iter()
         .zip(&styles)
@@ -637,7 +667,9 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
             link: None,
         })
         .collect();
-    let flow = style(choices, &faces);
+    let flow = style(choices, faces);
+    pinned.extend(styles.iter().map(|style| style.font));
+    pinned.push(flow.font);
     let mut fs = FontSystemLease::new("flow fuzz");
     match choices.below(4) {
         0 => {
@@ -719,7 +751,7 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                     // lays a finding's text as found as well, as it lays its
                     // layout (`laid_layouts`): two committed findings run on
                     // past the draw.
-                    let drawn_texts = mixed_sizes(choices, &texts, &styles, scale, &faces);
+                    let drawn_texts = mixed_sizes(choices, &texts, &styles, scale, faces);
                     let mut laid_texts = vec![drawn_texts];
                     if !bounded && laid_texts[0].0 != texts {
                         laid_texts.push((texts.clone(), styles.clone()));
@@ -860,13 +892,45 @@ fn plain_style() -> ResolvedText {
 /// bearing its name comes first (the shadowing R30.1 removes): a sweep
 /// that drew its faces from the index would stop pinning that family at
 /// all, and so could not see a host face win its pin.
+///
+/// Not the ornament fallback's faces (#297) either, and this list must
+/// not change length. Every committed structured seed and finding chose
+/// its faces from it: a choice picks the face at its value modulo the
+/// list's length, so a face added anywhere in it, at the end included,
+/// moves every one of them to another face. And it moves them silently:
+/// with the two fallback faces put in, every `flow::`, seed and fuzz test
+/// stays green (review 5804264394), each finding replaying in a face it
+/// was not found in. The fallback faces are drawn from [`every_face`]
+/// instead, by the flow_structured_every_face target and its own seeds,
+/// and by `test_generated_flows_over_every_face_hold_every_flow_property`.
+/// A face a map can pin that this list lacks belongs there, not here.
 pub(crate) fn faces() -> Vec<AppFont> {
+    let fallback: Vec<AppFont> = crate::font::fallback::ORNAMENT_FALLBACK
+        .iter()
+        .map(|(font, _)| *font)
+        .collect();
     let mut faces: Vec<AppFont> = COMPILED_FONT_ID_MAP
         .iter()
-        .filter(|(_, ids)| !ids.is_empty())
+        .filter(|(font, ids)| !ids.is_empty() && !fallback.contains(font))
         .map(|(font, _)| *font)
         .collect();
     faces.sort_by_key(|font| format!("{font:?}"));
+    faces
+}
+
+/// `faces()`, then the ornament fallback's faces (#297), in
+/// [`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)'s
+/// order: every face a map can pin. `Mandala Emoji` is the first compiled
+/// face with no outline at all and no space, the kind of face unlike the
+/// others that gave the R24 findings, and both are on the untrusted
+/// surface, since a map's `font` can name either.
+pub fn every_face() -> Vec<AppFont> {
+    let mut faces = faces();
+    faces.extend(
+        crate::font::fallback::ORNAMENT_FALLBACK
+            .iter()
+            .map(|(font, _)| *font),
+    );
     faces
 }
 

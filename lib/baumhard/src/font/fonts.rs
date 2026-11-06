@@ -27,6 +27,8 @@ use parking_lot::{RecursiveRwLock, RecursiveRwLockReadGuard, RecursiveRwLockWrit
 use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
 
+use crate::font::fallback;
+
 // Serde derives are used by the generated AppFont enum below.
 use serde::{Deserialize, Serialize};
 // Build-time generated: defines `AppFont` and `FONT_DATA`. The
@@ -51,11 +53,13 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// guard on this thread makes the acquire panic at once, naming both
 /// sites, instead of hanging — but that never happens in practice
 /// because [`init`] runs `load_fonts` at startup, before any guard
-/// is held. Once they are registered, every other face that bears a
-/// compiled family's name is removed ([`remove_shadowing_faces`], ruling
-/// R30.1). Costs: one lock acquisition, one `load_font_source` call per
-/// entry in [`FONT_SOURCES`], and one walk over every face in the
-/// database.
+/// is held. Each [`fallback::ORNAMENT_FALLBACK`] face is registered at
+/// every weight ([`fallback::register_every_weight`], #297). Once they
+/// are registered, every other face that bears a compiled family's name
+/// is removed ([`remove_shadowing_faces`], ruling R30.1). Costs: one lock
+/// acquisition, one `load_font_source` call per entry in
+/// [`FONT_SOURCES`], eight database inserts per fallback face, and one
+/// walk over every face in the database.
 fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     debug!("Waiting for font-system write lock");
     let mut font_system = acquire_font_system_write("load_fonts");
@@ -69,6 +73,12 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
         debug!("loaded font {x:?}");
         compiled_font_id_map.insert(x, font_id);
     });
+    // The ornament fallback at every weight a span can ask for (#297).
+    for (font, _) in fallback::ORNAMENT_FALLBACK {
+        if let Some(ids) = compiled_font_id_map.get_mut(font) {
+            fallback::register_every_weight(&mut font_system, ids);
+        }
+    }
     let removed = remove_shadowing_faces(&mut font_system, &compiled_font_id_map);
     #[cfg(test)]
     let _ = SHADOWING_FACES_REMOVED.set(removed);
@@ -140,6 +150,63 @@ pub(crate) const DECOY_WEIGHTS: [u16; 7] = [100, 200, 300, 500, 600, 800, 900];
 #[cfg(test)]
 pub(crate) const DECOY_FAMILY: &str = "Noto Sans";
 
+/// Where [`register_host_decoys`] registers a copy of each ornament
+/// fallback face (#297), as `(face, family, weight)`: a host face that
+/// holds the ornaments, in cosmic-text's common fallback families, and,
+/// for the ornaments, in the script fallback family a run of Arabic
+/// tries first (an emoji is shaped as a word of its own, with no script).
+/// Without the ornament fallback a span whose face lacks an ornament is
+/// drawn in one of these on every machine, as it is drawn in DejaVu Sans
+/// or Noto Color Emoji on a desktop.
+///
+/// - The ornaments in [`DECOY_FAMILY`] at the regular and the bold weight,
+///   the weights a pinned compiled text face asks for, which no R30 decoy
+///   takes; and in `FreeSans`, which no R30 decoy takes at all, at every
+///   one of [`fallback::FALLBACK_WEIGHTS`], the weights an unpinned span
+///   asks for as written.
+/// - The emoji in `Noto Color Emoji`, at every one of them.
+///
+/// Each face has families of its own: cosmic-text tries one face of a
+/// family, and sorts a color face first, so an emoji copy would shadow an
+/// ornament copy beside it.
+#[cfg(test)]
+pub(crate) const ORNAMENT_DECOYS: [(AppFont, &str, u16); 21] = {
+    use AppFont::{MandalaEmoji as E, MandalaOrnaments as O};
+    const FREE: &str = "FreeSans";
+    const EMOJI: &str = "Noto Color Emoji";
+    [
+        (O, DECOY_FAMILY, 400),
+        (O, DECOY_FAMILY, 700),
+        (O, "Noto Sans Arabic", 400),
+        (O, FREE, 100),
+        (O, FREE, 200),
+        (O, FREE, 300),
+        (O, FREE, 400),
+        (O, FREE, 500),
+        (O, FREE, 600),
+        (O, FREE, 700),
+        (O, FREE, 800),
+        (O, FREE, 900),
+        (E, EMOJI, 100),
+        (E, EMOJI, 200),
+        (E, EMOJI, 300),
+        (E, EMOJI, 400),
+        (E, EMOJI, 500),
+        (E, EMOJI, 600),
+        (E, EMOJI, 700),
+        (E, EMOJI, 800),
+        (E, EMOJI, 900),
+    ]
+};
+
+/// The PostScript name of the copy of the ornament fallback face `font`
+/// that [`register_host_decoys`] registers under `family` at `weight`.
+/// It keeps the face's own "Emoji", which cosmic-text sorts by.
+#[cfg(test)]
+pub(crate) fn ornament_decoy_name(font: AppFont, family: &str, weight: u16) -> String {
+    format!("Decoy-{font:?}-{}-{weight}", family.replace(' ', ""))
+}
+
 /// Test builds only (ruling R30): register, under [`DECOY_FAMILY`], one
 /// face at each of [`DECOY_WEIGHTS`] — Galatia SIL's outlines under
 /// another name — standing in for a host that has an exact-weight face
@@ -157,6 +224,10 @@ pub(crate) const DECOY_FAMILY: &str = "Noto Sans";
 /// it, so it comes first in the database. cosmic-text would draw every
 /// SilhousTwo pin in it; [`remove_shadowing_faces`] removes it, as it
 /// removes a real host face of that name.
+///
+/// And (#297) a copy of each ornament fallback face at each of
+/// [`ORNAMENT_DECOYS`]: a host face holding the ornaments, which the
+/// ornament fallback must come before.
 #[cfg(test)]
 fn register_host_decoys(font_system: &mut FontSystem) {
     use cosmic_text::fontdb::{FaceInfo, Language, Stretch, Style, Weight};
@@ -187,6 +258,24 @@ fn register_host_decoys(font_system: &mut FontSystem) {
             monospaced: false,
         });
     }
+    // After the Noto Sans decoys above, so that at their weights the
+    // family's first face is still one of theirs.
+    for (font, family, weight) in ORNAMENT_DECOYS {
+        let Some(source) = FONT_SOURCES.get(&font).cloned() else {
+            continue;
+        };
+        font_system.db_mut().push_face_info(FaceInfo {
+            id: ID::dummy(),
+            source,
+            index: 0,
+            families: vec![(family.to_string(), Language::English_UnitedStates)],
+            post_script_name: ornament_decoy_name(font, family, weight),
+            style: Style::Normal,
+            weight: Weight(weight),
+            stretch: Stretch::Normal,
+            monospaced: false,
+        });
+    }
 }
 
 lazy_static! {
@@ -205,7 +294,10 @@ lazy_static! {
     /// that record who holds it: a bare `FONT_SYSTEM.write()` would
     /// hold the lock invisibly, and a same-thread re-acquire under it
     /// could no longer be told from ordinary contention.
-    static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(FontSystem::new());
+    ///
+    /// Built by [`fallback::new_font_system`], whose fallback lists reach
+    /// the compiled ornament faces before any host face (#297).
+    static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(fallback::new_font_system());
     /// `AppFont → fontdb face IDs` map populated on first access by
     /// [`load_fonts`]. Read-only after initialization.
     pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = load_fonts();

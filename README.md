@@ -125,4 +125,6 @@ turns the same loop into a short captioned GIF for a human to review;
 
 ## License
 
-MPL-2.0 — see per-file SPDX identifiers.
+MPL-2.0 — see per-file SPDX identifiers. The bundled fonts under
+[`lib/baumhard/src/font/fonts/`](lib/baumhard/src/font/fonts/) keep
+their own licenses, recorded beside each face (`info.txt`, `misc/`).

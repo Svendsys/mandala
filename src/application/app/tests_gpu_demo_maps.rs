@@ -47,7 +47,7 @@ use baumhard::flow::{
     offset, outline, place_on_closed, place_on_open, ring_offset, shape_box, shape_run, Curve, FlowSpan,
     Outline, PlacedRun, Rect, RingLayout, ShapedRun,
 };
-use baumhard::font::fonts::{self, FontSystemLease};
+use baumhard::font::fonts::{self, AppFont, FontSystemLease};
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -95,6 +95,21 @@ pub(super) struct Projected {
     /// (a ring of text), `ring N.k` (a `repeat` ring) or `path N>M`, by
     /// node id and place.
     pub(super) labels: Vec<String>,
+    /// The face every span shaped asks for, and every ring's own (its
+    /// sides' face), each once: what the map pins, `AppFont::Any` for a
+    /// span that pins nothing.
+    pub(super) fonts: Vec<AppFont>,
+}
+
+impl Projected {
+    /// Record `fonts` in [`Projected::fonts`], each once.
+    fn pin(&mut self, fonts: impl IntoIterator<Item = AppFont>) {
+        for font in fonts {
+            if !self.fonts.contains(&font) {
+                self.fonts.push(font);
+            }
+        }
+    }
 }
 
 /// A node as drawn: its outline, and how far past it its outermost
@@ -246,6 +261,7 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
         paths: 0,
         lost: Vec::new(),
         labels: Vec::new(),
+        fonts: Vec::new(),
     };
     let mut drawn: Vec<(NodeId, Drawn)> = Vec::new();
     for node in nodes_of(doc) {
@@ -262,6 +278,7 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
                 continue;
             };
             let spans = spans_of(doc, section, 0.0);
+            out.pin(spans.iter().map(|(_, style)| style.font));
             let shaped = shape_box(
                 &flow_spans(&spans),
                 s.min_size,
@@ -300,6 +317,7 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
                 let d = ring_offset(f.inset, f.gap, &heights);
                 let path = offset(&base, d);
                 let style = in_points(resolve_text(tree, ring, &mut ()), side);
+                out.pin(spans.iter().map(|(_, style)| style.font).chain([style.font]));
                 let resolved = resolve_ring(tree, ring, &mut ());
                 let shaped = shape_run(&flow_spans(&spans), 1.0, fs);
                 let (rescaled, placed) = place_on_closed(
@@ -397,6 +415,7 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
                 Content::Spans => spans_of(doc, path, 0.0),
                 Content::Text(text) => vec![(text.clone(), style)],
             };
+            out.pin(spans.iter().map(|(_, style)| style.font));
             let shaped = shape_run(&flow_spans(&spans), 1.0, fs);
             let (rescaled, placed) =
                 place_on_open(&shaped, &curve, &resolved.fit, resolved.spacing, &style, fs);
