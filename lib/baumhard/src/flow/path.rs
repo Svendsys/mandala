@@ -356,14 +356,46 @@ impl ArcPath {
     /// a straight stretch with the next straight one, across the seam
     /// too, where the direction of travel turns by more than
     /// [`CORNER_TURN`]. A straight side met by a corner arc turns
-    /// smoothly into it, however small its radius.
+    /// smoothly into it, however small its radius. Each corner's
+    /// [`sides`](Corner::sides) are its sides' whole lengths: every
+    /// straight stretch in line with the one beside it, the seam's two
+    /// included, where a path started part way along a side cuts it in
+    /// two (#308: round a sharp rectangle started at the middle of its
+    /// left side, as a frame's halves are, a side read as its stretch
+    /// alone was half its length, and the curve inside each of its
+    /// corners stepped by as much as the cap fell short).
     ///
-    /// Cost: O(stretches).
+    /// Cost: O(stretches), and O(stretches) more for each corner's sides.
     fn find_corners(&self) -> Vec<Corner> {
         let n = self.stretches.len();
         if self.winding == 0.0 || n < 2 || !self.length.is_finite() {
             return Vec::new();
         }
+        // The length of the straight side stretch `k` lies on, running
+        // on from it `step` stretches at a time (`n − 1` back, `1` on)
+        // over every straight stretch in line with it, `stop` excluded.
+        let side_through = |k: usize, step: usize, stop: usize| {
+            let Stretch::Line { dir, len, .. } = &self.stretches[k] else {
+                return 0.0;
+            };
+            let mut long = *len;
+            let mut at = k;
+            for _ in 1..n {
+                at = (at + step) % n;
+                if at == stop || at == k {
+                    break;
+                }
+                match &self.stretches[at] {
+                    Stretch::Line { dir: d, len, .. }
+                        if d.perp_dot(*dir).atan2(d.dot(*dir)).abs() <= CORNER_TURN =>
+                    {
+                        long += len;
+                    }
+                    _ => break,
+                }
+            }
+            long
+        };
         let mut corners = Vec::new();
         for i in 0..n {
             let Stretch::Line {
@@ -393,12 +425,7 @@ impl ArcPath {
                 arced += turn * len / r;
                 j = (j + 1) % n;
             }
-            let Stretch::Line {
-                dir: after,
-                len: side_after,
-                ..
-            } = &self.stretches[j]
-            else {
+            let Stretch::Line { dir: after, .. } = &self.stretches[j] else {
                 continue;
             };
             let sharp = center.is_none();
@@ -417,7 +444,7 @@ impl ArcPath {
                     before: *before,
                     after: *after,
                     turn,
-                    sides: (*side_before, *side_after),
+                    sides: (side_through(i, n - 1, j), side_through(j, 1, i)),
                 });
             }
         }
@@ -785,6 +812,11 @@ impl ArcPath {
     /// than twice the offset, has no such corner, and folds.
     ///
     /// With no offset it is the path itself.
+    ///
+    /// Every bend of a closed outline turns with its winding: it is
+    /// convex, both [`Outline`] kinds being so. A concave corner would want
+    /// the other branches — outward offsets crossing there, inward ones
+    /// sweeping — and is not handled.
     ///
     /// Cost: one path lookup; within a corner's stretch none, but its
     /// arithmetic, counted as one.

@@ -2195,6 +2195,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_ellipse_walk_stays_on_the_ellipse", |b| {
         b.iter(do_flow_ellipse_walk_stays_on_the_ellipse)
     });
+    c.bench_function(
+        "flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_side_of",
+        |b| b.iter(do_flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_side_of),
+    );
     c.bench_function("flow_bezier_walk_measures_arc_length", |b| {
         b.iter(do_flow_bezier_walk_measures_arc_length)
     });
