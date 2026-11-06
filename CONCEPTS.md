@@ -890,7 +890,7 @@ than the variant set: `"hexagon"`, `"diamond"`,
 `"parallelogram"` and `"rounded_rectangle"` are canonical but
 have no variant yet. `ShapeSpelling` is the pure
 classifier that separates those from a genuine typo —
-`Rendered` / `KnownNotYetRendered` / `Unrecognized` /
+`Modeled` / `KnownNotYetModeled` / `Unrecognized` /
 `Unspecified` — and `is_author_error` / `is_quiet_fallback`
 are the two predicates it exposes for the reporting
 decision. Before it existed, every hexagon in the demo map

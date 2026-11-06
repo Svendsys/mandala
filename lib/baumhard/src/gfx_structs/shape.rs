@@ -126,7 +126,7 @@ pub enum NodeShape {
 /// variant's [`NodeShape::style_spellings`] contains the entry, and
 /// `do_shape_variant_spellings_are_all_known` asks the mirror
 /// question of this list. An uppercase entry moves a spelling across
-/// the rendered / not-yet-rendered partition and sends both of them
+/// the modeled / not-yet-modeled partition and sends both of them
 /// red; the lowercase pin is what names the cause instead of leaving
 /// two derived tests failing for a reason neither states.
 ///
@@ -193,12 +193,12 @@ pub enum ShapeSpelling {
     /// A canonical spelling that has a [`NodeShape`] variant behind
     /// it, so the hit test and the border builder treat the node as
     /// the shape the author asked for.
-    Rendered(NodeShape),
+    Modeled(NodeShape),
     /// Listed in [`KNOWN_SHAPES`], but no [`NodeShape`] variant
     /// exists for it yet. Documented, tool-emitted, round-trips
     /// intact — and is treated as a rectangle until a variant lands.
     /// Not an author error.
-    KnownNotYetRendered,
+    KnownNotYetModeled,
     /// Not in [`KNOWN_SHAPES`] at all: a typo, or a value from a
     /// build that knows more shapes than this one. The only case
     /// that warrants a warning.
@@ -231,18 +231,18 @@ impl ShapeSpelling {
                 .iter()
                 .any(|spelling| s.eq_ignore_ascii_case(spelling))
             {
-                return ShapeSpelling::Rendered(shape);
+                return ShapeSpelling::Modeled(shape);
             }
         }
         if KNOWN_SHAPES.iter().any(|known| s.eq_ignore_ascii_case(known)) {
-            ShapeSpelling::KnownNotYetRendered
+            ShapeSpelling::KnownNotYetModeled
         } else {
             ShapeSpelling::Unrecognized
         }
     }
 
     /// The [`NodeShape`] the border builder and the hit test should use for
-    /// this classification. Every non-[`ShapeSpelling::Rendered`]
+    /// this classification. Every non-[`ShapeSpelling::Modeled`]
     /// case degrades to [`NodeShape::Rectangle`] — the bounding box
     /// is the one silhouette that is always correct to fall back to,
     /// because it is what the shape's AABB already occupies.
@@ -254,8 +254,8 @@ impl ShapeSpelling {
     /// call.
     pub const fn resolve(self) -> NodeShape {
         match self {
-            ShapeSpelling::Rendered(shape) => shape,
-            ShapeSpelling::Unspecified | ShapeSpelling::KnownNotYetRendered | ShapeSpelling::Unrecognized => {
+            ShapeSpelling::Modeled(shape) => shape,
+            ShapeSpelling::Unspecified | ShapeSpelling::KnownNotYetModeled | ShapeSpelling::Unrecognized => {
                 NodeShape::Rectangle
             }
         }
@@ -296,7 +296,7 @@ impl ShapeSpelling {
             ShapeSpelling::Unrecognized => true,
             // Spelled out rather than `_` so a fifth classification
             // cannot join the quiet set without a decision.
-            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::KnownNotYetRendered => {
+            ShapeSpelling::Unspecified | ShapeSpelling::Modeled(_) | ShapeSpelling::KnownNotYetModeled => {
                 false
             }
         }
@@ -305,7 +305,7 @@ impl ShapeSpelling {
     /// Was a rectangle substituted for a spelling that is perfectly
     /// valid, just not modeled yet?
     ///
-    /// True for [`ShapeSpelling::KnownNotYetRendered`] alone.
+    /// True for [`ShapeSpelling::KnownNotYetModeled`] alone.
     /// [`ShapeSpelling::Unspecified`] is *not* a substitution — an
     /// unset field asked for nothing — and
     /// [`ShapeSpelling::Unrecognized`] is
@@ -323,10 +323,10 @@ impl ShapeSpelling {
     /// O(1), branch-only. No allocation.
     pub const fn is_quiet_fallback(self) -> bool {
         match self {
-            ShapeSpelling::KnownNotYetRendered => true,
+            ShapeSpelling::KnownNotYetModeled => true,
             // Spelled out rather than `_`, for the reason
             // `is_author_error` spells its own arms out.
-            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::Unrecognized => false,
+            ShapeSpelling::Unspecified | ShapeSpelling::Modeled(_) | ShapeSpelling::Unrecognized => false,
         }
     }
 
@@ -462,7 +462,7 @@ impl NodeShape {
     /// which is what keeps everything upstream of it testable without
     /// a logger:
     ///
-    /// - a canonical spelling with a variant renders as asked;
+    /// - a canonical spelling with a variant resolves to it;
     /// - the empty string means "unset" and is silent;
     /// - a [`KNOWN_SHAPES`] spelling with no variant yet
     ///   (`"hexagon"`, `"diamond"`, `"parallelogram"`,

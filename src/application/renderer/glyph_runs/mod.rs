@@ -22,8 +22,8 @@
 //! ([`TargetEncoding`]) and the camera. What it does not share is the atlas,
 //! because glyphon's is not reachable from outside it ([`atlas`]
 //! explains). Instance data is plain floats, so the pipeline needs no
-//! integer vertex attribute (a WebGL2 gap on some browsers, as the rect
-//! pipeline notes) and no storage buffer (none on WebGL2).
+//! integer vertex attribute — wgpu's WebGL2 backend does not support
+//! one on every browser — and no storage buffer (none on WebGL2).
 //!
 //! This is the V1-C1 prototype. It draws whatever `GlyphRun` elements
 //! the canvas trees hold; no projection emits them yet (V1-B7, C3), so
@@ -52,9 +52,9 @@ use super::target_encoding::TargetEncoding;
 /// which page it is on.
 ///
 /// Instance attributes are all `f32` — `page` included, rounded back
-/// to an integer in the vertex stage — for the reason the rect
-/// pipeline gives: integer vertex attributes are not available on
-/// every WebGL2 browser. `vertex_index` is a builtin, not an attribute.
+/// to an integer in the vertex stage — because wgpu's WebGL2 backend
+/// does not support integer vertex attributes on every browser.
+/// `vertex_index` is a builtin, not an attribute.
 ///
 /// A mask glyph is its color with the mask as coverage. A color glyph
 /// keeps its own colors and takes only the instance's alpha, which is

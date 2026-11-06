@@ -36,8 +36,10 @@ Inherited from miMind's shape catalog (plus the `"circle"` alias).
 Default: `"rectangle"`.
 
 `"rectangle"` and `"ellipse"` are **live shapes** — they drive the hit
-test (BVH descent plus `rect_select`), and nothing draws them: a node has
-no background fill since V1-B12 — via
+test (BVH descent plus `rect_select`) and whether a node's frame is drawn
+(the glyph frame runs along a rectangle, so only a `"rectangle"` node is
+framed: `tree_builder/border.rs`); no fill is drawn for either, since a
+node has none (V1-B12) — via
 [`NodeShape`](../lib/baumhard/src/gfx_structs/shape.rs). A perfect circle
 is expressed as `"ellipse"` with `width == height`; stretched /
 "conical" cases are the same variant with `width != height`. `"circle"`
@@ -45,10 +47,11 @@ is accepted as an alias for `"ellipse"` — the convenience spelling
 authors reach for first.
 
 The remaining values (`"rounded_rectangle"`, `"diamond"`,
-`"parallelogram"`, `"hexagon"`) still round-trip but currently render
-as `"rectangle"` — adding one is a small change (one `NodeShape`
-variant, one `style_spellings` arm, one WGSL `case`, one
-`contains_local` arm; see the header doc in `shape.rs`).
+`"parallelogram"`, `"hexagon"`) still round-trip but are currently
+treated as `"rectangle"` — adding one is a small change (one `NodeShape`
+variant and the three arms the compiler then asks for: `style_spellings`,
+`contains_local` and `intersects_local_aabb`; see the header doc in
+`shape.rs`).
 
 Falling back is **not** an error for any of the values listed above:
 they are canonical, `maptool verify` accepts them, and
