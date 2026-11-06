@@ -163,6 +163,7 @@ impl Lines<'_> {
         PathWalk {
             path,
             memo: None,
+            work: None,
             line_height: self.run.line_height,
             outward: self.outward,
             limit: span.end + end_slack(span.end),

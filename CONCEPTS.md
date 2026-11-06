@@ -1640,9 +1640,10 @@ element.
   style), `Repeat` (reusing the run's glyph indices; around a closed
   outline, whole copies evenly spaced so the ring closes without a
   seam, rulings R29 and R31, a ring's `spacing` more between every two
-  steps), `Spread` and `Fit` (rescaling the run), the last two solved
-  so the last cluster ends at the path's end. On a frame they part and
-  size its two lines, which its `span` then lays along its halves.
+  steps, its work under a frame's budget, #310), `Spread` and `Fit`
+  (rescaling the run), the last two solved so the last cluster ends at
+  the path's end. On a frame they part and size its two lines, which
+  its `span` then lays along its halves.
   Text too long is cut to the longest prefix, in reading order, that
   fits — a right-to-left run keeps its beginning — and never
   overlaps.

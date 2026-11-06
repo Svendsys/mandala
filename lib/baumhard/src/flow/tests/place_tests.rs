@@ -693,8 +693,8 @@ fn test_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks() {
 /// round an ellipse 10²² from the origin, where an `f32` cannot set its
 /// glyphs apart and no count of its some 22,000 copies closed: dropped one
 /// at a time, every count was measured, each a walk of up to 65,536
-/// glyphs, past 18 minutes in a debug build (141 s now, the measures its
-/// gap's solve takes).
+/// glyphs, past 18 minutes in a debug build. (Its ring's work is budgeted
+/// since #310, `flow::place::ring`.)
 ///
 /// Control: with every copy dropped one at a time, the never-closing
 /// ring asks 21,844 times.
@@ -725,5 +725,66 @@ pub fn do_flow_a_ring_that_never_closes_counts_its_copies_in_few_asks() {
     assert!(
         never == 1 && asked <= 20,
         "a ring that never closes: {never} copies in {asked} looks"
+    );
+}
+
+/// Ruling R9.4, for the glyph cap: a text past the cap keeps the longest
+/// prefix in reading order that the cap holds, as a text past the path's
+/// end does, and reports it cut — where the lay that reached the cap kept
+/// the glyphs it had reached in visual order, the end of a Hebrew word
+/// without its beginning. `Once`, of a text of Latin and Hebrew words
+/// sixty times (480 glyphs), along a line long enough for the whole of
+/// it, the cap at 205 (the test seam, for the literal cap's 65,536
+/// glyphs): 25 copies of the text's eight glyphs and five of the next,
+/// its Latin word and the first of its Hebrew word's three glyphs in
+/// visual order — the last in reading order. (No `do_*` twin: it sets a
+/// test seam.)
+///
+/// Precondition: uncapped, the text is laid whole. Control: with the
+/// whole lay's stop at the cap returned as it is, red (205 glyphs, not a
+/// prefix in reading order).
+#[test]
+fn test_flow_a_text_past_the_glyph_cap_keeps_a_prefix_in_reading_order() {
+    use crate::flow::place::halves::CAP_OVERRIDE;
+    use crate::flow::tests::halves_tests::with_seam;
+    const CUT_CAP: usize = 205;
+    let text = "abc אבג ".repeat(60);
+    let curve = Curve::Line(Vec2::ZERO, Vec2::new(1e6, 0.0));
+    let flow = style(16.0);
+    let lay = || {
+        with_fonts(|fs| {
+            let run = real_run(&text, &flow, fs);
+            let (_, placed) = place_on_open(&run, &curve, &FitMode::Once { filler: None }, 0.0, &flow, fs);
+            (run, placed)
+        })
+    };
+    let (run, whole) = lay();
+    assert!(
+        whole.glyphs.len() == run.glyphs.len() && !whole.truncated && run.glyphs.len() > CUT_CAP,
+        "precondition: the line holds the text whole ({} glyphs of {}, truncated {})",
+        whole.glyphs.len(),
+        run.glyphs.len(),
+        whole.truncated
+    );
+    let (_, capped) = with_seam(&CAP_OVERRIDE, CUT_CAP, lay);
+    assert!(
+        capped.truncated && capped.glyphs.len() <= CUT_CAP && capped.glyphs.len() + 8 > CUT_CAP,
+        "{} glyphs placed, truncated {}: at most the cap of {CUT_CAP}, a copy of it at most short, and reported",
+        capped.glyphs.len(),
+        capped.truncated
+    );
+    // Each glyph's place in reading order: where its cluster starts in
+    // the text.
+    let reading = |index: usize| (run.glyphs[index].span, run.glyphs[index].bytes.start);
+    let kept: std::collections::BTreeSet<usize> = capped.glyphs.iter().map(|g| g.glyph as usize).collect();
+    let last_kept = kept.iter().map(|&g| reading(g)).max();
+    let first_dropped = (0..run.glyphs.len())
+        .filter(|g| !kept.contains(g))
+        .map(reading)
+        .min();
+    assert!(
+        matches!((last_kept, first_dropped), (Some(last), Some(first)) if last < first),
+        "the {} glyphs kept are not a prefix in reading order: kept up to {last_kept:?}, dropped from {first_dropped:?}",
+        kept.len()
     );
 }
