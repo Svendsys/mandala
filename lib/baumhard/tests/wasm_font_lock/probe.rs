@@ -45,6 +45,7 @@ use baumhard::flow::{
 };
 use baumhard::font::fonts::{
     self, acquire_font_system_read, acquire_font_system_write, try_acquire_font_system_write, AppFont,
+    FontSystemLease,
 };
 use baumhard::glam::Vec2;
 
@@ -173,7 +174,7 @@ pub extern "C" fn flow_shape_and_place() -> u32 {
         style: &style,
         link: None,
     };
-    let mut fs = acquire_font_system_write("probe::flow");
+    let mut fs = FontSystemLease::new("probe::flow");
     let run = shape_run(&[span("abc")], 1.0, &mut fs);
     if run.glyphs.len() != 3 {
         return 2;
@@ -239,7 +240,7 @@ pub extern "C" fn ornaments_fall_back_to_their_compiled_faces() -> u32 {
         ("\u{1F338}", &pinned, AppFont::MandalaEmoji, 3),
         ("~", &unpinned, AppFont::MandalaOrnaments, 4),
     ];
-    let mut fs = acquire_font_system_write("probe::ornaments");
+    let mut fs = FontSystemLease::new("probe::ornaments");
     for (text, style, face, code) in cases {
         let span = FlowSpan {
             text,

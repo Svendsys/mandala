@@ -929,6 +929,68 @@ impl Drop for FontSystemWriteGuard {
     }
 }
 
+/// The font system, taken when it is asked for and given back between:
+/// what a placement holds (#308).
+///
+/// A [`FontSystemWriteGuard`] holds the lock for as long as it lives,
+/// which is what startup and the renderer want. A placement would hold
+/// it across work that reads the shaped run and no font: a `Repeat` or
+/// `Spread` walk, the readable pass, a halves frame's clearance lays and
+/// side fill. A frame of 65,000 side copies, or a `Repeat` ring of as
+/// many glyphs, held the lock some 5 s that way in a debug build, and
+/// test threads queued behind three such holds waited past the 60 s a
+/// write acquire waits, under load. A lease gives the lock back for
+/// that work ([`unlocked`](Self::unlocked)) and takes it again when a
+/// font is next read ([`fonts`](Self::fonts)).
+///
+/// Holding nothing is one of a lease's two ordinary states, not a
+/// broken invariant: [`fonts`](Self::fonts) takes the lock whenever it
+/// finds none held, so nothing here can find the lease empty and fail.
+/// It takes it as [`acquire_font_system_write`] does, waiting at most
+/// [`FONT_SYSTEM_LOCK_TIMEOUT`] and naming the holder past it, and the
+/// guard it holds clears its records and poisons on a panic as any
+/// write guard does. `!Send`, as that guard is.
+///
+/// A lease that has given the lock back waits for it, as every write
+/// acquire waits, the next time a font is read: it is for work that may
+/// wait, not for the renderer's skip-a-frame paths
+/// ([`try_acquire_font_system_write`]).
+pub struct FontSystemLease {
+    /// Where the lease was made: the site each acquire is made under.
+    site: &'static str,
+    held: Option<FontSystemWriteGuard>,
+}
+
+impl FontSystemLease {
+    /// A lease for `site`, holding nothing until [`fonts`](Self::fonts)
+    /// is first called.
+    pub fn new(site: &'static str) -> Self {
+        Self { site, held: None }
+    }
+
+    /// The font system, the lock taken first when this lease does not
+    /// hold it. Cost: an acquire when it does not, nothing when it does.
+    pub fn fonts(&mut self) -> &mut FontSystem {
+        let site = self.site;
+        self.held.get_or_insert_with(|| acquire_font_system_write(site))
+    }
+
+    /// Run `f` with the lock given back; the next [`fonts`](Self::fonts)
+    /// takes it again. While `f` runs this thread holds no record of the
+    /// lock, so `f` may take it itself, and a panic in `f` finds nothing
+    /// held, so poisons nothing. Cost: a release, when the lease holds
+    /// the lock.
+    pub fn unlocked<R>(&mut self, f: impl FnOnce() -> R) -> R {
+        self.held = None;
+        f()
+    }
+
+    /// Whether the lease holds the lock now.
+    pub fn holds(&self) -> bool {
+        self.held.is_some()
+    }
+}
+
 /// Shared access to the global `FontSystem`. Read-only; see
 /// [`FontSystemWriteGuard`] for why it is a type of its own.
 pub struct FontSystemReadGuard {
@@ -1315,6 +1377,42 @@ pub fn glyph_outline_ink(
     // An outline's `y` points up, the canvas's down.
     let min = Vec2::new(low.x, -high.y) + offset;
     let max = Vec2::new(high.x, -low.y) + offset;
+    (min.is_finite() && max.is_finite()).then_some((min, max))
+}
+
+/// The ink of the character `ch` in the face a laid-out glyph `of` is
+/// drawn in, at its size and weight, as [`glyph_outline_ink`] measures a
+/// glyph's — relative to the pen on the baseline, `y` pointing down — but
+/// for the glyph the face's own character map gives `ch`, unshaped. `None`
+/// where the face maps no glyph to `ch`, or draws nothing for it. What a
+/// frame's text reads its x-height from, the ink of an `x` (#308).
+///
+/// Cost: one character-map lookup, and one outline scale through
+/// `swash_cache`'s scaler, uncached.
+pub fn face_char_ink(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    of: &cosmic_text::LayoutGlyph,
+    ch: char,
+) -> Option<(Vec2, Vec2)> {
+    let font = font_system.get_font(of.font_id, of.font_weight)?;
+    let glyph_id = font.as_swash().charmap().map(ch);
+    if glyph_id == 0 {
+        return None;
+    }
+    let (key, _, _) = CacheKey::new(
+        of.font_id,
+        glyph_id,
+        of.font_size,
+        (0.0, 0.0),
+        of.font_weight,
+        CacheKeyFlags::DISABLE_HINTING,
+    );
+    let commands = swash_cache.get_outline_commands_uncached(font_system, key)?;
+    let (low, high) = outline_bounds(&commands)?;
+    // An outline's `y` points up, the canvas's down.
+    let min = Vec2::new(low.x, -high.y);
+    let max = Vec2::new(high.x, -low.y);
     (min.is_finite() && max.is_finite()).then_some((min, max))
 }
 
@@ -1747,6 +1845,65 @@ mod tests {
             message.contains("It is held by"),
             "must say who holds it: {message}"
         );
+    }
+
+    /// A lease gives the lock back for `unlocked`'s closure and takes it
+    /// again when a font is next asked for (#308): another thread takes
+    /// and releases the lock while the closure runs; after it the lease
+    /// holds nothing until `fonts`, which takes the lock under the
+    /// lease's own site.
+    ///
+    /// Control: with `unlocked` running its closure without giving the
+    /// lock back, the other thread waits out its 5 s and panics, red.
+    #[test]
+    fn test_a_lease_gives_the_lock_back_while_unlocked_and_takes_it_again() {
+        let mut lease = FontSystemLease::new("test::lease");
+        let _ = lease.fonts().db().len();
+        assert!(lease.holds(), "`fonts` takes the lock");
+        let other = lease.unlocked(|| {
+            thread::spawn(|| {
+                drop(acquire_font_system_write_with_timeout(
+                    "test::while_unlocked",
+                    Duration::from_secs(5),
+                ));
+            })
+            .join()
+            .is_ok()
+        });
+        assert!(other, "another thread takes the lock while it is given back");
+        assert!(!lease.holds(), "nothing is held until a font is asked for");
+        let _ = lease.fonts().db().len();
+        assert_eq!(
+            current_writer().map(|(site, _)| site),
+            Some("test::lease"),
+            "`fonts` takes the lock again, under the lease's site"
+        );
+        drop(lease);
+    }
+
+    /// A panic inside a lease's `unlocked` closure poisons nothing and
+    /// strands no record: the lock is not held while the closure runs
+    /// (#308). Runs in a child process; see [`CHILD_SCENARIO_ENV`].
+    #[test]
+    fn test_a_panic_while_a_lease_is_unlocked_does_not_poison() {
+        run_child_scenario("test_child_scenario_panic_while_unlocked", "UNLOCKED_SCENARIO_OK");
+    }
+
+    /// The child half of the test above. A no-op in an ordinary run.
+    #[test]
+    fn test_child_scenario_panic_while_unlocked() {
+        if !is_child_for("test_child_scenario_panic_while_unlocked") {
+            return;
+        }
+        let unwound = catch_unwind(AssertUnwindSafe(|| {
+            let mut lease = FontSystemLease::new("test::unlocked_panic");
+            let _ = lease.fonts().db().len();
+            lease.unlocked(|| panic!("deliberate: work done unlocked dying"));
+        }));
+        assert!(unwound.is_err(), "the closure was supposed to panic");
+        assert!(!font_system_poisoned(), "nothing was held to poison");
+        drop(acquire_font_system_write("test::after_unlocked_panic"));
+        println!("UNLOCKED_SCENARIO_OK");
     }
 
     /// A panic while holding the guard poisons every later acquire.

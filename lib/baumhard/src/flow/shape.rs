@@ -68,7 +68,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{
-    clamp_font_metric, glyph_outline_ink, pinned_family, AppFont, FontSystemWriteGuard, PinnedFamily,
+    clamp_font_metric, glyph_outline_ink, pinned_family, AppFont, FontSystemLease, PinnedFamily,
     MIN_FONT_SIZE_PT,
 };
 use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, SwashCache, Wrap, SHAPING_ADVANCED};
@@ -889,18 +889,19 @@ fn word_breaks(text: &str, out: &mut Vec<usize>) {
 /// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
 ///
 /// **Precondition: call [`fonts::init`](crate::font::fonts::init) before
-/// taking the guard.** Resolving a span's face reads the compiled font
-/// table, whose first read registers the fonts under the font lock; with
-/// the table still cold, that read would re-enter the lock this
-/// caller holds and panic. The app initializes at startup; any other
-/// caller (a tool, a fuzz target) does it once before its first guard.
+/// the lease first takes the lock.** Resolving a span's face reads the
+/// compiled font table, whose first read registers the fonts under the
+/// font lock; with the table still cold, that read would re-enter the
+/// lock the lease holds and panic. The app initializes at startup; any
+/// other caller (a tool, a fuzz target) does it once before its first
+/// lease or guard.
 ///
 /// Cost: one cosmic-text buffer and one shaping pass over the text,
-/// under the guard the caller holds (this never acquires the font
-/// lock); one family-name lookup and `String` per span; one grapheme
-/// walk; the piece table and glyph list.
-pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemWriteGuard) -> ShapedRun {
-    let fs: &mut FontSystem = fs;
+/// under the lock `fs` holds (an acquire first when it holds none,
+/// [`FontSystemLease::fonts`]); one family-name lookup and `String` per
+/// span; one grapheme walk; the piece table and glyph list.
+pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemLease) -> ShapedRun {
+    let fs = fs.fonts();
     let families = families_of(spans.iter().map(|span| span.style), fs);
     let untabbed = untabbed(spans, &families, scale, fs);
     let spans = with_untabbed(spans, &untabbed);
@@ -1082,20 +1083,20 @@ fn usable_min_size(min: Vec2) -> Vec2 {
 ///
 /// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)),
 /// and [`fonts::init`](crate::font::fonts::init) must have run before the
-/// guard was taken, as for [`shape_run`].
+/// lease first took the lock, as for [`shape_run`].
 ///
 /// Cost: one cosmic-text buffer, shaped once and laid out twice (once
 /// unbounded to measure, once at the box's width to align — the second
-/// pass re-lays-out without reshaping), under the guard the caller
-/// holds; one family-name lookup and `String` per span; the piece
+/// pass re-lays-out without reshaping), under the lock `fs` holds (an
+/// acquire first when it holds none); one family-name lookup and `String` per span; the piece
 /// table and the glyph-span list.
 pub fn shape_box(
     spans: &[FlowSpan<'_>],
     min_size: Option<Vec2>,
     align: Align,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> ShapedBox {
-    let fs: &mut FontSystem = fs;
+    let fs = fs.fonts();
     let families = families_of(spans.iter().map(|span| span.style), fs);
     let untabbed = untabbed(spans, &families, 1.0, fs);
     let spans = &with_untabbed(spans, &untabbed);

@@ -215,7 +215,7 @@ fn test_demo_maps_hold_the_readable_structure() {
         let zoom = camera_on(projected.bounds).zoom;
         let mut swash = SwashCache::new();
         let read: Vec<Vec<Read>> = with_fonts(|fs| {
-            let fsys: &mut glyphon::FontSystem = fs;
+            let fsys = fs.fonts();
             projected
                 .runs
                 .iter()
@@ -419,6 +419,7 @@ fn test_demo_maps_draw_every_glyph_in_a_face_they_pin_or_the_ornament_fallback()
         let projected = with_fonts(|fs| project(&doc, fs));
         unpinned += usize::from(projected.fonts.contains(&AppFont::Any));
         with_fonts(|fs| {
+            let fs = fs.fonts();
             let allowed = allowed_faces(fs, &projected.fonts);
             for (run, label) in projected.runs.iter().zip(&projected.labels) {
                 for (text, face, glyph) in shaped_glyphs(run) {

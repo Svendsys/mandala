@@ -736,6 +736,24 @@ down the right side; the second the lower-left half, from the top-left
 point down the left side and along the bottom. Glyphs stay upright, so
 every steep stretch reads down and every level one reads right.
 
+**A frame's text sits on one curve.** Every glyph of a frame — both
+lines, and the [sides](#sides) ornament's copies — is set on one curve
+at one distance from the outline all round, so the ring of text is one
+even offset of the node's shape, with no step where the lines meet. A
+letter sits on it at the middle of its span's x-height: halfway
+between its baseline and the height of an `x` in its span's font, at
+its size. So every letter of a span shares one baseline, and its
+ascenders and descenders hang free of it — on the lower half the
+ascenders point at the outline, on the upper half the descenders. A
+side ornament's copy sits on the curve at the middle of its own ink.
+Outward, the curve lies as near the outline as lets every ink of the
+frame clear it (the outline is `inset` and `gap` out from what it
+frames); inward, the frame's ink is centered on the outline. Where an
+outline is thinner than twice the curve's distance inside it — the
+tips of a long, thin ellipse with a frame laid inward — no curve lies
+that far inside it all round, and there the curve folds over the far
+side.
+
 **Each line is evenly tracked.** Between every two neighboring letters
 of a line is one gap, measured between their inks — the marks the
 letters make, not their boxes — so it looks the same where the line
@@ -784,7 +802,9 @@ touches nothing, or left out, and then the first likewise if two of its
 own letters still touch; a `once` frame is never shrunk. Text its
 half holds without touching is never cut, so a frame can be left with
 a break short and keep its text whole. A break whose [sides](#sides)
-ornament would touch the text there is left without it.
+ornament would touch the text there is left without it, and so is one
+whose room for a whole copy the lines cannot leave at their font's
+letter gap: a frame's sides never cost its text.
 
 `start` and `direction` do not apply: a frame's text always begins at
 the top left. They are kept and saved, and a ring set to `repeat` uses
@@ -826,7 +846,8 @@ copies, at least one, with every gap between two copies and the gap
 from each line's last letter to the nearest copy the same: as near the
 lines' letter gap as whole copies allow, at most 256 copies. A copy is
 scaled so that its ink is no taller than the text's x-height, and sits
-on the text's center line. Without a `color` it takes the ring's text
+on the frame's [one curve](#readable-path-text) at the middle of its
+ink. Without a `color` it takes the ring's text
 color. A `repeat` ring ignores it. When `sides` is unset on the ring,
 its frame and both defaults, and the ring's [fit](#fit) is
 `{ "once": { "filler": … } }`, the filler is its sides, in the ring's

@@ -272,9 +272,54 @@ pub(crate) struct ArcPath {
     table_samples: usize,
     /// The stretch the last lookup fell in ([`at_or_below`]).
     cursor: Cell<usize>,
+    /// Its sharp corners, in order along it: where two straight
+    /// stretches meet at an angle, as a rounded rectangle of no radius
+    /// turns ([`offset_at`](Self::offset_at), #308). None on an open path.
+    corners: Vec<Corner>,
     /// The reads walked off this path so far ([`reads`](Self::reads)):
     /// what a `Repeat` ring's work is counted in (#310).
     reads: Cell<usize>,
+}
+
+/// A bend of a closed path between two straight sides (#308): a sharp
+/// corner, where one side ends and the next begins at an angle and the
+/// path has no one normal, or a run of arcs about one center, a rounded
+/// corner ([`ArcPath::offset_at`]).
+#[derive(Copy, Clone, Debug)]
+struct Corner {
+    /// Where along the path it begins, in `0.0..length`.
+    at: f32,
+    /// How long it is along the path: none for a sharp corner, its arcs'
+    /// for a rounded one.
+    bend: f32,
+    /// The corner's point, or its arcs' center.
+    point: Vec2,
+    /// Its arcs' radius: none for a sharp corner.
+    radius: f32,
+    /// The direction of travel along the side before it and the side
+    /// after it.
+    before: Vec2,
+    after: Vec2,
+    /// How far the direction of travel turns there, in radians, signed:
+    /// positive turning clockwise on screen.
+    turn: f32,
+    /// How long the straight sides before and after it are.
+    sides: (f32, f32),
+}
+
+/// The point at `s` of a closed path's offset curve (#308,
+/// [`ArcPath::offset_at`]).
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct OffsetPoint {
+    /// The point, `offset` along the path's outward normal from it.
+    pub(crate) point: Vec2,
+    /// The unit direction the point moves in as `s` grows: the path's
+    /// direction of travel there, turned back where the offset sweeps a
+    /// sharp corner from inside it.
+    pub(crate) moves: Vec2,
+    /// The path's outward normal the point is offset along: at a sharp
+    /// corner, the one the sweep has reached.
+    pub(crate) normal: Vec2,
 }
 
 impl ArcPath {
@@ -293,6 +338,7 @@ impl ArcPath {
             winding,
             table_samples: 0,
             cursor: Cell::new(0),
+            corners: Vec::new(),
             reads: Cell::new(0),
         };
         for stretch in stretches {
@@ -306,7 +352,108 @@ impl ArcPath {
                 path.stretches.push(stretch);
             }
         }
+        path.corners = path.find_corners();
         path
+    }
+
+    /// The sharp corners of a closed path ([`Corner`]): each meeting of
+    /// a straight stretch with the next straight one, across the seam
+    /// too, where the direction of travel turns by more than
+    /// [`CORNER_TURN`]. A straight side met by a corner arc turns
+    /// smoothly into it, however small its radius. Each corner's
+    /// [`sides`](Corner::sides) are its sides' whole lengths: every
+    /// straight stretch in line with the one beside it, the seam's two
+    /// included, where a path started part way along a side cuts it in
+    /// two (#308: round a sharp rectangle started at the middle of its
+    /// left side, as a frame's halves are, a side read as its stretch
+    /// alone was half its length, and the curve inside each of its
+    /// corners stepped by as much as the cap fell short).
+    ///
+    /// Cost: O(stretches), and O(stretches) more for each corner's sides.
+    fn find_corners(&self) -> Vec<Corner> {
+        let n = self.stretches.len();
+        if self.winding == 0.0 || n < 2 || !self.length.is_finite() {
+            return Vec::new();
+        }
+        // The length of the straight side stretch `k` lies on, running
+        // on from it `step` stretches at a time (`n − 1` back, `1` on)
+        // over every straight stretch in line with it, `stop` excluded.
+        let side_through = |k: usize, step: usize, stop: usize| {
+            let Stretch::Line { dir, len, .. } = &self.stretches[k] else {
+                return 0.0;
+            };
+            let mut long = *len;
+            let mut at = k;
+            for _ in 1..n {
+                at = (at + step) % n;
+                if at == stop || at == k {
+                    break;
+                }
+                match &self.stretches[at] {
+                    Stretch::Line { dir: d, len, .. }
+                        if d.perp_dot(*dir).atan2(d.dot(*dir)).abs() <= CORNER_TURN =>
+                    {
+                        long += len;
+                    }
+                    _ => break,
+                }
+            }
+            long
+        };
+        let mut corners = Vec::new();
+        for i in 0..n {
+            let Stretch::Line {
+                from,
+                dir: before,
+                len: side_before,
+            } = &self.stretches[i]
+            else {
+                continue;
+            };
+            // The arcs after the side, about one center, and the side
+            // after them.
+            let mut j = (i + 1) % n;
+            let (mut bend, mut center, mut radius, mut arced) = (0.0_f32, None::<Vec2>, 0.0_f32, 0.0_f32);
+            while let Stretch::Arc {
+                center: c,
+                radius: r,
+                turn,
+                len,
+                ..
+            } = &self.stretches[j]
+            {
+                if center.is_some_and(|was| was.distance(*c) > CORNER_TURN * r.max(1.0)) || j == i {
+                    break;
+                }
+                (bend, center, radius) = (bend + len, Some(*c), *r);
+                arced += turn * len / r;
+                j = (j + 1) % n;
+            }
+            let Stretch::Line { dir: after, .. } = &self.stretches[j] else {
+                continue;
+            };
+            let sharp = center.is_none();
+            let turn = if sharp {
+                before.perp_dot(*after).atan2(before.dot(*after))
+            } else {
+                arced
+            };
+            if turn.is_finite() && (!sharp || turn.abs() > CORNER_TURN) {
+                let start = (i + 1) % n;
+                corners.push(Corner {
+                    at: if start == 0 { 0.0 } else { self.starts[start] },
+                    bend,
+                    point: center.unwrap_or(*from + *before * *side_before),
+                    radius,
+                    before: *before,
+                    after: *after,
+                    turn,
+                    sides: (side_through(i, n - 1, j), side_through(j, 1, i)),
+                });
+            }
+        }
+        corners.sort_by(|a, b| a.at.total_cmp(&b.at));
+        corners
     }
 
     /// `outline` walked once around from `start` in `direction`, its
@@ -652,87 +799,169 @@ impl ArcPath {
         best.map(|(_, s)| s)
     }
 
-    /// Where along the path within `reach` of `guess` the point nearest
-    /// `p` lies: [`NEAR_SAMPLES`] samples across `guess ± reach`, then a
-    /// golden-section search between the best sample's neighbors, each of
-    /// its rounds one lookup, until the bracket is within [`NEAR_WIDTH`].
-    /// On a closed path the result is in `0.0..length`; on an open one
-    /// within its ends. What a point set near `guess` is looked for with
-    /// — a text ink set at `guess` along a convex outline and pushed off
-    /// it by no more than its own half size, whose nearest point is
-    /// within its diagonal of where it is set — at a cost that is the
-    /// ink's, not the path's: [`nearest`](Self::nearest) samples the
-    /// whole path (ruling R43). `guess`, held to the path, where `reach`
-    /// is not a positive number or the path is empty; `0.0` where `guess`
-    /// is not a number either.
-    ///
-    /// Cost: [`NEAR_SAMPLES`] `+ 1` path lookups and [`NEAR_ROUNDS`] more
-    /// at most.
-    pub(crate) fn nearest_near(&self, p: Vec2, guess: f32, reach: f32) -> f32 {
-        let closed = self.winding != 0.0;
-        let held = |s: f32| {
-            if closed {
-                s.rem_euclid(self.length)
-            } else {
-                s.clamp(0.0, self.length)
-            }
-        };
-        if !guess.is_finite() {
-            return 0.0;
-        }
-        // A length or a reach that is not a positive number is none.
-        let positive = |v: f32| v.partial_cmp(&0.0) == Some(std::cmp::Ordering::Greater);
-        if self.stretches.is_empty() || !positive(self.length) || !positive(reach) || !reach.is_finite() {
-            return if self.stretches.is_empty() {
-                0.0
-            } else {
-                held(guess)
-            };
-        }
-        let distance = |s: f32| length_of(self.at(s).0 - p);
-        let step = 2.0 * reach / NEAR_SAMPLES as f32;
-        let from = guess - reach;
-        let mut best = (f32::INFINITY, guess);
-        for k in 0..=NEAR_SAMPLES {
-            let s = from + step * k as f32;
-            let d = distance(s);
-            if d < best.0 {
-                best = (d, s);
-            }
-        }
-        let (mut low, mut high) = (best.1 - step, best.1 + step);
-        if !closed {
-            (low, high) = (low.max(0.0), high.min(self.length));
-        }
-        // Golden section, the inner point the round keeps reused.
-        let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
-        let mut a = high - ratio * (high - low);
-        let mut b = low + ratio * (high - low);
-        let (mut da, mut db) = (distance(a), distance(b));
-        for _ in 0..NEAR_ROUNDS {
-            if !(high - low).gt(&NEAR_WIDTH) {
-                break;
-            }
-            if da <= db {
-                (high, b, db) = (b, a, da);
-                a = high - ratio * (high - low);
-                da = distance(a);
-            } else {
-                (low, a, da) = (a, b, db);
-                b = low + ratio * (high - low);
-                db = distance(b);
-            }
-        }
-        held(low.midpoint(high))
-    }
-
     /// The outward unit normal beside `tangent`, for a closed path: the
     /// direction of travel turned a quarter toward the outside. Zero for
     /// an open path, which has no outside.
     pub(crate) fn outward(&self, tangent: Vec2) -> Vec2 {
         Vec2::new(tangent.y, -tangent.x) * self.winding
     }
+
+    /// The point at `s` of the path's offset curve at `offset` along its
+    /// outward normal (inward for a negative `offset`, #308): `p(s) +
+    /// offset · n(s)`, exactly, wherever the path has one normal and the
+    /// offset does not pass the radius of a bend inward — its sides, its
+    /// arcs, an ellipse's table, whose points and directions are the
+    /// curve's own. An offset inward past an ellipse's radius of curvature,
+    /// at the tips of one fifty times as wide as tall, folds back there as
+    /// a parallel curve does.
+    ///
+    /// **Sharp corners, outward.** At a sharp corner ([`Corner`]) the path
+    /// has no one normal, and the curve sweeps round the corner at `offset`
+    /// from it, from the side before's normal to the side after's. That
+    /// sweep has no length along the path, so it is given some: the stretch
+    /// within `w` of the corner — `w` half the sweep's own length, at most
+    /// half of either side — walks the offset curve's side before, its
+    /// sweep and its side after at one speed, `(2w + |offset|·|turn|) /
+    /// 2w`. So the point moves continuously as `s` moves through a corner,
+    /// never jumping from one side's offset to the other's, and every point
+    /// lies on the curve.
+    ///
+    /// **Bends, inward.** Inside a corner — a sharp one, or a rounded one
+    /// whose radius the offset passes — the two sides' offsets cross before
+    /// they reach it, at the corner of the curve inside, `X`, and what lies
+    /// past it of either, and round the bend between, folds back over the
+    /// outline: the stretch of the path from where either side's offset
+    /// reaches `X`, `|radius + offset|·tan(|turn| / 2)` before the bend and
+    /// after it, at most half of either side, is the point `X` throughout,
+    /// its normal turning from the side before's to the side after's. A
+    /// bend that turns by half a turn or more, the end of an outline thinner
+    /// than twice the offset, has no such corner, and folds.
+    ///
+    /// With no offset it is the path itself.
+    ///
+    /// Every bend of a closed outline turns with its winding: it is
+    /// convex, both [`Outline`] kinds being so. A concave corner would want
+    /// the other branches — outward offsets crossing there, inward ones
+    /// sweeping — and is not handled.
+    ///
+    /// Cost: one path lookup; within a corner's stretch none, but its
+    /// arithmetic, counted as one.
+    pub(crate) fn offset_at(&self, s: f32, offset: f32) -> OffsetPoint {
+        if self.winding != 0.0 && offset != 0.0 && self.length > 0.0 {
+            let s = s.rem_euclid(self.length);
+            // Signed, across the seam, from `at`.
+            let from_at = |at: f32| {
+                let from = s - at;
+                if from > 0.5 * self.length {
+                    from - self.length
+                } else if from < -0.5 * self.length {
+                    from + self.length
+                } else {
+                    from
+                }
+            };
+            for corner in &self.corners {
+                let half_turn = 0.5 * corner.turn.abs();
+                let inside = corner.radius + offset;
+                if offset < 0.0 && inside < 0.0 && half_turn < INSIDE_TURN {
+                    let t = (-inside * half_turn.tan())
+                        .min(0.5 * corner.sides.0)
+                        .min(0.5 * corner.sides.1);
+                    let reach = 0.5 * corner.bend + t;
+                    let from = from_at(corner.at + 0.5 * corner.bend);
+                    if reach > 0.0 && from.abs() < reach && reach.is_finite() {
+                        #[cfg(test)]
+                        PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
+                        return self.inside(corner, inside, half_turn, (from + reach) / (2.0 * reach));
+                    }
+                    continue;
+                }
+                if corner.radius > 0.0 || offset < 0.0 {
+                    continue;
+                }
+                let sweep = offset * corner.turn.abs();
+                let w = (0.5 * sweep).min(0.5 * corner.sides.0).min(0.5 * corner.sides.1);
+                if !(w > 0.0 && sweep.is_finite()) {
+                    continue;
+                }
+                let from = from_at(corner.at);
+                if from.abs() >= w {
+                    continue;
+                }
+                #[cfg(test)]
+                PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
+                return self.swept(corner, offset, w, sweep, from);
+            }
+        }
+        let (point, tangent) = self.at(s);
+        let normal = self.outward(tangent);
+        OffsetPoint {
+            point: point + normal * offset,
+            moves: tangent,
+            normal,
+        }
+    }
+
+    /// [`offset_at`](Self::offset_at) inside `corner`, its offset past the
+    /// bend's radius by `inside` (negative), `frac` of the way through the
+    /// stretch that is the inside curve's corner `X`.
+    fn inside(&self, corner: &Corner, inside: f32, half_turn: f32, frac: f32) -> OffsetPoint {
+        let (n1, n2) = (self.outward(corner.before), self.outward(corner.after));
+        let bisector = (n1 + n2).normalize_or_zero();
+        let point = corner.point + bisector * (inside / half_turn.cos());
+        OffsetPoint {
+            point,
+            moves: (corner.before + corner.after).normalize_or_zero(),
+            normal: n1.lerp(n2, frac.clamp(0.0, 1.0)).normalize_or_zero(),
+        }
+    }
+
+    /// [`offset_at`](Self::offset_at) within `w` of the sharp `corner`
+    /// outward, `from` past it (negative before it), its sweep `sweep`
+    /// long.
+    fn swept(&self, corner: &Corner, offset: f32, w: f32, sweep: f32, from: f32) -> OffsetPoint {
+        // How far along the offset curve's stretch round the corner.
+        let along = (from + w) / (2.0 * w) * (2.0 * w + sweep);
+        let side = |dir: Vec2, by: f32| {
+            let normal = self.outward(dir);
+            OffsetPoint {
+                point: corner.point + dir * by + normal * offset,
+                moves: dir,
+                normal,
+            }
+        };
+        if along <= w {
+            side(corner.before, along - w)
+        } else if along >= w + sweep {
+            side(corner.after, along - w - sweep)
+        } else {
+            let (sin, cos) = (corner.turn * (along - w) / sweep).sin_cos();
+            let turned = Vec2::new(
+                corner.before.x * cos - corner.before.y * sin,
+                corner.before.x * sin + corner.before.y * cos,
+            );
+            let normal = self.outward(turned);
+            OffsetPoint {
+                point: corner.point + normal * offset,
+                moves: turned,
+                normal,
+            }
+        }
+    }
 }
+
+/// How far, in radians, the direction of travel must turn where two
+/// straight stretches meet for the meeting to be a sharp corner
+/// ([`ArcPath::offset_at`]): a millionth, past the float error of two
+/// stretches of one straight side.
+const CORNER_TURN: f32 = 1e-6;
+
+/// The most half a bend's turn may be, in radians, for the offsets of its
+/// sides inside it to cross at a corner of the inside curve
+/// ([`ArcPath::offset_at`]): a hair short of a quarter turn, past which
+/// the two sides run back side by side and their offsets inside meet far
+/// off or never.
+const INSIDE_TURN: f32 = 0.49 * std::f32::consts::PI;
 
 /// `v`'s length, finite wherever it is: [`Vec2::length`], or, for a
 /// vector longer than `√f32::MAX` (about `1.8e19`) — whose squared
@@ -776,20 +1005,6 @@ pub(crate) const NEAREST_SAMPLES: usize = 2048;
 /// its best sample with: a bracket of two samples closes by a factor of
 /// about 10⁷.
 pub(crate) const NEAREST_ROUNDS: usize = 34;
-
-/// How many samples [`ArcPath::nearest_near`] takes across its reach.
-pub(crate) const NEAR_SAMPLES: usize = 8;
-
-/// The most rounds of golden-section search [`ArcPath::nearest_near`]
-/// refines its best sample with, one lookup each: a bracket of two
-/// samples closes by a factor of about 10⁷.
-pub(crate) const NEAR_ROUNDS: usize = 34;
-
-/// How narrow [`ArcPath::nearest_near`] closes its bracket, by arc
-/// length: a thousandth of a point turns an outline's normal there by
-/// a thousandth of its curvature, nothing a junction's 135° test or an
-/// arc's ends can tell.
-pub(crate) const NEAR_WIDTH: f32 = 1e-3;
 
 /// A table walking `param` from `from` to `to`, its samples close
 /// enough that no neighbors are more than `spacing` apart, given that the

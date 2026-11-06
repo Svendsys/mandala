@@ -760,3 +760,69 @@ fn test_flow_path_walks_forward_without_searching() {
         }
     }
 }
+
+#[test]
+fn test_flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_side_of() {
+    do_flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_side_of();
+}
+
+/// #308 (review 5801763546): a closed path's offset curve
+/// (`ArcPath::offset_at`) lies its offset from the outline all round,
+/// and moves on continuously, inside a sharp corner whose side the path's
+/// seam cuts in two as well as anywhere: round a 200 × 20 rectangle
+/// started at the middle of its left side, as a frame's halves are, and
+/// at the middle of its top, sharp and with a quarter's corners, inward
+/// at 6 and 9 — past a quarter of its height, short of half, so no
+/// corner's stretch of the curve inside it is held to the shorter of its
+/// sides — and outward at 3 and 9; sampled every 0.05 along the path,
+/// each point within a thousandth of its offset from the outline
+/// (`signed_distance`), and none more than five samples' length from the
+/// one before: the curve moves on faster than the path round a bend
+/// outward, 4.6 times round the quarter's corners, radius 2.5, at 9, and
+/// a step where the curve jumps is a point or more.
+///
+/// Control: with each corner's sides read as the stretch beside it
+/// alone, the seam's half of a side, red started mid-left inward at 6: a
+/// point 1.0 off its offset, and the curve stepping 1.0 (the reviewer's
+/// probe, every 0.011: 0.996 at 6 and 3.996 at 9).
+pub fn do_flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_side_of() {
+    use crate::flow::tests::halves_tests::signed_distance;
+    let rect = Rect::new(Vec2::ZERO, Vec2::new(200.0, 20.0));
+    for (name, shape) in [
+        (
+            "sharp",
+            Shape::Rectangle {
+                radius: Percent::new(0),
+            },
+        ),
+        (
+            "rounded",
+            Shape::Rectangle {
+                radius: Percent::new(25),
+            },
+        ),
+    ] {
+        let outline = outline(rect, shape);
+        for edge in [Edge::Left, Edge::Top] {
+            let path = ArcPath::closed(&outline, StartPoint { edge, at: 0.5 }, Direction::Clockwise, 0.25);
+            for d in [-6.0_f32, -9.0, 3.0, 9.0] {
+                let step = 0.05;
+                let samples = (path.length() / step) as usize;
+                let (mut off, mut jump) = (0.0_f32, 0.0_f32);
+                let mut last: Option<Vec2> = None;
+                for k in 0..=samples {
+                    let p = path.offset_at(k as f32 * step, d).point;
+                    off = off.max((signed_distance(&path, p) - d).abs());
+                    if let Some(q) = last {
+                        jump = jump.max(p.distance(q));
+                    }
+                    last = Some(p);
+                }
+                assert!(
+                    off <= 1e-3 && jump <= 5.0 * step,
+                    "{name}, started mid-{edge:?}, at {d}: a point {off} off its offset, a step of {jump} between neighbors"
+                );
+            }
+        }
+    }
+}

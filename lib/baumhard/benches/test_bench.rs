@@ -2212,6 +2212,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_ellipse_walk_stays_on_the_ellipse", |b| {
         b.iter(do_flow_ellipse_walk_stays_on_the_ellipse)
     });
+    c.bench_function(
+        "flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_side_of",
+        |b| b.iter(do_flow_offset_curve_holds_its_distance_round_a_corner_its_seam_splits_a_side_of),
+    );
     c.bench_function("flow_bezier_walk_measures_arc_length", |b| {
         b.iter(do_flow_bezier_walk_measures_arc_length)
     });
@@ -2467,9 +2471,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_crowded_frame_shrinks_or_cuts", |b| {
         b.iter(do_flow_halves_a_crowded_frame_shrinks_or_cuts)
     });
-    c.bench_function("flow_halves_span_half_is_the_mean_of_natural_and_whole", |b| {
-        b.iter(do_flow_halves_span_half_is_the_mean_of_natural_and_whole)
-    });
+    c.bench_function(
+        "flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline",
+        |b| b.iter(do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline),
+    );
     c.bench_function("flow_halves_a_line_keeps_its_half", |b| {
         b.iter(do_flow_halves_a_line_keeps_its_half)
     });

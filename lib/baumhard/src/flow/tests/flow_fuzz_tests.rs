@@ -506,7 +506,7 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
             .find(|run| run.line_i == line)
             .and_then(|run| run.glyphs.first().map(|glyph| glyph.w))
     };
-    let mixed_box = |fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+    let mixed_box = |fs: &mut crate::font::fonts::FontSystemLease| {
         shape_box(
             &[
                 FlowSpan {
@@ -525,7 +525,7 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
             fs,
         )
     };
-    let mixed_run = |fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+    let mixed_run = |fs: &mut crate::font::fonts::FontSystemLease| {
         shape_run(
             &[
                 FlowSpan {
@@ -664,7 +664,7 @@ fn test_a_span_at_a_weight_its_family_lacks_is_drawn_in_its_family() {
         ..zero_width_space_style()
     };
     let (decoys, pin) = with_fonts(|fs| {
-        let fs: &crate::font::FontSystem = fs;
+        let fs: &crate::font::FontSystem = fs.fonts();
         let decoys = fs
             .db()
             .faces()
@@ -1101,7 +1101,7 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
     let (tracks, builds) = counted(&mut || {
         (pinned, truncated) = with_fonts(|fs| {
             let run = real_run(quatrain, &flow, fs);
-            let pinned = crate::font::fonts::pinned_family(fs, flow.font)
+            let pinned = crate::font::fonts::pinned_family(fs.fonts(), flow.font)
                 .is_some_and(|pins| run.layout_glyphs().all(|g| pins.faces.contains(&g.font_id)));
             let start = StartPoint {
                 edge: Edge::Top,
@@ -1539,6 +1539,40 @@ fn test_flow_structured_finding_a_curve_fit_shrunk_to_the_size_floor() {
     }
 }
 
+/// The flow_structured finding of #308's fuzz run, failing alike at
+/// d7242d38: a `Spread` frame laid inward round an ellipse 3.24 wide and
+/// 1.18e-38 tall, its text of two glyphs one line, 0.45 long at its
+/// font's gap along a half 3.24 long, with a 92-byte mixed ornament on
+/// its sides. Its words' break was met at both junctions; one whole copy
+/// of the ornament, some 60 glyphs, longer than the half, was not, and
+/// the clearance was grown for the copy's room till it reached 28.3 at
+/// each junction, the line pressed, and the pressed line cut to one
+/// glyph: a frame lost its text to its sides, where it loses its sides
+/// before its text (ruling R48.3, B15.5). Growth for a side copy's room
+/// alone is held to the lines' slack now, and never takes a try that
+/// presses a line; the arc no copy fits is left empty. Found on the
+/// compiled faces alone (`FONTCONFIG_FILE` at an empty directory);
+/// replays alike on every host.
+///
+/// Control: with a side copy's growth pressing a line as the words' does,
+/// and no frame laid again without its sides where they cut it (either
+/// holds the finding), red ("its natural length fits, and it was cut").
+#[test]
+fn test_flow_structured_finding_a_frame_of_one_line_round_an_outline_of_no_height() {
+    let found = include_bytes!("fuzz_findings/structured_frame_one_line_round_an_outline_of_no_height");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
 /// R52.2: the oracle owes a `Fit` text whole exactly where it fits as the
 /// engine shrinks it, no glyph below the size floor: "To see a World" at
 /// 16 pt, `Fit` from a millionth, on a path just longer than the text
@@ -1778,7 +1812,7 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
     // A private-use code point no face here holds (`.notdef`).
     let heavy_text = "\u{10FFFD}".repeat(60);
     let (long, short, heavy) = with_fonts(|fs| {
-        let cut = |text: String, fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+        let cut = |text: String, fs: &mut crate::font::fonts::FontSystemLease| {
             let kept = framed(&[text], std::slice::from_ref(&flow), 1.0, fs, &fits);
             let run = real_run(&kept[0], &flow, fs);
             (run.glyphs.len(), frame_work_steps(&run, None, true), kept)
@@ -1862,7 +1896,7 @@ fn test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout() {
     let (floor, light, past) = with_fonts(|fs| {
         let ornament = real_run("─═─═", &flow, fs);
         let empty = real_run("", &flow, fs);
-        let at = |glyphs: usize, fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+        let at = |glyphs: usize, fs: &mut crate::font::fonts::FontSystemLease| {
             frame_work_steps(&real_run(&"a".repeat(glyphs), &flow, fs), Some(&ornament), true)
         };
         (

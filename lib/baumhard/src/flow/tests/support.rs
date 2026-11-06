@@ -24,7 +24,7 @@ use glam::Vec2;
 use crate::document::resolve::ResolvedText;
 use crate::document::values::{FontSize, Rgba, Weight};
 use crate::flow::{shape_run, FlowSpan, GlyphMetrics, ShapedRun, LINE_HEIGHT_FACTOR};
-use crate::font::fonts::{self, acquire_font_system_write, AppFont, FontSystemWriteGuard};
+use crate::font::fonts::{self, AppFont, FontSystemLease};
 use crate::font::{Buffer, Metrics};
 
 /// A Latin face compiled into the binary, so real shaping does not
@@ -42,16 +42,17 @@ pub(crate) fn style(points: f32) -> ResolvedText {
     }
 }
 
-/// Run `f` with the font system initialized and this thread holding its
-/// guard, and release the guard before returning `f`'s result.
-pub(crate) fn with_fonts<R>(f: impl FnOnce(&mut FontSystemWriteGuard) -> R) -> R {
+/// Run `f` with the font system initialized and a lease on it, which
+/// takes the lock when a font is read and gives it back across a
+/// placement's font-free phases ([`FontSystemLease`]).
+pub(crate) fn with_fonts<R>(f: impl FnOnce(&mut FontSystemLease) -> R) -> R {
     fonts::init();
-    let mut fs = acquire_font_system_write("flow::tests");
+    let mut fs = FontSystemLease::new("flow::tests");
     f(&mut fs)
 }
 
 /// `text` shaped for real in one span of `style`, at scale 1.
-pub(crate) fn real_run(text: &str, style: &ResolvedText, fs: &mut FontSystemWriteGuard) -> ShapedRun {
+pub(crate) fn real_run(text: &str, style: &ResolvedText, fs: &mut FontSystemLease) -> ShapedRun {
     shape_run(
         &[FlowSpan {
             text,

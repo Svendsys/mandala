@@ -19,7 +19,7 @@ use crate::flow::place::{place_lines, place_on_closed_traced, Trace, INK_TOLERAN
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{outline, Outline, PlacedGlyph, PlacedRun, Rect, RingLayout, ShapedRun, FILLER_SPAN};
 use crate::font::fonts::glyph_outline_ink;
-use crate::font::{FontSystem, SwashCache};
+use crate::font::SwashCache;
 
 /// The README's Blake quatrain.
 pub(crate) const QUATRAIN: &str = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower, \
@@ -151,10 +151,7 @@ pub(crate) fn frame_of_spans(
 
 /// `spans`, each its text at its size in points, shaped for real as one
 /// run in [`FACE`](crate::flow::tests::support::FACE), at scale 1.
-pub(crate) fn spans_run(
-    spans: &[(String, f32)],
-    fs: &mut crate::font::fonts::FontSystemWriteGuard,
-) -> ShapedRun {
+pub(crate) fn spans_run(spans: &[(String, f32)], fs: &mut crate::font::fonts::FontSystemLease) -> ShapedRun {
     let styles: Vec<crate::document::resolve::ResolvedText> =
         spans.iter().map(|(_, points)| style(*points)).collect();
     let flow: Vec<crate::flow::FlowSpan<'_>> = spans
@@ -186,7 +183,7 @@ pub(crate) fn mixed_sizes(copies: usize, dots: usize) -> Vec<(String, f32)> {
 /// outline; `None` for a space.
 fn inks(run: &ShapedRun, placed: &PlacedRun) -> Vec<Option<(Vec2, Vec2)>> {
     with_fonts(|fs| {
-        let fs: &mut FontSystem = fs;
+        let fs = fs.fonts();
         let mut cache = SwashCache::new();
         let laid: Vec<_> = run.layout_glyphs().cloned().collect();
         placed
@@ -210,13 +207,270 @@ fn center(b: (Vec2, Vec2)) -> Vec2 {
     0.5 * (b.0 + b.1)
 }
 
+/// The x-height of [`style`]'s face a point of its size (#308): the ink
+/// of an `x` shaped alone in it above the baseline, over its size —
+/// measured here through the shaper and the outline, not read from the
+/// engine's band, so a band the engine reads wrong does not agree with
+/// itself (TEST_CONVENTIONS §T13, shape 6).
+pub(crate) fn x_height_per_point() -> f32 {
+    static X: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *X.get_or_init(|| {
+        with_fonts(|fs| {
+            let flow = style(16.0);
+            let run = real_run("x", &flow, fs);
+            let fs = fs.fonts();
+            let mut cache = SwashCache::new();
+            let x = run.layout_glyphs().next().cloned().expect("an x is shaped");
+            let (min, _) = glyph_outline_ink(fs, &mut cache, &x).expect("an x has ink");
+            -min.y / x.font_size
+        })
+    })
+}
+
+/// Where glyph `k` of `placed` is anchored on its frame's band curve
+/// (#308, ruling B15.1), its ink `ink` on the canvas: its ink's center
+/// along the line and, across it, halfway between its baseline and its
+/// x-height ([`x_height_per_point`], at its size) — or, a side
+/// ornament's glyph, its ink's center.
+pub(crate) fn band_anchor(run: &ShapedRun, placed: &PlacedRun, k: usize, ink: (Vec2, Vec2)) -> Vec2 {
+    let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
+    if glyph.span == FILLER_SPAN {
+        return center(ink);
+    }
+    let baseline = placed.glyphs[k].pos.y + run.baseline();
+    Vec2::new(center(ink).x, baseline - 0.5 * x_height_per_point() * glyph.size)
+}
+
+/// The x-height of the face `style` draws in, a point of its size
+/// (#308): the ink of an `x` shaped alone in it above the baseline, over
+/// its size, measured through the shaper and the outline as
+/// [`x_height_per_point`] measures [`style`]'s.
+#[cfg(test)]
+pub(crate) fn x_height_of(style: &crate::document::resolve::ResolvedText) -> f32 {
+    with_fonts(|fs| {
+        let run = crate::flow::shape_run(
+            &[crate::flow::FlowSpan {
+                text: "x",
+                style,
+                link: None,
+            }],
+            1.0,
+            fs,
+        );
+        let fs = fs.fonts();
+        let mut cache = SwashCache::new();
+        let x = run.layout_glyphs().next().cloned();
+        x.and_then(|x| glyph_outline_ink(fs, &mut cache, &x).map(|(min, _)| -min.y / x.font_size))
+            .unwrap_or(f32::NAN)
+    })
+}
+
+/// The signed distance of `p` from the outline `path` is walked round,
+/// positive outside it (#308): from the point of the outline nearest it,
+/// along the outline's outward normal there or, past a sharp corner,
+/// from the corner. A point of a closed path's offset curve at `offset`
+/// lies `offset` from it — what an offset curve is — round a sharp
+/// corner outward too, where the curve sweeps round it, and inside a
+/// corner, where the sides' offsets meet.
+pub(crate) fn signed_distance(path: &ArcPath, p: Vec2) -> f32 {
+    let (q, tangent) = path.at(path.nearest(p));
+    let off = p - q;
+    let outside = off.dot(path.outward(tangent)) >= 0.0;
+    if outside {
+        off.length()
+    } else {
+        -off.length()
+    }
+}
+
+/// What [`band_residual`] measures of a frame: the most an anchor lies
+/// off its band curve, the least and most distance from the outline, the
+/// anchors measured, and of them those [`folded`]; and how far past the
+/// offset the most any of its inks reaches toward the outline from its
+/// anchor lies.
+pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize, f32);
+
+/// How a frame's glyphs lie on its band curve (#308, ruling B15.1),
+/// measured from the placement alone: each cluster's anchor — its ink's
+/// center along the line and, across it, its baseline less half its
+/// span's x-height at its size (`x_per_pt`, by span), or a side
+/// ornament's ink center — and its signed distance from the outline
+/// `path` ([`signed_distance`]). The most any anchor lies off the curve
+/// at `offset`, the most and least distance (the curve's radial spread
+/// over the frame: no step at a junction or a side arc), the anchors
+/// measured, and of them those [`folded`] — left out of the first two:
+/// inward, where the outline under an anchor is thinner across than
+/// twice the offset, no curve inside it lies at the offset from it all
+/// round, and the band curve folds over the outline's far side. A glyph
+/// with no outline to measure is inked as its box, as the engine inks it.
+///
+/// And the most any ink not folded reaches toward the outline from its
+/// anchor, as the engine models an ink's reach: the support, along the
+/// outline's outward normal under the anchor ([`normal_under`]), of the
+/// ellipse its box bounds, less how far its center lies off its anchor
+/// that way, less the offset. Outward, the band curve lies as near the
+/// outline as lets every ink clear it (ruling B15.1): that most is the
+/// frame's offset, and this none.
+pub(crate) fn band_residual(
+    run: &ShapedRun,
+    placed: &PlacedRun,
+    path: &ArcPath,
+    offset: f32,
+    x_per_pt: &dyn Fn(usize) -> f32,
+) -> BandMeasure {
+    // A glyph with no outline to measure — a `.notdef` or a bitmap, as a
+    // side ornament no compiled face holds is drawn where no host face
+    // does — inked as its box, its advance by the line height, as the
+    // engine inks it.
+    let inks: Vec<Option<(Vec2, Vec2)>> = inks(run, placed)
+        .into_iter()
+        .zip(&placed.glyphs)
+        .map(|(ink, g)| {
+            let glyph = &run.glyphs[g.glyph as usize];
+            ink.or_else(|| {
+                (!glyph.blank).then(|| (g.pos, g.pos + Vec2::new(glyph.advance.max(0.0), run.line_height)))
+            })
+        })
+        .collect();
+    let mut clusters: Vec<(usize, Option<(Vec2, Vec2)>)> = Vec::new();
+    for (k, g) in placed.glyphs.iter().enumerate() {
+        let glyph = &run.glyphs[g.glyph as usize];
+        if glyph.blank {
+            continue;
+        }
+        let starts = glyph.grapheme_start || clusters.is_empty();
+        match (starts, clusters.last_mut(), inks[k]) {
+            (false, Some((_, Some(b))), Some(i)) => *b = (b.0.min(i.0), b.1.max(i.1)),
+            (false, Some(last), None) => last.1 = None,
+            _ => clusters.push((k, inks[k])),
+        }
+    }
+    let (mut worst, mut least, mut most, mut measured, mut fold) =
+        (0.0_f32, f32::INFINITY, f32::NEG_INFINITY, 0, 0);
+    let mut reach = f32::NEG_INFINITY;
+    for (k, ink) in clusters {
+        let Some(ink) = ink else { continue };
+        let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
+        let anchor = if glyph.span == FILLER_SPAN {
+            center(ink)
+        } else {
+            let baseline = placed.glyphs[k].pos.y + run.baseline();
+            Vec2::new(center(ink).x, baseline - 0.5 * x_per_pt(glyph.span) * glyph.size)
+        };
+        measured += 1;
+        if folded(path, anchor, offset) {
+            fold += 1;
+            continue;
+        }
+        let d = signed_distance(path, anchor);
+        worst = worst.max((d - offset).abs());
+        least = least.min(d);
+        most = most.max(d);
+        let normal = normal_under(path, anchor);
+        let half = 0.5 * (ink.1 - ink.0);
+        reach = reach.max((normal * half).length() - (center(ink) - anchor).dot(normal));
+    }
+    (worst, (least, most), measured, fold, reach - offset)
+}
+
+/// Whether the outline `path` is thinner than twice `offset` somewhere
+/// along the stretches it is walked over from each of `spans`' starts
+/// on to their ends (#308, ruling B15.4): the point twice the offset in
+/// from one of [`THIN_SAMPLES`] points of each not inside it, as
+/// [`folded`] reads one. Outward, never.
+pub(crate) fn thin_along(path: &ArcPath, offset: f32, spans: &[(f32, f32)]) -> bool {
+    if offset >= 0.0 {
+        return false;
+    }
+    let length = path.length();
+    spans.iter().any(|&(from, to)| {
+        let along = (to - from).rem_euclid(length);
+        (0..=THIN_SAMPLES).any(|k| {
+            let (q, tangent) = path.at(from + along * k as f32 / THIN_SAMPLES as f32);
+            signed_distance(path, q + 2.0 * offset * path.outward(tangent)) >= 0.0
+        })
+    })
+}
+
+/// How many points along each line's stretch [`thin_along`] looks at.
+pub(crate) const THIN_SAMPLES: usize = 512;
+
+/// Whether an anchor at `p` of a band curve at `offset` lies where the
+/// curve folds (#308): inward, where the outline `path` at the point
+/// nearest `p` is thinner along its normal than twice the offset — the
+/// point twice the offset in from it not inside the outline — as at the
+/// end of an ellipse whose radius of curvature there is less than the
+/// offset. Read from the outline alone.
+pub(crate) fn folded(path: &ArcPath, p: Vec2, offset: f32) -> bool {
+    if offset >= 0.0 {
+        return false;
+    }
+    let (q, tangent) = path.at(path.nearest(p));
+    signed_distance(path, q + 2.0 * offset * path.outward(tangent)) >= 0.0
+}
+
+/// How near the most any ink of a frame laid outward reaches toward the
+/// outline must lie to its offset, in points (#308, ruling B15.1): a
+/// hundredth, what the engine solves the offset to (`OFFSET_TOLERANCE`).
+#[cfg(test)]
+pub(crate) const REACH_TOLERANCE: f32 = 0.01;
+
+/// The most a glyph's anchor may lie off its frame's band curve, and the
+/// most its frame's anchors' distance from the outline may spread, in
+/// points at the scale laid (#308, ruling B15.1): 0.05.
+pub(crate) const BAND_RESIDUAL: f32 = 0.05;
+
 /// One line's letter gaps (between neighboring inks of a word) and word
-/// gaps (across a space), and its first and last ink.
+/// gaps (across a space), and its first and last ink, with their anchors
+/// on the frame's band curve ([`band_anchor`], #308).
 struct LineGaps {
     letters: Vec<f32>,
     words: Vec<f32>,
     ends: ((Vec2, Vec2), (Vec2, Vec2)),
+    anchors: (Vec2, Vec2),
     centers: Vec<Vec2>,
+}
+
+/// The outline's outward normal under the anchor `p` of an ink (#308),
+/// `path` walked clockwise: the normal at the point of the outline
+/// nearest `p` — the way from that point to a point of the frame's band
+/// curve, which lies along the normal of the point it is offset from
+/// — or, where `p` lies off the outline in no normal of it there, a
+/// degree off or more, the way from that point to `p`: past a sharp
+/// corner, where the nearest point is the corner and the outline has no
+/// one normal, the way from the corner, turned outward for a point
+/// inside the outline.
+fn normal_under(path: &ArcPath, p: Vec2) -> Vec2 {
+    let (q, tangent) = path.at(path.nearest(p));
+    let along = Vec2::new(tangent.y, -tangent.x);
+    let off = p - q;
+    let way = off.normalize_or_zero() * off.dot(along).signum();
+    if off.length() > 0.5 && way.dot(along) < 1.0_f32.to_radians().cos() {
+        way
+    } else {
+        along
+    }
+}
+
+/// How far, as a cosine, the outline's outward normals under the
+/// anchors `a` and `b` of two end inks turn apart (#308): at the most,
+/// over the normals within a hundredth of a point along the outline of
+/// where each lies ([`normal_under`]). An anchor on the outline at a
+/// sharp corner — the band curve at no offset, inward, where a line's
+/// last letter can come to rest on the corner — lies where the outline
+/// has no one normal, and the engine reads it as facing whichever side
+/// it is set on, which a float's error in its position here would turn
+/// the other way.
+fn turn_cos(path: &ArcPath, a: Vec2, b: Vec2) -> f32 {
+    let near = |p: Vec2| {
+        let s = path.nearest(p);
+        let side = |s: f32| path.outward(path.at(s).1);
+        [normal_under(path, p), side(s - 1e-2), side(s + 1e-2)]
+    };
+    let (na, nb) = (near(a), near(b));
+    na.iter()
+        .flat_map(|u| nb.iter().map(move |v| u.dot(*v)))
+        .fold(f32::INFINITY, f32::min)
 }
 
 fn line_gaps(
@@ -229,6 +483,7 @@ fn line_gaps(
     let mut previous: Option<(Vec2, Vec2)> = None;
     let mut spaced = false;
     let mut first = None;
+    let mut anchors: Option<(Vec2, Vec2)> = None;
     for k in range {
         if run.glyphs[placed.glyphs[k].glyph as usize].blank {
             spaced = true;
@@ -243,6 +498,8 @@ fn line_gaps(
             }
         }
         first.get_or_insert(ink);
+        let anchor = band_anchor(run, placed, k, ink);
+        anchors = Some((anchors.map_or(anchor, |(a, _)| a), anchor));
         centers.push(center(ink));
         previous = Some(ink);
         spaced = false;
@@ -252,6 +509,7 @@ fn line_gaps(
         letters,
         words,
         ends: (first, previous.expect("a line with ink")),
+        anchors: anchors.expect("a line with ink"),
         centers,
     }
 }
@@ -536,7 +794,7 @@ pub fn do_flow_halves_tracking_grows_with_the_gap() {
     for (name, shape, text, points) in scenes() {
         let ends = with_fonts(|fs| {
             let run = real_run(&text[..text.len().min(40)], &style(points), fs);
-            let fs: &mut FontSystem = fs;
+            let fs = fs.fonts();
             track_seam(&run, &shape, &gaps, fs)
         });
         for (k, pair) in ends.windows(2).enumerate() {
@@ -568,7 +826,7 @@ pub fn do_flow_halves_sides_hold_the_junctions() {
     let x_height = |points: f32| {
         with_fonts(|fs| {
             let run = real_run("x", &style(points), fs);
-            let fs: &mut FontSystem = fs;
+            let fs = fs.fonts();
             let mut cache = SwashCache::new();
             let laid: Vec<_> = run.layout_glyphs().cloned().collect();
             glyph_outline_ink(fs, &mut cache, &laid[0]).map_or(0.0, |(min, max)| max.y - min.y)
@@ -1075,6 +1333,23 @@ pub struct SweepWork {
     /// The rounds a letter was moved clear of an ink before its neighbor,
     /// and of them the rounds that left it where it was (ruling R44.7).
     pub earlier: (usize, usize),
+    /// The most an anchor lay off its frame's band curve, and the most a
+    /// frame's anchors' distance from its outline spread (#308, ruling
+    /// B15.1, `band_residual`), and the frames each was the most of.
+    pub band: (f32, f32),
+    pub band_worst: (String, String),
+    /// Over the frames laid outward, the most and least the most reach of
+    /// a frame's inks toward the outline (`band_residual`) lies past its
+    /// offset, and the frames each was of.
+    pub reach: (f32, f32),
+    pub reach_worst: (String, String),
+    /// The anchors measured so, and of them those where the band curve
+    /// folds (`folded`).
+    pub anchors: usize,
+    pub folded: usize,
+    /// The frames with anchors so, each round an outline thinner than
+    /// twice its offset along its lines (`thin_along`).
+    pub thin_folded: usize,
 }
 
 /// The lines this thread has tracked (`halves::TRACKS`, a test
@@ -1137,16 +1412,11 @@ pub(crate) fn most_step_lookups(to: usize) -> usize {
 /// frame laid inward whose two lines' inks are together taller than the
 /// outline may, and the rest must hold. Only such a frame may have a
 /// line cut apart (ruling R38.1), and some here are.
-pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
-    /// The most lines a frame here may track (rulings R35.3, R38.3): the
-    /// most any does is 598 (6,164 at 30411a6e, 10,534 before the shrink
-    /// stopped at a useful precision, ruling R42.2; 17,031 when a line's
-    /// gap was bisected). Ruling R43's bounds, in glyph steps and path
-    /// lookups, are the sweep's tests below ([`SWEEP_MOST_STEPS`]).
-    const MOST_TRACKS: usize = 12_000;
-    // Opt-in: the sweep's tallies, for reading the counts this test's
-    // bounds are set from.
-    let report = std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some();
+/// The aspect sweep's outlines ([`do_flow_halves_hold_on_every_aspect`]):
+/// each, its name, its height, and the size its text is set at — an
+/// ellipse and a sharp and a rounded rectangle at 1:1, 10:1 and 50:1, and
+/// the 600 × 12 sharp rectangle.
+pub(crate) fn sweep_outlines() -> Vec<(String, Outline, f32, f32)> {
     let rect = |w: f32, h: f32| Rect::new(Vec2::ZERO, Vec2::new(w, h));
     // Each outline, its height, and the size its text is set at.
     let mut outlines: Vec<(String, Outline, f32, f32)> = Vec::new();
@@ -1183,6 +1453,20 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
         12.0,
         22.0,
     ));
+    outlines
+}
+
+pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
+    /// The most lines a frame here may track (rulings R35.3, R38.3): the
+    /// most any does is 598 (6,164 at 30411a6e, 10,534 before the shrink
+    /// stopped at a useful precision, ruling R42.2; 17,031 when a line's
+    /// gap was bisected). Ruling R43's bounds, in glyph steps and path
+    /// lookups, are the sweep's tests below ([`SWEEP_MOST_STEPS`]).
+    const MOST_TRACKS: usize = 12_000;
+    // Opt-in: the sweep's tallies, for reading the counts this test's
+    // bounds are set from.
+    let report = std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some();
+    let outlines = sweep_outlines();
     let mut faults: Vec<String> = Vec::new();
     // How many frames reached a last resort: a `Fit` frame shrunk below
     // R27's size, a `Once` frame cut, and one that reports what is left
@@ -1194,7 +1478,10 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
     // The work the frames here take (ruling R43): the most glyph steps
     // one frame takes (`Trace::spent`, what `TRACK_BUDGET` bounds), and
     // the glyph steps and path lookups in all.
-    let mut work = SweepWork::default();
+    let mut work = SweepWork {
+        reach: (f32::NEG_INFINITY, f32::INFINITY),
+        ..SweepWork::default()
+    };
     most_step_lookups(0);
     let earlier_before = earlier_rounds();
     let size = |run: &ShapedRun| {
@@ -1209,12 +1496,9 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
         at: 0.5,
     };
     for (name, shape, height, points) in &outlines {
-        // The outline's outward normal nearest `p`.
+        // The outline, walked clockwise: what a junction's ends' normals
+        // are read from (`turn_cos`).
         let path = ArcPath::closed(shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
-        let normal = |p: Vec2| {
-            let tangent = path.at(path.nearest(p)).1;
-            Vec2::new(tangent.y, -tangent.x)
-        };
         for text in [ECCLESIASTES, QUATRAIN] {
             let (fitted, r27_cut) = with_fonts(|fs| {
                 let flow = style(*points);
@@ -1273,6 +1557,67 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                             }
                             work.most_looks = work.most_looks.with(trace.looks);
                             work.lookups += lookups_so_far() - looked;
+                            // Every anchor on the frame's one band curve,
+                            // at one distance from the outline all round
+                            // (#308, ruling B15.1).
+                            if let Some(offset) = trace.offset {
+                                let inks_of = inks(&run, &placed);
+                                let (off, (least, most), measured, fold, past) =
+                                    band_residual(&run, &placed, &path, offset, &|_| x_height_per_point());
+                                work.anchors += measured;
+                                work.folded += fold;
+                                // Folds only where the outline is thinner
+                                // than twice the offset along the lines
+                                // (ruling B15.4): from each line's first
+                                // anchor on to its last, the way it reads.
+                                if fold > 0 {
+                                    let spans: Vec<(f32, f32)> = trace
+                                        .lines
+                                        .iter()
+                                        .map(|l| {
+                                            let g = line_gaps(&run, &placed, &inks_of, l.glyphs.clone());
+                                            let (a, b) =
+                                                (path.nearest(g.anchors.0), path.nearest(g.anchors.1));
+                                            if l.half == 0 {
+                                                (a, b)
+                                            } else {
+                                                (b, a)
+                                            }
+                                        })
+                                        .collect();
+                                    if thin_along(&path, offset, &spans) {
+                                        work.thin_folded += 1;
+                                    } else {
+                                        faults.push(format!(
+                                            "{what}: {fold} anchors where the band curve folds, its outline at least twice {offset} thick along its lines"
+                                        ));
+                                    }
+                                }
+                                if off > work.band.0 {
+                                    work.band.0 = off;
+                                    work.band_worst.0 = what.clone();
+                                }
+                                if most - least > work.band.1 {
+                                    work.band.1 = most - least;
+                                    work.band_worst.1 = what.clone();
+                                }
+                                if off > BAND_RESIDUAL || most - least > BAND_RESIDUAL {
+                                    faults.push(format!(
+                                        "{what}: an anchor {off} off the band curve at {offset}, its distance from the outline {least}..{most}"
+                                    ));
+                                }
+                                // Outward, the curve as near the outline
+                                // as lets every ink clear it: the inks'
+                                // most reach toward it is the offset.
+                                if outward {
+                                    if past > work.reach.0 {
+                                        (work.reach.0, work.reach_worst.0) = (past, what.clone());
+                                    }
+                                    if past < work.reach.1 {
+                                        (work.reach.1, work.reach_worst.1) = (past, what.clone());
+                                    }
+                                }
+                            }
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
                                 shrunk += 1;
                             }
@@ -1388,9 +1733,14 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                     .map(|l| mean(&l.words))
                                     .collect();
                                 let word = if words.is_empty() { 0.0 } else { mean(&words) };
-                                for (j, (junction, a, b)) in [
-                                    ("top-left", one.ends.0, two.ends.0),
-                                    ("bottom-right", one.ends.1, two.ends.1),
+                                for (j, (junction, a, b, anchors)) in [
+                                    ("top-left", one.ends.0, two.ends.0, (one.anchors.0, two.anchors.0)),
+                                    (
+                                        "bottom-right",
+                                        one.ends.1,
+                                        two.ends.1,
+                                        (one.anchors.1, two.anchors.1),
+                                    ),
                                 ]
                                 .into_iter()
                                 .enumerate()
@@ -1399,7 +1749,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                         continue;
                                     }
                                     let apart = gap(a, b);
-                                    let turn = normal(center(a)).dot(normal(center(b)));
+                                    let turn = turn_cos(&path, anchors.0, anchors.1);
                                     // Stacked past 135°: only not touching.
                                     // Between 130° and 135°, where the
                                     // engine's ink and this projection may
@@ -1526,11 +1876,6 @@ pub fn do_flow_halves_a_crowded_frame_shrinks_or_cuts() {
     }
 }
 
-#[test]
-fn test_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
-    do_flow_halves_span_half_is_the_mean_of_natural_and_whole();
-}
-
 /// Span ½ lays each end halfway between its natural place and its place
 /// at whole (ruling R33): by arc length, the part's ends — where along
 /// the path the end inks are set — exactly so; and each end ink's
@@ -1541,7 +1886,24 @@ fn test_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
 /// place). Precondition: each scene's clearance is not nothing — a
 /// line's end at whole is short of its junction — so the ½ end is not
 /// also halfway to the junction.
-pub fn do_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
+///
+/// **On one band curve** (#308, ruling B15.1). Each frame solves its own
+/// band curve from where its inks lie, and a line's natural ends — at its
+/// font's gap, centered on its half's apex on that curve — move with the
+/// curve's offset: the psalm's natural frame lies at 21.1764 and its ½
+/// and whole frames at 21.1953, and its natural end on the first half
+/// at 911.0593 on the one, 911.0309 on the other. So the three spans are
+/// laid on the ½ frame's own curve (`OFFSET_OVERRIDE`), each frame
+/// held to having laid there (a precondition), and the mean is exact.
+/// As ruled on review 5801763546: R33's mean holds within a frame, on
+/// that frame's own curve; ends on curves at different offsets are not
+/// one quantity.
+/// Control: with the natural frame laid on its own curve again, the
+/// psalm's end at 989.3153 misses the mean of 911.0593 and 1067.5997 by
+/// 0.014, past the hundredth. (No `do_*` twin: it reads a test seam.)
+#[test]
+fn test_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
+    use crate::flow::place::halves::OFFSET_OVERRIDE;
     for (name, shape, text, points) in scenes() {
         let (junctions, _, length) = halves_seam(&shape);
         let left = StartPoint {
@@ -1552,12 +1914,32 @@ pub fn do_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
             ArcPath::closed(&shape, left, Direction::Clockwise, MIN_TABLE_SPACING),
             ArcPath::closed(&shape, left, Direction::CounterClockwise, MIN_TABLE_SPACING),
         ];
+        let half_span = LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE);
+        let own = frame(
+            text,
+            points,
+            &shape,
+            &RingLayout {
+                span: half_span,
+                ..RingLayout::whole()
+            },
+        )
+        .2
+        .offset
+        .expect("a frame on its halves has a band curve");
         let at = |span: LineSpan| {
             let layout = RingLayout {
                 span,
                 ..RingLayout::whole()
             };
-            let (run, placed, trace) = frame(text, points, &shape, &layout);
+            let (run, placed, trace) = with_seam(&OFFSET_OVERRIDE, own.to_bits() as usize, || {
+                frame(text, points, &shape, &layout)
+            });
+            assert_eq!(
+                trace.offset.map(f32::to_bits),
+                Some(own.to_bits()),
+                "precondition, {name} at {span:?}: the frame lies on the ½ frame's band curve"
+            );
             let inks = inks(&run, &placed);
             trace
                 .lines
@@ -1576,11 +1958,7 @@ pub fn do_flow_halves_span_half_is_the_mean_of_natural_and_whole() {
                 })
                 .collect::<Vec<_>>()
         };
-        let (natural, half, whole) = (
-            at(LineSpan::NATURAL),
-            at(LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE)),
-            at(LineSpan::WHOLE),
-        );
+        let (natural, half, whole) = (at(LineSpan::NATURAL), at(half_span), at(LineSpan::WHOLE));
         for ((n, h), w) in natural.iter().zip(&half).zip(&whole) {
             let what = format!("{name} half {}", n.0);
             let (ja, jb) = junctions[w.0];
@@ -2052,10 +2430,6 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
         ),
     ] {
         let path = ArcPath::closed(shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
-        let normal = |p: Vec2| {
-            let tangent = path.at(path.nearest(p)).1;
-            Vec2::new(tangent.y, -tangent.x)
-        };
         for span in spans {
             let layout = RingLayout {
                 span,
@@ -2081,13 +2455,22 @@ pub fn do_flow_halves_the_break_holds_at_the_span_laid() {
                 trace.unheld
             );
             let word = word_gap(&lines);
-            for (junction, a, b) in [
-                ("top-left", lines[0].ends.0, lines[1].ends.0),
-                ("bottom-right", lines[0].ends.1, lines[1].ends.1),
+            for (junction, a, b, anchors) in [
+                (
+                    "top-left",
+                    lines[0].ends.0,
+                    lines[1].ends.0,
+                    (lines[0].anchors.0, lines[1].anchors.0),
+                ),
+                (
+                    "bottom-right",
+                    lines[0].ends.1,
+                    lines[1].ends.1,
+                    (lines[0].anchors.1, lines[1].anchors.1),
+                ),
             ] {
                 let apart = gap(a, b);
-                let turn = normal(center(a))
-                    .dot(normal(center(b)))
+                let turn = turn_cos(&path, anchors.0, anchors.1)
                     .clamp(-1.0, 1.0)
                     .acos()
                     .to_degrees();
@@ -2434,9 +2817,12 @@ pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
 /// box as large as its minimum size and its sections, each ring of its
 /// frame on the outline offset past the rings inside it), and the work
 /// each took: its trace's glyph steps, and the path lookups its
-/// placement made. `Repeat` rings take no glyph step and are left out.
+/// placement made; its touch checks' looks; and how its glyphs lie on
+/// its band curve ([`band_residual`], each span's x-height measured in
+/// its own style, #308). `Repeat` rings take no glyph step and are left
+/// out.
 #[cfg(test)]
-pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks)> {
+pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks, BandMeasure)> {
     use crate::arena::NodeId;
     use crate::document::element::{DocElement, DocKind};
     use crate::document::format::load;
@@ -2536,6 +2922,7 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks)> {
                     let resolved = resolve_ring(tree, ring, &mut ());
                     let mut trace = Trace::default();
                     let looked = lookups_so_far();
+                    let mut laid = None;
                     let height = with_fonts(|fs| {
                         let flow: Vec<FlowSpan<'_>> = spans
                             .iter()
@@ -2546,7 +2933,7 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks)> {
                             })
                             .collect();
                         let shaped = shape_run(&flow, 1.0, fs);
-                        let (rescaled, _) = place_on_closed_traced(
+                        let (rescaled, placed) = place_on_closed_traced(
                             &shaped,
                             &path,
                             f.start,
@@ -2558,16 +2945,31 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks)> {
                             fs,
                             Some(&mut trace),
                         );
-                        rescaled.unwrap_or(shaped).line_height
+                        let run = rescaled.unwrap_or(shaped);
+                        let height = run.line_height;
+                        laid = Some((run, placed));
+                        height
                     });
                     let lookups = lookups_so_far() - looked;
                     heights.push(height);
                     if !matches!(resolved.fit, FitMode::Repeat) {
+                        let band = match (trace.offset, &laid) {
+                            (Some(offset), Some((run, placed))) => {
+                                let walked = ArcPath::closed(&path, f.start, f.direction, MIN_TABLE_SPACING);
+                                let heights: Vec<f32> =
+                                    spans.iter().map(|(_, style)| x_height_of(style)).collect();
+                                band_residual(run, placed, &walked, offset, &|span| {
+                                    heights.get(span).copied().unwrap_or(f32::NAN)
+                                })
+                            }
+                            _ => (0.0, (0.0, 0.0), 0, 0, f32::NAN),
+                        };
                         out.push((
                             format!("{name} node {} ring {k}", data.ident.0),
                             trace.spent,
                             lookups,
                             trace.looks,
+                            band,
                         ));
                     }
                 }
@@ -2676,7 +3078,7 @@ fn test_flow_halves_a_touch_check_looks_at_few_pairs_a_box() {
     let sweep = the_sweep();
     let mut over_reserved = sweep.over_reserved.clone();
     let mut most = sweep.most_looks;
-    for (name, _, _, looks) in demo_map_frames() {
+    for (name, _, _, looks, _) in demo_map_frames() {
         // Each frame on its own, before the fold takes the most classes
         // and the most held back of different frames.
         if looks.classes > looks.reserved {
@@ -2724,11 +3126,11 @@ fn test_flow_halves_a_glyph_step_of_the_demo_maps_takes_few_path_lookups() {
     let frames = demo_map_frames();
     let most_step = most_step_lookups(0);
     assert!(
-        frames.len() >= 5 && frames.iter().all(|(_, spent, _, _)| *spent > 0),
+        frames.len() >= 5 && frames.iter().all(|(_, spent, _, _, _)| *spent > 0),
         "precondition: the four demo maps' five frames are laid and counted: {frames:?}"
     );
-    let steps: usize = frames.iter().map(|(_, spent, _, _)| spent).sum();
-    let lookups: usize = frames.iter().map(|(_, _, lookups, _)| lookups).sum();
+    let steps: usize = frames.iter().map(|(_, spent, _, _, _)| spent).sum();
+    let lookups: usize = frames.iter().map(|(_, _, lookups, _, _)| lookups).sum();
     assert!(
         lookups <= MEAN_STEP_LOOKUPS * steps,
         "the demo maps' frames: {lookups} path lookups for {steps} glyph steps, {:.1} a step, at most {MEAN_STEP_LOOKUPS}: {frames:?}",
@@ -2738,7 +3140,7 @@ fn test_flow_halves_a_glyph_step_of_the_demo_maps_takes_few_path_lookups() {
         most_step <= MOST_STEP_LOOKUPS,
         "the demo maps' frames: a glyph step took {most_step} path lookups, at most {MOST_STEP_LOOKUPS}"
     );
-    for (what, spent, _, _) in &frames {
+    for (what, spent, _, _, _) in &frames {
         assert!(
             *spent <= SWEEP_MOST_STEPS,
             "{what}: {spent} glyph steps, at most {SWEEP_MOST_STEPS}"
@@ -2754,21 +3156,23 @@ fn test_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
     do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it();
 }
 
-/// A line's ends at a sharp corner (ruling R43), round a 600 × 60
-/// rectangle with no radius. An end ink pushed round the corner off the
-/// end of a side — here past the bottom-left corner, on the second half,
-/// which runs down the left side from its middle — lies nearest the
-/// corner, where the outline has no one normal: it faces the way from
-/// the corner to it, not the bottom side's way, which the 135° test
-/// would read as a line stacked across the outline from one on the top.
-/// And a part ending at a corner — the first half's at the bottom-right
-/// one, down the right side — draws back up the side before it, not
-/// along the bottom after it, which reads as drawing back parting
-/// nothing. Each expectation is the geometry's, worked here by hand.
+/// A line's ends at a sharp corner (ruling R43, #308), round a 600 × 60
+/// rectangle with no radius. An end ink set round the corner — here at
+/// the bottom-left corner, on the second half, which runs down the left
+/// side from its middle — has its baseline point on the baseline's sweep
+/// round the corner, where the outline has no one normal: it faces the
+/// way from the corner to it, halfway between the two sides' normals
+/// where it is set at the corner itself, not the left side's way or the
+/// bottom's, which the 135° test would read as a line stacked across
+/// the outline from one on the top. And a part ending at a corner — the
+/// first half's at the bottom-right one, down the right side — draws
+/// back up the side before it, not along the bottom after it, which
+/// reads as drawing back parting nothing. Each expectation is the
+/// geometry's, worked here by hand.
 ///
-/// Controls: with the normal always the outline's at the nearest point,
-/// the end faces a side's way, `(-1, 0)`; with the retreat taken from
-/// the tangent at the end itself, it runs along the bottom.
+/// Controls: with the normal always the outline's at the point the end
+/// is set at, the end faces a side's way, `(-1, 0)`; with the retreat
+/// taken from the tangent at the end itself, it runs along the bottom.
 pub fn do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
     let shape = outline(
         Rect::new(Vec2::ZERO, Vec2::new(600.0, 60.0)),
@@ -2776,17 +3180,18 @@ pub fn do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it() {
             radius: Percent::new(0),
         },
     );
-    // The second half from (0, 30) down: the corner (0, 60) is 30 along.
-    let ink = (Vec2::new(-12.0, 58.0), Vec2::new(-2.0, 68.0));
-    let (normal, _) = end_seam(&shape, 1, ink, 30.0, 630.0);
-    let away = Vec2::new(-7.0, 3.0).normalize();
+    // The second half from (0, 30) down: the corner (0, 60) is 30 along,
+    // and a baseline 10 off the outline sweeps round it from the left
+    // side's normal to the bottom's.
+    let (normal, _) = end_seam(&shape, 1, 10.0, 30.0, 630.0);
+    let away = Vec2::new(-1.0, 1.0).normalize();
     assert!(
         normal.distance(away) < 1e-3,
-        "an end ink past the bottom-left corner faces {normal:?}, not the way from the corner to it, {away:?}"
+        "an end set at the bottom-left corner faces {normal:?}, not the way from the corner to it, {away:?}"
     );
     // The first half from (0, 30) up: over the top, then down the right
     // side to the corner (600, 60), 690 along.
-    let (_, retreat) = end_seam(&shape, 0, ink, 300.0, 690.0);
+    let (_, retreat) = end_seam(&shape, 0, 10.0, 300.0, 690.0);
     assert!(
         retreat.distance(Vec2::new(0.0, -1.0)) < 1e-3,
         "an end at the bottom-right corner draws back along {retreat:?}, not up the right side"
@@ -2998,7 +3403,7 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         ..RingLayout::whole()
     };
     use crate::flow::place::halves::{
-        inking_steps, overshoot_steps, untouched_steps, FRAME_STEPS, OVERSHOOT_TRACKS, TRACK_CALL_STEPS,
+        inking_steps, overshoot_steps, FRAME_STEPS, OVERSHOOT_TRACKS, TRACK_CALL_STEPS,
     };
     for budget in [1, 1_000, 10_000] {
         let (run, _, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
@@ -3019,11 +3424,15 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
             past <= overshoot_steps(&run, None, false),
             "precondition: the frame's overshoot is within the general bound"
         );
-        let held = budget.max(untouched_steps(trace.glyphs));
+        let held = budget.max(trace.reserve);
+        // Spent as the frame reads it: its budget less the share held
+        // back for `untouched` (ruling R46.1), which is held for the
+        // checks it makes since #308.
         assert!(
-            trace.spent >= budget,
-            "precondition: the budget of {budget} is spent ({})",
-            trace.spent
+            trace.spent.saturating_add(trace.reserve) >= budget,
+            "precondition: the budget of {budget} is spent ({}, {} held back)",
+            trace.spent,
+            trace.reserve
         );
         assert!(
             trace.spent <= held + past,
@@ -3120,9 +3529,12 @@ fn test_flow_halves_a_frames_shaping_inking_and_tracking_are_all_counted() {
 /// least 400,000 — ten times the most a frame of the aspect sweep took
 /// a glyph, rounded up, while a step counted tracking alone — and, as
 /// R47.1 restates it now that a step counts all of a frame's work (R46),
-/// at least five times the sweep's most a glyph: 3,000 over 597, ×5.0.
-/// Control: with the sweep's most a glyph past 600, red. (No `do_*` twin:
-/// it reads test counters.)
+/// at least five times the sweep's most a glyph: 3,000 over 599, ×5.0
+/// (597 at d7242d38; on the frame's band curve 604 with the slide's stop
+/// at a step in its line's end removed, ruling B15.3 — the Ecclesiastes
+/// line inward round the 50:1 ellipse, `Fit`, both times). Control: with
+/// the sweep's most a glyph past 600, red — as it is with that stop
+/// removed. (No `do_*` twin: it reads test counters.)
 #[test]
 fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
     use crate::flow::place::halves::{frame_budget, STEPS_PER_GLYPH};
@@ -3138,38 +3550,253 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
     );
 }
 
+/// #308, ruling B15.1: every glyph of a frame is anchored on its one band
+/// curve — its ink's center along the line and, across it, its span's
+/// band center, halfway between its baseline and its x-height, or a side
+/// ornament's ink center — and the curve lies one distance from the
+/// outline all round: no step at a junction between its lines, nor
+/// where its side arcs meet them. Measured from the placement alone
+/// ([`band_residual`]: the x-height shaped in each span's style, the
+/// distance from the outline's nearest point): over the aspect sweep's
+/// 360 frames, 30,219 anchors, the most 0.0054 off its frame's curve and
+/// the most a frame's spread 0.0108; over the demo maps' five frames,
+/// 0.0049 and 0.0098; within [`BAND_RESIDUAL`], 0.05, each.
+///
+/// **Outward, the least offset that clears every ink.** The curve lies
+/// as near the outline as lets every ink of the frame, its side copies'
+/// included, clear it (ruling B15.1; review 5801763546): the most any ink
+/// reaches toward the outline from its anchor, as the engine models it
+/// ([`band_residual`]), is the frame's offset, within
+/// [`REACH_TOLERANCE`] — past it an ink crosses into the frame's gap,
+/// short of it the whole frame floats. Over the sweep's outward frames
+/// it lies from 0.0054 short of the offset to 0.0039 past it.
+///
+/// **Where the curve folds** (ruling B15.4). Inward round the 50:1
+/// ellipse, 600 × 12, the Ecclesiastes line `Once` at span whole lies on
+/// a curve 0.665 inside the outline, whose ends have a radius of
+/// curvature of 0.12 and are thinner than twice that within some 1.8 of
+/// each tip: no curve inside them lies 0.665 from them all round, and
+/// the band curve folds over the far side ([`folded`]). Its line's last
+/// two anchors lie there, the one 0.017 outside the outline: the sweep's
+/// two folded anchors, in that frame alone, which are left out of the
+/// residual and the spread and counted here. No frame whose outline is
+/// at least twice its offset thick along its lines has one
+/// ([`thin_along`], held in the sweep), nor any demo map's frame.
+///
+/// Controls, each red over the sweep: each line on a curve of its own,
+/// the second half's 0.5 further off than the first's (352 of its 360
+/// frames, every frame of two lines, a spread of 0.508 at the most);
+/// every glyph anchored at its own ink's center, the per-glyph anchor
+/// before B15.1 (every frame, an anchor 5.66 off at the most); the band
+/// center read at the cap height, an `H` in place of the `x` (every
+/// frame, 4.91 at the most); the offset laid 5 further out than its inks
+/// want (the nearest inks 5.005 short of it), and 2 nearer (an ink 2.004
+/// past it). (No `do_*` twin: it reads the sweep and the demo maps.)
+#[test]
+fn test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve() {
+    let sweep = the_sweep();
+    assert!(
+        sweep.anchors > 30_000,
+        "precondition: the sweep measures its frames' anchors ({})",
+        sweep.anchors
+    );
+    assert!(
+        sweep.band.0 <= BAND_RESIDUAL && sweep.band.1 <= BAND_RESIDUAL,
+        "the aspect sweep: an anchor {} off its frame's band curve ({}), a frame's anchors {} apart in their distance from the outline ({}), at most {BAND_RESIDUAL}",
+        sweep.band.0,
+        sweep.band_worst.0,
+        sweep.band.1,
+        sweep.band_worst.1
+    );
+    assert!(
+        sweep.reach.0 <= REACH_TOLERANCE && sweep.reach.1 >= -REACH_TOLERANCE,
+        "the aspect sweep, outward: an ink reaches {} past its frame's offset ({}): it crosses the outline; the inks nearest it reach {} past ({}): the curve floats off it; within {REACH_TOLERANCE} each",
+        sweep.reach.0,
+        sweep.reach_worst.0,
+        sweep.reach.1,
+        sweep.reach_worst.1
+    );
+    assert_eq!(
+        (sweep.folded, sweep.thin_folded),
+        (2, 1),
+        "the aspect sweep's anchors where the band curve folds, and the frames round an outline too thin along its lines that hold them"
+    );
+    let frames = demo_map_frames();
+    assert!(
+        frames.len() >= 5,
+        "precondition: the demo maps' five frames are laid"
+    );
+    for (name, _, _, _, (off, (least, most), measured, fold, past)) in frames {
+        assert!(
+            measured > 0 && off <= BAND_RESIDUAL && most - least <= BAND_RESIDUAL && fold == 0,
+            "{name}: {measured} anchors, the most {off} off its band curve, {least}..{most} from the outline, {fold} where it folds"
+        );
+        assert!(
+            past.abs() <= REACH_TOLERANCE,
+            "{name}: its inks' most reach toward the outline lies {past} past its offset, within {REACH_TOLERANCE}: none crosses it, and the nearest touches it"
+        );
+    }
+}
+
+#[test]
+fn test_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
+    do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline();
+}
+
+/// #308, ruling B15.1: a line whose letters climb and fall — ascenders on
+/// the lower half, descenders on the upper, each pointing at the outline
+/// — sits on one baseline, as an artist sets it: round a 600 × 120
+/// rectangle with 20% corners, outward, `Once` at span whole, the upper
+/// line `a gypsy yogi pray` and the lower `hold all the bold hills`, each
+/// glyph whose anchor lies over a straight side of the outline has its
+/// baseline within `BAND_RESIDUAL` of every other's there, its
+/// ascender or descender hanging free of it: toward the outline, the
+/// nearest of the line's inks there, and its edge facing the outline
+/// clear of it (outward, the outline already its gap from what it
+/// frames; along a straight side an ink's reach is its box's).
+/// Preconditions: each straight stretch holds letters of the x-height
+/// alone and letters past it — ascenders below, descenders above.
+///
+/// Control: every glyph anchored at its own ink's center, the per-glyph
+/// anchor before B15.1, red: each ascender's baseline drops below its
+/// neighbors' and each descender's rises — over the bottom side the
+/// baselines lie 4.67 apart, over the top 7.82.
+pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 120.0)),
+        Shape::Rectangle {
+            radius: Percent::new(20),
+        },
+    );
+    let left = StartPoint {
+        edge: Edge::Left,
+        at: 0.5,
+    };
+    let path = ArcPath::closed(&shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
+    let text = "a gypsy yogi pray\nhold all the bold hills";
+    let (run, placed, trace) = frame(text, 18.0, &shape, &RingLayout::whole());
+    assert_eq!(trace.lines.len(), 2, "precondition: two lines");
+    let inks = inks(&run, &placed);
+    let x = x_height_per_point();
+    for line in &trace.lines {
+        // Each inked glyph over a straight side, by the side's outward
+        // normal: its baseline, and how far its ink rises past the
+        // x-height and falls past the baseline, a point of its size.
+        // A glyph's baseline, its rise and fall, and its ink.
+        type Hung = (f32, f32, f32, (Vec2, Vec2));
+        let mut sides: Vec<(Vec2, Vec<Hung>)> = Vec::new();
+        for k in line.glyphs.clone() {
+            let Some(ink) = inks[k] else { continue };
+            let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
+            let anchor = band_anchor(&run, &placed, k, ink);
+            let s = path.nearest(anchor);
+            let normal = path.outward(path.at(s).1);
+            let straight = [s - 1.0, s + 1.0]
+                .iter()
+                .all(|&t| path.outward(path.at(t).1).dot(normal) > 1.0 - 1e-6);
+            if !straight {
+                continue;
+            }
+            let baseline = placed.glyphs[k].pos.y + run.baseline();
+            let rises = (baseline - ink.0.y) / glyph.size - x;
+            let falls = (ink.1.y - baseline) / glyph.size;
+            match sides.iter_mut().find(|(n, _)| n.dot(normal) > 1.0 - 1e-6) {
+                Some((_, glyphs)) => glyphs.push((baseline, rises, falls, ink)),
+                None => sides.push((normal, vec![(baseline, rises, falls, ink)])),
+            }
+        }
+        let horizontal: Vec<&(Vec2, Vec<Hung>)> = sides.iter().filter(|(n, _)| n.x.abs() < 1e-3).collect();
+        assert!(
+            !horizontal.is_empty(),
+            "precondition, half {}: the line lies over a straight side",
+            line.half
+        );
+        for (normal, glyphs) in horizontal {
+            let below = normal.y > 0.0;
+            let plain = glyphs.iter().filter(|g| g.1 < 0.05 && g.2 < 0.05).count();
+            let hanging = glyphs
+                .iter()
+                .filter(|g| if below { g.1 > 0.2 } else { g.2 > 0.15 })
+                .count();
+            assert!(
+                plain >= 2 && hanging >= 2,
+                "precondition, half {}: x-height letters ({plain}) and {} ({hanging}) over the side facing {normal}",
+                line.half,
+                if below { "ascenders" } else { "descenders" }
+            );
+            let (low, high) = spread(&glyphs.iter().map(|g| g.0).collect::<Vec<_>>());
+            assert!(
+                high - low <= BAND_RESIDUAL,
+                "half {}: the baselines over the side facing {normal} lie {low}..{high}, {} apart, at most {BAND_RESIDUAL}",
+                line.half,
+                high - low
+            );
+            // Each ink's edge facing the outline, and how far it clears it.
+            let clear = |g: &Hung| {
+                let (min, max) = g.3;
+                let facing = if below { min.y } else { max.y };
+                signed_distance(&path, Vec2::new(0.5 * (min.x + max.x), facing))
+            };
+            let nearest = glyphs.iter().map(clear).fold(f32::INFINITY, f32::min);
+            let nearest_plain = glyphs
+                .iter()
+                .filter(|g| g.1 < 0.05 && g.2 < 0.05)
+                .map(clear)
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                nearest >= -BAND_RESIDUAL && nearest < nearest_plain,
+                "half {}: over the side facing {normal}, the nearest ink {nearest} from the outline, the nearest of the x-height alone {nearest_plain}: the hanging letters point at it, and none crosses it",
+                line.half
+            );
+        }
+    }
+}
+
 /// R44.3: filling a frame's sides is work in proportion to what it
 /// places, counted against its budget: the reviewer's case, a 200-byte
 /// ornament at span natural round a 200,000 ellipse, and the same round a
 /// 200,000 sharp square (review 5739829769).
 ///
 /// With a budget that holds it (a floor of 2,000,000, the test seam;
-/// some 720,000 and 1,256,000 glyph steps), each fills both arcs, some
+/// some 515,000 and 805,000 glyph steps), each fills both arcs, some
 /// 65,000 glyphs, in at most [`SIDE_LOOKUPS_A_GLYPH`] path lookups a glyph
-/// placed (128 round the ellipse, 146 round the square; 784 at dd04a8f5,
-/// when each fill bisected its gap in 30 lays of every copy), and looks at most at
-/// [`PAIRS_A_BOX`] pairs of boxes a glyph for touching (6.5 round the
-/// ellipse and 6.8 round the square, each box placed or copied into a
-/// class's strips counted a look; 7.3 and 8.1 at 289a684f, when every
+/// placed (35.7 round the ellipse, 37.7 round the square, each copy set
+/// on the frame's band curve in one lookup, #308; 128 and 146 at
+/// d7242d38, three a copy pushed off the outline by its ink; 784 at
+/// dd04a8f5, when each fill bisected its gap in 30 lays of every copy),
+/// and looks at most at [`PAIRS_A_BOX`] pairs of boxes a glyph for
+/// touching (5.33 round the ellipse and 6.86 round the square, each box
+/// placed or copied into a class's strips counted a look; 6.5 and 6.8 at
+/// d7242d38; 7.3 and 8.1 at 289a684f, when every
 /// box shared the tallest's strip height; every pair, some two billion,
 /// at dd04a8f5; round the square 5,272 a glyph at 1f1b3f8e, when a
 /// sweep along one axis weighed every copy down a straight side against
 /// every other).
 ///
-/// At its own budget, 400,000, neither can afford its arcs and the touch
+/// At a budget of 200,000, neither can afford its arcs and the touch
 /// check of them (some 34,000 copies each, the check held back at
-/// `TOUCH_LOOKS_A_BOX` looks a box): each lays its text whole, leaves both
-/// arcs empty and reported — a frame loses its sides before its text
-/// (ruling R48.3) — and takes no more past its budget than
-/// `overshoot_steps` (rulings R44.2, R47.2, R48.2).
+/// `touch_looks` looks a box of its classes): each lays its text whole,
+/// leaves both arcs empty and reported — a frame loses its sides before
+/// its text (ruling R48.3) — and takes no more past its budget than
+/// `overshoot_steps` (rulings R44.2, R47.2, R48.2). At its own budget,
+/// 400,000, it can afford its first arc and not its second: on its band
+/// curve each copy's gap is solved in fewer lays than at d7242d38, which
+/// spent 339,200 and 294,560 there on a first arc it then left empty
+/// (#308; 296,000 and 283,000 now, both arcs at the floor of 2,000,000
+/// 515,000 and 805,000 where they took 761,000 and 1,299,000), so it
+/// lays its text whole and its first arc as far as it affords — filled
+/// round the ellipse, kept short round the square — and leaves the
+/// second empty and reported, within the same bound.
 ///
 /// Controls: with the gap bisected in 30 lays again, past the lookups'
 /// bound; with the sweep along one axis again, past the pairs' round the
 /// square; with a side's lay unread past its first copy, past the
 /// overshoot. (No `do_*` twin: it reads test counters.)
 #[cfg(test)]
-fn a_long_side_ornament(shape: Shape, what: &str) {
-    use crate::flow::place::halves::{overshoot_steps, BOXES_WEIGHED, FLOOR_OVERRIDE, PAST_BUDGET};
+fn a_long_side_ornament(shape: Shape, what: &str, own: &[(usize, crate::flow::place::SideLoss)]) {
+    use crate::flow::place::halves::{
+        overshoot_steps, BOXES_WEIGHED, BUDGET_OVERRIDE, FLOOR_OVERRIDE, PAST_BUDGET,
+    };
     use crate::flow::place::SideLoss;
     use crate::flow::tests::flow_fuzz::ornament_run;
     use crate::flow::tests::support::style;
@@ -3209,29 +3836,45 @@ fn a_long_side_ornament(shape: Shape, what: &str) {
         let ornament = ornament_run(&layout, &flow, 1.0, fs);
         overshoot_steps(&real_run(text, &flow, fs), ornament.as_ref(), false)
     });
-    PAST_BUDGET.with(|past| past.set(0));
-    let (_, placed, trace) = lay();
-    let past = PAST_BUDGET.with(std::cell::Cell::get);
-    assert!(
-        placed.glyphs.len() >= text.chars().filter(|c| !c.is_whitespace()).count()
-            && trace.unheld.sides == [(0, SideLoss::Empty), (1, SideLoss::Empty)]
-            && !placed.truncated,
-        "{what}: at its own budget, which cannot hold the check of either arc, the text is laid whole and both arcs are left empty and reported ({} glyphs, {:?})",
-        placed.glyphs.len(),
-        trace.unheld
-    );
-    assert!(
-        past <= allowed && trace.spent <= trace.budget + allowed,
-        "{what}: {past} glyph steps past a spent budget, {} in all against {}, at most {allowed} past it",
-        trace.spent,
-        trace.budget
-    );
+    let letters = text.chars().filter(|c| !c.is_whitespace()).count();
+    for (budget, sides, why) in [
+        (
+            None,
+            own,
+            "at its own budget, which holds the first arc and its check and not the second's, the text is laid whole, the first arc as far as it affords, and the second left empty",
+        ),
+        (
+            Some(200_000),
+            &[(0, SideLoss::Empty), (1, SideLoss::Empty)][..],
+            "at 200,000, which cannot hold the check of either arc, the text is laid whole and both arcs are left empty",
+        ),
+    ] {
+        PAST_BUDGET.with(|past| past.set(0));
+        let (_, placed, trace) = match budget {
+            Some(budget) => with_seam(&BUDGET_OVERRIDE, budget, lay),
+            None => lay(),
+        };
+        let past = PAST_BUDGET.with(std::cell::Cell::get);
+        assert!(
+            placed.glyphs.len() >= letters && trace.unheld.sides == sides && !placed.truncated,
+            "{what}: {why}, and reported ({} glyphs, {:?})",
+            placed.glyphs.len(),
+            trace.unheld
+        );
+        assert!(
+            past <= allowed && trace.spent <= trace.budget + allowed,
+            "{what}: {past} glyph steps past a spent budget, {} in all against {}, at most {allowed} past it",
+            trace.spent,
+            trace.budget
+        );
+    }
 }
 
 /// [`a_long_side_ornament`] round the ellipse.
 #[test]
 fn test_flow_halves_a_long_side_ornament_is_filled_in_few_lays() {
-    a_long_side_ornament(Shape::Ellipse, "ellipse");
+    use crate::flow::place::SideLoss;
+    a_long_side_ornament(Shape::Ellipse, "ellipse", &[(1, SideLoss::Empty)]);
 }
 
 /// [`a_long_side_ornament`] round the sharp square.
@@ -3242,24 +3885,31 @@ fn test_flow_halves_a_long_side_ornament_round_a_sharp_square_is_filled_in_few_l
             radius: Percent::new(0),
         },
         "sharp square",
+        &[
+            (0, crate::flow::place::SideLoss::Short),
+            (1, crate::flow::place::SideLoss::Empty),
+        ],
     );
 }
 
 /// The most path lookups [`a_long_side_ornament`]'s frames may take a
-/// glyph they place, both arcs filled: a few lays of each copy at a dozen
-/// lookups a glyph, with a margin past the 128 (ellipse) and 146 (sharp
-/// square) they take. (At 1f1b3f8e the ellipse's frame took 78 at its own
-/// budget, where its second arc's floor row was laid, unread, after the
-/// budget was spent and its gap never solved; with each copy's gap solved
-/// by bisection, 784.)
+/// glyph they place, both arcs filled: a few lays of each copy at a few
+/// lookups a glyph, with a margin of ×1.59 past the 35.7 (ellipse) and
+/// 37.7 (sharp square) they take, each copy set on the frame's band curve
+/// in one lookup (#308). (Till #308, 200, past the 128 and 146 they took
+/// when each copy was pushed off the outline by its ink in three: the
+/// control. At 1f1b3f8e the ellipse's frame took 78 at its own budget,
+/// where its second arc's floor row was laid, unread, after the budget
+/// was spent and its gap never solved; with each copy's gap solved by
+/// bisection, 784.)
 #[cfg(test)]
-const SIDE_LOOKUPS_A_GLYPH: usize = 200;
+const SIDE_LOOKUPS_A_GLYPH: usize = 60;
 
 /// The most pairs of boxes the same frames may look at for touching a
 /// glyph they place: the few inks near each, in the strips of its class
-/// and the coarser ones round it — 6.5 a glyph round the ellipse and 6.8
-/// round the square, so a margin of ×1.46 (7.3 and 8.1 at 289a684f, a
-/// margin of ×1.24).
+/// and the coarser ones round it — 5.33 a glyph round the ellipse and
+/// 6.86 round the square, so a margin of ×1.46 (6.5 and 6.8 at d7242d38;
+/// 7.3 and 8.1 at 289a684f, a margin of ×1.24).
 #[cfg(test)]
 const PAIRS_A_BOX: usize = 10;
 
@@ -3269,10 +3919,12 @@ const PAIRS_A_BOX: usize = 10;
 /// face, so its path through the last resorts is every host's. Its two
 /// lines face each other across the outline, and the later is cut apart
 /// (`Trace::cut_apart`); the cut takes at most [`CUT_APART_TRACKS`]
-/// `track`s.
+/// `track`s: 657 on the frame's band curve (#308), 426 at d7242d38.
 ///
-/// Control: `cut_apart` bisecting its prefix on whole clearance searches
-/// again (C63), past the bound. (No `do_*` twin: it reads test counters.)
+/// Controls: `cut_apart` bisecting its prefix on whole clearance searches
+/// again (C63), past the bound; a clearance round's whole step held to a
+/// line's slack laid without a look first after a round whose whole step
+/// pressed a line (#308), 750. (No `do_*` twin: it reads test counters.)
 #[test]
 fn test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines() {
     use crate::flow::place::halves::TRACKS;
@@ -3307,6 +3959,246 @@ fn test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines() {
     );
 }
 
+/// A slide whose line's end steps as its start crosses a float step
+/// stops there (ruling B15.3, `Layout::slid`): the Ecclesiastes line
+/// at 18 pt inward round the 50:1 ellipse, `Fit` — the aspect sweep's
+/// frame of the most glyph steps a glyph — whose second line, at its
+/// font's gap, all but fills its room, its end in the ellipse's tight
+/// bend. Its slides track 8 lines in all, and the frame takes 599 glyph
+/// steps a glyph; its lines are laid at their font's gap, none pressed.
+///
+/// Control: with the stop removed, the secant circles the step in starts
+/// an ulp or two apart, never within its tolerance, and the slides track
+/// 16 lines (604 glyph steps a glyph). (No `do_*` twin: it reads a test
+/// counter.)
+#[test]
+fn test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end() {
+    use crate::flow::place::halves::SLIDE_TRACKS;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)), Shape::Ellipse);
+    let layout = RingLayout {
+        span: LineSpan::NATURAL,
+        ..RingLayout::whole()
+    };
+    SLIDE_TRACKS.with(|count| count.set(0));
+    let (_, placed, trace) = frame_with(
+        ECCLESIASTES,
+        18.0,
+        &shape,
+        &FitMode::Fit { min: 0.5, max: 2.0 },
+        &layout,
+        false,
+    );
+    let slides = SLIDE_TRACKS.with(std::cell::Cell::get);
+    assert!(
+        slides > 0
+            && trace.lines.len() == 2
+            && trace.unheld == crate::flow::place::Unheld::default()
+            && !placed.truncated,
+        "precondition: the frame slides ({slides} tracks) and holds both lines whole ({:?})",
+        trace.unheld
+    );
+    assert!(
+        slides <= SLIDE_STEP_TRACKS,
+        "the frame's slides track {slides} lines, at most {SLIDE_STEP_TRACKS}"
+    );
+}
+
+/// Ruling B15.3 (review 5801763546): a slide stops where its line's end
+/// steps between two starts within a few ulps of each other
+/// (`steps_between`), and nowhere else: at the step the sweep's 50:1
+/// ellipse frame meets, 0.0011 apart round 1,301, its end moving 0.0059
+/// across them; not at a slope-one end there or round 1e30, where the end
+/// moves no more than the start; not across a bracket wider than the
+/// window, nor one reversed; never with a start or a miss not a number,
+/// nor across a start at either infinity. An end past the clearance by
+/// infinity is a step, and the slide stops at the start whose line ends
+/// short of it, which fits.
+///
+/// Control: with the step read as any jump, not one past what the
+/// bracket's width moves a slope-one end by, the slope-one rows are red.
+/// (No `do_*` twin: it reads a test seam.)
+#[test]
+fn test_flow_halves_a_slide_stops_at_a_step_and_nowhere_else() {
+    use crate::flow::place::halves::steps_between_seam;
+    let at = 1e30_f32;
+    let step = at * f32::EPSILON;
+    // What each row is, its start short of the clearance and its miss,
+    // its start past it, the tolerance, and whether its end steps.
+    type Row = (&'static str, (f32, f32), (f32, f32), f32, bool);
+    let rows: [Row; 13] = [
+        (
+            "the 50:1 ellipse's step",
+            (1301.0331, -0.0011),
+            (1301.0342, 0.0048),
+            4e-4,
+            true,
+        ),
+        (
+            "a slope-one end round 1,301",
+            (1301.0, -0.0005),
+            (1301.0011, 0.0006),
+            4e-4,
+            false,
+        ),
+        (
+            "a slope-one end round 1e30",
+            (at, -2.0 * step),
+            (at + 4.0 * step, 2.0 * step),
+            4e-4,
+            false,
+        ),
+        (
+            "a bracket wider than the window",
+            (1301.0, -0.05),
+            (1301.01, 0.05),
+            4e-4,
+            false,
+        ),
+        (
+            "a bracket reversed",
+            (1301.0342, -0.0011),
+            (1301.0331, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a short start not a number",
+            (f32::NAN, -0.0011),
+            (1301.0342, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a past start not a number",
+            (1301.0331, -0.0011),
+            (f32::NAN, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a short miss not a number",
+            (1301.0331, f32::NAN),
+            (1301.0342, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a past miss not a number",
+            (1301.0331, -0.0011),
+            (1301.0342, f32::NAN),
+            4e-4,
+            false,
+        ),
+        (
+            "a start at minus infinity",
+            (f32::NEG_INFINITY, -0.0011),
+            (1301.0342, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a start at infinity",
+            (1301.0331, -0.0011),
+            (f32::INFINITY, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "an end past by infinity",
+            (1301.0331, -0.0011),
+            (1301.0342, f32::INFINITY),
+            4e-4,
+            true,
+        ),
+        (
+            "an end short by infinity",
+            (1301.0331, f32::NEG_INFINITY),
+            (1301.0342, 0.0048),
+            4e-4,
+            true,
+        ),
+    ];
+    for (what, short, past, tolerance, steps) in rows {
+        assert_eq!(
+            steps_between_seam(short, past, tolerance),
+            steps,
+            "{what}: {short:?} {past:?}"
+        );
+    }
+}
+
+/// R48.3 (review 5801763546): outward, no side copy is left across the
+/// outline. A frame whose side copies want more of its band curve than
+/// its text does — `xxxx xxxx` round a 400 × 200 ellipse, outward,
+/// `Once` at span natural, with an em dash on its sides, the dashes
+/// reaching further across the diagonal at its junctions than the text —
+/// lays its lines again at the offset the copies want (6.44 where its
+/// text wants 4.19) and keeps them; and where it keeps the curve its text
+/// wants (the seam `RELAY_ROUNDS_OVERRIDE` at none, as when laying the
+/// lines again would press a line or touch two inks, or its rounds run
+/// out), the arcs whose copies want more are left empty and reported,
+/// never laid across the outline: either way, every ink it places reaches
+/// toward the outline no further than its offset (`band_residual`).
+///
+/// Control: with the arcs the curve leaves wanting kept, the frame laid
+/// at no round places its copies 2.26 across the outline. (No `do_*`
+/// twin: it reads a test seam.)
+#[test]
+fn test_flow_halves_no_side_copy_is_left_across_the_outline() {
+    use crate::flow::place::halves::{ARCS_OFF_THE_CURVE, RELAY_ROUNDS_OVERRIDE};
+    use crate::flow::place::SideLoss;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(400.0, 200.0)), Shape::Ellipse);
+    let left = StartPoint {
+        edge: Edge::Left,
+        at: 0.5,
+    };
+    let path = ArcPath::closed(&shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
+    let layout = RingLayout {
+        span: LineSpan::NATURAL,
+        sides: Some(("—".to_string(), Rgba::opaque(9, 9, 9))),
+        ..RingLayout::whole()
+    };
+    let text = "xxxx xxxx";
+    let lay = || frame_with(text, 18.0, &shape, &FitMode::Once { filler: None }, &layout, true);
+    for rounds in [None, Some(0)] {
+        ARCS_OFF_THE_CURVE.with(|n| n.set(0));
+        let (run, placed, trace) = match rounds {
+            Some(r) => with_seam(&RELAY_ROUNDS_OVERRIDE, r, lay),
+            None => lay(),
+        };
+        let offset = trace.offset.expect("a frame on its halves has a band curve");
+        let (_, _, _, _, past) = band_residual(&run, &placed, &path, offset, &|_| x_height_per_point());
+        let copies = placed
+            .glyphs
+            .iter()
+            .filter(|g| run.glyphs[g.glyph as usize].span == FILLER_SPAN)
+            .count();
+        let off = ARCS_OFF_THE_CURVE.with(std::cell::Cell::get);
+        match rounds {
+            None => assert!(
+                copies > 0 && off == 0 && trace.unheld.sides.is_empty(),
+                "laid again for its copies, the frame keeps them ({copies} glyphs, {off} arcs left empty, {:?})",
+                trace.unheld
+            ),
+            Some(_) => assert!(
+                copies == 0 && off == 2 && trace.unheld.sides == [(0, SideLoss::Empty), (1, SideLoss::Empty)],
+                "at the curve its text wants, the frame leaves out the arcs its copies want more of ({copies} glyphs, {off} arcs left empty, {:?})",
+                trace.unheld
+            ),
+        }
+        assert!(
+            past <= REACH_TOLERANCE,
+            "relaid {rounds:?} times at most: an ink reaches {past} past the offset {offset}, across the outline"
+        );
+    }
+}
+
+/// The most lines [`test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end`]'s
+/// slides may track: its 8, and a margin short of the 16 they track
+/// circling the step.
+#[cfg(test)]
+const SLIDE_STEP_TRACKS: usize = 10;
+
 /// The most `track`s [`test_flow_halves_a_frame_cut_apart_lays_a_bounded_number_of_lines`]'s
 /// frame may take.
 #[cfg(test)]
@@ -3317,8 +4209,11 @@ const CUT_APART_TRACKS: usize = 700;
 /// what the rule accepts — so no such round over the aspect sweep leaves
 /// a letter where it was, and three lookups for nothing.
 ///
-/// Control: with an ink nearer than the gap itself moved from, as before
-/// R44.7, rounds that leave the letter where it was. (No `do_*` twin: it
+/// Controls: with an ink nearer than the gap itself moved from, as before
+/// R44.7, rounds that leave the letter where it was; with a round begun
+/// on the last try a letter's pairing has left (#308), whose one try is
+/// the center the letter has, 17 of 4,713 rounds of the sweep's inward
+/// frames round sharp corners on the band curve. (No `do_*` twin: it
 /// reads test counters.)
 #[test]
 fn test_flow_halves_a_letter_never_spends_a_round_where_it_stands() {
@@ -3437,8 +4332,12 @@ fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box
 /// looks at no more pairs a box than measured, a part for each class
 /// ([`looks_as_measured`]), and so within `touch_looks` of its classes:
 /// the reviewer's 14-size probe ([`mixed_sizes`]), round a 2,000 sharp
-/// square with 60 dots, `Fit` from ¼ to 4 and `Once`, and five times over
-/// round a 20,000 one with 3,000 dots a span, `Once`; at span natural,
+/// square with 60 dots, `Fit` from ¼ to 4, and round a 4,000 one, `Once`,
+/// its text whole beside its sides' copies (2.60 pairs a box in sweeps
+/// and own strips, 1.26 a box a class between its 15; ruling B15.5:
+/// round the 2,000 one, `Once` cut its 4,096-point `x`, which no break
+/// leaves room for, its sides' checks holding no classes), and five
+/// times over round a 20,000 one with 3,000 dots a span, `Once`; at span natural,
 /// `x` on its sides, inward, each at its own budget. At R50, whose bound
 /// was 18 a box whatever the classes, they looked at 23.86, 21.28 and
 /// 23.46 pairs a box.
@@ -3470,7 +4369,7 @@ fn test_flow_halves_a_mixed_size_frame_s_touch_check_looks_within_its_classes() 
         (
             "Once",
             mixed_sizes(1, 60),
-            2_000.0,
+            4_000.0,
             FitMode::Once { filler: None },
         ),
         (
@@ -3495,6 +4394,206 @@ fn test_flow_halves_a_mixed_size_frame_s_touch_check_looks_within_its_classes() 
             panic!("{name} round {size}: {why}");
         }
     }
+}
+
+/// R48.3, ruling B15.5: a frame loses its sides before its text — the
+/// reviewer's 14-size probe ([`mixed_sizes`], 74 glyphs, one line)
+/// inward round a 2,000 sharp square, `Once` at span natural, places the
+/// same 73 glyphs of its text with an `x` on its sides as without. The
+/// glyph it leaves out, either way, is its last, the `x` at 4,096 points,
+/// 2,130 wide, wider than the square: drawing its line back from the
+/// bottom-right junction moves the line's end along the half but never
+/// off the junction, where its words' break is owed, and the line is
+/// pressed and cut there (ruling R34) — its half less the break cannot
+/// hold it.
+///
+/// Controls: with a side copy's room grown as the words' is, pressing the
+/// line, the frame with sides is laid again without them, and keeps no
+/// copy; with neither that nor the frame laid again without its sides
+/// where they cut it, it places 71 glyphs of its text. (No `do_*` twin:
+/// it reads a frame's placement.)
+#[test]
+fn test_flow_halves_a_frames_sides_cost_none_of_its_text() {
+    let square = outline(
+        Rect::new(Vec2::ZERO, Vec2::splat(2_000.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let text = mixed_sizes(1, 60);
+    let laid = |sides: Option<(String, Rgba)>| {
+        let layout = RingLayout {
+            span: LineSpan::NATURAL,
+            sides,
+            ..RingLayout::whole()
+        };
+        let (run, placed, _) = frame_of_spans(
+            &text,
+            16.0,
+            &square,
+            &FitMode::Once { filler: None },
+            &layout,
+            false,
+        );
+        let mut kept: Vec<u32> = placed
+            .glyphs
+            .iter()
+            .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+            .map(|g| g.glyph)
+            .collect();
+        kept.sort_unstable();
+        let copies = placed.glyphs.len() - kept.len();
+        (run, kept, copies)
+    };
+    let (run, bare, _) = laid(None);
+    let (_, beside, copies) = laid(Some(("x".to_string(), Rgba::opaque(0, 0, 0))));
+    let last = run.glyphs.len() - 1;
+    assert!(
+        copies > 0 && run.glyphs.len() == 74,
+        "precondition: the 74 glyphs of the text and a copy of its sides are laid ({copies} copies)"
+    );
+    assert_eq!(beside, bare, "the text placed beside its sides, and without them");
+    assert!(
+        bare.len() == last && !bare.contains(&(last as u32)),
+        "the text without sides leaves out its last glyph alone: {} of {} placed",
+        bare.len(),
+        run.glyphs.len()
+    );
+    let x = &run.glyphs[last];
+    assert!(
+        x.size == 4_096.0 && x.advance > 2_000.0,
+        "the glyph left out is the 4,096-point `x`, wider than the square ({} at {})",
+        x.advance,
+        x.size
+    );
+}
+
+/// R48.3, ruling B15.5 (review 5801763546): a frame loses its sides
+/// before its text. Over the aspect sweep's outlines and texts
+/// ([`sweep_outlines`]), `Once` at each span, outward and inward, every
+/// frame whose sides keep a copy places as many glyphs of its text as it
+/// does without sides — with a `·` on its sides, which asks little room,
+/// and with forty of them, whose one copy asks more room at a junction
+/// than a thin outline's lines can leave beside it. And 188 of them keep
+/// their copies: the sides are left out only where the frame's text
+/// needs it.
+///
+/// Controls, each red: with a side copy's room grown as the words' is,
+/// pressing a line (B15.5's hold removed), 186 keep their copies — the
+/// frame laid again without sides keeps the text, and leaves two frames'
+/// sides out the hold keeps; with no frame laid again without its sides
+/// where they cut it, 6 frames lose text, inward round the 600 × 12
+/// rectangle, their later line cut apart the shorter beside lines drawn
+/// in for the sides' room (the Ecclesiastes line at span whole: 29
+/// glyphs of its text beside 40-dot sides, 30 without); with neither, 41.
+/// (No `do_*` twin: it reads a test helper's frames.)
+#[test]
+fn test_flow_halves_no_frame_of_the_sweep_loses_text_to_its_sides() {
+    let fit = FitMode::Once { filler: None };
+    let (mut kept, mut lost) = (0, Vec::new());
+    for (name, shape, _, points) in sweep_outlines() {
+        for text in [ECCLESIASTES, QUATRAIN] {
+            for outward in [true, false] {
+                for span in [
+                    LineSpan::WHOLE,
+                    LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+                    LineSpan::NATURAL,
+                ] {
+                    // Its text's glyphs placed, and its side copies'.
+                    let laid = |sides: Option<(String, Rgba)>| {
+                        let layout = RingLayout {
+                            span,
+                            sides,
+                            ..RingLayout::whole()
+                        };
+                        let (run, placed, _) = frame_with(text, points, &shape, &fit, &layout, outward);
+                        let text_placed = placed
+                            .glyphs
+                            .iter()
+                            .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+                            .count();
+                        (text_placed, placed.glyphs.len() - text_placed)
+                    };
+                    let (bare, _) = laid(None);
+                    for ornament in ["·".to_string(), "·".repeat(40)] {
+                        let (beside, copies) = laid(Some((ornament.clone(), Rgba::opaque(9, 9, 9))));
+                        if copies == 0 {
+                            continue;
+                        }
+                        kept += 1;
+                        if beside < bare {
+                            lost.push(format!(
+                                "{name} {:.8} {} span {} sides of {} bytes: {beside} glyphs of its text beside {copies} copies, {bare} without sides",
+                                text,
+                                if outward { "outward" } else { "inward" },
+                                span.get(),
+                                ornament.len()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        kept >= 188,
+        "{kept} frames keep their sides' copies, at least 188: a side left out where the frame's text does not need it"
+    );
+    assert!(
+        lost.is_empty(),
+        "{} frames lose text to their sides:\n{}",
+        lost.len(),
+        lost.join("\n")
+    );
+}
+
+/// A frame whose sides are left out for its text (ruling R48.3, B15.5)
+/// reports both junctions `Empty`, whatever lines it keeps (review
+/// 5805412034): a loss is keyed by junction, and a frame of one line has
+/// one side arc, round both. The census frame here is the quatrain inward
+/// round the 600 × 12 rectangle, at span whole, with 40-dot sides: laid
+/// again without them, it keeps one line, on the top half, its text whole
+/// against its bare frame, and no copy.
+///
+/// Control: the losses keyed by the arc's index in `side_arcs`, red —
+/// `[(0, Empty)]`, the bottom-right junction never reported. (No `do_*`
+/// twin: it reads a test helper's frame.)
+#[test]
+fn test_flow_halves_sides_left_out_of_a_one_line_frame_report_both_junctions() {
+    use crate::flow::place::SideLoss;
+    let thin = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let fit = FitMode::Once { filler: None };
+    let laid = |sides: Option<(String, Rgba)>| {
+        let layout = RingLayout {
+            span: LineSpan::WHOLE,
+            sides,
+            ..RingLayout::whole()
+        };
+        let (run, placed, trace) = frame_with(QUATRAIN, 22.0, &thin, &fit, &layout, false);
+        let text = placed
+            .glyphs
+            .iter()
+            .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+            .count();
+        (text, placed.glyphs.len() - text, trace)
+    };
+    let (bare, _, _) = laid(None);
+    let (text, copies, trace) = laid(Some(("·".repeat(40), Rgba::opaque(9, 9, 9))));
+    let halves: Vec<usize> = trace.lines.iter().map(|line| line.half).collect();
+    assert!(
+        halves == [0] && copies == 0 && text == bare,
+        "the census frame keeps one line, on the top half ({halves:?}), its text whole ({text} of {bare}) and no copy ({copies})"
+    );
+    assert_eq!(
+        trace.unheld.sides,
+        [(0, SideLoss::Empty), (1, SideLoss::Empty)],
+        "its sides left out, both junctions are reported"
+    );
 }
 
 /// One case of [`test_flow_halves_the_touch_check_finds_what_every_pair_does`]:
@@ -3577,8 +4676,10 @@ fn touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) -> Vec<((u
 /// a coarser box's copies without the strip either side; the strips'
 /// two-list sweep in one direction only; `stripped`'s strips round a
 /// box at a plain `- 1` and `+ 1` (a panic, `attempt to add with
-/// overflow`, among the far cases before the repro). (No `do_*` twin: it
-/// reads a test seam.)
+/// overflow`, among the far cases before the repro); and, of the strips
+/// leaving out what the sweep before them weighed (#308, ruling B15.2),
+/// the box the sweep stopped in read as done (case 1,507), and the box
+/// after it (case 2,065). (No `do_*` twin: it reads a test seam.)
 #[test]
 fn test_flow_halves_the_touch_check_finds_what_every_pair_does() {
     use crate::flow::place::halves::{touch_seam, touching_seam, TOUCH};
@@ -3941,7 +5042,7 @@ fn test_flow_halves_a_one_gap_line_on_a_curve_is_solved_to_its_end() {
     for room in [15.0, 20.0, 25.0, 30.0, 35.0] {
         let (gap, short, tolerance, at_zero, at_room) = with_fonts(|fs| {
             let run = real_run("ab", &style(16.0), fs);
-            let fs: &mut FontSystem = fs;
+            let fs = fs.fonts();
             solve_line_seam(&run, &shape, room, fs)
         });
         assert!(

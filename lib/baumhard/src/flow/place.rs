@@ -123,7 +123,7 @@ use crate::flow::outline::Outline;
 use crate::flow::path::ArcPath;
 use crate::flow::shape::{reshape, GlyphMetrics, Ink, ShapedRun, FILLER_SPAN};
 use crate::flow::span::{point_size, LINE_HEIGHT_FACTOR};
-use crate::font::fonts::{clamp_font_metric, FontSystemWriteGuard, MIN_FONT_SIZE_PT};
+use crate::font::fonts::{clamp_font_metric, FontSystemLease, MIN_FONT_SIZE_PT};
 use crate::font::FontSystem;
 
 pub(crate) mod halves;
@@ -156,7 +156,6 @@ pub(crate) fn box_step(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, Vec2) {
         level: false,
         ornament: false,
         baseline: 0.0,
-        push: None,
     };
     walk.step(s, w, h)
 }
@@ -621,9 +620,20 @@ pub(crate) struct Trace {
     /// scaled by (ruling R44.2).
     pub(crate) budget: usize,
     pub(crate) glyphs: usize,
+    /// For a text frame, the share of its budget held back for its last
+    /// resort's cut to the inks that touch nothing (`halves::untouched_steps`,
+    /// ruling R46.1).
+    pub(crate) reserve: usize,
     /// For a text frame, the most pairs its touch checks looked at a box
     /// (rulings R48.2, R51.2).
     pub(crate) looks: halves::Looks,
+    /// For a text frame laid on its halves, the offset off the outline,
+    /// along its outward normal, of its one band curve (#308, ruling
+    /// B15.1): every glyph's anchor — its ink's center along the line,
+    /// its span's band center across it, or a side ornament's own ink
+    /// center — lies on the outline's offset curve there. `None` for a
+    /// frame R27 lays on its level spans.
+    pub(crate) offset: Option<f32>,
     /// For a `Repeat` ring, how its budget left it, when it stopped any of
     /// its work (#310): `None` when its work fit. A ring's `spent`,
     /// `budget` and `glyphs` are its own, as a frame's are.
@@ -857,11 +867,6 @@ struct PathWalk<'p> {
     /// Where the run's baseline sits below a box's top
     /// ([`ShapedRun::baseline`]): where an ornament's ink is in its box.
     baseline: f32,
-    /// The half size an ink is pushed off a closed path by
-    /// ([`ink_at`](Self::ink_at)), when not its own: a frame's side
-    /// ornaments are pushed as far as the text's mean ink, so they sit on
-    /// the text's own center line (#291, ruling R33.1).
-    push: Option<Vec2>,
 }
 
 impl PathWalk<'_> {
@@ -1041,26 +1046,16 @@ impl PathWalk<'_> {
     /// The center on the canvas of the ink of a glyph whose ink is `ink`
     /// (in its box's coordinates) set at `c` along the path (ruling R31):
     /// on the path there — pushed outward on a closed path by the
-    /// [`support`] of the ellipse its ink box bounds (or the walk's
-    /// [`push`](Self::push), when set), along the normal of the chord
-    /// across its own reach, so the ink, not its box, clears a side of the
-    /// outline, and the push turns with the chord through a sharp corner
-    /// rather than jumping.
-    fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {
-        self.ink_point(c, ink).0
-    }
-
-    /// [`ink_at`](Self::ink_at), and the direction the ink moves in as
-    /// `c` grows: the chord it is pushed off along, or on a path it is
-    /// not pushed off, the direction of travel at `c`. What a frame's
-    /// pairwise rule models the next step with, at no lookup more
-    /// (ruling R43).
+    /// [`support`] of the ellipse its ink box bounds, along the normal of
+    /// the chord across its own reach, so the ink, not its box, clears a
+    /// side of the outline, and the push turns with the chord through a
+    /// sharp corner rather than jumping. A frame's text is anchored on its
+    /// band curve instead (#308, `halves::Band`).
     ///
     /// Cost: one path lookup; three where the ink is pushed outward.
-    fn ink_point(&self, c: f32, ink: Ink) -> (Vec2, Vec2) {
+    fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {
         let size = ink.max - ink.min;
         let (mut center, tangent) = self.path.at(c);
-        let mut moves = tangent;
         if self.outward {
             let reach = 0.5 * size.length();
             let dir = if reach > 0.0 {
@@ -1068,10 +1063,9 @@ impl PathWalk<'_> {
             } else {
                 tangent
             };
-            center += support(self.path.outward(dir), self.push.unwrap_or(size * 0.5));
-            moves = dir;
+            center += support(self.path.outward(dir), size * 0.5);
         }
-        (center, moves)
+        center
     }
 
     /// Walk a cluster of `body` from `s`, `trail` remembering an
@@ -2539,9 +2533,11 @@ impl PathStretch {
 ///
 /// `flow` is the flow's own resolved style (sizes in points), read to
 /// shape a `Once` filler (ruling R6) and a frame's sides. `fs` is the
-/// guard the caller holds; `Fit` (reshaping at the fitted size), a
-/// filler, sides and a line's ink measure shape or scale glyphs, and
-/// nothing here acquires the font lock.
+/// caller's lease on the font system: `Fit` (reshaping at the fitted
+/// size), a filler, sides and a line's ink measure take the lock from
+/// it to shape or scale glyphs, and a walk or a lay, which reads no
+/// font, gives it back ([`FontSystemLease::unlocked`], #308), so the
+/// lease may hold nothing when this returns.
 ///
 /// Returns the run the placement refers to when it is not `run` — the
 /// rescaled run for `Fit`, `run` plus one shaped copy of a filler or a
@@ -2564,7 +2560,7 @@ pub fn place_on_closed(
     layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> (Option<ShapedRun>, PlacedRun) {
     place_on_closed_traced(run, path, start, direction, fit, layout, outward, flow, fs, None)
 }
@@ -2581,7 +2577,7 @@ pub(crate) fn place_on_closed_traced(
     layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     place_on_closed_capped(
@@ -2615,7 +2611,7 @@ pub(crate) fn place_on_closed_capped(
     layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     ring_cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
@@ -2679,7 +2675,7 @@ pub fn place_on_open(
     fit: &FitMode,
     spacing: f32,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> (Option<ShapedRun>, PlacedRun) {
     place_on_open_traced(run, curve, fit, spacing, flow, fs, None)
 }
@@ -2692,7 +2688,7 @@ pub(crate) fn place_on_open_traced(
     fit: &FitMode,
     spacing: f32,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let table = table_spacing(run, fit, flow);
@@ -2860,7 +2856,7 @@ fn place(
     spacing: f32,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystem,
+    fs: &mut FontSystemLease,
     ring_cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
@@ -2894,19 +2890,22 @@ fn place(
         level: false,
         ornament: !run.glyphs.iter().any(|glyph| glyph.letter),
         baseline: run.baseline(),
-        push: None,
     };
+    // A `Repeat` or `Spread` walk, and every readable lay, reads the run
+    // as shaped and no font: they run with the font system's lock
+    // released ([`FontSystemLease::unlocked`], #308).
     let walked = match fit {
-        FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
-        FitMode::Repeat => repeat(run, &walk(run), spacing, closed),
-        FitMode::Spread => spread(run, &walk(run), 0.0),
-        FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs, &walk),
+        FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs.fonts(), &walk),
+        FitMode::Repeat => fs.unlocked(|| repeat(run, &walk(run), spacing, closed)),
+        FitMode::Spread => fs.unlocked(|| spread(run, &walk(run), 0.0)),
+        FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs.fonts(), &walk),
     };
     let mut trace = trace;
     if let Some(ring) = &ring {
         ring.lay_again();
     }
-    let placed = walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut());
+    let placed =
+        fs.unlocked(|| walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut()));
     if let Some(ring) = &ring {
         ring.placed(placed.1.glyphs.len());
         let spent = ring.spent(path);

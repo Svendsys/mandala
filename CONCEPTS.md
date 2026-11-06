@@ -1603,6 +1603,14 @@ element.
     up-left and down-right (`Outline::support`): the first from the
     top-left junction clockwise over the top and down the right side,
     the second down the left side and along the bottom, glyphs upright.
+    Every ink of the frame, both lines' and the sides' copies, is
+    anchored on one band curve, the outline's offset at one distance
+    all round (#308, ruling B15.1): a letter at its ink's center along
+    the line and its span's band center across it, halfway between its
+    baseline and its x-height, so a span's letters share a baseline and
+    their ascenders and descenders hang free; the distance is solved once
+    a frame, outward the least that clears every ink, inward centering
+    the frame's ink on the outline.
     Each line is tracked evenly — one ink gap between every two letters,
     by the ornament's pairwise rule, and a space plus two gaps between
     words — over the part of its half its `span` gives it
