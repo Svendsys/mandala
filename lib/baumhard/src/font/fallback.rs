@@ -32,11 +32,12 @@
 //! holds is drawn in it. That is the default family's gap (#228), not a
 //! fallback's.
 
+use std::sync::OnceLock;
+
 use cosmic_text::fontdb::{Weight, ID};
 use cosmic_text::{Fallback, FontSystem, PlatformFallback};
-use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
-use unicode_script::{Script, ScriptExtension};
+use unicode_script::Script;
 
 use crate::font::fonts::AppFont;
 
@@ -52,8 +53,8 @@ use crate::font::fonts::AppFont;
 /// host face. The names are spelled here, not read from the faces,
 /// because the fallback lists are built with the font system, before the
 /// compiled faces are registered in it;
-/// `test_each_ornament_fallback_names_its_faces_family` holds each to its
-/// face.
+/// `test_each_ornament_fallback_names_its_faces_family_at_every_weight`
+/// holds each to its face.
 pub const ORNAMENT_FALLBACK: &[(AppFont, &str)] = &[
     (AppFont::MandalaOrnaments, "Mandala Ornaments"),
     (AppFont::MandalaEmoji, "Mandala Emoji"),
@@ -68,39 +69,40 @@ pub const FALLBACK_WEIGHTS: [u16; 9] = [100, 200, 300, 400, 500, 600, 700, 800, 
 /// last (`common`), and each script's own list, which a run of that
 /// script tries before it (`scripts`).
 ///
-/// The lists are built once, for every script there is and the locale
-/// the font system has, because the trait hands out borrows of them.
+/// The trait hands out borrows of the lists, so each is kept here. A
+/// script's is built the first time cosmic-text asks for it, in its slot
+/// of `scripts`, indexed by the script's `u8` discriminant: Unicode's
+/// scripts cannot be listed up front through `unicode_script` (a
+/// `ScriptExtension` of every script iterates as `Common` alone).
 struct OrnamentsFirst {
     /// The ornament families, then the platform's common list.
     common: Vec<&'static str>,
-    /// For each script, the ornament families, then the platform's list
-    /// for it at `locale`.
-    scripts: FxHashMap<Script, Vec<&'static str>>,
+    /// For each script, once asked for, the ornament families, then the
+    /// platform's list for it at `locale`.
+    scripts: [OnceLock<Vec<&'static str>>; 256],
     /// The locale `scripts` is built for.
     locale: String,
-    /// The platform's lists, for a locale `scripts` is not built for.
+    /// The platform's lists.
     platform: PlatformFallback,
 }
 
+/// [`ORNAMENT_FALLBACK`]'s family names, in order.
+fn ornament_families() -> impl Iterator<Item = &'static str> {
+    ORNAMENT_FALLBACK.iter().map(|(_, family)| *family)
+}
+
 impl OrnamentsFirst {
-    /// The lists for a font system at `locale`. Cost: one platform lookup
-    /// and one small `Vec` for each of Unicode's scripts.
+    /// The lists for a font system at `locale`. Cost: the common list; a
+    /// script's costs one platform lookup and one small `Vec`, the first
+    /// time it is asked for.
     fn new(locale: &str) -> Self {
         let platform = PlatformFallback;
-        let first = || ORNAMENT_FALLBACK.iter().map(|(_, family)| *family);
-        let common = first().chain(platform.common_fallback().iter().copied()).collect();
-        let scripts = ScriptExtension::default()
-            .iter()
-            .map(|script| {
-                let list = first()
-                    .chain(platform.script_fallback(script, locale).iter().copied())
-                    .collect();
-                (script, list)
-            })
+        let common = ornament_families()
+            .chain(platform.common_fallback().iter().copied())
             .collect();
         Self {
             common,
-            scripts,
+            scripts: std::array::from_fn(|_| OnceLock::new()),
             locale: locale.to_string(),
             platform,
         }
@@ -118,11 +120,15 @@ impl Fallback for OrnamentsFirst {
 
     fn script_fallback(&self, script: Script, locale: &str) -> &[&'static str] {
         // cosmic-text asks for its own locale, which is the one the lists
-        // were built for; another gets the platform's list unchanged.
-        match self.scripts.get(&script) {
-            Some(list) if locale == self.locale => list,
-            _ => self.platform.script_fallback(script, locale),
+        // are built for; another gets the platform's list unchanged.
+        if locale != self.locale {
+            return self.platform.script_fallback(script, locale);
         }
+        self.scripts[script as usize].get_or_init(|| {
+            ornament_families()
+                .chain(self.platform.script_fallback(script, locale).iter().copied())
+                .collect()
+        })
     }
 }
 
@@ -151,7 +157,10 @@ pub(crate) fn register_every_weight(font_system: &mut FontSystem, ids: &mut Tiny
     let Some(face) = faces.first() else {
         return;
     };
-    for weight in FALLBACK_WEIGHTS.into_iter().filter(|weight| !have.contains(weight)) {
+    for weight in FALLBACK_WEIGHTS
+        .into_iter()
+        .filter(|weight| !have.contains(weight))
+    {
         let mut info = face.clone();
         info.id = ID::dummy();
         info.weight = Weight(weight);

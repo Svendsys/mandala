@@ -28,6 +28,8 @@
 
 use baumhard::document::format::load;
 use baumhard::flow::FILLER_SPAN;
+use baumhard::font::fallback::ORNAMENT_FALLBACK;
+use baumhard::font::fonts::AppFont;
 use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
 use glam::Vec2;
 use glyphon::{CacheKey, SwashCache};
@@ -350,23 +352,56 @@ fn shaped_glyphs(run: &GlyphRunData) -> Vec<(String, glyphon::fontdb::ID, u16)> 
         .collect()
 }
 
+/// The compiled faces a demo map may draw a glyph in: every compiled
+/// face of each family it pins (`fonts`: a bold span is drawn in its
+/// family's bold face), read by name from the font system as a pin is
+/// matched, and the ornament fallback's (#297).
+fn allowed_faces(fs: &glyphon::FontSystem, fonts: &[AppFont]) -> Vec<glyphon::fontdb::ID> {
+    let compiled = &baumhard::font::fonts::COMPILED_FONT_ID_MAP;
+    let families_of = |ids: &[glyphon::fontdb::ID]| -> Vec<String> {
+        ids.iter()
+            .filter_map(|id| fs.db().face(*id))
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .collect()
+    };
+    let pinned: Vec<String> = fonts
+        .iter()
+        .filter_map(|font| compiled.get(font))
+        .flat_map(|ids| families_of(ids))
+        .collect();
+    let mut allowed: Vec<glyphon::fontdb::ID> = compiled
+        .values()
+        .filter(|ids| families_of(ids).iter().any(|family| pinned.contains(family)))
+        .flat_map(|ids| ids.iter().copied())
+        .collect();
+    for (font, _) in ORNAMENT_FALLBACK {
+        allowed.extend(compiled.get(font).into_iter().flat_map(|ids| ids.iter().copied()));
+    }
+    allowed
+}
+
 /// (i) No demo map draws a glyph in a host face (#297): every glyph of
-/// every run, text, ornament and connector alike, is drawn in a
-/// compiled face, and none is a compiled face's `.notdef`. So the four
-/// README images show the same glyphs on every install, and in the
-/// browser, which has the compiled faces alone.
+/// every run, text, ornament and connector alike, is drawn in a compiled
+/// face of a family the map pins, or in an ornament fallback face, and
+/// none is a `.notdef`. So the four README images show the same glyphs on
+/// every install, and in the browser, which has the compiled faces alone.
 ///
-/// The `.notdef` half is what keeps the property from passing on a host
-/// with no faces of its own (CI, or `FONTCONFIG_FILE` at an empty
-/// directory, §T14): there a glyph no compiled face holds is not drawn
-/// in a host face, but as the first face's empty box.
+/// The two halves past "compiled" are what keep the property from passing
+/// on a host with no faces of its own (CI, or `FONTCONFIG_FILE` at an
+/// empty directory, §T14). There a glyph no face holds is not drawn in a
+/// host face but as the first face's empty box, and a glyph one compiled
+/// face holds is drawn in whichever comes first in cosmic-text's order, a
+/// decorative face the map never named, unless the ornament fallback
+/// comes before it.
 ///
-/// Controls: with the ornament faces' fallback turned off
-/// (`fonts::ORNAMENT_FALLBACK` empty), red on every ornament, in
-/// `DejaVuSans` and `NotoColorEmoji` here, and as `.notdef` with the
-/// host's faces hidden.
+/// Controls: with `OrnamentsFirst` listing the platform's families alone
+/// (the ornament fallback off), red on a desktop on the 15 glyphs drawn
+/// in `DejaVuSans` and `NotoColorEmoji`, and with the host's faces hidden
+/// on the connectors' `~`, drawn in `212Keyboard`. Before the ornament
+/// faces were compiled in, red with the host's faces hidden on `✦`, `❦`
+/// and `🌸` drawn as Galatia SIL's `.notdef`.
 #[test]
-fn test_demo_maps_draw_every_glyph_in_a_compiled_face() {
+fn test_demo_maps_draw_every_glyph_in_a_face_they_pin_or_the_ornament_fallback() {
     let maps = demo_maps();
     assert!(
         maps.len() >= 4,
@@ -377,12 +412,14 @@ fn test_demo_maps_draw_every_glyph_in_a_compiled_face() {
         .flat_map(|ids| ids.iter().copied())
         .collect();
     let mut faults: Vec<String> = Vec::new();
-    let mut glyphs = 0;
+    let (mut glyphs, mut unpinned) = (0, 0);
     for (name, path) in maps {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
         let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
         let projected = with_fonts(|fs| project(&doc, fs));
+        unpinned += usize::from(projected.fonts.contains(&AppFont::Any));
         with_fonts(|fs| {
+            let allowed = allowed_faces(fs, &projected.fonts);
             for (run, label) in projected.runs.iter().zip(&projected.labels) {
                 for (text, face, glyph) in shaped_glyphs(run) {
                     glyphs += 1;
@@ -392,6 +429,10 @@ fn test_demo_maps_draw_every_glyph_in_a_compiled_face() {
                         .map_or_else(|| format!("{face:?}"), |f| f.post_script_name.clone());
                     if !compiled.contains(&face) {
                         faults.push(format!("{name} {label}: {text:?} drawn in the host face {named}"));
+                    } else if !allowed.contains(&face) {
+                        faults.push(format!(
+                            "{name} {label}: {text:?} drawn in {named}, a face the map does not pin"
+                        ));
                     } else if glyph == 0 {
                         faults.push(format!("{name} {label}: {text:?} drawn as {named}'s .notdef"));
                     }
@@ -400,11 +441,15 @@ fn test_demo_maps_draw_every_glyph_in_a_compiled_face() {
         });
     }
     assert!(glyphs > 0, "precondition: the maps' glyphs are read ({glyphs})");
+    assert!(
+        unpinned > 0,
+        "precondition: a demo map has a span that pins no face, which only the fallback may draw"
+    );
     faults.sort();
     faults.dedup();
     assert!(
         faults.is_empty(),
-        "{} glyphs not drawn by a compiled face:\n{}",
+        "{} glyphs not drawn in a face the map pins or the ornament fallback:\n{}",
         faults.len(),
         faults.join("\n")
     );

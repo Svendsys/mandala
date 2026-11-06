@@ -10,6 +10,7 @@
 //! bytes, not through the shaper whose fallback is under test.
 
 use cosmic_text::skrifa::bitmap::BitmapStrikes;
+use cosmic_text::skrifa::instance::{LocationRef, Size};
 use cosmic_text::skrifa::{FontRef, MetadataProvider};
 
 use crate::document::defaults::BUILT_IN;
@@ -76,15 +77,29 @@ pub fn do_each_ornament_face_holds_exactly_its_listed_code_points() {
         "control: the reader finds a text face's letters and not an ornament it lacks"
     );
     let ornaments = face_data(AppFont::MandalaOrnaments);
-    assert_eq!(mapped(ornaments), sorted(&ORNAMENT_CODE_POINTS), "Mandala Ornaments' character map");
+    assert_eq!(
+        mapped(ornaments),
+        sorted(&ORNAMENT_CODE_POINTS),
+        "Mandala Ornaments' character map"
+    );
     let font = FontRef::new(ornaments).expect("a compiled face parses");
-    let outlines = font.outline_glyphs();
+    let metrics = font.glyph_metrics(Size::unscaled(), LocationRef::default());
+    let inked = |c: char| {
+        let glyph = font.charmap().map(c).expect("mapped");
+        metrics
+            .bounds(glyph)
+            .is_some_and(|b| b.x_max > b.x_min && b.y_max > b.y_min)
+    };
+    assert!(!inked(' '), "control: the space has no ink");
     for c in ORNAMENT_CODE_POINTS.iter().filter(|c| **c != ' ') {
-        let glyph = font.charmap().map(*c).expect("mapped");
-        assert!(outlines.get(glyph).is_some(), "Mandala Ornaments draws no outline for {c:?}");
+        assert!(inked(*c), "Mandala Ornaments draws no outline for {c:?}");
     }
     let emoji = face_data(AppFont::MandalaEmoji);
-    assert_eq!(mapped(emoji), sorted(&EMOJI_CODE_POINTS), "Mandala Emoji's character map");
+    assert_eq!(
+        mapped(emoji),
+        sorted(&EMOJI_CODE_POINTS),
+        "Mandala Emoji's character map"
+    );
     let font = FontRef::new(emoji).expect("a compiled face parses");
     let strikes = BitmapStrikes::new(&font);
     for c in EMOJI_CODE_POINTS {
@@ -152,7 +167,10 @@ pub fn do_every_built_in_ornament_is_an_ornament_face_glyph() {
         ("portal end", BUILT_IN.portal_end.content),
     ];
     for (what, content) in built_in {
-        assert!(!content.is_empty(), "precondition: the built-in {what} draws a glyph");
+        assert!(
+            !content.is_empty(),
+            "precondition: the built-in {what} draws a glyph"
+        );
         for c in content.chars() {
             assert!(
                 held.contains(&c),
@@ -178,9 +196,17 @@ pub fn do_each_ornament_fallback_names_its_faces_family_at_every_weight() {
         "precondition: the fallback lists the ornament and the emoji face"
     );
     fonts::init();
-    let fs = acquire_font_system_write("ornament_tests::do_*");
-    for (font, family) in ORNAMENT_FALLBACK {
-        let pin = fonts::pinned_family(&fs, *font).expect("a compiled family");
+    // Read under the guard and assert once it is released, so that a
+    // failure does not poison the lock for the tests beside it.
+    let pins: Vec<Option<fonts::PinnedFamily>> = {
+        let fs = acquire_font_system_write("ornament_tests::do_*");
+        ORNAMENT_FALLBACK
+            .iter()
+            .map(|(font, _)| fonts::pinned_family(&fs, *font))
+            .collect()
+    };
+    for ((font, family), pin) in ORNAMENT_FALLBACK.iter().zip(pins) {
+        let pin = pin.expect("a compiled family");
         assert_eq!(pin.name, *family, "{font:?}'s family");
         assert_eq!(pin.weights, FALLBACK_WEIGHTS.to_vec(), "{family}'s weights");
         assert_eq!(
@@ -191,8 +217,19 @@ pub fn do_each_ornament_fallback_names_its_faces_family_at_every_weight() {
     }
 }
 
+/// For an ornament face, a letter of the script whose fallback family the
+/// test build gives a copy of that face (`fonts::ORNAMENT_DECOYS`): a run
+/// of it tries that family before the common list. None for the emoji:
+/// Unicode puts a line-break opportunity on each side of one (UAX #14
+/// class ID), so cosmic-text shapes it as a word of its own, with no
+/// script, which reaches the common list alone.
+#[cfg(test)]
+const SCRIPT_RUNS: [(AppFont, char); 1] = [(AppFont::MandalaOrnaments, 'ب')];
+
 /// What `text`, shaped alone at `weight` in the family `family`, is
-/// drawn in: each glyph's face, PostScript name and glyph id.
+/// drawn in: each glyph's face, PostScript name and glyph id. Test builds
+/// only, as its one caller is.
+#[cfg(test)]
 fn drawn(
     fs: &mut cosmic_text::FontSystem,
     text: &str,
@@ -207,12 +244,20 @@ fn drawn(
     buffer.shape_until_scroll(fs, false);
     let glyphs: Vec<(cosmic_text::fontdb::ID, u16)> = buffer
         .layout_runs()
-        .flat_map(|run| run.glyphs.iter().map(|g| (g.font_id, g.glyph_id)).collect::<Vec<_>>())
+        .flat_map(|run| {
+            run.glyphs
+                .iter()
+                .map(|g| (g.font_id, g.glyph_id))
+                .collect::<Vec<_>>()
+        })
         .collect();
     glyphs
         .into_iter()
         .map(|(id, glyph)| {
-            let name = fs.db().face(id).map_or_else(String::new, |f| f.post_script_name.clone());
+            let name = fs
+                .db()
+                .face(id)
+                .map_or_else(String::new, |f| f.post_script_name.clone());
             (id, name, glyph)
         })
         .collect()
@@ -223,21 +268,20 @@ fn drawn(
 /// a host face that holds it is reached first in cosmic-text's own order.
 ///
 /// The test build registers copies of the ornament faces as host faces
-/// (`fonts::ORNAMENT_DECOYS`): in `Noto Sans`, the first of cosmic-text's
-/// common fallback families, at 400 and 700, and in `Noto Sans Arabic`,
-/// the family a run of Arabic tries first. Galatia SIL lacks the five the
-/// issue names, and each is shaped in it at 400 and at 700 (its bold
-/// face), alone, and inside a run of Arabic, where the script's own
-/// fallback comes before the common list. Plain, not a `do_*()` pair: it
-/// reads the test build's decoys.
+/// (`fonts::ORNAMENT_DECOYS`), in common fallback families of
+/// cosmic-text's at 400 and 700 (the ornaments in `Noto Sans`, the emoji
+/// in `Noto Color Emoji`), and the ornaments in the family a run of Arabic
+/// tries first (`Noto Sans Arabic`). Galatia SIL lacks the five the issue
+/// names, and each is shaped in it at 400 and at 700 (its bold face),
+/// alone, and each ornament between two Arabic letters ([`SCRIPT_RUNS`]),
+/// where the script's own fallback list comes before the common one.
+/// Plain, not a `do_*()` pair: it reads the test build's decoys.
 ///
-/// Controls: with `ORNAMENT_FALLBACK` empty, red on every case, drawn in
-/// the `Noto Sans` decoys (on this machine `DejaVuSans` comes first for
-/// `✦ ❦ ♪ ∙` alone, and `NotoColorEmoji` for `🌸`); with the faces
-/// registered at their own weight only (no `register_every_weight`), red
-/// at 700 alone, in `DejaVuSans-Bold` or a decoy; with the families put
-/// first in the common list only, red inside the Arabic run alone, in
-/// the `Noto Sans Arabic` decoy.
+/// Controls (the PR lists what each drew): with `OrnamentsFirst` listing
+/// the platform's families alone, red on every case; with the faces at
+/// their own weight only (no `register_every_weight`), red at 700 alone;
+/// with the families first in the common list only, red inside the
+/// Arabic runs alone, in the `Noto Sans Arabic` decoy.
 #[test]
 fn test_a_pinned_span_draws_each_ornament_in_its_compiled_face_before_a_host_face() {
     fonts::init();
@@ -255,31 +299,44 @@ fn test_a_pinned_span_draws_each_ornament_in_its_compiled_face_before_a_host_fac
             "precondition: Galatia SIL lacks {c:?}, so it falls back"
         );
     }
+    for (_, letter) in SCRIPT_RUNS {
+        assert!(
+            !galatia.contains(&letter) && !galatia_bold.contains(&letter),
+            "precondition: Galatia SIL lacks {letter:?}, so its run falls back through its script's list"
+        );
+    }
     // Read under the guard and assert once it is released, so that a
     // failure does not poison the lock for the tests beside it.
     let (decoys, results) = {
         let mut fs = acquire_font_system_write("ornament_tests::pinned");
         let pin = fonts::pinned_family(&fs, AppFont::GalatiaSIL).expect("a compiled family");
         let names: Vec<String> = fs.db().faces().map(|f| f.post_script_name.clone()).collect();
-        let decoys: Vec<(String, bool)> = ORNAMENT_FALLBACK
+        let decoys: Vec<(String, bool)> = fonts::ORNAMENT_DECOYS
             .iter()
-            .flat_map(|(font, _)| {
-                fonts::ORNAMENT_DECOYS
-                    .iter()
-                    .map(move |(family, weight)| fonts::ornament_decoy_name(*font, family, *weight))
-            })
-            .map(|name| {
+            .map(|(font, family, weight)| {
+                let name = fonts::ornament_decoy_name(*font, family, *weight);
                 let found = names.contains(&name);
                 (name, found)
             })
             .collect();
         let mut results = Vec::new();
         for (c, font) in &cases {
+            let mut texts = vec![(c.to_string(), 0)];
+            for (_, letter) in SCRIPT_RUNS.iter().filter(|(face, _)| face == font) {
+                texts.push((format!("{letter}{c}{letter}"), 1));
+            }
             for weight in [400, 700] {
                 let weight = pin.weight_for(weight);
-                for (text, at) in [(c.to_string(), 0), (format!("ب{c}ب"), 1)] {
-                    let glyphs = drawn(&mut fs, &text, &pin.name, weight);
-                    results.push((*c, *font, weight, text, glyphs.get(at).cloned(), glyphs.len()));
+                for (text, at) in &texts {
+                    let glyphs = drawn(&mut fs, text, &pin.name, weight);
+                    results.push((
+                        *c,
+                        *font,
+                        weight,
+                        text.clone(),
+                        glyphs.get(*at).cloned(),
+                        glyphs.len(),
+                    ));
                 }
             }
         }
@@ -293,11 +350,16 @@ fn test_a_pinned_span_draws_each_ornament_in_its_compiled_face_before_a_host_fac
         let ids = &fonts::COMPILED_FONT_ID_MAP[&font];
         match glyph {
             Some((id, _, glyph)) if ids.contains(&id) && glyph != 0 => {}
-            Some((_, name, glyph)) => {
-                faults.push(format!("{c:?} in {text:?} at {weight}: drawn in {name} (glyph {glyph})"))
-            }
+            Some((_, name, glyph)) => faults.push(format!(
+                "{c:?} in {text:?} at {weight}: drawn in {name} (glyph {glyph})"
+            )),
             None => faults.push(format!("{c:?} in {text:?} at {weight}: {count} glyphs")),
         }
     }
-    assert!(faults.is_empty(), "{} ornaments not drawn in their compiled face:\n{}", faults.len(), faults.join("\n"));
+    assert!(
+        faults.is_empty(),
+        "{} ornaments not drawn in their compiled face:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
 }

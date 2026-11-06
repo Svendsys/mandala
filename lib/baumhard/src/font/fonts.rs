@@ -151,16 +151,25 @@ pub(crate) const DECOY_WEIGHTS: [u16; 7] = [100, 200, 300, 500, 600, 800, 900];
 pub(crate) const DECOY_FAMILY: &str = "Noto Sans";
 
 /// Where [`register_host_decoys`] registers a copy of each ornament
-/// fallback face (#297), as `(family, weight)`: a host face that holds
-/// the ornaments, in the first of cosmic-text's common fallback families
-/// at the regular and the bold weight (the weights the compiled text
-/// faces have, which no other decoy takes), and in the first script
-/// fallback family a run of Arabic tries. Without the ornament fallback
-/// a span whose face lacks an ornament would be drawn in one of these on
-/// every machine, as it is drawn in DejaVu Sans or Noto Color Emoji on
-/// a desktop.
+/// fallback face (#297), as `(face, family, weight)`: a host face that
+/// holds the ornaments, in a common fallback family of cosmic-text's at
+/// the regular and the bold weight (the weights the compiled text faces
+/// have, which no R30 decoy takes), and, for the ornaments, in the script
+/// fallback family a run of Arabic tries first (an emoji is shaped as a
+/// word of its own, with no script). Without the ornament fallback a span
+/// whose face lacks an ornament is drawn in one of these on every
+/// machine, as it is drawn in DejaVu Sans or Noto Color Emoji on a
+/// desktop. Each face has families of its own: cosmic-text tries one face
+/// of a family, and sorts a color face first, so an emoji copy would
+/// shadow an ornament copy beside it.
 #[cfg(test)]
-pub(crate) const ORNAMENT_DECOYS: [(&str, u16); 3] = [(DECOY_FAMILY, 400), (DECOY_FAMILY, 700), ("Noto Sans Arabic", 400)];
+pub(crate) const ORNAMENT_DECOYS: [(AppFont, &str, u16); 5] = [
+    (AppFont::MandalaOrnaments, DECOY_FAMILY, 400),
+    (AppFont::MandalaOrnaments, DECOY_FAMILY, 700),
+    (AppFont::MandalaOrnaments, "Noto Sans Arabic", 400),
+    (AppFont::MandalaEmoji, "Noto Color Emoji", 400),
+    (AppFont::MandalaEmoji, "Noto Color Emoji", 700),
+];
 
 /// The PostScript name of the copy of the ornament fallback face `font`
 /// that [`register_host_decoys`] registers under `family` at `weight`.
@@ -223,23 +232,21 @@ fn register_host_decoys(font_system: &mut FontSystem) {
     }
     // After the Noto Sans decoys above, so that at their weights the
     // family's first face is still one of theirs.
-    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK {
-        let Some(source) = FONT_SOURCES.get(font).cloned() else {
+    for (font, family, weight) in ORNAMENT_DECOYS {
+        let Some(source) = FONT_SOURCES.get(&font).cloned() else {
             continue;
         };
-        for (family, weight) in ORNAMENT_DECOYS {
-            font_system.db_mut().push_face_info(FaceInfo {
-                id: ID::dummy(),
-                source: source.clone(),
-                index: 0,
-                families: vec![(family.to_string(), Language::English_UnitedStates)],
-                post_script_name: ornament_decoy_name(*font, family, weight),
-                style: Style::Normal,
-                weight: Weight(weight),
-                stretch: Stretch::Normal,
-                monospaced: false,
-            });
-        }
+        font_system.db_mut().push_face_info(FaceInfo {
+            id: ID::dummy(),
+            source,
+            index: 0,
+            families: vec![(family.to_string(), Language::English_UnitedStates)],
+            post_script_name: ornament_decoy_name(font, family, weight),
+            style: Style::Normal,
+            weight: Weight(weight),
+            stretch: Stretch::Normal,
+            monospaced: false,
+        });
     }
 }
 
