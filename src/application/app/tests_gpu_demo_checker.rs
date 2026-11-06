@@ -329,3 +329,83 @@ fn test_demo_maps_hold_the_readable_structure() {
         faults.join("\n")
     );
 }
+
+/// Every glyph `run` was shaped into, as the checker's face property
+/// reads it: the text it draws, its face and its glyph id. A path run's
+/// placed glyphs are copies of these, so a face every shaped glyph is
+/// drawn in is the face every placed one is drawn in.
+fn shaped_glyphs(run: &GlyphRunData) -> Vec<(String, glyphon::fontdb::ID, u16)> {
+    let buffer = match run.shaped() {
+        RunShape::Path { run: shaped, .. } => &shaped.buffer,
+        RunShape::Box(shaped) => &shaped.buffer,
+    };
+    buffer
+        .layout_runs()
+        .flat_map(|line| {
+            line.glyphs
+                .iter()
+                .map(|g| (line.text[g.start..g.end].to_string(), g.font_id, g.glyph_id))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// (i) No demo map draws a glyph in a host face (#297): every glyph of
+/// every run, text, ornament and connector alike, is drawn in a
+/// compiled face, and none is a compiled face's `.notdef`. So the four
+/// README images show the same glyphs on every install, and in the
+/// browser, which has the compiled faces alone.
+///
+/// The `.notdef` half is what keeps the property from passing on a host
+/// with no faces of its own (CI, or `FONTCONFIG_FILE` at an empty
+/// directory, §T14): there a glyph no compiled face holds is not drawn
+/// in a host face, but as the first face's empty box.
+///
+/// Controls: with the ornament faces' fallback turned off
+/// (`fonts::ORNAMENT_FALLBACK` empty), red on every ornament, in
+/// `DejaVuSans` and `NotoColorEmoji` here, and as `.notdef` with the
+/// host's faces hidden.
+#[test]
+fn test_demo_maps_draw_every_glyph_in_a_compiled_face() {
+    let maps = demo_maps();
+    assert!(
+        maps.len() >= 4,
+        "the README's demo maps must be found, else this would pass over none: {maps:?}"
+    );
+    let compiled: Vec<glyphon::fontdb::ID> = baumhard::font::fonts::COMPILED_FONT_ID_MAP
+        .values()
+        .flat_map(|ids| ids.iter().copied())
+        .collect();
+    let mut faults: Vec<String> = Vec::new();
+    let mut glyphs = 0;
+    for (name, path) in maps {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
+        let projected = with_fonts(|fs| project(&doc, fs));
+        with_fonts(|fs| {
+            for (run, label) in projected.runs.iter().zip(&projected.labels) {
+                for (text, face, glyph) in shaped_glyphs(run) {
+                    glyphs += 1;
+                    let named = fs
+                        .db()
+                        .face(face)
+                        .map_or_else(|| format!("{face:?}"), |f| f.post_script_name.clone());
+                    if !compiled.contains(&face) {
+                        faults.push(format!("{name} {label}: {text:?} drawn in the host face {named}"));
+                    } else if glyph == 0 {
+                        faults.push(format!("{name} {label}: {text:?} drawn as {named}'s .notdef"));
+                    }
+                }
+            }
+        });
+    }
+    assert!(glyphs > 0, "precondition: the maps' glyphs are read ({glyphs})");
+    faults.sort();
+    faults.dedup();
+    assert!(
+        faults.is_empty(),
+        "{} glyphs not drawn by a compiled face:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}

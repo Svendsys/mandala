@@ -862,10 +862,21 @@ fn plain_style() -> ResolvedText {
 /// bearing its name comes first (the shadowing R30.1 removes): a sweep
 /// that drew its faces from the index would stop pinning that family at
 /// all, and so could not see a host face win its pin.
+///
+/// Not the ornament fallback's faces (#297) either. A span reaches them
+/// whenever its own face lacks one of their glyphs, so the generator draws
+/// them through every face it pins. And the list is what every committed
+/// structured seed and finding chose its faces from: a choice picks the
+/// face at its value modulo the list's length, so two faces more would
+/// replay each of them in another face than the one it was found in.
 pub(crate) fn faces() -> Vec<AppFont> {
+    let fallback: Vec<AppFont> = crate::font::fallback::ORNAMENT_FALLBACK
+        .iter()
+        .map(|(font, _)| *font)
+        .collect();
     let mut faces: Vec<AppFont> = COMPILED_FONT_ID_MAP
         .iter()
-        .filter(|(_, ids)| !ids.is_empty())
+        .filter(|(font, ids)| !ids.is_empty() && !fallback.contains(font))
         .map(|(font, _)| *font)
         .collect();
     faces.sort_by_key(|font| format!("{font:?}"));
