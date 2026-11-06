@@ -13,18 +13,20 @@
 //! whichever compiled face came first, or as an empty box.
 //!
 //! Two compiled faces hold them now, subset from freely licensed sources
-//! by `scripts/ornament_fonts.sh` ([`ORNAMENT_FALLBACK`]), and the font
-//! system is built with a [`Fallback`] that lists their families ahead of
+//! by `scripts/ornament_fonts.sh`
+//! ([`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)), and
+//! the font system is built with a
+//! [`Fallback`](cosmic_text::Fallback) that lists their families ahead of
 //! the platform's, in the common list and in every script's
-//! ([`new_font_system`]). A span's own face still comes first: a pinned
+//! (`new_font_system`). A span's own face still comes first: a pinned
 //! family that holds a glyph draws it. What changes is the face a glyph
 //! falls back to, which is now a compiled one on every install.
 //!
 //! cosmic-text matches a fallback family only at the exact weight a span
 //! asks for (or within a variable face's `wght` axis), so each fallback
-//! face is registered at every CSS weight ([`register_every_weight`]): the
-//! same outlines under each weight, nothing synthesized, as a single-weight
-//! family draws every weight at its own (ruling R30).
+//! face is registered at every CSS weight (`register_every_weight`): the
+//! same outlines under each weight, nothing synthesized, as a
+//! single-weight family draws every weight at its own (ruling R30).
 //!
 //! What this cannot reach is a span's own family when that is a host
 //! face: a span that pins no compiled family asks for cosmic-text's
