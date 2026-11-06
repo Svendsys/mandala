@@ -108,6 +108,31 @@ fn test_every_fuzz_seed_holds_its_targets_properties() {
     }
 }
 
+/// flow_structured_every_face's seeds named `pins_<face>_<seed>` pin that
+/// face (#297): its spans or its flow's style name it, read over the
+/// target's own list of faces, so the corpus starts from inputs that
+/// meet each ornament fallback face. Control: the seeds read over
+/// flow_structured's list instead, red on each.
+#[test]
+fn test_the_every_face_flow_seeds_pin_the_faces_they_are_named_for() {
+    let faces = flow_fuzz::every_face();
+    let mut named = 0;
+    for (name, bytes) in files(&repo_path("fuzz/seeds/flow_structured_every_face")) {
+        let pinned = flow_fuzz::check_flow_generated_in(&mut Choices::new(&bytes), &faces)
+            .unwrap_or_else(|why| panic!("{name}: {why}"));
+        let want = if name.starts_with("pins_mandala_emoji_") {
+            crate::font::fonts::AppFont::MandalaEmoji
+        } else if name.starts_with("pins_mandala_ornaments_") {
+            crate::font::fonts::AppFont::MandalaOrnaments
+        } else {
+            continue;
+        };
+        named += 1;
+        assert!(pinned.contains(&want), "{name} pins {pinned:?}, not {want:?}");
+    }
+    assert!(named >= 2, "precondition: the named seeds are read ({named})");
+}
+
 #[test]
 fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     let seeds = files(&repo_path("fuzz/seeds/load_structured"));
