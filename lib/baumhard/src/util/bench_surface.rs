@@ -370,6 +370,31 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_sides_cost_none_of_its_text",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_no_frame_of_the_sweep_loses_text_to_its_sides",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_span_half_is_the_mean_of_natural_and_whole",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_a_long_side_ornament_round_a_sharp_square_is_filled_in_few_lays",
             CannotCompileIntoTheLibrary,
         ),
