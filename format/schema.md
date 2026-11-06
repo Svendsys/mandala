@@ -789,7 +789,9 @@ touches nothing, or left out, and then the first likewise if two of its
 own letters still touch; a `once` frame is never shrunk. Text its
 half holds without touching is never cut, so a frame can be left with
 a break short and keep its text whole. A break whose [sides](#sides)
-ornament would touch the text there is left without it.
+ornament would touch the text there is left without it, and so is one
+whose room for a whole copy the lines cannot leave at their font's
+letter gap: a frame's sides never cost its text.
 
 `start` and `direction` do not apply: a frame's text always begins at
 the top left. They are kept and saved, and a ring set to `repeat` uses

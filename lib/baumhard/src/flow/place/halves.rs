@@ -79,8 +79,11 @@
 //! gaps apart, box to box, of the mean of the lines that have one (a
 //! line of one word has none: the span stretches its letter gaps
 //! alone), and with `sides` one whole copy of the ornament fits between
-//! them; two end inks whose outward normals turn more than 135° apart
-//! are lines stacked across a thin outline, and need only not touch.
+//! them — the clearance grown for that copy's room alone only as far as
+//! the lines' slack, never pressing a line: a frame loses its sides
+//! before its text (rulings R48.3, B15.5); two end inks whose outward
+//! normals turn more than 135° apart are lines stacked across a thin
+//! outline, and need only not touch.
 //! Each line keeps its own clearance from each junction, grown round by
 //! round among the lines whose drawing back parts the ends there, at
 //! whole and then on at the span laid ([`Layout::lay_clear`]): each
