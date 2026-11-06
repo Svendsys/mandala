@@ -288,8 +288,10 @@ pub(crate) fn signed_distance(path: &ArcPath, p: Vec2) -> f32 {
 
 /// What [`band_residual`] measures of a frame: the most an anchor lies
 /// off its band curve, the least and most distance from the outline, the
-/// anchors measured, and of them those [`folded`].
-pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize);
+/// anchors measured, and of them those [`folded`]; and how far past the
+/// offset the most any of its inks reaches toward the outline from its
+/// anchor lies.
+pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize, f32);
 
 /// How a frame's glyphs lie on its band curve (#308, ruling B15.1),
 /// measured from the placement alone: each cluster's anchor — its ink's
@@ -304,6 +306,14 @@ pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize);
 /// twice the offset, no curve inside it lies at the offset from it all
 /// round, and the band curve folds over the outline's far side. A
 /// cluster with no outline to measure is left out.
+///
+/// And the most any ink not folded reaches toward the outline from its
+/// anchor, as the engine models an ink's reach: the support, along the
+/// outline's outward normal under the anchor ([`normal_under`]), of the
+/// ellipse its box bounds, less how far its center lies off its anchor
+/// that way, less the offset. Outward, the band curve lies as near the
+/// outline as lets every ink clear it (ruling B15.1): that most is the
+/// frame's offset, and this none.
 pub(crate) fn band_residual(
     run: &ShapedRun,
     placed: &PlacedRun,
@@ -327,6 +337,7 @@ pub(crate) fn band_residual(
     }
     let (mut worst, mut least, mut most, mut measured, mut fold) =
         (0.0_f32, f32::INFINITY, f32::NEG_INFINITY, 0, 0);
+    let mut reach = f32::NEG_INFINITY;
     for (k, ink) in clusters {
         let Some(ink) = ink else { continue };
         let glyph = &run.glyphs[placed.glyphs[k].glyph as usize];
@@ -345,8 +356,11 @@ pub(crate) fn band_residual(
         worst = worst.max((d - offset).abs());
         least = least.min(d);
         most = most.max(d);
+        let normal = normal_under(path, anchor);
+        let half = 0.5 * (ink.1 - ink.0);
+        reach = reach.max((normal * half).length() - (center(ink) - anchor).dot(normal));
     }
-    (worst, (least, most), measured, fold)
+    (worst, (least, most), measured, fold, reach - offset)
 }
 
 /// Whether the outline `path` is thinner than twice `offset` somewhere
@@ -384,6 +398,11 @@ pub(crate) fn folded(path: &ArcPath, p: Vec2, offset: f32) -> bool {
     let (q, tangent) = path.at(path.nearest(p));
     signed_distance(path, q + 2.0 * offset * path.outward(tangent)) >= 0.0
 }
+
+/// How near the most any ink of a frame laid outward reaches toward the
+/// outline must lie to its offset, in points (#308, ruling B15.1): a
+/// hundredth, what the engine solves the offset to (`OFFSET_TOLERANCE`).
+pub(crate) const REACH_TOLERANCE: f32 = 0.01;
 
 /// The most a glyph's anchor may lie off its frame's band curve, and the
 /// most its frame's anchors' distance from the outline may spread, in
@@ -1307,6 +1326,11 @@ pub struct SweepWork {
     /// B15.1, `band_residual`), and the frames each was the most of.
     pub band: (f32, f32),
     pub band_worst: (String, String),
+    /// Over the frames laid outward, the most and least the most reach of
+    /// a frame's inks toward the outline ([`band_residual`]) lies past its
+    /// offset, and the frames each was of.
+    pub reach: (f32, f32),
+    pub reach_worst: (String, String),
     /// The anchors measured so, and of them those where the band curve
     /// folds (`folded`).
     pub anchors: usize,
@@ -1437,7 +1461,10 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
     // The work the frames here take (ruling R43): the most glyph steps
     // one frame takes (`Trace::spent`, what `TRACK_BUDGET` bounds), and
     // the glyph steps and path lookups in all.
-    let mut work = SweepWork::default();
+    let mut work = SweepWork {
+        reach: (f32::NEG_INFINITY, f32::INFINITY),
+        ..SweepWork::default()
+    };
     most_step_lookups(0);
     let earlier_before = earlier_rounds();
     let size = |run: &ShapedRun| {
@@ -1544,7 +1571,7 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                             // (#308, ruling B15.1).
                             if let Some(offset) = trace.offset {
                                 let inks_of = inks(&run, &placed);
-                                let (off, (least, most), measured, fold) =
+                                let (off, (least, most), measured, fold, past) =
                                     band_residual(&run, &placed, &path, offset, &|_| x_height_per_point());
                                 work.anchors += measured;
                                 work.folded += fold;
@@ -1587,6 +1614,17 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                                     faults.push(format!(
                                         "{what}: an anchor {off} off the band curve at {offset}, its distance from the outline {least}..{most}"
                                     ));
+                                }
+                                // Outward, the curve as near the outline
+                                // as lets every ink clear it: the inks'
+                                // most reach toward it is the offset.
+                                if outward {
+                                    if past > work.reach.0 {
+                                        (work.reach.0, work.reach_worst.0) = (past, what.clone());
+                                    }
+                                    if past < work.reach.1 {
+                                        (work.reach.1, work.reach_worst.1) = (past, what.clone());
+                                    }
                                 }
                             }
                             if matches!(fit, FitMode::Fit { .. }) && size(&run) < fitted * 0.999 {
@@ -2930,7 +2968,7 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks, BandMeasure
                                     heights.get(span).copied().unwrap_or(f32::NAN)
                                 })
                             }
-                            _ => (0.0, (0.0, 0.0), 0, 0),
+                            _ => (0.0, (0.0, 0.0), 0, 0, f32::NAN),
                         };
                         out.push((
                             format!("{name} node {} ring {k}", data.ident.0),
@@ -3530,6 +3568,15 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 /// the most a frame's spread 0.0108; over the demo maps' five frames,
 /// 0.0049 and 0.0098; within [`BAND_RESIDUAL`], 0.05, each.
 ///
+/// **Outward, the least offset that clears every ink.** The curve lies
+/// as near the outline as lets every ink of the frame, its side copies'
+/// included, clear it (ruling B15.1; review 5801763546): the most any ink
+/// reaches toward the outline from its anchor, as the engine models it
+/// ([`band_residual`]), is the frame's offset, within
+/// [`REACH_TOLERANCE`] — past it an ink crosses into the frame's gap,
+/// short of it the whole frame floats. Over the sweep's outward frames
+/// it lies from 0.0054 short of the offset to 0.0039 past it.
+///
 /// **Where the curve folds** (ruling B15.4). Inward round the 50:1
 /// ellipse, 600 × 12, the Ecclesiastes line `Once` at span whole lies on
 /// a curve 0.665 inside the outline, whose ends have a radius of
@@ -3548,8 +3595,9 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
 /// every glyph anchored at its own ink's center, the per-glyph anchor
 /// before B15.1 (every frame, an anchor 5.66 off at the most); the band
 /// center read at the cap height, an `H` in place of the `x` (every
-/// frame, 4.91 at the most). (No `do_*` twin: it reads the sweep and
-/// the demo maps.)
+/// frame, 4.91 at the most); the offset laid 5 further out than its inks
+/// want (the nearest inks 5.005 short of it), and 2 nearer (an ink 2.004
+/// past it). (No `do_*` twin: it reads the sweep and the demo maps.)
 #[test]
 fn test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve() {
     let sweep = the_sweep();
@@ -3566,6 +3614,14 @@ fn test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve() {
         sweep.band.1,
         sweep.band_worst.1
     );
+    assert!(
+        sweep.reach.0 <= REACH_TOLERANCE && sweep.reach.1 >= -REACH_TOLERANCE,
+        "the aspect sweep, outward: an ink reaches {} past its frame's offset ({}): it crosses the outline; the inks nearest it reach {} past ({}): the curve floats off it; within {REACH_TOLERANCE} each",
+        sweep.reach.0,
+        sweep.reach_worst.0,
+        sweep.reach.1,
+        sweep.reach_worst.1
+    );
     assert_eq!(
         (sweep.folded, sweep.thin_folded),
         (2, 1),
@@ -3576,10 +3632,14 @@ fn test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve() {
         frames.len() >= 5,
         "precondition: the demo maps' five frames are laid"
     );
-    for (name, _, _, _, (off, (least, most), measured, fold)) in frames {
+    for (name, _, _, _, (off, (least, most), measured, fold, past)) in frames {
         assert!(
             measured > 0 && off <= BAND_RESIDUAL && most - least <= BAND_RESIDUAL && fold == 0,
             "{name}: {measured} anchors, the most {off} off its band curve, {least}..{most} from the outline, {fold} where it folds"
+        );
+        assert!(
+            past.abs() <= REACH_TOLERANCE,
+            "{name}: its inks' most reach toward the outline lies {past} past its offset, within {REACH_TOLERANCE}: none crosses it, and the nearest touches it"
         );
     }
 }
