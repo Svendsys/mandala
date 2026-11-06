@@ -627,7 +627,7 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
 /// list that also holds the ornament fallback's faces, so an input pins
 /// `Mandala Ornaments` or `Mandala Emoji` as a map may; a finding here
 /// replays in the face it was found in, as a flow_structured one does in
-/// [`faces`].
+/// `faces()`.
 pub fn check_flow_structured_every_face(bytes: &[u8]) -> Result<(), String> {
     check_generated(&mut Choices::new(bytes), true, &every_face())
 }
@@ -635,10 +635,7 @@ pub fn check_flow_structured_every_face(bytes: &[u8]) -> Result<(), String> {
 /// [`check_flow_generated`] over `faces`, and the faces its spans and
 /// its flow's own style were pinned to, in the order drawn: what a sweep
 /// over [`every_face`] reads to know it met each fallback face.
-pub(crate) fn check_flow_generated_in(
-    choices: &mut Choices<'_>,
-    faces: &[AppFont],
-) -> Result<Vec<AppFont>, String> {
+pub fn check_flow_generated_in(choices: &mut Choices<'_>, faces: &[AppFont]) -> Result<Vec<AppFont>, String> {
     let mut pinned = Vec::new();
     check_generated_pinning(choices, true, faces, &mut pinned)?;
     Ok(pinned)
@@ -923,7 +920,7 @@ pub(crate) fn faces() -> Vec<AppFont> {
     faces
 }
 
-/// [`faces`], then the ornament fallback's faces (#297), in
+/// `faces()`, then the ornament fallback's faces (#297), in
 /// [`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)'s
 /// order: every face a map can pin. `Mandala Emoji` is the first compiled
 /// face with no outline at all and no space, the kind of face unlike the
