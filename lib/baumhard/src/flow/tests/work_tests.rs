@@ -61,13 +61,17 @@ pub(crate) struct Counters {
     pub(crate) reshapes: usize,
     pub(crate) inkings: usize,
     pub(crate) weighed: usize,
+    pub(crate) track_hits: usize,
+    pub(crate) outline_reads: usize,
+    pub(crate) table_samples: usize,
 }
 
 impl Counters {
     pub(crate) fn now() -> Counters {
-        use crate::flow::path::{PATH_LOOKUPS, PATH_SEARCHES};
+        use crate::flow::path::{PATH_LOOKUPS, PATH_SEARCHES, TABLE_SAMPLES};
         use crate::flow::place::halves::{
-            BOXES_WEIGHED, INKINGS, RESHAPES, SIDE_STEP_LOOKUPS, STEP_LOOKUPS, TRACKS,
+            BOXES_WEIGHED, INKINGS, OUTLINE_READS, RESHAPES, SIDE_STEP_LOOKUPS, STEP_LOOKUPS, TRACKS,
+            TRACK_HITS,
         };
         let get = |c: &'static std::thread::LocalKey<std::cell::Cell<usize>>| c.with(std::cell::Cell::get);
         Counters {
@@ -79,6 +83,9 @@ impl Counters {
             reshapes: get(&RESHAPES),
             inkings: get(&INKINGS),
             weighed: get(&BOXES_WEIGHED),
+            track_hits: get(&TRACK_HITS),
+            outline_reads: get(&OUTLINE_READS),
+            table_samples: get(&TABLE_SAMPLES),
         }
     }
 
@@ -95,6 +102,9 @@ impl Counters {
             reshapes: self.reshapes - before.reshapes,
             inkings: self.inkings - before.inkings,
             weighed: self.weighed - before.weighed,
+            track_hits: self.track_hits - before.track_hits,
+            outline_reads: self.outline_reads - before.outline_reads,
+            table_samples: self.table_samples - before.table_samples,
         }
     }
 }
@@ -129,6 +139,9 @@ impl Tally {
         w.reshapes += work.reshapes;
         w.inkings += work.inkings;
         w.weighed += work.weighed;
+        w.track_hits += work.track_hits;
+        w.outline_reads += work.outline_reads;
+        w.table_samples += work.table_samples;
     }
 
     /// The glyph steps the text's lines took, and their path lookups.
@@ -155,7 +168,8 @@ impl fmt::Display for Tally {
             "{} frames, {} glyphs ({} sides); lookups {} ({:.1} a glyph placed), searches {}; \
              line steps {} ({:.2} lookups a step, {:.1} steps a text glyph); \
              side steps {} ({} lookups, {:.1} a side glyph); tracks {} ({:.1} a frame); \
-             reshapes {}, inkings {}, pairs weighed {}; spent {} ({:.1} a glyph)",
+             reshapes {}, inkings {} ({} outlines read), pairs weighed {}; tracks remembered {}; \
+             table samples {}; spent {} ({:.1} a glyph)",
             self.frames,
             self.text + self.sides,
             self.sides,
@@ -172,7 +186,10 @@ impl fmt::Display for Tally {
             w.tracks as f64 / self.frames.max(1) as f64,
             w.reshapes,
             w.inkings,
+            w.outline_reads,
             w.weighed,
+            w.track_hits,
+            w.table_samples,
             self.spent,
             self.spent as f64 / placed,
         )
