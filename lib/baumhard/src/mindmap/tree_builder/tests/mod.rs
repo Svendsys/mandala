@@ -10,8 +10,8 @@
 //!   hierarchy, unique IDs, element type invariants.
 //! - [`node_scale`] — large-N regression guards (1000-node chain,
 //!   500-wide fan-out, deep-chain stack safety).
-//! - [`node_background`] — `GlyphArea::background_color` resolution
-//!   across hex, empty, transparent, theme-var, malformed, 3-digit.
+//! - [`node_container`] — a node's container draws nothing: no
+//!   background, whatever its style says (V1-B12).
 //! - [`border`] — border tree: void-per-framed, filters, drag
 //!   offset, theme var, channel stability, mutator round-trip.
 //! - [`canvas_hit`] — canvas click routing over the portal and
@@ -78,9 +78,9 @@ mod connection_label_emit;
 mod edge_handle;
 mod edge_handle_emit;
 mod edge_path;
-mod node_background;
 mod node_basic;
 mod node_clip;
+mod node_container;
 mod node_edit;
 mod node_scale;
 mod palette_cascade;

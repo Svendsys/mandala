@@ -23,7 +23,7 @@ A one-sided window (only `min` or only `max` set) is fully supported.
 
 | Type | Effect when set |
 |---|---|
-| [`MindNode`](./legacy-schema.md#node) | Gates the node text, background fill, and glyph border as one unit |
+| [`MindNode`](./legacy-schema.md#node) | Gates the node text and glyph border as one unit (a node draws no fill: V1-B12) |
 | [`MindEdge`](./legacy-schema.md#edge) | Gates the edge body, caps, label (unless overridden), and both portal endpoints (unless overridden) |
 | [`EdgeLabelConfig`](./legacy-schema.md#edgelabelconfig) | Per-label override on a line-mode edge |
 | [`PortalEndpointState`](./portal-labels.md) | Per-endpoint override on a portal-mode edge (icon + text render as one unit) |

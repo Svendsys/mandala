@@ -90,6 +90,10 @@ const DELETED_FIELDS: &[&str] = &[
     "frame_thickness",
     "parent_id",
     "edge_type",
+    // V1-B12: a map has one background and no node, section or palette
+    // group has a fill; every other color comes from a glyph.
+    "fill",
+    "fill_fade",
 ];
 
 /// Whether `ty` mentions `String` anywhere: `String`, `Vec<String>`,
@@ -2284,6 +2288,7 @@ hidden_items!();
                 })],
                 "MapData.name" => vec![DocElement::Map(MapData {
                     name: TEXT.to_string(),
+                    ..MapData::default()
                 })],
                 "PaletteData.name" => vec![DocElement::Palette(PaletteData {
                     name: TEXT.to_string(),

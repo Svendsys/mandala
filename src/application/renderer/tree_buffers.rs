@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Tree-to-buffer pipeline — walks a Baumhard `Tree`, shapes cosmic-text
-//! buffers for each `GlyphArea`, and stores them (with optional background
-//! rects) into the `Renderer`'s per-role buffer maps.
+//! buffers for each `GlyphArea`, and stores them into the `Renderer`'s
+//! per-role buffer maps. Nothing here collects a fill: a map draws no
+//! rect (V1-B12).
 
 use baumhard::font::fonts;
 use baumhard::gfx_structs::tree::GfxTree;
@@ -10,59 +11,7 @@ use glam::Vec2;
 
 use super::scene_shape_cache::{self, ScenePassKind};
 use super::tree_walker::{shape_one_element_into_buffers, walk_tree_into_buffers};
-use super::{NodeBackgroundRect, Renderer};
-
-/// Draw-order-preserving write-back cursor for the background fills
-/// of a single re-shaped element.
-///
-/// `node_background_rects` is drawn in index order — `render.rs`
-/// pushes one quad per entry into a single vertex stream, so a later
-/// entry paints over an earlier one — and
-/// [`Renderer::rebuild_buffers_from_tree`] fills it in tree-walk
-/// order. A keyed re-shape that dropped an element's fill and
-/// re-pushed the fresh one at the end would therefore lift that
-/// element's fill above every other node's, for as long as the
-/// caller keeps re-shaping it: the whole of a text-edit or a
-/// section-resize drag, snapping back on the next full rebuild.
-/// Writing the fresh fills into the slot the old ones held keeps the
-/// order stable instead, without a per-frame re-walk of the tree.
-pub(super) struct BackgroundRectSlot<'a> {
-    rects: &'a mut Vec<NodeBackgroundRect>,
-    next: usize,
-}
-
-impl<'a> BackgroundRectSlot<'a> {
-    /// Remove every fill authored by `unique_id` and remember where
-    /// the first of them sat, so [`Self::push`] writes the fresh
-    /// ones back into the same place.
-    ///
-    /// An element with no fill in the list yet — one that just
-    /// gained a `background_color` — has no slot to preserve, so it
-    /// appends. Its tree-order position is derivable, but only by
-    /// walking the tree, which is the per-frame cost this type
-    /// exists to avoid; no live caller reaches that case today.
-    ///
-    /// # Costs
-    ///
-    /// O(len) for the scan and the retain, plus O(len) per
-    /// [`Self::push`] for the shift. Same order as the `retain` +
-    /// `push` it replaces.
-    pub(super) fn take_over(rects: &'a mut Vec<NodeBackgroundRect>, unique_id: usize) -> Self {
-        let next = rects
-            .iter()
-            .position(|rect| rect.unique_id == unique_id)
-            .unwrap_or(rects.len());
-        rects.retain(|rect| rect.unique_id != unique_id);
-        BackgroundRectSlot { rects, next }
-    }
-
-    /// Write one fresh fill into the slot, advancing so a second
-    /// fill from the same element lands after it rather than before.
-    pub(super) fn push(&mut self, rect: NodeBackgroundRect) {
-        self.rects.insert(self.next, rect);
-        self.next += 1;
-    }
-}
+use super::Renderer;
 
 impl Renderer {
     /// Rebuild text buffers from a Baumhard tree (nodes rendered from GlyphArea
@@ -70,30 +19,16 @@ impl Renderer {
     /// connections use their own `rebuild_*_buffers` methods alongside it.
     pub fn rebuild_buffers_from_tree(&mut self, tree: &GfxTree) {
         self.mindmap_buffers.clear();
-        // Node backgrounds live on GlyphArea and are collected
-        // fresh alongside the text buffers. The render pipeline
-        // reads them back out each frame to draw solid fills behind
-        // the text, with the camera transform baked in at the last
-        // moment. Clearing here (rather than on every render call)
-        // keeps the collect cost aligned with the tree rebuild
-        // cadence — i.e. only when something structural changed.
-        self.node_background_rects.clear();
         let mut font_system = fonts::acquire_font_system_write("rebuild_buffers_from_tree");
-        walk_tree_into_buffers(
-            tree,
-            Vec2::ZERO,
-            &mut font_system,
-            |unique_id, buffer| {
-                // The walker emits multiple buffers per element
-                // when an outline halo is configured (one buffer
-                // per halo offset, then the main glyph). Push onto
-                // the entry's `Vec` so all of them survive in
-                // emission order — `insert`-style replace would
-                // collapse halos onto the main glyph silently.
-                self.mindmap_buffers.entry(unique_id).or_default().push(buffer);
-            },
-            |rect| self.node_background_rects.push(rect),
-        );
+        walk_tree_into_buffers(tree, Vec2::ZERO, &mut font_system, |unique_id, buffer| {
+            // The walker emits multiple buffers per element
+            // when an outline halo is configured (one buffer
+            // per halo offset, then the main glyph). Push onto
+            // the entry's `Vec` so all of them survive in
+            // emission order — `insert`-style replace would
+            // collapse halos onto the main glyph silently.
+            self.mindmap_buffers.entry(unique_id).or_default().push(buffer);
+        });
     }
 
     /// Re-shape one element's text buffers in place, keyed by the
@@ -108,17 +43,6 @@ impl Renderer {
     /// Drops every existing buffer keyed by `unique_id` (the main
     /// glyph plus any halos) before re-shaping; the re-shape pass
     /// writes the new buffers back into the same `Vec` entry.
-    /// Background rects authored by this same `unique_id` are
-    /// removed from `node_background_rects` and re-collected from
-    /// the fresh element so a section whose background color just
-    /// changed reflects the new fill *without* leaking duplicate
-    /// stale rects per keystroke. Other elements' rects are
-    /// untouched — the filter compares `NodeBackgroundRect.unique_id`
-    /// directly — and the fresh fill goes back into the slot the old
-    /// one held, because that list is drawn in index order and
-    /// re-appending would float this element's fill over every other
-    /// node's for the duration of the edit. See
-    /// [`BackgroundRectSlot`].
     ///
     /// Silent no-op when `arena_id` doesn't resolve (e.g. the tree
     /// was rebuilt between the caller's lookup and this call). The
@@ -131,25 +55,14 @@ impl Renderer {
         };
         let unique_id = element.unique_id();
 
-        // Drop the existing buffers + background entries authored
-        // by this element so the re-shape pass can write fresh
-        // ones. Background rects use direct `unique_id` equality
-        // so other elements' rects survive the filter, and the
-        // draw-order slot is remembered across the removal so the
-        // fresh fill goes back where the old one was.
+        // Drop the existing buffers authored by this element so the
+        // re-shape pass can write fresh ones.
         self.mindmap_buffers.remove(&unique_id);
-        let mut slot = BackgroundRectSlot::take_over(&mut self.node_background_rects, unique_id);
 
         let mut font_system = fonts::acquire_font_system_write("reshape_buffer_for");
-        shape_one_element_into_buffers(
-            element,
-            Vec2::ZERO,
-            &mut font_system,
-            &mut |uid, buffer| {
-                self.mindmap_buffers.entry(uid).or_default().push(buffer);
-            },
-            &mut |rect| slot.push(rect),
-        );
+        shape_one_element_into_buffers(element, Vec2::ZERO, &mut font_system, &mut |uid, buffer| {
+            self.mindmap_buffers.entry(uid).or_default().push(buffer);
+        });
     }
 
     /// Patch the canvas-space position of moved nodes' buffers in
@@ -179,9 +92,8 @@ impl Renderer {
     /// O(patch_set_size × halos+1) — no text shaping, no font-system
     /// lock, no allocation. Halos count is 0 for mindmap nodes
     /// today, so the constant collapses on the common path.
-    // Native-driver-only, with `rebuild_node_backgrounds_from_tree`:
-    // both are drag-preview fast paths driven by the native drag
-    // state machine.
+    // Native-driver-only: a drag-preview fast path driven by the
+    // native drag state machine.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn patch_drag_positions(&mut self, patches: &[(usize, (f32, f32))]) {
         for &(unique_id, new_pos) in patches {
@@ -191,31 +103,6 @@ impl Renderer {
                 for buf in bufs.iter_mut() {
                     buf.place_at(new_pos, Vec2::ZERO);
                 }
-            }
-        }
-    }
-
-    /// Rebuild only the `node_background_rects` from a tree, without
-    /// reshaping any text buffers. Used during drag to keep background
-    /// fills in sync with moved node positions.
-    ///
-    /// # Costs
-    ///
-    /// O(n) descendant walk, but no text shaping, no font-system
-    /// lock — just position and color reads from the arena.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub fn rebuild_node_backgrounds_from_tree(&mut self, tree: &GfxTree) {
-        self.node_background_rects.clear();
-        // Single source of background-rect math: routes through the
-        // walker's `extract_background_rect` so the drag-fast-path
-        // and the full text-shaping pass can't drift on padding /
-        // shape-id / zoom-visibility resolution.
-        for descendant_id in tree.root().descendants(tree.arena()) {
-            let Some(node) = tree.arena().get(descendant_id) else { continue };
-            let element = node.get();
-            let Some(area) = element.glyph_area() else { continue };
-            if let Some(rect) = super::tree_walker::extract_background_rect(element, area, Vec2::ZERO) {
-                self.node_background_rects.push(rect);
             }
         }
     }
@@ -259,8 +146,8 @@ impl Renderer {
     /// [`crate::application::scene_host::AppScene`]'s canvas
     /// sub-scene — borders, connections, portals, edge handles,
     /// connection labels, section frames and the two resize-handle
-    /// roles. These buffers and fills feed the camera-transformed
-    /// main pass alongside the mindmap's own.
+    /// roles. These buffers feed the camera-transformed main pass
+    /// alongside the mindmap's own.
     ///
     /// **Only elements whose shaping inputs changed are re-shaped**,
     /// by the same rule and the same body the overlay pass above

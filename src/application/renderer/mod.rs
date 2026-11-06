@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! GPU-side presentation: every wgpu device, every cosmic-text
-//! rasterization, every text/rect/border buffer Mandala paints
-//! lives under [`Renderer`]. `Renderer` reads two intermediate
+//! rasterization, every text and border buffer Mandala paints
+//! lives under [`Renderer`]. A frame is its clear — the map's one
+//! background — and glyphs, and nothing else (V1-B12). `Renderer` reads two intermediate
 //! representation the document layer hands it
 //! (`GfxTree`, one per canvas role — nodes,
 //! borders, connections, labels, portals, handles); it never
@@ -20,12 +21,19 @@
 //!   per-frame driver over it (`Renderer::process`); composes the
 //!   buffer layers in draw order.
 //! - [`tree_buffers`] / [`tree_walker`] — `GfxElement` tree
-//!   → text-buffer + rect-buffer projection. The tree walker
+//!   → text-buffer projection. The tree walker
 //!   is where the bulk of canvas-content shaping happens.
 //! - [`glyph_runs`] — the positioned-glyph pass: every glyph of a
 //!   `GlyphRun` at its own canvas position, from the run's one
 //!   shaped buffer, through an atlas and a pipeline of its own, in
 //!   one draw call per frame (design §13.2).
+//! - [`target_encoding`] — how an authored color is written to a
+//!   target of a given format: the one answer the clear, glyphon's
+//!   text and the glyph-run pass share, so a glyph colored like the
+//!   background matches it on every target.
+//! - [`backdrop`] — the opaque backdrops behind the console and the
+//!   color picker, drawn as a grid of full-block glyphs (`█`) in the
+//!   console's pass, under the modal's text.
 //! - [`selection_overlay`] — the rubber-band selection
 //!   rectangle, the one canvas visual with no model behind it.
 //! - [`borders`] — node-frame buffers (the box-drawing
@@ -48,6 +56,8 @@
 // Adapter choice — the attempt plan and the environment it honors —
 // shared by every bootstrap.
 mod adapter;
+// The console's and the color picker's backdrops, as full-block glyphs.
+mod backdrop;
 // The overlay-render modules below carry a wasm32-only
 // `allow(dead_code)`: each renders a modal whose *shell* is
 // native-gated (CLAUDE.md "Dual-target status"), so on wasm32 the
@@ -81,6 +91,9 @@ mod overlay_dispatch;
 mod pipeline;
 mod render;
 mod scene_shape_cache;
+// How an authored color is written to a target of a given format: the
+// one answer the clear, glyphon and the glyph-run pass share.
+mod target_encoding;
 // Test-only reach-through to the shared scene shape pass. The pass
 // takes a `&Scene` rather than a `&mut Renderer` precisely so its
 // granularity can be asserted without a live device (§T8), and that
@@ -150,7 +163,6 @@ use console_pass::{
     CONSOLE_CHANNEL_TOP_BORDER,
 };
 
-use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
@@ -158,13 +170,13 @@ use web_time::Instant;
 use baumhard::font::{Attrs, Buffer};
 use glyphon::{Cache, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
+// Also read by the GPU-backed test that checks what a renderer handed
+// its passes.
+pub(crate) use target_encoding::TargetEncoding;
 
 use rustc_hash::FxHashMap;
 
-use wgpu::{
-    Color, Device, Instance, MultisampleState, Queue, RenderPipeline, Surface, SurfaceConfiguration,
-    TextureFormat,
-};
+use wgpu::{Color, Device, Instance, MultisampleState, Queue, Surface, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -174,167 +186,6 @@ use baumhard::font::fonts;
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::camera::Camera2D;
 use glam::Vec2;
-
-/// Inline WGSL shader for the colored-rectangle pipeline. Draws a
-/// stream of NDC-space vertices, each carrying its own RGBA color,
-/// a local-space `uv` in `[0, 1]`, and a `shape_id` that selects
-/// how the fragment shader treats the fill. Kept inline (rather
-/// than in the baumhard shader table) because it's 100%
-/// renderer-local — no tree data, no camera uniforms; the CPU
-/// bakes the camera transform into each vertex before upload.
-///
-/// Extending with a new shape: add a `SHAPE_*` constant and a
-/// `case` arm in `fs_main`. The shape id comes from
-/// `NodeShape::shader_id` on the baumhard side; the two must stay
-/// in lock-step, and
-/// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
-/// is what holds them there — it reads this string as text, so no
-/// GPU is involved (§T8's renderer-free tier). That it is *this* string
-/// `Renderer::new` compiles, rather than another const beside it, is
-/// pinned by
-/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`:
-/// a const read by value can be orphaned, and a decoy handed to
-/// `create_shader_module` would leave both tests holding over a
-/// shader the GPU never sees.
-///
-/// `shape_id` rides the vertex stream as a plain `f32` (written
-/// with `SHAPE_ID_* as f32`, read with `u32(round(id))`) rather
-/// than a `Uint32` vertex attribute, because integer vertex
-/// attributes are a wgpu WebGL2 feature gate on some browsers and
-/// the per-shape branch only needs a handful of discrete values.
-/// The round-trip through `f32` is lossless for the small integer
-/// range we use; see `NodeShape::shader_id` for the allocation.
-const RECT_SHADER_WGSL: &str = r#"
-const SHAPE_RECT: u32 = 0u;
-const SHAPE_ELLIPSE: u32 = 1u;
-
-struct VsIn {
-    @location(0) pos: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) shape_id: f32,
-};
-
-struct VsOut {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) @interpolate(flat) shape_id: u32,
-};
-
-@vertex
-fn vs_main(in: VsIn) -> VsOut {
-    var out: VsOut;
-    out.pos = vec4<f32>(in.pos, 0.0, 1.0);
-    out.color = in.color;
-    out.uv = in.uv;
-    // `round` then cast — the CPU writes exact integers, so the
-    // round is belt-and-braces against any driver-side rasterization
-    // of the attribute. Flat-interpolated onto VsOut as `u32` so
-    // the fragment `switch` is a plain integer compare.
-    out.shape_id = u32(round(in.shape_id));
-    return out;
-}
-
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    switch (in.shape_id) {
-        case SHAPE_ELLIPSE: {
-            // Local-space ellipse SDF: bounds map to uv in [0, 1]
-            // so the inscribed unit circle lives at |uv - 0.5| <= 0.5.
-            // Remap to [-1, 1] so the test is `dot(p, p) <= 1`.
-            let p = (in.uv - vec2<f32>(0.5, 0.5)) * 2.0;
-            let d = dot(p, p);
-            if (d > 1.0) {
-                discard;
-            }
-            return in.color;
-        }
-        default: {
-            // SHAPE_RECT (and the safe fallback for unknown ids):
-            // the whole quad is the fill.
-            return in.color;
-        }
-    }
-}
-"#;
-
-/// Bytes-per-vertex for the rect pipeline: `vec2<f32> pos +
-/// vec2<f32> uv + vec4<f32> color + f32 shape_id = 9 × 4 = 36 bytes`.
-/// Used when sizing / offsetting the vertex buffer. Declared as a
-/// compile-time const so the layout math is grep-able from a single
-/// place.
-///
-/// Not kept in step by hand: it is the running sum of
-/// [`RECT_VERTEX_ATTRIBUTES`]' formats, and
-/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`
-/// adds them up and compares. The same test ties it to
-/// [`RECT_VERTEX_FLOATS`] and to the slots `push_rect_ndc` writes,
-/// and pins that this constant — not a literal beside it — is the
-/// `array_stride` `Renderer::new` gives the pipeline. wgpu asks only
-/// that a stride be a multiple of four and leave room for every
-/// attribute, so an over-large one builds cleanly and reads every
-/// vertex after the first from the wrong byte.
-const RECT_VERTEX_SIZE: u64 = 36;
-
-/// The rect pipeline's vertex-attribute table: which run of bytes in
-/// each [`RECT_VERTEX_SIZE`]-byte vertex feeds which `VsIn` field of
-/// [`RECT_SHADER_WGSL`].
-///
-/// Layout: `pos` (8 B) | `uv` (8 B) | `color` (16 B) | `shape_id`
-/// (4 B), the offsets being the running sum of the formats' sizes and
-/// the order being the order `push_rect_ndc` writes them.
-///
-/// **The names in that sentence are the shader's, not this table's.**
-/// An entry here carries a `shader_location` and nothing else; which
-/// field it lands in is decided by the `@location(N)` in `VsIn`. Two
-/// attributes of the same format — `pos` and `uv` both being
-/// `Float32x2` — differ in nothing a pipeline can validate, so
-/// swapping their `shader_location`s builds a byte-identical
-/// pipeline that draws every quad into the `[0, 1]²` corner of NDC.
-/// What holds the two sides together is
-/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`,
-/// which reads this table slot for slot against `VsIn`.
-///
-/// A module-level `const` rather than an array literal inline in
-/// `Renderer::new` for that test's sake: nothing here is a
-/// source-level property, so the test reads it as a *value* instead
-/// of re-parsing what the compiler has already parsed. What the test
-/// does read as text is the expression `Renderer::new` writes after
-/// `attributes:`, compared whole against `&RECT_VERTEX_ATTRIBUTES`.
-/// An inline array grown back alongside, a `RECT_VERTEX_ATTRIBUTES_2`
-/// beside this one, or a `&RECT_VERTEX_ATTRIBUTES[..3]` would each
-/// leave this table a decoy the GPU never sees, and the first name in
-/// that list is why the comparison is an equality rather than a
-/// substring search.
-///
-/// `shape_id` rides the stream as `Float32`, not `Uint32`: wgpu's
-/// WebGL2 backend doesn't support integer vertex attributes on every
-/// browser, and we only need a handful of discrete ids. The WGSL
-/// vertex stage rounds + casts to `u32` before flat-interpolating,
-/// so `VsIn.shape_id` is an `f32` on purpose.
-const RECT_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = [
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x2,
-        offset: 0,
-        shader_location: 0,
-    },
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x2,
-        offset: 8,
-        shader_location: 1,
-    },
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x4,
-        offset: 16,
-        shader_location: 2,
-    },
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32,
-        offset: 32,
-        shader_location: 3,
-    },
-];
 
 /// How many frames `FpsDisplayMode::Snapshot` waits between readout
 /// refreshes, and how many frames `FpsDisplayMode::Debug` averages
@@ -412,35 +263,12 @@ impl FrameIntervalRing {
     }
 }
 
-/// Number of `f32`-sized slots per vertex. The CPU accumulates
-/// packed floats into `main_rect_vertices` / `console_rect_vertices`,
-/// and the draw divides their length by this to get a vertex count,
-/// so it is four bytes times this that has to equal
-/// [`RECT_VERTEX_SIZE`].
-///
-/// `shape_id` keeps the stream a single `Vec<f32>` by riding it as
-/// its own **numeric value** — `shape_id as f32` in `push_rect_ndc`,
-/// read back as `u32(round(in.shape_id))` in the vertex stage. It is
-/// not a bit pattern: this doc claimed `f32::from_bits` until #147,
-/// and nothing in the tree has ever done that. It could not — the
-/// bit pattern of `1u32` is a denormal that rounds straight back to
-/// zero, so every ellipse would draw as a rectangle.
-pub(super) const RECT_VERTEX_FLOATS: usize = 9;
-
-/// Starting capacity (in bytes) for the rect vertex buffer. Big
-/// enough for a modest map with several hundred node backgrounds
-/// without an immediate grow; doubling-on-overflow handles anything
-/// larger. 8192 bytes ÷ 36 bytes/vertex ≈ 227 vertices ≈ 37 rects.
-/// Deliberately small since most maps will have a handful of colored
-/// nodes and the grow path is exercised rarely.
-pub(super) const RECT_VBUF_INITIAL_CAPACITY: u64 = 8192;
-
 pub struct Renderer {
     /// Where the window's frames land: a window's swapchain, or — with
     /// no window at all — nowhere ([`Sink`]).
     sink: Sink,
     /// The color format of every frame: the window's surface format, or
-    /// the headless target's (`HEADLESS_FORMAT`). Both pipelines are
+    /// the headless target's (`HEADLESS_FORMAT`). Every pipeline is
     /// built for it, and a capture's offscreen texture is created in it,
     /// so it has this one source.
     // Native-only reader: the capture engine, which is native-gated.
@@ -463,17 +291,19 @@ pub struct Renderer {
     glyphon_cache: Cache,
     atlas: TextAtlas,
     text_renderer: TextRenderer,
-    /// Second glyphon TextRenderer dedicated to the command
-    /// palette overlay. Shares `self.atlas` with `text_renderer`
-    /// so glyph caching is unified, but keeps its own internal
-    /// vertex/index buffers — which is what lets us issue a rect
-    /// draw BETWEEN the two text renders inside one render pass
-    /// (otherwise re-preparing the single text renderer would
-    /// race with the pass's already-recorded draw commands).
+    /// Second glyphon TextRenderer, for the screen-space chrome: the
+    /// console or the color picker over its backdrop, the FPS readout
+    /// and the mode-status line. Shares `self.atlas` with
+    /// `text_renderer` so glyph caching is unified, but keeps its own
+    /// vertex/index buffers — which is what lets the glyph-run pass
+    /// draw BETWEEN the two text renders inside one render pass, so the
+    /// chrome covers every canvas glyph (re-preparing the single text
+    /// renderer would race with the pass's already-recorded draw
+    /// commands).
     console_text_renderer: TextRenderer,
     /// The positioned-glyph pass: draws the `GlyphRun` elements the
     /// canvas trees hold, each glyph at its own position, between the
-    /// main text pass and the palette backdrop. Shares the font system,
+    /// main text pass and the chrome pass. Shares the font system,
     /// the swash cache and the render pass with glyphon; holds its own
     /// atlas, because glyphon's cannot be reached from outside it.
     glyph_runs: glyph_runs::GlyphRunPass,
@@ -565,11 +395,12 @@ pub struct Renderer {
     /// emission order so halos stay behind the main glyph at render
     /// time.
     mindmap_buffers: FxHashMap<usize, Vec<MindMapTextBuffer>>,
-    /// Screen-space geometry of the color picker's opaque backdrop.
-    /// Captured inside `rebuild_color_picker_overlay_buffers`; the
-    /// `render()` rect-pipeline pass appends a black fill rect for
-    /// this region alongside the palette backdrop. `None` whenever
-    /// the picker is closed.
+    /// Screen-space geometry of the color picker's opaque backdrop, in
+    /// window pixels. Captured inside
+    /// `rebuild_color_picker_overlay_buffers`; each frame draws it as
+    /// full-block cells alongside the console's ([`backdrop`]). `None`
+    /// whenever the picker is closed, and when its spec asks for a
+    /// transparent backdrop.
     color_picker_backdrop: Option<(f32, f32, f32, f32)>,
     /// The rubber-band selection rectangle's four shaped edges, and
     /// nothing else. Camera-transformed. Written only by
@@ -615,12 +446,10 @@ pub struct Renderer {
     /// camera-transformed pass. Empty until a canvas component
     /// migrates to a tree.
     ///
-    /// Unlike the overlay half, these entries carry the walker's
-    /// background fills as well as its buffers: canvas fills *are*
-    /// wired to the camera-transformed rect pipeline. Holding each
-    /// element's fill inside the element's own entry is what keeps
-    /// that index-ordered draw stream stable while only part of the
-    /// scene re-shapes.
+    /// Holding each element's output inside the element's own entry
+    /// is what keeps the order glyphon draws them in stable while only
+    /// part of the scene re-shapes. No entry holds a fill: a map draws
+    /// no rect (V1-B12).
     canvas_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
     /// A capture's canvas: the shaped output of the capture engine's
     /// scratch scene — the zoom-dependent roles projected at the
@@ -641,48 +470,32 @@ pub struct Renderer {
     /// this flag so the event loop can explicitly clear the cache and
     /// re-run the connection rebuild.
     connection_geometry_dirty: bool,
-    /// Filled-rectangle rendering pipeline. Used to draw node
-    /// backgrounds (from `GlyphArea.background_color`), the command
-    /// palette backdrop, and any other solid-color fill that needs
-    /// to sit in the render pipeline alongside text. See the
-    /// `RECT_SHADER_WGSL` const above for the shader, and
-    /// `push_rect_ndc` for the CPU-side
-    /// vertex layout.
-    rect_pipeline: RenderPipeline,
-    /// Persistent vertex buffer for the rect pipeline. Grows
-    /// (doubling) on overflow, never shrinks. Re-uploaded each
-    /// frame with the concatenation of `main_rect_vertices` and
-    /// `console_rect_vertices`; the two batches draw separately
-    /// using offset + count so a single buffer keeps the code
-    /// simple.
-    rect_vertex_buffer: wgpu::Buffer,
-    /// Current allocated capacity of `rect_vertex_buffer`, in
-    /// bytes.
-    rect_vertex_buffer_capacity: u64,
-    /// Canvas-space node background rects (pos, size, rgba u8)
-    /// collected from `GlyphArea.background_color` during
-    /// `rebuild_buffers_from_tree`. Camera-transformed to NDC in
-    /// `render` each frame so a camera pan/zoom is a pure CPU
-    /// rebuild — no tree rewalk required.
-    node_background_rects: Vec<NodeBackgroundRect>,
-    /// Packed vertex floats for the "main" (node background) rect
-    /// batch, rebuilt every frame from `node_background_rects` +
-    /// current camera. 6 floats per vertex, 6 vertices per rect.
-    main_rect_vertices: Vec<f32>,
-    /// Packed vertex floats for the "overlay" (palette backdrop)
-    /// rect batch, rebuilt whenever the palette opens/closes or
-    /// the viewport resizes. Stays empty when the palette is shut.
-    console_rect_vertices: Vec<f32>,
-    /// Screen-space geometry of the palette's opaque backdrop.
-    /// Captured inside `rebuild_console_overlay_buffers` so
-    /// `render()` can turn it into NDC vertices against the
-    /// current viewport size without re-running the layout.
-    /// `None` whenever the palette is closed.
-    console_backdrop: Option<(f32, f32, f32, f32)>, // (left, top, width, height)
-    /// Clear color for the render pass, driven by the map's
-    /// `Canvas.background_color`. Starts as opaque black so the
-    /// app looks sensible before a map loads; the event loop
-    /// calls `set_clear_color_from_hex` right after load.
+    /// Screen-space geometry of the console's opaque backdrop, in
+    /// window pixels: `(left, top, width, height)`. Captured inside
+    /// `rebuild_console_overlay_buffers` so each frame can lay its
+    /// cells out in its own target's pixels ([`backdrop`]) without
+    /// re-running the layout. `None` whenever the console is closed.
+    console_backdrop: Option<(f32, f32, f32, f32)>,
+    /// The one shaped full block every backdrop's cells draw
+    /// ([`backdrop::BackdropCell`]). Shaped the first time a backdrop
+    /// is set ([`Self::ensure_backdrop_cell`]), and kept: it depends on
+    /// nothing a backdrop or a target varies.
+    backdrop_cell: Option<backdrop::BackdropCell>,
+    /// The fill blocks the last prepared frame handed each pass
+    /// ([`backdrop::FillCensus`]). Test build only, read by the
+    /// GPU-backed tests (`Renderer::fill_census_of_last_frame`).
+    #[cfg(test)]
+    fill_census: backdrop::FillCensus,
+    /// The color mode glyphon's atlas was built with, kept by the test
+    /// build so the GPU-backed test can read what `Renderer::new` handed
+    /// it (glyphon keeps its own copy private).
+    #[cfg(test)]
+    glyphon_color_mode: glyphon::ColorMode,
+    /// Clear color for the render pass: the map's resolved
+    /// background, the one color drawn behind the whole canvas
+    /// ([`Self::set_background`]). Starts as opaque black — the
+    /// format's default background — so the app looks right before a
+    /// map loads; the event loop sets it right after load.
     clear_color: Color,
 }
 
@@ -742,47 +555,29 @@ impl Sink {
 #[cfg(not(target_arch = "wasm32"))]
 const HEADLESS_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
 
-/// Canvas-space record of a background fill drawn behind a node's
-/// text. The CPU always uploads an axis-aligned quad covering
-/// `(position, size)`; the fragment shader then discards pixels
-/// outside the shape described by `shape_id` (rectangle keeps the
-/// whole quad, ellipse clips to the inscribed conic, future shapes
-/// add one more case). Captured from `GlyphArea.background_color`
-/// during the tree walk in `rebuild_buffers_from_tree`;
-/// camera-transformed to NDC in `render` each frame.
-#[derive(Clone, Debug)]
-pub(super) struct NodeBackgroundRect {
-    pub position: Vec2,
-    pub size: Vec2,
-    pub color: [u8; 4],
-    /// Stable shape id from [`baumhard::gfx_structs::shape::NodeShape::shader_id`].
-    /// Flat-interpolated to the fragment shader's `switch`.
-    pub shape_id: u32,
-    /// Per-`GlyphArea` zoom window. The main render loop skips this
-    /// rect whenever `camera.zoom` falls outside the window. Default
-    /// (both bounds `None`) renders at every zoom — existing nodes
-    /// pay nothing.
-    pub zoom_visibility: baumhard::gfx_structs::zoom_visibility::ZoomVisibility,
-    /// `GfxElement::unique_id` of the source element. Lets keyed
-    /// reshape paths ([`Renderer::reshape_buffer_for`]) drop the
-    /// stale rect for a single element before re-collecting it
-    /// — otherwise repeated keystrokes leak duplicate rects per
-    /// edit. Always populated by the tree walker; tests synthesize
-    /// rects with any sentinel value (matching by `unique_id`
-    /// during reshape is the only consumer today).
-    pub unique_id: usize,
-}
-
-impl NodeBackgroundRect {
-    /// Should this rect render at the current camera state? Asks
-    /// the one cull predicate, `Camera2D::visibility`, which the
-    /// IPC scene introspection reports verbatim. Pure, no
-    /// allocation; the render loop calls this once per rect per
-    /// frame.
-    pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
-        camera
-            .visibility(self.position, self.size, self.zoom_visibility)
-            .is_visible()
+/// The render-pass clear value that leaves `background` in a target of
+/// `format`, opaque.
+///
+/// A clear value is written to the target the way a shader's output
+/// is, so it takes the target's [`TargetEncoding`]: on an sRGB target
+/// each channel is the authored byte decoded to linear light, which the
+/// GPU encodes back as it writes; on a linear (`Unorm`) target — the
+/// browser's WebGPU surface, which is never sRGB — the byte goes in as
+/// it is, which that target keeps. Glyphon's text and the glyph-run
+/// pass make the same choice from the same type, so the frame holds
+/// `#rrggbb` as written behind glyphs that hold their own colors as
+/// written, on native and on both browser backends alike
+/// (CODE_CONVENTIONS §4). The alpha is always 1.
+///
+/// Pure, so the renderer-free tier pins it (§T8). O(1).
+pub(super) fn clear_color_for(background: [u8; 4], format: TextureFormat) -> Color {
+    let [r, g, b, _] = background;
+    let encoding = TargetEncoding::of(format);
+    Color {
+        r: encoding.channel(r),
+        g: encoding.channel(g),
+        b: encoding.channel(b),
+        a: 1.0,
     }
 }
 
@@ -903,8 +698,8 @@ impl Renderer {
     }
 
     /// Everything a renderer holds beyond its sink: the glyphon atlas
-    /// and text renderers, the rect pipeline — both in `format` — and
-    /// a camera over `size`.
+    /// and text renderers and the glyph-run pass — all in `format` —
+    /// and a camera over `size`.
     fn new(
         device: Device,
         queue: Queue,
@@ -914,72 +709,25 @@ impl Renderer {
     ) -> Renderer {
         let glyphon_cache = Cache::new(&device);
 
-        let mut atlas = TextAtlas::new(&device, &queue, &glyphon_cache, surface_format);
+        // How every pass writes a color to this target, derived once and
+        // handed to both glyph passes: glyphon decodes a glyph's color for
+        // an sRGB target and writes it as it is for a linear one, as the
+        // clear and the glyph-run pass do (`target_encoding`).
+        let encoding = TargetEncoding::of(surface_format);
+        let glyphon_color_mode = encoding.glyphon_color_mode();
+        let mut atlas = TextAtlas::with_color_mode(
+            &device,
+            &queue,
+            &glyphon_cache,
+            surface_format,
+            glyphon_color_mode,
+        );
         let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
-        let glyph_runs = glyph_runs::GlyphRunPass::new(&device, surface_format);
+        let glyph_runs = glyph_runs::GlyphRunPass::new(&device, surface_format, encoding);
         let camera = Camera2D::new(size.width, size.height);
 
-        // Rect pipeline: colored quads for node backgrounds and the
-        // palette backdrop. Uses the same surface format as the
-        // render-pass attachment so the pipeline matches, and enables
-        // standard alpha blending so semi-transparent fills compose
-        // cleanly with whatever's beneath them.
-        let rect_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rect_shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(RECT_SHADER_WGSL)),
-        });
-        let rect_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rect_pipeline_layout"),
-            bind_group_layouts: &[],
-            immediate_size: 0,
-        });
-        let rect_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("rect_pipeline"),
-            layout: Some(&rect_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &rect_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: RECT_VERTEX_SIZE,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    // The layout, its offsets and why `shape_id` is a
-                    // float are all documented on the table itself.
-                    attributes: &RECT_VERTEX_ATTRIBUTES,
-                })],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &rect_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        let rect_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rect_vertex_buffer"),
-            size: RECT_VBUF_INITIAL_CAPACITY,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         Renderer {
             sink,
             format: surface_format,
@@ -1015,13 +763,12 @@ impl Renderer {
             canvas_scene_elements: Vec::new(),
             capture_canvas: Default::default(),
             connection_geometry_dirty: false,
-            rect_pipeline,
-            rect_vertex_buffer,
-            rect_vertex_buffer_capacity: RECT_VBUF_INITIAL_CAPACITY,
-            node_background_rects: Vec::new(),
-            main_rect_vertices: Vec::new(),
-            console_rect_vertices: Vec::new(),
             console_backdrop: None,
+            backdrop_cell: None,
+            #[cfg(test)]
+            fill_census: backdrop::FillCensus::default(),
+            #[cfg(test)]
+            glyphon_color_mode,
             clear_color: Color {
                 r: 0.0,
                 g: 0.0,
@@ -1106,19 +853,80 @@ impl Renderer {
         self.surface_size.1
     }
 
-    /// Set the render-pass clear color from a hex string like
-    /// `#141820`. Called by the event loop after a map loads so the
-    /// canvas matches `Canvas.background_color`. Bad hex degrades
-    /// to opaque black via `hex_to_rgba_safe`, so a typo in a
-    /// theme file can't leave the app with a glitched background.
-    pub fn set_clear_color_from_hex(&mut self, hex: &str) {
-        let rgba = baumhard::util::color::hex_to_rgba_safe(hex, [0.0, 0.0, 0.0, 1.0]);
-        self.clear_color = Color {
-            r: rgba[0] as f64,
-            g: rgba[1] as f64,
-            b: rgba[2] as f64,
-            a: rgba[3] as f64,
-        };
+    /// Clear every frame to `background`, the map's one background
+    /// color (V1-B12), so the frame shows exactly that color behind
+    /// everything the map draws. Called on both targets when a map
+    /// loads and after every rebuild of the canvas, so the clear
+    /// follows the document's background through a theme-variant
+    /// switch, an undo or a document swap.
+    ///
+    /// Opaque whatever `background` says: nothing is behind the
+    /// canvas for an alpha to blend with. See [`clear_color_for`] for
+    /// how the color is written to a target of this renderer's format.
+    pub fn set_background(&mut self, background: [u8; 4]) {
+        self.clear_color = clear_color_for(background, self.format);
+    }
+
+    /// The color every frame is cleared to, as the render pass is
+    /// given it. For the GPU-backed tests (TEST_CONVENTIONS §T8),
+    /// which assert on state, never on pixels.
+    #[cfg(test)]
+    pub(crate) fn clear_color(&self) -> Color {
+        self.clear_color
+    }
+
+    /// The fill blocks the last prepared frame handed the canvas
+    /// passes and the chrome pass ([`backdrop::FillCensus`]): a map's
+    /// frame hands the canvas none, and an open console's or picker's
+    /// backdrop hands the chrome one per cell. For the GPU-backed tests,
+    /// which assert on what a frame was given to draw, never on pixels.
+    #[cfg(test)]
+    pub(crate) fn fill_census_of_last_frame(&self) -> backdrop::FillCensus {
+        self.fill_census
+    }
+
+    /// What `Renderer::new` handed the two glyph passes for this
+    /// renderer's target: glyphon's color mode, and the glyph-run pass's
+    /// encoding with the format of its color page. For the GPU-backed
+    /// test that builds a renderer on a linear target.
+    #[cfg(test)]
+    pub(crate) fn glyph_pass_encodings(&self) -> (glyphon::ColorMode, (TargetEncoding, TextureFormat)) {
+        (self.glyphon_color_mode, self.glyph_runs.encoding())
+    }
+
+    /// A headless renderer like `bootstrap_headless`'s, but drawing in
+    /// `format`, so a GPU-backed test can stand on a target the app's
+    /// own headless launch never picks — a linear one, the browser's
+    /// WebGPU case. The caller has probed for an adapter first
+    /// (`app::gpu_harness`), so one that then opens no device dies saying
+    /// so, as the headless bootstrap does.
+    #[cfg(test)]
+    pub(crate) async fn headless_in(size: PhysicalSize<u32>, format: TextureFormat) -> Renderer {
+        let instance = Instance::new(adapter::instance_descriptor());
+        let (_adapter, device, queue) = adapter::acquire(&instance, None, AdapterPolicy::Auto)
+            .await
+            .unwrap_or_else(|why| {
+                panic!("renderer: no GPU adapter could be used for a test's target: {why}")
+            });
+        Self::new(device, queue, Sink::Headless, format, size)
+    }
+
+    /// The console's backdrop rectangle, in window pixels, while the
+    /// console is open. For the GPU-backed tests.
+    #[cfg(test)]
+    pub(crate) fn console_backdrop_extent(&self) -> Option<(f32, f32, f32, f32)> {
+        self.console_backdrop
+    }
+
+    /// Shape the one backdrop cell if no backdrop has needed it yet.
+    /// Called by the two overlay rebuilds whenever they set a backdrop,
+    /// so a frame that draws one finds it shaped; a no-op after the
+    /// first. Takes the font system for that first shaping only.
+    fn ensure_backdrop_cell(&mut self) {
+        if self.backdrop_cell.is_none() {
+            let mut font_system = fonts::acquire_font_system_write("renderer::backdrop_cell");
+            self.backdrop_cell = Some(backdrop::BackdropCell::shape(&mut font_system));
+        }
     }
 
     /// Set the screen-space FPS readout mode. Routes through the

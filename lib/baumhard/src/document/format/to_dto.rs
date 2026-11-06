@@ -33,7 +33,7 @@
 //! same path, as the loader would refuse it.
 
 use crate::arena::NodeId;
-use crate::document::defaults::{FIT_MAX, FIT_MIN};
+use crate::document::defaults::{DEFAULT_BACKGROUND, FIT_MAX, FIT_MIN};
 use crate::document::element::{
     CapData, DefaultsData, DocElement, DocKind, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PathData,
     PortalEndData, PortalEndStyle, RingLayoutStyle, RingStyle, TextStyle,
@@ -49,8 +49,8 @@ use crate::document::format::error::{render_path, NodeContext, SaveError, SaveEr
 use crate::document::format::index::FORMAT;
 use crate::document::format::rows::{Halt, RowSource, Rows, RowsError};
 use crate::document::format::spelling::{
-    ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, LineSpanDto, Named, PaletteFieldDto,
-    RectangleDto, ShapeDto, SidesDto, SidesObjectDto, StartDto, StartPointDto, WeightDto,
+    BackgroundDto, ColorDto, EdgeDto, FitDto, FitOnceDto, FitRangeDto, HexDto, LineSpanDto, Named,
+    PaletteFieldDto, RectangleDto, ShapeDto, SidesDto, SidesObjectDto, StartDto, StartPointDto, WeightDto,
 };
 use crate::document::ids::{Document, VerbDef};
 use crate::document::keyed::{KeyedMap, KeyedSet};
@@ -242,12 +242,20 @@ impl<'a> Saver<'a> {
     /// The header: every top-level key but `nodes`.
     fn map(&mut self) -> SaveResult<MapHeaderDto<'a>> {
         let doc = self.core.doc;
-        let name = match doc.get(doc.root()) {
-            Some(DocElement::Map(map)) => map.name.clone(),
-            _ => String::new(),
+        let (name, background) = match doc.get(doc.root()) {
+            Some(DocElement::Map(map)) => (map.name.clone(), map.background),
+            _ => (String::new(), PlainColor::Rgba(DEFAULT_BACKGROUND)),
         };
         let definitions = doc.definitions();
         let theme = self.theme()?;
+        // The default is written by leaving the key out. A translucent
+        // literal is written as it is, for the loader's builder to
+        // refuse (`check_savable` hands it this header).
+        let background = match background {
+            PlainColor::Rgba(rgba) if rgba == DEFAULT_BACKGROUND => None,
+            PlainColor::Rgba(rgba) => Some(BackgroundDto::Hex(HexDto(rgba.0))),
+            PlainColor::Var(var) => Some(BackgroundDto::Var(self.var_name("background", var.0)?)),
+        };
         let palettes = self.palettes()?;
         let defaults = self.key("defaults", |s| s.defaults(doc.defaults()))?;
         let edits = self.definitions("edits", definitions.edits.iter().map(|d| (&d.id, &d.name)))?;
@@ -260,6 +268,7 @@ impl<'a> Saver<'a> {
             format: FORMAT,
             name,
             theme,
+            background,
             palettes,
             defaults,
             edits: edits.into_iter().map(|(id, name)| EditDto { id, name }).collect(),
@@ -382,7 +391,6 @@ impl<'a> Saver<'a> {
                     for (index, group) in palette.groups.iter().enumerate() {
                         groups.push(s.at(Seg::Index(index), |s| {
                             Ok(PaletteGroupDto {
-                                fill: s.plain("fill", group.fill)?,
                                 frame: s.plain("frame", group.frame)?,
                                 text: s.plain("text", group.text)?,
                                 title: group.title.map(|title| s.plain("title", title)).transpose()?,
@@ -433,7 +441,6 @@ impl<'a> Saver<'a> {
             ColorRef::Rgba(rgba) => ColorDto::Hex(HexDto(rgba.0)),
             ColorRef::Var(var) => ColorDto::Var(self.var_name(key, var.0)?),
             ColorRef::Palette(field) => ColorDto::Palette(match field {
-                PaletteField::Fill => PaletteFieldDto::Fill,
                 PaletteField::Frame => PaletteFieldDto::Frame,
                 PaletteField::Text => PaletteFieldDto::Text,
                 PaletteField::Title => PaletteFieldDto::Title,
@@ -561,7 +568,6 @@ impl<'a> Saver<'a> {
                 None
             })
         })?;
-        let fill = self.color("fill", node.style.fill)?;
         let palette = match node.palette {
             Some(palette) => Some(
                 self.core
@@ -603,8 +609,6 @@ impl<'a> Saver<'a> {
             position: node.position.to_array(),
             min_size: node.min_size.map(|size| size.to_array()),
             shape: node.style.shape.map(shape),
-            fill,
-            fill_fade: node.style.fill_fade,
             palette,
             zoom: Self::zoom(node.zoom),
             folded: node.folded,
@@ -1074,8 +1078,6 @@ impl<'a> Saver<'a> {
         let text = self.text(&style.text, Unit::of_tier(DocKind::Node))?;
         Ok(Some(NodeDefaultsDto {
             shape: style.shape.map(shape),
-            fill: self.color("fill", style.fill)?,
-            fill_fade: style.fill_fade,
             font: text.font,
             size: text.size,
             color: text.color,

@@ -351,12 +351,9 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
     // a pure-data `flat_mutations` reach (flower-layout,
     // tree-cascade, …).
     crate::application::document::mutations::register_builtin_handlers(&mut doc);
-    // Canvas background: resolve through theme variables so
-    // `"var(--bg)"` works, then hand off to the renderer as
-    // the render-pass clear color.
-    let vars = &doc.mindmap.canvas.theme_variables;
-    let resolved_bg = baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
-    renderer.set_clear_color_from_hex(resolved_bg);
+    // The map's one background (V1-B12): every frame is cleared to
+    // it. The browser's load path makes the same call.
+    renderer.set_background(doc.background());
 
     // Nodes: build Baumhard tree from MindMap hierarchy.
     let tree = doc.build_tree();

@@ -382,14 +382,13 @@ fn test_scene_dump_placement_spans_what_the_renderer_draws() {
 }
 
 /// An element is placed by everything the renderer draws for it, each
-/// part culled as the renderer culls it: a padded background fill
-/// whose box sits just off-screen but whose padding crosses the
-/// viewport edge is visible, and so is a text whose main glyph is off
-/// the edge while one outline-halo stamp is on it. Each rect is the
-/// union of the parts. The camera sees canvas x in `[-800, 0)`, so a
+/// part culled as the renderer culls it: a text whose main glyph is off
+/// the edge while one outline-halo stamp is on it is visible, and its
+/// rect is the union of the stamps. An area that draws nothing — a node
+/// container, with no background since V1-B12 — is placed by its box. The camera sees canvas x in `[-800, 0)`, so a
 /// box starting at `x = 0` misses it by nothing.
 pub fn do_scene_dump_placement_spans_what_the_renderer_draws() {
-    use crate::gfx_structs::area::{EdgePadding, GlyphArea};
+    use crate::gfx_structs::area::GlyphArea;
     use crate::gfx_structs::area_fields::OutlineStyle;
 
     let mut camera = Camera2D::new(800, 600);
@@ -403,30 +402,14 @@ pub fn do_scene_dump_placement_spans_what_the_renderer_draws() {
         )
     };
 
-    let mut filled = GlyphArea::new(16.0, 16.0, Vec2::ZERO, Vec2::new(100.0, 40.0));
-    filled.background_color = Some([1, 2, 3, 255]);
-    filled.background_padding = EdgePadding::new(5.0, 6.0, 7.0, 8.0);
-    assert_eq!(
-        boxed(&filled).visibility,
-        Visibility::Offscreen,
-        "precondition: the bare box misses"
-    );
-    let placed = ScenePlacement::of_area(&filled, Vec2::ZERO, &camera);
-    assert_eq!(
-        placed.visibility,
-        Visibility::Visible,
-        "the padding is drawn, and it is on screen"
-    );
+    let container = GlyphArea::new(16.0, 16.0, Vec2::ZERO, Vec2::new(100.0, 40.0));
+    let placed = ScenePlacement::of_area(&container, Vec2::ZERO, &camera);
     assert_eq!(
         (placed.canvas.x, placed.canvas.y, placed.canvas.w, placed.canvas.h),
-        (-8.0, -5.0, 114.0, 52.0),
-        "the fill grown per edge: left 8, top 5, right 6, bottom 7"
+        (0.0, 0.0, 100.0, 40.0),
+        "an area that draws nothing is placed by its box"
     );
-    assert_eq!(
-        filled.background_rect(),
-        Some((Vec2::new(-8.0, -5.0), Vec2::new(114.0, 52.0))),
-        "the rect the renderer's fill extraction reads"
-    );
+    assert_eq!(placed.visibility, Visibility::Offscreen, "and its box misses");
 
     let mut haloed = GlyphArea::new_with_str("x", 16.0, 16.0, Vec2::ZERO, Vec2::new(100.0, 40.0));
     haloed.outline = Some(OutlineStyle {

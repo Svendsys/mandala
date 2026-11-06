@@ -16,16 +16,15 @@
       }
     }
   },
+  "background": "#0a0b0c",
   "palettes": {
     "mixed": [
       {
-        "fill": "#112233",
         "frame": "var(ink)",
         "text": "#445566",
         "title": "var(paper)"
       },
       {
-        "fill": "#11223344",
         "frame": "#aabbcc",
         "text": "var(wash)"
       }
@@ -33,7 +32,6 @@
   },
   "defaults": {
     "node": {
-      "fill": "palette(fill)",
       "color": "palette(text)"
     },
     "ring": {
@@ -50,10 +48,9 @@
     {
       "id": 1,
       "position": [0.0, 0.0],
-      "fill": "#0a0b0c",
       "palette": "mixed",
       "color": "var(paper)",
-      "sections": [{"color": "#abcdef", "spans": [{"text": "six digits", "color": "#abcdef"}, {"text": "eight digits", "color": "#abcdef80"}, {"text": "a variable", "color": "var(ink)"}, {"text": "palette fill", "color": "palette(fill)"}, {"text": "palette frame", "color": "palette(frame)"}, {"text": "palette text", "color": "palette(text)"}, {"text": "palette title", "color": "palette(title)"}]}],
+      "sections": [{"color": "#abcdef", "spans": [{"text": "six digits", "color": "#abcdef"}, {"text": "eight digits", "color": "#abcdef80"}, {"text": "a variable", "color": "var(ink)"}, {"text": "palette frame", "color": "palette(frame)"}, {"text": "palette text", "color": "palette(text)"}, {"text": "palette title", "color": "palette(title)"}]}],
       "frame": {"color": "palette(frame)", "rings": [{"color": "var(wash)", "spans": [{"text": "ring", "color": "#00ff0080"}]}]},
       "links": [{"to": 2, "kind": "line", "color": "palette(frame)", "cap_start": {"color": "#123456"}, "label": {"color": "var(ink)", "spans": [{"text": "label", "color": "#ff00ff"}]}}]
     },
@@ -61,7 +58,6 @@
       "id": 2,
       "parent": 1,
       "position": [300.0, 0.0],
-      "fill": "palette(title)",
       "connector": {"color": "#00000000"}
     }
   ]

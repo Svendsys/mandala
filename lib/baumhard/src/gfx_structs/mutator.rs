@@ -7,17 +7,13 @@
 //! delivers to an element's subscribers.
 
 use crate::core::primitives::{Applicable, Discriminated};
-use crate::document::values::Rgba;
 use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
-use crate::flow::Rect;
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand};
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::fill::FillData;
 use crate::gfx_structs::model::{DeltaGlyphModel, GlyphModel, GlyphModelCommand};
 use crate::gfx_structs::mutator::GfxMutation::{
-    AreaCommand, AreaDelta, Event, FillColor, FillOpacity, FillRect, FillSet, ModelCommand, ModelDelta,
-    RunOpacity, RunOrigin, RunOverrides, RunSet,
+    AreaCommand, AreaDelta, Event, ModelCommand, ModelDelta, RunOpacity, RunOrigin, RunOverrides, RunSet,
 };
 use crate::gfx_structs::run::{GlyphRunData, RunOverrideOp};
 use crate::gfx_structs::template::CellField;
@@ -185,18 +181,6 @@ pub enum GfxMutation {
     /// Edit a run's per-glyph overrides: what glyph-layer presentations
     /// write. See [`RunOverrideOp`]. Cost: O(glyphs in the range).
     RunOverrides(RunOverrideOp),
-    /// Replace the whole [`Fill`](GfxElement::Fill) payload: what
-    /// projection writes. Never authored and never serialized, for the
-    /// reason [`GfxMutation::RunSet`] is not: it is projection-only.
-    /// O(1).
-    #[serde(skip)]
-    FillSet(Box<FillData>),
-    /// Set a fill's color. O(1).
-    FillColor(Rgba),
-    /// Set a fill's opacity. O(1).
-    FillOpacity(f32),
-    /// Set the rectangle a fill covers (its hit-test box with it). O(1).
-    FillRect(Rect),
 }
 
 impl AsRef<GfxMutation> for GfxMutation {
@@ -280,20 +264,10 @@ impl GfxMutation {
         self == other || format!("{self:?}") == format!("{other:?}")
     }
 
-    /// Whether this is one of the run or fill payloads
-    /// (`RunSet` … `FillRect`). O(1).
-    fn is_run_or_fill(&self) -> bool {
-        matches!(
-            self,
-            RunSet(_)
-                | RunOrigin(_)
-                | RunOpacity(_)
-                | RunOverrides(_)
-                | FillSet(_)
-                | FillColor(_)
-                | FillOpacity(_)
-                | FillRect(_)
-        )
+    /// Whether this is one of the run payloads (`RunSet` …
+    /// `RunOverrides`). O(1).
+    fn is_run(&self) -> bool {
+        matches!(self, RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_))
     }
 
     /// Apply this mutation directly to a [`GlyphArea`]. A model
@@ -312,8 +286,7 @@ impl GfxMutation {
             ModelDelta(_) | ModelCommand(_) => {
                 debug!("Tried to apply a model mutation to an area, ignoring.")
             }
-            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) | FillSet(_) | FillColor(_)
-            | FillOpacity(_) | FillRect(_) => self.refuse_run_or_fill("a GlyphArea"),
+            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) => self.refuse_run("a GlyphArea"),
             // `apply_to` filters `Event` before reaching here.
             // A direct caller hitting this arm is a regression in
             // the dispatch invariant, not a runtime user error.
@@ -335,8 +308,7 @@ impl GfxMutation {
             AreaDelta(_) | AreaCommand(_) => {
                 debug!("Tried to apply an area mutation to a model, ignoring.");
             }
-            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) | FillSet(_) | FillColor(_)
-            | FillOpacity(_) | FillRect(_) => self.refuse_run_or_fill("a GlyphModel"),
+            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) => self.refuse_run("a GlyphModel"),
             Event(_) => {
                 unreachable!("Event reached apply_to_model; apply_to() must filter Event before dispatch")
             }
@@ -344,9 +316,8 @@ impl GfxMutation {
     }
 
     /// Apply this mutation directly to a run's data. Only the `Run*`
-    /// variants write one; a fill payload is the wrong kind for the
-    /// element and is a no-op (see [`Self::refuse_run_or_fill`]), and an
-    /// area or model payload is ignored as at a `Void`.
+    /// variants write one; an area or model payload is ignored as at a
+    /// `Void`.
     ///
     /// Cost: O(1), except `RunSet` (a payload clone) and `RunOverrides`
     /// (O(glyphs in range)). See [`Self::apply_to_area`] for the
@@ -357,7 +328,6 @@ impl GfxMutation {
             RunOrigin(origin) => run.set_origin(*origin),
             RunOpacity(opacity) => run.set_opacity(*opacity),
             RunOverrides(op) => run.apply_override(op),
-            FillSet(_) | FillColor(_) | FillOpacity(_) | FillRect(_) => self.refuse_run_or_fill("a GlyphRun"),
             // An area or model payload at a run: not the run's to
             // apply, as at a `Void`.
             AreaDelta(_) | AreaCommand(_) | ModelDelta(_) | ModelCommand(_) => {
@@ -369,46 +339,25 @@ impl GfxMutation {
         }
     }
 
-    /// Apply this mutation directly to a fill's data. Counterpart of
-    /// [`Self::apply_to_run`].
+    /// A run payload reached an element of another kind (`target`):
+    /// nothing changes, in every build profile.
     ///
-    /// Cost: O(1), `FillSet` included.
-    pub(crate) fn apply_to_fill(&self, fill: &mut FillData) {
-        match self {
-            FillSet(data) => *fill = (**data).clone(),
-            FillColor(color) => fill.color = *color,
-            FillOpacity(opacity) => fill.opacity = *opacity,
-            FillRect(rect) => fill.rect = *rect,
-            RunSet(_) | RunOrigin(_) | RunOpacity(_) | RunOverrides(_) => self.refuse_run_or_fill("a Fill"),
-            AreaDelta(_) | AreaCommand(_) | ModelDelta(_) | ModelCommand(_) => {
-                debug!("Tried to apply an area or model mutation to a fill, ignoring.");
-            }
-            Event(_) => {
-                unreachable!("Event reached apply_to_fill; apply_to() must filter Event before dispatch")
-            }
-        }
-    }
-
-    /// A run or fill payload reached an element of another kind
-    /// (`target`): nothing changes, in every build profile.
-    ///
-    /// The six authored variants (`RunOrigin`, `RunOpacity`,
-    /// `RunOverrides`, `FillColor`, `FillOpacity`, `FillRect`) can come
-    /// from a map's `custom_mutations`, which is untrusted input, and a
+    /// The three authored variants (`RunOrigin`, `RunOpacity`,
+    /// `RunOverrides`) can come from a map's `custom_mutations`, which is untrusted input, and a
     /// scope such as `SelfAndDescendants` sends one list to elements of
     /// every kind. They are a logged no-op, as an area or model payload
     /// at the wrong element is, and never assert.
     ///
-    /// `RunSet` and `FillSet` come only from projection and are never
-    /// authored, so landing on the wrong element is a projection bug:
-    /// those also trip a `debug_assert!`.
-    fn refuse_run_or_fill(&self, target: &str) {
+    /// `RunSet` comes only from projection and is never authored, so
+    /// landing on the wrong element is a projection bug: it also trips a
+    /// `debug_assert!`.
+    fn refuse_run(&self, target: &str) {
         debug!(
             "gfx_structs: a {:?} mutation reached {target}, ignoring.",
             self.variant()
         );
         debug_assert!(
-            !matches!(self, RunSet(_) | FillSet(_)),
+            !matches!(self, RunSet(_)),
             "a projection-only {:?} mutation reached {target}",
             self.variant()
         );
@@ -423,11 +372,11 @@ impl Mutation<GfxElement> for GfxMutation {
 
     /// Apply this mutation to the given [`GfxElement`]. Events are
     /// dispatched to the element's subscribers; field mutations are
-    /// routed to the matching element type (area, model, run or fill).
+    /// routed to the matching element type (area, model or run).
     /// Applying to a `Void` element or a type mismatch is a no-op
-    /// (logged at debug level), a run or fill payload at an element of
-    /// another kind included; only `RunSet` and `FillSet`, which are
-    /// never authored, also trip a `debug_assert!` there. Cost: O(k)
+    /// (logged at debug level), a run payload at an element of another
+    /// kind included; only `RunSet`, which is never authored, also
+    /// trips a `debug_assert!` there. Cost: O(k)
     /// in the number of delta fields, or O(1) for commands and events.
     fn apply_to(&self, target: &mut GfxElement, _inherited: &()) {
         if let Event(event) = self {
@@ -444,12 +393,9 @@ impl Mutation<GfxElement> for GfxMutation {
             GfxElement::GlyphRun { run, .. } => {
                 self.apply_to_run(run);
             }
-            GfxElement::Fill { fill, .. } => {
-                self.apply_to_fill(fill);
-            }
             GfxElement::Void { .. } => {
-                if self.is_run_or_fill() {
-                    self.refuse_run_or_fill("a Void");
+                if self.is_run() {
+                    self.refuse_run("a Void");
                 }
             }
         }

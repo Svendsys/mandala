@@ -79,6 +79,12 @@ pub fn do_format_full_fixture_reads_as_written() {
         ]
     );
 
+    // The background: the theme's `bg`, by its index.
+    match doc.get(doc.root()) {
+        Some(DocElement::Map(map)) => assert_eq!(map.background, PlainColor::Var(VarId(1)), "var(bg)"),
+        other => panic!("the root is the map: {other:?}"),
+    }
+
     // The palettes, ids by ascending name; a group with no title has none.
     let palettes: Vec<_> = doc.palettes().collect();
     assert_eq!(palettes.len(), 2);
@@ -98,7 +104,7 @@ pub fn do_format_full_fixture_reads_as_written() {
         rainbow[0].title,
         Some(PlainColor::Rgba(Rgba::opaque(0xff, 0xff, 0xff)))
     );
-    assert_eq!(rainbow[1].fill, PlainColor::Var(VarId(1)), "var(bg)");
+    assert_eq!(rainbow[1].text, PlainColor::Var(VarId(2)), "var(fg)");
     assert_eq!(rainbow[1].frame, PlainColor::Var(VarId(0)), "var(accent)");
     assert_eq!(rainbow[1].title, None, "R5: a group may have no title");
 
@@ -123,8 +129,6 @@ pub fn do_format_full_fixture_reads_as_written() {
             shape: Some(Shape::Rectangle {
                 radius: Percent::new(10)
             }),
-            fill: Some(ColorRef::Var(VarId(1))),
-            fill_fade: Some(4.0),
             text: TextStyle {
                 font: Some(AppFont::PublicPixel),
                 size: Some(FontSize::Pt(20.0)),
@@ -222,8 +226,6 @@ pub fn do_format_full_fixture_reads_as_written() {
             radius: Percent::new(25)
         })
     );
-    assert_eq!(data.style.fill, Some(ColorRef::Var(VarId(1))));
-    assert_eq!(data.style.fill_fade, Some(6.5));
     assert_eq!(data.palette, Some(PaletteId(1)), "rainbow is the second palette");
     assert_eq!(
         data.zoom,
@@ -445,8 +447,6 @@ fn builder_documents() -> Vec<(&'static str, crate::document::ids::Document)> {
         a.position = Vec2::new(-12.5, 3.25);
         a.min_size = Some(Vec2::new(100.0, 40.0));
         a.style.shape = Some(Shape::Ellipse);
-        a.style.fill = Some(ColorRef::Palette(PaletteField::Fill));
-        a.style.fill_fade = Some(1.5);
         a.zoom = Some(ZoomWindow {
             min: None,
             max: Some(3.0),
@@ -458,6 +458,12 @@ fn builder_documents() -> Vec<(&'static str, crate::document::ids::Document)> {
         a.style.text.color = Some(ColorRef::Var(VarId(1)));
         a.style.text.weight = Some(Weight::new(300).unwrap());
         a.style.text.italic = Some(true);
+    });
+    let map = builder.root();
+    builder.edit(map, |map| {
+        if let DocElement::Map(map) = map {
+            map.background = PlainColor::Rgba(Rgba::opaque(0x0a, 0x0b, 0x0c));
+        }
     });
     builder.edit(ids.frame, |frame| {
         if let DocElement::Frame(frame) = frame {

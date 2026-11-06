@@ -131,9 +131,9 @@ fn test_the_native_ceiling_is_none_and_the_browser_is_bounded() {
         crate::document::format::MAX_ELEMENTS,
         Some(crate::document::format::WASM32_MAX_ELEMENTS)
     );
-    // The derived values, written out: half of 3 GiB over 7 bytes per
+    // The derived values, written out: half of 3 GiB over 6 bytes per
     // byte of text, and over 480 bytes per element.
-    assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 230_087_533);
+    assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 268_435_456);
     assert_eq!(crate::document::format::WASM32_MAX_ELEMENTS, 3_355_443);
 }
 
@@ -160,7 +160,7 @@ fn test_text_after_the_map_is_a_syntax_error() {
 fn test_a_number_the_reader_cannot_hold_is_refused() {
     // JSON has no NaN or infinity, but a number past `f64` is one in
     // disguise; the reader refuses it.
-    let error = rejection(&map_of(r#","fill_fade":1e999"#));
+    let error = rejection(&map_of(r#","opacity":1e999"#));
     assert!(matches!(error.kind, LoadErrorKind::Syntax { .. }), "{error:?}");
 }
 
@@ -223,7 +223,7 @@ fn test_a_name_the_author_chose_is_quoted_in_a_path_unless_it_is_plain() {
     // nothing) found the fault.
     let color = |name: &str, value: &str| {
         format!(
-            r##","palettes":{{{}:[{{"fill":"{value}","frame":"#000000","text":"#000000"}}]}}"##,
+            r##","palettes":{{{}:[{{"frame":"{value}","text":"#000000"}}]}}"##,
             serde_json::to_string(name).unwrap()
         )
     };
@@ -233,7 +233,7 @@ fn test_a_name_the_author_chose_is_quoted_in_a_path_unless_it_is_plain() {
     // Found by the builder.
     rejects(
         &map_with(&color("a.b", "var(nope)"), ""),
-        r#"palettes["a.b"][0].fill"#,
+        r#"palettes["a.b"][0].frame"#,
         unknown_variable("nope"),
     );
     // An empty name is quoted too, and is no name at all (design B.8).
@@ -244,24 +244,24 @@ fn test_a_name_the_author_chose_is_quoted_in_a_path_unless_it_is_plain() {
     );
     rejects(
         &map_with(&color("say \"hi\"", "var(nope)"), ""),
-        r#"palettes["say \"hi\""][0].fill"#,
+        r#"palettes["say \"hi\""][0].frame"#,
         unknown_variable("nope"),
     );
     rejects(
         &map_with(&color("a[0]", "var(nope)"), ""),
-        r#"palettes["a[0]"][0].fill"#,
+        r#"palettes["a[0]"][0].frame"#,
         unknown_variable("nope"),
     );
     // A plain name stays a plain key: no brackets, no noise.
     rejects(
         &map_with(&color("_p9", "var(nope)"), ""),
-        "palettes._p9[0].fill",
+        "palettes._p9[0].frame",
         unknown_variable("nope"),
     );
     // A name that starts with a digit is not an identifier.
     rejects(
         &map_with(&color("9p", "var(nope)"), ""),
-        r#"palettes["9p"][0].fill"#,
+        r#"palettes["9p"][0].frame"#,
         unknown_variable("nope"),
     );
     rejects(
@@ -281,8 +281,8 @@ fn test_a_name_the_author_chose_is_quoted_in_a_path_unless_it_is_plain() {
     );
     // Found by the reader.
     rejects_as_invalid(
-        r##"{"format":1,"name":"t","palettes":{"a.b":[{"fill":"#gggggg","frame":"#000000","text":"#000000"}]},"nodes":[]}"##,
-        r#"palettes["a.b"][0].fill"#,
+        r##"{"format":1,"name":"t","palettes":{"a.b":[{"frame":"#gggggg","text":"#000000"}]},"nodes":[]}"##,
+        r#"palettes["a.b"][0].frame"#,
     );
     rejects_as_invalid(
         r##"{"format":1,"name":"t","theme":{"active":"a","variants":{"a":{"x y":"#gggggg"}}}}"##,
@@ -362,9 +362,9 @@ fn test_a_missing_required_key_is_refused() {
         missing("filler"),
     );
     rejects(
-        &map_with(r##","palettes":{"p":[{"fill":"#000000"}]}"##, ""),
+        &map_with(r##","palettes":{"p":[{"frame":"#000000"}]}"##, ""),
         "palettes.p[0]",
-        missing("frame"),
+        missing("text"),
     );
     rejects(
         r#"{"format":1,"name":"t","theme":{"variants":{"d":{}}}}"#,
@@ -438,7 +438,7 @@ fn test_a_value_of_the_wrong_type_is_refused() {
 #[test]
 fn test_null_is_not_a_way_to_write_an_absent_key() {
     for body in [
-        r#","fill":null"#,
+        r#","color":null"#,
         r#","min_size":null"#,
         r#","font":null"#,
         r#","frame":null"#,
@@ -515,13 +515,14 @@ fn test_a_spelling_the_schema_does_not_list_is_refused() {
         "#1234567",
         "var(",
         "var(x",
-        "palette(fill",
+        "palette(frame",
+        "palette(fill)",
         "palette(none)",
         "rgb(1,2,3)",
         "",
         "#",
     ] {
-        rejects_as_invalid(&map_of(&format!(r#","fill":"{color}""#)), "nodes[0].fill");
+        rejects_as_invalid(&map_of(&format!(r#","color":"{color}""#)), "nodes[0].color");
     }
     // The other enums.
     rejects_as_invalid(
@@ -585,12 +586,14 @@ fn test_every_color_spelling_but_the_listed_ones_is_refused_and_the_listed_read(
         "#abcdef12",
         "#abcdef00",
         "var(bg)",
-        "palette(fill)",
         "palette(frame)",
         "palette(text)",
         "palette(title)",
     ] {
-        assert!(load(&map_of(&format!(r#","fill":"{color}""#))).is_ok(), "{color}");
+        assert!(
+            load(&map_of(&format!(r#","color":"{color}""#))).is_ok(),
+            "{color}"
+        );
     }
 }
 
@@ -609,11 +612,15 @@ fn test_a_color_has_one_spelling_and_the_refusal_names_it() {
             "{json}: the message should name {canonical}: {message}"
         );
     };
-    refused(&map_of(r##","fill":"#ABCDEF""##), "nodes[0].fill", "#abcdef");
-    refused(&map_of(r##","fill":"#AbCdEf""##), "nodes[0].fill", "#abcdef");
-    refused(&map_of(r##","fill":"#ABCDEF12""##), "nodes[0].fill", "#abcdef12");
-    refused(&map_of(r##","fill":"#abcdefff""##), "nodes[0].fill", "#abcdef");
-    refused(&map_of(r##","fill":"#ABCDEFFF""##), "nodes[0].fill", "#abcdef");
+    refused(&map_of(r##","color":"#ABCDEF""##), "nodes[0].color", "#abcdef");
+    refused(&map_of(r##","color":"#AbCdEf""##), "nodes[0].color", "#abcdef");
+    refused(
+        &map_of(r##","color":"#ABCDEF12""##),
+        "nodes[0].color",
+        "#abcdef12",
+    );
+    refused(&map_of(r##","color":"#abcdefff""##), "nodes[0].color", "#abcdef");
+    refused(&map_of(r##","color":"#ABCDEFFF""##), "nodes[0].color", "#abcdef");
     // The same in a theme's literal colors and in a palette's.
     refused(
         r##"{"format":1,"name":"t","theme":{"active":"d","variants":{"d":{"bg":"#000000FF"}}},"nodes":[]}"##,
@@ -621,13 +628,13 @@ fn test_a_color_has_one_spelling_and_the_refusal_names_it() {
         "#000000",
     );
     refused(
-        r##"{"format":1,"name":"t","palettes":{"p":[{"fill":"#FFFFFF","frame":"#000000","text":"#000000"}]},"nodes":[]}"##,
-        "palettes.p[0].fill",
+        r##"{"format":1,"name":"t","palettes":{"p":[{"frame":"#FFFFFF","text":"#000000"}]},"nodes":[]}"##,
+        "palettes.p[0].frame",
         "#ffffff",
     );
     // A text that is not a color at all keeps the reader's wording.
-    rejects_as_invalid(&map_of(r##","fill":"#abc""##), "nodes[0].fill");
-    rejects_as_invalid(&map_of(r##","fill":"#gggggg""##), "nodes[0].fill");
+    rejects_as_invalid(&map_of(r##","color":"#abc""##), "nodes[0].color");
+    rejects_as_invalid(&map_of(r##","color":"#gggggg""##), "nodes[0].color");
 }
 
 #[test]
@@ -841,8 +848,8 @@ fn test_a_theme_variable_that_is_not_defined_is_refused() {
         name: name.to_string(),
     };
     rejects(
-        &map_of(r#","fill":"var(nope)""#),
-        "nodes[0].fill",
+        &map_of(r#","color":"var(nope)""#),
+        "nodes[0].color",
         unknown("nope"),
     );
     rejects(
@@ -857,10 +864,10 @@ fn test_a_theme_variable_that_is_not_defined_is_refused() {
     );
     rejects(
         &map_with(
-            r##","palettes":{"p":[{"fill":"var(nope)","frame":"#000000","text":"#000000"}]}"##,
+            r##","palettes":{"p":[{"frame":"var(nope)","text":"#000000"}]}"##,
             "",
         ),
-        "palettes.p[0].fill",
+        "palettes.p[0].frame",
         unknown("nope"),
     );
     rejects(
@@ -869,8 +876,12 @@ fn test_a_theme_variable_that_is_not_defined_is_refused() {
         unknown("nope"),
     );
     // A name is exact: no case folding, no padding.
-    rejects(&map_of(r#","fill":"var(BG)""#), "nodes[0].fill", unknown("BG"));
-    rejects(&map_of(r#","fill":"var( bg)""#), "nodes[0].fill", unknown(" bg"));
+    rejects(&map_of(r#","color":"var(BG)""#), "nodes[0].color", unknown("BG"));
+    rejects(
+        &map_of(r#","color":"var( bg)""#),
+        "nodes[0].color",
+        unknown(" bg"),
+    );
 }
 
 #[test]
@@ -926,16 +937,15 @@ fn test_the_active_variant_must_be_one_of_the_variants() {
 
 #[test]
 fn test_a_palette_color_cannot_be_a_palette() {
-    for field in ["fill", "frame", "text", "title"] {
+    for field in ["frame", "text", "title"] {
         let group = |value: &str| match field {
-            "fill" => format!(r##"{{"fill":"{value}","frame":"#000000","text":"#000000"}}"##),
-            "frame" => format!(r##"{{"fill":"#000000","frame":"{value}","text":"#000000"}}"##),
-            "text" => format!(r##"{{"fill":"#000000","frame":"#000000","text":"{value}"}}"##),
-            _ => format!(r##"{{"fill":"#000000","frame":"#000000","text":"#000000","title":"{value}"}}"##),
+            "frame" => format!(r##"{{"frame":"{value}","text":"#000000"}}"##),
+            "text" => format!(r##"{{"frame":"#000000","text":"{value}"}}"##),
+            _ => format!(r##"{{"frame":"#000000","text":"#000000","title":"{value}"}}"##),
         };
         rejects(
             &map_with(
-                &format!(r#","palettes":{{"p":[{}]}}"#, group("palette(fill)")),
+                &format!(r#","palettes":{{"p":[{}]}}"#, group("palette(frame)")),
                 "",
             ),
             &format!("palettes.p[0].{field}"),
@@ -1281,11 +1291,6 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
         inclusive: true,
     };
     rejects_bound(
-        &map_of(r#","fill_fade":-1"#),
-        "nodes[0].fill_fade",
-        negative(-1.0),
-    );
-    rejects_bound(
         &map_of(r#","min_size":[-1,0]"#),
         "nodes[0].min_size[0]",
         negative(-1.0),
@@ -1311,8 +1316,8 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
         negative(-5.0),
     );
     rejects_bound(
-        &map_with(r#","defaults":{"node":{"fill_fade":-6}}"#, ""),
-        "defaults.node.fill_fade",
+        &map_with(r#","defaults":{"ring":{"spacing":-6}}"#, ""),
+        "defaults.ring.spacing",
         negative(-6.0),
     );
     rejects_bound(
@@ -1335,10 +1340,7 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
         },
     );
     // Zero is in.
-    assert!(load(&map_of(
-        r#","fill_fade":0,"min_size":[0,0],"frame":{"gap":0,"inset":0}"#
-    ))
-    .is_ok());
+    assert!(load(&map_of(r#","min_size":[0,0],"frame":{"gap":0,"inset":0}"#)).is_ok());
 }
 
 #[test]
@@ -1746,4 +1748,105 @@ fn test_a_frame_rings_layout_is_held_to_its_bounds() {
         r#","frame":{"span":0,"spacing":0,"rings":[{"span":1,"sides":"·"}]}"#
     ))
     .is_ok());
+}
+
+#[test]
+fn test_the_fill_keys_are_refused_as_unknown() {
+    // V1-B12: a map has one background, and nothing in it has a fill.
+    // Each key that held one is refused as unknown, like any other key
+    // the schema does not define, at its own path; `palette(fill)` is a
+    // spelling no color has. No shim reads them.
+    let unknown = |key: &str| LoadErrorKind::UnknownKey { key: key.to_string() };
+    rejects(
+        &map_of(r##","fill":"#102030""##),
+        "nodes[0].fill",
+        unknown("fill"),
+    );
+    rejects(
+        &map_of(r#","fill_fade":2"#),
+        "nodes[0].fill_fade",
+        unknown("fill_fade"),
+    );
+    rejects(
+        &map_with(r##","defaults":{"node":{"fill":"#102030"}}"##, ""),
+        "defaults.node.fill",
+        unknown("fill"),
+    );
+    rejects(
+        &map_with(r#","defaults":{"node":{"fill_fade":2}}"#, ""),
+        "defaults.node.fill_fade",
+        unknown("fill_fade"),
+    );
+    rejects(
+        &map_with(
+            r##","palettes":{"p":[{"fill":"#102030","frame":"#000000","text":"#000000"}]}"##,
+            "",
+        ),
+        "palettes.p[0].fill",
+        unknown("fill"),
+    );
+    rejects(
+        &map_of(r#","sections":[{"fill":"var(bg)"}]"#),
+        "nodes[0].sections[0].fill",
+        unknown("fill"),
+    );
+    rejects_as_invalid(&map_of(r#","color":"palette(fill)""#), "nodes[0].color");
+    // The controls: the same maps without the keys load.
+    for body in [
+        r##","color":"#102030""##,
+        r#","sections":[{"color":"var(bg)"}]"#,
+        r#","color":"palette(frame)""#,
+    ] {
+        assert!(load(&map_of(body)).is_ok(), "{body}");
+    }
+    assert!(load(&map_with(r##","defaults":{"node":{"color":"#102030"}}"##, "")).is_ok());
+    assert!(load(&map_with(
+        r##","palettes":{"p":[{"frame":"#000000","text":"#000000"}]}"##,
+        ""
+    ))
+    .is_ok());
+}
+
+#[test]
+fn test_a_background_is_opaque_a_variable_and_never_a_palette() {
+    let header = |background: &str| map_with(&format!(r#","background":{background}"#), "");
+    // Every alpha below ff is refused, naming it: all 255 of them,
+    // spelled as a file spells them.
+    for alpha in 0..=0xfeu8 {
+        rejects(
+            &header(&format!(r##""#102030{alpha:02x}""##)),
+            "background",
+            LoadErrorKind::TranslucentBackground { alpha },
+        );
+    }
+    // The control: the same color, opaque, loads; so does a variable,
+    // and one whose value is translucent, since the variable's alpha is
+    // not the background's.
+    assert!(load(&header(r##""#102030""##)).is_ok());
+    assert!(load(&header(r#""var(bg)""#)).is_ok());
+    let translucent_var = r##"{"format":1,"name":"t","theme":{"active":"d","variants":{"d":{"bg":"#10203040"}}},"background":"var(bg)"}"##;
+    assert!(
+        load(translucent_var).is_ok(),
+        "a translucent variable is the theme's"
+    );
+    // A variable the theme lacks, a palette color and a spelling no
+    // color has are refused at `background`.
+    rejects(
+        &header(r#""var(nope)""#),
+        "background",
+        LoadErrorKind::UnknownVariable {
+            name: "nope".to_string(),
+        },
+    );
+    for spelling in [
+        r#""palette(text)""#,
+        r#""palette(fill)""#,
+        r##""#fff""##,
+        r##""#ABCDEF""##,
+        "null",
+        "7",
+        r#""black""#,
+    ] {
+        rejects_as_invalid(&header(spelling), "background");
+    }
 }

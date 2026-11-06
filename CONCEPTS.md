@@ -370,12 +370,11 @@ mutable field type in the delta world carries all four.
 ### `GfxElement`
 
 The tagged union every `Tree<GfxElement, _>` node is
-— a `GlyphArea`, a `GlyphModel`, a `GlyphRun`, a `Fill`, or a `Void`.
+— a `GlyphArea`, a `GlyphModel`, a `GlyphRun`, or a `Void`.
 
 This is *the* tree-node type in the codebase.
 All visual things — every text region, every composed-glyph
-shape, every shaped TextFlow, every node background, every
-structural padding node — is one variant of this
+shape, every shaped TextFlow, every structural padding node — is one variant of this
 enum. Shared metadata rides on every variant: a `channel` for
 mutation routing, a `unique_id` assigned by the host app (Mandala
 uses it for the mindmap node id), a `flags` set, and an
@@ -385,7 +384,7 @@ hit-test — lives in the tree's `GlyphTreeCache`, keyed by `NodeId`,
 never on an element.
 
 `lib/baumhard/src/gfx_structs/element.rs`.
-`GlyphArea`, `GlyphModel`, `GlyphRun` and `Fill` each box their
+`GlyphArea`, `GlyphModel` and `GlyphRun` each box their
 payload (one heap allocation per element of that kind); `Void` has no
 payload.
 There is a companion `GfxElementType` enum for cheap variant
@@ -410,9 +409,11 @@ When something visible has characters in it, a
 portal icons, console lines, FPS overlay digits. The struct
 carries everything the renderer needs to shape and draw that text
 — position, render bounds, font scale and line-height, per-span
-color/font overrides ([`ColorFontRegions`](#colorfontregions)), a
-background fill, an optional outline halo, a hit shape, and a
-zoom-visibility window.
+color/font overrides ([`ColorFontRegions`](#colorfontregions)), an
+optional outline halo, a hit shape, and a zoom-visibility window. It
+draws its text and nothing behind it: a map's one background is the
+frame's clear color, and every other color comes from a glyph
+(V1-B12, design D12).
 
 `lib/baumhard/src/gfx_structs/area.rs`. Uses
 `OrderedFloat<f32>` and `OrderedVec2` for its numeric fields so
@@ -494,22 +495,16 @@ touches no run. No projection emits runs yet (V1-B7, C3).
 `GfxMutation::Run*` in `mutator.rs`; the pass is
 `src/application/renderer/glyph_runs/`.
 
-### `Fill`
+### No fill element
 
-A node's background as a glyph element: a rectangle, the shape it
-takes in it (a rounded rectangle, or the inscribed ellipse), a color,
-a soft `fade` at its edge, an opacity and an optional zoom window.
-
-The rectangle is `flow::Rect`, the one the node's frame runs around,
-so the fill and the frame share one outline (design §13.4). A fill is
-hit by its rectangle, ellipses included. It changes through `FillSet`
-(projection's), `FillColor`, `FillOpacity` and `FillRect`;
-interpolation blends the rectangle, the color, `fade` and `opacity`
-and snaps the `shape` and `zoom`. Introduced in V1-B6 (#240); the
-renderer's shader fill that draws it is V1-C2.
-
-`lib/baumhard/src/gfx_structs/fill.rs`; the mutations are
-`GfxMutation::Fill*`.
+There is none (V1-B12, design D12, replacing V1-B6's `Fill`): a map
+has exactly one background, the color every frame is cleared to, and
+every other color it draws comes from a glyph — text, frames, rings,
+connectors, links, labels, portal ends, ornaments. The document holds
+the background as the map's own field (`MapData::background`, a
+literal or a theme variable, black when unset), resolved by
+`document::resolve::resolve_background`. A mutation naming a fill is
+refused as an unknown variant.
 
 ### `Void`
 
@@ -779,9 +774,8 @@ A mutation is not one uniform thing — a
 `GlyphArea` and a `GlyphModel` accept different kinds of change.
 The `GfxMutation` enum is the sum type covering all of them: two
 flavors each for area and model (field-level `Delta` vs.
-imperative `Command`), plus `Event` (subscriber dispatch), the `Run*`
-mutations that change a `GlyphRun` and the `Fill*` mutations that
-change a `Fill`. It
+imperative `Command`), plus `Event` (subscriber dispatch) and the
+`Run*` mutations that change a `GlyphRun`. It
 implements the engine's `Mutation<GfxElement>`; its builder template
 is a list of `CellField` slots (`gfx_structs/template.rs`).
 
@@ -789,9 +783,9 @@ is a list of `CellField` slots (`gfx_structs/template.rs`).
 Each variant boxes its payload to keep the enum compact. Type
 mismatches (e.g. `ModelDelta` applied to a `GlyphArea`) are
 silently ignored per the [`Applicable`](#applicablet) no-panic
-rule; a run or fill mutation at an element of another kind is
-ignored and logged the same way, in every build. `RunSet` and
-`FillSet` are projection-only and never authored: they are
+rule; a run mutation at an element of another kind is ignored and
+logged the same way, in every build. `RunSet` is projection-only and
+never authored: it is
 `#[serde(skip)]` and have no JSON spelling, and since only a
 projection bug can land one on the wrong element, that case also trips
 a `debug_assert!`.
@@ -870,26 +864,19 @@ path, so enable only when background legibility demands it.
 ### `NodeShape`
 
 A pluggable hit-test shape — `Rectangle` or
-`Ellipse` — shared between the renderer SDF and the BVH
-descent.
+`Ellipse` — shared between the BVH descent and the border builder.
 
-A node's visual silhouette and its clickable
-silhouette must agree. `NodeShape` names the two today
-(rectangle, ellipse) and gives both pipelines one source of
-truth for "is this point inside?". Adding a new shape is one
-enum variant, the match arms the compiler then demands, and a
-`SHAPE_*` constant plus a `case` arm in the WGSL shader;
-`shape.rs`'s own module header is the recipe. What makes it safe
-to follow is that the arms are not remembered: four `match`es over
-`NodeShape` in `shape.rs` are exhaustive — `shader_id`,
-`style_spellings`, `contains_local`, `intersects_local_aabb` — so a
-planted variant is four E0004s, and once those are answered a
-fifth lands in the mandala crate, `wgsl_shape_const_name` in
-`renderer/tests.rs`. The shader half is not a `match` and is
-forced by a test instead:
-`test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
-reads the WGSL as text and fails on a variant with no constant, a
-constant carrying the wrong id, and a missing `case` arm.
+A node's clickable silhouette and what is drawn around it must
+agree. `NodeShape` names the two shapes today (rectangle, ellipse)
+and gives the hit test one source of truth for "is this point
+inside?"; the border builder resolves the same spelling to the same
+variant and frames only a rectangle. Nothing draws the shape itself:
+a node draws no fill (V1-B12). Adding a new shape is one enum variant
+and the match arms the compiler then demands; `shape.rs`'s own
+module header is the recipe. What makes it safe to follow is that
+the arms are not remembered: three `match`es over `NodeShape` in
+`shape.rs` are exhaustive — `style_spellings`, `contains_local`,
+`intersects_local_aabb` — so a planted variant is three E0004s.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
@@ -901,9 +888,9 @@ The format's shape vocabulary (`KNOWN_SHAPES`, published in
 `format/enums.md` and enforced by `maptool verify`) is wider
 than the variant set: `"hexagon"`, `"diamond"`,
 `"parallelogram"` and `"rounded_rectangle"` are canonical but
-have no shader case yet. `ShapeSpelling` is the pure
+have no variant yet. `ShapeSpelling` is the pure
 classifier that separates those from a genuine typo —
-`Rendered` / `KnownNotYetRendered` / `Unrecognized` /
+`Modeled` / `KnownNotYetModeled` / `Unrecognized` /
 `Unspecified` — and `is_author_error` / `is_quiet_fallback`
 are the two predicates it exposes for the reporting
 decision. Before it existed, every hexagon in the demo map
@@ -1232,10 +1219,9 @@ interpolate; every other field takes the before or the after value by
 entry's interpolated element, and stands moved elements in the
 before or the after arrangement by the same snap, so the rows stay
 sorted. The glyph instantiation interpolates an area's position,
-render bounds, scale, line height and background color, a model's
-position, a run's origin, opacity and per-glyph overrides, and a
-fill's rectangle, color, fade and opacity; a run's shaping and zoom
-window and a fill's shape and zoom window snap.
+render bounds, scale and line height, a model's position, and a
+run's origin, opacity and per-glyph overrides; a run's shaping and
+zoom window snap.
 
 `lib/baumhard/src/engine/interpolate.rs`; `Interpolable for
 GfxElement` in `lib/baumhard/src/gfx_structs/element.rs`.
@@ -1883,9 +1869,9 @@ against the array with the constructs already lifted out. See
 
 ### `Canvas`
 
-The per-map shared rendering context: background
-color, default node and connection styles, live theme-variable
-map, named theme presets.
+The per-map shared rendering context: the one
+background color, default node and connection styles, live
+theme-variable map, named theme presets.
 
 Some things are per-map rather than per-node:
 the canvas background color, the defaults nodes and edges fall
@@ -1894,7 +1880,9 @@ variables colors reference, and the presets theme-switching
 mutations copy into those live variables. `Canvas` is that
 shared state. It sits on `MindMap` directly (`canvas: Canvas`)
 and is consulted at scene-build time for defaults and theme
-resolution.
+resolution. Its `background_color`, resolved through the theme, is
+what every frame is cleared to (`MindMapDocument::background`,
+`Renderer::set_background`), on both targets.
 
 `lib/baumhard/src/mindmap/model/canvas.rs`. Fields:
 `background_color`; four optional default records —
@@ -1920,8 +1908,8 @@ The unit of content. Each node renders as a
 shape with one or more text-bearing **sections** inside,
 optionally framed by a glyph border, and participates in the
 parent-child tree through its `parent_id`. Post-section refactor
-the node owns visual chrome (background, frame, shape, border,
-shadow) and structural pieces (`channel`, `color_schema`,
+the node owns visual chrome (frame, shape, border, shadow) and
+structural pieces (`channel`, `color_schema`,
 `trigger_bindings`, `inline_mutations`, zoom-bounds); the
 user-typed text lives on its sections.
 
@@ -2069,8 +2057,11 @@ requires every referenced palette to exist with at least one
 group.
 
 The cascade is **override first, palette second, `style`
-third**, and the
-projection passes read it through four sibling helpers —
+third**. The background channel of it still resolves
+(`node_background_color`), and the console and color picker still
+write it, but nothing draws it: a node has no fill since V1-B12, and
+the cut-over (V1-C3) deletes the channel with the legacy model. The
+projection passes read the cascade through four sibling helpers —
 `node_background_color`, `node_frame_color`,
 `node_text_color`, `node_title_color` — plus
 `edge_theme_stroke_color`, which supplies the themed tier of
@@ -3908,11 +3899,16 @@ buffers, and submits to the GPU. It never holds a reference to
 the document.
 
 `src/application/renderer/mod.rs` (`struct Renderer`).
-The dual pipeline lives here:
-- **Rect / SDF pipeline** — node fills, ellipse SDF (shape-aware
-  fills via `RECT_SHADER_WGSL`), background fills.
+A frame is its clear — the map's one background,
+`Renderer::set_background` (V1-B12) — and glyphs, drawn by two
+pipelines:
 - **Glyph pipeline** — every visible character, via
-  cosmic-text + glyphon atlas.
+  cosmic-text + glyphon atlas, in two passes: the canvas's, and the
+  screen-space chrome's over it. The opaque backdrops behind the
+  console and the color picker are glyphs too: a grid of full blocks
+  (`█`, Public Pixel's, which is the whole em square) at the bottom of
+  the chrome pass, laid out in the target's own pixels so the cells
+  abut without a seam (`renderer/backdrop.rs`).
 - **Positioned-glyph pipeline** (`glyph_runs/`) — every glyph of a
   [`GlyphRun`](#glyphrun) at its own canvas position, rasterized by
   cosmic-text into an atlas of its own (glyphon's cannot be reached
@@ -3959,8 +3955,7 @@ rebuilds (in `scene_rebuild.rs`) and overlay-role rebuilds
 ### Scene shape cache
 
 The rule that decides, per walked element, whether
-its cosmic-text buffers and background fill are re-shaped, moved,
-or reused — one mechanism serving both of
+its cosmic-text buffers are re-shaped, moved, or reused — one mechanism serving both of
 [`AppScene`](#appscene-and-scene-host)'s sub-scenes.
 
 Rebuild dispatch stops at the arena. A mutator
@@ -3986,20 +3981,17 @@ Two details are load-bearing. `GlyphArea`'s derived equality is
 blind to a region *recolor* — `ColorFontRegion`'s `Eq` is set
 identity by range — which is exactly what a picker hover changes,
 so the check adds `ColorFontRegions::same_content` on top of `==`.
-And each element's background fill lives inside that element's own
-entry rather than in a flat list, so a partial re-shape cannot
-disturb the index order the rect pipeline paints in; the mindmap's
-own keyed re-shape, whose fills *are* flat, needs
-`BackgroundRectSlot` to hold that line by bookkeeping instead
-(`renderer/tree_buffers.rs`).
+And each element's output lives inside that element's own entry
+rather than in a flat list, so a partial re-shape cannot disturb the
+order glyphon is handed its text areas in.
 
 The key has two halves, and a mismatch is classified rather than
 merely detected (`ShapedSceneElement::classify` → `Verdict`).
 `GlyphArea::position` and the registered tree offset never reach
 cosmic-text — the walker adds them to each buffer's `pos` after
 shaping — so when they are the *only* difference the entry is
-`Moved`, and `patch_placement` rewrites its buffers' positions and
-its fill in place with no shaping and no `FONT_SYSTEM` lock. Any
+`Moved`, and `patch_placement` rewrites its buffers' positions in
+place with no shaping and no `FONT_SYSTEM` lock. Any
 other difference is `Stale` and re-shapes. The patch re-derives
 each buffer from the stamp offset the walker recorded
 (`MindMapTextBuffer::emission_offset`), the same fix the mindmap's
@@ -4008,10 +4000,8 @@ stamps do not sit at its anchor, and writing the anchor flat would
 collapse them under the glyph. A picker drag-move — every cell
 repositioned, nothing else changed — is the case this exists for.
 
-`ScenePassKind` is the whole difference between the two passes:
-the canvas keeps the walker's fills because they reach a draw
-pass, the overlay discards them because no screen-space rect
-pipeline exists yet. `refresh` takes a `&Scene` rather than a
+`ScenePassKind` is the whole difference between the two passes: the
+site name the font lock is taken under. `refresh` takes a `&Scene` rather than a
 `&mut Renderer` so its granularity can be asserted without a live
 device (TEST_CONVENTIONS §T8) — the same reason
 [`RebuildTier`](#scene-rebuild-granularity) is a value rather than

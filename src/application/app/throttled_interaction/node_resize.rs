@@ -137,12 +137,6 @@ impl ThrottledInteraction for NodeResizeInteraction {
                 renderer.reshape_buffer_for(container, &tree.tree);
             }
             renderer.patch_drag_positions(&self.patches);
-            // Section fills moved with their sections; the
-            // container's own rect was re-collected by the reshape
-            // above. This walk is position/color reads only — no
-            // shaping — and is the same call the move-drag path
-            // makes for the same reason.
-            renderer.rebuild_node_backgrounds_from_tree(&tree.tree);
             let elements = build_node_resize_handles(&self.node_id, canvas_pos, canvas_size);
             update_node_resize_handle_tree_from_slice(&elements, app_scene);
             flush_canvas_scene_buffers(app_scene, renderer);

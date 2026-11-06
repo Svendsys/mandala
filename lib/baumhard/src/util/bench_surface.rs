@@ -840,21 +840,6 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "gfx_structs/tests/run_tests.rs",
-            "test_a_fill_set_at_a_run_trips_the_debug_assert",
-            DrivesAPanic,
-        ),
-        (
-            "gfx_structs/tests/run_tests.rs",
-            "test_a_fill_set_at_an_area_trips_the_debug_assert",
-            DrivesAPanic,
-        ),
-        (
-            "gfx_structs/tests/run_tests.rs",
-            "test_a_run_set_at_a_fill_trips_the_debug_assert",
-            DrivesAPanic,
-        ),
-        (
-            "gfx_structs/tests/run_tests.rs",
             "test_a_run_set_at_a_model_trips_the_debug_assert",
             DrivesAPanic,
         ),

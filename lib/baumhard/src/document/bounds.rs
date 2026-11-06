@@ -313,8 +313,8 @@ pub fn check_ornament(content: &str) -> Result<&str, BoundError> {
     }
 }
 
-/// A finite value `≥ 0`: a node's `fill_fade`, a frame's `gap` and
-/// `inset`, and a path's or a ring's `spacing`. O(1).
+/// A finite value `≥ 0`: a frame's `gap` and `inset`, and a path's or
+/// a ring's `spacing`. O(1).
 pub fn check_non_negative(value: f32) -> Result<f32, BoundError> {
     in_closed(value, 0.0, f32::MAX)
 }

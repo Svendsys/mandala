@@ -24,12 +24,8 @@ pub mod camera;
 /// trait shared by the area-side and model-side mutation surfaces.
 pub mod delta;
 /// `GfxElement` — tree-node variant (`GlyphArea` / `GlyphModel` /
-/// `GlyphRun` / `Fill` / `Void`) plus its field enum, flags, and AABB
-/// caching.
+/// `GlyphRun` / `Void`) plus its field enum, flags, and AABB caching.
 pub mod element;
-/// `Fill` — the node background element: a rectangle, a shape, a
-/// color and a soft edge fade.
-pub mod fill;
 /// How a `GfxElement` answers a predicate's field tests — the glyph
 /// `Inspect` implementation over `GfxElementField`.
 pub mod inspect;
@@ -45,8 +41,8 @@ pub mod run;
 /// `Scene` — composes multiple `Tree`s at per-layer offsets into a
 /// single rendered frame.
 pub mod scene;
-/// Per-node background / hit-test shape enum shared by the
-/// renderer (SDF) and the BVH hit test.
+/// Per-node hit-test shape enum shared by the BVH hit test and the
+/// border builder.
 pub mod shape;
 /// `CellField` — the glyph payload's builder template — and the
 /// helpers that resolve one into an `AreaDelta`.

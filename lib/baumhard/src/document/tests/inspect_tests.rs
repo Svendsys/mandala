@@ -7,7 +7,7 @@
 use crate::document::element::{DocElement, DocKind};
 use crate::document::inspect::DocField;
 use crate::document::tests::test_support::example;
-use crate::document::values::{ColorRef, FitMode, FontSize, PaletteField, Rgba, Shape};
+use crate::document::values::{ColorRef, FitMode, FontSize, PaletteField, PlainColor, Rgba, Shape, VarId};
 use crate::engine::predicate::{Comparator, Inspect, Predicate};
 
 #[test]
@@ -85,7 +85,7 @@ fn test_document_inspect_optional_fields() {
 pub fn do_document_inspect_optional_fields() {
     let (mut builder, ids) = example();
     let unset = builder.tree().arena()[ids.d].get().clone();
-    let fade = DocField::FillFade(1.0);
+    let fade = DocField::MinWidth(1.0);
     assert_eq!(unset.test_field(&fade, &Comparator::exists()), Some(false));
     assert_eq!(unset.test_field(&fade, &Comparator::not_exists()), Some(true));
     assert_eq!(unset.test_field(&fade, &Comparator::equals()), Some(false));
@@ -98,13 +98,13 @@ pub fn do_document_inspect_optional_fields() {
     ] {
         assert_eq!(unset.test_field(&fade, &order), Some(false), "{order:?}");
     }
-    builder.edit_node(ids.d, |n| n.style.fill_fade = Some(2.0));
+    builder.edit_node(ids.d, |n| n.min_size = Some(glam::Vec2::new(2.0, 5.0)));
     let set = builder.tree().arena()[ids.d].get();
     assert_eq!(set.test_field(&fade, &Comparator::exists()), Some(true));
     assert_eq!(set.test_field(&fade, &Comparator::greater()), Some(true));
     assert_eq!(set.test_field(&fade, &Comparator::less()), Some(false));
     assert_eq!(
-        set.test_field(&DocField::FillFade(2.0), &Comparator::equals()),
+        set.test_field(&DocField::MinWidth(2.0), &Comparator::equals()),
         Some(true)
     );
 }
@@ -115,31 +115,49 @@ fn test_document_inspect_values_are_stored_not_resolved() {
 }
 
 /// A predicate sees what an element stores: `a`'s palette makes its
-/// fill a palette color when resolved, but `a` stores no fill. Colors,
-/// shapes and fit modes compare by value and do not order.
+/// text a palette color when resolved, but `a` stores no color. Colors,
+/// shapes and fit modes compare by value and do not order. The map's
+/// background is stored, never unset: black when the map gives none.
 pub fn do_document_inspect_values_are_stored_not_resolved() {
     let (mut builder, ids) = example();
     let red = ColorRef::Rgba(Rgba::opaque(255, 0, 0));
     assert_eq!(
         builder.tree().arena()[ids.a]
             .get()
-            .test_field(&DocField::Fill(red), &Comparator::exists()),
+            .test_field(&DocField::Color(red), &Comparator::exists()),
         Some(false)
     );
     builder.edit_node(ids.a, |n| {
-        n.style.fill = Some(red);
+        n.style.text.color = Some(red);
         n.style.shape = Some(Shape::Ellipse);
     });
     let a = builder.tree().arena()[ids.a].get();
     assert_eq!(
-        a.test_field(&DocField::Fill(red), &Comparator::equals()),
+        a.test_field(&DocField::Color(red), &Comparator::equals()),
         Some(true)
     );
-    let palette_fill = DocField::Fill(ColorRef::Palette(PaletteField::Fill));
-    assert_eq!(a.test_field(&palette_fill, &Comparator::equals()), Some(false));
+    let palette_text = DocField::Color(ColorRef::Palette(PaletteField::Text));
+    assert_eq!(a.test_field(&palette_text, &Comparator::equals()), Some(false));
     assert_eq!(
-        a.test_field(&DocField::Fill(red), &Comparator::greater()),
+        a.test_field(&DocField::Color(red), &Comparator::greater()),
         Some(false)
+    );
+    let black = DocField::Background(PlainColor::Rgba(Rgba::opaque(0, 0, 0)));
+    let map = builder.tree().arena()[builder.root()].get();
+    assert_eq!(map.test_field(&black, &Comparator::exists()), Some(true));
+    assert_eq!(map.test_field(&black, &Comparator::equals()), Some(true));
+    assert_eq!(
+        map.test_field(
+            &DocField::Background(PlainColor::Rgba(Rgba::opaque(255, 0, 0))),
+            &Comparator::equals()
+        ),
+        Some(false),
+        "the control: another color is not the stored one"
+    );
+    assert_eq!(
+        a.test_field(&black, &Comparator::exists()),
+        None,
+        "a node has no background"
     );
     assert_eq!(
         a.test_field(&DocField::Shape(Shape::Ellipse), &Comparator::equals()),
@@ -235,9 +253,25 @@ pub fn do_document_field_json_spelling() {
         r#"{"kind":"cap_start"}"#
     );
     assert_eq!(
-        serde_json::to_string(&DocField::FillFade(1.5)).unwrap(),
-        r#"{"fill_fade":1.5}"#
+        serde_json::to_string(&DocField::Background(PlainColor::Var(VarId(1)))).unwrap(),
+        r#"{"background":{"var":1}}"#
     );
+    // A background is a literal or a variable, so a palette color — which
+    // no map stores, and which could never match — has no spelling. The
+    // controls: the two spellings a background has read.
+    let refused = serde_json::from_str::<DocField>(r#"{"background":{"palette":"text"}}"#)
+        .expect_err("a palette background has no spelling")
+        .to_string();
+    assert!(refused.contains("unknown variant"), "{refused}");
+    for spelling in [
+        r#"{"background":{"var":1}}"#,
+        r#"{"background":{"rgba":[0,0,0,255]}}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<DocField>(spelling).is_ok(),
+            "{spelling} reads"
+        );
+    }
     assert_eq!(
         serde_json::to_string(&DocField::Color(ColorRef::Palette(PaletteField::Title))).unwrap(),
         r#"{"color":{"palette":"title"}}"#

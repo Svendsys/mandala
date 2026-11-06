@@ -24,79 +24,6 @@ use crate::util::grapheme_chad;
 use crate::util::ordered_vec2::OrderedVec2;
 use glam::f32::Vec2;
 use log::warn;
-
-/// Asymmetric per-edge expansion in pixels. Used by
-/// [`GlyphArea::background_padding`] to extend the fill rect
-/// outward by an independent amount on each side. Default is
-/// `0.0` everywhere — the fill coincides with the text rect, the
-/// historical behavior. All fields stored as
-/// [`ordered_float::OrderedFloat`] so the type is hashable and
-/// `PartialEq`-able with float-bit equality, mirroring
-/// [`OrderedVec2`].
-///
-/// Why per-edge rather than the previous symmetric `OrderedVec2`:
-/// node borders are NOT symmetric — the top run sits
-/// `font_size - corner_overlap` above the node rect, the bottom
-/// run extends `1.5 * font_size - corner_overlap` below it. A
-/// symmetric pad either over-extends top or under-extends bottom.
-/// Carrying four independent values lets the producer
-/// (`tree_builder::node::mindnode_container_area`) state the actual
-/// outward extent on each side.
-#[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-pub struct EdgePadding {
-    pub top: ordered_float::OrderedFloat<f32>,
-    pub right: ordered_float::OrderedFloat<f32>,
-    pub bottom: ordered_float::OrderedFloat<f32>,
-    pub left: ordered_float::OrderedFloat<f32>,
-}
-
-impl EdgePadding {
-    /// All-zero padding. Equivalent to `Default::default()`; named
-    /// for use in `const` contexts and to read clearly at call
-    /// sites that want "no inflation".
-    pub const ZERO: EdgePadding = EdgePadding {
-        top: ordered_float::OrderedFloat(0.0),
-        right: ordered_float::OrderedFloat(0.0),
-        bottom: ordered_float::OrderedFloat(0.0),
-        left: ordered_float::OrderedFloat(0.0),
-    };
-
-    /// Construct from raw `f32`s.
-    pub fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
-        EdgePadding {
-            top: ordered_float::OrderedFloat(top),
-            right: ordered_float::OrderedFloat(right),
-            bottom: ordered_float::OrderedFloat(bottom),
-            left: ordered_float::OrderedFloat(left),
-        }
-    }
-
-    /// `true` when every edge is exactly zero. Used by the
-    /// renderer's per-frame fast-path to skip the pad arithmetic
-    /// for unframed nodes (the common case).
-    pub fn is_zero(&self) -> bool {
-        self.top.0 == 0.0 && self.right.0 == 0.0 && self.bottom.0 == 0.0 && self.left.0 == 0.0
-    }
-
-    pub fn top(&self) -> f32 {
-        self.top.0
-    }
-    pub fn right(&self) -> f32 {
-        self.right.0
-    }
-    pub fn bottom(&self) -> f32 {
-        self.bottom.0
-    }
-    pub fn left(&self) -> f32 {
-        self.left.0
-    }
-}
-
-impl Default for EdgePadding {
-    fn default() -> Self {
-        EdgePadding::ZERO
-    }
-}
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -121,41 +48,6 @@ pub struct GlyphArea {
     pub render_bounds: OrderedVec2,
     /// Per-character color / font runs layered over the base text.
     pub regions: ColorFontRegions,
-    /// Solid background fill drawn behind the text glyphs by the
-    /// renderer. `None` means no fill — the element draws as text
-    /// only, letting the canvas show through. Stored as 4×u8 RGBA
-    /// so it's cheap to hash, copy, and ship to the GPU. Per-frame
-    /// rendering reads it during `rebuild_buffers_from_tree`.
-    ///
-    /// **Rebuild-only**, like `background_padding` and `align_center`
-    /// below: set when the scene is built (`tree_builder`'s node
-    /// emitter, the color picker's area factory) and reached by no
-    /// `GlyphAreaField` or `GlyphAreaCommand`, so no mutation or tree
-    /// walk changes it; a new value means a rebuild. The consumer that
-    /// would earn a `GlyphAreaField` variant for it is the color
-    /// picker's live node-background preview, which its commit path
-    /// records as not yet wired. That variant also needs a reverse
-    /// converter in `sync_node_from_tree` (or an
-    /// `unsupported_fields_of_mutation` entry), or a mutation of it
-    /// reverts on the next `rebuild_all`.
-    #[serde(default)]
-    pub background_color: Option<[u8; 4]>,
-    /// Asymmetric outward expansion of the background fill rect
-    /// beyond `(position, render_bounds)`. The renderer draws the
-    /// fill at `(position.x - left, position.y - top)` with size
-    /// `(render_bounds.x + left + right, render_bounds.y + top + bottom)`;
-    /// text shaping uses the unmodified `position` / `render_bounds`,
-    /// so this field doesn't affect layout. Default `EdgePadding::ZERO`
-    /// — the background coincides with the text bounds, the historical
-    /// behavior. Used by mindmap nodes to extend the fill behind
-    /// border glyphs that sit outside the text rect so the border
-    /// draws against the node's background color rather than the
-    /// canvas underneath. Per-edge rather than symmetric because
-    /// node borders are inherently asymmetric — the top run sits
-    /// `font_size - corner_overlap` above the rect and the bottom
-    /// run extends `1.5 * font_size - corner_overlap` below it.
-    #[serde(default)]
-    pub background_padding: EdgePadding,
     /// When `true`, the renderer shapes this area's text with
     /// `cosmic_text::Align::Center` so cross-script glyphs whose
     /// per-glyph advance varies (e.g. the picker's Devanagari /
@@ -169,16 +61,13 @@ pub struct GlyphArea {
     /// extra shaped buffers at offset positions before the main
     /// one — see [`OutlineStyle`] for the cost trade-off. `None`
     /// (the default) skips the halo entirely; ordinary mindmap
-    /// nodes that render against an opaque-enough background
-    /// don't need one.
+    /// nodes don't need one.
     #[serde(default)]
     pub outline: Option<OutlineStyle>,
-    /// Background / hit-test shape of the area. Default
-    /// [`NodeShape::Rectangle`] matches the historical behavior
-    /// where every node fills its bounding box. Shared between the
-    /// renderer's rect SDF pipeline (drawn fill) and the BVH
-    /// descent (point-in-shape hit test), so changing this field
-    /// automatically moves both visuals and input together.
+    /// Hit-test shape of the area: the BVH descent's point-in-shape
+    /// test. Default [`NodeShape::Rectangle`], the whole bounding box.
+    /// Nothing draws it — an area draws its text and nothing behind
+    /// it (V1-B12).
     ///
     /// Round-trip fidelity for unknown-spelling shapes is owned by
     /// the format layer (`NodeStyle.shape: String` in
@@ -220,8 +109,6 @@ impl PartialEq for GlyphArea {
             position,
             render_bounds,
             regions,
-            background_color,
-            background_padding,
             align_center,
             outline,
             shape,
@@ -234,8 +121,6 @@ impl PartialEq for GlyphArea {
             && *position == other.position
             && *render_bounds == other.render_bounds
             && *regions == other.regions
-            && *background_color == other.background_color
-            && *background_padding == other.background_padding
             && *align_center == other.align_center
             && *outline == other.outline
             && *shape == other.shape
@@ -255,8 +140,6 @@ impl Hash for GlyphArea {
         self.render_bounds.x().to_bits().hash(state);
         self.render_bounds.y().to_bits().hash(state);
         self.regions.hash(state);
-        self.background_color.hash(state);
-        self.background_padding.hash(state);
         self.align_center.hash(state);
         self.outline.hash(state);
         self.shape.hash(state);
@@ -302,8 +185,6 @@ impl GlyphArea {
             position,
             render_bounds,
             regions,
-            background_color,
-            background_padding,
             align_center,
             outline,
             shape,
@@ -318,8 +199,6 @@ impl GlyphArea {
         render_bounds.x().to_bits().hash(state);
         render_bounds.y().to_bits().hash(state);
         regions.hash_content(state);
-        background_color.hash(state);
-        background_padding.hash(state);
         align_center.hash(state);
         outline.hash(state);
         shape.hash(state);
@@ -350,8 +229,6 @@ impl GlyphArea {
             position,
             render_bounds,
             regions,
-            background_color,
-            background_padding,
             align_center,
             outline,
             shape,
@@ -364,8 +241,6 @@ impl GlyphArea {
             && *position == other.position
             && *render_bounds == other.render_bounds
             && regions.same_content(&other.regions)
-            && *background_color == other.background_color
-            && *background_padding == other.background_padding
             && *align_center == other.align_center
             && *outline == other.outline
             && *shape == other.shape
@@ -374,9 +249,8 @@ impl GlyphArea {
     }
 
     /// Construct an empty-text area with the given metrics and
-    /// placement. Regions and hitbox start empty; `align_center`,
-    /// `background_color`, `background_padding`, and `outline`
-    /// default off; `shape` defaults to `Rectangle`;
+    /// placement. Regions and hitbox start empty; `align_center` and
+    /// `outline` default off; `shape` defaults to `Rectangle`;
     /// `zoom_visibility` to unbounded. O(1); one heap allocation
     /// for the empty `text` String.
     pub fn new(scale: f32, line_height: f32, position: Vec2, bounds: Vec2) -> Self {
@@ -387,8 +261,6 @@ impl GlyphArea {
             position: OrderedVec2::from_vec2(position),
             render_bounds: OrderedVec2::from_vec2(bounds),
             regions: ColorFontRegions::default(),
-            background_color: None,
-            background_padding: EdgePadding::ZERO,
             align_center: false,
             outline: None,
             shape: NodeShape::Rectangle,
@@ -407,8 +279,6 @@ impl GlyphArea {
             position: OrderedVec2::from_vec2(position),
             render_bounds: OrderedVec2::from_vec2(bounds),
             regions: ColorFontRegions::default(),
-            background_color: None,
-            background_padding: EdgePadding::ZERO,
             align_center: false,
             outline: None,
             shape: NodeShape::Rectangle,
@@ -683,30 +553,6 @@ impl GlyphArea {
     /// Position as a plain `Vec2`. O(1).
     pub fn position(&self) -> Vec2 {
         self.position.to_vec2()
-    }
-
-    /// The rect this area's background fill covers, as `(position,
-    /// size)` in the area's own space: its `position` / `render_bounds`
-    /// box grown outward by `background_padding`, per edge. `None` when
-    /// the area has no `background_color`, i.e. draws no fill.
-    ///
-    /// The one statement of that geometry: the renderer's fill-rect
-    /// extraction and the scene introspection
-    /// ([`crate::mindmap::scene_dump`]) both read it, so the rect a
-    /// fill is drawn and culled at and the rect an agent is told about
-    /// are the same rect. O(1), no allocation.
-    pub fn background_rect(&self) -> Option<(Vec2, Vec2)> {
-        self.background_color?;
-        let pad = self.background_padding;
-        let pos = self.position.to_vec2();
-        let size = Vec2::new(self.render_bounds.x.0, self.render_bounds.y.0);
-        Some((
-            Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
-            Vec2::new(
-                size.x + pad.left() + pad.right(),
-                size.y + pad.top() + pad.bottom(),
-            ),
-        ))
     }
 
     /// The outline this area's text is haloed with, when it draws one:

@@ -355,7 +355,7 @@ fn test_indices_follow_sorted_names_not_the_order_of_the_file() {
     let palettes = |order: &[&str]| {
         let body: Vec<String> = order
             .iter()
-            .map(|name| format!(r##""{name}":[{{"fill":"#000000","frame":"#000000","text":"#000000"}}]"##))
+            .map(|name| format!(r##""{name}":[{{"frame":"#000000","text":"#000000"}}]"##))
             .collect();
         format!(r#","palettes":{{{}}}"#, body.join(","))
     };
@@ -363,7 +363,7 @@ fn test_indices_follow_sorted_names_not_the_order_of_the_file() {
         format!(
             r#"{{"format":1,"name":"t",{variants}{},"nodes":[{}]}}"#,
             palettes(palette_order),
-            node_of(1, r#","fill":"var(fg)","palette":"zeta""#)
+            node_of(1, r#","palette":"zeta","color":"var(fg)""#)
         )
     };
     let reference = load(&text(
@@ -390,7 +390,7 @@ fn test_indices_follow_sorted_names_not_the_order_of_the_file() {
     assert_eq!(reference.theme().variants[0].name, "dark");
     let (_, data) = node(&reference, 1);
     assert_eq!(
-        data.style.fill,
+        data.style.text.color,
         Some(ColorRef::Var(VarId(2))),
         "fg is the third name"
     );
@@ -426,13 +426,13 @@ fn test_an_index_never_reaches_the_file() {
     let root = builder.root();
     let mut data = node_data(1);
     data.palette = Some(first_in_file);
-    data.style.fill = Some(ColorRef::Var(VarId(0)));
+    data.style.text.color = Some(ColorRef::Var(VarId(0)));
     builder.node_with(root, data);
     let doc = builder.build().unwrap();
 
     let text = written(&doc);
     assert!(
-        text.contains(r#""fill": "var(zed)""#),
+        text.contains(r#""color": "var(zed)""#),
         "a variable is written by name:\n{text}"
     );
     assert!(
@@ -455,7 +455,7 @@ fn test_an_index_never_reaches_the_file() {
     let (_, data) = node(&back, 1);
     assert_eq!(back.theme().variables, ["alpha", "zed"]);
     assert_eq!(
-        data.style.fill,
+        data.style.text.color,
         Some(ColorRef::Var(VarId(1))),
         "zed is the second name now"
     );

@@ -61,7 +61,7 @@ use crate::document::format::{
 };
 use crate::document::ids::Document;
 use crate::document::tests::format_support::same_document;
-use crate::document::values::{FitMode, FontSize, Shape, Sides, ZoomWindow};
+use crate::document::values::{FitMode, FontSize, PlainColor, Shape, Sides, ZoomWindow};
 use crate::document::writer::Derived;
 
 /// Every property of a load of `bytes`, whatever they are: the
@@ -594,7 +594,14 @@ pub fn bounds_hold(doc: &Document) -> Result<(), String> {
 /// The bounds of one element's own fields.
 fn element_bounds(element: &DocElement) -> Result<(), String> {
     match element {
-        DocElement::Map(_) | DocElement::Theme(_) | DocElement::Palette(_) => Ok(()),
+        // A background is opaque or a variable (V1-B12).
+        DocElement::Map(map) => match map.background {
+            PlainColor::Rgba(rgba) if rgba.0[3] != u8::MAX => {
+                Err(format!("a translucent background loaded: {rgba:?}"))
+            }
+            _ => Ok(()),
+        },
+        DocElement::Theme(_) | DocElement::Palette(_) => Ok(()),
         DocElement::Defaults(defaults) => {
             node_style(&defaults.node)?;
             text_style(&defaults.section)?;
@@ -688,9 +695,6 @@ fn text_style(style: &TextStyle) -> Result<(), String> {
 fn node_style(style: &NodeStyle) -> Result<(), String> {
     if let Some(Shape::Rectangle { radius }) = style.shape {
         named("shape.radius", bounds::check_percent(radius.get()))?;
-    }
-    if let Some(fade) = style.fill_fade {
-        named("fill_fade", bounds::check_non_negative(fade))?;
     }
     text_style(&style.text)
 }
@@ -826,6 +830,23 @@ pub struct MapSpec {
     pub bounded: Option<&'static str>,
     /// The header's `defaults`: each style and its JSON object.
     pub defaults: Vec<(String, String)>,
+    /// The header's `background`, if it has one.
+    pub background: Option<Background>,
+}
+
+/// A generated map's `background` (V1-B12).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Background {
+    /// A literal, as JSON text: `"#rrggbb"`, or `"#rrggbbaa"` for a
+    /// translucent one, which is refused.
+    Literal(String),
+    /// `"var(bg)"`, with a one-variant theme defining `bg` as this
+    /// literal — translucent or not, since a variable's alpha is not
+    /// the background's to refuse.
+    Var(String),
+    /// A spelling a background does not have, or a variable the map
+    /// does not define, as JSON text.
+    Unspelled(&'static str),
 }
 
 /// What was injected into a generated map.
@@ -1071,11 +1092,87 @@ pub fn generate(choices: &mut crate::util::tests::choices::Choices<'_>, most: u3
         3 => inject(choices, &mut nodes, &mut defaults),
         _ => (Fault::None, None),
     };
+    // No background here: `check_generated` draws it after its own
+    // steps' choices ([`draw_background`] says why).
     MapSpec {
         nodes,
         fault,
         bounded,
         defaults,
+        background: None,
+    }
+}
+
+/// A literal color drawn from `choices`, as JSON text: opaque, or with
+/// alpha digits below `ff` when `translucent`.
+fn hex(choices: &mut crate::util::tests::choices::Choices<'_>, translucent: bool) -> String {
+    let rgb = choices.below(1 << 24);
+    if translucent {
+        format!("\"#{rgb:06x}{:02x}\"", choices.below(255))
+    } else {
+        format!("\"#{rgb:06x}\"")
+    }
+}
+
+/// Give `spec` a background drawn from `choices` (V1-B12), and the fault
+/// the map then carries ([`background`]).
+///
+/// **Drawn after every choice an input made before backgrounds
+/// existed**, which is why it is not part of [`generate`]:
+/// [`check_generated`] draws it after its key order, its reorder and
+/// tamper flags and the tamper step's own choices ([`Tamper`]), and
+/// before the map is rendered. So a seed written before the background
+/// reads every one of its choices where it read them — the same nodes,
+/// fault, key order and tamper edits, reordered and tampered as it was —
+/// and its background is the zero past its end, which is none. Every
+/// seed a sweep wrote ends where its choices did (`Choices::replay`),
+/// and each of the 21 committed before the background ends by this
+/// draw. Before this draw moved here it
+/// sat inside `generate`, where it took the bytes the steps after it had
+/// read: across the 21 seeds committed before it, 15 reordered and 2
+/// tampered seeds became 3 and 0.
+/// `test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for`
+/// holds the corpus to keeping a reordered seed, a tampered one and a
+/// reordered background among them.
+fn draw_background(choices: &mut crate::util::tests::choices::Choices<'_>, spec: &mut MapSpec) {
+    let (drawn, fault) = background(choices, spec.fault.clone());
+    spec.background = drawn;
+    spec.fault = fault;
+}
+
+/// The map's background, and the fault the map then carries: none, a
+/// literal, a variable — each valid — or, on a map with no other fault,
+/// a translucent literal or a spelling a background lacks, which the
+/// loader refuses at `background` (it is read before any node).
+fn background(
+    choices: &mut crate::util::tests::choices::Choices<'_>,
+    fault: Fault,
+) -> (Option<Background>, Fault) {
+    let header_fault = |kind: &'static str| Fault::Content {
+        node: None,
+        path: "background".to_string(),
+        kind,
+    };
+    match choices.below(6) {
+        2 => (Some(Background::Literal(hex(choices, false))), fault),
+        3 => {
+            let translucent = choices.one_in(2);
+            (Some(Background::Var(hex(choices, translucent))), fault)
+        }
+        4 if fault == Fault::None => (
+            Some(Background::Literal(hex(choices, true))),
+            header_fault("TranslucentBackground"),
+        ),
+        5 if fault == Fault::None => {
+            let spelling = *choices.pick(&[r#""palette(text)""#, r##""#fff""##, "null", "7", r#""var()""#]);
+            let kind = if spelling == r#""var()""# {
+                "UnknownVariable"
+            } else {
+                "Invalid"
+            };
+            (Some(Background::Unspelled(spelling)), header_fault(kind))
+        }
+        _ => (None, fault),
     }
 }
 
@@ -1466,7 +1563,7 @@ const ORNAMENT: Bounded = Bounded::Length {
 /// structure's, which `corrupt` drives; the counts of palettes, theme
 /// variables and variants, verbs, edits and presentations are left to
 /// load_raw).
-pub static BOUNDED_FIELDS: [BoundedField; 115] = [
+pub static BOUNDED_FIELDS: [BoundedField; 113] = [
     BoundedField {
         name: "position x",
         needs: Needs::Nothing,
@@ -1506,14 +1603,6 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         template: "#",
         path: ".opacity",
         value: float(UNIT, unit),
-    },
-    BoundedField {
-        name: "fill_fade",
-        needs: Needs::Nothing,
-        key: "fill_fade",
-        template: "#",
-        path: ".fill_fade",
-        value: float(NON_NEGATIVE, non_negative),
     },
     BoundedField {
         name: "zoom min",
@@ -2007,14 +2096,6 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         template: r#", "kind": "portal", "ends": [{"spans": [{"text": "a", "weight": #}]}, {}]"#,
         path: ".ends[0].spans[0].weight",
         value: WEIGHT,
-    },
-    BoundedField {
-        name: "defaults node fill_fade",
-        needs: Needs::Defaults,
-        key: "node",
-        template: r#"{"fill_fade": #}"#,
-        path: ".node.fill_fade",
-        value: float(NON_NEGATIVE, non_negative),
     },
     BoundedField {
         name: "defaults node size",
@@ -2591,6 +2672,17 @@ pub fn render(spec: &MapSpec, order: u32) -> String {
         })
         .collect();
     let mut top = vec![r#""format": 1"#.to_string(), r#""name": "generated""#.to_string()];
+    match &spec.background {
+        None => {}
+        Some(Background::Literal(value)) => top.push(format!(r#""background": {value}"#)),
+        Some(Background::Unspelled(value)) => top.push(format!(r#""background": {value}"#)),
+        Some(Background::Var(value)) => {
+            top.push(format!(
+                r#""theme": {{"active": "a", "variants": {{"a": {{"bg": {value}}}}}}}"#
+            ));
+            top.push(r#""background": "var(bg)""#.to_string());
+        }
+    }
     if !spec.defaults.is_empty() {
         let styles: Vec<String> = spec
             .defaults
@@ -2789,6 +2881,26 @@ pub struct Generated {
     /// Whether it loaded and its document was tampered with and checked
     /// again.
     pub tampered: bool,
+    /// The background it was drawn with, if any.
+    pub background: Option<Background>,
+    /// What the tamper step read, when it tampered.
+    pub tamper: Option<TamperRead>,
+}
+
+/// What the tamper step did to an input it tampered with: the arm each
+/// edit **fired** (`0..7` its fault's, [`SECTION_ARM`] for a section's
+/// offset, in the order the edits apply — an edit with no arm for its
+/// target's kind changes nothing and is not listed) and the small
+/// element bound (`0..64`) it read, reduced as the step reduces it.
+/// Carried so that the seed corpus can pin a seed to reading the edits
+/// it read: a change to the order the step draws its choices in reads
+/// other edits from the same bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TamperRead {
+    /// The arm each edit that changed the document fired.
+    pub faults: Vec<u32>,
+    /// The small element bound the tampered document is checked under.
+    pub small: u32,
 }
 
 /// [`check_structured`] for a map drawn from `choices`, whatever their
@@ -2797,10 +2909,11 @@ pub fn check_generated(
     choices: &mut crate::util::tests::choices::Choices<'_>,
     most: u32,
 ) -> Result<Generated, String> {
-    let spec = generate(choices, most);
+    let mut spec = generate(choices, most);
     let order = 1 + choices.below(u32::MAX - 1);
     let reordered = choices.one_in(4);
-    let tamper = choices.one_in(4);
+    let tamper = choices.one_in(4).then(|| Tamper::draw(choices));
+    draw_background(choices, &mut spec);
     let text = render(&spec, 0);
     let result = load(&text);
     let context = |why: String| format!("{why}\n{text}");
@@ -2876,32 +2989,75 @@ pub fn check_generated(
         Fault::Structure => "structure",
         Fault::Content { .. } => "content",
     };
-    let (outcome, tampered) = match result {
+    let (outcome, tampered, fired) = match result {
         Ok(doc) => {
-            if tamper {
-                tampered_documents_agree(choices, doc)?;
-            }
-            (format!("{fault}: loaded"), tamper)
+            let tampered = tamper.is_some();
+            let fired = match &tamper {
+                Some(tamper) => tampered_documents_agree(tamper, doc)?,
+                None => Vec::new(),
+            };
+            (format!("{fault}: loaded"), tampered, fired)
         }
-        Err(error) => (format!("{fault}: {}", kind_name(&error.kind)), false),
+        Err(error) => (format!("{fault}: {}", kind_name(&error.kind)), false, Vec::new()),
     };
+    let tamper = tamper.filter(|_| tampered).map(|tamper| TamperRead {
+        faults: fired,
+        small: tamper.small % 64,
+    });
     Ok(Generated {
         outcome,
         reordered,
         tampered,
+        background: spec.background,
+        tamper,
     })
+}
+
+/// The tamper step's choices, drawn before the map is loaded.
+///
+/// They are drawn up front, in the order [`tampered_documents_agree`]
+/// reads them — how many edits, then each edit's target, other node and
+/// fault, then the small element bound — and reduced against the loaded
+/// document's ids only when they are applied. That keeps them where they
+/// were in the input before the background existed: the background
+/// ([`draw_background`]) is drawn after them, but must be part of the
+/// map before it can be loaded. Every raw choice is drawn whether or not
+/// the map then loads, so an input that does not load reads its zero
+/// past the end of the input or a choice nothing else reads.
+struct Tamper {
+    /// Each edit's raw target, other-node and fault choices.
+    edits: Vec<[u32; 3]>,
+    /// The raw choice of the small element bound.
+    small: u32,
+}
+
+impl Tamper {
+    fn draw(choices: &mut crate::util::tests::choices::Choices<'_>) -> Self {
+        let edits = (0..choices.below(3))
+            .map(|_| [choices.next_u32(), choices.next_u32(), choices.next_u32()])
+            .collect();
+        Tamper {
+            edits,
+            small: choices.next_u32(),
+        }
+    }
 }
 
 /// `doc` with up to two values a buggy writer could leave — a second
 /// node with one id, a fresh id, a position or opacity out of bounds, a
 /// size in the wrong unit, a link to itself or to no node — each drawn
-/// from `choices`; then `check_savable` must agree with the full build,
+/// from `tamper`; then `check_savable` must agree with the full build,
 /// under this target's limits and under an element bound small enough
 /// to be reached, and a document it passes must round-trip.
-fn tampered_documents_agree(
-    choices: &mut crate::util::tests::choices::Choices<'_>,
-    doc: Document,
-) -> Result<(), String> {
+///
+/// Each raw choice is reduced as `Choices` reduces one — modulo the
+/// count it chooses among — so a seed reads the same edits it read when
+/// this step drew them itself.
+///
+/// Returns the arm each edit **fired** — `0..7` its fault's, [`SECTION_ARM`]
+/// for a section's offset — in the order the edits apply: an edit whose
+/// fault has no arm for its target's kind changes nothing and is left out.
+fn tampered_documents_agree(tamper: &Tamper, doc: Document) -> Result<Vec<u32>, String> {
     use crate::document::ids::{get, IdentIndex, NodeIdent};
     let mut tree = doc.tree().clone();
     let ids: Vec<crate::arena::NodeId> = tree.descendants().collect();
@@ -2911,27 +3067,54 @@ fn tampered_documents_agree(
         .filter(|id| matches!(get(&tree, *id), Some(DocElement::Node(_))))
         .collect();
     if nodes.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    for _ in 0..choices.below(3) {
-        let target = *choices.pick(&ids);
-        let other = *choices.pick(&nodes);
+    let pick = |raw: u32, from: &[crate::arena::NodeId]| from[raw as usize % from.len()];
+    let mut fired = Vec::new();
+    for &[target, other, fault] in &tamper.edits {
+        let target = pick(target, &ids);
+        let other = pick(other, &nodes);
         let other_ident = match get(&tree, other) {
             Some(DocElement::Node(node)) => node.ident,
             _ => NodeIdent(1),
         };
-        let fault = choices.below(7);
-        let _ = tree.update(target, |element| match (fault, element) {
-            (0, DocElement::Node(node)) => node.ident = other_ident,
-            (1, DocElement::Node(node)) => node.ident = NodeIdent(bounds::MAX_NODE_IDENT),
-            (2, DocElement::Node(node)) => node.position = glam::Vec2::new(f32::NAN, 0.0),
-            (3, DocElement::Node(node)) => node.opacity = 1.5,
-            (4, DocElement::Span(span)) => span.style.size = Some(FontSize::Rel(0.5)),
-            (5, DocElement::Link(link)) => link.to = target,
-            (6, DocElement::Link(link)) => link.to = other,
-            (_, DocElement::Section(section)) => section.offset.y = 2.0e9,
-            _ => {}
+        let fault = fault % 7;
+        let arm = tree.update(target, |element| match (fault, element) {
+            (0, DocElement::Node(node)) => {
+                node.ident = other_ident;
+                Some(0)
+            }
+            (1, DocElement::Node(node)) => {
+                node.ident = NodeIdent(bounds::MAX_NODE_IDENT);
+                Some(1)
+            }
+            (2, DocElement::Node(node)) => {
+                node.position = glam::Vec2::new(f32::NAN, 0.0);
+                Some(2)
+            }
+            (3, DocElement::Node(node)) => {
+                node.opacity = 1.5;
+                Some(3)
+            }
+            (4, DocElement::Span(span)) => {
+                span.style.size = Some(FontSize::Rel(0.5));
+                Some(4)
+            }
+            (5, DocElement::Link(link)) => {
+                link.to = target;
+                Some(5)
+            }
+            (6, DocElement::Link(link)) => {
+                link.to = other;
+                Some(6)
+            }
+            (_, DocElement::Section(section)) => {
+                section.offset.y = 2.0e9;
+                Some(SECTION_ARM)
+            }
+            _ => None,
         });
+        fired.extend(arm.ok().flatten());
     }
     // The index a loader would build from this tree: each node under its
     // ident, the later of two with one ident winning.
@@ -2948,16 +3131,21 @@ fn tampered_documents_agree(
         .collect();
     let derived = Derived::scan(&tree, doc.definitions());
     let Ok(tampered) = Document::from_loaded(tree, doc.definitions().clone(), index, highest, derived) else {
-        return Ok(());
+        return Ok(fired);
     };
     savable_checks_agree(&tampered, LIMITS)?;
     let small = Limits {
         bytes: None,
-        elements: Some(u64::from(choices.below(64))),
+        elements: Some(u64::from(tamper.small % 64)),
     };
     savable_checks_agree(&tampered, small)?;
     if check_savable_under(&tampered, LIMITS).is_ok() {
         round_trips(&tampered)?;
     }
-    Ok(())
+    Ok(fired)
 }
+
+/// The arm the tamper step reports for an edit that moved a section's
+/// offset, which any fault does to a section: one past the seven fault
+/// arms.
+pub const SECTION_ARM: u32 = 7;

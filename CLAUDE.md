@@ -193,10 +193,10 @@ the parity trajectory (or why none is owed):
   limit and a map's cost grows both with its text and with the
   elements (and definitions) it becomes, and a short text can
   become many elements. A map's peak while it loads, and while it
-  is then saved, is modeled as `text × 7 + elements × 480` bytes
+  is then saved, is modeled as `text × 6 + elements × 480` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`), and
-  each limit takes half of a 3 GiB budget: **230,087,533 bytes of
-  text** (~219 MiB, refused before parsing) and **3,355,443
+  each limit takes half of a 3 GiB budget: **268,435,456 bytes of
+  text** (256 MiB, refused before parsing) and **3,355,443
   elements** (counted as the builder appends them, the one past it
   refused with `TooManyElements`). The two costs are measured, not
   chosen: the densest shape of each kind of content (empty

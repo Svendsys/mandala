@@ -80,7 +80,7 @@ fn test_a_palette_group_may_have_no_title() {
     // R5: `title` is optional, and an absent one is `None`, not a copy
     // of `text` (the first section takes `text` in the same tier).
     let doc = load(&map_with(
-        r##","palettes":{"p":[{"fill":"#010101","frame":"#020202","text":"#030303"},{"fill":"#010101","frame":"#020202","text":"#030303","title":"var(fg)"}]}"##,
+        r##","palettes":{"p":[{"frame":"#020202","text":"#030303"},{"frame":"#020202","text":"#030303","title":"var(fg)"}]}"##,
         "",
     ))
     .unwrap();
@@ -238,8 +238,8 @@ fn test_the_fit_spellings_read_and_the_bare_fit_means_the_built_in_bounds() {
 #[test]
 fn test_a_color_reads_in_every_spelling_the_schema_lists() {
     let fill = |written: &str| -> Option<ColorRef> {
-        let doc = load_node(&format!(r#","fill":"{written}""#)).unwrap();
-        node(&doc, 1).1.style.fill
+        let doc = load_node(&format!(r#","color":"{written}""#)).unwrap();
+        node(&doc, 1).1.style.text.color
     };
     assert_eq!(
         fill("#102030"),
@@ -250,7 +250,6 @@ fn test_a_color_reads_in_every_spelling_the_schema_lists() {
         Some(ColorRef::Rgba(Rgba::new(0x10, 0x20, 0x30, 0x40)))
     );
     assert_eq!(fill("var(fg)"), Some(ColorRef::Var(VarId(1))));
-    assert_eq!(fill("palette(fill)"), Some(ColorRef::Palette(PaletteField::Fill)));
     assert_eq!(
         fill("palette(frame)"),
         Some(ColorRef::Palette(PaletteField::Frame))
@@ -263,9 +262,9 @@ fn test_a_color_reads_in_every_spelling_the_schema_lists() {
     // One spelling: the saver writes what the loader accepts, in
     // lowercase and with no alpha digits when opaque, and the loader
     // accepts nothing else (`format_reject_tests` holds the refusals).
-    let doc = load_node(r##","fill":"#abcdef","color":"#10203040""##).unwrap();
+    let doc = load_node(r##","color":"#10203040","sections":[{"color":"#abcdef"}]"##).unwrap();
     let text = written(&doc);
-    assert!(text.contains("\"fill\": \"#abcdef\""), "{text}");
+    assert!(text.contains("\"color\": \"#abcdef\""), "{text}");
     assert!(text.contains("\"color\": \"#10203040\""), "{text}");
 }
 

@@ -53,7 +53,7 @@ fn test_text_shown_in_a_message_has_no_raw_control_but_keeps_its_quotes() {
     // Every kind that carries text from the file renders it through the
     // same escape.
     let error = LoadError::new(
-        "nodes[0].fill".to_string(),
+        "nodes[0].color".to_string(),
         LoadErrorKind::UnknownVariable {
             name: hostile.to_string(),
         },
@@ -143,13 +143,13 @@ fn test_an_excerpt_is_bounded_in_bytes_as_well_as_in_clusters() {
     assert_eq!(EXCERPT_BYTES, 256);
     // And an error on a node holding the long cluster stays short.
     let json = map_of(&format!(
-        r#","sections":[{{"spans":[{{"text":"{one_cluster}"}}]}}],"fill":"var(nope)""#
+        r#","sections":[{{"spans":[{{"text":"{one_cluster}"}}]}}],"color":"var(nope)""#
     ));
     let error = rejection(&json);
     assert_eq!(
         (error.path.as_str(), &error.kind),
         (
-            "nodes[0].fill",
+            "nodes[0].color",
             &LoadErrorKind::UnknownVariable {
                 name: "nope".to_string()
             }
@@ -185,7 +185,7 @@ fn test_a_key_from_the_file_is_escaped_in_a_path_wherever_it_is() {
     assert!(!rendered.chars().any(is_dangerous), "{rendered:?}");
     // A palette name refused for what it holds, at its own path.
     let error = rejection(&map_with(
-        &format!(r#","palettes":{{"{key}":[{{"fill":"var(bg)","frame":"var(bg)","text":"var(fg)"}}]}}"#),
+        &format!(r#","palettes":{{"{key}":[{{"frame":"var(bg)","text":"var(fg)"}}]}}"#),
         &node_of(1, ""),
     ));
     assert_eq!(
