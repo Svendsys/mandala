@@ -111,12 +111,14 @@ fn test_every_fuzz_seed_holds_its_targets_properties() {
 /// flow_structured_every_face's seeds named `pins_<face>_<seed>` pin that
 /// face (#297): its spans or its flow's style name it, read over the
 /// target's own list of faces, so the corpus starts from inputs that
-/// meet each ornament fallback face. Control: the seeds read over
-/// flow_structured's list instead, red on each.
+/// meet each ornament fallback face, and every one of them has a seed
+/// named for it. Controls: the seeds read over flow_structured's list
+/// instead, red on each; the emoji's seeds left out, red on
+/// `MandalaEmoji`.
 #[test]
 fn test_the_every_face_flow_seeds_pin_the_faces_they_are_named_for() {
     let faces = flow_fuzz::every_face();
-    let mut named = 0;
+    let mut named: Vec<crate::font::fonts::AppFont> = Vec::new();
     for (name, bytes) in files(&repo_path("fuzz/seeds/flow_structured_every_face")) {
         let pinned = flow_fuzz::check_flow_generated_in(&mut Choices::new(&bytes), &faces)
             .unwrap_or_else(|why| panic!("{name}: {why}"));
@@ -127,10 +129,15 @@ fn test_the_every_face_flow_seeds_pin_the_faces_they_are_named_for() {
         } else {
             continue;
         };
-        named += 1;
+        named.push(want);
         assert!(pinned.contains(&want), "{name} pins {pinned:?}, not {want:?}");
     }
-    assert!(named >= 2, "precondition: the named seeds are read ({named})");
+    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK {
+        assert!(
+            named.contains(font),
+            "no seed is named for {font:?}, so the corpus need not meet it ({named:?})"
+        );
+    }
 }
 
 #[test]
