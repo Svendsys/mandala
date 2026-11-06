@@ -27,7 +27,7 @@ type Check = fn(&[u8]) -> Result<(), String>;
 
 /// Every fuzz target: its name, the property function its file calls (as
 /// the file spells the call's last two segments) and the function.
-const TARGETS: [(&str, &str, Check); 6] = [
+const TARGETS: [(&str, &str, Check); 7] = [
     (
         "load_raw",
         "format_fuzz::check_load_bytes",
@@ -47,6 +47,11 @@ const TARGETS: [(&str, &str, Check); 6] = [
         "flow_structured",
         "flow_fuzz::check_flow_structured",
         flow_fuzz::check_flow_structured,
+    ),
+    (
+        "flow_structured_every_face",
+        "flow_fuzz::check_flow_structured_every_face",
+        flow_fuzz::check_flow_structured_every_face,
     ),
     (
         "glyph_mutation_raw",
@@ -100,6 +105,38 @@ fn test_every_fuzz_seed_holds_its_targets_properties() {
         for (seed, bytes) in &seeds {
             check(bytes).unwrap_or_else(|why| panic!("{name}/{seed}: {why}"));
         }
+    }
+}
+
+/// flow_structured_every_face's seeds named `pins_<face>_<seed>` pin that
+/// face (#297): its spans or its flow's style name it, read over the
+/// target's own list of faces, so the corpus starts from inputs that
+/// meet each ornament fallback face, and every one of them has a seed
+/// named for it. Controls: the seeds read over flow_structured's list
+/// instead, red on each; the emoji's seeds left out, red on
+/// `MandalaEmoji`.
+#[test]
+fn test_the_every_face_flow_seeds_pin_the_faces_they_are_named_for() {
+    let faces = flow_fuzz::every_face();
+    let mut named: Vec<crate::font::fonts::AppFont> = Vec::new();
+    for (name, bytes) in files(&repo_path("fuzz/seeds/flow_structured_every_face")) {
+        let pinned = flow_fuzz::check_flow_generated_in(&mut Choices::new(&bytes), &faces)
+            .unwrap_or_else(|why| panic!("{name}: {why}"));
+        let want = if name.starts_with("pins_mandala_emoji_") {
+            crate::font::fonts::AppFont::MandalaEmoji
+        } else if name.starts_with("pins_mandala_ornaments_") {
+            crate::font::fonts::AppFont::MandalaOrnaments
+        } else {
+            continue;
+        };
+        named.push(want);
+        assert!(pinned.contains(&want), "{name} pins {pinned:?}, not {want:?}");
+    }
+    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK {
+        assert!(
+            named.contains(font),
+            "no seed is named for {font:?}, so the corpus need not meet it ({named:?})"
+        );
     }
 }
 

@@ -466,10 +466,11 @@ fn test_flow_ring_budget_a_spent_ring_says_how_it_was_left() {
 /// (review 5800041728) — set by their ink, which is narrow beside their
 /// advance, so their steps are shorter than the advance their glyphs are
 /// estimated by, and each glyph works more. The review measured `✦ ·`,
-/// the ornament UNIFIED_ARCHITECTURE §6.2 names; no compiled face holds
-/// `✦`, so it is shaped by whatever face a host has (§T14), and the bar
-/// is the compiled faces' glyph of the same kind: ink a fifth of its
-/// advance.
+/// the ornament UNIFIED_ARCHITECTURE §6.2 names; no compiled face held
+/// `✦` then, so it was shaped by whatever face a host had (§T14), and the
+/// bar is the compiled faces' glyph of the same kind: ink a fifth of its
+/// advance. The compiled ornament face holds `✦` since #297; the sweep
+/// keeps the bar its numbers were measured on.
 const SWEEP: [(&str, &[f32]); 5] = [
     ("─═", &[1_000.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0]),
     ("· ", &[1_000.0, 5_000.0, 15_000.0, 20_000.0]),

@@ -16,7 +16,7 @@
 #     load_*               lib/baumhard/src/document/format/fixtures
 #                          lib/baumhard/src/document/tests/fuzz_findings
 #                          maps/*.mandala.json
-#     flow_raw, flow_structured
+#     flow_raw, flow_structured, flow_structured_every_face
 #                          lib/baumhard/src/flow/tests/fuzz_findings
 #     glyph_mutation_raw   lib/baumhard/src/gfx_structs/tests/fuzz_findings
 #
@@ -37,7 +37,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGETS=(load_raw load_structured flow_raw flow_structured glyph_mutation_raw glyph_mutation_structured)
+TARGETS=(load_raw load_structured flow_raw flow_structured flow_structured_every_face glyph_mutation_raw glyph_mutation_structured)
 
 usage() {
   sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -86,6 +86,7 @@ case "$TARGET" in
   load_structured) MAX_LEN=65536 ;;
   flow_raw) MAX_LEN=4096 ;;
   flow_structured) MAX_LEN=8192 ;;
+  flow_structured_every_face) MAX_LEN=8192 ;;
   glyph_mutation_raw) MAX_LEN=16384 ;;
   glyph_mutation_structured) MAX_LEN=8192 ;;
 esac
@@ -114,6 +115,11 @@ case "$TARGET" in
     CORPORA+=("lib/baumhard/src/flow/tests/fuzz_findings")
     ;;
   flow_structured)
+    CORPORA+=("lib/baumhard/src/flow/tests/fuzz_findings")
+    ;;
+  flow_structured_every_face)
+    # The flow findings as seeds, read over this target's own list of
+    # faces (#297): inputs to start from, not findings replayed.
     CORPORA+=("lib/baumhard/src/flow/tests/fuzz_findings")
     ;;
   glyph_mutation_raw)

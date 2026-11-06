@@ -21,7 +21,12 @@
 //! (`baumhard::flow`, #239) under the guard — shaping a run and a box,
 //! and the two placements that shape again, `Fit` and a `Once` filler —
 //! because that is the shaping path every frame, connector and section
-//! takes in the browser.
+//! takes in the browser. And it shapes the ornament fallback there
+//! (#297): a `✦` in a Galatia SIL span drawn in `Mandala Ornaments`, a
+//! `🌸` in `Mandala Emoji`, and a `~` in a span that pins no face drawn
+//! in `Mandala Ornaments` rather than the decorative face the browser's
+//! search met first before (the one case of the three the fallback's
+//! order decides there, so the one its control turns red).
 //!
 //! **It also runs the tree walks 100,000 levels deep** — the mutation
 //! validator over a deep mutator tree, and every arena, engine and

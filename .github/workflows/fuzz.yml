@@ -83,6 +83,7 @@ jobs:
           - load_structured
           - flow_raw
           - flow_structured
+          - flow_structured_every_face
           - glyph_mutation_raw
           - glyph_mutation_structured
     steps:

@@ -18,6 +18,11 @@ pub mod attrs;
 /// back. Single source of byte↔float quantization at the cosmic-text
 /// wall.
 pub mod color;
+/// The ornament fallback (#297): the compiled faces a glyph a span's
+/// face lacks falls back to before any host face
+/// ([`fallback::ORNAMENT_FALLBACK`]), and the font system built to reach
+/// them first.
+pub mod fallback;
 /// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text editor
 /// factories, and the text-measurement primitives.
 pub mod fonts;

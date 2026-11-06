@@ -748,6 +748,7 @@ decoders and every regression test compile and run on stable, in every
 | `load_structured` | the loader, maps built from choices | `document::tests::format_fuzz::check_structured` |
 | `flow_raw` | TextFlow (B5), any bytes as text | `flow::tests::flow_fuzz::check_flow_bytes` |
 | `flow_structured` | TextFlow, spans and geometry from choices | `flow::tests::flow_fuzz::check_flow_structured` |
+| `flow_structured_every_face` | the same, its faces from `every_face()`: `faces()` and the ornament fallback's (#297) | `flow::tests::flow_fuzz::check_flow_structured_every_face` |
 | `glyph_mutation_raw` | authored run mutations (B6; there is no fill since B12), any bytes as JSON | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_json` |
 | `glyph_mutation_structured` | the same, built from choices | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_structured` |
 
@@ -796,7 +797,14 @@ What they hold, in short (each module's docs are the full list):
   remove (R30.1). The suite's sweep, with the decoys, is the
   deterministic half of R30's regression; the fuzz targets, which build
   baumhard without them, are the other half, and what they can catch
-  depends on the host's fonts.
+  depends on the host's fonts. The generator's face list, `faces()`,
+  never changes length: a choice picks a face modulo it, so a face added
+  moves every committed structured seed and finding to another face, and
+  silently, since each still passes. Faces it lacks that a map can pin,
+  the ornament fallback's two (#297), are drawn from `every_face()`, by
+  flow_structured_every_face with seeds of its own and by
+  `test_generated_flows_over_every_face_hold_every_flow_property`, whose
+  precondition is that each of them is pinned.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and
@@ -890,7 +898,10 @@ leave their shaping and inking room within the per-input bound below
 host face holds it, or as a `.notdef`, weighed 2,200 steps, where none
 does — on CI, which has few host faces — so a harness counts what it
 shapes on the host it runs on, and a fixture names glyphs the compiled
-faces hold. To see what CI sees, point `FONTCONFIG_FILE` at a config
+faces hold. The ornament fallback's glyphs are among them since #297
+(the space, `+ ~ · ∙ ◈ ♪ ✦ ❦` and `🌸`, `format/fonts.md` "Ornament
+fallback"): a span whose face lacks one draws it in a compiled ornament
+face on every host, before any host face. To see what CI sees, point `FONTCONFIG_FILE` at a config
 whose one `<dir>` is empty: the host's faces are then not indexed, and
 the compiled ones alone remain. A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times

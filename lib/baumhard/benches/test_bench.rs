@@ -47,6 +47,7 @@ use baumhard::font::tests::hex_tests::*;
 use baumhard::font::tests::metric_cache_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::font::tests::name_rules_tests::*;
+use baumhard::font::tests::ornament_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
 use baumhard::gfx_structs::tests::builder_tests::*;
 use baumhard::gfx_structs::tests::bvh_descent_tests::*;
@@ -1306,6 +1307,22 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function(
         "no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks",
         |b| b.iter(do_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks),
+    );
+    // The ornament fallback (#297): two character-map reads, one file
+    // read and parse, and a pinned-family lookup under the font guard.
+    c.bench_function("each_ornament_face_holds_exactly_its_listed_code_points", |b| {
+        b.iter(do_each_ornament_face_holds_exactly_its_listed_code_points)
+    });
+    c.bench_function(
+        "the_regeneration_script_subsets_exactly_the_listed_code_points",
+        |b| b.iter(do_the_regeneration_script_subsets_exactly_the_listed_code_points),
+    );
+    c.bench_function("every_built_in_ornament_is_an_ornament_face_glyph", |b| {
+        b.iter(do_every_built_in_ornament_is_an_ornament_face_glyph)
+    });
+    c.bench_function(
+        "each_ornament_fallback_names_its_faces_family_at_every_weight",
+        |b| b.iter(do_each_ornament_fallback_names_its_faces_family_at_every_weight),
     );
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
         b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
