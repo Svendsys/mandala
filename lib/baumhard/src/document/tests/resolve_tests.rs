@@ -1425,3 +1425,107 @@ pub fn do_document_resolve_background() {
         "a variable the theme lacks"
     );
 }
+
+#[test]
+fn test_document_resolve_carried_binding_resolves_what_the_climb_does() {
+    do_document_resolve_carried_binding_resolves_what_the_climb_does();
+}
+
+/// A walk that carries each node's palette binding down with
+/// [`carry_binding`](crate::document::resolve::carry_binding) resolves
+/// every text and every ring to exactly what the one-off climb resolves,
+/// and records the one carried value of the owning node in place of the
+/// climb's `palette` reads of every node above it. The example's palette
+/// colors three depths differently, and a node two levels below the
+/// binding takes the group two levels down, so a carried value one level
+/// off resolves another color.
+pub fn do_document_resolve_carried_binding_resolves_what_the_climb_does() {
+    use crate::document::element::DocKind;
+    use crate::document::ids::owning_node;
+    use crate::document::resolve::{
+        carry_binding, resolve_ring_in, resolve_text_in, Binding, CarriedBinding,
+    };
+    let (builder, ids) = example();
+    let tree = builder.tree();
+    // Top-down: the tree's descendants are in pre-order, so a node's
+    // parent is carried before the node is.
+    let mut carried: rustc_hash::FxHashMap<NodeId, Option<CarriedBinding>> = Default::default();
+    for id in tree.descendants() {
+        if tree.arena()[id].get().kind() != DocKind::Node {
+            continue;
+        }
+        let parent = id
+            .parent(tree.arena())
+            .and_then(|p| carried.get(&p).copied())
+            .flatten();
+        carried.insert(id, carry_binding(tree, id, parent, &mut ()));
+    }
+    assert_eq!(
+        carried[&ids.c],
+        Some(CarriedBinding {
+            palette: crate::document::values::PaletteId(0),
+            steps: 2
+        }),
+        "c is two levels below a, which binds the palette"
+    );
+    assert_eq!(
+        resolve_text(tree, ids.b_span, &mut ()).color,
+        Rgba::opaque(11, 11, 0),
+        "the fixture colors b's span, its first section's, from its group's title: the palette tier is reached"
+    );
+    let mut compared = 0;
+    for id in tree.descendants() {
+        let element = tree.arena()[id].get();
+        let Some(node) = owning_node(tree, id) else {
+            continue;
+        };
+        let binding = Binding::Carried(carried[&node]);
+        let holds_text = element.text_style().is_some()
+            || matches!(
+                element.kind(),
+                DocKind::Connector | DocKind::Link | DocKind::PortalEnd
+            );
+        if holds_text {
+            assert_eq!(
+                resolve_text_in(tree, id, binding, &mut ()),
+                resolve_text(tree, id, &mut ()),
+                "the text of {:?}",
+                element.kind()
+            );
+            compared += 1;
+        }
+        if element.kind() == DocKind::Ring {
+            assert_eq!(
+                resolve_ring_in(tree, id, binding, &mut ()),
+                crate::document::resolve::resolve_ring(tree, id, &mut ()),
+                "the ring"
+            );
+        }
+    }
+    assert!(compared > 20, "every text of the example compared: {compared}");
+
+    // The reads: the carried value of the owning node, and nothing above.
+    let mut carried_reads: Vec<Input> = Vec::new();
+    let before = crate::document::resolve::climb_steps::taken();
+    resolve_text_in(tree, ids.b_span, Binding::Carried(carried[&ids.b]), &mut carried_reads);
+    assert_eq!(
+        crate::document::resolve::climb_steps::taken(),
+        before,
+        "a carried binding climbs nothing"
+    );
+    assert!(carried_reads.contains(&Input::Binding(ids.b)));
+    assert!(
+        !carried_reads.contains(&Input::PaletteBinding(ids.a)),
+        "nothing above b is read: {carried_reads:?}"
+    );
+    let mut climbed_reads: Vec<Input> = Vec::new();
+    resolve_text(tree, ids.b_span, &mut climbed_reads);
+    assert!(
+        crate::document::resolve::climb_steps::taken() > before,
+        "the one-off climbs"
+    );
+    assert!(
+        climbed_reads.contains(&Input::PaletteBinding(ids.a)),
+        "and reads the binding node's palette field: {climbed_reads:?}"
+    );
+}

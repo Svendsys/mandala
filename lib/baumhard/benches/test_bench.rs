@@ -1837,6 +1837,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_resolve_node_chain", |b| {
         b.iter(do_document_resolve_node_chain)
     });
+    c.bench_function("document_resolve_carried_binding_resolves_what_the_climb_does", |b| {
+        b.iter(do_document_resolve_carried_binding_resolves_what_the_climb_does)
+    });
     c.bench_function("document_resolve_background", |b| {
         b.iter(do_document_resolve_background)
     });
