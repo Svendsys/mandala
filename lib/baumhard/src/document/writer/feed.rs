@@ -11,8 +11,22 @@
 //! record also carries the [address](crate::document::writer::feed::RemovedAddress)
 //! each removed element had, captured when it left; that is what the IPC
 //! event stream reports it by (V1-E2).
+//!
+//! **What changed for the readers rides along** (ruling B7.2 on #241). A
+//! reader of the current state cannot tell which of an element's
+//! resolution inputs a change touched, nor which parent a removed
+//! subtree hung from, and the projector needs both: it re-resolves only
+//! the readers of what changed ([`inputs_changed`]), and a children row
+//! that gained or lost an element (which section is a node's first)
+//! dirties the readers of that row. So a record also carries
+//! [`inputs`](crate::document::writer::feed::ChangeRecord::inputs) and
+//! [`rows`](crate::document::writer::feed::ChangeRecord::rows), read from
+//! the journals' own images and positions by
+//! [`effects`](crate::document::writer::feed::effects) — never from the
+//! document, which it is not given.
 
 use crate::arena::NodeId;
+use crate::document::deps::{inputs_changed, InputKind};
 use crate::document::element::{DocElement, DocKind};
 use crate::document::ids::{owning_node, NodeIdent};
 use crate::document::writer::{ChangeSource, Revision};
@@ -45,6 +59,66 @@ pub struct ChangeRecord {
     /// Every element the change took out of the tree, with the address it
     /// had there.
     pub removed: Vec<(NodeId, RemovedAddress)>,
+    /// For every element the change left in the tree with another value
+    /// ([`Touch::Field`]), each kind of resolution input the change
+    /// touched: [`inputs_changed`] of its image before the change and its
+    /// image after, in the direction the change went (an undo compares
+    /// the edit's after-image with its before-image). An element named
+    /// once per journal the change wrote can be named once per journal
+    /// here.
+    pub inputs: Vec<(NodeId, InputKind)>,
+    /// Every element whose children row the change rearranged: the parent
+    /// before and the parent after of each element the change inserted,
+    /// removed, re-parented or moved within its row — of a subtree, its
+    /// top's, the elements under it keeping their parents. A parent that
+    /// is both is named once per element.
+    pub rows: Vec<NodeId>,
+}
+
+/// What `journal`, written forward — or backward when `back` — changed
+/// for the readers of the document: the input kinds of each element it
+/// left in the tree with another value, appended to `inputs`, and every
+/// parent whose row it rearranged, appended to `rows`
+/// ([`ChangeRecord::inputs`], [`ChangeRecord::rows`]).
+///
+/// Reads the journal alone — its images and its positions. It is not
+/// given the document, so a record costs no walk of it, whatever the
+/// document's size (ruling B7.2 on #241). Cost: O(the journal's
+/// touches), each a hash lookup or two and one [`inputs_changed`] of two
+/// images. No clone.
+pub(super) fn effects(
+    journal: &Journal<DocElement>,
+    back: bool,
+    inputs: &mut Vec<(NodeId, InputKind)>,
+    rows: &mut Vec<NodeId>,
+) {
+    for (id, touch) in journal.touched() {
+        if touch == Touch::Field {
+            field_inputs(journal, id, back, inputs);
+        }
+        if let Some((before, after)) = journal.parents(id) {
+            rows.extend(before);
+            if after != before {
+                rows.extend(after);
+            }
+        }
+    }
+}
+
+/// The input kinds a change to `id` touched, from `journal`'s two images
+/// of it in the direction `back` names, appended to `inputs`. Nothing for
+/// an element the journal holds no images of. O(1); no clone.
+pub(super) fn field_inputs(
+    journal: &Journal<DocElement>,
+    id: NodeId,
+    back: bool,
+    inputs: &mut Vec<(NodeId, InputKind)>,
+) {
+    let (Some(before), Some(after)) = (journal.before(id), journal.after(id)) else {
+        return;
+    };
+    let (from, to) = if back { (after, before) } else { (before, after) };
+    inputs.extend(inputs_changed(from, to).map(|kind| (id, kind)));
 }
 
 /// Where an element was when it was taken out of the tree, in the terms

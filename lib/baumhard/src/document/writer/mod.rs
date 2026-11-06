@@ -55,7 +55,7 @@ use crate::document::format::{self, Limits, SaveError};
 use crate::document::ids::Document;
 use crate::document::mutation::step::DocStep;
 use crate::document::writer::error::ApplyError;
-use crate::document::writer::feed::{addresses, reversed, Arrangement, ChangeRecord, RemovedAddress};
+use crate::document::writer::feed::{addresses, effects, reversed, Arrangement, ChangeRecord, RemovedAddress};
 use crate::document::writer::history::History;
 use crate::document::writer::transaction::{inserted_by, removed_by, Open, TransactionKind};
 use crate::document::writer::upkeep::Direction;
@@ -235,12 +235,17 @@ impl Document {
             }
             let removed = addresses(&doc.tree, removed_by(&journal), Arrangement::Before(&journal));
             doc.account(&journal, Direction::Forward);
-            let touched = journal.touched().collect();
+            let mut change = Change {
+                touched: journal.touched().collect(),
+                removed,
+                ..Change::default()
+            };
+            effects(&journal, false, &mut change.inputs, &mut change.rows);
             let revision = doc.advance();
             doc.writer
                 .history
                 .push(&mut doc.tree, vec![journal], source, label, revision);
-            doc.push_change(source, touched, removed);
+            doc.push_change(source, change);
             Ok(revision)
         })
     }
@@ -266,8 +271,7 @@ impl Document {
                 Settled::Nothing | Settled::Committed => {}
             }
             let mut entry = doc.writer.history.take_applied()?;
-            let mut touched = Vec::new();
-            let mut removed = Vec::new();
+            let mut change = Change::default();
             for (i, journal) in entry.journals.iter().enumerate().rev() {
                 let leaving = addresses(&doc.tree, inserted_by(journal), Arrangement::Current);
                 if let Err(error) = journal.revert(&mut doc.tree) {
@@ -285,13 +289,16 @@ impl Document {
                     return None;
                 }
                 doc.account(journal, Direction::Backward);
-                touched.extend(journal.touched().map(|(id, touch)| (id, reversed(touch))));
-                removed.extend(leaving);
+                change
+                    .touched
+                    .extend(journal.touched().map(|(id, touch)| (id, reversed(touch))));
+                change.removed.extend(leaving);
+                effects(journal, true, &mut change.inputs, &mut change.rows);
             }
             let revision = doc.advance();
             entry.revision = revision;
             doc.writer.history.push_undone(entry);
-            doc.push_change(ChangeSource::Undo, touched, removed);
+            doc.push_change(ChangeSource::Undo, change);
             Some(revision)
         })
     }
@@ -317,8 +324,7 @@ impl Document {
             let Some(mut entry) = doc.writer.history.take_undone() else {
                 return (settled == Settled::Committed).then(|| doc.revision());
             };
-            let mut touched = Vec::new();
-            let mut removed = Vec::new();
+            let mut change = Change::default();
             for (i, journal) in entry.journals.iter().enumerate() {
                 let leaving = addresses(&doc.tree, removed_by(journal), Arrangement::Current);
                 if let Err(error) = journal.replay(&mut doc.tree) {
@@ -335,13 +341,14 @@ impl Document {
                     return None;
                 }
                 doc.account(journal, Direction::Forward);
-                touched.extend(journal.touched());
-                removed.extend(leaving);
+                change.touched.extend(journal.touched());
+                change.removed.extend(leaving);
+                effects(journal, false, &mut change.inputs, &mut change.rows);
             }
             let revision = doc.advance();
             entry.revision = revision;
             doc.writer.history.push_redone(entry);
-            doc.push_change(ChangeSource::Redo, touched, removed);
+            doc.push_change(ChangeSource::Redo, change);
             Some(revision)
         })
     }
@@ -462,14 +469,15 @@ impl Document {
         Revision(self.writer.revision)
     }
 
-    /// Append a record at the current revision, unless it touched
-    /// nothing. O(1).
-    fn push_change(
-        &mut self,
-        source: ChangeSource,
-        touched: Vec<(NodeId, Touch)>,
-        removed: Vec<(NodeId, RemovedAddress)>,
-    ) {
+    /// Append a record of `change` at the current revision, unless it
+    /// touched nothing. O(1).
+    fn push_change(&mut self, source: ChangeSource, change: Change) {
+        let Change {
+            touched,
+            removed,
+            inputs,
+            rows,
+        } = change;
         if touched.is_empty() && removed.is_empty() {
             return;
         }
@@ -478,6 +486,22 @@ impl Document {
             revision: self.revision(),
             touched,
             removed,
+            inputs,
+            rows,
         });
     }
+}
+
+/// What a change has done, for its record: the four lists a
+/// [`ChangeRecord`] carries beside its source and revision.
+#[derive(Debug, Default)]
+pub(super) struct Change {
+    /// [`ChangeRecord::touched`].
+    pub(super) touched: Vec<(NodeId, Touch)>,
+    /// [`ChangeRecord::removed`].
+    pub(super) removed: Vec<(NodeId, RemovedAddress)>,
+    /// [`ChangeRecord::inputs`].
+    pub(super) inputs: Vec<(NodeId, crate::document::deps::InputKind)>,
+    /// [`ChangeRecord::rows`].
+    pub(super) rows: Vec<NodeId>,
 }

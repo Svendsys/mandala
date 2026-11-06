@@ -75,5 +75,6 @@ pub(crate) mod test_support;
 mod writer_cost_tests;
 /// What the writer's tests share.
 pub(crate) mod writer_support;
+pub mod writer_feed_tests;
 pub mod writer_tests;
 pub mod writer_transaction_tests;

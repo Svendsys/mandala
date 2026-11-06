@@ -1540,8 +1540,13 @@ and a request cannot declare them). Nothing outside `document` holds a
   — its source, the revision, every element it touched with how
   (`Touch`), and the address (`RemovedAddress`: the owning node's
   ident, the kind, the channel, the index among its siblings) of each
-  element it took out of the tree. The projector (V1-B7) and IPC's
-  event stream (V1-E2) read it; neither diffs anything.
+  element it took out of the tree. Beside them, read from the journals
+  the change wrote and never from the document (ruling B7.2 on #241):
+  the resolution input kinds each element it changed touched
+  (`ChangeRecord::inputs`, `inputs_changed` of the element's two
+  images in the change's direction), and every parent whose children
+  row it rearranged (`ChangeRecord::rows`). The projector (V1-B7) and
+  IPC's event stream (V1-E2) read it; neither diffs anything.
 - **One funnel.** Every call that changes the tree runs through one
   private method, `mutate`, where the presentation layer (V1-D2) will
   revert and re-apply around each change.

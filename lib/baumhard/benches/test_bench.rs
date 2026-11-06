@@ -20,6 +20,7 @@ use baumhard::document::tests::mutation_validate_tests::*;
 use baumhard::document::tests::resolve_tests::*;
 use baumhard::document::tests::shape_tests::*;
 use baumhard::document::tests::structure_tests::*;
+use baumhard::document::tests::writer_feed_tests::*;
 use baumhard::document::tests::writer_tests::*;
 use baumhard::document::tests::writer_transaction_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
@@ -2009,6 +2010,18 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("writer_feed_names_what_each_change_touched", |b| {
         b.iter(do_writer_feed_names_what_each_change_touched)
+    });
+    c.bench_function("writer_feed_reports_input_kinds_and_undo_reverses_them", |b| {
+        b.iter(do_writer_feed_reports_input_kinds_and_undo_reverses_them)
+    });
+    c.bench_function("writer_feed_a_stage_replacing_a_stage_reports_both_journals", |b| {
+        b.iter(do_writer_feed_a_stage_replacing_a_stage_reports_both_journals)
+    });
+    c.bench_function("writer_feed_removing_a_first_section_reports_its_nodes_row", |b| {
+        b.iter(do_writer_feed_removing_a_first_section_reports_its_nodes_row)
+    });
+    c.bench_function("writer_feed_a_move_reports_both_parents", |b| {
+        b.iter(do_writer_feed_a_move_reports_both_parents)
     });
     c.bench_function("writer_holds_edits_to_the_platform_budget", |b| {
         b.iter(do_writer_holds_edits_to_the_platform_budget)
