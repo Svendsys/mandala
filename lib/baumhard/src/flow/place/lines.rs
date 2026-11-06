@@ -354,7 +354,7 @@ pub(crate) fn place_lines(
     fit: &FitMode,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let work = Work::new(run.glyphs.len().min(MAX_PLACED_GLYPHS));
@@ -371,7 +371,7 @@ pub(crate) fn place_lines_in(
     fit: &FitMode,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
     work: &Work,
 ) -> (Option<ShapedRun>, PlacedRun) {
@@ -395,7 +395,7 @@ pub(crate) fn frame_lines(
     fit: &FitMode,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
     work: &Work,
 ) -> (Option<ShapedRun>, PlacedRun) {
@@ -411,7 +411,7 @@ fn lay_lines(
     fit: &FitMode,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
     centered: bool,
     work: &Work,
@@ -465,7 +465,7 @@ fn lay_lines(
             )
         }
         FitMode::Once { filler: Some(filler) } => {
-            let filled = reshape(run, 1.0, Some((filler, flow)), fs);
+            let filled = reshape(run, 1.0, Some((filler, flow)), fs.fonts());
             work.shaped(&filled);
             (Some(filled), Some(()))
         }
@@ -590,13 +590,13 @@ fn fit_reshape(
     outward: bool,
     mut scale: f32,
     low: f32,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     work: &Work,
 ) -> Option<ShapedRun> {
-    let shaped = |scale: f32, fs: &mut FontSystemWriteGuard| {
+    let shaped = |scale: f32, fs: &mut FontSystemLease| {
         #[cfg(test)]
         super::halves::FIT_RESHAPES.with(|count| count.set(count.get() + 1));
-        let reshaped = reshape(run, scale, None, fs);
+        let reshaped = reshape(run, scale, None, fs.fonts());
         work.shaped(&reshaped);
         reshaped
     };

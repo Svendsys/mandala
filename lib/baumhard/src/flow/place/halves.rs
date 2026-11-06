@@ -4492,7 +4492,7 @@ fn side_run(
     run: &ShapedRun,
     sides: &Option<(String, Rgba)>,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     work: &Work,
 ) -> Option<(ShapedRun, Range<usize>)> {
     let (content, color) = sides.as_ref()?;
@@ -4505,7 +4505,7 @@ fn side_run(
     if size.partial_cmp(&0.0) != Some(Ordering::Greater) {
         return None;
     }
-    let at = |text: &str, size: f32, fs: &mut FontSystemWriteGuard| {
+    let at = |text: &str, size: f32, fs: &mut FontSystemLease| {
         let style = ResolvedText {
             size: FontSize::Pt(size),
             ..*flow
@@ -4521,7 +4521,7 @@ fn side_run(
         );
         work.shaped(&shaped);
         work.inked(&shaped);
-        let fsys: &mut FontSystem = fs;
+        let fsys = fs.fonts();
         inked(&shaped, fsys)
             .glyphs
             .iter()
@@ -4540,7 +4540,7 @@ fn side_run(
         color: *color,
         ..*flow
     };
-    let fsys: &mut FontSystem = fs;
+    let fsys = fs.fonts();
     let with = reshape(run, 1.0, Some((content.as_str(), &style)), fsys);
     work.shaped(&with);
     let start = with.glyphs.iter().position(|g| g.span == FILLER_SPAN)?;
@@ -4953,7 +4953,7 @@ pub(super) fn place_halves(
     layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let span = layout.span.get();
@@ -4963,7 +4963,7 @@ pub(super) fn place_halves(
     // parted it, then by the lines it parted.
     let work = Work::new(run.glyphs.len().min(glyph_cap()));
     // R27's placement, laid in full only for a frame that keeps it.
-    let keep_r27 = |trace: Option<&mut Trace>, fs: &mut FontSystemWriteGuard, work: &Work| {
+    let keep_r27 = |trace: Option<&mut Trace>, fs: &mut FontSystemLease, work: &Work| {
         let mut natural_trace = Trace::default();
         let placed = place_lines_in(
             run,
@@ -5059,13 +5059,13 @@ pub(super) fn place_halves(
     // does not fit its half less the seed at its font's gap (one `track`
     // a line), before any clearance is grown: what a shrink's probe
     // looks at first (ruling R35.3).
-    let build = |scale: f32, seed: Clear, cheap: bool, fs: &mut FontSystemWriteGuard| {
+    let build = |scale: f32, seed: Clear, cheap: bool, fs: &mut FontSystemLease| {
         #[cfg(test)]
         BUILDS.with(|count| count.set(count.get() + 1));
         let scaled = if scale == 1.0 {
             base.clone()
         } else {
-            let fsys: &mut FontSystem = fs;
+            let fsys = fs.fonts();
             let scaled = reshape(&base, scale, None, fsys);
             lay.work.shaped(&scaled);
             scaled
@@ -5076,7 +5076,7 @@ pub(super) fn place_halves(
         };
         lay.work.inked(&drawn);
         lay.work.take(band_steps(&drawn));
-        let fsys: &mut FontSystem = fs;
+        let fsys = fs.fonts();
         // Each span's band center, what every glyph's anchor on the
         // frame's band curve is read from (#308, ruling B15.1).
         let (drawn, centers) = inked_with_bands(&drawn, fsys);
@@ -5652,13 +5652,13 @@ pub(crate) fn side_floor_seam(
     ornament: &str,
     n: usize,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> Option<(ShapedRun, Vec<PlacedGlyph>, f32)> {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
     let lay = Layout::new(&halves, true, Work::new(0), Vec::new());
     let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
     let (with, range) = side_run(run, &sides, flow, fs, &lay.work)?;
-    let fsys: &mut FontSystem = fs;
+    let fsys = fs.fonts();
     let drawn = inked(&with, fsys);
     letters_of(&clusters_of(&drawn.glyphs, 0..range.start))?;
     let side = SideOrnament::new(&lay, &drawn, range);
@@ -5686,13 +5686,13 @@ pub(crate) fn side_solve_seam(
     ornament: &str,
     n: usize,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> Option<(f32, bool)> {
     let halves = Halves::new(outline, MIN_TABLE_SPACING);
     let lay = Layout::new(&halves, true, Work::new(0), Vec::new());
     let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
     let (with, range) = side_run(run, &sides, flow, fs, &lay.work)?;
-    let fsys: &mut FontSystem = fs;
+    let fsys = fs.fonts();
     let drawn = inked(&with, fsys);
     letters_of(&clusters_of(&drawn.glyphs, 0..range.start))?;
     let side = SideOrnament::new(&lay, &drawn, range);

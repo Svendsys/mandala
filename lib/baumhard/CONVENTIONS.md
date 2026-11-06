@@ -294,6 +294,17 @@ access to it.
   Do not add a timing read before the first acquire attempt;
   `tests/wasm_font_lock.rs` runs the helper on wasm32 and fails if it
   does.
+- **Work that reads no font does not hold the lock.** A guard holds
+  the lock for as long as it lives; a long computation over runs
+  already shaped (a placement's walks and lays) holds it in a
+  `FontSystemLease` instead, which takes the lock through
+  `acquire_font_system_write` when a font is asked of it (`fonts()`)
+  and gives it back for a closure that reads none (`unlocked(f)`).
+  Holding nothing is a lease's ordinary state, not an invariant that
+  could fail, so the guard type itself never has an unheld state.
+  Before it (#308) one placement held the lock some 5 s in a debug
+  build, and test threads queued behind three such holds waited past
+  the 60 s timeout under load.
 - **A caller already holding the guard measures via a `*_with`
   variant, never a nested acquire.** Thread the live
   `&mut FontSystem` into the composable API — `metric_cache::glyph_*_with`,

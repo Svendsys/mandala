@@ -801,11 +801,7 @@ fn refuse_if_poisoned(site: &'static str) {
 /// release: clearing this thread's holding record and marking the
 /// lock poisoned if the holder is unwinding.
 pub struct FontSystemWriteGuard {
-    /// The lock's own guard: `None` only while [`unlocked`](Self::unlocked)
-    /// runs its closure, the lock released.
-    guard: Option<RecursiveRwLockWriteGuard<'static, FontSystem>>,
-    /// Where it was taken, what its records and messages name.
-    site: &'static str,
+    guard: RecursiveRwLockWriteGuard<'static, FontSystem>,
     /// Whether this thread was already unwinding when it took the
     /// guard. Such a guard is taken by cleanup code running *during* a
     /// panic that began elsewhere; that panic cannot have interrupted
@@ -818,63 +814,13 @@ pub struct FontSystemWriteGuard {
 impl Deref for FontSystemWriteGuard {
     type Target = FontSystem;
     fn deref(&self) -> &FontSystem {
-        self.guard
-            .as_ref()
-            .expect("a write guard holds the lock outside `unlocked`")
+        &self.guard
     }
 }
 
 impl DerefMut for FontSystemWriteGuard {
     fn deref_mut(&mut self) -> &mut FontSystem {
-        self.guard
-            .as_mut()
-            .expect("a write guard holds the lock outside `unlocked`")
-    }
-}
-
-impl FontSystemWriteGuard {
-    /// Run `f` with the lock released, and take it back before
-    /// returning: for work that holds a guard it reads nothing through —
-    /// a placement's walks and lays, once its runs are shaped and inked
-    /// — so that other threads are not held off the font system for all
-    /// of it (#308: a frame of 65,000 side copies, or a `Repeat` ring of
-    /// as many glyphs, held the lock some 5 s each in a debug build, and
-    /// four test threads queued behind such holds waited past the 60 s
-    /// a write guard waits, under load).
-    ///
-    /// The lock is taken back as [`acquire_font_system_write`] takes it,
-    /// at most [`FONT_SYSTEM_LOCK_TIMEOUT`], panicking past it. While `f`
-    /// runs this thread holds no record of the lock, so `f` may take it
-    /// afresh; a panic in `f` leaves the guard empty, the lock not held,
-    /// and so poisons nothing.
-    ///
-    /// Cost: one release and one acquire of the lock.
-    pub fn unlocked<R>(&mut self, f: impl FnOnce() -> R) -> R {
-        set_writer(None);
-        update_held(|held| held.write_site = None);
-        drop(self.guard.take());
-        let out = f();
-        refuse_reentry(self.site, Access::Write);
-        match FONT_SYSTEM.try_write_for(FONT_SYSTEM_LOCK_TIMEOUT) {
-            Some(guard) => {
-                update_held(|held| held.write_site = Some(self.site));
-                set_writer(Some((self.site, this_thread())));
-                self.guard = Some(guard);
-                refuse_if_poisoned(self.site);
-            }
-            None => {
-                let holder = match current_writer() {
-                    Some((holder_site, thread)) => format!("`{holder_site}` on {thread:?}"),
-                    None => "reader(s), which hold no write record".to_string(),
-                };
-                panic!(
-                    "FONT_SYSTEM write lock not available after {FONT_SYSTEM_LOCK_TIMEOUT:?} \
-                     (site: {}, taken back after `unlocked`). It is held by {holder}.",
-                    self.site
-                );
-            }
-        }
-        out
+        &mut self.guard
     }
 }
 
@@ -883,16 +829,73 @@ impl Drop for FontSystemWriteGuard {
     /// cleared while the lock is still ours: the next holder cannot
     /// set its record and then have it erased by this one.
     fn drop(&mut self) {
-        // Released by `unlocked`, whose closure panicked: no lock held,
-        // no record to clear, nothing the panic interrupted under it.
-        if self.guard.is_none() {
-            return;
-        }
         if thread::panicking() && !self.panicking_at_acquire {
             POISONED.store(true, Ordering::SeqCst);
         }
         set_writer(None);
         update_held(|held| held.write_site = None);
+    }
+}
+
+/// The font system, taken when it is asked for and given back between:
+/// what a placement holds (#308).
+///
+/// A [`FontSystemWriteGuard`] holds the lock for as long as it lives,
+/// which is what startup and the renderer want. A placement would hold
+/// it across work that reads the shaped run and no font: a `Repeat` or
+/// `Spread` walk, the readable pass, a halves frame's clearance lays and
+/// side fill. A frame of 65,000 side copies, or a `Repeat` ring of as
+/// many glyphs, held the lock some 5 s that way in a debug build, and
+/// test threads queued behind three such holds waited past the 60 s a
+/// write acquire waits, under load. A lease gives the lock back for
+/// that work ([`unlocked`](Self::unlocked)) and takes it again when a
+/// font is next read ([`fonts`](Self::fonts)).
+///
+/// Holding nothing is one of a lease's two ordinary states, not a
+/// broken invariant: [`fonts`](Self::fonts) takes the lock whenever it
+/// finds none held, so nothing here can find the lease empty and fail.
+/// It takes it as [`acquire_font_system_write`] does, waiting at most
+/// [`FONT_SYSTEM_LOCK_TIMEOUT`] and naming the holder past it, and the
+/// guard it holds clears its records and poisons on a panic as any
+/// write guard does. `!Send`, as that guard is.
+///
+/// A lease that has given the lock back waits for it, as every write
+/// acquire waits, the next time a font is read: it is for work that may
+/// wait, not for the renderer's skip-a-frame paths
+/// ([`try_acquire_font_system_write`]).
+pub struct FontSystemLease {
+    /// Where the lease was made: the site each acquire is made under.
+    site: &'static str,
+    held: Option<FontSystemWriteGuard>,
+}
+
+impl FontSystemLease {
+    /// A lease for `site`, holding nothing until [`fonts`](Self::fonts)
+    /// is first called.
+    pub fn new(site: &'static str) -> Self {
+        Self { site, held: None }
+    }
+
+    /// The font system, the lock taken first when this lease does not
+    /// hold it. Cost: an acquire when it does not, nothing when it does.
+    pub fn fonts(&mut self) -> &mut FontSystem {
+        let site = self.site;
+        self.held.get_or_insert_with(|| acquire_font_system_write(site))
+    }
+
+    /// Run `f` with the lock given back; the next [`fonts`](Self::fonts)
+    /// takes it again. While `f` runs this thread holds no record of the
+    /// lock, so `f` may take it itself, and a panic in `f` finds nothing
+    /// held, so poisons nothing. Cost: a release, when the lease holds
+    /// the lock.
+    pub fn unlocked<R>(&mut self, f: impl FnOnce() -> R) -> R {
+        self.held = None;
+        f()
+    }
+
+    /// Whether the lease holds the lock now.
+    pub fn holds(&self) -> bool {
+        self.held.is_some()
     }
 }
 
@@ -927,8 +930,7 @@ fn adopt_write(
     update_held(|held| held.write_site = Some(site));
     set_writer(Some((site, this_thread())));
     let adopted = FontSystemWriteGuard {
-        guard: Some(guard),
-        site,
+        guard,
         panicking_at_acquire: thread::panicking(),
         _not_send: PhantomData,
     };
@@ -1753,17 +1755,20 @@ mod tests {
         );
     }
 
-    /// `unlocked` releases the lock for its closure and takes it back
-    /// (#308): another thread takes and releases the lock while the
-    /// closure runs, and the guard holds it again after, its record this
-    /// thread's.
+    /// A lease gives the lock back for `unlocked`'s closure and takes it
+    /// again when a font is next asked for (#308): another thread takes
+    /// and releases the lock while the closure runs; after it the lease
+    /// holds nothing until `fonts`, which takes the lock under the
+    /// lease's own site.
     ///
-    /// Control: with `unlocked` running its closure without releasing the
-    /// lock, the other thread waits out its 5 s and panics, red.
+    /// Control: with `unlocked` running its closure without giving the
+    /// lock back, the other thread waits out its 5 s and panics, red.
     #[test]
-    fn test_unlocked_lets_another_thread_take_the_lock_and_takes_it_back() {
-        let mut guard = acquire_font_system_write("test::unlocked");
-        let other = guard.unlocked(|| {
+    fn test_a_lease_gives_the_lock_back_while_unlocked_and_takes_it_again() {
+        let mut lease = FontSystemLease::new("test::lease");
+        let _ = lease.fonts().db().len();
+        assert!(lease.holds(), "`fonts` takes the lock");
+        let other = lease.unlocked(|| {
             thread::spawn(|| {
                 drop(acquire_font_system_write_with_timeout(
                     "test::while_unlocked",
@@ -1773,21 +1778,22 @@ mod tests {
             .join()
             .is_ok()
         });
-        assert!(other, "another thread takes the lock while it is released");
+        assert!(other, "another thread takes the lock while it is given back");
+        assert!(!lease.holds(), "nothing is held until a font is asked for");
+        let _ = lease.fonts().db().len();
         assert_eq!(
             current_writer().map(|(site, _)| site),
-            Some("test::unlocked"),
-            "the guard holds the lock again, its record restored"
+            Some("test::lease"),
+            "`fonts` takes the lock again, under the lease's site"
         );
-        let _ = guard.db().len();
-        drop(guard);
+        drop(lease);
     }
 
-    /// A panic inside `unlocked`'s closure poisons nothing and strands no
-    /// record: the lock is not held while the closure runs (#308). Runs
-    /// in a child process; see [`CHILD_SCENARIO_ENV`].
+    /// A panic inside a lease's `unlocked` closure poisons nothing and
+    /// strands no record: the lock is not held while the closure runs
+    /// (#308). Runs in a child process; see [`CHILD_SCENARIO_ENV`].
     #[test]
-    fn test_a_panic_while_unlocked_does_not_poison() {
+    fn test_a_panic_while_a_lease_is_unlocked_does_not_poison() {
         run_child_scenario("test_child_scenario_panic_while_unlocked", "UNLOCKED_SCENARIO_OK");
     }
 
@@ -1798,8 +1804,9 @@ mod tests {
             return;
         }
         let unwound = catch_unwind(AssertUnwindSafe(|| {
-            let mut guard = acquire_font_system_write("test::unlocked_panic");
-            guard.unlocked(|| panic!("deliberate: work done unlocked dying"));
+            let mut lease = FontSystemLease::new("test::unlocked_panic");
+            let _ = lease.fonts().db().len();
+            lease.unlocked(|| panic!("deliberate: work done unlocked dying"));
         }));
         assert!(unwound.is_err(), "the closure was supposed to panic");
         assert!(!font_system_poisoned(), "nothing was held to poison");

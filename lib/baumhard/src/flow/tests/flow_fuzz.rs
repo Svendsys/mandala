@@ -58,9 +58,7 @@ use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
     PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
 };
-use crate::font::fonts::{
-    self, acquire_font_system_write, AppFont, FontSystemWriteGuard, COMPILED_FONT_ID_MAP,
-};
+use crate::font::fonts::{self, AppFont, FontSystemLease, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
 
 /// The most characters a structured span holds: enough for a cut, a
@@ -333,7 +331,7 @@ pub(crate) fn ornament_run(
     layout: &RingLayout,
     style: &ResolvedText,
     scale: f32,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> Option<ShapedRun> {
     let (ornament, _) = layout.sides.as_ref()?;
     Some(shape_run(
@@ -466,7 +464,7 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
         link: None,
     }];
     fonts::init();
-    let mut fs = acquire_font_system_write("flow fuzz");
+    let mut fs = FontSystemLease::new("flow fuzz");
     let shaped = shape_box(&spans, None, Align::Left, &mut fs);
     check_box(&spans, &shaped, None)?;
     let run = shape_run(&spans, 1.0, &mut fs);
@@ -518,7 +516,7 @@ fn frames_round_a_rectangle(
     layout: &RingLayout,
     fits: &[FitMode],
     bounded: bool,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> Result<(), String> {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(120.0, 40.0));
     let start = StartPoint {
@@ -640,7 +638,7 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
         })
         .collect();
     let flow = style(choices, &faces);
-    let mut fs = acquire_font_system_write("flow fuzz");
+    let mut fs = FontSystemLease::new("flow fuzz");
     match choices.below(4) {
         0 => {
             let min = choices.one_in(2).then(|| any_vec2(choices));
@@ -660,7 +658,7 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                 .zip(shaped.glyph_spans.iter())
                 .map(|((face, text), (span, _))| (face, *span, text))
                 .collect::<Vec<_>>();
-            shapes_in_pinned_faces(&spans, glyphs, &mut fs).map_err(|why| format!("in a box: {why}"))
+            shapes_in_pinned_faces(&spans, glyphs, fs.fonts()).map_err(|why| format!("in a box: {why}"))
         }
         layout => {
             let scale = any_f32(choices);
@@ -686,7 +684,7 @@ fn check_generated(choices: &mut Choices<'_>, bounded: bool) -> Result<(), Strin
                 .zip(&run.glyphs)
                 .map(|((face, text), metrics)| (face, metrics.span, text))
                 .collect::<Vec<_>>();
-            shapes_in_pinned_faces(&spans, glyphs, &mut fs).map_err(|why| format!("in the run: {why}"))?;
+            shapes_in_pinned_faces(&spans, glyphs, fs.fonts()).map_err(|why| format!("in the run: {why}"))?;
             match layout {
                 1 => {
                     let rect = Rect::new(any_vec2(choices), any_vec2(choices));
@@ -956,7 +954,7 @@ pub fn sides_in_time(
     style: &ResolvedText,
     scale: f32,
     frames: usize,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> (RingLayout, Option<ShapedRun>) {
     let empty = shape_run(
         &[FlowSpan {
@@ -1128,7 +1126,7 @@ pub fn framed(
     texts: &[String],
     styles: &[ResolvedText],
     scale: f32,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     fits: &dyn Fn(&ShapedRun) -> bool,
 ) -> Vec<String> {
     let mut share = usize::MAX;

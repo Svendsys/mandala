@@ -123,7 +123,7 @@ use crate::flow::outline::Outline;
 use crate::flow::path::ArcPath;
 use crate::flow::shape::{reshape, GlyphMetrics, Ink, ShapedRun, FILLER_SPAN};
 use crate::flow::span::{point_size, LINE_HEIGHT_FACTOR};
-use crate::font::fonts::{clamp_font_metric, FontSystemWriteGuard, MIN_FONT_SIZE_PT};
+use crate::font::fonts::{clamp_font_metric, FontSystemLease, MIN_FONT_SIZE_PT};
 use crate::font::FontSystem;
 
 pub(crate) mod halves;
@@ -2533,9 +2533,11 @@ impl PathStretch {
 ///
 /// `flow` is the flow's own resolved style (sizes in points), read to
 /// shape a `Once` filler (ruling R6) and a frame's sides. `fs` is the
-/// guard the caller holds; `Fit` (reshaping at the fitted size), a
-/// filler, sides and a line's ink measure shape or scale glyphs, and
-/// nothing here acquires the font lock.
+/// caller's lease on the font system: `Fit` (reshaping at the fitted
+/// size), a filler, sides and a line's ink measure take the lock from
+/// it to shape or scale glyphs, and a walk or a lay, which reads no
+/// font, gives it back ([`FontSystemLease::unlocked`], #308), so the
+/// lease may hold nothing when this returns.
 ///
 /// Returns the run the placement refers to when it is not `run` — the
 /// rescaled run for `Fit`, `run` plus one shaped copy of a filler or a
@@ -2558,7 +2560,7 @@ pub fn place_on_closed(
     layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> (Option<ShapedRun>, PlacedRun) {
     place_on_closed_traced(run, path, start, direction, fit, layout, outward, flow, fs, None)
 }
@@ -2575,7 +2577,7 @@ pub(crate) fn place_on_closed_traced(
     layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     place_on_closed_capped(
@@ -2609,7 +2611,7 @@ pub(crate) fn place_on_closed_capped(
     layout: &RingLayout,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     ring_cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
@@ -2673,7 +2675,7 @@ pub fn place_on_open(
     fit: &FitMode,
     spacing: f32,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
 ) -> (Option<ShapedRun>, PlacedRun) {
     place_on_open_traced(run, curve, fit, spacing, flow, fs, None)
 }
@@ -2686,7 +2688,7 @@ pub(crate) fn place_on_open_traced(
     fit: &FitMode,
     spacing: f32,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let table = table_spacing(run, fit, flow);
@@ -2854,7 +2856,7 @@ fn place(
     spacing: f32,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystemWriteGuard,
+    fs: &mut FontSystemLease,
     ring_cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
@@ -2891,12 +2893,12 @@ fn place(
     };
     // A `Repeat` or `Spread` walk, and every readable lay, reads the run
     // as shaped and no font: they run with the font system's lock
-    // released ([`FontSystemWriteGuard::unlocked`], #308).
+    // released ([`FontSystemLease::unlocked`], #308).
     let walked = match fit {
-        FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
+        FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs.fonts(), &walk),
         FitMode::Repeat => fs.unlocked(|| repeat(run, &walk(run), spacing, closed)),
         FitMode::Spread => fs.unlocked(|| spread(run, &walk(run), 0.0)),
-        FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs, &walk),
+        FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs.fonts(), &walk),
     };
     let mut trace = trace;
     if let Some(ring) = &ring {

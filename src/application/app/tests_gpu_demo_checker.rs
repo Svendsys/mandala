@@ -213,7 +213,7 @@ fn test_demo_maps_hold_the_readable_structure() {
         let zoom = camera_on(projected.bounds).zoom;
         let mut swash = SwashCache::new();
         let read: Vec<Vec<Read>> = with_fonts(|fs| {
-            let fsys: &mut glyphon::FontSystem = fs;
+            let fsys = fs.fonts();
             projected
                 .runs
                 .iter()

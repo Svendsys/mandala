@@ -314,7 +314,7 @@ pub fn do_flow_fit_models_the_size_floor() {
     let large = style(24.0);
     let small = style(1.0);
     let bs = "b".repeat(40);
-    let shape = |fs: &mut crate::font::fonts::FontSystemWriteGuard| {
+    let shape = |fs: &mut crate::font::fonts::FontSystemLease| {
         shape_run(
             &[
                 FlowSpan {

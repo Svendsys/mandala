@@ -21,7 +21,7 @@ use baumhard::document::values::{FitMode, FontSize, Rgba, Weight, ZoomWindow};
 use baumhard::flow::{
     place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, PlacedGlyph, PlacedRun, ShapedRun,
 };
-use baumhard::font::fonts::{self, acquire_font_system_write, AppFont, FontSystemWriteGuard};
+use baumhard::font::fonts::{self, AppFont, FontSystemLease};
 use baumhard::font::LayoutGlyph;
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
@@ -54,9 +54,9 @@ fn style(points: f32, color: Rgba) -> ResolvedText {
 const TEXT_COLOR: Rgba = Rgba([200, 100, 50, 255]);
 
 /// Run `f` under the font guard, released before the result returns.
-fn with_fonts<R>(f: impl FnOnce(&mut FontSystemWriteGuard) -> R) -> R {
+fn with_fonts<R>(f: impl FnOnce(&mut FontSystemLease) -> R) -> R {
     fonts::init();
-    let mut fs = acquire_font_system_write("renderer::glyph_runs::tests");
+    let mut fs = FontSystemLease::new("renderer::glyph_runs::tests");
     f(&mut fs)
 }
 

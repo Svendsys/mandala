@@ -33,8 +33,11 @@
 //!
 //! This module is pure functions and the types they return. It builds
 //! no glyph tree, caches nothing (the projection, V1-B7, owns caches)
-//! and never takes the font lock: every shaping function takes the
-//! `FontSystemWriteGuard` the caller holds. Sizes arrive in points;
+//! and takes the font lock only through the
+//! [`FontSystemLease`](crate::font::fonts::FontSystemLease) the caller
+//! passes: a function that reads a font takes it from the lease, and a
+//! placement gives it back for the work that reads none (#308). Sizes
+//! arrive in points;
 //! converting a frame's relative size is the projection's job.
 //!
 //! Intra-doc links here are crate-absolute because `lib.rs` also puts

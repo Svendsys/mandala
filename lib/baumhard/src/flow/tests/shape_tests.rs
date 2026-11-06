@@ -298,7 +298,7 @@ pub fn do_flow_shape_run_measures_an_ornaments_ink() {
                 laid.font_weight,
                 laid.cache_key_flags | cosmic_text::CacheKeyFlags::DISABLE_HINTING,
             );
-            let fs: &mut crate::font::FontSystem = fs;
+            let fs = fs.fonts();
             let image = cache
                 .get_image_uncached(fs, key)
                 .unwrap_or_else(|| panic!("glyph {k} does not rasterize"));
@@ -442,7 +442,7 @@ pub fn do_flow_reshape_rescales_and_keeps_the_mapping() {
             1.0,
             fs,
         );
-        let doubled = reshape(&run, 2.0, None, fs);
+        let doubled = reshape(&run, 2.0, None, fs.fonts());
         (run, doubled)
     });
     assert_eq!(doubled.glyphs.len(), 4);
@@ -466,7 +466,7 @@ pub fn do_flow_reshape_appends_a_filler_on_its_own_line() {
     let flow = style(24.0);
     let (run, filled) = with_fonts(|fs| {
         let run = real_run("ab", &style(12.0), fs);
-        let filled = reshape(&run, 1.0, Some(("~-", &flow)), fs);
+        let filled = reshape(&run, 1.0, Some(("~-", &flow)), fs.fonts());
         (run, filled)
     });
     assert_eq!(filled.glyphs.len(), 4);
@@ -803,7 +803,7 @@ pub fn do_flow_shape_run_maps_a_zwj_emoji() {
 /// (lib/baumhard/CONVENTIONS.md §B8, class 2).
 #[test]
 fn test_flow_shaping_needs_fonts_init_before_the_guard() {
-    use crate::font::fonts::{self, acquire_font_system_write};
+    use crate::font::fonts::{self, FontSystemLease};
     // Set in a child process to say which half it runs: `init` calls
     // `fonts::init` before taking the guard, `none` does not.
     const COLD_CHILD_ENV: &str = "MANDALA_FLOW_COLD_CHILD";
@@ -811,7 +811,7 @@ fn test_flow_shaping_needs_fonts_init_before_the_guard() {
         if mode == "init" {
             fonts::init();
         }
-        let mut fs = acquire_font_system_write("flow::cold");
+        let mut fs = FontSystemLease::new("flow::cold");
         let run = real_run("cold", &style(12.0), &mut fs);
         println!("FLOW_COLD_SHAPED {}", run.glyphs.len());
         return;

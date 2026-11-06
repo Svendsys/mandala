@@ -33,7 +33,7 @@ use baumhard::flow::{
     outline, place_at_point, place_on_closed, place_on_open, shape_run, Curve, FlowSpan, PlacedGlyph,
     PlacedRun, Rect, RingLayout, ShapedRun,
 };
-use baumhard::font::fonts::{self, acquire_font_system_write, AppFont, FontSystemWriteGuard};
+use baumhard::font::fonts::{self, AppFont, FontSystemLease};
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutation;
@@ -67,13 +67,13 @@ fn style(font: AppFont, points: f32, color: Rgba) -> ResolvedText {
 
 /// Run `f` under the font guard, released before the result returns, so
 /// a failing assertion never holds the lock.
-fn with_fonts<R>(f: impl FnOnce(&mut FontSystemWriteGuard) -> R) -> R {
+fn with_fonts<R>(f: impl FnOnce(&mut FontSystemLease) -> R) -> R {
     fonts::init();
-    let mut fs = acquire_font_system_write("app::tests_gpu_glyph_runs");
+    let mut fs = FontSystemLease::new("app::tests_gpu_glyph_runs");
     f(&mut fs)
 }
 
-fn shape(text: &str, style: &ResolvedText, fs: &mut FontSystemWriteGuard) -> ShapedRun {
+fn shape(text: &str, style: &ResolvedText, fs: &mut FontSystemLease) -> ShapedRun {
     shape_run(
         &[FlowSpan {
             text,
@@ -322,7 +322,7 @@ fn test_frames_of_text_around_a_rounded_rectangle_and_an_ellipse_draw_in_one_cal
 
     let runs: Vec<GlyphRunData> = with_fonts(|fs| {
         let mut runs = Vec::new();
-        let frame = |text: &str, style: &ResolvedText, path, fit: &FitMode, fs: &mut FontSystemWriteGuard| {
+        let frame = |text: &str, style: &ResolvedText, path, fit: &FitMode, fs: &mut FontSystemLease| {
             let shaped = shape(text, style, fs);
             let (rescaled, placed) = place_on_closed(
                 &shaped,

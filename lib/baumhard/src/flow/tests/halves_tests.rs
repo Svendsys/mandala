@@ -19,7 +19,7 @@ use crate::flow::place::{place_lines, place_on_closed_traced, Trace, INK_TOLERAN
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{outline, Outline, PlacedGlyph, PlacedRun, Rect, RingLayout, ShapedRun, FILLER_SPAN};
 use crate::font::fonts::glyph_outline_ink;
-use crate::font::{FontSystem, SwashCache};
+use crate::font::SwashCache;
 
 /// The README's Blake quatrain.
 pub(crate) const QUATRAIN: &str = "To see a World in a Grain of Sand, And a Heaven in a Wild Flower, \
@@ -151,10 +151,7 @@ pub(crate) fn frame_of_spans(
 
 /// `spans`, each its text at its size in points, shaped for real as one
 /// run in [`FACE`](crate::flow::tests::support::FACE), at scale 1.
-pub(crate) fn spans_run(
-    spans: &[(String, f32)],
-    fs: &mut crate::font::fonts::FontSystemWriteGuard,
-) -> ShapedRun {
+pub(crate) fn spans_run(spans: &[(String, f32)], fs: &mut crate::font::fonts::FontSystemLease) -> ShapedRun {
     let styles: Vec<crate::document::resolve::ResolvedText> =
         spans.iter().map(|(_, points)| style(*points)).collect();
     let flow: Vec<crate::flow::FlowSpan<'_>> = spans
@@ -186,7 +183,7 @@ pub(crate) fn mixed_sizes(copies: usize, dots: usize) -> Vec<(String, f32)> {
 /// outline; `None` for a space.
 fn inks(run: &ShapedRun, placed: &PlacedRun) -> Vec<Option<(Vec2, Vec2)>> {
     with_fonts(|fs| {
-        let fs: &mut FontSystem = fs;
+        let fs = fs.fonts();
         let mut cache = SwashCache::new();
         let laid: Vec<_> = run.layout_glyphs().cloned().collect();
         placed
@@ -221,7 +218,7 @@ pub(crate) fn x_height_per_point() -> f32 {
         with_fonts(|fs| {
             let flow = style(16.0);
             let run = real_run("x", &flow, fs);
-            let fs: &mut FontSystem = fs;
+            let fs = fs.fonts();
             let mut cache = SwashCache::new();
             let x = run.layout_glyphs().next().cloned().expect("an x is shaped");
             let (min, _) = glyph_outline_ink(fs, &mut cache, &x).expect("an x has ink");
@@ -260,7 +257,7 @@ pub(crate) fn x_height_of(style: &crate::document::resolve::ResolvedText) -> f32
             1.0,
             fs,
         );
-        let fs: &mut FontSystem = fs;
+        let fs = fs.fonts();
         let mut cache = SwashCache::new();
         let x = run.layout_glyphs().next().cloned();
         x.and_then(|x| glyph_outline_ink(fs, &mut cache, &x).map(|(min, _)| -min.y / x.font_size))
@@ -797,7 +794,7 @@ pub fn do_flow_halves_tracking_grows_with_the_gap() {
     for (name, shape, text, points) in scenes() {
         let ends = with_fonts(|fs| {
             let run = real_run(&text[..text.len().min(40)], &style(points), fs);
-            let fs: &mut FontSystem = fs;
+            let fs = fs.fonts();
             track_seam(&run, &shape, &gaps, fs)
         });
         for (k, pair) in ends.windows(2).enumerate() {
@@ -829,7 +826,7 @@ pub fn do_flow_halves_sides_hold_the_junctions() {
     let x_height = |points: f32| {
         with_fonts(|fs| {
             let run = real_run("x", &style(points), fs);
-            let fs: &mut FontSystem = fs;
+            let fs = fs.fonts();
             let mut cache = SwashCache::new();
             let laid: Vec<_> = run.layout_glyphs().cloned().collect();
             glyph_outline_ink(fs, &mut cache, &laid[0]).map_or(0.0, |(min, max)| max.y - min.y)
@@ -4995,7 +4992,7 @@ fn test_flow_halves_a_one_gap_line_on_a_curve_is_solved_to_its_end() {
     for room in [15.0, 20.0, 25.0, 30.0, 35.0] {
         let (gap, short, tolerance, at_zero, at_room) = with_fonts(|fs| {
             let run = real_run("ab", &style(16.0), fs);
-            let fs: &mut FontSystem = fs;
+            let fs = fs.fonts();
             solve_line_seam(&run, &shape, room, fs)
         });
         assert!(

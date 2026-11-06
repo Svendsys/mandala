@@ -47,7 +47,7 @@ use baumhard::flow::{
     offset, outline, place_on_closed, place_on_open, ring_offset, shape_box, shape_run, Curve, FlowSpan,
     Outline, PlacedRun, Rect, RingLayout, ShapedRun,
 };
-use baumhard::font::fonts::{self, acquire_font_system_write, FontSystemWriteGuard};
+use baumhard::font::fonts::{self, FontSystemLease};
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -109,9 +109,9 @@ struct Drawn {
 }
 
 /// Run `f` under the font guard, released before the result returns.
-pub(super) fn with_fonts<R>(f: impl FnOnce(&mut FontSystemWriteGuard) -> R) -> R {
+pub(super) fn with_fonts<R>(f: impl FnOnce(&mut FontSystemLease) -> R) -> R {
     fonts::init();
-    let mut fs = acquire_font_system_write("app::tests_gpu_demo_maps");
+    let mut fs = FontSystemLease::new("app::tests_gpu_demo_maps");
     f(&mut fs)
 }
 
@@ -237,7 +237,7 @@ fn opacity_of(doc: &Document, node: NodeId) -> f32 {
 
 /// Project `doc`: every node's sections and frame, then every
 /// connector and line link.
-pub(super) fn project(doc: &Document, fs: &mut FontSystemWriteGuard) -> Projected {
+pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
     let tree = doc.tree();
     let mut out = Projected {
         runs: Vec::new(),
