@@ -304,8 +304,8 @@ pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize, f32);
 /// measured, and of them those [`folded`] — left out of the first two:
 /// inward, where the outline under an anchor is thinner across than
 /// twice the offset, no curve inside it lies at the offset from it all
-/// round, and the band curve folds over the outline's far side. A
-/// cluster with no outline to measure is left out.
+/// round, and the band curve folds over the outline's far side. A glyph
+/// with no outline to measure is inked as its box, as the engine inks it.
 ///
 /// And the most any ink not folded reaches toward the outline from its
 /// anchor, as the engine models an ink's reach: the support, along the
@@ -321,7 +321,20 @@ pub(crate) fn band_residual(
     offset: f32,
     x_per_pt: &dyn Fn(usize) -> f32,
 ) -> BandMeasure {
-    let inks = inks(run, placed);
+    // A glyph with no outline to measure — a `.notdef` or a bitmap, as a
+    // side ornament no compiled face holds is drawn where no host face
+    // does — inked as its box, its advance by the line height, as the
+    // engine inks it.
+    let inks: Vec<Option<(Vec2, Vec2)>> = inks(run, placed)
+        .into_iter()
+        .zip(&placed.glyphs)
+        .map(|(ink, g)| {
+            let glyph = &run.glyphs[g.glyph as usize];
+            ink.or_else(|| {
+                (!glyph.blank).then(|| (g.pos, g.pos + Vec2::new(glyph.advance.max(0.0), run.line_height)))
+            })
+        })
+        .collect();
     let mut clusters: Vec<(usize, Option<(Vec2, Vec2)>)> = Vec::new();
     for (k, g) in placed.glyphs.iter().enumerate() {
         let glyph = &run.glyphs[g.glyph as usize];
