@@ -968,6 +968,16 @@ thread_local! {
     /// otherwise solves its own.
     #[cfg(test)]
     pub(crate) static OFFSET_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test seam (#308, review 5801763546): the most times the frame's
+    /// lines are laid again at the offset its side copies want, in place
+    /// of [`OFFSET_ROUNDS`] — none, so a test can leave copies wanting
+    /// more of the curve than it is.
+    #[cfg(test)]
+    pub(crate) static RELAY_ROUNDS_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#308): the side arcs left empty because the frame's
+    /// curve lies nearer the outline than their copies want.
+    #[cfg(test)]
+    pub(crate) static ARCS_OFF_THE_CURVE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#294, ruling R46.1): the times R27's fit has
     /// reshaped a frame's text on this thread (`lines::fit_reshape`).
     #[cfg(test)]
@@ -4705,6 +4715,7 @@ impl Layout<'_> {
             glyphs: Vec::new(),
             losses: Vec::new(),
             want: None,
+            arcs: Vec::new(),
         };
         let sides = &mut out.glyphs;
         let text_len: usize = lines.iter().map(|l| l.tracked.glyphs.len()).sum();
@@ -4781,6 +4792,7 @@ impl Layout<'_> {
             }
             if let Some(reached) = arc.reached.get().filter(|_| sides.len() > before) {
                 out.want = Some(out.want.map_or(reached, |want| want.with(reached)));
+                out.arcs.push((at, before..sides.len(), reached));
             }
         }
         out
@@ -4794,6 +4806,10 @@ struct LaidSides {
     glyphs: Vec<PlacedGlyph>,
     losses: Vec<(usize, SideLoss)>,
     want: Option<SideWant>,
+    /// Each arc that kept copies: the junctions it lies round, its
+    /// glyphs among [`glyphs`](Self::glyphs), and what its copies want of
+    /// the frame's offset.
+    arcs: Vec<([bool; 2], Range<usize>, SideWant)>,
 }
 
 /// A frame's text laid at one size ([`place_halves`]).
@@ -5341,9 +5357,17 @@ pub(super) fn place_halves(
     // are laid again at the offset the frame's inks want with the
     // copies' share as laid ([`Layout::sides`]), the clearance grown on
     // from where it stood, and the sides laid again, [`OFFSET_ROUNDS`]
-    // times at most — unless that would press a line or touch two inks
-    // the curve before did not, where the frame keeps the curve before.
+    // times at most — unless that would press a line the curve before did
+    // not, or leave two of the lines' inks touching, where the frame
+    // keeps the curve before. Outward, an arc whose copies the curve kept
+    // leaves wanting more of it than it is, their inks across the
+    // outline, is left empty and reported: a frame loses its sides before
+    // the outline its text is set off (ruling R48.3, review 5801763546).
     let tolerance = resolved(OFFSET_TOLERANCE, halves.length);
+    #[cfg(test)]
+    let relay_rounds = RELAY_ROUNDS_OVERRIDE.with(Cell::get).unwrap_or(OFFSET_ROUNDS);
+    #[cfg(not(test))]
+    let relay_rounds = OFFSET_ROUNDS;
     let mut laid_sides = side
         .as_ref()
         .filter(|_| !sides_left_out)
@@ -5352,7 +5376,7 @@ pub(super) fn place_halves(
         let arcs = side_arcs(&lines, halves.length).len();
         unheld.sides.extend((0..arcs).map(|arc| (arc, SideLoss::Empty)));
     }
-    for _ in 0..OFFSET_ROUNDS {
+    for _ in 0..relay_rounds {
         let Some(want) = laid_sides.as_ref().map(|laid| laid.want) else {
             break;
         };
@@ -5387,8 +5411,33 @@ pub(super) fn place_halves(
     }
     let mut sides = Vec::new();
     if let Some(laid) = laid_sides {
-        sides = laid.glyphs;
-        unheld.sides.extend(laid.losses);
+        let offset = lay.offset.get();
+        let mut kept = vec![true; laid.glyphs.len()];
+        let mut emptied = [false; 2];
+        for (at, glyphs, want) in &laid.arcs {
+            if outward && want.toward > offset + tolerance {
+                for k in glyphs.clone() {
+                    kept[k] = false;
+                }
+                for j in 0..2 {
+                    emptied[j] |= at[j];
+                }
+                #[cfg(test)]
+                ARCS_OFF_THE_CURVE.with(|n| n.set(n.get() + 1));
+            }
+        }
+        sides = laid
+            .glyphs
+            .into_iter()
+            .zip(kept)
+            .filter_map(|(g, keep)| keep.then_some(g))
+            .collect();
+        unheld
+            .sides
+            .extend(laid.losses.into_iter().filter(|(j, _)| !emptied[*j]));
+        unheld
+            .sides
+            .extend((0..2).filter(|&j| emptied[j]).map(|j| (j, SideLoss::Empty)));
     }
 
     if let Some(trace) = trace {

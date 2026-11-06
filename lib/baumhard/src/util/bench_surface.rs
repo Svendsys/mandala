@@ -385,6 +385,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_no_side_copy_is_left_across_the_outline",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_every_glyph_lies_on_its_frames_one_band_curve",
             CannotCompileIntoTheLibrary,
         ),

@@ -4110,6 +4110,72 @@ fn test_flow_halves_a_slide_stops_at_a_step_and_nowhere_else() {
     }
 }
 
+/// R48.3 (review 5801763546): outward, no side copy is left across the
+/// outline. A frame whose side copies want more of its band curve than
+/// its text does — `xxxx xxxx` round a 400 × 200 ellipse, outward,
+/// `Once` at span natural, with an em dash on its sides, the dashes
+/// reaching further across the diagonal at its junctions than the text —
+/// lays its lines again at the offset the copies want (6.44 where its
+/// text wants 4.19) and keeps them; and where it keeps the curve its text
+/// wants (the seam `RELAY_ROUNDS_OVERRIDE` at none, as when laying the
+/// lines again would press a line or touch two inks, or its rounds run
+/// out), the arcs whose copies want more are left empty and reported,
+/// never laid across the outline: either way, every ink it places reaches
+/// toward the outline no further than its offset (`band_residual`).
+///
+/// Control: with the arcs the curve leaves wanting kept, the frame laid
+/// at no round places its copies 2.26 across the outline. (No `do_*`
+/// twin: it reads a test seam.)
+#[test]
+fn test_flow_halves_no_side_copy_is_left_across_the_outline() {
+    use crate::flow::place::halves::{ARCS_OFF_THE_CURVE, RELAY_ROUNDS_OVERRIDE};
+    use crate::flow::place::SideLoss;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(400.0, 200.0)), Shape::Ellipse);
+    let left = StartPoint {
+        edge: Edge::Left,
+        at: 0.5,
+    };
+    let path = ArcPath::closed(&shape, left, Direction::Clockwise, MIN_TABLE_SPACING);
+    let layout = RingLayout {
+        span: LineSpan::NATURAL,
+        sides: Some(("—".to_string(), Rgba::opaque(9, 9, 9))),
+        ..RingLayout::whole()
+    };
+    let text = "xxxx xxxx";
+    let lay = || frame_with(text, 18.0, &shape, &FitMode::Once { filler: None }, &layout, true);
+    for rounds in [None, Some(0)] {
+        ARCS_OFF_THE_CURVE.with(|n| n.set(0));
+        let (run, placed, trace) = match rounds {
+            Some(r) => with_seam(&RELAY_ROUNDS_OVERRIDE, r, lay),
+            None => lay(),
+        };
+        let offset = trace.offset.expect("a frame on its halves has a band curve");
+        let (_, _, _, _, past) = band_residual(&run, &placed, &path, offset, &|_| x_height_per_point());
+        let copies = placed
+            .glyphs
+            .iter()
+            .filter(|g| run.glyphs[g.glyph as usize].span == FILLER_SPAN)
+            .count();
+        let off = ARCS_OFF_THE_CURVE.with(std::cell::Cell::get);
+        match rounds {
+            None => assert!(
+                copies > 0 && off == 0 && trace.unheld.sides.is_empty(),
+                "laid again for its copies, the frame keeps them ({copies} glyphs, {off} arcs left empty, {:?})",
+                trace.unheld
+            ),
+            Some(_) => assert!(
+                copies == 0 && off == 2 && trace.unheld.sides == [(0, SideLoss::Empty), (1, SideLoss::Empty)],
+                "at the curve its text wants, the frame leaves out the arcs its copies want more of ({copies} glyphs, {off} arcs left empty, {:?})",
+                trace.unheld
+            ),
+        }
+        assert!(
+            past <= REACH_TOLERANCE,
+            "relaid {rounds:?} times at most: an ink reaches {past} past the offset {offset}, across the outline"
+        );
+    }
+}
+
 /// The most lines [`test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end`]'s
 /// slides may track: its 8, and a margin short of the 16 they track
 /// circling the step.
