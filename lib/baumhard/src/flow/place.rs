@@ -2854,7 +2854,7 @@ fn place(
     spacing: f32,
     outward: bool,
     flow: &ResolvedText,
-    fs: &mut FontSystem,
+    fs: &mut FontSystemWriteGuard,
     ring_cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
@@ -2889,17 +2889,21 @@ fn place(
         ornament: !run.glyphs.iter().any(|glyph| glyph.letter),
         baseline: run.baseline(),
     };
+    // A `Repeat` or `Spread` walk, and every readable lay, reads the run
+    // as shaped and no font: they run with the font system's lock
+    // released ([`FontSystemWriteGuard::unlocked`], #308).
     let walked = match fit {
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
-        FitMode::Repeat => repeat(run, &walk(run), spacing, closed),
-        FitMode::Spread => spread(run, &walk(run), 0.0),
+        FitMode::Repeat => fs.unlocked(|| repeat(run, &walk(run), spacing, closed)),
+        FitMode::Spread => fs.unlocked(|| spread(run, &walk(run), 0.0)),
         FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs, &walk),
     };
     let mut trace = trace;
     if let Some(ring) = &ring {
         ring.lay_again();
     }
-    let placed = walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut());
+    let placed =
+        fs.unlocked(|| walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut()));
     if let Some(ring) = &ring {
         ring.placed(placed.1.glyphs.len());
         let spent = ring.spent(path);

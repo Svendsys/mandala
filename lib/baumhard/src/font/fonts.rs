@@ -801,7 +801,11 @@ fn refuse_if_poisoned(site: &'static str) {
 /// release: clearing this thread's holding record and marking the
 /// lock poisoned if the holder is unwinding.
 pub struct FontSystemWriteGuard {
-    guard: RecursiveRwLockWriteGuard<'static, FontSystem>,
+    /// The lock's own guard: `None` only while [`unlocked`](Self::unlocked)
+    /// runs its closure, the lock released.
+    guard: Option<RecursiveRwLockWriteGuard<'static, FontSystem>>,
+    /// Where it was taken, what its records and messages name.
+    site: &'static str,
     /// Whether this thread was already unwinding when it took the
     /// guard. Such a guard is taken by cleanup code running *during* a
     /// panic that began elsewhere; that panic cannot have interrupted
@@ -814,13 +818,63 @@ pub struct FontSystemWriteGuard {
 impl Deref for FontSystemWriteGuard {
     type Target = FontSystem;
     fn deref(&self) -> &FontSystem {
-        &self.guard
+        self.guard
+            .as_ref()
+            .expect("a write guard holds the lock outside `unlocked`")
     }
 }
 
 impl DerefMut for FontSystemWriteGuard {
     fn deref_mut(&mut self) -> &mut FontSystem {
-        &mut self.guard
+        self.guard
+            .as_mut()
+            .expect("a write guard holds the lock outside `unlocked`")
+    }
+}
+
+impl FontSystemWriteGuard {
+    /// Run `f` with the lock released, and take it back before
+    /// returning: for work that holds a guard it reads nothing through —
+    /// a placement's walks and lays, once its runs are shaped and inked
+    /// — so that other threads are not held off the font system for all
+    /// of it (#308: a frame of 65,000 side copies, or a `Repeat` ring of
+    /// as many glyphs, held the lock some 5 s each in a debug build, and
+    /// four test threads queued behind such holds waited past the 60 s
+    /// a write guard waits, under load).
+    ///
+    /// The lock is taken back as [`acquire_font_system_write`] takes it,
+    /// at most [`FONT_SYSTEM_LOCK_TIMEOUT`], panicking past it. While `f`
+    /// runs this thread holds no record of the lock, so `f` may take it
+    /// afresh; a panic in `f` leaves the guard empty, the lock not held,
+    /// and so poisons nothing.
+    ///
+    /// Cost: one release and one acquire of the lock.
+    pub fn unlocked<R>(&mut self, f: impl FnOnce() -> R) -> R {
+        set_writer(None);
+        update_held(|held| held.write_site = None);
+        drop(self.guard.take());
+        let out = f();
+        refuse_reentry(self.site, Access::Write);
+        match FONT_SYSTEM.try_write_for(FONT_SYSTEM_LOCK_TIMEOUT) {
+            Some(guard) => {
+                update_held(|held| held.write_site = Some(self.site));
+                set_writer(Some((self.site, this_thread())));
+                self.guard = Some(guard);
+                refuse_if_poisoned(self.site);
+            }
+            None => {
+                let holder = match current_writer() {
+                    Some((holder_site, thread)) => format!("`{holder_site}` on {thread:?}"),
+                    None => "reader(s), which hold no write record".to_string(),
+                };
+                panic!(
+                    "FONT_SYSTEM write lock not available after {FONT_SYSTEM_LOCK_TIMEOUT:?} \
+                     (site: {}, taken back after `unlocked`). It is held by {holder}.",
+                    self.site
+                );
+            }
+        }
+        out
     }
 }
 
@@ -829,6 +883,11 @@ impl Drop for FontSystemWriteGuard {
     /// cleared while the lock is still ours: the next holder cannot
     /// set its record and then have it erased by this one.
     fn drop(&mut self) {
+        // Released by `unlocked`, whose closure panicked: no lock held,
+        // no record to clear, nothing the panic interrupted under it.
+        if self.guard.is_none() {
+            return;
+        }
         if thread::panicking() && !self.panicking_at_acquire {
             POISONED.store(true, Ordering::SeqCst);
         }
@@ -868,7 +927,8 @@ fn adopt_write(
     update_held(|held| held.write_site = Some(site));
     set_writer(Some((site, this_thread())));
     let adopted = FontSystemWriteGuard {
-        guard,
+        guard: Some(guard),
+        site,
         panicking_at_acquire: thread::panicking(),
         _not_send: PhantomData,
     };
@@ -1691,6 +1751,60 @@ mod tests {
             message.contains("It is held by"),
             "must say who holds it: {message}"
         );
+    }
+
+    /// `unlocked` releases the lock for its closure and takes it back
+    /// (#308): another thread takes and releases the lock while the
+    /// closure runs, and the guard holds it again after, its record this
+    /// thread's.
+    ///
+    /// Control: with `unlocked` running its closure without releasing the
+    /// lock, the other thread waits out its 5 s and panics, red.
+    #[test]
+    fn test_unlocked_lets_another_thread_take_the_lock_and_takes_it_back() {
+        let mut guard = acquire_font_system_write("test::unlocked");
+        let other = guard.unlocked(|| {
+            thread::spawn(|| {
+                drop(acquire_font_system_write_with_timeout(
+                    "test::while_unlocked",
+                    Duration::from_secs(5),
+                ));
+            })
+            .join()
+            .is_ok()
+        });
+        assert!(other, "another thread takes the lock while it is released");
+        assert_eq!(
+            current_writer().map(|(site, _)| site),
+            Some("test::unlocked"),
+            "the guard holds the lock again, its record restored"
+        );
+        let _ = guard.db().len();
+        drop(guard);
+    }
+
+    /// A panic inside `unlocked`'s closure poisons nothing and strands no
+    /// record: the lock is not held while the closure runs (#308). Runs
+    /// in a child process; see [`CHILD_SCENARIO_ENV`].
+    #[test]
+    fn test_a_panic_while_unlocked_does_not_poison() {
+        run_child_scenario("test_child_scenario_panic_while_unlocked", "UNLOCKED_SCENARIO_OK");
+    }
+
+    /// The child half of the test above. A no-op in an ordinary run.
+    #[test]
+    fn test_child_scenario_panic_while_unlocked() {
+        if !is_child_for("test_child_scenario_panic_while_unlocked") {
+            return;
+        }
+        let unwound = catch_unwind(AssertUnwindSafe(|| {
+            let mut guard = acquire_font_system_write("test::unlocked_panic");
+            guard.unlocked(|| panic!("deliberate: work done unlocked dying"));
+        }));
+        assert!(unwound.is_err(), "the closure was supposed to panic");
+        assert!(!font_system_poisoned(), "nothing was held to poison");
+        drop(acquire_font_system_write("test::after_unlocked_panic"));
+        println!("UNLOCKED_SCENARIO_OK");
     }
 
     /// A panic while holding the guard poisons every later acquire.

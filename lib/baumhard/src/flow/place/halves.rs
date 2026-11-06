@@ -5133,14 +5133,18 @@ pub(super) fn place_halves(
             return None;
         }
         let backtracks = if cheap { PROBE_BACKTRACKS } else { BACKTRACKS };
-        let cleared = lay.lay_clear(
-            &drawn,
-            &prepared,
-            side.as_ref().map(|r| (&drawn, r)),
-            span,
-            seed,
-            backtracks,
-        );
+        // Its lines laid and their clearance grown read the inked run and
+        // no font: with the font system's lock released (#308).
+        let cleared = fs.unlocked(|| {
+            lay.lay_clear(
+                &drawn,
+                &prepared,
+                side.as_ref().map(|r| (&drawn, r)),
+                span,
+                seed,
+                backtracks,
+            )
+        });
         let overlap = overlapping(&cleared.lines, &lay.work);
         Some(Built {
             offset: lay.offset.get(),
@@ -5308,8 +5312,11 @@ pub(super) fn place_halves(
         (prepared, lines, clear, met, overlap, truncated, cut_apart)
     };
     let bare_prepared = prepared.clone();
+    // The last resorts, the frame laid again without its sides, and its
+    // sides' fill read the inked runs and no font: each runs with the
+    // font system's lock released (#308).
     let (mut prepared, mut lines, mut clear, mut met, overlap, truncated, cut_apart) =
-        resorts(prepared, lines, clear, met, overlap, side_of);
+        fs.unlocked(|| resorts(prepared, lines, clear, met, overlap, side_of));
     // A frame loses its sides before its text (rulings R48.3, B15.5):
     // where the frame its sides make room for is cut, it is laid again
     // with no room made for them, and where that keeps more of its text,
@@ -5326,16 +5333,18 @@ pub(super) fn place_halves(
         let held = lay.sides.replace(None);
         let sided_offset = lay.offset.get();
         let zero: Clear = [[0.0; 2]; 2];
-        let cleared = lay.lay_clear(&drawn, &bare_prepared, None, span, zero, BACKTRACKS);
-        let bare_overlap = overlapping(&cleared.lines, &lay.work);
-        let bare = resorts(
-            bare_prepared,
-            cleared.lines,
-            cleared.clear,
-            cleared.met,
-            bare_overlap,
-            None,
-        );
+        let bare = fs.unlocked(|| {
+            let cleared = lay.lay_clear(&drawn, &bare_prepared, None, span, zero, BACKTRACKS);
+            let bare_overlap = overlapping(&cleared.lines, &lay.work);
+            resorts(
+                bare_prepared,
+                cleared.lines,
+                cleared.clear,
+                cleared.met,
+                bare_overlap,
+                None,
+            )
+        });
         if kept_text(&bare.1) > kept_text(&lines) {
             sides_left_out = true;
             (prepared, lines, clear, met) = (bare.0, bare.1, bare.2, bare.3);
@@ -5372,7 +5381,7 @@ pub(super) fn place_halves(
     let mut laid_sides = side
         .as_ref()
         .filter(|_| !sides_left_out)
-        .map(|range| lay.lay_sides(&drawn, range, &lines));
+        .map(|range| fs.unlocked(|| lay.lay_sides(&drawn, range, &lines)));
     if sides_left_out {
         let arcs = side_arcs(&lines, halves.length).len();
         unheld.sides.extend((0..arcs).map(|arc| (arc, SideLoss::Empty)));
@@ -5392,7 +5401,7 @@ pub(super) fn place_halves(
             break;
         }
         let kept = lay.sides.replace(want);
-        let cleared = lay.lay_clear(&drawn, &prepared, side_of, span, clear, BACKTRACKS);
+        let cleared = fs.unlocked(|| lay.lay_clear(&drawn, &prepared, side_of, span, clear, BACKTRACKS));
         let pressed = lines.iter().any(|l| l.pressed);
         if (!pressed && cleared.lines.iter().any(|l| l.pressed)) || overlapping(&cleared.lines, &lay.work) {
             lay.offset.set(offset);
@@ -5401,7 +5410,9 @@ pub(super) fn place_halves(
         }
         (lines, clear, met) = (cleared.lines, cleared.clear, cleared.met);
         unheld = unheld_of(&lines, met, overlap);
-        laid_sides = side.as_ref().map(|range| lay.lay_sides(&drawn, range, &lines));
+        laid_sides = side
+            .as_ref()
+            .map(|range| fs.unlocked(|| lay.lay_sides(&drawn, range, &lines)));
     }
 
     let mut text = Vec::new();
