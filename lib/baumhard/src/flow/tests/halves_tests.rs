@@ -4556,7 +4556,8 @@ fn test_flow_halves_no_frame_of_the_sweep_loses_text_to_its_sides() {
 /// against its bare frame, and no copy.
 ///
 /// Control: the losses keyed by the arc's index in `side_arcs`, red —
-/// `[(0, Empty)]`, the bottom-right junction never reported.
+/// `[(0, Empty)]`, the bottom-right junction never reported. (No `do_*`
+/// twin: it reads a test helper's frame.)
 #[test]
 fn test_flow_halves_sides_left_out_of_a_one_line_frame_report_both_junctions() {
     use crate::flow::place::SideLoss;

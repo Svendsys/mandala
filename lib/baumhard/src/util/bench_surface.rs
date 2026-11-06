@@ -405,6 +405,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_sides_left_out_of_a_one_line_frame_report_both_junctions",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_span_half_is_the_mean_of_natural_and_whole",
             CannotCompileIntoTheLibrary,
         ),
