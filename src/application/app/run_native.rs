@@ -207,6 +207,37 @@ impl ApplicationHandler<IpcWake> for NativeApp {
 }
 
 impl InitState {
+    /// Resize every frame to `width × height` pixels, and lay out
+    /// again the two screen-space modals laid out against that size.
+    ///
+    /// Each caches its layout. The glyph-wheel color picker caches it in
+    /// `OpenPicker::layout`, with the screen-space backdrop and
+    /// per-glyph positions, so a resize would leave hit-tests aimed at
+    /// the old geometry. The console's backdrop and glyphs are laid out
+    /// bottom-anchored against the surface
+    /// (`renderer::compute_console_frame_layout`), so a resize would
+    /// leave the panel, and its glyph backdrop, where the old size put
+    /// them until the next keystroke rebuilt it. Both are rebuilt here,
+    /// whichever is open.
+    pub(super) fn resize_surface(&mut self, width: u32, height: u32) {
+        self.renderer
+            .process_decree(RenderDecree::SetSurfaceSize(width, height));
+        if self.color_picker_state.is_open() {
+            rebuild_color_picker_overlay(&mut self.color_picker_state, &mut self.app_scene, &mut self.renderer);
+        }
+        if self.console_state.is_open() {
+            if let Some(doc) = self.document.as_ref() {
+                super::console_input::rebuild_console_overlay(
+                    &self.console_state,
+                    doc,
+                    &mut self.app_scene,
+                    &mut self.renderer,
+                    &self.keybinds,
+                );
+            }
+        }
+    }
+
     /// Per-event dispatch. Most of the per-event work lives in
     /// [`super::event_mouse_click`], [`super::event_cursor_moved`],
     /// and [`super::event_keyboard`]; this method handles the
@@ -229,22 +260,7 @@ impl InitState {
                 event: WindowEvent::Resized(size),
                 ..
             } => {
-                self.renderer
-                    .process_decree(RenderDecree::SetSurfaceSize(size.width, size.height));
-                // Glyph-wheel color picker caches its layout in
-                // OpenPicker::layout; the
-                // cached values include the screen-space backdrop
-                // and per-glyph positions, so a resize would
-                // leave hit-tests aimed at the old geometry and
-                // the renderer's overlay buffers anchored at the
-                // pre-resize coordinates.
-                if self.color_picker_state.is_open() {
-                    rebuild_color_picker_overlay(
-                        &mut self.color_picker_state,
-                        &mut self.app_scene,
-                        &mut self.renderer,
-                    );
-                }
+                self.resize_surface(size.width, size.height);
                 redraw_after = true;
             }
             Event::WindowEvent {

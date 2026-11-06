@@ -367,3 +367,49 @@ fn test_a_frame_draws_no_content_fill() {
         "the control: a map whose text is fill blocks hands the canvas passes fill blocks ({census:?})"
     );
 }
+
+/// **A resize lays the open console out again** at the new size: its
+/// backdrop — the full-block cells — and its glyphs are bottom-anchored
+/// against the surface, so a resize that left them as they were would
+/// draw the panel where the old size put it, until the next keystroke.
+/// After `resize_surface` (the body of the window's `Resized` arm), the
+/// console's backdrop is the one a fresh rebuild at the new size lays
+/// out, and its bottom edge sits at the new bottom.
+///
+/// Control: the backdrop before the resize differs from the one after,
+/// so a resize that kept the old layout fails the comparison with the
+/// fresh rebuild rather than passing it by coincidence.
+#[test]
+fn test_a_resize_lays_the_open_console_out_again() {
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    act(init, json!({"id": 1, "cmd": "act.action", "action": "OpenConsole"}));
+    assert!(init.console_state.is_open(), "precondition: the console is open");
+    draw(init);
+    let before = init.renderer.console_backdrop_extent().expect("an open console has a backdrop");
+
+    let (width, height) = (HARNESS_SIZE.0 + 320, HARNESS_SIZE.1 + 240);
+    init.resize_surface(width, height);
+    let after = init.renderer.console_backdrop_extent().expect("the console is still open");
+    assert_ne!(after, before, "precondition: the new size moves the console's backdrop");
+
+    // A fresh rebuild at the new size, as the next keystroke would make.
+    let doc = init.document.as_ref().expect("the harness builds a document");
+    super::console_input::rebuild_console_overlay(
+        &init.console_state,
+        doc,
+        &mut init.app_scene,
+        &mut init.renderer,
+        &init.keybinds,
+    );
+    let fresh = init.renderer.console_backdrop_extent().expect("the console is still open");
+    assert_eq!(after, fresh, "the resize lays the console out as a rebuild at the new size does");
+    let (_, top, _, h) = after;
+    assert!(
+        (top + h) <= height as f32 && (height as f32 - (top + h)) < 64.0,
+        "the backdrop is bottom-anchored at the new height {height}: {after:?}"
+    );
+    draw(init);
+}
