@@ -1,0 +1,2 @@
+license: SIL Open Font License (OFL) 1.1, as the face's own name table states
+link: https://fonts.google.com/noto/specimen/Noto+Serif+Tibetan
