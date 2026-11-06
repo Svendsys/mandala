@@ -1311,6 +1311,10 @@ pub struct SweepWork {
     /// folds ([`folded`]).
     pub anchors: usize,
     pub folded: usize,
+    /// The frames with sides that kept copies, and each that placed
+    /// fewer glyphs of its text than without sides (ruling R48.3, B15.5).
+    pub sides_kept: usize,
+    pub text_lost_to_sides: Vec<String>,
     /// The frames with anchors so, each round an outline thinner than
     /// twice its offset along its lines ([`thin_along`]).
     pub thin_folded: usize,
@@ -1463,6 +1467,10 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                     // Inward, sides round an outline its lines fill are
                     // left out (and reported); outward they are laid.
                     let sides_tried = if outward { 2 } else { 1 };
+                    // The text glyphs each span's frame placed without
+                    // sides: what it places with them, while they keep
+                    // copies, holds (ruling R48.3, B15.5).
+                    let mut bare: Vec<(u32, usize)> = Vec::new();
                     for sides in [None, Some(("·".to_owned(), Rgba::opaque(9, 9, 9)))]
                         .into_iter()
                         .take(sides_tried)
@@ -1490,6 +1498,28 @@ pub fn do_flow_halves_hold_on_every_aspect() -> SweepWork {
                             let (run, placed, trace) =
                                 frame_with(text, *points, shape, &fit, &layout, outward);
                             let tracks = tracks_so_far() - before;
+                            let text_placed = placed
+                                .glyphs
+                                .iter()
+                                .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+                                .count();
+                            let copies = placed.glyphs.len() - text_placed;
+                            match &sides {
+                                None => bare.push((span.get().to_bits(), text_placed)),
+                                Some(_) if copies > 0 => {
+                                    work.sides_kept += 1;
+                                    let without = bare
+                                        .iter()
+                                        .find(|(at, _)| *at == span.get().to_bits())
+                                        .map_or(0, |b| b.1);
+                                    if text_placed < without {
+                                        work.text_lost_to_sides.push(format!(
+                                            "{what}: {text_placed} text glyphs beside {copies} copies, {without} without sides"
+                                        ));
+                                    }
+                                }
+                                Some(_) => {}
+                            }
                             most_tracks = most_tracks.max(tracks);
                             if tracks > MOST_TRACKS {
                                 faults.push(format!("{what}: {tracks} lines tracked"));
@@ -4058,8 +4088,12 @@ fn test_flow_halves_a_long_mixed_ornament_s_touch_check_looks_at_few_pairs_a_box
 /// looks at no more pairs a box than measured, a part for each class
 /// ([`looks_as_measured`]), and so within `touch_looks` of its classes:
 /// the reviewer's 14-size probe ([`mixed_sizes`]), round a 2,000 sharp
-/// square with 60 dots, `Fit` from ¼ to 4 and `Once`, and five times over
-/// round a 20,000 one with 3,000 dots a span, `Once`; at span natural,
+/// square with 60 dots, `Fit` from ¼ to 4, and round a 4,000 one, `Once`,
+/// its text whole beside its sides' copies (2.60 pairs a box in sweeps
+/// and own strips, 1.26 a box a class between its 15; ruling B15.5:
+/// round the 2,000 one, `Once` cut its 4,096-point `x`, which no break
+/// leaves room for, its sides' checks holding no classes), and five
+/// times over round a 20,000 one with 3,000 dots a span, `Once`; at span natural,
 /// `x` on its sides, inward, each at its own budget. At R50, whose bound
 /// was 18 a box whatever the classes, they looked at 23.86, 21.28 and
 /// 23.46 pairs a box.
@@ -4091,7 +4125,7 @@ fn test_flow_halves_a_mixed_size_frame_s_touch_check_looks_within_its_classes() 
         (
             "Once",
             mixed_sizes(1, 60),
-            2_000.0,
+            4_000.0,
             FitMode::Once { filler: None },
         ),
         (
@@ -4116,6 +4150,103 @@ fn test_flow_halves_a_mixed_size_frame_s_touch_check_looks_within_its_classes() 
             panic!("{name} round {size}: {why}");
         }
     }
+}
+
+/// R48.3, ruling B15.5: a frame loses its sides before its text — the
+/// reviewer's 14-size probe ([`mixed_sizes`], 74 glyphs, one line)
+/// inward round a 2,000 sharp square, `Once` at span natural, places the
+/// same 73 glyphs of its text with an `x` on its sides as without. The
+/// glyph it leaves out, either way, is its last, the `x` at 4,096 points,
+/// 2,130 wide, wider than the square: drawing its line back from the
+/// bottom-right junction moves the line's end along the half but never
+/// off the junction, where its words' break is owed, and the line is
+/// pressed and cut there (ruling R34) — its half less the break cannot
+/// hold it.
+///
+/// Control: with a side copy's room grown as the words' is, pressing the
+/// line, the frame with sides places 71 glyphs of its text. (No `do_*`
+/// twin: it reads a frame's placement.)
+#[test]
+fn test_flow_halves_a_frames_sides_cost_none_of_its_text() {
+    let square = outline(
+        Rect::new(Vec2::ZERO, Vec2::splat(2_000.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let text = mixed_sizes(1, 60);
+    let laid = |sides: Option<(String, Rgba)>| {
+        let layout = RingLayout {
+            span: LineSpan::NATURAL,
+            sides,
+            ..RingLayout::whole()
+        };
+        let (run, placed, _) = frame_of_spans(
+            &text,
+            16.0,
+            &square,
+            &FitMode::Once { filler: None },
+            &layout,
+            false,
+        );
+        let mut kept: Vec<u32> = placed
+            .glyphs
+            .iter()
+            .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+            .map(|g| g.glyph)
+            .collect();
+        kept.sort_unstable();
+        let copies = placed.glyphs.len() - kept.len();
+        (run, kept, copies)
+    };
+    let (run, bare, _) = laid(None);
+    let (_, beside, copies) = laid(Some(("x".to_string(), Rgba::opaque(0, 0, 0))));
+    let last = run.glyphs.len() - 1;
+    assert!(
+        copies > 0 && run.glyphs.len() == 74,
+        "precondition: the 74 glyphs of the text and a copy of its sides are laid ({copies} copies)"
+    );
+    assert_eq!(beside, bare, "the text placed beside its sides, and without them");
+    assert!(
+        bare.len() == last && !bare.contains(&(last as u32)),
+        "the text without sides leaves out its last glyph alone: {} of {} placed",
+        bare.len(),
+        run.glyphs.len()
+    );
+    let x = &run.glyphs[last];
+    assert!(
+        x.size == 4_096.0 && x.advance > 2_000.0,
+        "the glyph left out is the 4,096-point `x`, wider than the square ({} at {})",
+        x.advance,
+        x.size
+    );
+}
+
+/// R48.3, ruling B15.5: over the aspect sweep, every frame whose sides
+/// keep copies places as many glyphs of its text as it does without
+/// sides: its sides cost it none.
+///
+/// The sweep's sides, `·`, want little room, and its frames lost none at
+/// d7242d38 either. Control: with a side copy's room grown as the
+/// words' is, pressing a line, and each junction asking room for 40
+/// copies, three frames lose text — the 600 × 12 rectangle outward,
+/// `Once`, 114 glyphs of its text beside 21 copies where it places 124
+/// without sides — while with the copies' growth held to the slack the
+/// same 40 lose none. (No `do_*` twin: it reads the sweep.)
+#[test]
+fn test_flow_halves_no_frame_of_the_sweep_loses_text_to_its_sides() {
+    let sweep = the_sweep();
+    assert!(
+        sweep.sides_kept >= 50,
+        "precondition: the sweep's frames keep their sides' copies ({})",
+        sweep.sides_kept
+    );
+    assert!(
+        sweep.text_lost_to_sides.is_empty(),
+        "{} frames lose text to their sides:\n{}",
+        sweep.text_lost_to_sides.len(),
+        sweep.text_lost_to_sides.join("\n")
+    );
 }
 
 /// One case of [`test_flow_halves_the_touch_check_finds_what_every_pair_does`]:

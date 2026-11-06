@@ -3140,6 +3140,9 @@ impl Layout<'_> {
         let mut alone = [false; 2];
         let mut free = [false; 2];
         let mut stuck = [false; 2];
+        // Whether this round grows a junction for a copy of the side
+        // ornament alone, its words' break met (#308).
+        let mut for_copy = [false; 2];
         let mut met_now: Option<[bool; 2]> = None;
         // Whether the last round's whole step, laid, pressed a line it
         // left unpressed (#308).
@@ -3182,6 +3185,7 @@ impl Layout<'_> {
                 }
                 // Ends whose distance is not a number are short of it.
                 let by_words = matches!(apart.partial_cmp(&aim), None | Some(Ordering::Less));
+                for_copy[j] = !by_words;
                 let shortfall = if by_words {
                     // Ends that overlap are short by how deep they do too.
                     aim - if depth.is_finite() {
@@ -3287,7 +3291,13 @@ impl Layout<'_> {
             // the other line where it parts the ends there too and has
             // room (rulings R34, R38.1). Where no line that parts a
             // junction has room the round grows as it would, and the line
-            // it presses takes the last resorts.
+            // it presses takes the last resorts — for its words' break; a
+            // junction grown for a copy of the side ornament alone is held
+            // to the slack all the same, for a frame loses its sides before
+            // its text (ruling R48.3): an arc no copy fits is left empty
+            // (#308: one copy of a 92-byte ornament, longer than a half
+            // 3.24 long, once grew a single line's clearance to 28 and cut
+            // its text).
             for k in 0..2 {
                 let Some(line) = laid.iter().find(|l| l.half == k) else {
                     continue;
@@ -3311,7 +3321,7 @@ impl Layout<'_> {
                     } else {
                         0.0
                     };
-                    if line.slack >= MIN_GROWTH || handed > 0.0 {
+                    if line.slack >= MIN_GROWTH || handed > 0.0 || for_copy[j] {
                         held[j] |= cut > 0.0;
                         grow[k][j] -= cut;
                         grow[other][j] += handed;
@@ -3329,7 +3339,9 @@ impl Layout<'_> {
                 alone[j] = grew[j] && !grew[1 - j];
             }
             met_now = Some(met_here);
-            if !grown {
+            // Nothing left to grow — every step held to a slack of none —
+            // and so nothing to lay again.
+            if !grown || !grew.iter().any(|g| *g) {
                 break;
             }
             let pressed: Vec<bool> = laid.iter().map(|l| l.pressed).collect();
@@ -3341,6 +3353,14 @@ impl Layout<'_> {
                 .iter()
                 .any(|l| !l.pressed && l.slack < MIN_GROWTH && grow[l.half][0] + grow[l.half][1] > l.slack);
             let backtracks = if foreseen { 0 } else { backtracks };
+            // A round that grows junctions for a copy of the side ornament
+            // alone never presses a line (ruling R48.3, B15.5): a step held
+            // to a slack lays the line at the very edge of its room, and a
+            // try that presses it even so is not taken however far it is
+            // halved — the search ends with the lines as they lie, the arc
+            // its copy does not fit left empty.
+            let copy_only = (0..2).all(|j| !grew[j] || for_copy[j]);
+            let mut taken = false;
             let mut scale = 1.0;
             for _ in 0..=backtracks {
                 // The frame's budget spent: the round not taken, the lines
@@ -3379,7 +3399,8 @@ impl Layout<'_> {
                 if scale == 1.0 {
                     full_pressed = presses;
                 }
-                if !presses || last {
+                if !presses || (last && !copy_only) {
+                    taken = true;
                     clear = next;
                     laid = tried;
                     met_now = None;
@@ -3388,6 +3409,10 @@ impl Layout<'_> {
                     break;
                 }
                 scale *= 0.5;
+            }
+            if copy_only && !taken {
+                met_now = Some(met_here);
+                break;
             }
         }
         let met = met_now.unwrap_or_else(|| [0, 1].map(|j| self.met(&laid, side, j).0));

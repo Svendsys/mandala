@@ -1504,6 +1504,39 @@ fn test_flow_structured_finding_a_curve_fit_shrunk_to_the_size_floor() {
     }
 }
 
+/// The flow_structured finding of #308's fuzz run, failing alike at
+/// d7242d38: a `Spread` frame laid inward round an ellipse 3.24 wide and
+/// 1.18e-38 tall, its text of two glyphs one line, 0.45 long at its
+/// font's gap along a half 3.24 long, with a 92-byte mixed ornament on
+/// its sides. Its words' break was met at both junctions; one whole copy
+/// of the ornament, some 60 glyphs, longer than the half, was not, and
+/// the clearance was grown for the copy's room till it reached 28.3 at
+/// each junction, the line pressed, and the pressed line cut to one
+/// glyph: a frame lost its text to its sides, where it loses its sides
+/// before its text (ruling R48.3, B15.5). Growth for a side copy's room
+/// alone is held to the lines' slack now, and never takes a try that
+/// presses a line; the arc no copy fits is left empty. Found on the
+/// compiled faces alone (`FONTCONFIG_FILE` at an empty directory);
+/// replays alike on every host.
+///
+/// Control: with a side copy's growth pressing a line as the words' does,
+/// red ("its natural length fits, and it was cut").
+#[test]
+fn test_flow_structured_finding_a_frame_of_one_line_round_an_outline_of_no_height() {
+    let found = include_bytes!("fuzz_findings/structured_frame_one_line_round_an_outline_of_no_height");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
 /// R52.2: the oracle owes a `Fit` text whole exactly where it fits as the
 /// engine shrinks it, no glyph below the size floor: "To see a World" at
 /// 16 pt, `Fit` from a millionth, on a path just longer than the text
