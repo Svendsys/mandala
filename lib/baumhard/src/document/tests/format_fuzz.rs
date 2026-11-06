@@ -2883,6 +2883,22 @@ pub struct Generated {
     pub tampered: bool,
     /// The background it was drawn with, if any.
     pub background: Option<Background>,
+    /// What the tamper step read, when it tampered.
+    pub tamper: Option<TamperRead>,
+}
+
+/// What the tamper step read from an input it tampered with: each
+/// edit's fault arm (`0..7`, in the order the edits apply) and the
+/// small element bound (`0..64`), each reduced as the step reduces it.
+/// Carried so that the seed corpus can pin a seed to reading the edits
+/// it read: a change to the order the step draws its choices in reads
+/// other edits from the same bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TamperRead {
+    /// Each edit's fault arm.
+    pub faults: Vec<u32>,
+    /// The small element bound the tampered document is checked under.
+    pub small: u32,
 }
 
 /// [`check_structured`] for a map drawn from `choices`, whatever their
@@ -2981,11 +2997,16 @@ pub fn check_generated(
         }
         Err(error) => (format!("{fault}: {}", kind_name(&error.kind)), false),
     };
+    let tamper = tamper.filter(|_| tampered).map(|tamper| TamperRead {
+        faults: tamper.edits.iter().map(|&[_, _, fault]| fault % 7).collect(),
+        small: tamper.small % 64,
+    });
     Ok(Generated {
         outcome,
         reordered,
         tampered,
         background: spec.background,
+        tamper,
     })
 }
 

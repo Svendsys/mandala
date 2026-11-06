@@ -110,6 +110,7 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     let mut bounded_seeds: BTreeSet<String> = BTreeSet::new();
     let mut past_seeds: BTreeSet<String> = BTreeSet::new();
     let (mut reordered, mut tampered, mut reordered_backgrounds) = (Vec::new(), Vec::new(), Vec::new());
+    let mut tamper_reads: BTreeMap<&str, format_fuzz::TamperRead> = BTreeMap::new();
     for (name, bytes) in &seeds {
         let got = format_fuzz::check_generated(&mut Choices::new(bytes), MAX_GENERATED_ROWS)
             .unwrap_or_else(|why| panic!("{name}: {why}"));
@@ -121,6 +122,9 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
         }
         if got.tampered {
             tampered.push(name.as_str());
+        }
+        if let Some(read) = &got.tamper {
+            tamper_reads.insert(name.as_str(), read.clone());
         }
         if let Some(outcome) = name.strip_prefix("outcome_") {
             assert_eq!(got.outcome.replacen(": ", "_", 1), outcome, "{name}");
@@ -162,6 +166,15 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                 matches!(got.background, Some(format_fuzz::Background::Var(_)))
                     && got.outcome == "none: loaded"
             }
+            // A map that loads and is tampered with twice, at two
+            // different fault arms, so the tamper step's edits are
+            // reached from a committed seed and not only in a fuzzing run.
+            "tamper_two_edits" => {
+                got.outcome == "none: loaded"
+                    && got.tamper.as_ref().is_some_and(|read| {
+                        read.faults.len() == 2 && read.faults[0] != read.faults[1]
+                    })
+            }
             // A bounded field written past its bound, refused as `Bound`
             // at its path, so a dropped check fails on the seed itself.
             n if n.starts_with("bounded_") && n.ends_with("_past") => {
@@ -195,6 +208,28 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
         !reordered.is_empty() && !tampered.is_empty() && !reordered_backgrounds.is_empty(),
         "the corpus reorders {reordered:?}, tampers {tampered:?}, and reorders a background in {reordered_backgrounds:?}"
     );
+    // A tampered seed makes edits, not only draws the step: one with no
+    // edit reaches none of its fault arms.
+    assert!(
+        tamper_reads.values().any(|read| !read.faults.is_empty()),
+        "a tampered seed makes at least one edit: {tamper_reads:?}"
+    );
+    // **A seed reads the edits it read.** The named seeds' tamper reads,
+    // as they were when each seed was written — the two `outcome_*`
+    // seeds before backgrounds existed — so a change to the order the
+    // tamper step draws its choices in, which reads other edits and
+    // another bound from the same bytes, fails here.
+    for (seed, faults, small) in [
+        ("outcome_none_loaded", vec![], 42),
+        ("outcome_structure_loaded", vec![], 40),
+        ("tamper_two_edits", vec![1, 3], 13),
+    ] {
+        assert_eq!(
+            tamper_reads.get(seed),
+            Some(&format_fuzz::TamperRead { faults, small }),
+            "{seed} reads the tamper edits and the bound it was written with"
+        );
+    }
     let fields: BTreeSet<String> = format_fuzz::BOUNDED_FIELDS
         .iter()
         .map(|field| field.name.replace('_', " "))
@@ -655,3 +690,4 @@ fn test_every_fuzz_input_fits_its_targets_max_len() {
         "precondition: the deep-chain seeds are read ({longest} bytes the longest)"
     );
 }
+
