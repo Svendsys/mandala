@@ -4546,6 +4546,54 @@ fn test_flow_halves_no_frame_of_the_sweep_loses_text_to_its_sides() {
     );
 }
 
+/// A frame whose sides are left out for its text (ruling R48.3, B15.5)
+/// reports both junctions `Empty`, whatever lines it keeps (review
+/// 5805412034): a loss is keyed by junction, and a frame of one line has
+/// one side arc, round both. The census frame here is the quatrain inward
+/// round the 600 × 12 rectangle, at span whole, with 40-dot sides: laid
+/// again without them, it keeps one line, on the top half, its text whole
+/// against its bare frame, and no copy.
+///
+/// Control: the losses keyed by the arc's index in `side_arcs`, red —
+/// `[(0, Empty)]`, the bottom-right junction never reported.
+#[test]
+fn test_flow_halves_sides_left_out_of_a_one_line_frame_report_both_junctions() {
+    use crate::flow::place::SideLoss;
+    let thin = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(600.0, 12.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let fit = FitMode::Once { filler: None };
+    let laid = |sides: Option<(String, Rgba)>| {
+        let layout = RingLayout {
+            span: LineSpan::WHOLE,
+            sides,
+            ..RingLayout::whole()
+        };
+        let (run, placed, trace) = frame_with(QUATRAIN, 22.0, &thin, &fit, &layout, false);
+        let text = placed
+            .glyphs
+            .iter()
+            .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+            .count();
+        (text, placed.glyphs.len() - text, trace)
+    };
+    let (bare, _, _) = laid(None);
+    let (text, copies, trace) = laid(Some(("·".repeat(40), Rgba::opaque(9, 9, 9))));
+    let halves: Vec<usize> = trace.lines.iter().map(|line| line.half).collect();
+    assert!(
+        halves == [0] && copies == 0 && text == bare,
+        "the census frame keeps one line, on the top half ({halves:?}), its text whole ({text} of {bare}) and no copy ({copies})"
+    );
+    assert_eq!(
+        trace.unheld.sides,
+        [(0, SideLoss::Empty), (1, SideLoss::Empty)],
+        "its sides left out, both junctions are reported"
+    );
+}
+
 /// One case of [`test_flow_halves_the_touch_check_finds_what_every_pair_does`]:
 /// ink boxes, each keyed by its group and its place in it — columns of
 /// boxes stacked across an axis, a column's gaps half, just under, at and

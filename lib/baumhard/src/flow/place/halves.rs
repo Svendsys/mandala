@@ -5320,7 +5320,7 @@ pub(super) fn place_halves(
     // A frame loses its sides before its text (rulings R48.3, B15.5):
     // where the frame its sides make room for is cut, it is laid again
     // with no room made for them, and where that keeps more of its text,
-    // the sides are left out — every arc empty, and reported — and the
+    // the sides are left out — both junctions empty, and reported — and the
     // frame keeps that text. A side copy's room grown within the lines'
     // slack presses no line, but draws the lines in, and inward round an
     // outline too thin for both, lines drawn in touch the more, and the
@@ -5382,9 +5382,11 @@ pub(super) fn place_halves(
         .as_ref()
         .filter(|_| !sides_left_out)
         .map(|range| fs.unlocked(|| lay.lay_sides(&drawn, range, &lines)));
+    // Left out, the sides lose both junctions' copies, whatever arcs the
+    // lines leave: a loss is keyed by junction, as `lay_sides` keys it,
+    // and one line's one arc runs round both (review 5805412034).
     if sides_left_out {
-        let arcs = side_arcs(&lines, halves.length).len();
-        unheld.sides.extend((0..arcs).map(|arc| (arc, SideLoss::Empty)));
+        unheld.sides.extend((0..2).map(|j| (j, SideLoss::Empty)));
     }
     for _ in 0..relay_rounds {
         let Some(want) = laid_sides.as_ref().map(|laid| laid.want) else {

@@ -42,8 +42,9 @@ pub(crate) fn style(points: f32) -> ResolvedText {
     }
 }
 
-/// Run `f` with the font system initialized and this thread holding its
-/// guard, and release the guard before returning `f`'s result.
+/// Run `f` with the font system initialized and a lease on it, which
+/// takes the lock when a font is read and gives it back across a
+/// placement's font-free phases ([`FontSystemLease`]).
 pub(crate) fn with_fonts<R>(f: impl FnOnce(&mut FontSystemLease) -> R) -> R {
     fonts::init();
     let mut fs = FontSystemLease::new("flow::tests");
