@@ -51,10 +51,19 @@ impl Param {
         }
     }
 
-    fn derivative(&self, t: f32) -> Vec2 {
+    /// The point at `t`, [`point`](Self::point)'s to the bit, and the
+    /// derivative with respect to `t` there: an ellipse's sine and cosine
+    /// of `t` taken once for both (#309).
+    fn point_and_derivative(&self, t: f32) -> (Vec2, Vec2) {
         match *self {
-            Param::Ellipse { radii, .. } => Vec2::new(-radii.x * t.sin(), radii.y * t.cos()),
-            Param::Curve(curve) => curve.derivative(t),
+            Param::Ellipse { center, radii } => {
+                let (sin, cos) = (t.sin(), t.cos());
+                (
+                    center + Vec2::new(radii.x * cos, radii.y * sin),
+                    Vec2::new(-radii.x * sin, radii.y * cos),
+                )
+            }
+            Param::Curve(curve) => (curve.point(t), curve.derivative(t)),
         }
     }
 }
@@ -234,10 +243,11 @@ impl Stretch {
                 };
                 let t = t0 + (t1 - t0) * frac;
                 let forward = if t1 >= t0 { 1.0 } else { -1.0 };
-                let tangent = direction_of(param.derivative(t) * forward)
+                let (point, derivative) = param.point_and_derivative(t);
+                let tangent = direction_of(derivative * forward)
                     .or_else(|| direction_of(param.point(t1) - param.point(t0)))
                     .unwrap_or(Vec2::X);
-                (param.point(t), tangent)
+                (point, tangent)
             }
         }
     }
@@ -252,6 +262,10 @@ thread_local! {
     /// on this thread, a lookup its cursor did not answer.
     #[cfg(test)]
     pub(crate) static PATH_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#309): the samples arc-length tables have been built
+    /// with on this thread.
+    #[cfg(test)]
+    pub(crate) static TABLE_SAMPLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A path walked by arc length.
@@ -1024,6 +1038,8 @@ fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<S
     } else {
         MIN_TABLE_SAMPLES
     };
+    #[cfg(test)]
+    TABLE_SAMPLES.with(|samples| samples.set(samples.get() + count + 1));
     let mut params = Vec::with_capacity(count + 1);
     let mut distances = Vec::with_capacity(count + 1);
     let mut previous = param.point(from);

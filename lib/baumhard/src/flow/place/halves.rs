@@ -145,6 +145,7 @@
 
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -835,7 +836,14 @@ fn middle(b: (Vec2, Vec2)) -> Vec2 {
 /// inked as its box, its advance by the line height, so a line keeps it
 /// and steps it like any other letter.
 ///
-/// Cost: one outline scale per glyph that is not a space.
+/// Each distinct glyph's outline is read once (#309): a glyph's ink is a
+/// function of its face, its id, its size, its weight, its flags and its
+/// offsets alone ([`glyph_outline_ink`]), so a glyph the text repeats —
+/// most of a line's letters are — reads the ink its first read did, to
+/// the bit.
+///
+/// Cost: one outline scale per distinct glyph that is not a space, and a
+/// search of the distinct glyphs read so far per glyph.
 fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
     #[cfg(test)]
     INKED_STEPS.with(|count| count.set(count.get() + inking_steps(run)));
@@ -845,17 +853,40 @@ fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
     let mut cache = SwashCache::new();
     let laid: Vec<_> = run.layout_glyphs().cloned().collect();
     let (baseline, height) = (run.baseline(), run.line_height);
+    let mut read: BTreeMap<InkKey, Option<(Vec2, Vec2)>> = BTreeMap::new();
     for (glyph, laid) in out.glyphs.iter_mut().zip(&laid) {
         if !glyph.blank {
             let boxed = Ink {
                 min: Vec2::new(0.0, -baseline),
                 max: Vec2::new(glyph.advance.max(0.0), height - baseline),
             };
-            glyph.ink =
-                Some(glyph_outline_ink(fs, &mut cache, laid).map_or(boxed, |(min, max)| Ink { min, max }));
+            let ink = *read.entry(ink_key(laid)).or_insert_with(|| {
+                #[cfg(test)]
+                OUTLINE_READS.with(|count| count.set(count.get() + 1));
+                glyph_outline_ink(fs, &mut cache, laid)
+            });
+            glyph.ink = Some(ink.map_or(boxed, |(min, max)| Ink { min, max }));
         }
     }
     out
+}
+
+/// What a laid-out glyph's ink is a function of ([`glyph_outline_ink`]):
+/// its face, its glyph id, the bits of its size, its weight, its cache
+/// flags' bits and the bits of its offsets.
+type InkKey = (crate::font::FontId, u16, u32, u16, u32, u32, u32);
+
+/// The [`InkKey`] of `glyph`.
+fn ink_key(glyph: &crate::font::LayoutGlyph) -> InkKey {
+    (
+        glyph.font_id,
+        glyph.glyph_id,
+        glyph.font_size.to_bits(),
+        glyph.font_weight.0,
+        glyph.cache_key_flags.bits(),
+        glyph.x_offset.to_bits(),
+        glyph.y_offset.to_bits(),
+    )
 }
 
 /// [`inked`], and each of `run`'s spans' band center below its baseline
@@ -1450,9 +1481,19 @@ thread_local! {
     pub(crate) static SIDE_STEP_LOOKUPS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// Test counter (#309): the runs a frame's placement has shaped or
     /// reshaped on this thread — R27's fit, a build at a size, a side
-    /// ornament's runs — and the runs it has inked.
+    /// ornament's runs.
     #[cfg(test)]
     pub(crate) static RESHAPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#309): the lines a frame's [`TrackMemo`] answered on
+    /// this thread, each a [`track`] not laid again.
+    #[cfg(test)]
+    pub(crate) static TRACK_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#309): the glyph outlines [`inked`] has read on this
+    /// thread, each distinct glyph of a run once.
+    #[cfg(test)]
+    pub(crate) static OUTLINE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#309): the runs a frame's placement has inked on this
+    /// thread ([`inked`]).
     #[cfg(test)]
     pub(crate) static INKINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -1737,6 +1778,8 @@ struct Layout<'a> {
     /// it to, along with the lines' own inks. `None` before a fill, or
     /// without sides.
     sides: std::cell::RefCell<Option<SideWant>>,
+    /// The lines its last few [`track`]s laid ([`TrackMemo`]).
+    tracked: std::cell::RefCell<TrackMemo>,
 }
 
 /// A frame's work (rulings R44.2, R46.1): the glyph steps all its work
@@ -1866,6 +1909,57 @@ impl Work {
     }
 }
 
+/// The lines a frame's last few [`track`]s laid, by what each was laid
+/// from (#309), so a line laid again as it was just laid is read, not
+/// laid: a slide measures the line its centering last measured, and the
+/// line from its room's start it measured to find it longer than its
+/// room. A line is a function of what this keys and of the build's run and
+/// band centers alone, and the frame forgets every line at each build.
+/// The most recent [`TRACK_MEMO`] are kept, so a long text's lines are
+/// not all held at once.
+#[derive(Default)]
+struct TrackMemo {
+    kept: Vec<(TrackKey, Tracked)>,
+    /// Where the next line is kept once [`TRACK_MEMO`] are.
+    next: usize,
+}
+
+/// How many lines a frame's [`TrackMemo`] keeps.
+const TRACK_MEMO: usize = 8;
+
+/// What a line [`track`] lays is known by ([`TrackMemo`]): its half, the
+/// first glyph of its first cluster and the end of its last, its clusters'
+/// count — a run of a build's clusters, which are each its glyphs' — its
+/// part's ends, its gap and the frame's offset, each bit for bit.
+type TrackKey = (usize, usize, usize, usize, u32, u32, u32, u32);
+
+impl TrackMemo {
+    /// The line laid from `key`, if it is one of those kept.
+    ///
+    /// Cost: O([`TRACK_MEMO`]).
+    fn get(&self, key: &TrackKey) -> Option<&Tracked> {
+        self.kept.iter().find(|(k, _)| k == key).map(|(_, t)| t)
+    }
+
+    /// Keep `tracked`, laid from `key`, in place of the oldest kept.
+    ///
+    /// Cost: a clone of the line.
+    fn put(&mut self, key: TrackKey, tracked: &Tracked) {
+        if self.kept.len() < TRACK_MEMO {
+            self.kept.push((key, tracked.clone()));
+        } else {
+            self.kept[self.next] = (key, tracked.clone());
+            self.next = (self.next + 1) % TRACK_MEMO;
+        }
+    }
+
+    /// Forget every line: the build's run and band centers have changed.
+    fn clear(&mut self) {
+        self.kept.clear();
+        self.next = 0;
+    }
+}
+
 /// The lines [`Layout::lay`] has laid in one clearance search.
 ///
 /// Both are short lists searched in order, not hashed (#309): a search
@@ -1957,6 +2051,7 @@ impl<'a> Layout<'a> {
             offset: Cell::new(0.0),
             centers: std::cell::RefCell::new(centers.into()),
             sides: std::cell::RefCell::new(None),
+            tracked: std::cell::RefCell::new(TrackMemo::default()),
         }
     }
 }
@@ -1981,7 +2076,24 @@ impl Layout<'_> {
         g: f32,
     ) -> Tracked {
         self.work.take(clusters.len() + TRACK_CALL_STEPS);
-        track(walk, glyphs, clusters, part, g, self.band())
+        let key = (
+            usize::from(std::ptr::eq(walk.path, self.halves.path(1))),
+            clusters.first().map_or(0, |c| c.glyphs.start),
+            clusters.last().map_or(0, |c| c.glyphs.end),
+            clusters.len(),
+            part.0.to_bits(),
+            part.1.to_bits(),
+            g.to_bits(),
+            self.offset.get().to_bits(),
+        );
+        if let Some(tracked) = self.tracked.borrow().get(&key) {
+            #[cfg(test)]
+            TRACK_HITS.with(|count| count.set(count.get() + 1));
+            return tracked.clone();
+        }
+        let tracked = track(walk, glyphs, clusters, part, g, self.band());
+        self.tracked.borrow_mut().put(key, &tracked);
+        tracked
     }
 
     /// Whether the frame has taken its budget ([`Work`]).
@@ -5170,6 +5282,7 @@ pub(super) fn place_halves(
         // frame's band curve is read from (#308, ruling B15.1).
         let (drawn, centers) = inked_with_bands(&drawn, fsys);
         lay.centers.replace(centers.into());
+        lay.tracked.borrow_mut().clear();
         // `untouched`'s share, for the classes of height the text's inks
         // hold (ruling R46.1).
         lay.work.hold_for(height_classes(
@@ -5316,8 +5429,10 @@ pub(super) fn place_halves(
         overlap,
     } = built;
     // The frame's band curve where the size kept laid it, a later probe's
-    // laid elsewhere (#308).
+    // laid elsewhere (#308); and none of a later probe's lines, which
+    // were laid from another run (#309).
     lay.offset.set(offset);
+    lay.tracked.borrow_mut().clear();
     let side_of = side.as_ref().map(|range| (&drawn, range));
 
     // The frame's last resorts, from its lines as laid with `clear` kept
