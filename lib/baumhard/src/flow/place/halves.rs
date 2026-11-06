@@ -1914,7 +1914,9 @@ impl Work {
 /// room. A line is a function of what this keys and of the build's run and
 /// band centers alone, and the frame forgets every line at each build.
 /// The most recent [`TRACK_MEMO`] are kept, so a long text's lines are
-/// not all held at once.
+/// not all held at once. A line read so counts the work it is — a search
+/// of those kept and a copy, [`TRACK_CALL_STEPS`] — not a track's (ruling
+/// B16.1c).
 #[derive(Default)]
 struct TrackMemo {
     kept: Vec<(TrackKey, Tracked)>,
@@ -2073,7 +2075,6 @@ impl Layout<'_> {
         part: (f32, f32),
         g: f32,
     ) -> Tracked {
-        self.work.take(clusters.len() + TRACK_CALL_STEPS);
         let key = (
             usize::from(std::ptr::eq(walk.path, self.halves.path(1))),
             clusters.first().map_or(0, |c| c.glyphs.start),
@@ -2087,8 +2088,12 @@ impl Layout<'_> {
         if let Some(tracked) = self.tracked.borrow().get(&key) {
             #[cfg(test)]
             TRACK_HITS.with(|count| count.set(count.get() + 1));
+            // A line read, not laid: its search and its copy, the work of a
+            // track's call past its clusters (#309, ruling B16.1c).
+            self.work.take(TRACK_CALL_STEPS);
             return tracked.clone();
         }
+        self.work.take(clusters.len() + TRACK_CALL_STEPS);
         let tracked = track(walk, glyphs, clusters, part, g, self.band());
         self.tracked.borrow_mut().put(key, &tracked);
         tracked
