@@ -13,9 +13,10 @@
 //! drawn at its node's opacity times its ancestors'. It is a test's
 //! projection, not the app's: it reads what the demo maps hold and
 //! nothing more (no palettes' own projection, no labels, caps or portal
-//! ends). What a demo map shows is what the format spells: a per-glyph
+//! ends), on the map's one background: the frame is cleared to it
+//! (V1-B12), and a demo map gives none, so it is black. What a demo map shows is what the format spells: a per-glyph
 //! override (a glyph's offset, scale or color, `format/mutations.md`
-//! "Glyph run and fill mutations") has no spelling in a `.mandala.json`
+//! "Glyph run mutations") has no spelling in a `.mandala.json`
 //! yet, so no demo map carries one and this projection applies none.
 //!
 //! Every assertion is structural, never a pixel (§T10): each demo map
@@ -37,7 +38,8 @@ use baumhard::document::element::{DocElement, DocKind};
 use baumhard::document::format::load;
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::{
-    resolve_frame, resolve_node, resolve_path, resolve_ring, resolve_text, Content, ResolvedText,
+    resolve_background, resolve_frame, resolve_node, resolve_path, resolve_ring, resolve_text, Content,
+    ResolvedText,
 };
 use baumhard::document::values::{Align, FitMode, FontSize};
 use baumhard::engine::tree::Placement;
@@ -493,6 +495,8 @@ fn test_demo_maps_draw_every_ring_and_path() {
         let placed: usize = projected.runs.iter().map(|run| run.shaped().glyph_count()).sum();
         let camera = camera_on(projected.bounds);
         let init = &mut app.init;
+        init.renderer
+            .set_background(resolve_background(doc.tree(), &mut ()).0);
         show(init, projected.runs);
         let pixels = draw(init, &camera);
         let counts = init.renderer.glyph_run_counts();

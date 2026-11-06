@@ -1,6 +1,12 @@
 # libFuzzer dictionary for the raw loader target (load_raw): every key
 # the format's fixtures use and their value spellings, so mutations
 # splice whole tokens instead of rediscovering them byte by byte.
+#
+# Three entries are spellings the format no longer has: "fill",
+# "fill_fade" and "palette(fill)" (V1-B12 removed node fills). They are
+# kept on purpose, to probe the refusals that replaced them: a node's
+# or a palette group's "fill" is an unknown key, and "palette(fill)" is
+# an invalid color reference.
 "\"(\""
 "\")\""
 "\"accent\""
@@ -9,6 +15,7 @@
 "\"anchors\""
 "\"at\""
 "\"back\""
+"\"background\""
 "\"bg\""
 "\"bold\""
 "\"border_t\""

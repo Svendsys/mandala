@@ -74,11 +74,6 @@ impl Builder {
             .map(|size| self.extent("min_size", size))
             .transpose()?;
         let shape = dto.shape.map(|shape| self.shape(shape)).transpose()?;
-        let fill = match &dto.fill {
-            Some(fill) => Some(self.color("fill", fill)?),
-            None => None,
-        };
-        let fill_fade = self.opt_number("fill_fade", dto.fill_fade, bounds::check_non_negative)?;
         let palette = match &dto.palette {
             Some(name) => Some(self.palette(name)?),
             None => None,
@@ -104,12 +99,7 @@ impl Builder {
             channel,
             position,
             min_size,
-            style: NodeStyle {
-                shape,
-                fill,
-                fill_fade,
-                text,
-            },
+            style: NodeStyle { shape, text },
             palette,
             zoom,
             folded: dto.folded,

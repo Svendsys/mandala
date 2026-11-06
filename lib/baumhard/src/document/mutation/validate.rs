@@ -222,6 +222,7 @@ impl<'d> Validator<'d> {
         }
         match mutation {
             DocMutation::Map(MapOp::SetName(_)) => Ok(()),
+            DocMutation::Map(MapOp::SetBackground(background)) => self.background(background),
             DocMutation::Theme(op) => self.theme(op),
             DocMutation::Palette(PaletteOp::SetGroup { index, group }) => {
                 // The group must exist in some palette; a palette the
@@ -349,8 +350,20 @@ impl<'d> Validator<'d> {
         }
     }
 
+    /// A background: a variable the theme has, or an opaque literal
+    /// (the loader's rule, so a mutation cannot leave a map a load
+    /// refuses).
+    fn background(&self, color: &PlainColor) -> Result<(), MutationError> {
+        match color {
+            PlainColor::Rgba(rgba) if rgba.0[3] != u8::MAX => Err(MutationError::TranslucentBackground {
+                at: self.at(),
+                alpha: rgba.0[3],
+            }),
+            other => self.plain(other),
+        }
+    }
+
     fn palette_group(&self, group: &PaletteGroup) -> Result<(), MutationError> {
-        self.plain(&group.fill)?;
         self.plain(&group.frame)?;
         self.plain(&group.text)?;
         group.title.as_ref().map_or(Ok(()), |title| self.plain(title))
@@ -496,8 +509,6 @@ impl<'d> Validator<'d> {
                 Ok(())
             }
             NodeOp::SetChannel(channel) => self.bound("node.channel", check_channel(*channel)),
-            NodeOp::SetFill(fill) => self.color(fill.as_ref()),
-            NodeOp::SetFillFade(fade) => self.non_negative("node.fill_fade", *fade),
             NodeOp::SetPalette(palette) => self.palette(*palette),
             NodeOp::SetZoom(zoom) => self.zoom("node.zoom", zoom.as_ref()),
             NodeOp::SetOpacity(opacity) => self.bound("node.opacity", check_unit_interval(*opacity)),
@@ -548,8 +559,6 @@ impl<'d> Validator<'d> {
     }
 
     fn node_style(&self, style: &NodeStyle) -> Result<(), MutationError> {
-        self.color(style.fill.as_ref())?;
-        self.non_negative("node.fill_fade", style.fill_fade)?;
         self.text_style(&style.text, Unit::of_tier(DocKind::Node))
     }
 

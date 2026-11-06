@@ -5,25 +5,17 @@
 //!
 //! A node's outline is its drawn rectangle shaped by its
 //! [`Shape`]: a rounded rectangle whose corner radius is a percentage
-//! of half the rectangle's shorter side, or the inscribed ellipse. The
-//! node's background fill uses the same outline, so the fill and the
-//! frame agree. Ring *k* runs around the outline grown outward by
-//! [`ring_offset`].
+//! of half the rectangle's shorter side, or the inscribed ellipse.
+//! Ring *k* runs around the outline grown outward by [`ring_offset`].
 
 use glam::Vec2;
-use serde::{Deserialize, Serialize};
 
 use crate::document::values::Shape;
 
 /// An axis-aligned rectangle on the canvas: its top-left corner and its
 /// size. The node's drawn rectangle — position plus fitted or minimum
-/// size, which the projection computes — is one of these, and so is a
-/// fill's.
-///
-/// Serializable because a glyph-layer mutation carries one
-/// ([`GfxMutation::FillRect`](crate::gfx_structs::mutator::GfxMutation::FillRect)):
-/// `{"origin": [x, y], "size": [w, h]}`.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// size, which the projection computes — is one of these.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Rect {
     /// The top-left corner.
     pub origin: Vec2,

@@ -7,8 +7,8 @@
 //! The values reproduce what the app draws today for a map that says
 //! nothing, each taken from the constant that decides it now (the
 //! sources are named beside each value), so a map converted to the
-//! document draws as it did. Fields the document adds — `fill_fade`,
-//! the frame's start, direction, fit, gap and inset, ring sizes,
+//! document draws as it did. Fields the document adds — the frame's
+//! start, direction, fit, gap and inset, ring sizes,
 //! `content` — take the defaults design §5 and #235 give them.
 //!
 //! `BUILT_IN` is fully resolved: no `Option`, no theme variable, no
@@ -23,6 +23,12 @@ use crate::document::values::{
     Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, Sides, StartPoint, Weight,
 };
 use crate::font::fonts::AppFont;
+
+/// The map's background when the file does not give one: black
+/// (V1-B12, "a single background color, default black").
+/// `background` is not inherited, so it has no tier here; the loader
+/// writes this, and the saver leaves a background equal to it out.
+pub const DEFAULT_BACKGROUND: Rgba = Rgba::opaque(0, 0, 0);
 
 /// A node's opacity when the file does not give one: fully opaque.
 /// `opacity` is not inherited, so it has no tier here; the loader
@@ -81,10 +87,6 @@ const fn text(size: FontSize, color: Rgba) -> ResolvedText {
 pub struct BuiltInNode {
     /// The outline.
     pub shape: Shape,
-    /// The fill.
-    pub fill: Rgba,
-    /// The fill's soft edge.
-    pub fill_fade: f32,
 }
 
 /// [`BUILT_IN`]'s frame fields.
@@ -189,10 +191,6 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         shape: Shape::Rectangle {
             radius: Percent::new(0),
         },
-        // `DEFAULT_NODE_BACKGROUND_COLOR`, src/application/document/defaults.rs.
-        fill: Rgba::opaque(0x14, 0x14, 0x14),
-        // #235's table: new with D12.
-        fill_fade: 0.0,
     },
     // Size: `DEFAULT_RUN_SIZE_PT`; color: `DEFAULT_NODE_TEXT_COLOR`;
     // both src/application/document/defaults.rs. Upright regular:

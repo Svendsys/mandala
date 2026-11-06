@@ -1364,6 +1364,9 @@ mod gpu_harness;
 mod tests_gpu;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_background;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_demo_checker;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]

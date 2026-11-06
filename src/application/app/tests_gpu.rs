@@ -203,14 +203,15 @@ fn test_delete_selection_then_undo_through_act_action_matches_the_keyboard_path(
 }
 
 /// Removes a file when dropped, so a test that writes one leaves
-/// nothing behind whichever assertion stops it.
-struct TempFile(std::path::PathBuf);
+/// nothing behind whichever assertion stops it. Shared with the
+/// sibling GPU test modules.
+pub(super) struct TempFile(std::path::PathBuf);
 
 impl TempFile {
     /// A fresh path under the temp dir, `mandala-tests-gpu-<stem>-…
     /// .<ext>`, unique to this process and test thread; whatever was
     /// there is removed first.
-    fn new(stem: &str, ext: &str) -> Self {
+    pub(super) fn new(stem: &str, ext: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
             "mandala-tests-gpu-{stem}-{}-{}.{ext}",
             std::process::id(),
@@ -226,7 +227,7 @@ impl TempFile {
         TempFile(std::path::PathBuf::from(format!("{}{suffix}", self.as_str())))
     }
 
-    fn as_str(&self) -> &str {
+    pub(super) fn as_str(&self) -> &str {
         self.0.to_str().expect("a UTF-8 temp path")
     }
 }

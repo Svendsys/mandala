@@ -188,9 +188,9 @@ mod tests {
         assert_eq!(emitted, LEGACY_SHAPE_ORDINALS[0]);
         assert_eq!(
             ShapeSpelling::classify(emitted),
-            ShapeSpelling::Rendered(NodeShape::default()),
+            ShapeSpelling::Modeled(NodeShape::default()),
             "the converter's fallback spelling must be the one the \
-             renderer's default variant claims"
+             default variant claims"
         );
     }
 

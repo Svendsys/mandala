@@ -23,8 +23,8 @@ MindMap
 In the runtime [Baumhard tree](../CONCEPTS.md#tree-t-m), a `MindNode`
 materializes as a three-deep subtree:
 
-- one **container** `GlyphArea` (chrome only — background, frame
-  padding, shape, zoom window),
+- one **container** `GlyphArea` (the node's hit shape and zoom
+  window; it draws nothing, since a node has no fill — V1-B12),
 - one **section-area** `GlyphArea` per section, carrying the
   section's text and its theme-resolved `ColorFontRegions`,
 - one structural **section-model** `GlyphModel` child per

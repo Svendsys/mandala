@@ -45,7 +45,7 @@ fn node(
 fn journaled() -> (Tree<DocElement>, Tree<DocElement>, Journal<DocElement>, Example) {
     let (mut builder, ids) = example();
     builder.edit_node(ids.b, |n| {
-        n.style.fill = Some(ColorRef::Rgba(Rgba::opaque(0, 0, 0)));
+        n.style.text.color = Some(ColorRef::Rgba(Rgba::opaque(0, 0, 0)));
         n.style.text.size = Some(FontSize::Pt(20.0));
     });
     let mut tree = builder.tree().clone();
@@ -53,7 +53,7 @@ fn journaled() -> (Tree<DocElement>, Tree<DocElement>, Journal<DocElement>, Exam
     let mut journal = JournalBuilder::new();
     node(&mut tree, &mut journal, ids.b, |n| {
         n.position = Vec2::new(100.0, 50.0);
-        n.style.fill = Some(ColorRef::Rgba(Rgba::opaque(200, 0, 0)));
+        n.style.text.color = Some(ColorRef::Rgba(Rgba::opaque(200, 0, 0)));
         n.style.text.size = Some(FontSize::Pt(10.0));
     });
     tree.update_journaled(ids.b_span, &mut journal, |e| {
@@ -134,7 +134,7 @@ fn test_document_write_interpolated() {
 }
 
 /// `write_interpolated` at 0 is the original and at 1 the changed tree,
-/// exactly, under either snap. At 0.5 the position, the literal fill and
+/// exactly, under either snap. At 0.5 the position, the literal color and
 /// the point size are halfway; the span's text, the theme's active
 /// variant and the section's key snap — before under `Snap::End`, after
 /// under `Snap::Start` — and every row stays sorted.
@@ -151,7 +151,7 @@ pub fn do_document_write_interpolated() {
         tree.check_sorted().unwrap();
         let DocElement::Node(b) = tree.arena()[ids.b].get() else { panic!("b is a node") };
         assert_eq!(b.position, Vec2::new(50.0, 25.0));
-        assert_eq!(b.style.fill, Some(ColorRef::Rgba(Rgba::opaque(100, 0, 0))));
+        assert_eq!(b.style.text.color, Some(ColorRef::Rgba(Rgba::opaque(100, 0, 0))));
         assert_eq!(b.style.text.size, Some(FontSize::Pt(15.0)));
         let theme = tree.root().children(tree.arena()).next().unwrap();
         let DocElement::Theme(theme) = tree.arena()[theme].get() else { panic!("the theme") };
@@ -175,10 +175,10 @@ fn test_document_interpolate_blends_numbers_and_colors() {
 pub fn do_document_interpolate_blends_numbers_and_colors() {
     let (builder, ids) = example();
     let before = builder.tree().arena()[ids.b].get().clone();
-    let with = |fill: ColorRef, size: FontSize, opacity: f32| {
+    let with = |color: ColorRef, size: FontSize, opacity: f32| {
         let mut e = before.clone();
         if let DocElement::Node(n) = &mut e {
-            n.style.fill = Some(fill);
+            n.style.text.color = Some(color);
             n.style.text.size = Some(size);
             n.opacity = opacity;
         }
@@ -192,7 +192,10 @@ pub fn do_document_interpolate_blends_numbers_and_colors() {
     );
     let half = DocElement::interpolate(&from, &to, 0.5, Snap::End);
     let DocElement::Node(n) = &half else { panic!("a node") };
-    assert_eq!(n.style.fill, Some(ColorRef::Rgba(Rgba::opaque(100, 50, 25))));
+    assert_eq!(
+        n.style.text.color,
+        Some(ColorRef::Rgba(Rgba::opaque(100, 50, 25)))
+    );
     assert_eq!(n.style.text.size, Some(FontSize::Pt(15.0)));
     assert_eq!(n.opacity, 0.5);
     assert_eq!(DocElement::interpolate(&from, &to, 0.0, Snap::Start), from);
@@ -203,7 +206,7 @@ pub fn do_document_interpolate_blends_numbers_and_colors() {
         panic!("a node")
     };
     assert_eq!(
-        n.style.fill,
+        n.style.text.color,
         Some(ColorRef::Rgba(Rgba::opaque(0, 0, 0))),
         "a variable snaps"
     );
@@ -258,7 +261,6 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
     let before = node(&|n| {
         n.position = Vec2::new(0.0, 0.0);
         n.min_size = Some(Vec2::new(10.0, 10.0));
-        n.style.fill_fade = Some(0.0);
         n.opacity = 0.0;
         n.hidden = false;
         n.style.shape = Some(Shape::Rectangle {
@@ -272,7 +274,6 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
     let after = node(&|n| {
         n.position = Vec2::new(10.0, -20.0);
         n.min_size = Some(Vec2::new(30.0, 50.0));
-        n.style.fill_fade = Some(4.0);
         n.opacity = 1.0;
         n.hidden = true;
         n.style.shape = Some(Shape::Rectangle {
@@ -287,7 +288,6 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
     let (DocElement::Node(end), DocElement::Node(start)) = (end, start) else { panic!("nodes") };
     assert_eq!(end.position, Vec2::new(5.0, -10.0));
     assert_eq!(end.min_size, Some(Vec2::new(20.0, 30.0)));
-    assert_eq!(end.style.fill_fade, Some(2.0));
     assert_eq!(end.opacity, 0.5);
     assert!(!end.hidden && start.hidden, "hidden snaps");
     assert_eq!(
@@ -463,5 +463,35 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
         end.groups[0].title,
         Some(PlainColor::Rgba(Rgba::opaque(50, 50, 50))),
         "a palette group's colors blend"
+    );
+
+    // The map's background: a literal blends; a variable snaps.
+    let map = |background: PlainColor| {
+        DocElement::Map(crate::document::element::MapData {
+            name: "m".to_string(),
+            background,
+        })
+    };
+    let black = map(PlainColor::Rgba(Rgba::opaque(0, 0, 0)));
+    let (end, start) = halves(&black, &map(PlainColor::Rgba(Rgba::opaque(100, 200, 50))));
+    let DocElement::Map(end) = end else { panic!("the map") };
+    assert_eq!(
+        end.background,
+        PlainColor::Rgba(Rgba::opaque(50, 100, 25)),
+        "a literal background blends"
+    );
+    let DocElement::Map(start) = start else { panic!("the map") };
+    assert_eq!(start.background, end.background, "under either snap");
+    let (end, start) = halves(&black, &map(PlainColor::Var(crate::document::values::VarId(0))));
+    let DocElement::Map(end) = end else { panic!("the map") };
+    let DocElement::Map(start) = start else { panic!("the map") };
+    assert_eq!(
+        end.background,
+        PlainColor::Rgba(Rgba::opaque(0, 0, 0)),
+        "a variable snaps"
+    );
+    assert_eq!(
+        start.background,
+        PlainColor::Var(crate::document::values::VarId(0))
     );
 }

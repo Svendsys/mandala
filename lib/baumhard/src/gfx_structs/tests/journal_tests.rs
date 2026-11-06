@@ -18,7 +18,7 @@ use crate::engine::interpolate::Snap;
 use crate::engine::journal::JournalBuilder;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::{Placement, TreeError};
-use crate::gfx_structs::area::{DeltaGlyphArea, EdgePadding, GlyphArea, GlyphAreaField, OutlineStyle};
+use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField, OutlineStyle};
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::model::{GlyphLine, GlyphModel};
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
@@ -33,8 +33,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 /// An area element: text `"glyph"`, scale 10, line height 12, at
-/// `(0, 0)`, 100 × 40, one red region over its first two clusters, a
-/// background, one hit rectangle, the `Mutable` flag, channel 1, id 7.
+/// `(0, 0)`, 100 × 40, one red region over its first two clusters,
+/// one hit rectangle, the `Mutable` flag, channel 1, id 7.
 fn rich_area() -> GfxElement {
     let mut area = GlyphArea::new_with_str("glyph", 10.0, 12.0, Vec2::ZERO, Vec2::new(100.0, 40.0));
     area.regions = ColorFontRegions::new_from(vec![ColorFontRegion::new(
@@ -42,7 +42,6 @@ fn rich_area() -> GfxElement {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     )]);
-    area.background_color = Some([10, 20, 30, 255]);
     area.hitbox.add(BoundingRectangle::at_origin(100.0, 40.0));
     let mut element = GfxElement::new_area_non_indexed_with_id(area, 1, 7);
     element.set_flag(Flag::Mutable);
@@ -63,7 +62,6 @@ fn set_channel(element: &mut GfxElement, to: usize) {
         GfxElement::GlyphArea { channel, .. }
         | GfxElement::GlyphModel { channel, .. }
         | GfxElement::GlyphRun { channel, .. }
-        | GfxElement::Fill { channel, .. }
         | GfxElement::Void { channel, .. } => *channel = to,
     }
 }
@@ -108,12 +106,6 @@ const AREA_VARIATIONS: &[Variation] = &[
                     Some([0.0, 0.0, 1.0, 1.0]),
                 )]))
         })
-    }),
-    ("background_color", |e| {
-        with_area(e, |a| a.background_color = Some([10, 20, 31, 255]))
-    }),
-    ("background_padding", |e| {
-        with_area(e, |a| a.background_padding = EdgePadding::new(0.0, 0.0, 1.0, 0.0))
     }),
     ("align_center", |e| with_area(e, |a| a.align_center = true)),
     ("outline", |e| {
@@ -380,20 +372,19 @@ pub fn do_gfx_journal_reverts_and_replays_a_glyph_walk_exactly() {
 // ── interpolation ─────────────────────────────────────────────────
 
 #[test]
-fn test_gfx_interpolates_geometry_and_color_and_snaps_the_rest() {
-    do_gfx_interpolates_geometry_and_color_and_snaps_the_rest();
+fn test_gfx_interpolates_geometry_and_snaps_the_rest() {
+    do_gfx_interpolates_geometry_and_snaps_the_rest();
 }
 
 /// One journaled update takes an area from `(0, 0)`, 100 × 40, scale
-/// 10, line height 12, background `[10, 20, 30, 255]`, text `"glyph"`
-/// to `(10, 20)`, 200 × 80, scale 20, line height 24, background
-/// `[110, 120, 130, 55]`, text `"other"`. Halfway, the five
-/// interpolating fields are their midpoints under either snap, and the
-/// text is `"glyph"` under `Snap::End` and `"other"` under `Snap::Start`.
-/// At `0` the tree equals the reverted tree and at `1` the replayed
-/// one. A background on one side only snaps with the text. A model's
-/// position interpolates the same way.
-pub fn do_gfx_interpolates_geometry_and_color_and_snaps_the_rest() {
+/// 10, line height 12, text `"glyph"` to `(10, 20)`, 200 × 80, scale
+/// 20, line height 24, text `"other"`. Halfway, the four interpolating
+/// fields are their midpoints under either snap, and the text is
+/// `"glyph"` under `Snap::End` and `"other"` under `Snap::Start`. At
+/// `0` the tree equals the reverted tree and at `1` the replayed one. A
+/// model's position interpolates the same way. An area has no
+/// background to blend (V1-B12).
+pub fn do_gfx_interpolates_geometry_and_snaps_the_rest() {
     let (mut tree, ids) = glyph_row();
     let target = ids[0];
     let model = tree
@@ -411,7 +402,6 @@ pub fn do_gfx_interpolates_geometry_and_color_and_snaps_the_rest() {
             area.render_bounds = OrderedVec2::new_f32(200.0, 80.0);
             area.scale = OrderedFloat(20.0);
             area.line_height = OrderedFloat(24.0);
-            area.background_color = Some([110, 120, 130, 55]);
             area.text = "other".to_string();
         });
     })
@@ -432,7 +422,6 @@ pub fn do_gfx_interpolates_geometry_and_color_and_snaps_the_rest() {
         assert_eq!(area.render_bounds, OrderedVec2::new_f32(150.0, 60.0), "{snap:?}");
         assert_eq!(area.scale, OrderedFloat(15.0), "{snap:?}");
         assert_eq!(area.line_height, OrderedFloat(18.0), "{snap:?}");
-        assert_eq!(area.background_color, Some([60, 70, 80, 155]), "{snap:?}");
         assert_eq!(area.text, text, "{snap:?}: the text snaps");
         let model_position = tree.arena()[model].get().glyph_model().unwrap().position;
         assert_eq!(model_position, OrderedVec2::new_f32(-4.0, 2.0), "{snap:?}");
@@ -448,22 +437,6 @@ pub fn do_gfx_interpolates_geometry_and_color_and_snaps_the_rest() {
             "{snap:?}: t = 1 is the replayed tree"
         );
     }
-
-    // A background present on one side only has nothing to blend: it
-    // snaps.
-    let (mut tree, ids) = glyph_row();
-    let mut builder = JournalBuilder::new();
-    tree.update_journaled(ids[0], &mut builder, |element| {
-        with_area(element, |area| area.background_color = None);
-    })
-    .unwrap();
-    let journal = builder.close(&tree);
-    journal.write_interpolated(&mut tree, 0.5, Snap::End).unwrap();
-    let area = tree.arena()[ids[0]].get().glyph_area().unwrap();
-    assert_eq!(area.background_color, Some([10, 20, 30, 255]));
-    journal.write_interpolated(&mut tree, 0.5, Snap::Start).unwrap();
-    let area = tree.arena()[ids[0]].get().glyph_area().unwrap();
-    assert_eq!(area.background_color, None);
 }
 
 // ── structural commands ───────────────────────────────────────────

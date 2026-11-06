@@ -847,15 +847,11 @@ pub(super) fn run(mut app: Application) {
         // targets to start disagreeing.
         let mut doc = startup_load::wasm_startup_document(&mindmap_path).await;
 
-        // Canvas background: resolve through theme variables
-        // so `"var(--bg)"` works, then hand off to the
-        // renderer as the render-pass clear color. Mirrors
-        // run_native.rs so the WASM canvas paints against
-        // the doc's configured background instead of the
-        // default pitch black.
-        let vars = &doc.mindmap.canvas.theme_variables;
-        let resolved_bg = baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
-        renderer.set_clear_color_from_hex(resolved_bg);
+        // The map's one background (V1-B12): every frame is
+        // cleared to it. The same call native's load path makes
+        // (`run_native_init`), so the two targets cannot start
+        // disagreeing about what is behind the canvas.
+        renderer.set_background(doc.background());
 
         // Four-source mutation registry, matching the native
         // path: app bundle (shipped in the binary) < user

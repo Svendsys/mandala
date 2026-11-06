@@ -11,15 +11,15 @@
 //! draws the pixels the window shows; one at another size, framing or
 //! pixel ratio draws the same scene projected differently. Nothing the
 //! renderer holds for the window is changed by a capture except the GPU
-//! staging it re-uploads every frame anyway (both rect batches, the
-//! text prepares and the glyphon viewport), so the next window frame is
+//! staging it re-uploads every frame anyway (the text prepares, the
+//! glyph-run instances and the glyphon viewport), so the next window frame is
 //! exactly the frame it would have been. A capture at another zoom
 //! draws its zoom-dependent canvas roles from a set of the capture's
 //! own ([`Renderer::rebuild_capture_canvas_buffers`],
 //! [`CanvasSource::Composed`]) rather than re-projecting the window's,
 //! which is what keeps that sentence true of the live set as well.
 //!
-//! **The target is the frames' own format.** Both pipelines are built
+//! **The target is the frames' own format.** Every pipeline is built
 //! for the renderer's `format` — the sRGB one the window's surface
 //! offers, or `HEADLESS_FORMAT` with no window — so the offscreen
 //! texture is created in it too: the format has one source and the

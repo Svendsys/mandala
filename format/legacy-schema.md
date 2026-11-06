@@ -321,7 +321,7 @@ untouched and never reported as unrecognized. See
 
 | Field | Type | Notes |
 |---|---|---|
-| `background_color` | string | `#RRGGBB` or `var(--name)`. **Required** — the one `Canvas` key with no default; every other key below may be absent |
+| `background_color` | string | `#RRGGBB` or `var(--name)`: the map's one background, which every frame is cleared to. **Required** — the one `Canvas` key with no default; every other key below may be absent |
 | `default_border` | object\|null | Fallback `GlyphBorderConfig` for every node with no `style.border` of its own. A node's own `border` replaces it whole, except for `color` (see [`canvas.md`](./canvas.md#cascade-resolution)) |
 | `default_connection` | object\|null | Fallback `GlyphConnectionConfig` for every edge |
 | `default_section_frame_border` | object\|null | Fallback `GlyphBorderConfig` for unfocused section frames in NodeEdit mode. `null` → hardcoded `light`-preset thin line. See [`border-patterns.md`](./border-patterns.md#section-frames). |
@@ -388,7 +388,7 @@ untouched and never reported as unrecognized. See
 
 | Field | Type | Notes |
 |---|---|---|
-| `background_color` | string | `#RRGGBB`, empty (`""` for transparent), or `var(--name)` |
+| `background_color` | string | `#RRGGBB`, empty (`""` for transparent), or `var(--name)`. Loaded, resolved and editable, and **not drawn**: a node has no fill since V1-B12 |
 | `frame_color` | string | Border color |
 | `text_color` | string | Base text color — the section default, which a `TextRun`'s own `color` overrides |
 | `shape` | string | See [enums.md](./enums.md) |
@@ -399,8 +399,8 @@ untouched and never reported as unrecognized. See
 | `border` | object\|null | `GlyphBorderConfig`; optional per-node override |
 
 The three color fields are the **fallback** tier. A node carrying a
-`color_schema` takes its fill, frame and text from the referenced
-palette group instead — or from `color_schema.overrides` where that
+`color_schema` takes its fill (loaded, not drawn since V1-B12), frame
+and text from the referenced palette group instead — or from `color_schema.overrides` where that
 node has excepted a channel by hand — and these values are what it
 would fall back to if the schema were removed. They are *not* where
 a per-node recolor lands on a themed node; that is

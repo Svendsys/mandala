@@ -216,6 +216,8 @@ fn test_generated_maps_hold_every_loader_property() {
         "structure: loaded",
         "content: Bound",
         "content: Invalid",
+        "content: TranslucentBackground",
+        "content: UnknownVariable",
         "content: SiblingsOutOfOrder",
         "content: UnknownKey",
         "structure: Bound",
@@ -627,6 +629,7 @@ fn test_the_structure_models_judge_the_named_cases_of_chain_ref() {
                 fault: Fault::Structure,
                 bounded: None,
                 defaults: Vec::new(),
+                background: None,
             },
             0,
         );
@@ -653,6 +656,7 @@ fn bounded_map(choices: &mut Choices<'_>) -> (MapSpec, &'static BoundedField) {
             fault,
             bounded: Some(field.name),
             defaults,
+            background: None,
         },
         field,
     )

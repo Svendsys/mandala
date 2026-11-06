@@ -639,7 +639,9 @@ pub struct NodeStyle {
     /// Default text color for the node's primary text (`#RRGGBB`
     /// or `var(--name)`).
     pub text_color: String,
-    /// Background shape spelling — matched against
+    /// Hit-test shape spelling — the node's clickable silhouette, and
+    /// whether its frame is drawn (only a rectangle is framed); nothing
+    /// draws a fill for it (V1-B12). Matched against
     /// [`crate::gfx_structs::shape::NodeShape::from_style_string`].
     /// Falls back to rectangle for any spelling with no
     /// [`NodeShape`](crate::gfx_structs::shape::NodeShape) variant

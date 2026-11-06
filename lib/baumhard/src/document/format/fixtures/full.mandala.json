@@ -16,23 +16,21 @@
       }
     }
   },
+  "background": "var(bg)",
   "palettes": {
     "mono": [
       {
-        "fill": "#000000",
         "frame": "#808080",
         "text": "#ffffff80"
       }
     ],
     "rainbow": [
       {
-        "fill": "#2a1b3d",
         "frame": "#a239ca",
         "text": "#e0e0e0",
         "title": "#ffffff"
       },
       {
-        "fill": "var(bg)",
         "frame": "var(accent)",
         "text": "var(fg)"
       }
@@ -45,8 +43,6 @@
           "radius": 10
         }
       },
-      "fill": "var(bg)",
-      "fill_fade": 4.0,
       "font": "Public Pixel",
       "size": 20.0,
       "color": "var(fg)",
@@ -156,8 +152,6 @@
       "position": [0.0, 0.0],
       "min_size": [320.0, 200.0],
       "shape": {"rectangle": {"radius": 25}},
-      "fill": "var(bg)",
-      "fill_fade": 6.5,
       "palette": "rainbow",
       "zoom": {"min": 0.25, "max": 8.0},
       "folded": true,

@@ -197,6 +197,7 @@ impl Builder {
     pub(super) fn begin(header: &MapHeaderDto, keep: Keep, max_elements: Option<u64>) -> LoadResult<Builder> {
         let root = DocElement::Map(MapData {
             name: header.name.clone(),
+            ..MapData::default()
         });
         let mut derived = Derived::default();
         derived.appended(&root);
@@ -704,7 +705,6 @@ impl Builder {
             ColorDto::Hex(hex) => Ok(ColorRef::Rgba(Rgba(hex.0))),
             ColorDto::Var(name) => b.var(name).map(ColorRef::Var),
             ColorDto::Palette(field) => Ok(ColorRef::Palette(match field {
-                PaletteFieldDto::Fill => PaletteField::Fill,
                 PaletteFieldDto::Frame => PaletteField::Frame,
                 PaletteFieldDto::Text => PaletteField::Text,
                 PaletteFieldDto::Title => PaletteField::Title,
@@ -847,6 +847,7 @@ mod arena_bound_tests {
             format: 1,
             name: String::new(),
             theme: None,
+            background: None,
             palettes: Default::default(),
             defaults: None,
             edits: Vec::new(),

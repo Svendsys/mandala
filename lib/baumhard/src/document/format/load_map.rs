@@ -18,11 +18,11 @@ use crate::document::format::dto::{
 use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{sorted_names, Builder, LoadResult};
 use crate::document::format::index::FORMAT;
-use crate::document::format::spelling::{HexDto, Named};
+use crate::document::format::spelling::{BackgroundDto, HexDto, Named};
 use crate::document::ids::{Definitions, EditDef, PresentationDef, VerbDef};
 use crate::document::keyed::KeyedSet;
 use crate::document::place::{name_fault, NameFault, Unit};
-use crate::document::values::{Rgba, VerbId};
+use crate::document::values::{PlainColor, Rgba, VerbId};
 
 /// A name and what it names, in a file's object.
 type NameAndValue<'a, T> = (&'a str, &'a T);
@@ -49,6 +49,20 @@ impl Builder {
             None => ThemeData::default(),
         };
         self.element(root, DocElement::Theme(theme), |_, _| Ok(()))?;
+        if let Some(background) = &dto.background {
+            let background = self.background(background)?;
+            self.tree
+                .update(root, |element| {
+                    if let DocElement::Map(map) = element {
+                        map.background = background;
+                    }
+                })
+                .map_err(|error| {
+                    self.error(LoadErrorKind::Internal {
+                        message: error.to_string(),
+                    })
+                })?;
+        }
         self.key("palettes", |b| b.palettes(root, &dto.palettes))?;
         let definitions = self.definitions(dto)?;
         let defaults = match &dto.defaults {
@@ -57,6 +71,22 @@ impl Builder {
         };
         self.element(root, DocElement::Defaults(Box::new(defaults)), |_, _| Ok(()))?;
         Ok(definitions)
+    }
+
+    /// The map's background, read after the theme it may name: an
+    /// opaque literal or a variable of the theme. The current path is
+    /// the map.
+    fn background(&mut self, dto: &BackgroundDto) -> LoadResult<PlainColor> {
+        self.key("background", |b| match dto {
+            BackgroundDto::Hex(HexDto([red, green, blue, alpha])) => {
+                if *alpha == u8::MAX {
+                    Ok(PlainColor::Rgba(Rgba::opaque(*red, *green, *blue)))
+                } else {
+                    Err(b.error(LoadErrorKind::TranslucentBackground { alpha: *alpha }))
+                }
+            }
+            BackgroundDto::Var(name) => b.var(name).map(PlainColor::Var),
+        })
     }
 
     /// Refuse a file with more of something than an index addresses,
@@ -251,7 +281,6 @@ impl Builder {
     /// One palette depth.
     fn palette_group(&mut self, group: &PaletteGroupDto) -> LoadResult<PaletteGroup> {
         Ok(PaletteGroup {
-            fill: self.plain_color("fill", &group.fill)?,
             frame: self.plain_color("frame", &group.frame)?,
             text: self.plain_color("text", &group.text)?,
             title: match &group.title {
@@ -362,11 +391,6 @@ impl Builder {
     fn node_defaults(&mut self, dto: &NodeDefaultsDto) -> LoadResult<NodeStyle> {
         Ok(NodeStyle {
             shape: dto.shape.map(|shape| self.shape(shape)).transpose()?,
-            fill: match &dto.fill {
-                Some(fill) => Some(self.color("fill", fill)?),
-                None => None,
-            },
-            fill_fade: self.opt_number("fill_fade", dto.fill_fade, bounds::check_non_negative)?,
             text: self.text_style(text_in!(dto), Unit::of_tier(DocKind::Node))?,
         })
     }

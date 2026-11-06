@@ -3,6 +3,15 @@
 Color schemas are defined **once** at the map level and **referenced** by
 name from each themed node.
 
+> **The `.mandala.json` format (V1) has no fill.** A map has one
+> background, the color every frame is cleared to, and every other color
+> comes from a glyph (V1-B12, design D12). Its palette groups hold
+> `frame`, `text` and an optional `title`, and nothing else
+> ([schema.md](./schema.md#palette-group)). This page describes the
+> older `.mindmap.json`, which the app reads until V1-C3: its groups'
+> `background` channel still loads, resolves and can be edited, but the
+> app no longer draws a node's fill, so nothing on screen shows it.
+
 ```json
 {
   "palettes": {
@@ -80,7 +89,7 @@ field:
 
 | Role | Override | Palette channel | Fallback | Read by |
 |---|---|---|---|---|
-| Node fill | `overrides.background` | `group.background` | `style.background_color` | `node_background_color` |
+| Node fill (loaded, never drawn: V1-B12) | `overrides.background` | `group.background` | `style.background_color` | `node_background_color` |
 | Node frame | `overrides.frame` | `group.frame` | `style.frame_color` | `node_frame_color` |
 | Node text | `overrides.text` | `group.text` | `style.text_color` | `node_text_color` |
 | Node title | `overrides.title` | `group.title` | the text role above | `node_title_color` |
@@ -88,7 +97,8 @@ field:
 An **empty** value in the frame, text or title column is a hole rather
 than a color, in the *override* column as much as the palette one: the
 reader skips that tier and takes the next one. Only `background`
-passes an empty string along, where it means "no fill".
+passes an empty string along, where it meant "no fill" while fills
+were drawn.
 See [legacy-schema.md](./legacy-schema.md#palette-on-the-map).
 
 ## Overriding one channel on one node

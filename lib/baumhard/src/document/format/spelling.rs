@@ -200,11 +200,9 @@ impl<'de> Deserialize<'de> for HexDto {
     }
 }
 
-/// Which of a palette group's four colors `palette(...)` names.
+/// Which of a palette group's three colors `palette(...)` names.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PaletteFieldDto {
-    /// `palette(fill)`.
-    Fill,
     /// `palette(frame)`.
     Frame,
     /// `palette(text)`.
@@ -217,7 +215,6 @@ impl PaletteFieldDto {
     /// The name inside `palette(...)`.
     fn name(self) -> &'static str {
         match self {
-            PaletteFieldDto::Fill => "fill",
             PaletteFieldDto::Frame => "frame",
             PaletteFieldDto::Text => "text",
             PaletteFieldDto::Title => "title",
@@ -227,7 +224,6 @@ impl PaletteFieldDto {
     /// The field a name inside `palette(...)` spells.
     fn from_name(name: &str) -> Option<Self> {
         Some(match name {
-            "fill" => PaletteFieldDto::Fill,
             "frame" => PaletteFieldDto::Frame,
             "text" => PaletteFieldDto::Text,
             "title" => PaletteFieldDto::Title,
@@ -349,7 +345,7 @@ impl<'de> Deserialize<'de> for ShapeDto {
 }
 
 /// A color wherever a color may be written: `"#rrggbb"`,
-/// `"#rrggbbaa"`, `"var(name)"` or `"palette(fill|frame|text|title)"`.
+/// `"#rrggbbaa"`, `"var(name)"` or `"palette(frame|text|title)"`.
 /// Hex is lowercase, and an opaque color has no alpha digits.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ColorDto<'a> {
@@ -380,9 +376,7 @@ impl<'de> Deserialize<'de> for ColorDto<'_> {
             type Value = ColorDto<'static>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(
-                    "a color: `#rrggbb`, `#rrggbbaa`, `var(name)` or `palette(fill|frame|text|title)`",
-                )
+                f.write_str("a color: `#rrggbb`, `#rrggbbaa`, `var(name)` or `palette(frame|text|title)`")
             }
 
             fn visit_str<E: de::Error>(self, text: &str) -> Result<ColorDto<'static>, E> {
@@ -403,6 +397,60 @@ impl<'de> Deserialize<'de> for ColorDto<'_> {
         }
 
         deserializer.deserialize_str(ColorVisitor)
+    }
+}
+
+/// The map's background: `"#rrggbb"` or `"var(name)"` (V1-B12). A
+/// `palette(...)` names a color of the palette a node is bound to, and
+/// the background belongs to no node, so it is not a spelling here. A
+/// literal with alpha digits reads, and the loader refuses it as
+/// translucent
+/// ([`TranslucentBackground`](crate::document::format::LoadErrorKind::TranslucentBackground)),
+/// so that the saver's own document goes through the same rule when
+/// `check_savable` hands it to the loader's builder.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum BackgroundDto<'a> {
+    /// A literal color.
+    Hex(HexDto),
+    /// A theme variable, by name: borrowed from the document when the
+    /// saver writes it, owned when the loader reads it.
+    Var(Cow<'a, str>),
+}
+
+impl Serialize for BackgroundDto<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            BackgroundDto::Hex(hex) => hex.serialize(serializer),
+            BackgroundDto::Var(name) => serializer.collect_str(&format_args!("var({name})")),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BackgroundDto<'_> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BackgroundVisitor;
+
+        impl Visitor<'_> for BackgroundVisitor {
+            type Value = BackgroundDto<'static>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a background color: `#rrggbb` or `var(name)`")
+            }
+
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<BackgroundDto<'static>, E> {
+                if text.starts_with('#') {
+                    return parse_hex(text)
+                        .map(|rgba| BackgroundDto::Hex(HexDto(rgba)))
+                        .map_err(|refusal| E::custom(refusal.message(text)));
+                }
+                if let Some(name) = text.strip_prefix("var(").and_then(|rest| rest.strip_suffix(')')) {
+                    return Ok(BackgroundDto::Var(Cow::Owned(name.to_string())));
+                }
+                Err(E::invalid_value(Unexpected::Str(text), &self))
+            }
+        }
+
+        deserializer.deserialize_str(BackgroundVisitor)
     }
 }
 

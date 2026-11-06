@@ -14,23 +14,21 @@ use log::debug;
 use wgpu::StoreOp;
 
 use baumhard::font::{fonts, COLOR_WHITE};
-use baumhard::util::color_conversion::convert_u8_to_f32;
 
+use super::backdrop::{self, PixelRect};
 use super::scene_shape_cache::CanvasSource;
-use super::{Renderer, RECT_VBUF_INITIAL_CAPACITY, RECT_VERTEX_FLOATS};
+use super::Renderer;
 
 use baumhard::gfx_structs::camera::Camera2D;
-use baumhard::gfx_structs::shape::SHAPE_ID_RECTANGLE;
 use glyphon::Resolution;
 
-/// Where [`Renderer::prepare_frame`] left one frame's two rect batches in
-/// the shared vertex buffer — `[main | palette]` — for
-/// [`Renderer::encode_frame`] to draw.
+/// Proof that [`Renderer::prepare_frame`] ran for the frame
+/// [`Renderer::encode_frame`] is about to draw: everything the frame
+/// draws — both glyphon prepares and the glyph-run instances — was
+/// staged by that call, and lives in the passes themselves, so there is
+/// nothing else to hand over.
 pub(super) struct PreparedFrame {
-    main_bytes: u64,
-    palette_bytes: u64,
-    main_vertices: u32,
-    palette_vertices: u32,
+    _prepared: (),
 }
 
 /// Whether a frame draws the screen-space modal — the console or the
@@ -94,72 +92,6 @@ impl FrameSkip {
 }
 
 impl Renderer {
-    /// Push the six vertices (two triangles) of a filled axis-aligned
-    /// rectangle into `out`. Coords are already in NDC — the caller is
-    /// responsible for any camera or screen→NDC transform. `color` is
-    /// the flat RGBA written to every vertex; `shape_id` selects the
-    /// fragment-shader path (`0` = rectangle, `1` = ellipse, …). The
-    /// per-vertex `uv` is hard-wired to the quad's local `[0, 1]²`
-    /// frame so the fragment shader can evaluate any SDF in the shape
-    /// table without extra uniforms.
-    ///
-    /// Layout per vertex: `[x, y, u, v, r, g, b, a, shape_id]`
-    /// (9 × 4 bytes = 36 bytes; must match `RECT_VERTEX_SIZE`).
-    /// `shape_id` rides the stream as a plain `f32` (`shape_id as f32`)
-    /// because wgpu's WebGL2 backend doesn't support integer vertex
-    /// attributes on every browser — the WGSL vertex stage rounds and
-    /// casts to `u32` before flat-interpolating. The round-trip is
-    /// lossless for the small integer range we use.
-    fn push_rect_ndc(out: &mut Vec<f32>, ndc_min: Vec2, ndc_max: Vec2, color: [f32; 4], shape_id: u32) {
-        // Triangle 1: TL, BL, BR
-        // Triangle 2: TL, BR, TR
-        //
-        // NDC y is UP, so "top" is the larger y. The caller computes
-        // ndc_min / ndc_max from the canonical top-left + size by
-        // flipping y during the screen-to-NDC transform, so here
-        // ndc_min is bottom-left and ndc_max is top-right. Unpack:
-        let (lx, ly) = (ndc_min.x, ndc_min.y); // bottom-left
-        let (rx, ry) = (ndc_max.x, ndc_max.y); // top-right
-        let [r, g, b, a] = color;
-        // `shape_id` is encoded as `Float32` in the vertex buffer;
-        // WGSL rounds + casts back to `u32` before the switch. See
-        // the type-level doc on this function for the rationale.
-        let sid = shape_id as f32;
-        // UVs match the quad's local frame: TL = (0, 0), TR = (1, 0),
-        // BR = (1, 1), BL = (0, 1). The SDF cases in the fragment
-        // shader assume exactly this parameterization.
-        let push = |out: &mut Vec<f32>, x: f32, y: f32, u: f32, v: f32| {
-            out.extend_from_slice(&[x, y, u, v, r, g, b, a, sid]);
-        };
-        // Triangle 1: TL, BL, BR
-        push(out, lx, ry, 0.0, 0.0);
-        push(out, lx, ly, 0.0, 1.0);
-        push(out, rx, ly, 1.0, 1.0);
-        // Triangle 2: TL, BR, TR
-        push(out, lx, ry, 0.0, 0.0);
-        push(out, rx, ly, 1.0, 1.0);
-        push(out, rx, ry, 1.0, 0.0);
-    }
-
-    /// Convert a screen-space rectangle (top-left + size in pixels)
-    /// into a NDC bounding pair. Y is flipped so "top" (small y on
-    /// screen) maps to "top" (large y in NDC).
-    fn screen_rect_to_ndc_bounds(
-        left: f32,
-        top: f32,
-        width: f32,
-        height: f32,
-        vp_w: f32,
-        vp_h: f32,
-    ) -> (Vec2, Vec2) {
-        let x0 = left / vp_w * 2.0 - 1.0;
-        let x1 = (left + width) / vp_w * 2.0 - 1.0;
-        // Screen y grows down; NDC y grows up. Invert.
-        let y_top = 1.0 - top / vp_h * 2.0;
-        let y_bottom = 1.0 - (top + height) / vp_h * 2.0;
-        // ndc_min = (x0, y_bottom), ndc_max = (x1, y_top)
-        (Vec2::new(x0, y_bottom), Vec2::new(x1, y_top))
-    }
     /// Draw one frame to the window: [`Self::prepare_frame`] at the live
     /// camera, then [`Self::encode_frame`] into the swapchain texture,
     /// then present. The window is one caller of the pair; an offscreen
@@ -206,8 +138,8 @@ impl Renderer {
     }
 
     /// End a frame that was prepared and has nowhere to be presented — an
-    /// occluded window's. The prepare staged its uploads (both rect
-    /// batches, the glyph atlas, the text vertices) on the queue, and wgpu
+    /// occluded window's. The prepare staged its uploads (the glyph
+    /// atlases, the text vertices, the glyph-run instances) on the queue, and wgpu
     /// holds staged writes until the next submission; with none to come
     /// until a capture asks, every such frame would add to them. An empty
     /// submission flushes them, as the frame's own would have.
@@ -217,8 +149,7 @@ impl Renderer {
     }
 
     /// The CPU half of a frame, for a target `camera.viewport_size`
-    /// pixels large: rebuild both rect batches through `camera` and
-    /// upload them, size the glyphon viewport to the target, and run
+    /// pixels large: size the glyphon viewport to the target, and run
     /// both glyphon prepares and the positioned-glyph pass's
     /// ([`Self::prepare_text_for_pass`]).
     ///
@@ -232,13 +163,16 @@ impl Renderer {
     /// the ratio is 1.
     ///
     /// With [`ModalLayer::Omitted`], an open modal's backdrop and glyphs
-    /// are left out of the frame; nothing else changes.
+    /// are left out of the frame; nothing else changes. A backdrop is
+    /// glyphs too — full blocks at the bottom of the chrome pass
+    /// ([`super::backdrop`]) — so a frame draws its clear and glyphs and
+    /// nothing else (V1-B12).
     ///
     /// `canvas` names which shaped canvas set the main pass draws the
     /// tree-rendered roles from: the window's live set, or a capture's
     /// composition of it with a scratch projection
-    /// ([`CanvasSource`]). The node text and backgrounds are the
-    /// renderer's own and are drawn either way.
+    /// ([`CanvasSource`]). The node text is the renderer's own and is
+    /// drawn either way.
     ///
     /// Leaves the glyphon viewport at the target's resolution; the next
     /// frame's prepare sets it to its own. `Viewport::update` writes
@@ -250,118 +184,7 @@ impl Renderer {
         canvas: CanvasSource,
     ) -> Result<PreparedFrame, FrameSkip> {
         let (width, height) = camera.viewport_size;
-        let vp_w_px = width as f32;
-        let vp_h_px = height as f32;
         self.viewport.update(&self.queue, Resolution { width, height });
-
-        // Rebuild the "main" rect batch: canvas-space node
-        // backgrounds transformed to NDC via `camera`.
-        // Cheap: one push per visible node, no text shaping.
-        // Visible-range test mirrors the text-area cull below so
-        // clipped-offscreen nodes don't waste vertices either.
-        self.main_rect_vertices.clear();
-        for rect in self
-            .node_background_rects
-            .iter()
-            .chain(super::scene_shape_cache::background_fills(
-                super::scene_shape_cache::canvas_elements(
-                    canvas,
-                    &self.canvas_scene_elements,
-                    &self.capture_canvas,
-                ),
-            ))
-        {
-            if !rect.visible_at(camera) {
-                continue;
-            }
-            let screen_tl = camera.canvas_to_screen(rect.position);
-            let screen_size = rect.size * camera.pixels_per_unit();
-            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
-                screen_tl.x,
-                screen_tl.y,
-                screen_size.x,
-                screen_size.y,
-                vp_w_px,
-                vp_h_px,
-            );
-            let color = convert_u8_to_f32(&rect.color);
-            Self::push_rect_ndc(
-                &mut self.main_rect_vertices,
-                ndc_min,
-                ndc_max,
-                color,
-                rect.shape_id,
-            );
-        }
-
-        // Rebuild the "palette" rect batch: one opaque backdrop
-        // behind the command palette and/or the glyph-wheel color
-        // picker, in screen space at the camera's pixel ratio. The two
-        // modals are mutually exclusive but a single batch handles
-        // either case (or both, if a future variant ever overlaps
-        // them). Both are pitch black: the palette's cyan frame and the
-        // picker's saturated hue-ring glyphs pop against true black
-        // with no tinting, over any canvas background.
-        self.console_rect_vertices.clear();
-        let ratio = camera.pixel_ratio;
-        let backdrops = match modal {
-            ModalLayer::Drawn => self
-                .console_backdrop
-                .into_iter()
-                .chain(self.color_picker_backdrop),
-            ModalLayer::Omitted => None.into_iter().chain(None),
-        };
-        for (left, top, w, h) in backdrops {
-            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
-                left * ratio,
-                top * ratio,
-                w * ratio,
-                h * ratio,
-                vp_w_px,
-                vp_h_px,
-            );
-            Self::push_rect_ndc(
-                &mut self.console_rect_vertices,
-                ndc_min,
-                ndc_max,
-                [0.0, 0.0, 0.0, 1.0],
-                SHAPE_ID_RECTANGLE,
-            );
-        }
-
-        // Upload both batches to the shared rect vertex buffer,
-        // growing if the combined size exceeds the current
-        // capacity. Layout: `[main_bytes | palette_bytes]`.
-        let main_bytes_len = self.main_rect_vertices.len() * std::mem::size_of::<f32>();
-        let palette_bytes_len = self.console_rect_vertices.len() * std::mem::size_of::<f32>();
-        let total_bytes = (main_bytes_len + palette_bytes_len) as u64;
-        if total_bytes > self.rect_vertex_buffer_capacity {
-            let mut new_cap = self.rect_vertex_buffer_capacity.max(RECT_VBUF_INITIAL_CAPACITY);
-            while new_cap < total_bytes {
-                new_cap *= 2;
-            }
-            self.rect_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rect_vertex_buffer"),
-                size: new_cap,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.rect_vertex_buffer_capacity = new_cap;
-        }
-        if main_bytes_len > 0 {
-            self.queue.write_buffer(
-                &self.rect_vertex_buffer,
-                0,
-                bytemuck::cast_slice(&self.main_rect_vertices),
-            );
-        }
-        if palette_bytes_len > 0 {
-            self.queue.write_buffer(
-                &self.rect_vertex_buffer,
-                main_bytes_len as u64,
-                bytemuck::cast_slice(&self.console_rect_vertices),
-            );
-        }
 
         // Collect text areas + run both glyphon prepares against
         // the atlas. Shared with `prewarm()` (through `render`) so the
@@ -369,25 +192,21 @@ impl Renderer {
         // frame will draw — no risk of warming a different set than
         // gets rasterized.
         self.prepare_text_for_pass(camera, modal, canvas)?;
-        Ok(PreparedFrame {
-            main_bytes: main_bytes_len as u64,
-            palette_bytes: palette_bytes_len as u64,
-            main_vertices: (self.main_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32,
-            palette_vertices: (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32,
-        })
+        Ok(PreparedFrame { _prepared: () })
     }
 
     /// The GPU half of a frame: one render pass into `view`, cleared to
-    /// the canvas color, drawing what [`Self::prepare_frame`] uploaded.
+    /// the map's background ([`Self::set_background`]), drawing what
+    /// [`Self::prepare_frame`] uploaded.
     /// Returns the encoder unsubmitted, so a caller can record more
     /// after the pass — the capture records its texture-to-buffer copy
     /// there.
     ///
-    /// `view` must be a texture of the surface format, the one both
-    /// pipelines were built for, at the size the frame was prepared for.
+    /// `view` must be a texture of the surface format, the one every
+    /// pipeline was built for, at the size the frame was prepared for.
     pub(super) fn encode_frame(
         &self,
-        prepared: &PreparedFrame,
+        _prepared: &PreparedFrame,
         view: &wgpu::TextureView,
     ) -> wgpu::CommandEncoder {
         let mut encoder = self
@@ -411,16 +230,10 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            // 1. Node backgrounds (rect pipeline, camera-transformed).
-            if prepared.main_vertices > 0 {
-                pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..prepared.main_bytes));
-                pass.draw(0..prepared.main_vertices, 0..1);
-            }
-
-            // 2. Main text pass — node text, borders, connections,
+            // 1. Main text pass — node text, borders, connections,
             //    edge handles, camera-transformed and screen-space
-            //    overlays, all drawn on top of the node backgrounds.
+            //    overlays, straight onto the cleared background: a map
+            //    draws no fill (V1-B12).
             //    Interactive path: log and continue on render failure
             //    so a single bad atlas frame doesn't crash the editor.
             //    Unreachable as of glyphon 0.12.0 — `TextRenderer::
@@ -434,27 +247,18 @@ impl Renderer {
                 log::warn!("renderer: text_renderer.render failed: {e}");
             }
 
-            // 2b. Positioned glyph runs — every glyph of every
-            //     `GlyphRun` at its own canvas position, one instanced
-            //     draw. Canvas content, so under the palette below.
+            // 2. Positioned glyph runs — every glyph of every
+            //    `GlyphRun` at its own canvas position, one instanced
+            //    draw. Canvas content, so under the chrome below.
             self.glyph_runs.render(&mut pass);
 
-            // 3. Palette backdrop (rect pipeline, screen-space).
-            //    Drawn AFTER the main text pass so node text
-            //    sitting behind the palette is fully occluded.
-            if prepared.palette_vertices > 0 {
-                pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(
-                    0,
-                    self.rect_vertex_buffer
-                        .slice(prepared.main_bytes..prepared.main_bytes + prepared.palette_bytes),
-                );
-                pass.draw(0..prepared.palette_vertices, 0..1);
-            }
-
-            // 4. Palette text pass — cyan border, query line,
-            //    filtered action rows. Drawn on top of the palette
-            //    backdrop so every glyph sits cleanly on solid fill.
+            // 3. Chrome pass — an open modal's backdrop (full-block
+            //    cells, `backdrop`), then its glyphs: the console's
+            //    cyan border, query line and rows, or the picker's
+            //    wheel; then the FPS readout and the mode-status line.
+            //    Glyphon draws a pass's glyphs in the order they were
+            //    prepared, so the backdrop covers every canvas glyph
+            //    and every chrome glyph sits on it.
             //    Interactive path: log and continue on render failure.
             //    Unreachable in glyphon 0.12.0 for the same reason as
             //    the main pass above; kept as forward-compat cover.
@@ -513,9 +317,9 @@ impl Renderer {
         // overlays + canvas-scene arena buffers (borders,
         // connections, labels, portals, handles all arrive here
         // through the tree walker).
-        // Palette buffers go into a separate list so they render
-        // in a second glyphon pass (with the backdrop rect
-        // between them, hence the split).
+        // Chrome buffers go into a separate list so they render in a
+        // second glyphon pass, over the glyph-run pass that draws
+        // between the two (hence the split).
         // Upper-bound capacity so the per-frame `Vec` doesn't grow
         // through several reallocs. Visibility-culling reduces the
         // realized count below this; allocating once at the ceiling
@@ -555,9 +359,9 @@ impl Renderer {
                 }),
         );
 
-        // Palette overlay: screen-space text, drawn in its own
-        // glyphon pass so the rect-pipeline backdrop can be
-        // interleaved between the main text and this one. Both the
+        // Chrome: screen-space text, drawn in its own glyphon pass over
+        // the canvas's — first an open modal's backdrop cells, so they
+        // are under everything else here. Both the
         // console and the glyph-wheel color picker put their glyph
         // buffers in `overlay_scene_elements` (populated by
         // `rebuild_overlay_scene_buffers` from the respective
@@ -569,10 +373,27 @@ impl Renderer {
             ModalLayer::Drawn => &self.overlay_scene_elements,
             ModalLayer::Omitted => &[],
         };
-        let palette_capacity = super::scene_shape_cache::buffer_count(modal)
+        // The backdrops, in this target's pixels: the console's and the
+        // picker's (mutually exclusive, but either or both is drawn the
+        // same way), each the pixels its window rectangle covers at this
+        // camera's ratio, cut to the target, as full-block cells clipped
+        // to it.
+        let backdrops: [Option<PixelRect>; 2] = match modal_layer {
+            ModalLayer::Drawn => [self.console_backdrop, self.color_picker_backdrop]
+                .map(|extent| extent.map(|extent| PixelRect::covered_by(extent, ratio).within(vp_w, vp_h))),
+            ModalLayer::Omitted => [None, None],
+        };
+        let backdrop_cells: usize = backdrops.iter().flatten().map(PixelRect::cell_count).sum();
+        let palette_capacity = backdrop_cells
+            + super::scene_shape_cache::buffer_count(modal)
             + self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len();
         let mut palette_text_areas: Vec<TextArea> = Vec::with_capacity(palette_capacity);
+        if let Some(cell) = &self.backdrop_cell {
+            for rect in backdrops.into_iter().flatten() {
+                palette_text_areas.extend(backdrop::text_areas(cell, rect));
+            }
+        }
         palette_text_areas.extend(
             super::scene_shape_cache::text_buffers(modal)
                 .chain(self.fps_overlay_buffers.iter())
@@ -601,6 +422,37 @@ impl Renderer {
             log::debug!("renderer: font_system lock contended in prepare_text_for_pass, skipping");
             return Err(FrameSkip::FontSystemContended);
         };
+
+        // The test build's census of the fill blocks each pass is handed
+        // (`backdrop::FillCensus`), counted from the very lists the two
+        // prepares below draw and the very runs the glyph-run pass does.
+        // The fill glyph is read off the backdrop cell, shaped here if no
+        // backdrop has needed it yet, so a frame with no modal counts too.
+        #[cfg(test)]
+        {
+            let shaped_here;
+            let cell = match &self.backdrop_cell {
+                Some(cell) => cell,
+                None => {
+                    shaped_here = backdrop::BackdropCell::shape(&mut font_system);
+                    &shaped_here
+                }
+            };
+            let fill = backdrop::FillGlyph::of(cell).expect("the backdrop cell lays out its block");
+            let areas = |areas: &[TextArea]| {
+                areas
+                    .iter()
+                    .map(|area| fill.in_buffer(area.buffer))
+                    .sum::<usize>()
+            };
+            let runs: usize = super::scene_shape_cache::glyph_runs(canvas_elements())
+                .map(|(run, _)| fill.in_run(run))
+                .sum();
+            self.fill_census = backdrop::FillCensus {
+                canvas: areas(&main_text_areas) + runs,
+                chrome: areas(&palette_text_areas),
+            };
+        }
 
         // Interactive path: a glyphon prepare failure must degrade the
         // frame, not abort the process. Skip the whole render so we
@@ -667,9 +519,9 @@ impl Renderer {
     }
 
     /// Pre-warm the render pipeline during map load: run one full
-    /// `render()` cycle (rect-vertex prep → glyph atlas upload →
-    /// `pass.set_pipeline(rect_pipeline)` → text pipeline bind →
-    /// `surface.get_current_texture()` → `frame.present()`). Forces
+    /// `render()` cycle (glyph atlas upload → text and glyph-run
+    /// pipeline binds → `surface.get_current_texture()` →
+    /// `frame.present()`). Forces
     /// the wgpu driver to compile pipeline shaders and the
     /// swapchain to allocate its first backing image — both are
     /// commonly 50-300ms costs (Vulkan/Metal/D3D12 lazily compile

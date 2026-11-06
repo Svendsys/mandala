@@ -43,10 +43,11 @@ pub const FORMAT: u64 = 1;
 
 /// The top-level keys of a file, in the order the saver writes them
 /// (design B.3).
-pub(crate) const TOP_LEVEL_KEYS: [&str; 9] = [
+pub(crate) const TOP_LEVEL_KEYS: [&str; 10] = [
     "format",
     "name",
     "theme",
+    "background",
     "palettes",
     "defaults",
     "edits",
@@ -55,6 +56,10 @@ pub(crate) const TOP_LEVEL_KEYS: [&str; 9] = [
     "nodes",
 ];
 
+/// Where `nodes` is in [`TOP_LEVEL_KEYS`]: last, and held apart from
+/// the other values' extents.
+const NODES: usize = TOP_LEVEL_KEYS.len() - 1;
+
 /// A text, indexed: the extent of each top-level value, and of each
 /// node.
 pub(crate) struct MapIndex<'t> {
@@ -62,7 +67,7 @@ pub(crate) struct MapIndex<'t> {
     pub text: &'t str,
     /// The extent of each top-level key's value but `nodes`, in
     /// [`TOP_LEVEL_KEYS`] order; `None` for a key the text leaves out.
-    pub values: [Option<&'t RawValue>; 8],
+    pub values: [Option<&'t RawValue>; 9],
     /// The extent of each node, in list order.
     pub nodes: Vec<&'t RawValue>,
 }
@@ -80,7 +85,7 @@ impl<'t> MapIndex<'t> {
 /// What the top-level visitor has found so far, and what stopped it.
 #[derive(Default)]
 struct Found<'t> {
-    values: [Option<&'t RawValue>; 8],
+    values: [Option<&'t RawValue>; 9],
     nodes: Option<Vec<&'t RawValue>>,
     /// The first key the format does not define.
     unknown: Option<String>,
@@ -119,7 +124,7 @@ impl<'de: 't, 't> Visitor<'de> for TopLevel<'_, 't> {
         while let Some(key) = map.next_key::<String>()? {
             let slot = TOP_LEVEL_KEYS.iter().position(|known| *known == key);
             let repeated = match slot {
-                Some(8) => found.nodes.is_some(),
+                Some(NODES) => found.nodes.is_some(),
                 Some(slot) => found.values.get(slot).is_some_and(Option::is_some),
                 None => found.unknown_seen.contains(&key),
             };
@@ -128,7 +133,7 @@ impl<'de: 't, 't> Visitor<'de> for TopLevel<'_, 't> {
                 return Err(de::Error::custom("a key appears twice"));
             }
             match slot {
-                Some(8) => map.next_value_seed(Nodes(&mut *found))?,
+                Some(NODES) => map.next_value_seed(Nodes(&mut *found))?,
                 Some(slot) => map.next_value_seed(ValueExtent {
                     found: &mut *found,
                     slot,

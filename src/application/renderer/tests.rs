@@ -790,109 +790,203 @@ fn clamp_surface_size_passes_exact_limit() {
     assert_eq!((w, h), (8192, 8192));
 }
 
-/// Integration-level cull: a `NodeBackgroundRect` whose
-/// spatial AABB is fully inside the viewport must still be
-/// dropped when `camera.zoom` falls outside its
-/// `zoom_visibility` window. Exercises the combined predicate
-/// that `render::render` runs on every background rect each
-/// frame; a regression that short-circuited the zoom check
-/// (e.g. `||` instead of `&&`) would leave the rect visible
-/// at every zoom and trip this test.
+/// The map's background is the frame's clear value, written so the
+/// frame holds the authored byte (V1-B12): on an sRGB target each byte
+/// is decoded to linear light — the GPU encodes it back as it writes —
+/// and on a linear target it goes in as it is. The expectations are
+/// the sRGB transfer function's own values at three bytes (IEC
+/// 61966-2-1: `0x80` is 0.2158605…, `0x0a` 0.0030352…), not a second
+/// run of the code under test. Controls: the two targets disagree on
+/// every byte but the ends, so the decode is not skipped on either;
+/// and the alpha is 1 whatever the background's, since nothing is
+/// behind the canvas.
 #[test]
-fn background_rect_culled_when_zoom_outside_window() {
-    use baumhard::gfx_structs::camera::Camera2D;
-    use baumhard::gfx_structs::shape::NodeShape;
-    use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
-
-    let mut camera = Camera2D::new(800, 600);
-    // Rect centered at canvas origin (the camera's default
-    // position) so the spatial check is satisfied at every
-    // zoom in the camera's clamped range — we want the zoom
-    // window to be the sole rejection reason.
-    let rect = NodeBackgroundRect {
-        position: Vec2::new(-50.0, -50.0),
-        size: Vec2::new(100.0, 100.0),
-        color: [64, 64, 64, 255],
-        shape_id: NodeShape::Rectangle.shader_id(),
-        zoom_visibility: ZoomVisibility {
-            min: Some(1.0),
-            max: Some(2.0),
-        },
-        unique_id: 0,
-    };
-
-    // Inside the window: visible.
-    camera.zoom = 1.0;
-    assert!(rect.visible_at(&camera), "zoom at min bound should render");
-    camera.zoom = 1.5;
-    assert!(rect.visible_at(&camera));
-    camera.zoom = 2.0;
-    assert!(rect.visible_at(&camera), "zoom at max bound should render");
-
-    // Outside the window: culled.
-    camera.zoom = 0.5;
-    assert!(!rect.visible_at(&camera), "zoom below min should cull");
-    camera.zoom = 3.0;
-    assert!(!rect.visible_at(&camera), "zoom above max should cull");
-}
-
-/// Integration-level cull: an unbounded rect (the historical
-/// default — both bounds `None`) renders regardless of
-/// `camera.zoom`. Pins the "existing maps pay nothing" contract.
-#[test]
-fn background_rect_with_unbounded_window_renders_at_every_zoom() {
-    use baumhard::gfx_structs::camera::Camera2D;
-    use baumhard::gfx_structs::shape::NodeShape;
-    use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
-
-    let mut camera = Camera2D::new(800, 600);
-    let rect = NodeBackgroundRect {
-        position: Vec2::new(-50.0, -50.0),
-        size: Vec2::new(100.0, 100.0),
-        color: [64, 64, 64, 255],
-        shape_id: NodeShape::Rectangle.shader_id(),
-        zoom_visibility: ZoomVisibility::unbounded(),
-        unique_id: 0,
-    };
-
-    for z in [0.05_f32, 0.5, 1.0, 2.5, 5.0] {
-        camera.zoom = z;
+fn test_the_clear_color_holds_the_background_on_either_target() {
+    use wgpu::TextureFormat::{Bgra8Unorm, Bgra8UnormSrgb, Rgba8Unorm, Rgba8UnormSrgb};
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    for srgb in [Bgra8UnormSrgb, Rgba8UnormSrgb] {
+        let clear = clear_color_for([0x80, 0x0a, 0xff, 0x40], srgb);
         assert!(
-            rect.visible_at(&camera),
-            "unbounded window must render at zoom {z}"
+            close(clear.r, 0.215_860_5),
+            "{srgb:?}: 0x80 decodes, got {}",
+            clear.r
         );
+        assert!(
+            close(clear.g, 0.003_035_27),
+            "{srgb:?}: 0x0a decodes, got {}",
+            clear.g
+        );
+        assert!(close(clear.b, 1.0), "{srgb:?}: 0xff is 1");
+        assert_eq!(clear.a, 1.0, "{srgb:?}: opaque, whatever the alpha");
+        let black = clear_color_for([0, 0, 0, 0], srgb);
+        assert_eq!((black.r, black.g, black.b, black.a), (0.0, 0.0, 0.0, 1.0));
+    }
+    for linear in [Bgra8Unorm, Rgba8Unorm] {
+        let clear = clear_color_for([0x80, 0x0a, 0xff, 0x40], linear);
+        assert!(close(clear.r, 128.0 / 255.0), "{linear:?}: the byte as it is");
+        assert!(close(clear.g, 10.0 / 255.0));
+        assert!(close(clear.b, 1.0));
+        assert_eq!(clear.a, 1.0);
+    }
+    for byte in 1..255u8 {
+        let srgb = clear_color_for([byte, byte, byte, 255], Bgra8UnormSrgb).r;
+        let linear = clear_color_for([byte, byte, byte, 255], Bgra8Unorm).r;
+        assert!(srgb < linear, "0x{byte:02x}: an sRGB target's value is decoded");
     }
 }
 
-/// Spatial and zoom culls compose as AND: a rect outside the
-/// viewport is dropped even if its zoom window is satisfied.
-/// Mirrors the "spatial cull short-circuits" invariant so a
-/// future refactor that reverses the two checks still sees
-/// this test stay green.
+/// **A glyph colored like the background matches it exactly, on every
+/// target** (CODE_CONVENTIONS §4, D12). For each surface format a
+/// bootstrap can pick — native's and the headless renderer's
+/// `Bgra8UnormSrgb`, the WebGL2 surface's `Rgba8UnormSrgb`, and the
+/// WebGPU surface's `Bgra8Unorm` / `Rgba8Unorm` / `Rgba16Float`, none of
+/// them sRGB — and for every authored byte, the byte each pass leaves in
+/// the target is the authored byte:
+///
+/// - **the clear**, `clear_color_for`;
+/// - **glyphon's text**, through the color mode the renderer gives its
+///   atlas, the shader's per-mode handling of a glyph's color written
+///   out here from glyphon 0.12.0's `shader.wgsl` (`ConvertToLinear`
+///   applies the shader's sRGB-to-linear decode, `None` divides by 255);
+/// - **the glyph-run pass's mask glyphs**, the real `instance`;
+/// - **its color glyphs** (emoji), sampled from a page of the format the
+///   pass gives it: an sRGB page decodes the stored byte, a linear one
+///   returns it as it is.
+///
+/// "Leaves in the target" is the target's own write, written out from
+/// its definition: an sRGB format encodes by the sRGB transfer function
+/// (IEC 61966-2-1) and rounds; a linear one rounds the value as it is.
+/// Controls: a pass that decodes on a linear target, or does not on an
+/// sRGB one, leaves a darker or brighter byte for every byte but the
+/// two ends — `0x80` lands as `0x37` or `0xbc` — which the last loop
+/// asserts of the two wrong choices, so the agreement is not a model
+/// that cannot tell them apart.
 #[test]
-fn background_rect_off_viewport_still_culled_with_matching_zoom() {
-    use baumhard::gfx_structs::camera::Camera2D;
-    use baumhard::gfx_structs::shape::NodeShape;
-    use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
+fn test_the_three_color_passes_agree_on_every_target() {
+    use super::glyph_runs::atlas::{Page, Slot};
+    use super::glyph_runs::emit::GlyphSprite;
+    use super::glyph_runs::instance;
+    use super::target_encoding::TargetEncoding;
+    use wgpu::TextureFormat::{Bgra8Unorm, Bgra8UnormSrgb, Rgba16Float, Rgba8Unorm, Rgba8UnormSrgb};
 
-    let mut camera = Camera2D::new(800, 600);
-    camera.zoom = 1.0;
-    // Far off to the right of the viewport at canvas x = 10_000.
-    let rect = NodeBackgroundRect {
-        position: Vec2::new(10_000.0, 200.0),
-        size: Vec2::new(100.0, 100.0),
-        color: [64, 64, 64, 255],
-        shape_id: NodeShape::Rectangle.shader_id(),
-        zoom_visibility: ZoomVisibility {
-            min: Some(1.0),
-            max: Some(2.0),
-        },
-        unique_id: 0,
+    let decode = |c: f64| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
     };
-    assert!(
-        !rect.visible_at(&camera),
-        "off-viewport rect must be culled regardless of zoom window"
+    let encode = |l: f64| {
+        if l <= 0.003_130_8 {
+            l * 12.92
+        } else {
+            1.055 * l.powf(1.0 / 2.4) - 0.055
+        }
+    };
+    // The byte a target of `format` keeps for a pass's output `value`.
+    let stored = |format: wgpu::TextureFormat, value: f64| -> u8 {
+        let written = if format.is_srgb() { encode(value) } else { value };
+        (written.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    // glyphon's shader: a glyph's color byte as the vertex stage hands
+    // it on, per the conversion its color mode tags the glyph with.
+    let glyphon = |mode: glyphon::ColorMode, byte: u8| -> f64 {
+        let c = f32::from(byte) / 255.0;
+        f64::from(match mode {
+            glyphon::ColorMode::Accurate => {
+                if c <= 0.04045 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            }
+            glyphon::ColorMode::Web => c,
+        })
+    };
+    // A texture sample of a stored byte from a page of `format`.
+    let sample = |format: wgpu::TextureFormat, byte: u8| -> f64 {
+        let c = f64::from(byte) / 255.0;
+        if format.is_srgb() {
+            decode(c)
+        } else {
+            c
+        }
+    };
+    let (key, _, _) = glyphon::CacheKey::new(
+        glyphon::fontdb::ID::dummy(),
+        0,
+        16.0,
+        (0.0, 0.0),
+        glyphon::Weight::NORMAL,
+        glyphon::cosmic_text::CacheKeyFlags::empty(),
     );
+    let mask = Slot {
+        page: Page::Mask,
+        uv: (0, 0),
+        size: (1, 1),
+        left: 0,
+        top: 0,
+    };
+
+    for format in [
+        Bgra8UnormSrgb,
+        Rgba8UnormSrgb,
+        Bgra8Unorm,
+        Rgba8Unorm,
+        Rgba16Float,
+    ] {
+        let encoding = TargetEncoding::of(format);
+        let mode = encoding.glyphon_color_mode();
+        let page = encoding.color_page_format();
+        for byte in 0..=255u8 {
+            let clear = clear_color_for([byte, byte, byte, 255], format);
+            let sprite = GlyphSprite {
+                key,
+                pen: (0, 0),
+                color: [byte, byte, byte, 255],
+                opacity: 1.0,
+            };
+            let run_glyph = instance(&sprite, mask, encoding).color;
+            let left = [
+                ("the clear", stored(format, clear.r)),
+                ("glyphon's text", stored(format, glyphon(mode, byte))),
+                ("a run's mask glyph", stored(format, f64::from(run_glyph[0]))),
+                ("a run's color glyph", stored(format, sample(page, byte))),
+            ];
+            for (pass, got) in left {
+                assert_eq!(
+                    got, byte,
+                    "{format:?}: {pass} leaves 0x{got:02x} for the authored 0x{byte:02x}"
+                );
+            }
+        }
+    }
+
+    // The controls: on each kind of target, the other kind's choice
+    // leaves a different byte, for every byte but the two ends.
+    assert_eq!(
+        stored(Bgra8Unorm, decode(128.0 / 255.0)),
+        0x37,
+        "a decode on a linear target darkens"
+    );
+    assert_eq!(
+        stored(Bgra8UnormSrgb, 128.0 / 255.0),
+        0xbc,
+        "no decode on an sRGB target brightens"
+    );
+    for byte in 1..255u8 {
+        let c = f64::from(byte) / 255.0;
+        assert_ne!(
+            stored(Bgra8Unorm, decode(c)),
+            byte,
+            "0x{byte:02x}: decoded on a linear target"
+        );
+        assert_ne!(
+            stored(Bgra8UnormSrgb, c),
+            byte,
+            "0x{byte:02x}: not decoded on an sRGB target"
+        );
+    }
 }
 
 // --- FrameIntervalRing --------------------------------------------------
@@ -1010,14 +1104,13 @@ use strum::IntoEnumIterator;
 
 use super::scene_shape_cache::{self, ScenePassKind, ShapedSceneElement, Verdict};
 
-/// A styled, outlined, background-filled area — every field the
+/// A styled, outlined area — every field the
 /// shaper reads set to something other than its default, so a
 /// mutation to any one of them is a real difference rather than a
 /// coincidence with `GlyphArea::new`'s zeros.
 fn overlay_cache_fixture_area() -> GlyphArea {
     let mut area = GlyphArea::new_with_str("cell", 16.0, 18.0, Vec2::new(3.0, 5.0), Vec2::new(40.0, 20.0));
     area.regions = ColorFontRegions::single_span(4, Some([0.1, 0.2, 0.3, 1.0]), None);
-    area.background_color = Some([9, 8, 7, 255]);
     area.align_center = true;
     area.outline = Some(OutlineStyle {
         color: [1, 2, 3, 4],
@@ -1085,7 +1178,7 @@ fn overlay_cache_field_for(tag: GlyphAreaFieldType) -> GlyphAreaField {
 fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
     for tag in GlyphAreaFieldType::iter() {
         let (_scene, id, element) = overlay_cache_fixture();
-        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new());
         assert_eq!(
             cached.classify(id, &element, Vec2::ZERO),
             Verdict::Current,
@@ -1134,8 +1227,8 @@ fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
         // `Position` is the one writable field that never reaches
         // cosmic-text — the walker adds it to `pos` after shaping —
         // so it is the one that may move a cached element instead
-        // of re-shaping it. Every other field reaches the glyphs or
-        // the fill and must re-shape.
+        // of re-shaping it. Every other field reaches the glyphs and
+        // must re-shape.
         let expected = if tag == GlyphAreaFieldType::Position {
             Verdict::Moved
         } else {
@@ -1158,7 +1251,7 @@ fn test_scene_shape_cache_invalidates_on_every_writable_area_field() {
 #[test]
 fn test_scene_shape_cache_invalidates_on_identity_and_offset() {
     let (mut scene, id, element) = overlay_cache_fixture();
-    let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+    let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new());
 
     // `unique_id` reaches the emitted buffer through the walker's
     // yield, and is how a caller finds the buffer again.
@@ -1197,7 +1290,7 @@ fn test_scene_shape_cache_invalidates_on_identity_and_offset() {
 #[test]
 fn test_scene_shape_cache_reuses_when_only_the_hitbox_moved() {
     let (_scene, id, element) = overlay_cache_fixture();
-    let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+    let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new());
 
     let mut moved_hitbox = element.clone();
     let area = moved_hitbox.glyph_area_mut().expect("fixture is an area element");
@@ -1242,26 +1335,20 @@ type NamedAreaMutation = (&'static str, fn(&mut GlyphArea));
 ///   the comparison fails rather than quietly widening the cache's
 ///   blind spot.
 ///
-/// Three of those fields — `background_color`, `background_padding`
-/// and `align_center` — are read by the shaper (or by the fill the
-/// shaper's walker emits) and reachable by no `GlyphAreaField`
-/// mutator variant, so the sibling
+/// One of those fields — `align_center` — is read by the shaper and
+/// reachable by no `GlyphAreaField` mutator variant, so the sibling
 /// `test_scene_shape_cache_invalidates_on_every_writable_area_field`
-/// cannot see them. **This test is not where they are covered**, and
-/// the sentence that used to say so was wrong in a way worth naming:
+/// cannot see it. **This test is not where it is covered**, and the
+/// sentence that used to say so was wrong in a way worth naming:
 /// `GlyphArea::==` and the reuse key are two different subjects, and
-/// a field can be visible to the first while no test holds the
-/// second against it. All three are covered against the key by name
-/// — the two fill inputs in
-/// [`test_canvas_fill_inputs_are_all_visible_to_the_reuse_key`], the
-/// one text input in
+/// a field can be visible to the first while no test holds the second
+/// against it. It is covered against the key by name in
 /// [`test_canvas_text_inputs_are_all_visible_to_the_reuse_key`].
-/// What *this* test covers is the property those two rest on: that
+/// What *this* test covers is the property that rests on: that
 /// `==` is a real discriminator over every field but `hitbox`, so
 /// the key does not have to enumerate them.
 #[test]
 fn test_glyph_area_equality_ignores_only_the_hitbox() {
-    use baumhard::gfx_structs::area::EdgePadding;
     use baumhard::gfx_structs::util::hitbox::BoundingRectangle;
 
     let base = overlay_cache_fixture_area();
@@ -1275,8 +1362,6 @@ fn test_glyph_area_equality_ignores_only_the_hitbox() {
         position: _,
         render_bounds: _,
         regions: _,
-        background_color: _,
-        background_padding: _,
         align_center: _,
         outline: _,
         shape: _,
@@ -1291,7 +1376,7 @@ fn test_glyph_area_equality_ignores_only_the_hitbox() {
     // range and is deliberately blind to a recolor — the module
     // header's "The one place `==` is not enough", which
     // `ColorFontRegions::same_content` answers separately.
-    let visible: [NamedAreaMutation; 12] = [
+    let visible: [NamedAreaMutation; 10] = [
         ("text", |a| a.text.push('!')),
         ("scale", |a| a.scale = (a.scale.0 + 1.0).into()),
         ("line_height", |a| a.line_height = (a.line_height.0 + 1.0).into()),
@@ -1299,10 +1384,6 @@ fn test_glyph_area_equality_ignores_only_the_hitbox() {
         ("render_bounds", |a| a.set_bounds((321.0, 654.0))),
         ("regions", |a| {
             a.regions = ColorFontRegions::single_span(2, Some([0.1, 0.2, 0.3, 1.0]), None)
-        }),
-        ("background_color", |a| a.background_color = Some([1, 2, 3, 4])),
-        ("background_padding", |a| {
-            a.background_padding = EdgePadding::new(1.0, 2.0, 3.0, 4.0)
         }),
         ("align_center", |a| a.align_center = !a.align_center),
         ("outline", |a| a.outline = None),
@@ -1357,7 +1438,7 @@ fn snapshot_overlay(scene: &Scene, id: SceneTreeId) -> Vec<ShapedSceneElement> {
     tree.root()
         .descendants(tree.arena())
         .filter_map(|d| tree.arena().get(d).map(|n| n.get()))
-        .map(|element| ShapedSceneElement::new(id, element, Vec2::ZERO, Vec::new(), None))
+        .map(|element| ShapedSceneElement::new(id, element, Vec2::ZERO, Vec::new()))
         .collect()
 }
 
@@ -1534,64 +1615,44 @@ fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
 }
 
 // ====================================================================
-// Canvas re-shape granularity — the background-fill half
+// Canvas re-shape granularity — draw order
 // ====================================================================
 //
-// The canvas pass differs from the overlay pass in one thing: it
-// keeps the background fills the walker emits, and those fills are
-// wired to a draw pass that paints them in index order. These tests
-// cover that half. The reuse rule itself is shared and is covered by
-// the overlay tests above, which now name `scene_shape_cache`
-// because the rule has one owner for both sub-scenes.
-//
-// No `tree_builder` pass sets `background_color` on a canvas-role
-// element today, so the fills below are authored here rather than
-// projected from a role. The invariant is pinned anyway, for the
-// same reason `test_walker_records_the_stamp_offset_of_every_emitted_buffer`
-// pins halo bookkeeping for mindmap elements that carry no outline:
-// the day a canvas role gains a fill, the draw-order rule it rests
-// on has to already hold.
+// The canvas pass and the overlay pass share one reuse rule, covered
+// by the overlay tests above. What the canvas half adds is draw order
+// across a partial re-shape: an element's output is rewritten at the
+// walk position it already occupied, so the text areas glyphon is
+// handed keep their order. No canvas element draws a fill (V1-B12):
+// every color but the canvas background comes from a glyph.
 
-/// A `GlyphArea` with every fill input set to something other than
-/// its default, so a mutation to any one of them is a real
+/// A `GlyphArea` with its shaping inputs set to something other than
+/// their defaults, so a mutation to any one of them is a real
 /// difference rather than a coincidence with `GlyphArea::new`'s
 /// zeros.
-fn canvas_fill_fixture_area(text: &str, x: f32) -> GlyphArea {
-    use baumhard::gfx_structs::area::EdgePadding;
+fn canvas_fixture_area(text: &str, x: f32) -> GlyphArea {
     let mut area = GlyphArea::new_with_str(text, 16.0, 18.0, Vec2::new(x, 4.0), Vec2::new(40.0, 20.0));
-    area.background_color = Some([10, 20, 30, 255]);
-    area.background_padding = EdgePadding::new(1.0, 2.0, 3.0, 4.0);
     area.shape = NodeShape::Ellipse;
     area.zoom_visibility = ZoomVisibility::try_new(Some(0.5), Some(8.0)).unwrap();
     area
 }
 
-/// Two canvas trees of two filled elements each, registered in one
-/// scene at ascending layers — the smallest shape in which "an early
-/// element's fill was lifted above a later one's" is a visible
-/// difference.
-fn canvas_fill_fixture_scene() -> (Scene, Vec<SceneTreeId>) {
+/// Two canvas trees of two elements each, registered in one scene at
+/// ascending layers — the smallest shape in which "an early element's
+/// text was lifted above a later one's" is a visible difference.
+fn canvas_fixture_scene() -> (Scene, Vec<SceneTreeId>) {
     let mut scene = Scene::new();
     let mut ids = Vec::new();
     for (tree_idx, base_x) in [(0usize, 0.0f32), (1usize, 500.0f32)] {
         let mut tree: GfxTree = GfxTree::new_non_indexed();
         for leaf_idx in 0..2usize {
             let unique_id = tree_idx * 10 + leaf_idx + 1;
-            let area = canvas_fill_fixture_area(&format!("r{unique_id}"), base_x + 60.0 * leaf_idx as f32);
+            let area = canvas_fixture_area(&format!("r{unique_id}"), base_x + 60.0 * leaf_idx as f32);
             let element = GfxElement::new_area_non_indexed_with_id(area, 1, unique_id);
             tree.insert_child(tree.root(), element, Placement::Last).unwrap();
         }
         ids.push(scene.insert(tree, tree_idx as i32, Vec2::ZERO));
     }
     (scene, ids)
-}
-
-/// The pass's fill stream in draw order, described through derived
-/// `Debug` so a difference in any field shows up.
-fn canvas_fill_stream(shaped: &[ShapedSceneElement]) -> Vec<String> {
-    scene_shape_cache::background_fills(shaped)
-        .map(|rect| format!("{rect:?}"))
-        .collect()
 }
 
 /// The pass's text stream in draw order, described by the one thing
@@ -1603,28 +1664,22 @@ fn canvas_text_stream(shaped: &[ShapedSceneElement]) -> Vec<(f32, f32)> {
         .collect()
 }
 
-/// A partial re-shape leaves both order-sensitive draw streams
-/// exactly where a full one would put them.
+/// A partial re-shape leaves the order-sensitive draw stream exactly
+/// where a full one would put it.
 ///
-/// This is the hazard the issue names for the canvas half, and the
-/// mindmap path shipped it once: `reshape_buffer_for` dropped an
-/// element's fill and re-pushed the fresh one at the end of a flat
-/// list `render.rs` paints in index order, so the element being
-/// edited floated above every other node's fill until the next full
-/// rebuild. The canvas pass cannot reach that state — each element's
-/// fill lives inside that element's own entry, and an entry is
-/// rewritten at the walk position it already occupied — and this is
-/// what says so.
-///
-/// The reference is not a hand-written expectation: it is what the
-/// same scene produces through an *empty* cache, i.e. the whole-scene
-/// re-shape this pass used to do unconditionally. Equality between
-/// the two is the claim.
+/// Each element's output lives inside that element's own entry, and
+/// an entry is rewritten at the walk position it already occupied, so
+/// re-shaping the first element in draw order cannot lift its text
+/// above the others' — the hazard an earlier flat list keyed by
+/// element had. The reference is not a hand-written expectation: it
+/// is what the same scene produces through an *empty* cache, i.e. the
+/// whole-scene re-shape this pass used to do unconditionally.
+/// Equality between the two is the claim.
 #[test]
 fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
     baumhard::font::fonts::init();
 
-    let (mut scene, ids) = canvas_fill_fixture_scene();
+    let (mut scene, ids) = canvas_fixture_scene();
     let mut warm: Vec<ShapedSceneElement> = Vec::new();
     let cold = scene_shape_cache::refresh(&scene, &ids, &mut warm, ScenePassKind::Canvas);
     assert_eq!(
@@ -1632,18 +1687,12 @@ fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
         (6, 6),
         "two roots plus four leaves, none of them cached yet"
     );
-    assert_eq!(
-        canvas_fill_stream(&warm).len(),
-        4,
-        "each leaf authors one fill; the void roots author none"
-    );
 
-    // Recolor the fill of the *first* element in draw order — the
-    // one a re-append would lift above all three others, which is
-    // the direction the mindmap path's bug went. A fill color rather
-    // than a position, because a position change alone is patched in
+    // Edit the text of the *first* element in draw order — the one a
+    // re-append would lift above all three others. A text edit rather
+    // than a move, because a position change alone is patched in
     // place and never re-shapes; this test is about what a re-shape
-    // does to the streams.
+    // does to the stream.
     let first_leaf = {
         let tree = scene.tree(ids[0]).expect("tree registered");
         tree.root()
@@ -1657,7 +1706,8 @@ fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
             element
                 .glyph_area_mut()
                 .expect("leaf is an area element")
-                .background_color = Some([200, 100, 50, 255]);
+                .text
+                .push('!');
         })
         .expect("leaf resolves");
     }
@@ -1666,7 +1716,7 @@ fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
     assert_eq!(
         (partial.walked, partial.reshaped, partial.patched),
         (6, 1, 0),
-        "one element was recolored, so one walk position may re-shape"
+        "one element was edited, so one walk position may re-shape"
     );
 
     let mut full: Vec<ShapedSceneElement> = Vec::new();
@@ -1678,142 +1728,35 @@ fn test_canvas_partial_reshape_matches_a_full_one_stream_for_stream() {
     );
 
     assert_eq!(
-        canvas_fill_stream(&warm),
-        canvas_fill_stream(&full),
-        "a partially re-shaped pass must hand the rect pipeline the same fills, in the same \
-         order, as a fully re-shaped one"
-    );
-    assert_eq!(
         canvas_text_stream(&warm),
         canvas_text_stream(&full),
-        "and the same text areas, in the same order"
+        "a partially re-shaped pass must hand glyphon the same text areas, in the same order, \
+         as a fully re-shaped one"
     );
 }
 
-/// One named single-field mutation of a `GlyphArea`, for the fill-
-/// input table below. A `fn` pointer rather than a closure type so
-/// every row shares one type.
-type NamedFillMutation = (&'static str, fn(&mut GlyphArea));
-
-/// Every input the background fill is derived from is an input the
-/// reuse key can see.
-///
-/// The completeness half needs no test: `extract_background_rect`'s
-/// whole signature is `(element, area, offset)`, and the key carries
-/// the element's `unique_id`, the area, and the offset. What a test
-/// is needed for is the other half — that each of the area fields it
-/// *does* read is one the key is not blind to. `GlyphArea`'s derived
-/// equality has a documented blind spot (`regions`, whose `BTreeSet`
-/// identity ignores color) and a documented opt-out marker, so
-/// "the key sees every area field" is a property that has already
-/// been false once and is not assumed here.
-///
-/// Each row asserts in two steps, and the first is what makes the
-/// second non-vacuous: the mutation must actually move the emitted
-/// fill — asked of `extract_background_rect` itself, so a field that
-/// turns out not to reach the fill fails here rather than passing
-/// quietly — and only then must the key refuse to reuse. A row that
-/// passed step one and failed step two is a fill left stale on
-/// screen, which no test in this repo could otherwise see (§T10).
+/// The two passes shape the same text: [`ScenePassKind`] names the
+/// pass for the font lock's report and changes nothing the walk
+/// emits.
 #[test]
-fn test_canvas_fill_inputs_are_all_visible_to_the_reuse_key() {
-    use baumhard::gfx_structs::area::EdgePadding;
-
-    let base = canvas_fill_fixture_area("fill", 3.0);
-    let mut scene = Scene::new();
-    let id = scene.insert(GfxTree::new_non_indexed(), 0, Vec2::ZERO);
-
-    let inputs: [NamedFillMutation; 6] = [
-        ("background_color", |a| a.background_color = Some([1, 2, 3, 4])),
-        ("background_padding", |a| {
-            a.background_padding = EdgePadding::new(9.0, 8.0, 7.0, 6.0)
-        }),
-        ("position", |a| a.set_position((123.0, 456.0))),
-        ("render_bounds", |a| a.set_bounds((321.0, 654.0))),
-        ("shape", |a| a.shape = NodeShape::Rectangle),
-        ("zoom_visibility", |a| {
-            a.zoom_visibility = ZoomVisibility::try_new(Some(0.25), Some(4.0)).unwrap()
-        }),
-    ];
-
-    let described_fill = |element: &GfxElement| {
-        let area = element.glyph_area().expect("fixture is an area element");
-        format!(
-            "{:?}",
-            super::tree_walker::extract_background_rect(element, area, Vec2::ZERO)
-        )
-    };
-
-    for (name, mutate) in inputs {
-        let element = GfxElement::new_area_non_indexed_with_id(base.clone(), 1, 1);
-        let mut changed = element.clone();
-        mutate(changed.glyph_area_mut().expect("fixture is an area element"));
-
-        assert_ne!(
-            described_fill(&changed),
-            described_fill(&element),
-            "`GlyphArea::{name}` is listed as an input of the background fill but changing it \
-             leaves the emitted rect identical — the row proves nothing as written"
-        );
-
-        // `position` is the one fill input that may be patched
-        // rather than re-shaped, so for it "not kept" has to be
-        // shown on the output rather than on the verdict: the
-        // patched fill must be the one the walker would emit.
-        let fresh_fill = super::tree_walker::extract_background_rect(&element, &base, Vec2::ZERO);
-        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), fresh_fill);
-        let verdict = cached.classify(id, &changed, Vec2::ZERO);
-        if name == "position" {
-            assert_eq!(verdict, Verdict::Moved, "a position change is a placement change");
-            cached.patch_placement(&changed, Vec2::ZERO);
-            assert_eq!(
-                format!("{:?}", cached.background),
-                described_fill(&changed),
-                "a moved fill must be re-derived where the walker would have emitted it"
-            );
-        } else {
-            assert_eq!(
-                verdict,
-                Verdict::Stale,
-                "`GlyphArea::{name}` changed the background fill but the scene shape cache would \
-                 have kept the old one — the fill would render stale"
-            );
-        }
-    }
-}
-
-/// The overlay pass keeps no fills, and the canvas pass keeps them
-/// all.
-///
-/// [`ScenePassKind`] is the only thing separating the two passes, so
-/// it is worth one assertion that it separates them in the direction
-/// each needs: an overlay entry carrying a fill would be memory
-/// nothing draws, and a canvas entry missing one is a fill that
-/// vanishes from the rect pipeline the moment its element re-shapes.
-#[test]
-fn test_only_the_canvas_pass_keeps_the_walker_s_background_fills() {
+fn test_the_canvas_and_overlay_passes_shape_the_same_text() {
     baumhard::font::fonts::init();
 
-    let (scene, ids) = canvas_fill_fixture_scene();
+    let (scene, ids) = canvas_fixture_scene();
 
     let mut as_canvas: Vec<ShapedSceneElement> = Vec::new();
     scene_shape_cache::refresh(&scene, &ids, &mut as_canvas, ScenePassKind::Canvas);
-    assert_eq!(
-        canvas_fill_stream(&as_canvas).len(),
-        4,
-        "the canvas pass draws its fills, so it has to keep them"
-    );
-
     let mut as_overlay: Vec<ShapedSceneElement> = Vec::new();
     scene_shape_cache::refresh(&scene, &ids, &mut as_overlay, ScenePassKind::Overlay);
-    assert!(
-        canvas_fill_stream(&as_overlay).is_empty(),
-        "there is no screen-space rect pipeline, so an overlay fill is storage nothing reads"
+    assert_eq!(
+        canvas_text_stream(&as_canvas).len(),
+        4,
+        "precondition: four leaves shape text"
     );
     assert_eq!(
         canvas_text_stream(&as_overlay),
         canvas_text_stream(&as_canvas),
-        "the two passes differ in the fills alone — the text they shape is the same"
+        "the text the two passes shape is the same"
     );
 }
 
@@ -1822,14 +1765,14 @@ fn test_only_the_canvas_pass_keeps_the_walker_s_background_fills() {
 /// The pass indexes its cache by walk position, so an unregistered
 /// or shortened tree has to leave nothing of itself behind: a stale
 /// entry past the end of the walk would keep handing the render pass
-/// buffers and a fill for an element that no longer exists. The
-/// truncation that prevents it runs on every pass, including one
-/// where nothing else changed at all.
+/// buffers for an element that no longer exists. The truncation that
+/// prevents it runs on every pass, including one where nothing else
+/// changed at all.
 #[test]
 fn test_canvas_pass_drops_entries_a_shortened_tree_no_longer_walks() {
     baumhard::font::fonts::init();
 
-    let (scene, ids) = canvas_fill_fixture_scene();
+    let (scene, ids) = canvas_fixture_scene();
     let mut shaped: Vec<ShapedSceneElement> = Vec::new();
     scene_shape_cache::refresh(&scene, &ids, &mut shaped, ScenePassKind::Canvas);
     assert_eq!(shaped.len(), 6);
@@ -1849,9 +1792,9 @@ fn test_canvas_pass_drops_entries_a_shortened_tree_no_longer_walks() {
         "the departed tree's entries must not outlive the walk that produced them"
     );
     assert_eq!(
-        canvas_fill_stream(&shaped).len(),
+        canvas_text_stream(&shaped).len(),
         2,
-        "and neither must their fills"
+        "and neither must their text"
     );
 
     // Registering it again brings the positions back, freshly shaped.
@@ -1863,7 +1806,7 @@ fn test_canvas_pass_drops_entries_a_shortened_tree_no_longer_walks() {
     );
     let mut full: Vec<ShapedSceneElement> = Vec::new();
     scene_shape_cache::refresh(&scene, &ids, &mut full, ScenePassKind::Canvas);
-    assert_eq!(canvas_fill_stream(&shaped), canvas_fill_stream(&full));
+    assert_eq!(canvas_text_stream(&shaped), canvas_text_stream(&full));
 }
 
 /// Every glyph offset cosmic-text lays out for `element`, across
@@ -1888,14 +1831,12 @@ fn shaped_glyph_offsets(element: &GfxElement) -> Vec<f32> {
                     .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.x)),
             );
         },
-        &mut |_rect| {},
     );
     offsets
 }
 
 /// One named single-field mutation of a `GlyphArea`, for the
-/// text-input table below. Same shape as [`NamedFillMutation`], for
-/// the other half of what the shaper emits.
+/// text-input table below.
 type NamedTextMutation = (&'static str, fn(&mut GlyphArea));
 
 /// Every input the *laid-out glyphs* depend on that no
@@ -1905,18 +1846,15 @@ type NamedTextMutation = (&'static str, fn(&mut GlyphArea));
 /// The area fields a mutator *can* write are covered by
 /// [`test_scene_shape_cache_invalidates_on_every_writable_area_field`],
 /// which iterates the strum-derived tag enum and is therefore
-/// exhaustive over them by construction. Three fields sit outside
-/// that loop because no variant writes them, and they split by which
-/// of the walker's two outputs they feed: `background_color` and
-/// `background_padding` feed the fill and are
-/// [`test_canvas_fill_inputs_are_all_visible_to_the_reuse_key`]'s;
-/// `align_center` feeds the *text*, and is this table's — the row
-/// that had no home, and the only component of the whole reuse key
-/// that could be removed with the suite still green.
+/// exhaustive over them by construction. One field sits outside
+/// that loop because no variant writes it: `align_center`, which feeds
+/// the *text*, and is this table's — the row that had no home, and the
+/// only component of the whole reuse key that could be removed with
+/// the suite still green.
 ///
 /// It is a table with one row on purpose rather than a test named
 /// after the field: the classification it encodes — mutator-reachable,
-/// or fill input, or text input — is what the next unreachable field
+/// or text input — is what the next unreachable field
 /// has to be sorted into, and a table is where that sorting is
 /// visible.
 ///
@@ -1936,7 +1874,7 @@ fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
     // its bounds: centering can only move a glyph that has room to
     // move, so a fixture whose text filled its box would make the
     // step-one assertion unprovable.
-    let mut base = canvas_fill_fixture_area("fill", 3.0);
+    let mut base = canvas_fixture_area("fill", 3.0);
     base.align_center = false;
 
     let mut scene = Scene::new();
@@ -1972,7 +1910,7 @@ fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
              glyph by more than {shift} — the row proves nothing as written"
         );
 
-        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+        let mut cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new());
         assert_eq!(
             cached.classify(id, &changed, Vec2::ZERO),
             Verdict::Stale,
@@ -1986,26 +1924,23 @@ fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
 // Draw order out of the shared flatteners
 // ====================================================================
 //
-// `render.rs` reaches all four order-sensitive streams through
-// exactly two functions — `background_fills(&canvas_scene_elements)`
-// for the rect pipeline, and `text_buffers` over each of the two
-// sub-scenes for the two glyphon passes. That consolidation is new
-// with this pass (the canvas half used to be a flat `Vec` nobody had
-// to flatten), and it makes these two functions the single place
+// `render.rs` reaches the order-sensitive text streams through one
+// function — `text_buffers` over each of the two sub-scenes for the
+// two glyphon passes. That consolidation makes it the single place
 // draw order is decided for both sub-scenes at once.
 //
 // Which is why the order is asserted here *absolutely*, against
 // hand-written expectations, and not by comparing two passes with
 // each other. `test_canvas_partial_reshape_matches_a_full_one_stream_for_stream`
-// reads both of its sides through these same functions, so it is
-// blind to any reordering they apply uniformly — reversing either
-// one leaves that test, and the whole suite before these two, green.
+// reads both of its sides through the same function, so it is blind
+// to any reordering it applies uniformly — reversing it leaves that
+// test, and the whole suite before these, green.
 // That is a real boundary of a comparison-shaped assertion rather
 // than a flaw in it, and the answer is an assertion of a different
 // shape, which is what these are.
 
-/// The two flatteners hand the render pass their streams in walk
-/// order, element for element.
+/// The flattener hands the render pass its stream in walk order,
+/// element for element.
 ///
 /// The expectations are literals read off the fixture's own
 /// construction — `unique_id` 1 and 2 in the first tree, 11 and 12
@@ -2015,25 +1950,15 @@ fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
 fn test_the_draw_streams_come_out_in_walk_order() {
     baumhard::font::fonts::init();
 
-    let (scene, ids) = canvas_fill_fixture_scene();
+    let (scene, ids) = canvas_fixture_scene();
     let mut shaped: Vec<ShapedSceneElement> = Vec::new();
     scene_shape_cache::refresh(&scene, &ids, &mut shaped, ScenePassKind::Canvas);
-
-    let fill_ids: Vec<usize> = scene_shape_cache::background_fills(&shaped)
-        .map(|rect| rect.unique_id)
-        .collect();
-    assert_eq!(
-        fill_ids,
-        vec![1, 2, 11, 12],
-        "the rect pipeline paints in index order, so the fills must arrive in the order the \
-         scene walks them: both of the first tree's, then both of the second's"
-    );
 
     assert_eq!(
         canvas_text_stream(&shaped),
         vec![(0.0, 4.0), (60.0, 4.0), (500.0, 4.0), (560.0, 4.0)],
-        "and the glyphon pass is handed its text areas in the same order, at the anchors the \
-         fixture put them at"
+        "the glyphon pass is handed its text areas in the order the scene walks them — both of \
+         the first tree's, then both of the second's — at the anchors the fixture put them at"
     );
 }
 
@@ -2062,7 +1987,7 @@ fn test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings() {
     };
     let mut tree: GfxTree = GfxTree::new_non_indexed();
     for (unique_id, ring) in [(1usize, true), (2usize, false)] {
-        let mut area = canvas_fill_fixture_area(&format!("h{unique_id}"), 40.0 * unique_id as f32);
+        let mut area = canvas_fixture_area(&format!("h{unique_id}"), 40.0 * unique_id as f32);
         area.outline = ring.then_some(outline);
         tree.insert_child(
             tree.root(),
@@ -2165,7 +2090,6 @@ fn test_walker_records_the_stamp_offset_of_every_emitted_buffer() {
             tree_offset,
             &mut fs,
             &mut |_uid, buffer| emitted.push((buffer.emission_offset, buffer.pos)),
-            &mut |_rect| {},
         );
     }
 
@@ -2326,66 +2250,6 @@ fn test_a_position_only_change_patches_and_shapes_nothing() {
         (edited.reshaped, edited.patched),
         (1, 0),
         "a text edit is a shaping change and must re-shape the one leaf it touched"
-    );
-}
-
-/// A patch re-derives a kept fill where the walker would emit it,
-/// tree offset included.
-///
-/// The overlay pass keeps no fills, so the sibling test above cannot
-/// reach this half of `patch_placement`: it is the canvas pass that
-/// holds a fill on a moved element. Same fixture, same move — both
-/// leaves and the tree offset — run as `Canvas`, and the fill stream
-/// is held to a cold pass over the moved scene, the way the text
-/// stream is above. The outlined leaf carries a `background_color`
-/// and the plain one does not, so exactly one fill is in play, and
-/// the literal below says where it has to sit without asking the
-/// code under test.
-#[test]
-fn test_a_patched_canvas_fill_follows_the_move_and_the_tree_offset() {
-    baumhard::font::fonts::init();
-
-    let (mut scene, id) = patch_fixture_scene();
-    let mut shaped: Vec<ShapedSceneElement> = Vec::new();
-    scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Canvas);
-    assert_eq!(
-        canvas_fill_stream(&shaped).len(),
-        1,
-        "the outlined leaf authors the one fill this test follows"
-    );
-
-    edit_leaf_area(&mut scene, id, 0, |a| a.set_position((40.0, 70.0)));
-    edit_leaf_area(&mut scene, id, 1, |a| a.set_position((130.0, 75.0)));
-    let tree_offset = Vec2::new(12.0, -8.0);
-    scene.set_offset(id, tree_offset);
-
-    let moved = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Canvas);
-    assert_eq!(
-        (moved.reshaped, moved.patched),
-        (0, 3),
-        "a pure move is patched on the canvas pass too"
-    );
-
-    let mut full: Vec<ShapedSceneElement> = Vec::new();
-    scene_shape_cache::refresh(&scene, &[id], &mut full, ScenePassKind::Canvas);
-    assert_eq!(
-        canvas_fill_stream(&shaped),
-        canvas_fill_stream(&full),
-        "a patched fill must be the one re-shaping the moved scene emits"
-    );
-
-    // Independent of both passes: the fixture's fill rect, read off
-    // the moved area itself, plus the tree offset.
-    let mut moved_area = overlay_cache_fixture_area();
-    moved_area.set_position((40.0, 70.0));
-    let (rect_pos, _) = moved_area.background_rect().expect("the fixture area has a fill");
-    let fill = scene_shape_cache::background_fills(&shaped)
-        .next()
-        .expect("the fill survived the patch");
-    assert_eq!(
-        fill.position,
-        rect_pos + tree_offset,
-        "the patched fill sits at the moved rect plus the tree offset"
     );
 }
 
@@ -2638,84 +2502,6 @@ fn test_picker_drag_move_patches_every_cell_and_shapes_none() {
 }
 
 // ====================================================================
-// Background-fill draw order
-// ====================================================================
-
-use super::tree_buffers::BackgroundRectSlot;
-
-/// A synthetic fill carrying nothing but the identity the draw-order
-/// bookkeeping keys on. `Renderer::reshape_buffer_for` matches rects
-/// by `unique_id` and never reads the geometry while re-slotting
-/// them, so the rest is filler.
-fn background_rect(unique_id: usize) -> NodeBackgroundRect {
-    NodeBackgroundRect {
-        position: Vec2::ZERO,
-        size: Vec2::new(1.0, 1.0),
-        color: [0, 0, 0, 255],
-        shape_id: 0,
-        zoom_visibility: ZoomVisibility::unbounded(),
-        unique_id,
-    }
-}
-
-fn background_rect_order(rects: &[NodeBackgroundRect]) -> Vec<usize> {
-    rects.iter().map(|rect| rect.unique_id).collect()
-}
-
-/// Re-shaping one element leaves the background-fill draw order
-/// alone.
-///
-/// `render.rs` paints `node_background_rects` in index order, so the
-/// last entry covers every earlier one it overlaps.
-/// `reshape_buffer_for` runs on every drained frame of a
-/// section-resize drag and on every keystroke of a text edit; had it
-/// re-appended the fill it just re-collected, the element being
-/// edited would have spent the whole gesture painted over its
-/// neighbors and snapped back on the next full rebuild — a defect no
-/// assertion in this repo can see in pixels (§T10), which is why the
-/// ordering is asserted on the list instead.
-#[test]
-fn test_reshaping_an_element_keeps_its_background_fill_in_draw_order() {
-    let mut rects: Vec<NodeBackgroundRect> = (0..5).map(background_rect).collect();
-    assert_eq!(background_rect_order(&rects), vec![0, 1, 2, 3, 4]);
-
-    let mut slot = BackgroundRectSlot::take_over(&mut rects, 2);
-    slot.push(background_rect(2));
-    assert_eq!(
-        background_rect_order(&rects),
-        vec![0, 1, 2, 3, 4],
-        "the re-collected fill belongs where the stale one was, not on top of the map"
-    );
-
-    // An element the walker emits more than one fill for keeps them
-    // adjacent and in emission order — `push` advances rather than
-    // inserting each one at the same index.
-    let mut slot = BackgroundRectSlot::take_over(&mut rects, 1);
-    slot.push(background_rect(1));
-    slot.push(background_rect(101));
-    assert_eq!(background_rect_order(&rects), vec![0, 1, 101, 2, 3, 4]);
-}
-
-/// An element that had no fill before the re-shape appends, because
-/// there is no earlier slot to restore. The `unwrap_or(len)` branch.
-#[test]
-fn test_reshaping_an_element_that_gained_a_fill_appends_it() {
-    let mut rects: Vec<NodeBackgroundRect> = (0..3).map(background_rect).collect();
-    let mut slot = BackgroundRectSlot::take_over(&mut rects, 77);
-    slot.push(background_rect(77));
-    assert_eq!(background_rect_order(&rects), vec![0, 1, 2, 77]);
-}
-
-/// An element that *lost* its fill leaves no hole and no stale rect
-/// — `take_over` with no `push` is the whole of the removal.
-#[test]
-fn test_reshaping_an_element_that_lost_its_fill_drops_it() {
-    let mut rects: Vec<NodeBackgroundRect> = (0..3).map(background_rect).collect();
-    let _ = BackgroundRectSlot::take_over(&mut rects, 1);
-    assert_eq!(background_rect_order(&rects), vec![0, 2]);
-}
-
-// ====================================================================
 // Glyph advance measurement
 // ====================================================================
 
@@ -2825,874 +2611,6 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
 }
 
 // ====================================================================
-// WGSL <-> Rust shape lock-step
-// ====================================================================
-//
-// `RECT_SHADER_WGSL` and `NodeShape::shader_id` are two halves of one
-// wire format, and until this section existed the only thing holding
-// them together was a pair of comments asking each side to remember
-// the other. `do_shape_shader_ids_are_stable` (baumhard) pins the
-// Rust half against its own constants; nothing read the shader. The
-// checks below close that by reading the shader as text — no wgpu
-// device, no GPU: the renderer-free tier of §T8.
-
-/// The WGSL constant each `NodeShape` variant expects the fragment
-/// shader to declare.
-///
-/// Exhaustive on purpose, and that is the point: a new variant does
-/// not compile until it names its shader constant here, which is step
-/// 3 of the extension recipe in `baumhard::gfx_structs::shape`'s
-/// module header. The mapping is not derivable — `Rectangle` is
-/// `SHAPE_RECT`, not `SHAPE_RECTANGLE` — so it has to be written
-/// somewhere, and a test-local match keeps it out of the production
-/// surface while staying compiler-forced.
-fn wgsl_shape_const_name(shape: baumhard::gfx_structs::shape::NodeShape) -> &'static str {
-    use baumhard::gfx_structs::shape::NodeShape;
-    match shape {
-        NodeShape::Rectangle => "SHAPE_RECT",
-        NodeShape::Ellipse => "SHAPE_ELLIPSE",
-    }
-}
-
-/// Every `const <NAME>: u32 = <n>u;` declaration in `wgsl`, as
-/// `(name, value)` pairs, plus the number of lines that opened with
-/// `const` at all.
-///
-/// The second half of the return is what keeps the parser honest. A
-/// scanner that skips what it cannot read turns a spelling change in
-/// the shader into an empty result set, and an empty set satisfies
-/// every "no orphan constant" assertion vacuously. Callers compare
-/// the two numbers and refuse to proceed when they differ, so an
-/// unreadable declaration is reported rather than dropped.
-fn wgsl_u32_consts(wgsl: &str) -> (Vec<(String, u32)>, usize) {
-    let mut parsed = Vec::new();
-    let mut seen = 0usize;
-    for line in wgsl.lines() {
-        let line = line.trim();
-        let Some(rest) = line.strip_prefix("const ") else {
-            continue;
-        };
-        seen += 1;
-        let Some((name, value)) = rest.split_once(':') else {
-            continue;
-        };
-        let Some(value) = value.trim().strip_prefix("u32") else {
-            continue;
-        };
-        let Some(value) = value.trim().strip_prefix('=') else {
-            continue;
-        };
-        let value = value.trim().trim_end_matches(';').trim().trim_end_matches('u');
-        let Ok(n) = value.trim().parse::<u32>() else {
-            continue;
-        };
-        parsed.push((name.trim().to_string(), n));
-    }
-    (parsed, seen)
-}
-
-/// The scalar kind a vertex attribute delivers, and that a WGSL
-/// vertex input is declared to receive. WebGPU requires the two to
-/// agree — a `Uint32` attribute cannot feed an `f32` input, and no
-/// conversion happens at the boundary — so this is the axis a
-/// "compatible format" check turns on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ShaderScalar {
-    Float,
-    Uint,
-    Sint,
-}
-
-/// `(scalar kind, component count)` for the 32-bit vertex formats.
-///
-/// Those are the only ones the rect table can use: its vertices are
-/// accumulated as a packed `Vec<f32>` (`RECT_VERTEX_FLOATS` slots of
-/// four bytes each), so a `Unorm8x4` or a `Float16x2` would have to
-/// straddle a slot. Any other format therefore panics rather than
-/// returning `None` — the caller is asserting *about* the pair, and
-/// a format that quietly mapped to nothing would take its assertion
-/// down with it.
-///
-/// The component count is written out rather than derived because
-/// `wgpu::VertexFormat` exposes no accessor for it, and it is then
-/// checked against `VertexFormat::size()`, which wgpu does expose.
-/// That is what keeps this table from being a second, drifting copy
-/// of wgpu's own: a wrong count here fails on the next line instead
-/// of silently widening what "compatible" means. Kind cannot be
-/// cross-checked that way — `Float32` and `Uint32` are both four
-/// bytes — so the kinds are the one thing here taken on trust, and
-/// they are the part `wgpu::VertexFormat`'s own variant names state
-/// unambiguously.
-fn attribute_scalar_and_components(format: wgpu::VertexFormat) -> (ShaderScalar, u64) {
-    use wgpu::VertexFormat as F;
-    let (scalar, components) = match format {
-        F::Float32 => (ShaderScalar::Float, 1),
-        F::Float32x2 => (ShaderScalar::Float, 2),
-        F::Float32x3 => (ShaderScalar::Float, 3),
-        F::Float32x4 => (ShaderScalar::Float, 4),
-        F::Uint32 => (ShaderScalar::Uint, 1),
-        F::Uint32x2 => (ShaderScalar::Uint, 2),
-        F::Uint32x3 => (ShaderScalar::Uint, 3),
-        F::Uint32x4 => (ShaderScalar::Uint, 4),
-        F::Sint32 => (ShaderScalar::Sint, 1),
-        F::Sint32x2 => (ShaderScalar::Sint, 2),
-        F::Sint32x3 => (ShaderScalar::Sint, 3),
-        F::Sint32x4 => (ShaderScalar::Sint, 4),
-        other => panic!(
-            "{other:?} has no WGSL spelling recorded here, so this pin cannot say \
-             whether it matches the `VsIn` field it feeds. The rect vertex is a \
-             packed `Vec<f32>`, four bytes per slot, which is why only the 32-bit \
-             formats are listed; a format outside that family needs its WGSL type \
-             written into this match before it can appear in the table."
-        ),
-    };
-    assert_eq!(
-        format.size(),
-        4 * components,
-        "{format:?} is recorded here as {components} × 4 bytes but wgpu reports \
-         {} — the component count above is wrong, and every format comparison \
-         built on it is comparing the wrong width",
-        format.size()
-    );
-    (scalar, components)
-}
-
-/// `(scalar kind, component count)` for the WGSL types a vertex
-/// input may be declared as, or `None` for a spelling that is not one
-/// of them.
-///
-/// `None` rather than a panic, unlike its Rust-side counterpart: the
-/// caller has the field name and the struct it came from, so it can
-/// say *which* declaration it could not read, which the type alone
-/// cannot.
-///
-/// Both spellings of a vector are read: the constructed `vecN<f32>`
-/// and WGSL's predeclared alias for it, `vecNf`. A shader rewritten
-/// in the modern idiom is not a broken shader, and a reader that
-/// returned `None` for `vec2f` would have its caller report the
-/// declaration as one a vertex attribute cannot feed — an accusation
-/// against correct code. The `h` family (`vec2h` = `vec2<f16>`) is
-/// deliberately absent: `f16` needs an `enable` directive and pairs
-/// with no format in `attribute_scalar_and_components`' table, so it
-/// belongs in the caller's "this reader cannot read that" panic.
-fn wgsl_scalar_and_components(ty: &str) -> Option<(ShaderScalar, u64)> {
-    fn scalar(name: &str) -> Option<ShaderScalar> {
-        match name {
-            "f32" => Some(ShaderScalar::Float),
-            "u32" => Some(ShaderScalar::Uint),
-            "i32" => Some(ShaderScalar::Sint),
-            _ => None,
-        }
-    }
-    let ty = ty.trim();
-    for n in 2..=4u64 {
-        if let Some(rest) = ty.strip_prefix(&format!("vec{n}<")) {
-            let inner = rest.strip_suffix('>')?;
-            return scalar(inner.trim()).map(|s| (s, n));
-        }
-        let alias = match ty.strip_prefix(&format!("vec{n}")) {
-            Some("f") => Some(ShaderScalar::Float),
-            Some("u") => Some(ShaderScalar::Uint),
-            Some("i") => Some(ShaderScalar::Sint),
-            _ => None,
-        };
-        if let Some(alias) = alias {
-            return Some((alias, n));
-        }
-    }
-    scalar(ty).map(|s| (s, 1))
-}
-
-/// The `@location(N) name: type` fields of `struct <struct_name>` in
-/// `wgsl`, in declaration order, as `(location, name, type)`.
-///
-/// Anchored to the one struct rather than scanning the shader. A
-/// whole-shader `contains("@location(3) shape_id: f32")` is satisfied
-/// by any struct that happens to declare a field of that name at that
-/// location, and this shader declares `shape_id` twice — `VsIn` takes
-/// it as an `f32` from the vertex stream, `VsOut` carries it on as a
-/// `u32`. Today the two spellings differ, so nothing crosses; the
-/// pin should not depend on that staying true.
-///
-/// Panics — never returns a short list — when the struct is missing,
-/// when its body never closes, or when a field inside it is neither
-/// `@builtin(…)` nor `@location(N) name: type`. Every caller asserts
-/// *over* the list, and a field this reader dropped would shorten it
-/// rather than redden anything: a table pin that skips the slot it
-/// cannot read is exactly the pin that proves nothing.
-fn wgsl_struct_locations(wgsl: &str, struct_name: &str) -> Vec<(u32, String, String)> {
-    use baumhard::util::rust_source::braced_block_after;
-
-    let header = format!("struct {struct_name}");
-    let at = wgsl
-        .find(&header)
-        .unwrap_or_else(|| panic!("the rect shader must still declare `{header}`"));
-    let tail = &wgsl[at..];
-    // `braced_block_after` matches its header as a substring, which
-    // would hand back `struct VsInstance`'s body for a `struct VsIn`
-    // that no longer exists. Require the body to open right after the
-    // name so a longer name is a loud miss rather than a quiet
-    // redirection onto the wrong struct.
-    assert!(
-        tail[header.len()..].trim_start().starts_with('{'),
-        "`{header}` is followed by `{}`, not by its body: the shader declares a \
-         longer name that merely starts the same way, and reading that struct's \
-         fields would pin the wrong one",
-        tail[header.len()..]
-            .trim_start()
-            .chars()
-            .take(24)
-            .collect::<String>()
-    );
-    let block = braced_block_after(tail, &header)
-        .unwrap_or_else(|| panic!("`{header}`'s body never closes in the rect shader"));
-    // `braced_block_after` returns the braces as well; the fields are
-    // what sits between them, comma-separated. A WGSL attribute may
-    // carry an argument list, but none of the ones this shader can
-    // write puts a comma inside it, so splitting on `,` cuts between
-    // fields and nowhere else.
-    let body = block
-        .strip_prefix('{')
-        .and_then(|b| b.strip_suffix('}'))
-        .expect("braced_block_after returns a brace-delimited run");
-
-    let mut fields = Vec::new();
-    for field in body.split(',') {
-        let field = field.trim();
-        if field.is_empty() {
-            continue;
-        }
-        // Peel the leading `@attribute(arg)` run rather than assuming
-        // a lone `@location`. `VsIn` writes only that one today; the
-        // shader's other located struct, `VsOut`, stacks
-        // `@location(2) @interpolate(flat)`, and this reader takes a
-        // struct name so that it can be pointed at either. Only
-        // `"VsIn"` is passed to it today.
-        let mut rest = field;
-        let mut location: Option<u32> = None;
-        let mut is_builtin = false;
-        while let Some(after_at) = rest.strip_prefix('@') {
-            let Some(open) = after_at.find('(') else {
-                panic!("`{field}` in `{header}`: `@` attribute with no argument list — unreadable")
-            };
-            let Some(close) = after_at[open..].find(')') else {
-                panic!("`{field}` in `{header}`: `@` attribute argument list never closes")
-            };
-            let name = after_at[..open].trim();
-            let arg = after_at[open + 1..open + close].trim();
-            match name {
-                "location" => {
-                    location = Some(arg.parse().unwrap_or_else(|_| {
-                        panic!("`{field}` in `{header}`: `@location({arg})` is not a number")
-                    }))
-                }
-                "builtin" => is_builtin = true,
-                _ => {}
-            }
-            rest = after_at[open + close + 1..].trim_start();
-        }
-        if is_builtin {
-            // A `@builtin` field is produced by the stage, not fed
-            // from a vertex buffer, so it holds no slot in the table.
-            continue;
-        }
-        let Some(location) = location else {
-            panic!("`{field}` in `{header}` carries neither `@location` nor `@builtin`, so this reader cannot say which vertex slot feeds it")
-        };
-        let Some((name, ty)) = rest.split_once(':') else {
-            panic!("`{field}` in `{header}` is not `name: type` after its attributes")
-        };
-        fields.push((location, name.trim().to_string(), ty.trim().to_string()));
-    }
-
-    assert!(
-        !fields.is_empty(),
-        "`{header}` parsed to no located fields at all — the reader and the shader \
-         have drifted apart, and every comparison against this list would hold \
-         over an empty set"
-    );
-    fields
-}
-
-/// The expression `Renderer::new` assigns to the descriptor field
-/// `<field>`, as text with its internal whitespace collapsed.
-///
-/// Three facts about the rect pipeline are genuinely source-level —
-/// *which named item* `Renderer::new` hands it: the attribute table,
-/// the stride, and the shader source. Each is a `const` at module
-/// scope that the rest of this file reads as a value, and each can
-/// therefore be orphaned. A second const beside it, a slice of it, or
-/// a literal written in its place all leave every value-level
-/// assertion here holding over data no GPU is ever given.
-///
-/// **Equality, not `contains`.** A substring needle over
-/// `attributes: &RECT_VERTEX_ATTRIBUTES` is satisfied by
-/// `&RECT_VERTEX_ATTRIBUTES_2` and by `&RECT_VERTEX_ATTRIBUTES[..3]`
-/// — the identifier-prefix collision `wgsl_struct_locations` guards
-/// against on the WGSL side of this same file, and the one
-/// `baumhard`'s `test_a_longer_identifier_does_not_satisfy_a_shorter_body`
-/// exists for. Reading the whole expression and comparing it closes
-/// both, and prints what it found when it does not match.
-///
-/// The expression ends at the first `,`, `}` or `]` after the field
-/// name. That is where a struct-literal field ends whether or not it
-/// carries a trailing comma, and it cuts *inside* any nested literal
-/// written there — an inline array grown back in place of the const
-/// reads as a truncated expression and fails the comparison rather
-/// than satisfying it.
-///
-/// The cost, stated because it is a real one: this pins the
-/// expression's spelling. Rewriting it in an equivalent form —
-/// binding the table to a local first, or reaching the shader source
-/// through a different `Cow` constructor — reddens here. That is the
-/// loud direction, and the failure message says which text it wanted.
-///
-/// Panics when the field is absent, and when it appears more than
-/// once: a second occurrence is a second descriptor, and this reader
-/// would report only the first of them.
-fn renderer_new_field_expression(new_body: &str, field: &str) -> String {
-    let needle = format!("{field}:");
-    let found = new_body.matches(needle.as_str()).count();
-    assert_eq!(
-        found, 1,
-        "`Renderer::new` must write `{needle}` exactly once for this pin to know which \
-         descriptor it read; it appears {found} times, and this reader would compare \
-         only the first"
-    );
-    let at = new_body
-        .find(needle.as_str())
-        .expect("just counted one occurrence");
-    let rest = &new_body[at + needle.len()..];
-    let end = rest.find([',', '}', ']']).unwrap_or(rest.len());
-    rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Require `name` to appear exactly once in `Renderer::new`'s body.
-///
-/// [`renderer_new_field_expression`] compares text, so it reads
-/// `&RECT_VERTEX_ATTRIBUTES` as the module-level table on the
-/// strength of the name alone. A `const RECT_VERTEX_ATTRIBUTES`
-/// declared *inside* `Renderer::new` would shadow it: the text the
-/// pin reads is unchanged while the name resolves to something the
-/// test never saw, which is the one silent bypass left after the
-/// three orphans were closed. A renderer-free test (§T8) cannot
-/// resolve a name — that needs a `Renderer`, which only the
-/// GPU-backed tier builds — but a shadowing declaration has to be
-/// *written*, and writing it spends the name a second time.
-///
-/// The input that makes this fail: add `const RECT_VERTEX_SIZE: u64
-/// = 40;` inside `Renderer::new`. Each of the three names occurs
-/// exactly once today, in the expression the pipeline is handed.
-fn assert_name_is_not_shadowed_in_renderer_new(new_body: &str, name: &str) {
-    let found = new_body.matches(name).count();
-    let diagnosis = if found == 0 {
-        "zero mentions means `Renderer::new` no longer hands this item to the pipeline at \
-         all — the assertions below would then hold over data no GPU is given, which is the \
-         orphan the expression pins exist to catch"
-    } else {
-        "more than one means either a shadowing declaration — which leaves the pinned text \
-         intact while the name resolves to something this test never saw — or a second use \
-         a text reader cannot tell apart from one"
-    };
-    assert_eq!(
-        found, 1,
-        "`{name}` must appear exactly once in `Renderer::new`, and appears {found} times. \
-         The pins below read it as text: {diagnosis}."
-    );
-}
-
-/// The per-vertex values the closure in `push_rect_ndc` pushes, in
-/// order, exactly as `renderer/render.rs` spells them.
-///
-/// The one thing about the vertex layout that is genuinely a
-/// source-level property: the slice is an anonymous
-/// `[x, y, u, v, r, g, b, a, sid]`, so neither its width nor its
-/// order is visible to any runtime assertion —
-/// `main_rect_vertices` is a flat `Vec<f32>` that has forgotten where
-/// one vertex ended.
-///
-/// The names are returned as well as counted, and the caller pins
-/// them in order against a literal. **The price is any edit to this
-/// slice, not only a rename**: growing the vertex — #147's own
-/// third acceptance case, where a scalar is added and the WGSL
-/// updated correctly — reddens here until the literal in the test is
-/// updated too. That is one extra edit, it fails loudly, and the
-/// message prints both lists side by side.
-///
-/// It is worth that price because the alternative was worse: reading
-/// only the width let a reorder of this slice alone pass, which is
-/// one line, breaks the layout silently, and was the input that
-/// falsified this function's previous doc. A layout test that has to
-/// be edited when the layout changes is the honest shape; a layout
-/// test that stays green when the layout is scrambled is not.
-/// What it still cannot prove is that `x` is a coordinate; see the
-/// residual named in the test below.
-///
-/// Panics on anything it cannot read, and on a second
-/// `extend_from_slice` in the same body: two pushes of different
-/// widths is a layout this reader would report the first half of.
-fn push_rect_ndc_slots() -> Vec<String> {
-    use baumhard::util::rust_source::{braced_block_after, production_code};
-
-    let source = production_code("src/application/renderer/render.rs");
-    let body = braced_block_after(&source, "fn push_rect_ndc")
-        .expect("`push_rect_ndc` must still be a braced item in renderer/render.rs");
-
-    const PUSH: &str = "extend_from_slice(&[";
-    assert_eq!(
-        body.matches(PUSH).count(),
-        1,
-        "`push_rect_ndc` must build each vertex with exactly one `{PUSH}…]`; \
-         found {} — with more than one, the width this reads is the width of \
-         whichever came first",
-        body.matches(PUSH).count()
-    );
-    let at = body.find(PUSH).expect("just counted one occurrence");
-    let rest = &body[at + PUSH.len()..];
-    let close = rest
-        .find(']')
-        .unwrap_or_else(|| panic!("the `{PUSH}` slice in `push_rect_ndc` never closes"));
-    let slice = &rest[..close];
-    assert!(
-        !slice.contains('['),
-        "the per-vertex slice in `push_rect_ndc` nests another `[`, which this \
-         reader would miscount: `{slice}`"
-    );
-    slice
-        .split(',')
-        .map(str::trim)
-        .filter(|e| !e.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-/// The pipeline's vertex-attribute table and the shader's `VsIn`
-/// describe the same vertex: slot for slot, same `@location`, same
-/// scalar kind and width, offsets tiling `RECT_VERTEX_SIZE` with no
-/// gap and no overlap.
-///
-/// Fails when: `pos`'s and `uv`'s `shader_location` values are
-/// swapped (both are `Float32x2`, so the resulting pipeline is
-/// byte-identical and `createRenderPipeline` cannot object — every
-/// quad would draw into the `[0, 1]²` corner of NDC); `shape_id`'s
-/// format becomes `Uint32` while `VsIn` still declares it `f32`; an
-/// attribute is added, removed or given an offset that is not where
-/// the previous one ended; `RECT_VERTEX_SIZE` stops being the sum of
-/// the formats' sizes; `RECT_VERTEX_FLOATS` stops being that sum in
-/// four-byte slots; or `push_rect_ndc` writes a different number of
-/// values per vertex, or writes them in a different order, than the
-/// table describes.
-///
-/// It fails one step earlier, too, when `Renderer::new` stops handing
-/// the pipeline the three module-level items this test reads as
-/// values. All three are hoisted `const`s, so all three can be
-/// orphaned while every assertion below goes on holding over data no
-/// GPU is given, and each is pinned as the text of the expression
-/// `Renderer::new` writes:
-///
-/// - `attributes: &RECT_VERTEX_ATTRIBUTES` — the table itself. A
-///   decoy `RECT_VERTEX_ATTRIBUTES_2` beside it, or a
-///   `&RECT_VERTEX_ATTRIBUTES[..3]`, is what a substring needle would
-///   have accepted.
-/// - `array_stride: RECT_VERTEX_SIZE` — the running sum below is
-///   called the stride, and this is what makes that true. wgpu
-///   validates only that a stride is a multiple of four and leaves
-///   room for every attribute (`wgpu-core`'s `device/resource.rs`),
-///   so an over-large literal builds cleanly and reads every vertex
-///   after the first from the wrong byte.
-/// - `source: … Cow::Borrowed(RECT_SHADER_WGSL)` — the shader module.
-///   `VsIn` is read out of that const, and a decoy handed to
-///   `create_shader_module` would leave this test, and every
-///   assertion in
-///   `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`,
-///   pinning a string the GPU never compiles.
-///
-/// The join is by `@location`, which is what the hardware joins on —
-/// a `shader_location` names a slot, and the field carrying that
-/// `@location` is the one it feeds. The Rust side has no field names
-/// at all, so `shape_id` is identified here as "the field the
-/// attribute at location 3 lands in" rather than as "the attribute at
-/// byte offset 32", which is what the pin this replaces did: an
-/// offset is a fact about today's layout, and adding one per-vertex
-/// scalar ahead of `shape_id` used to leave that pin green on the
-/// broken shader and red on the corrected one.
-///
-/// Offsets are then anchored by arithmetic rather than by literals:
-/// each is required to be the running sum of the formats declared
-/// before it, and the total to be `RECT_VERTEX_SIZE`. That is what
-/// makes the table describe a *packed* vertex, and it is why the
-/// stride needs no separate literal in this file.
-///
-/// ## What this deliberately does not claim
-///
-/// **That byte 0 is a position.** The chain pinned here runs from the
-/// offsets outward: offsets → `shader_location` → `@location(N) name`
-/// → the field the shader body reads. Its far end is anchored by the
-/// WGSL names; its near end is not. `push_rect_ndc` writes an
-/// anonymous `[x, y, u, v, r, g, b, a, sid]`, and nothing the
-/// compiler can see relates that `x` to `VsIn.pos` — only a human
-/// convention does.
-///
-/// That slice is pinned here element for element, so the reorder of
-/// the slice alone is closed: `&[u, v, x, y, r, g, b, a, sid]`
-/// reddens. The pin holds the names in order, not what the names
-/// hold, and three inputs get past it — each of them swaps two
-/// fields, and each was run against this test and observed green:
-///
-/// - reordering the closure's own parameter list, `|out, y, x, u, v|`
-///   — one line, after which `x` names the coordinate `y` named;
-/// - swapping two arguments at one of that closure's call sites,
-///   `push(out, ry, lx, 0.0, 0.0)` — also one line;
-/// - a reordering applied *consistently* to the table and `VsIn` —
-///   attribute 0 becoming `uv` at location 1 while `VsIn` lists `uv`
-///   first — two declarations, edited in step.
-///
-/// The first two are the residual as it really stands: one line is
-/// still enough, which is why the slice order is now pinned rather
-/// than left to the width alone. What the text pin costs in exchange
-/// is a red run on a rename of `x`, `y`, `u`, `v` or `sid`;
-/// `push_rect_ndc_slots` records that trade.
-///
-/// **That the shader body uses the fields it declares.** A `VsIn`
-/// field bound correctly and then read nowhere in `vs_main` is a
-/// value delivered and thrown away, and every assertion here would
-/// still hold. That is
-/// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`'s
-/// concern — it asserts the forwarding of all three interpolated
-/// fields — not this test's.
-#[test]
-fn test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location() {
-    use baumhard::util::rust_source::{braced_block_after, production_code, strip_comments};
-
-    // Preconditions: the three consts read below are the three the
-    // pipeline is built from. Each is read here as a value, so each
-    // can be orphaned — a decoy beside it, a slice of it, or a
-    // literal in its place — and every assertion after this point
-    // would then be about dead data.
-    let renderer = production_code("src/application/renderer/mod.rs");
-    // `Renderer::new` by its first parameter: the bare `fn new(` would
-    // also find `FrameIntervalRing::new`, which comes first in the file.
-    let new_body = braced_block_after(&renderer, "fn new(\n        device: Device,")
-        .expect("`Renderer::new` must still be a braced item in renderer/mod.rs");
-
-    for name in ["RECT_VERTEX_ATTRIBUTES", "RECT_VERTEX_SIZE", "RECT_SHADER_WGSL"] {
-        assert_name_is_not_shadowed_in_renderer_new(new_body, name);
-    }
-
-    let attributes_expression = renderer_new_field_expression(new_body, "attributes");
-    assert_eq!(
-        attributes_expression, "&RECT_VERTEX_ATTRIBUTES",
-        "`Renderer::new` hands the rect pipeline `{attributes_expression}`, not \
-         `&RECT_VERTEX_ATTRIBUTES`, so the table walked below is not the one the GPU \
-         is given and every assertion here is about dead data. Compared whole rather \
-         than as a substring: a decoy `RECT_VERTEX_ATTRIBUTES_2` with `pos` and `uv` \
-         swapped, and `&RECT_VERTEX_ATTRIBUTES[..3]`, both satisfy a needle that only \
-         asks for the name to appear"
-    );
-
-    let stride_expression = renderer_new_field_expression(new_body, "array_stride");
-    assert_eq!(
-        stride_expression, "RECT_VERTEX_SIZE",
-        "the rect pipeline's `array_stride` is `{stride_expression}`, not \
-         `RECT_VERTEX_SIZE`. The formats are summed below and that sum is called the \
-         stride; wgpu asks only that a stride be a multiple of four and leave room \
-         for every attribute, so a larger literal builds a pipeline that reads every \
-         vertex after the first from the wrong byte, silently"
-    );
-
-    let shader_expression = renderer_new_field_expression(new_body, "source");
-    assert_eq!(
-        shader_expression, "wgpu::ShaderSource::Wgsl(Cow::Borrowed(RECT_SHADER_WGSL))",
-        "the rect shader module is compiled from `{shader_expression}`, not from \
-         `RECT_SHADER_WGSL`. `VsIn` is read out of that const just below, so a decoy \
-         string handed to `create_shader_module` leaves this test — and the \
-         forwarding assertions in \
-         `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm` — pinning \
-         a shader the GPU never compiles"
-    );
-
-    let wgsl = strip_comments(RECT_SHADER_WGSL);
-    let fields = wgsl_struct_locations(&wgsl, "VsIn");
-
-    assert_eq!(
-        RECT_VERTEX_ATTRIBUTES.len(),
-        fields.len(),
-        "the pipeline declares {} vertex attributes but `VsIn` declares {} located \
-         fields ({:?}): one side grew a slot the other does not know about",
-        RECT_VERTEX_ATTRIBUTES.len(),
-        fields.len(),
-        fields.iter().map(|(l, n, _)| (l, n)).collect::<Vec<_>>()
-    );
-
-    let mut offset = 0u64;
-    for (slot, (attribute, (location, name, ty))) in RECT_VERTEX_ATTRIBUTES.iter().zip(&fields).enumerate() {
-        assert_eq!(
-            attribute.shader_location, *location,
-            "vertex slot {slot} is declared at shader_location {} but the {slot}th \
-             field of `VsIn` is `{name}` at @location({location}). Two attributes of \
-             the same format are interchangeable to the pipeline — swapping `pos`'s \
-             and `uv`'s locations builds cleanly and draws every quad into the \
-             [0, 1]² corner of NDC",
-            attribute.shader_location
-        );
-
-        let (attribute_scalar, attribute_components) = attribute_scalar_and_components(attribute.format);
-        let Some((field_scalar, field_components)) = wgsl_scalar_and_components(ty) else {
-            panic!(
-                "`VsIn.{name}` is declared `{ty}`, which `wgsl_scalar_and_components` has no \
-                 scalar kind and width for. It reads `f32`, `u32`, `i32`, `vecN<…>` of those \
-                 and their predeclared aliases `vecNf`/`vecNu`/`vecNi`; a declaration outside \
-                 that set has to be written into that reader before this pin can say whether \
-                 the attribute feeding it matches"
-            )
-        };
-        assert_eq!(
-            (attribute_scalar, attribute_components),
-            (field_scalar, field_components),
-            "vertex slot {slot} delivers {:?} ({attribute_scalar:?} × \
-             {attribute_components}) into `VsIn.{name}: {ty}` ({field_scalar:?} × \
-             {field_components}). WebGPU converts nothing at this boundary: the \
-             kinds and the component counts have to match. `shape_id` is \
-             deliberately `Float32` against `f32` — an integer vertex attribute is \
-             a WebGL2 feature gate on some browsers — and that pairing is a match \
-             here, not an exception to it",
-            attribute.format
-        );
-
-        assert_eq!(
-            attribute.offset, offset,
-            "vertex slot {slot} (`{name}`) claims byte offset {} but the {offset} \
-             bytes before it are exactly the formats of slots 0..{slot}. An offset \
-             that is not the running sum leaves a hole or an overlap in a vertex \
-             `push_rect_ndc` packs solid",
-            attribute.offset
-        );
-        offset += attribute.format.size();
-    }
-
-    assert_eq!(
-        offset, RECT_VERTEX_SIZE,
-        "the attribute formats sum to {offset} bytes but `RECT_VERTEX_SIZE` — the \
-         pipeline's `array_stride` — is {RECT_VERTEX_SIZE}: consecutive vertices \
-         would be read from the wrong byte"
-    );
-    assert_eq!(
-        RECT_VERTEX_SIZE,
-        RECT_VERTEX_FLOATS as u64 * 4,
-        "`RECT_VERTEX_FLOATS` is {RECT_VERTEX_FLOATS} four-byte slots = {} bytes, \
-         against a stride of {RECT_VERTEX_SIZE}. The draw divides the length of a \
-         flat `Vec<f32>` by that constant to get its vertex count, so the two \
-         disagreeing means the wrong number of vertices is drawn",
-        RECT_VERTEX_FLOATS * 4
-    );
-    let push_slots = push_rect_ndc_slots();
-    assert_eq!(
-        push_slots.len(),
-        RECT_VERTEX_FLOATS,
-        "`push_rect_ndc` writes {} values per vertex against `RECT_VERTEX_FLOATS` \
-         = {RECT_VERTEX_FLOATS}: the CPU writer and the table describe vertices of \
-         different widths, and every vertex after the first is read from the wrong \
-         offset",
-        push_slots.len()
-    );
-    assert_eq!(
-        push_slots,
-        ["x", "y", "u", "v", "r", "g", "b", "a", "sid"],
-        "`push_rect_ndc` packs its vertex as {push_slots:?}. The order of that slice \
-         is what decides that bytes 0..8 are the position rather than the texture \
-         coordinate, and nothing the compiler sees ties it to the table above — so a \
-         reorder of this one line swaps two fields, builds cleanly, and every other \
-         assertion in this test stays green. Renaming one of these bindings reddens \
-         here too; the names are the only handle there is"
-    );
-
-    let mut locations: Vec<u32> = RECT_VERTEX_ATTRIBUTES.iter().map(|a| a.shader_location).collect();
-    locations.sort_unstable();
-    let distinct = {
-        let mut d = locations.clone();
-        d.dedup();
-        d.len()
-    };
-    assert_eq!(
-        distinct,
-        locations.len(),
-        "two vertex attributes claim the same shader_location ({locations:?}). The \
-         walk above pairs the two lists position by position, which makes them a \
-         bijection only while the locations are distinct: duplicated on both \
-         sides, two attributes feed one `VsIn` field and the walk still passes"
-    );
-}
-
-/// Every `NodeShape` variant has a WGSL constant carrying exactly its
-/// `shader_id`, the shader declares no shape constant no variant
-/// claims, and every variant's fill is reachable from the `switch` —
-/// by its own `case` arm, or, for the default variant, by the
-/// `default` arm that also catches ids from a future build.
-///
-/// Fails when: a variant is added with no `SHAPE_*` constant, a
-/// constant's value is renumbered on either side, the two names are
-/// swapped so `SHAPE_RECT` carries the ellipse's id, a `case` arm is
-/// deleted (every node of that shape would then silently draw as a
-/// rectangle — the exact failure the module headers warn about), or
-/// the `default` arm goes and unknown ids stop drawing at all.
-///
-/// It fails for that same reason one step earlier, too: both ends of
-/// the `shape_id` wire *inside the shader* are asserted by name. A
-/// `switch (0u)` in the fragment stage, or a vertex stage that writes
-/// a constant into `out.shape_id`, leaves every arm above intact and
-/// correct while every node on screen draws the default fill — a
-/// shader in perfect lock-step with a Rust enum it no longer reads.
-///
-/// `shape_id`'s two neighbors are asserted the same way, because the
-/// same mutation is available to them and one of them is just as
-/// quiet: a vertex stage that stops forwarding `uv` discards every
-/// ellipse — the SDF reads `uv` as the quad's local frame — while the
-/// rectangles, which never look at it, go on drawing. Losing `pos`
-/// is the loud one; it is asserted next to the others rather than
-/// left to the eye.
-///
-/// Upstream of that, where the attribute enters `VsIn` at all, is
-/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`'s
-/// concern and not this test's. Nothing here reads a
-/// `shader_location`. That test also pins the one fact this one reads
-/// by value and cannot check for itself: that `RECT_SHADER_WGSL` is
-/// the string `Renderer::new` compiles. Without it a decoy shader
-/// module would leave every assertion below asserting over a string
-/// no GPU sees.
-///
-/// Comments are stripped before anything is matched, so a `case
-/// SHAPE_X:` written in prose cannot satisfy an arm assertion — the
-/// shader carries one such mention today, naming `SHAPE_RECT` in the
-/// comment above the `default` arm.
-#[test]
-fn test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm() {
-    use baumhard::gfx_structs::shape::NodeShape;
-    use baumhard::util::rust_source::strip_comments;
-    use strum::IntoEnumIterator;
-
-    let wgsl = strip_comments(RECT_SHADER_WGSL);
-    let (consts, const_lines) = wgsl_u32_consts(&wgsl);
-
-    // Preconditions. Without these the assertions below hold over an
-    // empty set and prove nothing about the shader.
-    assert!(
-        !consts.is_empty(),
-        "no `const <NAME>: u32 = <n>u;` found in the rect shader — the parser \
-         and the shader have drifted apart, and every check below is vacuous"
-    );
-    assert_eq!(
-        consts.len(),
-        const_lines,
-        "{} of the shader's {const_lines} `const` declarations did not parse; \
-         a declaration this scanner cannot read must be reported, not skipped",
-        const_lines - consts.len()
-    );
-    assert!(
-        wgsl.contains("default: {"),
-        "the fragment switch must keep a `default` arm: it is the fill for the \
-         default shape and the safe landing for an id this build does not know"
-    );
-    // The arms are only worth checking if something selects between
-    // them. Both ends of the wire, in the same literal-string style:
-    // the vertex stage forwards the per-instance attribute, and the
-    // fragment stage switches on what it forwarded.
-    assert!(
-        wgsl.contains("out.shape_id = u32(round(in.shape_id));"),
-        "the vertex stage must forward the per-vertex `shape_id` attribute as exactly \
-         `out.shape_id = u32(round(in.shape_id));` — a constant written here reaches \
-         every fragment with the same value and the `case` arms below stop being \
-         reachable. The trailing `;` is load-bearing: without it the needle is a \
-         prefix, and `… * 0u;` satisfies it while sending every fragment the \
-         rectangle id"
-    );
-    assert!(
-        wgsl.contains("switch (in.shape_id)"),
-        "the fragment switch must select on `in.shape_id`: switching on anything \
-         else draws one fill for every node while each arm still matches its \
-         `NodeShape` constant perfectly"
-    );
-    // `shape_id`'s two neighbors on the same journey. Binding an
-    // attribute correctly and then not forwarding it is invisible to
-    // the table pin, which stops at `VsIn`.
-    assert!(
-        wgsl.contains("out.uv = in.uv;"),
-        "the vertex stage must forward `uv` as exactly `out.uv = in.uv;`: the ellipse \
-         arm's SDF reads it as the quad's local frame, so anything written here that \
-         is not the coordinate itself discards every ellipse while the rectangles — \
-         which never look at `uv` — keep drawing. The needle is that whole statement, \
-         terminator included, because `out.uv = in.uv * 0.0;` satisfies the prefix"
-    );
-    assert!(
-        wgsl.contains("out.pos = vec4<f32>(in.pos, 0.0, 1.0);"),
-        "the vertex stage must forward `pos` into clip space as exactly \
-         `out.pos = vec4<f32>(in.pos, 0.0, 1.0);`. This is a text pin on that one \
-         statement, so an equivalent spelling reddens here too and the fix is to \
-         update the needle; what it exists to catch is the inequivalent one — a \
-         constant, or `in.pos` scaled or transposed — which collapses every quad and \
-         leaves nothing on the canvas with a background. The terminator is part of \
-         the needle: `out.pos = vec4<f32>(in.pos, 0.0, 1.0) * 0.0;` satisfies the \
-         prefix and collapses every quad to a point"
-    );
-
-    let mut claimed: Vec<&str> = Vec::new();
-    let mut ids: Vec<u32> = Vec::new();
-    for shape in NodeShape::iter() {
-        let name = wgsl_shape_const_name(shape);
-        claimed.push(name);
-        ids.push(shape.shader_id());
-
-        let declared = consts
-            .iter()
-            .find(|(n, _)| n == name)
-            .unwrap_or_else(|| panic!("{shape:?} expects the shader to declare `{name}`"));
-        assert_eq!(
-            declared.1,
-            shape.shader_id(),
-            "`{name}` is {} in the shader but {shape:?}::shader_id() is {}",
-            declared.1,
-            shape.shader_id()
-        );
-
-        if shape == NodeShape::default() {
-            // The default variant is what the `default` arm draws;
-            // asserting a `case` arm for it would fail against the
-            // shader as designed.
-            continue;
-        }
-        assert!(
-            wgsl.contains(&format!("case {name}:")),
-            "{shape:?} has a shader id but no `case {name}:` arm — every node \
-             of this shape would draw as the default shape instead"
-        );
-    }
-
-    ids.sort_unstable();
-    let distinct = {
-        let mut d = ids.clone();
-        d.dedup();
-        d.len()
-    };
-    assert_eq!(
-        distinct,
-        ids.len(),
-        "two NodeShape variants share a shader id, so one of them cannot be \
-         selected: {ids:?}"
-    );
-
-    for (name, value) in &consts {
-        if !name.starts_with("SHAPE_") {
-            continue;
-        }
-        assert!(
-            claimed.contains(&name.as_str()),
-            "the shader declares `{name}` = {value} but no NodeShape variant \
-             claims it — either a variant was removed without its constant, or \
-             wgsl_shape_const_name is a name behind"
-        );
-    }
-}
-
-// ====================================================================
 // Selection-highlight single-sourcing
 // ====================================================================
 
@@ -3755,4 +2673,222 @@ fn test_every_selection_highlight_form_carries_one_rgb_triple() {
         "the rubber band is deliberately translucent; an opaque one means the alpha was lost \
          on the way through the shared definition"
     );
+}
+
+// ====================================================================
+// Backdrops as glyphs
+// ====================================================================
+
+/// **A backdrop cell is one opaque square at its text area's corner**,
+/// which is what lets a grid of them tile a rectangle with no seam
+/// (`backdrop`'s module docs). The cell is shaped as the renderer shapes
+/// it, rasterized as glyphon rasterizes it (`SwashCache::get_image_uncached`
+/// on the glyph's physical cache key, at scale 1 and a whole-pixel
+/// corner), and placed by glyphon 0.12.0's own arithmetic from
+/// `text_render.rs`: `x = physical.x + placement.left`, `y =
+/// round(line_y) + physical.y − placement.top`. It must land at `(0, 0)`,
+/// `CELL_PX` square, a coverage mask with every texel full — so a cell
+/// at `(x, y)` covers exactly `x..x + 64` by `y..y + 64`, wholly.
+///
+/// Controls: the same block shaped half a pixel larger lands with
+/// partial edge texels, and the default face's `█` is not a full square
+/// — so the assertions tell a seamless cell from one that is not.
+#[test]
+fn test_a_backdrop_cell_is_one_opaque_square_at_its_corner() {
+    use super::backdrop::{BackdropCell, CELL_PX};
+    use glyphon::{SwashCache, SwashContent};
+
+    baumhard::font::fonts::init();
+    let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (backdrop cell)");
+    // What glyphon draws of `buffer`'s one glyph at a text area whose
+    // corner is the origin: where its ink lands, its size, its kind, and
+    // how many of its texels are not fully covered.
+    let mut swash = SwashCache::new();
+    let mut ink = |buffer: &Buffer, fs: &mut baumhard::font::FontSystem| {
+        let run = buffer.layout_runs().next().expect("the cell lays out a line");
+        assert_eq!(run.glyphs.len(), 1, "the cell is one glyph");
+        let physical = run.glyphs[0].physical((0.0, 0.0), 1.0);
+        let image = swash
+            .get_image_uncached(fs, physical.cache_key)
+            .expect("the block rasterizes");
+        let at = (
+            physical.x + image.placement.left,
+            run.line_y.round() as i32 + physical.y - image.placement.top,
+        );
+        let size = (image.placement.width, image.placement.height);
+        let partial = image.data.iter().filter(|&&texel| texel != u8::MAX).count();
+        (at, size, image.content, partial)
+    };
+
+    let cell = BackdropCell::shape(&mut fs);
+    let (at, size, content, partial) = ink(cell.buffer(), &mut fs);
+    assert_eq!(at, (0, 0), "the block's ink starts at the text area's corner");
+    assert_eq!(
+        size,
+        (CELL_PX as u32, CELL_PX as u32),
+        "the block's ink is the cell"
+    );
+    assert!(
+        matches!(content, SwashContent::Mask),
+        "the block is a coverage mask, tinted black"
+    );
+    assert_eq!(partial, 0, "every texel of the block is fully covered");
+
+    // The controls: a half-pixel-larger block, and the default face's.
+    let larger = super::backdrop::shape_block(&mut fs, CELL_PX as f32 + 0.5, Some(AppFont::PublicPixel));
+    let (_, _, _, partial) = ink(&larger, &mut fs);
+    assert!(
+        partial > 0,
+        "the control: a block off the pixel grid has partly covered edges"
+    );
+    let default_face = super::backdrop::shape_block(&mut fs, CELL_PX as f32, None);
+    let (at, size, _, partial) = ink(&default_face, &mut fs);
+    assert!(
+        at != (0, 0) || size != (CELL_PX as u32, CELL_PX as u32) || partial > 0,
+        "the control: the default face's block is not a full cell ({at:?}, {size:?}, {partial} partial)"
+    );
+}
+
+/// **A backdrop covers the pixels its rectangle covered, each once, and
+/// lays out no cell its target cannot hold.** The frame's own path is
+/// followed: `PixelRect::covered_by` at the camera's ratio, cut to the
+/// target (`PixelRect::within`), and the text areas `backdrop::text_areas`
+/// hands glyphon for a shaped cell — each area's 64-pixel square glyph
+/// clipped by **that area's own bounds**, and by the target, as glyphon
+/// clips and clamps. For rectangles at fractional edges, `.5` ties,
+/// ratios of 1, 1.5, 2 and 4, and targets that cut the rectangle on any
+/// side, against a reference written from the rasterization rule itself
+/// — a pixel is covered when its center lies in `[x0, x1)` and it is in
+/// the target — checked pixel by pixel: the cells cover each covered
+/// pixel exactly once and nothing else, `cell_count` is how many text
+/// areas there are, and a target `W × H` holds at most `⌈W / 64⌉ ×
+/// ⌈H / 64⌉` of them.
+///
+/// Controls: rounding the edges to the nearest pixel, or truncating
+/// them, disagrees with the reference on some rectangle below — the
+/// last loop asserts both — so the agreement is not a reference that
+/// cannot tell them apart. Text areas without bounds would cover the
+/// grid's overhang past the rectangle's right and bottom edges, and a
+/// rectangle not cut to its target would lay out cells past the bound,
+/// on the overhanging cases.
+#[test]
+fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
+    use super::backdrop::{text_areas, BackdropCell, PixelRect, CELL_PX};
+
+    baumhard::font::fonts::init();
+    let cell = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (backdrop coverage)");
+        BackdropCell::shape(&mut fs)
+    };
+    let rects = [
+        (0.0_f32, 0.0_f32, 10.0_f32, 10.0_f32),
+        (8.0, 597.25, 1264.0, 194.75),
+        (10.5, 20.5, 129.0, 70.5),
+        (0.25, 0.75, 63.5, 64.5),
+        (100.4, 3.6, 200.2, 130.1),
+        (-5.0, -5.0, 20.0, 20.0),
+        (3.0, 3.0, 0.0, 9.0),
+    ];
+    // Every rectangle at every ratio, in a target that holds it, then
+    // the cases a target cuts: the harness console's backdrop captured
+    // at `scale = 4` into a 64-pixel image, a picker-sized rectangle
+    // overhanging a small target on all four sides, and one wholly
+    // outside its target.
+    // A window-pixel rectangle, the camera's ratio, and the target's size.
+    type Case = ((f32, f32, f32, f32), f32, (i32, i32));
+    let mut cases: Vec<Case> = Vec::new();
+    for rect in rects {
+        for ratio in [1.0_f32, 1.5, 2.0] {
+            cases.push((rect, ratio, (4000, 3000)));
+        }
+    }
+    cases.push(((8.0, 597.25, 1264.0, 194.75), 4.0, (64, 64)));
+    cases.push(((-100.0, -50.0, 2000.0, 1000.0), 1.5, (640, 480)));
+    cases.push(((-100.0, -50.0, 2000.0, 1000.0), 1.0, (100, 70)));
+    cases.push(((500.0, 500.0, 40.0, 40.0), 1.0, (300, 200)));
+    // The reference: pixel `i` is covered when its center `i + 0.5` is
+    // in `[from, to)`.
+    let covered = |from: f32, to: f32, i: i32| {
+        let center = f64::from(i) + 0.5;
+        f64::from(from) <= center && center < f64::from(to)
+    };
+    let mut checked = 0;
+    let mut cut = 0;
+    for ((left, top, width, height), ratio, (target_w, target_h)) in cases {
+        let (x0, x1) = (left * ratio, (left + width) * ratio);
+        let (y0, y1) = (top * ratio, (top + height) * ratio);
+        let rect = PixelRect::covered_by((left, top, width, height), ratio).within(target_w, target_h);
+        let areas: Vec<glyphon::TextArea> = text_areas(&cell, rect).collect();
+        assert_eq!(areas.len(), rect.cell_count(), "{rect:?}: the cell count");
+        let most = ((target_w as f64 / 64.0).ceil() * (target_h as f64 / 64.0).ceil()) as usize;
+        assert!(
+            areas.len() <= most,
+            "{rect:?} in a {target_w}×{target_h} target lays out {} cells, past the {most} it can hold",
+            areas.len()
+        );
+        if x0 < 0.0 || y0 < 0.0 || x1 > target_w as f32 || y1 > target_h as f32 {
+            cut += 1;
+        }
+        // How many cells hold each pixel of a margin around what the
+        // target shows: each area's glyph, `CELL_PX` square at its
+        // corner, clipped by the area's bounds and clamped to the
+        // target, as glyphon draws it.
+        let (from_x, to_x) = (-20, (x1.ceil() as i32).min(target_w) + 20);
+        let (from_y, to_y) = (-20, (y1.ceil() as i32).min(target_h) + 20);
+        let stride = (to_x - from_x) as usize;
+        let mut holding = vec![0u8; stride * (to_y - from_y).max(0) as usize];
+        for area in &areas {
+            let (ax, ay) = (area.left as i32, area.top as i32);
+            let (bounds_x, bounds_y) = (
+                area.bounds.left.max(0)..area.bounds.right.min(target_w),
+                area.bounds.top.max(0)..area.bounds.bottom.min(target_h),
+            );
+            for y in ay.max(bounds_y.start)..(ay + CELL_PX).min(bounds_y.end) {
+                for x in ax.max(bounds_x.start)..(ax + CELL_PX).min(bounds_x.end) {
+                    if (from_x..to_x).contains(&x) && (from_y..to_y).contains(&y) {
+                        holding[(y - from_y) as usize * stride + (x - from_x) as usize] += 1;
+                    }
+                }
+            }
+        }
+        for y in from_y..to_y {
+            for x in from_x..to_x {
+                let in_target = (0..target_w).contains(&x) && (0..target_h).contains(&y);
+                let reference = covered(x0, x1, x) && covered(y0, y1, y) && in_target;
+                let inside = (rect.left..rect.right).contains(&x) && (rect.top..rect.bottom).contains(&y);
+                assert_eq!(
+                    inside, reference,
+                    "({left}, {top}, {width}, {height}) at {ratio} in {target_w}×{target_h}: pixel ({x}, {y})"
+                );
+                let held = holding[(y - from_y) as usize * stride + (x - from_x) as usize];
+                assert_eq!(held, u8::from(reference), "pixel ({x}, {y}) of {rect:?}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked > 1_000_000 && cut >= 4,
+        "precondition: the pixels are checked ({checked}), and targets cut rectangles ({cut})"
+    );
+
+    // The controls: the two plausible wrong snaps each miss the rule.
+    type Snap = fn(f32) -> i32;
+    let snaps: [(&str, Snap); 2] = [("round", |v| v.round() as i32), ("truncate", |v| v as i32)];
+    for (name, snap) in snaps {
+        let differs = rects.iter().any(|&(left, top, width, height)| {
+            [1.0_f32, 1.5, 2.0].iter().any(|&ratio| {
+                let rect = PixelRect::covered_by((left, top, width, height), ratio);
+                (
+                    snap(left * ratio),
+                    snap((left + width) * ratio),
+                    snap(top * ratio),
+                    snap((top + height) * ratio),
+                ) != (rect.left, rect.right, rect.top, rect.bottom)
+            })
+        });
+        assert!(
+            differs,
+            "the control: snapping by {name} disagrees with the rule somewhere"
+        );
+    }
 }

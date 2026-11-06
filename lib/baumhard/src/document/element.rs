@@ -142,11 +142,29 @@ pub struct FlowStyle {
     pub content: Option<String>,
 }
 
-/// The map's own data: its name.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// The map's own data: its name and its background.
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapData {
     /// The map's name.
     pub name: String,
+    /// The one color drawn behind the whole canvas (V1-B12): every
+    /// other color a map draws comes from a glyph. Not inherited, so it
+    /// is never unset; [`DEFAULT_BACKGROUND`](crate::document::defaults::DEFAULT_BACKGROUND)
+    /// when the file gives none. A literal is opaque — the loader and
+    /// the mutations refuse an alpha below 255, which nothing behind
+    /// the canvas could show — and a theme variable's alpha is not
+    /// applied ([`resolve_background`](crate::document::resolve::resolve_background)).
+    pub background: PlainColor,
+}
+
+/// A map named nothing, on the default background.
+impl Default for MapData {
+    fn default() -> Self {
+        MapData {
+            name: String::new(),
+            background: PlainColor::Rgba(crate::document::defaults::DEFAULT_BACKGROUND),
+        }
+    }
 }
 
 /// The theme: named variables, and one value per variable in each
@@ -183,11 +201,9 @@ pub struct PaletteData {
     pub groups: Vec<PaletteGroup>,
 }
 
-/// The four colors of one palette depth.
+/// The colors of one palette depth.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PaletteGroup {
-    /// A node's fill.
-    pub fill: PlainColor,
     /// A node's frame text.
     pub frame: PlainColor,
     /// Section text.
@@ -226,12 +242,8 @@ pub struct DefaultsData {
 /// A node's style. Every field inherits when `None`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NodeStyle {
-    /// The outline its fill and frame share.
+    /// The outline its frame runs around.
     pub shape: Option<Shape>,
-    /// The background fill.
-    pub fill: Option<ColorRef>,
-    /// The width of the fill's soft edge, in canvas units (D12).
-    pub fill_fade: Option<f32>,
     /// Text defaults for everything the node holds.
     pub text: TextStyle,
 }

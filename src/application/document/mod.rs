@@ -852,6 +852,26 @@ impl MindMapDocument {
         tree_builder::build_mindmap_tree(&self.mindmap)
     }
 
+    /// The map's one background, the color every frame is cleared to
+    /// (V1-B12; [`Renderer::set_background`](crate::application::renderer::Renderer::set_background)):
+    /// `canvas.background_color` resolved through the theme
+    /// variables, so `"var(--bg)"` works, and opaque — nothing is drawn
+    /// behind the canvas for an alpha to blend with. A spelling that
+    /// is not a color is black, the format's default, so a typo in a
+    /// theme cannot leave the app on a glitched background. Both
+    /// targets hand the renderer this one value (CODE_CONVENTIONS §4):
+    /// at load, and after every rebuild of the canvas
+    /// (`app::scene_rebuild::rebuild_scene_only`), so a theme-variant
+    /// switch, its undo and a document swap move the clear with it.
+    /// O(1).
+    pub fn background(&self) -> [u8; 4] {
+        let canvas = &self.mindmap.canvas;
+        let resolved = baumhard::util::color::resolve_var(&canvas.background_color, &canvas.theme_variables);
+        let rgba = baumhard::util::color::hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 1.0]);
+        let [r, g, b, _] = baumhard::util::color::convert_f32_to_u8(&rgba);
+        [r, g, b, u8::MAX]
+    }
+
     /// The node ids a live rubber-band rectangle currently covers,
     /// or `None` when no gesture is live.
     ///

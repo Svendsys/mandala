@@ -33,6 +33,7 @@ use glam::Vec2;
 use super::atlas::{Page, Slot};
 use super::emit::{emit_run, EmitCounts, GlyphSprite, MAX_RASTER_FONT_PX};
 use super::instance;
+use crate::application::renderer::target_encoding::TargetEncoding;
 
 /// The face every run here is shaped in: compiled into the binary, so
 /// the glyphs do not depend on the machine's fonts.
@@ -556,25 +557,27 @@ fn test_glyph_run_instance_gives_a_color_glyph_the_opacity_alone() {
         left: 1,
         top: 2,
     };
-    let mask = instance(&sprite, slot(Page::Mask));
-    assert_eq!(
-        mask.color,
-        [1.0, 0.0, 0.0, 0.0],
-        "a mask glyph takes its color's alpha"
-    );
-    assert_eq!(mask.page, 1.0);
-    let color = instance(&sprite, slot(Page::Color));
-    assert_eq!(
-        color.color,
-        [1.0, 1.0, 1.0, 0.5],
-        "an emoji keeps its colors, and its alpha is the run's opacity"
-    );
-    assert_eq!(color.page, 0.0);
-    assert_eq!(
-        (color.pos, color.size, color.uv),
-        ([11.0, 18.0], [5.0, 6.0], [3.0, 4.0]),
-        "the bitmap placed by its bearing from the pen"
-    );
+    for encoding in [TargetEncoding::Srgb, TargetEncoding::Linear] {
+        let mask = instance(&sprite, slot(Page::Mask), encoding);
+        assert_eq!(
+            mask.color,
+            [1.0, 0.0, 0.0, 0.0],
+            "{encoding:?}: a mask glyph takes its color's alpha"
+        );
+        assert_eq!(mask.page, 1.0);
+        let color = instance(&sprite, slot(Page::Color), encoding);
+        assert_eq!(
+            color.color,
+            [1.0, 1.0, 1.0, 0.5],
+            "{encoding:?}: an emoji keeps its colors, and its alpha is the run's opacity"
+        );
+        assert_eq!(color.page, 0.0);
+        assert_eq!(
+            (color.pos, color.size, color.uv),
+            ([11.0, 18.0], [5.0, 6.0], [3.0, 4.0]),
+            "the bitmap placed by its bearing from the pen"
+        );
+    }
 }
 
 /// **Overrides and opacity.** On a three-glyph run: glyph 0 is moved by

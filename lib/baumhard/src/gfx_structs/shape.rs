@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Per-node background / hit-test shapes.
+//! Per-node hit-test shapes.
 //!
 //! [`crate::gfx_structs::shape::NodeShape`] is the single source of
-//! truth for "what shape does this node occupy?". Both the renderer
-//! (SDF fragment path) and the BVH hit test (point-in-shape check)
-//! consult the same enum, so adding a new shape never drifts between
-//! visuals and input.
+//! truth for "what shape does this node occupy?". The BVH hit test
+//! (point-in-shape check) and the border builder — which frames only a
+//! rectangle, and leaves any other shape's frame undrawn — consult the
+//! same enum, so adding a new shape never drifts between what is drawn
+//! and what is clicked. Nothing draws the shape itself: a node draws no
+//! fill (V1-B12).
 //!
 //! Extending the set is deliberately local:
 //!
@@ -18,35 +20,23 @@
 //!    already listed. The `match` in `style_spellings` is
 //!    exhaustive, so step 1 does not compile until this one is
 //!    done — a new variant cannot silently stay on the
-//!    quiet-fallback path. Its shader id in
-//!    [`crate::gfx_structs::shape::NodeShape::shader_id`] is forced
-//!    the same way, and so are both arms of step 4: a planted
-//!    variant is four E0004s in this file, and once they are
-//!    answered a fifth in the mandala crate's
-//!    `wgsl_shape_const_name` (`renderer/tests.rs`).
-//! 3. Add a `SHAPE_*` constant + a `case` arm to the rect pipeline's
-//!    fragment shader (`src/application/renderer/mod.rs`,
-//!    `RECT_SHADER_WGSL`). Forced, not remembered:
-//!    `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
-//!    in the mandala crate reads the shader as text and fails on a
-//!    variant with no constant, a constant carrying the wrong id, and
-//!    a non-default variant with no `case` arm — the last being the
-//!    silent one, where every node of the new shape draws as a
-//!    rectangle.
-//! 4. Add a branch in
+//!    quiet-fallback path. Both arms of step 3 are forced the same
+//!    way: a planted variant is three E0004s in this file.
+//! 3. Add a branch in
 //!    [`crate::gfx_structs::shape::NodeShape::contains_local`] and
 //!    [`crate::gfx_structs::shape::NodeShape::intersects_local_aabb`].
 //!
 //! No new structs, no new mutation surfaces, no new mesh builders.
 //!
 //! The format's shape vocabulary is deliberately wider than the set
-//! this module can draw:
+//! this module models:
 //! [`crate::gfx_structs::shape::KNOWN_SHAPES`] lists every canonical
 //! spelling `format/enums.md` publishes and `maptool verify` accepts,
-//! while `NodeShape` names only the ones with a shader case behind
-//! them. [`crate::gfx_structs::shape::ShapeSpelling`] is the pure
+//! while `NodeShape` names only the ones with a variant — a hit test
+//! and a border rule — behind them.
+//! [`crate::gfx_structs::shape::ShapeSpelling`] is the pure
 //! classifier that tells those two populations apart, so a canonical
-//! spelling awaiting its shader case degrades quietly to a rectangle
+//! spelling awaiting its variant degrades quietly to a rectangle
 //! and only a genuine typo is reported to the author.
 //! [`crate::gfx_structs::shape::ShapeReport`] is the second half of
 //! that split: the *reporting* decision as a value, so what a load
@@ -59,9 +49,10 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-/// The background / hit shape of a node. Stored on
-/// [`crate::gfx_structs::area::GlyphArea`] next to `background_color`
-/// and read by both the renderer and the BVH hit test.
+/// The hit shape of a node. Stored on
+/// [`crate::gfx_structs::area::GlyphArea`] and read by the BVH hit
+/// test; the border builder resolves the same spelling to the same
+/// variant to decide whether a node's frame is drawn.
 ///
 /// The variant is copied out of the area in the hot paths, so it is
 /// intentionally `Copy` and allocation-free.
@@ -87,14 +78,6 @@ pub enum NodeShape {
     /// extra parameters.
     Ellipse,
 }
-
-/// Shader-side id for [`NodeShape::Rectangle`]. Must match the
-/// `SHAPE_RECT` constant in the rect pipeline's WGSL fragment shader.
-pub const SHAPE_ID_RECTANGLE: u32 = 0;
-/// Shader-side id for [`NodeShape::Ellipse`]. Must match the
-/// `SHAPE_ELLIPSE` constant in the rect pipeline's WGSL fragment
-/// shader.
-pub const SHAPE_ID_ELLIPSE: u32 = 1;
 
 /// Canonical named-enum spellings for `NodeStyle.shape`, as used by
 /// `format/enums.md` and by `maptool verify`. Both sides compare the
@@ -143,13 +126,13 @@ pub const SHAPE_ID_ELLIPSE: u32 = 1;
 /// variant's [`NodeShape::style_spellings`] contains the entry, and
 /// `do_shape_variant_spellings_are_all_known` asks the mirror
 /// question of this list. An uppercase entry moves a spelling across
-/// the rendered / not-yet-rendered partition and sends both of them
+/// the modeled / not-yet-modeled partition and sends both of them
 /// red; the lowercase pin is what names the cause instead of leaving
 /// two derived tests failing for a reason neither states.
 ///
 /// Membership here is a claim about the *format*, not about the
-/// renderer: most of these have no [`NodeShape`] variant yet and
-/// draw as a rectangle until one lands.
+/// app: most of these have no [`NodeShape`] variant yet and are
+/// treated as a rectangle until one lands.
 pub const KNOWN_SHAPES: &[&str] = &[
     "rectangle",
     "rounded_rectangle",
@@ -168,7 +151,7 @@ pub const KNOWN_SHAPES: &[&str] = &[
 /// knows and a spelling nobody knows. [`KNOWN_SHAPES`] is wider than
 /// the [`NodeShape`] variant set — `"hexagon"` is published in
 /// `format/enums.md`, emitted by `maptool convert --legacy` and
-/// accepted by `maptool verify`, yet has no shader case — so
+/// accepted by `maptool verify`, yet has no variant — so
 /// collapsing it to `Rectangle` is the intended behavior and there is
 /// nothing for an author to fix. Telling them otherwise is noise, and
 /// on `maps/testament.mindmap.json` it was 242 lines of it per load
@@ -208,13 +191,14 @@ pub enum ShapeSpelling {
     /// to a value somebody typed on purpose.
     Unspecified,
     /// A canonical spelling that has a [`NodeShape`] variant behind
-    /// it, so the renderer draws what the author asked for.
-    Rendered(NodeShape),
+    /// it, so the hit test and the border builder treat the node as
+    /// the shape the author asked for.
+    Modeled(NodeShape),
     /// Listed in [`KNOWN_SHAPES`], but no [`NodeShape`] variant
     /// exists for it yet. Documented, tool-emitted, round-trips
-    /// intact — and draws as a rectangle until a shader case lands.
+    /// intact — and is treated as a rectangle until a variant lands.
     /// Not an author error.
-    KnownNotYetRendered,
+    KnownNotYetModeled,
     /// Not in [`KNOWN_SHAPES`] at all: a typo, or a value from a
     /// build that knows more shapes than this one. The only case
     /// that warrants a warning.
@@ -247,18 +231,18 @@ impl ShapeSpelling {
                 .iter()
                 .any(|spelling| s.eq_ignore_ascii_case(spelling))
             {
-                return ShapeSpelling::Rendered(shape);
+                return ShapeSpelling::Modeled(shape);
             }
         }
         if KNOWN_SHAPES.iter().any(|known| s.eq_ignore_ascii_case(known)) {
-            ShapeSpelling::KnownNotYetRendered
+            ShapeSpelling::KnownNotYetModeled
         } else {
             ShapeSpelling::Unrecognized
         }
     }
 
-    /// The [`NodeShape`] the renderer and the hit test should use for
-    /// this classification. Every non-[`ShapeSpelling::Rendered`]
+    /// The [`NodeShape`] the border builder and the hit test should use for
+    /// this classification. Every non-[`ShapeSpelling::Modeled`]
     /// case degrades to [`NodeShape::Rectangle`] — the bounding box
     /// is the one silhouette that is always correct to fall back to,
     /// because it is what the shape's AABB already occupies.
@@ -270,8 +254,8 @@ impl ShapeSpelling {
     /// call.
     pub const fn resolve(self) -> NodeShape {
         match self {
-            ShapeSpelling::Rendered(shape) => shape,
-            ShapeSpelling::Unspecified | ShapeSpelling::KnownNotYetRendered | ShapeSpelling::Unrecognized => {
+            ShapeSpelling::Modeled(shape) => shape,
+            ShapeSpelling::Unspecified | ShapeSpelling::KnownNotYetModeled | ShapeSpelling::Unrecognized => {
                 NodeShape::Rectangle
             }
         }
@@ -312,16 +296,16 @@ impl ShapeSpelling {
             ShapeSpelling::Unrecognized => true,
             // Spelled out rather than `_` so a fifth classification
             // cannot join the quiet set without a decision.
-            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::KnownNotYetRendered => {
+            ShapeSpelling::Unspecified | ShapeSpelling::Modeled(_) | ShapeSpelling::KnownNotYetModeled => {
                 false
             }
         }
     }
 
-    /// Did the renderer substitute a rectangle for a spelling that is
-    /// perfectly valid, just not drawable yet?
+    /// Was a rectangle substituted for a spelling that is perfectly
+    /// valid, just not modeled yet?
     ///
-    /// True for [`ShapeSpelling::KnownNotYetRendered`] alone.
+    /// True for [`ShapeSpelling::KnownNotYetModeled`] alone.
     /// [`ShapeSpelling::Unspecified`] is *not* a substitution — an
     /// unset field asked for nothing — and
     /// [`ShapeSpelling::Unrecognized`] is
@@ -331,18 +315,18 @@ impl ShapeSpelling {
     /// carry the entire "should anyone be told, and how loudly?"
     /// decision, which [`Self::report`] composes into one value and
     /// [`NodeShape::from_style_string`] then routes. Also `pub` for
-    /// the same reason — an editor that wants to gray out "drawn as a
-    /// rectangle until a shader case lands" should ask rather than
+    /// the same reason — an editor that wants to gray out "treated as a
+    /// rectangle until a variant lands" should ask rather than
     /// re-derive.
     ///
     /// # Costs
     /// O(1), branch-only. No allocation.
     pub const fn is_quiet_fallback(self) -> bool {
         match self {
-            ShapeSpelling::KnownNotYetRendered => true,
+            ShapeSpelling::KnownNotYetModeled => true,
             // Spelled out rather than `_`, for the reason
             // `is_author_error` spells its own arms out.
-            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::Unrecognized => false,
+            ShapeSpelling::Unspecified | ShapeSpelling::Modeled(_) | ShapeSpelling::Unrecognized => false,
         }
     }
 
@@ -412,7 +396,7 @@ pub enum ShapeReport {
     /// Reported at [`log::Level::Warn`] because an author can act on
     /// it.
     UnknownSpelling,
-    /// A canonical spelling with no shader case yet, drawn as a
+    /// A canonical spelling with no variant yet, treated as a
     /// rectangle. Reported at [`log::Level::Trace`]: the format is
     /// working as designed, and saying otherwise was issue #118 —
     /// 242 warnings per load of `maps/testament.mindmap.json`.
@@ -441,22 +425,6 @@ impl ShapeReport {
 }
 
 impl NodeShape {
-    /// Stable id fed to the fragment shader. Must stay in lock-step
-    /// with the `SHAPE_*` constants in
-    /// `src/application/renderer/mod.rs` — adding a variant without
-    /// adding its shader case would render the new shape as a
-    /// rectangle. The lock-step is checked rather than asked for:
-    /// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
-    /// parses the shader text and holds it against this function over
-    /// `NodeShape::iter()`. O(1).
-    #[inline]
-    pub const fn shader_id(self) -> u32 {
-        match self {
-            NodeShape::Rectangle => SHAPE_ID_RECTANGLE,
-            NodeShape::Ellipse => SHAPE_ID_ELLIPSE,
-        }
-    }
-
     /// The canonical `NodeStyle.shape` spellings that resolve to this
     /// variant, in the order [`ShapeSpelling::classify`] tries them.
     /// Every returned spelling must also appear in [`KNOWN_SHAPES`]
@@ -485,7 +453,7 @@ impl NodeShape {
     }
 
     /// Parse the format-level `NodeStyle.shape` string into the shape
-    /// the renderer and hit test should use, reporting only the case
+    /// the border builder and hit test should use, reporting only the case
     /// an author can act on.
     ///
     /// The classification is [`ShapeSpelling::classify`]'s and the
@@ -494,7 +462,7 @@ impl NodeShape {
     /// which is what keeps everything upstream of it testable without
     /// a logger:
     ///
-    /// - a canonical spelling with a variant renders as asked;
+    /// - a canonical spelling with a variant resolves to it;
     /// - the empty string means "unset" and is silent;
     /// - a [`KNOWN_SHAPES`] spelling with no variant yet
     ///   (`"hexagon"`, `"diamond"`, `"parallelogram"`,
@@ -557,8 +525,8 @@ impl NodeShape {
                  falling back to Rectangle"
             ),
             Some(ShapeReport::RectangleSubstituted) => log::trace!(
-                "shape: {s:?} is a canonical shape with no renderer yet, \
-                 drawing it as Rectangle"
+                "shape: {s:?} is a canonical shape with no variant yet, \
+                 treating it as Rectangle"
             ),
             None => {}
         }
