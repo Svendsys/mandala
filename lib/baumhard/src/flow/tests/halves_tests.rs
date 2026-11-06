@@ -3989,6 +3989,127 @@ fn test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end() {
     );
 }
 
+/// Ruling B15.3 (review 5801763546): a slide stops where its line's end
+/// steps between two starts within a few ulps of each other
+/// (`steps_between`), and nowhere else: at the step the sweep's 50:1
+/// ellipse frame meets, 0.0011 apart round 1,301, its end moving 0.0059
+/// across them; not at a slope-one end there or round 1e30, where the end
+/// moves no more than the start; not across a bracket wider than the
+/// window, nor one reversed; never with a start or a miss not a number,
+/// nor across a start at either infinity. An end past the clearance by
+/// infinity is a step, and the slide stops at the start whose line ends
+/// short of it, which fits.
+///
+/// Control: with the step read as any jump, not one past what the
+/// bracket's width moves a slope-one end by, the slope-one rows are red.
+/// (No `do_*` twin: it reads a test seam.)
+#[test]
+fn test_flow_halves_a_slide_stops_at_a_step_and_nowhere_else() {
+    use crate::flow::place::halves::steps_between_seam;
+    let at = 1e30_f32;
+    let step = at * f32::EPSILON;
+    let rows: [(&str, (f32, f32), (f32, f32), f32, bool); 13] = [
+        (
+            "the 50:1 ellipse's step",
+            (1301.0331, -0.0011),
+            (1301.0342, 0.0048),
+            4e-4,
+            true,
+        ),
+        (
+            "a slope-one end round 1,301",
+            (1301.0, -0.0005),
+            (1301.0011, 0.0006),
+            4e-4,
+            false,
+        ),
+        (
+            "a slope-one end round 1e30",
+            (at, -2.0 * step),
+            (at + 4.0 * step, 2.0 * step),
+            4e-4,
+            false,
+        ),
+        (
+            "a bracket wider than the window",
+            (1301.0, -0.05),
+            (1301.01, 0.05),
+            4e-4,
+            false,
+        ),
+        (
+            "a bracket reversed",
+            (1301.0342, -0.0011),
+            (1301.0331, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a short start not a number",
+            (f32::NAN, -0.0011),
+            (1301.0342, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a past start not a number",
+            (1301.0331, -0.0011),
+            (f32::NAN, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a short miss not a number",
+            (1301.0331, f32::NAN),
+            (1301.0342, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a past miss not a number",
+            (1301.0331, -0.0011),
+            (1301.0342, f32::NAN),
+            4e-4,
+            false,
+        ),
+        (
+            "a start at minus infinity",
+            (f32::NEG_INFINITY, -0.0011),
+            (1301.0342, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "a start at infinity",
+            (1301.0331, -0.0011),
+            (f32::INFINITY, 0.0048),
+            4e-4,
+            false,
+        ),
+        (
+            "an end past by infinity",
+            (1301.0331, -0.0011),
+            (1301.0342, f32::INFINITY),
+            4e-4,
+            true,
+        ),
+        (
+            "an end short by infinity",
+            (1301.0331, f32::NEG_INFINITY),
+            (1301.0342, 0.0048),
+            4e-4,
+            true,
+        ),
+    ];
+    for (what, short, past, tolerance, steps) in rows {
+        assert_eq!(
+            steps_between_seam(short, past, tolerance),
+            steps,
+            "{what}: {short:?} {past:?}"
+        );
+    }
+}
+
 /// The most lines [`test_flow_halves_a_slide_stops_at_a_step_in_its_lines_end`]'s
 /// slides may track: its 8, and a margin short of the 16 they track
 /// circling the step.

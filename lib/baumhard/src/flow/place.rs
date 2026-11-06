@@ -932,8 +932,8 @@ impl PathWalk<'_> {
     /// [`support`] of the ellipse its ink box bounds, along the normal of
     /// the chord across its own reach, so the ink, not its box, clears a
     /// side of the outline, and the push turns with the chord through a
-    /// sharp corner rather than jumping. A frame's text is set on a
-    /// baseline instead (#308, `halves`).
+    /// sharp corner rather than jumping. A frame's text is anchored on its
+    /// band curve instead (#308, `halves::Band`).
     ///
     /// Cost: one path lookup; three where the ink is pushed outward.
     fn ink_at(&self, c: f32, ink: Ink) -> Vec2 {

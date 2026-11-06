@@ -184,7 +184,8 @@ const SLIDE_TOLERANCE: f32 = 1e-4;
 const RESOLUTION_STEPS: f32 = 2.0;
 
 /// `tolerance`, or [`RESOLUTION_STEPS`] float steps of a position `at`
-/// along a path where those are wider: a line's end and its part's end
+/// along a path where those are wider — each [`ulp`]'s, one to two float
+/// steps (a power of two's own `EPSILON` of it): a line's end and its part's end
 /// some 2,400 points round an outline are a float step — 2.4e-4 points —
 /// apart at the nearest, so a tolerance of 1e-4 there can never be met,
 /// and a solve that waits for it runs out its rounds and keeps a worse
@@ -199,15 +200,37 @@ fn resolved(tolerance: f32, at: f32) -> f32 {
     }
 }
 
-/// How many float steps apart two starts of a slide may be for a jump in
+/// How many [`ulp`]s apart two starts of a slide may be for a jump in
 /// its line's end between them to be read as a step in the end, not a
 /// slope the secant has yet to close on ([`Layout::slid`], #308): eight,
-/// past which the secant is still moving the start by more than its
-/// floats resolve.
+/// 8 to 16 float steps, past which the secant is still moving the start
+/// by more than its floats resolve.
 const SLIDE_ULPS: f32 = 8.0;
 
-/// A float step of a position `at`: [`f32::EPSILON`] of it, the least
-/// positive `f32` at none.
+/// Whether a slide's line's end steps between two starts it tried
+/// ([`Layout::slid`], ruling B15.3): `short`, a start and the miss, its
+/// line's end past the clearance, short of it (negative), and `past`, one
+/// whose line ends past it — within [`SLIDE_ULPS`] ulps of the start, and
+/// the end moving across them by more than a line moving with its start
+/// nearly one for one could, twice their distance and `tolerance`. Not a
+/// number anywhere, or a bracket that is not one — `past` not after
+/// `short`, or as wide as infinity — is no step.
+///
+/// Cost: O(1).
+fn steps_between((a, short): (f32, f32), (b, past): (f32, f32), tolerance: f32) -> bool {
+    let width = b - a;
+    width > 0.0 && width <= SLIDE_ULPS * ulp(a.abs().max(b.abs())) && past - short > 2.0 * width + tolerance
+}
+
+/// Test seam (ruling B15.3): [`steps_between`].
+#[cfg(test)]
+pub(crate) fn steps_between_seam(short: (f32, f32), past: (f32, f32), tolerance: f32) -> bool {
+    steps_between(short, past, tolerance)
+}
+
+/// About a float step of a position `at`: [`f32::EPSILON`] of it — for
+/// `at` from `2^e` up to `2^(e+1)` one to two of its float steps, each
+/// `2^(e−23)` — and the least positive `f32` at none.
 fn ulp(at: f32) -> f32 {
     (at.abs() * f32::EPSILON).max(f32::MIN_POSITIVE)
 }
@@ -2146,11 +2169,7 @@ impl Layout<'_> {
                     past = Some((na, long, miss));
                 }
                 if let (Some((a, la, ma)), Some((b, _, mb))) = (short, past) {
-                    let width = b - a;
-                    if width > 0.0
-                        && width <= SLIDE_ULPS * ulp(a.abs().max(b.abs()))
-                        && mb - ma > 2.0 * width + tolerance
-                    {
+                    if steps_between((a, ma), (b, mb), tolerance) {
                         (na, long) = (a, la);
                         break;
                     }
@@ -3148,9 +3167,6 @@ impl Layout<'_> {
         let mut alone = [false; 2];
         let mut free = [false; 2];
         let mut stuck = [false; 2];
-        // Whether this round grows a junction for a copy of the side
-        // ornament alone, its words' break met (#308).
-        let mut for_copy = [false; 2];
         let mut met_now: Option<[bool; 2]> = None;
         // Whether the last round's whole step, laid, pressed a line it
         // left unpressed (#308).
@@ -3166,6 +3182,9 @@ impl Layout<'_> {
             }
             let mut grow: Clear = [[0.0; 2]; 2];
             let mut grown = false;
+            // Whether this round grows each junction for a copy of the
+            // side ornament alone, its words' break met (#308).
+            let mut for_copy = [false; 2];
             // Whether a line's slack held back this round's growth at
             // each junction.
             let mut held = [false; 2];
