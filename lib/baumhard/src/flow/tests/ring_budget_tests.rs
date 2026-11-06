@@ -651,11 +651,23 @@ fn test_flow_ring_budget_a_cut_short_keeps_a_prefix_in_reading_order() {
 }
 
 /// The budget the run on is pinned at (ruling B17.1d): within the
-/// 4,096 glyph steps between the least budget at which [`RUN_ON_RING`]
-/// closes holding back the run on of where its walk would end, 269,158,
-/// and the least at which it closes holding back the run on of its whole
-/// path, 273,254.
+/// [`RUN_ON_WINDOW`] glyph steps between the least budget at which
+/// [`RUN_ON_RING`] closes holding back the run on of where its walk would
+/// end, 269,149, and the least at which it closes holding back the run on
+/// of its whole path, 273,242 — each bisected on #309's base and on every
+/// commit of #309 (review 5810838863; #311 measured 269,158 and 273,254 on
+/// the code before it).
 const RUN_ON_BUDGET: usize = 271_200;
+
+/// How many glyph steps more [`RUN_ON_RING`] needs to close holding back
+/// the run on of its whole path than holding back the run on of where its
+/// walk would end: 273,242 less 269,149, measured for #309 (review
+/// 5810838863; #311's review 5802360938 measured 4,096 on the code before
+/// it). A ring that does not close [`RUN_ON_WINDOW`] below
+/// [`RUN_ON_BUDGET`] holding back its walk's run on would not close at
+/// [`RUN_ON_BUDGET`] holding back its whole path's: so the pin's
+/// precondition, set at the window's edge, is what keeps its control red.
+const RUN_ON_WINDOW: usize = 4_093;
 
 /// A ring whose path is long beside its line height, so that the run on
 /// of the whole of it is thousands of glyph steps: a text round an
@@ -669,26 +681,25 @@ const RUN_ON_RING: (&str, f32) = ("MANDALA ", 100_000.0);
 /// (Every closed ring of the grid holds back no run on in phase 2: the
 /// grid's bound, `held`.)
 ///
-/// Precondition: 2 percent less, the ring does not close. Control: with
-/// the run on held from the path's start whatever the walk has laid
+/// Precondition: [`RUN_ON_WINDOW`] less, the ring does not close — at the
+/// window's edge, so that a ring the hold of its whole path would close at
+/// [`RUN_ON_BUDGET`] fails the precondition instead of leaving the pin
+/// green under its control (#311, review 5802360938: at 2 percent less, a
+/// ring's work falling by 0.8 to 1.3 percent did so). Control: with the
+/// run on held from the path's start whatever the walk has laid
 /// (`RingWork::ends_by` doing nothing), red.
 #[test]
 fn test_flow_ring_budget_a_ring_holds_back_the_run_on_its_walk_leaves() {
     let (text, size) = RUN_ON_RING;
     let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(size)), Shape::Ellipse);
     let closes = |laid: &Laid| !matches!(laid.loss, Some(RingLoss::Short | RingLoss::Unclosed));
-    let less = ring(
-        text,
-        &shape,
-        true,
-        Some(RUN_ON_BUDGET * 98 / 100),
-        MAX_PLACED_GLYPHS,
-    );
+    let edge = RUN_ON_BUDGET - RUN_ON_WINDOW;
+    let less = ring(text, &shape, true, Some(edge), MAX_PLACED_GLYPHS);
     assert!(
         !closes(&less),
-        "precondition: at {} glyph steps the ring does not close ({:?})",
-        RUN_ON_BUDGET * 98 / 100,
-        less.loss
+        "precondition: at {edge} glyph steps, the run on window's edge below {RUN_ON_BUDGET}, the ring does not close ({:?}, {} spent): were it to, the hold of its whole path would close it at {RUN_ON_BUDGET} and the pin would hold under its control",
+        less.loss,
+        less.spent
     );
     let laid = ring(text, &shape, true, Some(RUN_ON_BUDGET), MAX_PLACED_GLYPHS);
     assert!(
