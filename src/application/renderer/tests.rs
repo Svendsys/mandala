@@ -2749,23 +2749,37 @@ fn test_a_backdrop_cell_is_one_opaque_square_at_its_corner() {
     );
 }
 
-/// **A backdrop covers the pixels its rectangle covered, each once.**
-/// For rectangles at fractional edges, `.5` ties and ratios of 1, 1.5
-/// and 2, against a reference written from the rasterization rule
-/// itself — a pixel is covered when its center lies in `[x0, x1)` —
-/// checked pixel by pixel: `PixelRect::covered_by` is the set of pixels
-/// whose centers the rectangle holds, its cells clipped to it cover each
-/// of them exactly once and nothing else, and `cell_count` is how many
-/// cells there are.
+/// **A backdrop covers the pixels its rectangle covered, each once, and
+/// lays out no cell its target cannot hold.** The frame's own path is
+/// followed: `PixelRect::covered_by` at the camera's ratio, cut to the
+/// target (`PixelRect::within`), and the text areas `backdrop::text_areas`
+/// hands glyphon for a shaped cell — each area's 64-pixel square glyph
+/// clipped by **that area's own bounds**, and by the target, as glyphon
+/// clips and clamps. For rectangles at fractional edges, `.5` ties,
+/// ratios of 1, 1.5, 2 and 4, and targets that cut the rectangle on any
+/// side, against a reference written from the rasterization rule itself
+/// — a pixel is covered when its center lies in `[x0, x1)` and it is in
+/// the target — checked pixel by pixel: the cells cover each covered
+/// pixel exactly once and nothing else, `cell_count` is how many text
+/// areas there are, and a target `W × H` holds at most `⌈W / 64⌉ ×
+/// ⌈H / 64⌉` of them.
 ///
 /// Controls: rounding the edges to the nearest pixel, or truncating
 /// them, disagrees with the reference on some rectangle below — the
 /// last loop asserts both — so the agreement is not a reference that
-/// cannot tell them apart.
+/// cannot tell them apart. Text areas without bounds would cover the
+/// grid's overhang past the rectangle's right and bottom edges, and a
+/// rectangle not cut to its target would lay out cells past the bound,
+/// on the overhanging cases.
 #[test]
 fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
-    use super::backdrop::{PixelRect, CELL_PX};
+    use super::backdrop::{text_areas, BackdropCell, PixelRect, CELL_PX};
 
+    baumhard::font::fonts::init();
+    let cell = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (backdrop coverage)");
+        BackdropCell::shape(&mut fs)
+    };
     let rects = [
         (0.0_f32, 0.0_f32, 10.0_f32, 10.0_f32),
         (8.0, 597.25, 1264.0, 194.75),
@@ -2775,6 +2789,21 @@ fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
         (-5.0, -5.0, 20.0, 20.0),
         (3.0, 3.0, 0.0, 9.0),
     ];
+    // Every rectangle at every ratio, in a target that holds it, then
+    // the cases a target cuts: the harness console's backdrop captured
+    // at `scale = 4` into a 64-pixel image, a picker-sized rectangle
+    // overhanging a small target on all four sides, and one wholly
+    // outside its target.
+    let mut cases: Vec<((f32, f32, f32, f32), f32, (i32, i32))> = Vec::new();
+    for rect in rects {
+        for ratio in [1.0_f32, 1.5, 2.0] {
+            cases.push((rect, ratio, (4000, 3000)));
+        }
+    }
+    cases.push(((8.0, 597.25, 1264.0, 194.75), 4.0, (64, 64)));
+    cases.push(((-100.0, -50.0, 2000.0, 1000.0), 1.5, (640, 480)));
+    cases.push(((-100.0, -50.0, 2000.0, 1000.0), 1.0, (100, 70)));
+    cases.push(((500.0, 500.0, 40.0, 40.0), 1.0, (300, 200)));
     // The reference: pixel `i` is covered when its center `i + 0.5` is
     // in `[from, to)`.
     let covered = |from: f32, to: f32, i: i32| {
@@ -2782,45 +2811,62 @@ fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
         f64::from(from) <= center && center < f64::from(to)
     };
     let mut checked = 0;
-    for (left, top, width, height) in rects {
-        for ratio in [1.0_f32, 1.5, 2.0] {
-            let (x0, x1) = (left * ratio, (left + width) * ratio);
-            let (y0, y1) = (top * ratio, (top + height) * ratio);
-            let rect = PixelRect::covered_by((left, top, width, height), ratio);
-            let cells: Vec<(i32, i32)> = rect.cells().collect();
-            assert_eq!(cells.len(), rect.cell_count(), "{rect:?}: the cell count");
-            // How many cells hold each pixel of a margin around the
-            // rectangle, each cell clipped to the rectangle as glyphon
-            // clips a glyph to its text area's bounds.
-            let (from_x, to_x) = (-20, x1.ceil() as i32 + 20);
-            let (from_y, to_y) = (-20, y1.ceil() as i32 + 20);
-            let stride = (to_x - from_x) as usize;
-            let mut holding = vec![0u8; stride * (to_y - from_y) as usize];
-            for &(cx, cy) in &cells {
-                for y in cy.max(rect.top)..(cy + CELL_PX).min(rect.bottom) {
-                    for x in cx.max(rect.left)..(cx + CELL_PX).min(rect.right) {
+    let mut cut = 0;
+    for ((left, top, width, height), ratio, (target_w, target_h)) in cases {
+        let (x0, x1) = (left * ratio, (left + width) * ratio);
+        let (y0, y1) = (top * ratio, (top + height) * ratio);
+        let rect = PixelRect::covered_by((left, top, width, height), ratio).within(target_w, target_h);
+        let areas: Vec<glyphon::TextArea> = text_areas(&cell, rect).collect();
+        assert_eq!(areas.len(), rect.cell_count(), "{rect:?}: the cell count");
+        let most = ((target_w as f64 / 64.0).ceil() * (target_h as f64 / 64.0).ceil()) as usize;
+        assert!(
+            areas.len() <= most,
+            "{rect:?} in a {target_w}×{target_h} target lays out {} cells, past the {most} it can hold",
+            areas.len()
+        );
+        if x0 < 0.0 || y0 < 0.0 || x1 > target_w as f32 || y1 > target_h as f32 {
+            cut += 1;
+        }
+        // How many cells hold each pixel of a margin around what the
+        // target shows: each area's glyph, `CELL_PX` square at its
+        // corner, clipped by the area's bounds and clamped to the
+        // target, as glyphon draws it.
+        let (from_x, to_x) = (-20, (x1.ceil() as i32).min(target_w) + 20);
+        let (from_y, to_y) = (-20, (y1.ceil() as i32).min(target_h) + 20);
+        let stride = (to_x - from_x) as usize;
+        let mut holding = vec![0u8; stride * (to_y - from_y).max(0) as usize];
+        for area in &areas {
+            let (ax, ay) = (area.left as i32, area.top as i32);
+            let (bounds_x, bounds_y) = (
+                area.bounds.left.max(0)..area.bounds.right.min(target_w),
+                area.bounds.top.max(0)..area.bounds.bottom.min(target_h),
+            );
+            for y in ay.max(bounds_y.start)..(ay + CELL_PX).min(bounds_y.end) {
+                for x in ax.max(bounds_x.start)..(ax + CELL_PX).min(bounds_x.end) {
+                    if (from_x..to_x).contains(&x) && (from_y..to_y).contains(&y) {
                         holding[(y - from_y) as usize * stride + (x - from_x) as usize] += 1;
                     }
                 }
             }
-            for y in from_y..to_y {
-                for x in from_x..to_x {
-                    let reference = covered(x0, x1, x) && covered(y0, y1, y);
-                    let inside = (rect.left..rect.right).contains(&x) && (rect.top..rect.bottom).contains(&y);
-                    assert_eq!(
-                        inside, reference,
-                        "({left}, {top}, {width}, {height}) at {ratio}: pixel ({x}, {y})"
-                    );
-                    let held = holding[(y - from_y) as usize * stride + (x - from_x) as usize];
-                    assert_eq!(held, u8::from(reference), "pixel ({x}, {y}) of {rect:?}");
-                    checked += 1;
-                }
+        }
+        for y in from_y..to_y {
+            for x in from_x..to_x {
+                let in_target = (0..target_w).contains(&x) && (0..target_h).contains(&y);
+                let reference = covered(x0, x1, x) && covered(y0, y1, y) && in_target;
+                let inside = (rect.left..rect.right).contains(&x) && (rect.top..rect.bottom).contains(&y);
+                assert_eq!(
+                    inside, reference,
+                    "({left}, {top}, {width}, {height}) at {ratio} in {target_w}×{target_h}: pixel ({x}, {y})"
+                );
+                let held = holding[(y - from_y) as usize * stride + (x - from_x) as usize];
+                assert_eq!(held, u8::from(reference), "pixel ({x}, {y}) of {rect:?}");
+                checked += 1;
             }
         }
     }
     assert!(
-        checked > 1_000_000,
-        "precondition: the pixels are checked ({checked})"
+        checked > 1_000_000 && cut >= 4,
+        "precondition: the pixels are checked ({checked}), and targets cut rectangles ({cut})"
     );
 
     // The controls: the two plausible wrong snaps each miss the rule.

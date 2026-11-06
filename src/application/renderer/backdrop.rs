@@ -36,7 +36,11 @@
 //!
 //! The one shaped cell ([`BackdropCell`]) is drawn by every text area of
 //! every backdrop, so a backdrop costs one text area per cell and no
-//! shaping: O(cells) per frame, `⌈w / 64⌉ × ⌈h / 64⌉` in target pixels.
+//! shaping: O(cells) per frame. The rectangle is cut to the target before
+//! its cells are laid out ([`PixelRect::within`]), so the cells of a
+//! frame `W × H` pixels large number at most `⌈W / 64⌉ × ⌈H / 64⌉` per
+//! backdrop, whatever the window's layout and the camera's ratio — a
+//! structural bound, not a measured cost.
 
 use baumhard::core::primitives::ColorFontRegions;
 use baumhard::font::attrs::{rich_text_spans_into, RegionFamilies};
@@ -118,6 +122,24 @@ impl PixelRect {
             top: edge(top * ratio),
             right: edge((left + width) * ratio),
             bottom: edge((top + height) * ratio),
+        }
+    }
+
+    /// The part of the rectangle inside a target `width × height`
+    /// pixels large: `0..width` by `0..height`. A backdrop is cut to its
+    /// target before its cells are laid out, so a frame lays out at most
+    /// the cells its own image can hold, whatever the rectangle the
+    /// window's layout and the camera's ratio make of it — a capture at
+    /// `scale = 4` of a small region included. It draws the same pixels,
+    /// since glyphon clamps every text area to the target anyway; the
+    /// cell corners stay whole pixels. Empty when nothing of the
+    /// rectangle is inside. O(1).
+    pub(super) fn within(self, width: i32, height: i32) -> Self {
+        PixelRect {
+            left: self.left.max(0),
+            top: self.top.max(0),
+            right: self.right.min(width),
+            bottom: self.bottom.min(height),
         }
     }
 

@@ -376,10 +376,11 @@ impl Renderer {
         // The backdrops, in this target's pixels: the console's and the
         // picker's (mutually exclusive, but either or both is drawn the
         // same way), each the pixels its window rectangle covers at this
-        // camera's ratio, as full-block cells clipped to it.
+        // camera's ratio, cut to the target, as full-block cells clipped
+        // to it.
         let backdrops: [Option<PixelRect>; 2] = match modal_layer {
             ModalLayer::Drawn => [self.console_backdrop, self.color_picker_backdrop]
-                .map(|extent| extent.map(|extent| PixelRect::covered_by(extent, ratio))),
+                .map(|extent| extent.map(|extent| PixelRect::covered_by(extent, ratio).within(vp_w, vp_h))),
             ModalLayer::Omitted => [None, None],
         };
         let backdrop_cells: usize = backdrops.iter().flatten().map(PixelRect::cell_count).sum();

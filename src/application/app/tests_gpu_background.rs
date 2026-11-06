@@ -393,7 +393,7 @@ fn test_a_resize_lays_the_open_console_out_again() {
     let (width, height) = (HARNESS_SIZE.0 + 320, HARNESS_SIZE.1 + 240);
     init.resize_surface(width, height);
     let after = init.renderer.console_backdrop_extent().expect("the console is still open");
-    assert_ne!(after, before, "precondition: the new size moves the console's backdrop");
+    assert_ne!(after, before, "the resize moves the console's backdrop to the new size, where a kept layout leaves it");
 
     // A fresh rebuild at the new size, as the next keystroke would make.
     let doc = init.document.as_ref().expect("the harness builds a document");
