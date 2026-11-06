@@ -180,7 +180,7 @@ impl Lines<'_> {
         let mut at = s;
         let mut end = s;
         for cluster in &self.clusters[self.lines[k].clone()] {
-            end = at + walk.step(at, cluster.advance, self.run.line_height).0;
+            end = at + walk.step_len(at, cluster.advance, self.run.line_height);
             at = walk.after_gap(end, gap);
         }
         end
@@ -287,7 +287,7 @@ impl Lines<'_> {
         let mut ends = vec![f32::INFINITY; n];
         let mut at = path_span.start;
         for (i, cluster) in clusters.iter().enumerate().skip(first) {
-            at += walk.step(at, cluster.advance, self.run.line_height).0;
+            at += walk.step_len(at, cluster.advance, self.run.line_height);
             ends[i] = at;
             if at > walk.limit {
                 break;
@@ -330,7 +330,17 @@ impl Lines<'_> {
                     .iter()
                     .map(|glyph| glyph.advance * size_factor(glyph.size, scale))
                     .sum();
-                at += walk.step(at, width, h).0;
+                at += walk.step_len(at, width, h);
+                // No step is negative (`PathWalk::level_len`): a line past
+                // its span's end here ends past it, and the rest of its
+                // clusters would only be walked to say so.
+                #[cfg(test)]
+                let stop = !crate::flow::place::NO_FIT_STOP.with(std::cell::Cell::get);
+                #[cfg(not(test))]
+                let stop = true;
+                if stop && at > walk.limit {
+                    return false;
+                }
             }
             at <= walk.limit
         })
@@ -358,16 +368,18 @@ pub(crate) fn place_lines(
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let work = Work::new(run.glyphs.len().min(MAX_PLACED_GLYPHS));
-    lay_lines(run, outline, fit, outward, flow, fs, trace, true, &work)
+    let halves = frame_halves(outline, table_spacing(run, fit, flow));
+    lay_lines(run, &halves, fit, outward, flow, fs, trace, true, &work)
 }
 
-/// [`place_lines`], its work counted in a frame's `work` (ruling R46.1):
-/// what a frame laid along its halves keeps when it keeps R27's
-/// placement.
+/// [`place_lines`] round the frame's `halves` — its outline's, as
+/// [`frame_halves`] built them for the frame (#309) — its work counted in
+/// a frame's `work` (ruling R46.1): what a frame laid along its halves
+/// keeps when it keeps R27's placement.
 #[allow(clippy::too_many_arguments)] // `place_lines`', and the work.
 pub(crate) fn place_lines_in(
     run: &ShapedRun,
-    outline: &Outline,
+    halves: &[(ArcPath, Range<f32>); 2],
     fit: &FitMode,
     outward: bool,
     flow: &ResolvedText,
@@ -375,7 +387,7 @@ pub(crate) fn place_lines_in(
     trace: Option<&mut Trace>,
     work: &Work,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    lay_lines(run, outline, fit, outward, flow, fs, trace, true, work)
+    lay_lines(run, halves, fit, outward, flow, fs, trace, true, work)
 }
 
 /// [`place_lines`] as a frame laid along its halves reads it (rulings
@@ -385,13 +397,17 @@ pub(crate) fn place_lines_in(
 /// them again. The placement's glyphs, lines, cuts and truncation, and
 /// the run it returns, are [`place_lines`]'s; only positions differ.
 ///
-/// Its work is counted in the frame's `work` (ruling R46.1).
+/// Its work is counted in the frame's `work` (ruling R46.1), and it is
+/// laid round the frame's `halves`, as [`frame_halves`] built them for the
+/// frame, which the frame's own halves then walk (#309): a frame builds
+/// its outline's paths once.
 ///
-/// Cost: [`place_lines`]'s but the centering and spreading.
+/// Cost: [`place_lines`]'s but the centering and spreading, and the
+/// halves.
 #[allow(clippy::too_many_arguments)] // `place_lines`', and the work.
 pub(crate) fn frame_lines(
     run: &ShapedRun,
-    outline: &Outline,
+    halves: &[(ArcPath, Range<f32>); 2],
     fit: &FitMode,
     outward: bool,
     flow: &ResolvedText,
@@ -399,15 +415,16 @@ pub(crate) fn frame_lines(
     trace: Option<&mut Trace>,
     work: &Work,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    lay_lines(run, outline, fit, outward, flow, fs, trace, false, work)
+    lay_lines(run, halves, fit, outward, flow, fs, trace, false, work)
 }
 
-/// [`place_lines`], each line centered or spread as R27 lays it, or not
-/// ([`Lines::centered`]), its work counted in `work`.
+/// [`place_lines`] round `halves` ([`frame_halves`]), each line centered
+/// or spread as R27 lays it, or not ([`Lines::centered`]), its work
+/// counted in `work`.
 #[allow(clippy::too_many_arguments)] // `place_lines`', the choice and the work.
 fn lay_lines(
     run: &ShapedRun,
-    outline: &Outline,
+    halves: &[(ArcPath, Range<f32>); 2],
     fit: &FitMode,
     outward: bool,
     flow: &ResolvedText,
@@ -416,7 +433,6 @@ fn lay_lines(
     centered: bool,
     work: &Work,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    let halves = frame_halves(outline, table_spacing(run, fit, flow));
     // A level line fits its span when its advances fit the span's width
     // (ruling R28): the parting balances against that.
     let spans = [0, 1].map(|k| {
@@ -432,7 +448,7 @@ fn lay_lines(
         run,
         clusters: &clusters,
         lines: lines.clone(),
-        halves: &halves,
+        halves,
         outward,
         centered,
     };
@@ -460,12 +476,14 @@ fn lay_lines(
                 under
             };
             (
-                fit_reshape(run, &lines, &halves, outward, scale, low, fs, work),
+                fit_reshape(run, &lines, halves, outward, scale, low, fs, work),
                 None,
             )
         }
         FitMode::Once { filler: Some(filler) } => {
             let filled = reshape(run, 1.0, Some((filler, flow)), fs.fonts());
+            #[cfg(test)]
+            super::halves::note_reshape();
             work.shaped(&filled);
             (Some(filled), Some(()))
         }
@@ -492,7 +510,7 @@ fn lay_lines(
         run: laid_run,
         clusters: &clusters[..text_clusters],
         lines,
-        halves: &halves,
+        halves,
         outward,
         centered,
     };
@@ -548,14 +566,10 @@ fn lay_lines(
 /// along their diagonal halves, which R27's level span does not limit
 /// (ruling R34).
 ///
-/// Cost: the two halves ([`frame_halves`]) and the parting, O(clusters).
-pub(crate) fn line_partition(
-    run: &ShapedRun,
-    outline: &Outline,
-    fit: &FitMode,
-    flow: &ResolvedText,
-) -> [Range<usize>; 2] {
-    let halves = frame_halves(outline, table_spacing(run, fit, flow));
+/// `halves` are the frame's, as [`frame_halves`] built them for it.
+///
+/// Cost: two path lookups a half and the parting, O(clusters).
+pub(crate) fn line_partition(run: &ShapedRun, halves: &[(ArcPath, Range<f32>); 2]) -> [Range<usize>; 2] {
     let spans = [0, 1].map(|k| {
         let (path, span) = &halves[k];
         path.at(span.end).0.x - path.at(span.start).0.x
@@ -596,6 +610,8 @@ fn fit_reshape(
     let shaped = |scale: f32, fs: &mut FontSystemLease| {
         #[cfg(test)]
         super::halves::FIT_RESHAPES.with(|count| count.set(count.get() + 1));
+        #[cfg(test)]
+        super::halves::note_reshape();
         let reshaped = reshape(run, scale, None, fs.fonts());
         work.shaped(&reshaped);
         reshaped
@@ -664,7 +680,7 @@ fn fill(
             lines.work.walked(count.saturating_mul(copy.len()));
             for _ in 0..count {
                 for cluster in copy {
-                    s += walk.step(s, cluster.advance, h).0;
+                    s += walk.step_len(s, cluster.advance, h);
                 }
             }
             s

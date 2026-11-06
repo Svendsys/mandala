@@ -150,9 +150,9 @@ use std::rc::Rc;
 
 use glam::Vec2;
 
-use super::lines::{frame_lines, line_partition, place_lines_in};
+use super::lines::{frame_halves, frame_lines, line_partition, place_lines_in};
 use super::*;
-use crate::document::values::{Edge, FontSize};
+use crate::document::values::FontSize;
 use crate::flow::shape::shape_run;
 use crate::flow::span::FlowSpan;
 use crate::font::fonts::{face_char_ink, glyph_outline_ink};
@@ -680,8 +680,10 @@ const CUT_ROUNDS: usize = 8;
 /// between its junctions, and its apex.
 struct Halves {
     /// The outline walked from the middle of its left side, clockwise
-    /// (the first half's) and counterclockwise (the second's).
-    paths: [ArcPath; 2],
+    /// (the first half's) and counterclockwise (the second's), each with
+    /// its level span ([`frame_halves`]): what R27 sizes and parts the
+    /// frame's text on too, so a frame builds its paths once (#309).
+    level: [(ArcPath, Range<f32>); 2],
     /// Each half's junctions along its path, top-left then bottom-right,
     /// the second past the first.
     junctions: [(f32, f32); 2],
@@ -694,15 +696,12 @@ struct Halves {
 }
 
 impl Halves {
-    fn new(outline: &Outline, spacing: f32) -> Self {
-        let left = StartPoint {
-            edge: Edge::Left,
-            at: 0.5,
-        };
-        let paths = [
-            ArcPath::closed(outline, left, Direction::Clockwise, spacing),
-            ArcPath::closed(outline, left, Direction::CounterClockwise, spacing),
-        ];
+    /// The halves of `outline`, walked along `level` — its two paths as
+    /// [`frame_halves`] builds them, with their level spans.
+    ///
+    /// Cost: O(stretches), and a binary search of an ellipse's tables.
+    fn new(outline: &Outline, level: [(ArcPath, Range<f32>); 2]) -> Self {
+        let paths = [&level[0].0, &level[1].0];
         let length = paths[0].length();
         let top_left = outline.support(Vec2::new(-1.0, -1.0));
         let bottom_right = outline.support(Vec2::new(1.0, 1.0));
@@ -732,16 +731,30 @@ impl Halves {
             apexes[k] = unwrap(along(tops[k]), start, length);
         }
         Halves {
-            paths,
+            level,
             junctions,
             apexes,
             length,
         }
     }
 
+    /// The halves of `outline`, its paths' tables sampled no coarser than
+    /// `spacing`, their level spans with them ([`frame_halves`]): what the
+    /// test seams lay on, the benches' among them.
+    fn of(outline: &Outline, spacing: f32) -> Self {
+        Halves::new(outline, frame_halves(outline, spacing))
+    }
+
+    /// Half `k`'s path: the outline walked from the middle of its left
+    /// side, clockwise for the first half and counterclockwise for the
+    /// second.
+    fn path(&self, k: usize) -> &ArcPath {
+        &self.level[k].0
+    }
+
     /// Where along half `k` the point nearest `p` lies, past its start.
     fn along(&self, k: usize, p: Vec2) -> f32 {
-        unwrap(self.paths[k].nearest(p), self.junctions[k].0, self.length)
+        unwrap(self.path(k).nearest(p), self.junctions[k].0, self.length)
     }
 }
 
@@ -826,6 +839,8 @@ fn middle(b: (Vec2, Vec2)) -> Vec2 {
 fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
     #[cfg(test)]
     INKED_STEPS.with(|count| count.set(count.get() + inking_steps(run)));
+    #[cfg(test)]
+    INKINGS.with(|count| count.set(count.get() + 1));
     let mut out = run.clone();
     let mut cache = SwashCache::new();
     let laid: Vec<_> = run.layout_glyphs().cloned().collect();
@@ -1193,6 +1208,10 @@ struct InkLay<'w> {
     /// Each ink's reach from its anchor, in the order of
     /// [`boxes`](Self::boxes).
     reaches: Vec<Reach>,
+    /// Whether it lays a side ornament's copies, not a line: which work
+    /// counter its steps are counted in ([`note_step`]).
+    #[cfg(test)]
+    side: bool,
 }
 
 /// A frame's band curve (#308, ruling B15.1): the outline's offset curve
@@ -1255,6 +1274,8 @@ impl<'w> InkLay<'w> {
             ratio: 1.0,
             band,
             reaches: Vec::new(),
+            #[cfg(test)]
+            side: false,
         }
     }
 
@@ -1316,7 +1337,7 @@ impl<'w> InkLay<'w> {
             self.owed += cluster.advance + g;
             self.s += cluster.advance;
             #[cfg(test)]
-            note_step(before);
+            note_step(before, self.side);
             return;
         }
         let Body::Inked { advance, ink } = walk.body_of(cluster) else {
@@ -1404,7 +1425,7 @@ impl<'w> InkLay<'w> {
         self.last = Some(set);
         self.owed = g;
         #[cfg(test)]
-        note_step(before);
+        note_step(before, self.side);
     }
 }
 
@@ -1423,18 +1444,41 @@ thread_local! {
     /// thread, and of them the rounds that left it where it was.
     #[cfg(test)]
     pub(crate) static EARLIER_ROUNDS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (#309): of [`STEP_LOOKUPS`], the glyph steps a side
+    /// ornament's lays took on this thread and the path lookups they took.
+    #[cfg(test)]
+    pub(crate) static SIDE_STEP_LOOKUPS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (#309): the runs a frame's placement has shaped or
+    /// reshaped on this thread — R27's fit, a build at a size, a side
+    /// ornament's runs — and the runs it has inked.
+    #[cfg(test)]
+    pub(crate) static RESHAPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(test)]
+    pub(crate) static INKINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Test counter (#294, ruling R43): one glyph step of [`track`] taken,
-/// the path lookups since `before` its cost.
+/// Test counter (#294, ruling R43): one glyph step of [`track`] or of a
+/// side ornament's lay (`side`) taken, the path lookups since `before` its
+/// cost.
 #[cfg(test)]
-fn note_step(before: usize) {
+fn note_step(before: usize, side: bool) {
     let spent = crate::flow::path::PATH_LOOKUPS.with(Cell::get) - before;
     MOST_STEP_LOOKUPS.with(|most| most.set(most.get().max(spent)));
-    STEP_LOOKUPS.with(|counts| {
+    let add = |counts: &std::cell::Cell<(usize, usize)>| {
         let (steps, lookups) = counts.get();
         counts.set((steps + 1, lookups + spent));
-    });
+    };
+    STEP_LOOKUPS.with(add);
+    if side {
+        SIDE_STEP_LOOKUPS.with(add);
+    }
+}
+
+/// Test counter (#309): one run shaped or reshaped by a frame's
+/// placement ([`RESHAPES`]).
+#[cfg(test)]
+pub(crate) fn note_reshape() {
+    RESHAPES.with(|count| count.set(count.get() + 1));
 }
 
 /// Where to set a letter whose ink is of half size `half`, its center
@@ -1823,17 +1867,53 @@ impl Work {
 }
 
 /// The lines [`Layout::lay`] has laid in one clearance search.
+///
+/// Both are short lists searched in order, not hashed (#309): a search
+/// lays each line a few dozen times at most — [`CLEAR_ROUNDS`] rounds,
+/// each with its backtracks, at two spans — and keeps one warm start for
+/// each line at each span.
 #[derive(Default)]
 struct LayMemo {
     /// By line, part of its half it may cover, span and the frame's
     /// offset (#308), all bit for bit: a round that grows one line's
     /// clearance lays the other where it lay.
-    laid: FxHashMap<(usize, u32, u32, u32, u32), Line>,
+    laid: Vec<(LayKey, Line)>,
     /// Each line's last lay at a span, by line and span's bits: its
     /// part's length and its gap, what its next lay's tracking is
     /// warm-started from ([`solve_tracking`], ruling R43) — a round moves
     /// a line's part a little, and its gap with it.
-    warm: FxHashMap<(usize, u32), (f32, f32)>,
+    warm: Vec<((usize, u32), (f32, f32))>,
+}
+
+/// What a line laid in a clearance search is known by ([`LayMemo`]): the
+/// line, its room's ends, the span and the frame's offset, each bit for
+/// bit.
+type LayKey = (usize, u32, u32, u32, u32);
+
+impl LayMemo {
+    /// The line laid at `key`, if one has been.
+    ///
+    /// Cost: O(lines laid in the search).
+    fn laid(&self, key: &LayKey) -> Option<&Line> {
+        self.laid.iter().find(|(k, _)| k == key).map(|(_, line)| line)
+    }
+
+    /// Line `i`'s last lay at the span of bits `span`: its part's length
+    /// and its gap.
+    ///
+    /// Cost: O(lines and spans warmed).
+    fn warm(&self, i: usize, span: u32) -> Option<(f32, f32)> {
+        self.warm.iter().find(|(k, _)| *k == (i, span)).map(|(_, w)| *w)
+    }
+
+    /// Remember line `i`'s lay at the span of bits `span` as its warm
+    /// start.
+    fn warm_with(&mut self, i: usize, span: u32, with: (f32, f32)) {
+        match self.warm.iter_mut().find(|(k, _)| *k == (i, span)) {
+            Some((_, was)) => *was = with,
+            None => self.warm.push(((i, span), with)),
+        }
+    }
 }
 
 /// One clearance search's state ([`Layout::lay_clear`]): the lines it
@@ -1911,7 +1991,7 @@ impl Layout<'_> {
 
     /// The walk a line on half `k` is tracked along.
     fn walk<'s>(&'s self, k: usize, run: &ShapedRun) -> PathWalk<'s> {
-        line_walk(&self.halves.paths[k], run, self.outward)
+        line_walk(self.halves.path(k), run, self.outward)
     }
 
     /// How long `clusters` are at gap `g` from their first ink center at
@@ -2245,16 +2325,15 @@ impl Layout<'_> {
                     span.to_bits(),
                     self.offset.get().to_bits(),
                 );
-                if let Some(line) = memo.laid.get(&key) {
+                if let Some(line) = memo.laid(&key) {
                     return line.clone();
                 }
-                let warm = memo.warm.get(&(i, span.to_bits())).copied();
+                let warm = memo.warm(i, span.to_bits());
                 let line = self.lay_one(run, p, room, span, warm);
                 if line.tracks && !line.pressed {
-                    memo.warm
-                        .insert((i, span.to_bits()), (line.part.1 - line.part.0, line.gap));
+                    memo.warm_with(i, span.to_bits(), (line.part.1 - line.part.0, line.gap));
                 }
-                memo.laid.insert(key, line.clone());
+                memo.laid.push((key, line.clone()));
                 line
             })
             .collect()
@@ -2314,7 +2393,7 @@ impl Layout<'_> {
         Line {
             half: p.half,
             normals: self.normals(p.half, &tracked, (sa, sb)),
-            retreats: retreats(&self.halves.paths[p.half], (sa, sb)),
+            retreats: retreats(self.halves.path(p.half), (sa, sb)),
             tracked,
             gap,
             word: (p.space > 0.0).then_some(p.space + 2.0 * gap),
@@ -2351,7 +2430,7 @@ impl Layout<'_> {
     /// Cost: none, as the lay found them; two path lookups for a line
     /// with no ink.
     fn normals(&self, k: usize, tracked: &Tracked, part: (f32, f32)) -> [Vec2; 2] {
-        let path = &self.halves.paths[k];
+        let path = self.halves.path(k);
         let normal = |s: f32| path.outward(path.at(s).1);
         match tracked.normals {
             Some((first, last)) => [first, last],
@@ -2435,7 +2514,7 @@ impl Layout<'_> {
             [one] => {
                 out.want = [0.5 * JUNCTION_WORD_GAPS * word; 2];
                 // The junction on the frame's band curve (#308).
-                let path = &self.halves.paths[one.half];
+                let path = self.halves.path(one.half);
                 let (ja, jb) = self.halves.junctions[one.half];
                 let offset = self.offset.get();
                 let points = [path.offset_at(ja, offset).point, path.offset_at(jb, offset).point];
@@ -2504,7 +2583,7 @@ impl<'a> SideOrnament<'a> {
     /// halves of `layout` on its band curve as it stands.
     fn new(layout: &'a Layout<'_>, run: &'a ShapedRun, range: Range<usize>) -> SideOrnament<'a> {
         SideOrnament {
-            walk: line_walk(&layout.halves.paths[0], run, layout.outward),
+            walk: line_walk(layout.halves.path(0), run, layout.outward),
             band: layout.band(),
             glyphs: &run.glyphs,
             per_copy: range.len(),
@@ -2649,14 +2728,20 @@ impl<'s> SideArc<'s> {
     /// A lay of copies at `gap` begun past the text ink the arc starts
     /// from, on the frame's band curve.
     fn begun(&self, gap: f32) -> InkLay<'_> {
-        InkLay::new(
+        #[cfg_attr(not(test), allow(unused_mut))]
+        let mut lay = InkLay::new(
             &self.side.walk,
             self.side.glyphs,
             self.ca,
             gap,
             self.side.band.clone(),
         )
-        .after(self.start)
+        .after(self.start);
+        #[cfg(test)]
+        {
+            lay.side = true;
+        }
+        lay
     }
 
     /// How far the last ink `lay` set is from `to`, and where along the
@@ -4519,6 +4604,8 @@ fn side_run(
             1.0,
             fs,
         );
+        #[cfg(test)]
+        note_reshape();
         work.shaped(&shaped);
         work.inked(&shaped);
         let fsys = fs.fonts();
@@ -4542,6 +4629,8 @@ fn side_run(
     };
     let fsys = fs.fonts();
     let with = reshape(run, 1.0, Some((content.as_str(), &style)), fsys);
+    #[cfg(test)]
+    note_reshape();
     work.shaped(&with);
     let start = with.glyphs.iter().position(|g| g.span == FILLER_SPAN)?;
     let range = start..with.glyphs.len();
@@ -4962,19 +5051,17 @@ pub(super) fn place_halves(
     // budget scaled by its text, cut to the glyph cap, until R27 has
     // parted it, then by the lines it parted.
     let work = Work::new(run.glyphs.len().min(glyph_cap()));
+    // The outline's two paths and their level spans, built once for the
+    // frame: R27 sizes and parts its text on them, and its lines are laid
+    // along them (#309).
+    let level = frame_halves(outline, table_spacing(run, fit, flow));
     // R27's placement, laid in full only for a frame that keeps it.
-    let keep_r27 = |trace: Option<&mut Trace>, fs: &mut FontSystemLease, work: &Work| {
+    let keep_r27 = |trace: Option<&mut Trace>,
+                    fs: &mut FontSystemLease,
+                    work: &Work,
+                    level: &[(ArcPath, Range<f32>); 2]| {
         let mut natural_trace = Trace::default();
-        let placed = place_lines_in(
-            run,
-            outline,
-            fit,
-            outward,
-            flow,
-            fs,
-            Some(&mut natural_trace),
-            work,
-        );
+        let placed = place_lines_in(run, level, fit, outward, flow, fs, Some(&mut natural_trace), work);
         if let Some(trace) = trace {
             *trace = natural_trace;
             trace.spent = work.spent.get();
@@ -4992,7 +5079,7 @@ pub(super) fn place_halves(
     let (fitted, natural) = if sized {
         frame_lines(
             run,
-            outline,
+            &level,
             fit,
             outward,
             flow,
@@ -5010,9 +5097,9 @@ pub(super) fn place_halves(
         )
     };
     if sized && natural_trace.lines.is_empty() {
-        return keep_r27(trace, fs, &work);
+        return keep_r27(trace, fs, &work, &level);
     }
-    let halves = Halves::new(outline, table_spacing(run, fit, flow));
+    let halves = Halves::new(outline, level);
     // An outline whose halves cannot be measured — one with a side that
     // is not a number — keeps R27's placement, which holds every
     // position finite there. (`place_on_closed` shrinks an outline too
@@ -5023,7 +5110,7 @@ pub(super) fn place_halves(
         (halves.apexes[0], halves.apexes[1]),
     ];
     if !(halves.length.is_finite() && ends.iter().all(|(a, b)| a.is_finite() && b.is_finite())) {
-        return keep_r27(trace, fs, &work);
+        return keep_r27(trace, fs, &work, &halves.level);
     }
     let lay = Layout::new(&halves, outward, work, Vec::new());
 
@@ -5044,7 +5131,7 @@ pub(super) fn place_halves(
         (base, specs)
     } else {
         lay.work.walked(run.glyphs.len());
-        let specs = line_partition(run, outline, fit, flow)
+        let specs = line_partition(run, &halves.level)
             .into_iter()
             .enumerate()
             .filter(|(_, range)| !range.is_empty())
@@ -5067,6 +5154,8 @@ pub(super) fn place_halves(
         } else {
             let fsys = fs.fonts();
             let scaled = reshape(&base, scale, None, fsys);
+            #[cfg(test)]
+            note_reshape();
             lay.work.shaped(&scaled);
             scaled
         };
@@ -5553,10 +5642,10 @@ pub(crate) fn spent_seam(glyphs: usize, classes: usize, budget: usize, steps: us
 /// half with each of `gaps` — how [`track`]'s length moves with its
 /// gap, a zero gap included.
 pub(crate) fn track_seam(run: &ShapedRun, outline: &Outline, gaps: &[f32], fs: &mut FontSystem) -> Vec<f32> {
-    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
     let run = inked(run, fs);
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
-    let walk = line_walk(&halves.paths[0], &run, true);
+    let walk = line_walk(halves.path(0), &run, true);
     let lay = seam_layout(&halves, &run, &clusters, fs);
     let (sa, sb) = halves.junctions[0];
     gaps.iter()
@@ -5598,10 +5687,10 @@ pub(crate) fn solve_line_seam(
     room: f32,
     fs: &mut FontSystem,
 ) -> (f32, f32, f32, f32, f32) {
-    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
     let run = inked(run, fs);
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
-    let walk = line_walk(&halves.paths[0], &run, true);
+    let walk = line_walk(halves.path(0), &run, true);
     let sa = halves.junctions[0].0;
     let sb = sa + room;
     let letters = clusters.iter().filter(|c| !c.blank).count();
@@ -5625,9 +5714,9 @@ pub(crate) fn solve_line_seam(
 /// curve `offset` off the outline ([`Layout::normals`]), and the way the
 /// end of a part ending at `end` draws back ([`retreats`]).
 pub(crate) fn end_seam(outline: &Outline, half: usize, offset: f32, set: f32, end: f32) -> (Vec2, Vec2) {
-    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
     let lay = Layout::new(&halves, true, Work::new(0), Vec::new());
-    let on = halves.paths[half].offset_at(set, offset);
+    let on = halves.path(half).offset_at(set, offset);
     let ink = (on.point, on.point);
     let tracked = Tracked {
         glyphs: Vec::new(),
@@ -5640,7 +5729,7 @@ pub(crate) fn end_seam(outline: &Outline, half: usize, offset: f32, set: f32, en
         reaches: vec![Reach::default()],
     };
     let normal = lay.normals(half, &tracked, (set, set))[0];
-    (normal, retreats(&halves.paths[half], (set, end))[1])
+    (normal, retreats(halves.path(half), (set, end))[1])
 }
 
 /// Test seam (#291, ruling R33.1): `n` copies of `ornament` laid as a
@@ -5656,7 +5745,7 @@ pub(crate) fn side_floor_seam(
     flow: &ResolvedText,
     fs: &mut FontSystemLease,
 ) -> Option<(ShapedRun, Vec<PlacedGlyph>, f32)> {
-    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
     let lay = Layout::new(&halves, true, Work::new(0), Vec::new());
     let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
     let (with, range) = side_run(run, &sides, flow, fs, &lay.work)?;
@@ -5666,7 +5755,7 @@ pub(crate) fn side_floor_seam(
     let side = SideOrnament::new(&lay, &drawn, range);
     let (ja, jb) = halves.junctions[0];
     let point = |s: f32| {
-        let p = halves.paths[0].at(s).0;
+        let p = halves.path(0).at(s).0;
         ((p, p), s)
     };
     let arc = side.arc(point(ja), point(jb))?;
@@ -5690,7 +5779,7 @@ pub(crate) fn side_solve_seam(
     flow: &ResolvedText,
     fs: &mut FontSystemLease,
 ) -> Option<(f32, bool)> {
-    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
     let lay = Layout::new(&halves, true, Work::new(0), Vec::new());
     let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
     let (with, range) = side_run(run, &sides, flow, fs, &lay.work)?;
@@ -5700,7 +5789,7 @@ pub(crate) fn side_solve_seam(
     let side = SideOrnament::new(&lay, &drawn, range);
     let (ja, jb) = halves.junctions[0];
     let point = |s: f32| {
-        let p = halves.paths[0].at(s).0;
+        let p = halves.path(0).at(s).0;
         ((p, p), s)
     };
     let arc = side.arc(point(ja), point(jb))?;
@@ -5719,7 +5808,7 @@ pub(crate) fn side_solve_seam(
 /// line may cover with `clear` kept at its junctions, and the half's
 /// junctions — [`Layout::room`], which never inverts.
 pub(crate) fn room_seam(outline: &Outline, half: usize, clear: [f32; 2]) -> ((f32, f32), (f32, f32)) {
-    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
     let lay = Layout::new(&halves, true, Work::new(0), Vec::new());
     (lay.room(half, clear), halves.junctions[half])
 }
@@ -5729,6 +5818,6 @@ pub(crate) fn room_seam(outline: &Outline, half: usize, clear: [f32; 2]) -> ((f3
 /// side, clockwise for the first, counterclockwise for the second — and
 /// the outline's length.
 pub(crate) fn halves_seam(outline: &Outline) -> ([(f32, f32); 2], [f32; 2], f32) {
-    let halves = Halves::new(outline, MIN_TABLE_SPACING);
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
     (halves.junctions, halves.apexes, halves.length)
 }

@@ -19,9 +19,15 @@ pub mod lines_tests;
 pub mod outline_tests;
 pub mod place_tests;
 pub mod readable_tests;
+/// The exact work removals of #309, each pinned by its counter.
+#[cfg(test)]
+mod removal_tests;
 /// A `Repeat` ring's work budget: past it, and what it holds back.
 #[cfg(test)]
 mod ring_budget_tests;
 pub mod shape_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;
+/// A frame's work counted by kind of outline (#309).
+#[cfg(test)]
+mod work_tests;
