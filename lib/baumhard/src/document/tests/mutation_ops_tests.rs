@@ -28,7 +28,7 @@ use crate::document::mutation::ops::{
 use crate::document::tests::test_support::{example, palette_group};
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
-    Percent, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::mutation::Mutation;
 use crate::font::fonts::AppFont;
@@ -64,8 +64,6 @@ fn rich_node() -> DocElement {
         min_size: Some(Vec2::new(100.0, 50.0)),
         style: NodeStyle {
             shape: Some(Shape::Ellipse),
-            fill: Some(ColorRef::Rgba(Rgba::opaque(9, 9, 9))),
-            fill_fade: Some(2.0),
             text: rich_text(FontSize::Pt(18.0)),
         },
         palette: Some(PaletteId(0)),
@@ -356,17 +354,6 @@ pub fn do_document_node_ops_write_their_field() {
         DocMutation::Node(NodeOp::SetShape(shape)),
         &s,
         |e| node(e).style.shape = shape,
-    );
-    let fill = Some(ColorRef::Var(VarId(1)));
-    case("SetFill", &n, DocMutation::Node(NodeOp::SetFill(fill)), &s, |e| {
-        node(e).style.fill = fill
-    });
-    case(
-        "SetFillFade",
-        &n,
-        DocMutation::Node(NodeOp::SetFillFade(Some(6.0))),
-        &s,
-        |e| node(e).style.fill_fade = Some(6.0),
     );
     case(
         "SetPalette",
@@ -890,6 +877,7 @@ pub fn do_document_map_theme_palette_and_defaults_ops_write_their_field() {
     let s = outside();
     let map = DocElement::Map(MapData {
         name: "old".to_string(),
+        background: PlainColor::Rgba(Rgba::opaque(1, 2, 3)),
     });
     case(
         "SetName",
@@ -902,6 +890,19 @@ pub fn do_document_map_theme_palette_and_defaults_ops_write_their_field() {
             }
         },
     );
+    for background in [PlainColor::Var(VarId(1)), PlainColor::Rgba(Rgba::opaque(4, 5, 6))] {
+        case(
+            "SetBackground",
+            &map,
+            DocMutation::Map(MapOp::SetBackground(background)),
+            &s,
+            |e| {
+                if let DocElement::Map(m) = e {
+                    m.background = background;
+                }
+            },
+        );
+    }
 
     let theme = rich_theme();
     case(

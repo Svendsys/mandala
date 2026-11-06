@@ -32,7 +32,8 @@
 
 use crate::document::format::rows::Rows;
 use crate::document::format::spelling::{
-    present, ColorDto, FitDto, HexDto, LineSpanDto, Named, ShapeDto, SidesDto, StartDto, WeightDto,
+    present, BackgroundDto, ColorDto, FitDto, HexDto, LineSpanDto, Named, ShapeDto, SidesDto, StartDto,
+    WeightDto,
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -238,8 +239,6 @@ pub(crate) struct ThemeDto {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PaletteGroupDto<'a> {
-    /// A node's fill.
-    pub fill: ColorDto<'a>,
     /// A node's frame text.
     pub frame: ColorDto<'a>,
     /// Section text.
@@ -264,20 +263,6 @@ pub(crate) struct NodeDefaultsDto<'a> {
         deserialize_with = "present"
     )]
     pub shape: Option<ShapeDto>,
-    /// The fill.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present"
-    )]
-    pub fill: Option<ColorDto<'a>>,
-    /// The width of the fill's soft edge.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present"
-    )]
-    pub fill_fade: Option<f32>,
     /// The font family name.
     #[serde(
         default,
@@ -1411,20 +1396,6 @@ pub(crate) struct NodeDto<'a> {
         deserialize_with = "present"
     )]
     pub shape: Option<ShapeDto>,
-    /// The background fill.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present"
-    )]
-    pub fill: Option<ColorDto<'a>>,
-    /// The width of the fill's soft edge.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present"
-    )]
-    pub fill_fade: Option<f32>,
     /// The name of the palette that colors it and its descendants.
     #[serde(
         default,
@@ -1533,6 +1504,14 @@ pub(crate) struct MapHeaderDto<'a> {
         deserialize_with = "present"
     )]
     pub theme: Option<ThemeDto>,
+    /// The one color drawn behind the canvas. Absent is the default,
+    /// black, which the saver writes by leaving the key out.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub background: Option<BackgroundDto<'a>>,
     /// The palettes, by name.
     #[serde(default, skip_serializing_if = "Named::is_empty")]
     pub palettes: Named<Vec<PaletteGroupDto<'a>>>,

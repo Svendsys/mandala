@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Authored glyph-layer mutations built from choices, `NaN` included,
-//! applied to a tree of box and path runs and fills built the same way,
+//! applied to a tree of box and path runs and an area built the same way,
 //! with every property of
 //! `baumhard::gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_structured`
 //! (TEST_CONVENTIONS §T14).

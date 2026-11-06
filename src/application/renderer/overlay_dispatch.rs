@@ -61,6 +61,7 @@ impl Renderer {
         let layout =
             compute_console_frame_layout(geometry, self.surface_size.0 as f32, self.surface_size.1 as f32);
         self.console_backdrop = Some(layout.backdrop_rect());
+        self.ensure_backdrop_cell();
         let signature = console_overlay_signature(&layout);
 
         // §B2 dispatch: if the structural signature
@@ -123,6 +124,9 @@ impl Renderer {
     ) {
         self.color_picker_backdrop =
             color_picker::prepare_overlay_for_rebuild(app_scene, geometry_and_layout);
+        if self.color_picker_backdrop.is_some() {
+            self.ensure_backdrop_cell();
+        }
         self.rebuild_overlay_scene_buffers(app_scene);
     }
 

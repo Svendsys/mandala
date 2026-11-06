@@ -279,7 +279,8 @@ path and move the result into place yourself.
    **The hoisted palette is authoritative at render time.** The
    converter leaves each node's `style` colors where it found them,
    but they are now the *fallback*: a node carrying a `color_schema`
-   draws its fill, frame and text from the palette group
+   draws its frame and text from the palette group, and loads its fill
+   from it too, though nothing draws a fill since V1-B12
    (see [palettes.md](./palettes.md)), and its `style` colors are what
    it would use if the schema were removed. A converted map whose
    `style` values were hand-edited away from the palette after

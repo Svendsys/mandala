@@ -98,7 +98,7 @@ fn test_document_bounds_non_negative() {
     do_document_bounds_non_negative();
 }
 
-/// `fill_fade`, `gap`, `inset`, `spacing`: finite and `≥ 0`.
+/// `gap`, `inset`, `spacing`: finite and `≥ 0`.
 pub fn do_document_bounds_non_negative() {
     assert_eq!(check_non_negative(0.0), Ok(0.0));
     assert_eq!(check_non_negative(1.0e6), Ok(1.0e6));

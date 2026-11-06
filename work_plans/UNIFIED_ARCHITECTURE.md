@@ -36,7 +36,7 @@ develops it.
 | D9 | Glyphs are never rotated. Curves are made by **positioning** upright glyphs, the way ASCII art makes curves. | §6 |
 | D10 | Frame fit mode, start point and direction are per-frame settings. Frames hold rings (stanzas). Frame font size is relative to the node's size. There is no "grow the node" fit mode for frames; `fit` scales both font size and spacing so the text goes around exactly once. | §6 |
 | D11 | Corner radius is a percentage of half the node's shorter side: 0% sharp, 100% fully round (circle on a square, pill on a rectangle). Capped at 100. | §6 |
-| D12 | The node background stays a shader fill, shaped to match the frame (rounded rectangle, ellipse), with a configurable soft fade at its edge. | §13 |
+| D12 | **One background; every other color comes from glyphs** (replaces "the node background stays a shader fill, shaped to match the frame, with a configurable soft fade"; owner, recorded on #230, V1-B12 #298). The owner: "screw background colors for nodes. It's not necessary, and it would break the ascii art feel. Let's just go for a single background color, default black, and all other colors come from glyphs". A map has exactly one `background`, a literal or a theme variable, `#000000` when unset, and every frame is cleared to it. Every other pixel a map draws is a glyph's: text, frames, rings, connectors, links, labels, portal ends, ornaments. No node, section or palette group has a fill, the glyph layers have no fill element, and the renderer has no content fill pass. A literal background is opaque (an alpha is refused); a theme variable's alpha is not applied. | §5.6, §7.1, §13.3 |
 | D13 | Deleted, not deferred: node `notes`, underline, node `layout`, `show_shadow` (shadow is deferred to V2), border `padding`, edge `width`, edge `line_style`, the `OnKey` trigger, `corner_radius_percent` / `frame_thickness` as they exist today (replaced by D10/D11). Edge width and line style are expressed through connection content and relative size. | §5 |
 | D14 | Kept and made real: bold, italic, per-span font size, hyperlinks (links target a URL or a verb), node-level hover. | §5, §11 |
 | D15 | Every stage after load does work proportional to what changed. No full-scene rebuild, scan or signature pass on an edit. | §2, §12, §13 |
@@ -181,7 +181,7 @@ These are the tests every V1 sub-issue's review applies.
                 │                       │
                 │                       └── glyph Journal → reshape / re-place set (§13)
  View-only glyph mutators                ▼
- (selection, dimming, hover chrome,   renderer: TextFlow runs, backgrounds → GPU
+ (selection, dimming, hover chrome,   renderer: TextFlow runs → GPU, on the map's one background
   glyph-layer presentations,
   console, color picker)
 ```
@@ -425,7 +425,7 @@ transaction, the presentation runtime — and holds a `Document`.
 ```
 Map                       (root; exactly one)
 ├─ Theme                  variants (name → variables: name → RGBA), active (a variant name)
-├─ Palette*               ordered color groups (fill / frame / text / title per depth)
+├─ Palette*               ordered color groups (frame / text / title per depth)
 ├─ Defaults               per-field defaults for frames, rings, connectors, links, labels, spans
 └─ Node*                  roots, in sibling order
     ├─ Section*           a box TextFlow
@@ -509,7 +509,7 @@ element field → owning node's field (for spans: section → node) → node's p
 colors itself and its descendants by depth, for every field that is
 `None` up to that tier: group = `depth(node) − depth(binding node)`,
 clamped to the last group; the nearest ancestor-or-self binding wins.
-Field mapping: node `fill` ← group `fill`; frame and ring text color ←
+Field mapping: frame and ring text color ←
 group `frame`; section text color ← group `text`, except the node's
 first section (lowest channel), which takes group `title` when the
 group sets one. Connectors, links and labels are not palette-colored.
@@ -536,8 +536,10 @@ when a section's spans, fonts or sizes change. `Section` has the same
 The authoritative field list is `format/schema.md` (rewritten in
 V1); this is the shape.
 
-- **Node:** `id`, `position`, `min_size?`, `shape`, `fill?`,
-  `fill_fade?` (edge fade width, D12), `palette?`, `zoom?` (min/max),
+- **Map:** `name`, and `background` (D12): the one color behind the
+  whole canvas, a literal or a theme variable, black when unset, not
+  inherited by anything.
+- **Node:** `id`, `position`, `min_size?`, `shape`, `palette?`, `zoom?` (min/max),
   `folded`, `hidden`, `opacity`, `on { click?, hover? }` (verb refs,
   §11), and text defaults (`font?`, `size?`, `color?`) inherited by
   its spans.
@@ -546,7 +548,7 @@ V1); this is the shape.
     and cannot be hit. Unlike `folded`, which collapses a node's
     descendants and keeps the node, `hidden` removes the node itself.
   - `opacity: f32` in `0.0..=1.0` (default `1.0`): multiplies the
-    alpha of everything the node draws — fill, frame, sections,
+    alpha of everything the node draws — frame, sections,
     connector — and **multiplies down the subtree**, so fading a
     node fades its descendants. Interpolates.
   - Both exist mainly for presentations (D17, §10.2): a sequential
@@ -856,8 +858,8 @@ The outline is derived from the node's drawn rectangle and its shape:
   semicircular ends) on a wide one. Values are capped at 100.
 - `Ellipse`: the inscribed ellipse.
 
-The node's background fill (§13.4) uses the same outline, so the fill
-and the glyph frame always agree.
+A node draws no fill (D12): its outline is drawn only by its frame's
+glyphs, and the canvas behind it is the map's one background.
 
 ### §6.4 Fit modes (D10)
 
@@ -1043,6 +1045,8 @@ keys, in the order the saver writes them:
 - `format`: an integer, `1`;
 - `name`;
 - `theme`: absent is the one spelling of the empty theme;
+- `background` (D12): absent is the one spelling of black, the
+  default, and it is read after the theme it may name;
 - `palettes`;
 - `defaults`;
 - `edits`, `presentations` and `verbs`: definitions (§10, §11);
@@ -1184,7 +1188,7 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
   may not hold a C0 or C1 control, DEL or a bidi control
   (`NameNotPrintable`). Names are compared byte for byte, without
   normalization. A name that is not a plain identifier is quoted in
-  paths (`palettes["My Palette"][0].fill`).
+  paths (`palettes["My Palette"][0].frame`).
 - **Loading: three linear passes.** No pass recurses on the depth of
   the tree.
   1. *Gates:* `MAX_MAP_BYTES`, then the byte-order mark, then UTF-8.
@@ -1223,7 +1227,7 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
     of the node's opening `{`.
   - **Rendered**, an error in `format/schema.md`'s example map reads
     `nodes[2].parent: no node before this one has the id 3; a parent
-    comes before its children (node 5 "the firmament", line 64)`.
+    comes before its children (node 5 "the firmament", line 63)`.
   - File text in a message (the excerpt, names, keys and reader
     messages) has every control, line separator and bidi control
     escaped.
@@ -1287,11 +1291,11 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
   `RandomState`, with a warning.
 - **Platform limits.** On wasm32, memory is the only limit, and a map
   costs it on two axes. Its peak while loading and then saving is at
-  most `text × 7 + elements × 480` bytes
+  most `text × 6 + elements × 480` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`, measured
   by the wasm32 probe). Each axis takes half of the 3 GiB
   `WASM32_MEMORY_BUDGET`:
-  - `MAX_MAP_BYTES` is `WASM32_MAX_MAP_BYTES`, 230,087,533 bytes. A
+  - `MAX_MAP_BYTES` is `WASM32_MAX_MAP_BYTES`, 268,435,456 bytes. A
     larger text is refused before parsing (`TooLarge`).
   - `MAX_ELEMENTS` is `WASM32_MAX_ELEMENTS`, 3,355,443. Each verb,
     edit and presentation counts as one element. The element past the
@@ -1320,7 +1324,13 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
   still in the old format) are converted **once**, in the cut-over
   sub-issue, by a throwaway script that is not committed. The
   converted maps are checked by screenshot against the old app's
-  rendering. The format's own fixtures
+  rendering. The conversion carries no fill across (D12): a node's
+  `style.background_color`, a palette group's `background` and an
+  override of either are dropped, and `canvas.background_color`
+  becomes the map's `background` — a literal as it is (made opaque),
+  a `var(--name)` as `var(name)` of the theme the conversion builds.
+  So the converted maps are checked against the old app's rendering
+  with the node fills left out. The format's own fixtures
   (`lib/baumhard/src/document/format/fixtures/`) are already in this
   format, and every one of them saves back byte for byte.
 - `maps/testament.mind` (the miMind original) and every legacy path
@@ -1671,13 +1681,16 @@ glyph layers, and the glyph journals they produce.
 
 | Layer | Content | Replaces |
 |---|---|---|
-| Fills | one fill element per visible node (shape, radius, color, fade) | `node_background_rects`, the background half of the node tree |
 | Sections | one box-flow run per section | the node tree's container + section areas |
 | Frames | one path-flow run per ring | `Borders` (one `GlyphArea` per glyph) |
 | Connections | one path-flow run per connector / line link, plus cap runs | `Connections` (one `GlyphArea` per glyph) |
 | Labels | one box-flow run per label | `ConnectionLabels` |
 | Portals | marker and label runs per portal end | `Portals` |
 | Chrome | selection, handles, NodeEdit section frames, hover chrome — **view-only**, built from app state, not the document | `EdgeHandles`, `NodeResizeHandles`, `SectionResizeHandles`, `SectionFrames` |
+
+There is no fill layer (D12): the map's background is not drawn by
+any layer but is the color every frame is cleared to, and nothing else
+is filled.
 
 Each layer is a `Tree<GfxElement, GfxMutation>` in the baumhard
 `Scene`. A TextFlow becomes **one** glyph element (§13.2), not one
@@ -1686,7 +1699,7 @@ element per glyph.
 ### §12.2 State and maps
 
 - **Projection map:** document `NodeId` → the glyph elements it
-  produced (a node produces a fill, section runs, ring runs, its
+  produced (a node produces section runs, ring runs, its
   connector run, …). Hit testing uses the reverse direction to go from
   a glyph back to a span or node.
 - **Projection state** per document element: resolved style values,
@@ -1707,16 +1720,17 @@ index cannot drift from what projection actually reads.
 Typical chains:
 
 - Span text or style → section measurement → node fitted size → node
-  geometry → its fill, frame rings (placement; `Rel` rings
+  geometry → its frame rings (placement; `Rel` rings
   re-shape), section placement, its connector, its children's
   connectors, links and portal ends touching it, labels on those.
 - Theme variant switch → every element that read a variable of the
-  theme — and nothing else.
+  theme, the map's background among them when it is a variable — and
+  nothing else.
 - Palette or `Defaults` field → elements whose resolution read it.
 - `folded` → the descendants' projection is removed or added.
 - `hidden` → the node's subtree, its connector and links touching the
   subtree are unprojected or projected.
-- `opacity` → the alpha of every glyph run and fill the node and its
+- `opacity` → the alpha of every glyph run the node and its
   descendants draw (opacity multiplies down the subtree).
 - Structural insert / remove / move → the subtree is projected,
   unprojected or re-placed; depth-dependent palette reads in a moved
@@ -1779,7 +1793,7 @@ canvas tree, every glyph of its one shaped buffer is emitted at its
 own position (`emit`), rasterized once into an atlas the pass holds
 (`atlas`), and drawn as one instanced quad, every glyph of every run
 in **one draw call per frame**, between glyphon's main text pass and
-the palette backdrop. Nothing is shaped to draw a run and nothing is
+its chrome pass (the console or the picker, over its backdrop). Nothing is shaped to draw a run and nothing is
 rotated; a pan or a zoom touches no run. Proven on lavapipe through
 the frame every window and capture draws: 500 glyphs on a circle are
 one run, 500 instances and one draw call, add no glyphon buffer, and
@@ -1914,15 +1928,23 @@ per-frame comparison scans; canvas structure and content signatures
 (`canvas_dispatch_with_content` and friends); the
 `SceneConnectionCache` / `EdgePathCache` pair as separate
 invalidation-by-convention caches (their job moves into projection
-state, invalidated by the dependency index).
+state, invalidated by the dependency index); the content fill pass —
+a shaped rect behind every node — and the fill element it would have
+drawn (D12).
 
-### §13.4 Fills (D12)
-
-Node backgrounds stay a shader fill (the existing SDF path,
-`SHAPE_*` constants). V1 adds a rounded-rectangle case whose radius
-follows §6.3 — so the fill and the frame share one outline — and a
-`fill_fade` width: the fill's alpha falls off smoothly over that
-distance at its edge, giving a soft transition into the glyph frame.
+**The background is the clear color** (D12). Every frame's render pass
+is cleared to the map's resolved background, the same value on native
+and in the browser, and the clear is opaque. Every pass writes a color
+for its target the same way (`renderer::target_encoding`): on an sRGB
+target — native's, and the browser's on WebGL2 — each authored byte is
+decoded to linear light, which the GPU encodes back; on a linear one —
+the browser's on WebGPU, which is never offered an sRGB surface — it is
+written as it is. The clear, glyphon's text and the glyph-run pass make
+that one choice, so the frame holds the authored color and a glyph
+colored like the background matches it, on every target. No pass draws
+a rect: the screen-space chrome backdrops (the console's and the color
+picker's) are full-block glyphs at the bottom of the chrome pass, so a
+frame is its clear and glyphs.
 
 ---
 
@@ -2055,10 +2077,10 @@ levels; where they differ, the epic is updated, then this table.
 | B3 | Document mutation vocabulary | A4, B1 |
 | B4 | Document writer: apply, history, transactions | B3 |
 | B5 | TextFlow: layout and path placement | B1 |
-| B6 | Glyph instantiation: `GlyphRun` and `Fill` elements | A3, B5 |
+| B6 | Glyph instantiation: `GlyphRun` and `Fill` elements (`Fill` removed by B12, #298: D12) | A3, B5 |
 | B7 | Projection: glyph layers, captured dependencies, oracle | B4, B6 |
 | C1 | Renderer spike: drawing positioned glyphs | B6 |
-| C2 | Renderer: runs, fills, journal-driven buffers | C1, B7 |
+| C2 | Renderer: runs and journal-driven buffers (no fills: D12) | C1, B7 |
 | C3 | App cut-over: the app runs on the document | B2, B7, C2 |
 | C4 | Structure editing: create, delete, reparent, connect, clipboard | C3 |
 | C5 | Field editing I: nodes, sections, frames, theme, defaults | C3 |

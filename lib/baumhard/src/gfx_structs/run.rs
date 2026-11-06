@@ -51,7 +51,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::values::{Rgba, ZoomWindow};
 use crate::flow::{PlacedRun, ShapedBox, ShapedRun, FILLER_SPAN};
-use crate::gfx_structs::fill::{same_f32, same_vec2, same_zoom};
 
 /// What was shaped, and how it is placed.
 ///
@@ -488,4 +487,31 @@ impl GlyphRunData {
 /// the end it is left with, or runs backward, is empty.
 fn clamp_range(range: &Range<usize>, len: usize) -> Range<usize> {
     range.start..range.end.min(len)
+}
+
+/// Whether two floats are the same state: equal, or both `NaN`.
+fn same_f32(a: f32, b: f32) -> bool {
+    a == b || (a.is_nan() && b.is_nan())
+}
+
+/// Whether two vectors are the same state, per axis, as [`same_f32`].
+fn same_vec2(a: glam::Vec2, b: glam::Vec2) -> bool {
+    same_f32(a.x, b.x) && same_f32(a.y, b.y)
+}
+
+/// Whether two optional zoom windows are the same state, as
+/// [`same_f32`] compares each bound.
+fn same_zoom(a: &Option<ZoomWindow>, b: &Option<ZoomWindow>) -> bool {
+    fn same_bound(a: Option<f32>, b: Option<f32>) -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => same_f32(a, b),
+            _ => false,
+        }
+    }
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => same_bound(a.min, b.min) && same_bound(a.max, b.max),
+        _ => false,
+    }
 }

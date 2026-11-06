@@ -158,7 +158,6 @@ impl ThrottledInteraction for MovingNodeInteraction {
                 );
             }
             renderer.patch_drag_positions(&self.patches);
-            renderer.rebuild_node_backgrounds_from_tree(&tree.tree);
         }
 
         // Rebuild connections and borders with position offsets.

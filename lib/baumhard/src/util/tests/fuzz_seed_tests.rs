@@ -109,9 +109,24 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     let mut named = 0;
     let mut bounded_seeds: BTreeSet<String> = BTreeSet::new();
     let mut past_seeds: BTreeSet<String> = BTreeSet::new();
+    let (mut reordered, mut tampered, mut reordered_backgrounds) = (Vec::new(), Vec::new(), Vec::new());
+    let mut tamper_reads: BTreeMap<&str, format_fuzz::TamperRead> = BTreeMap::new();
     for (name, bytes) in &seeds {
+        let got = format_fuzz::check_generated(&mut Choices::new(bytes), MAX_GENERATED_ROWS)
+            .unwrap_or_else(|why| panic!("{name}: {why}"));
+        if got.reordered {
+            reordered.push(name.as_str());
+            if name.starts_with("background_") {
+                reordered_backgrounds.push(name.as_str());
+            }
+        }
+        if got.tampered {
+            tampered.push(name.as_str());
+        }
+        if let Some(read) = &got.tamper {
+            tamper_reads.insert(name.as_str(), read.clone());
+        }
         if let Some(outcome) = name.strip_prefix("outcome_") {
-            let got = format_fuzz::check_generated(&mut Choices::new(bytes), MAX_GENERATED_ROWS).unwrap();
             assert_eq!(got.outcome.replacen(": ", "_", 1), outcome, "{name}");
             named += 1;
             continue;
@@ -140,6 +155,28 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                         .any(|(key, value)| key == "frame" && value.matches("{}").count() >= 3000)
             }
             "random_tree_1024" => nodes.len() == 1024,
+            // A map with a background that loads (V1-B12): a literal,
+            // and a theme variable. `check_generated` draws the
+            // background, after its own steps, so it is read from there.
+            "background_literal" => {
+                matches!(got.background, Some(format_fuzz::Background::Literal(_)))
+                    && got.outcome == "none: loaded"
+            }
+            "background_var" => {
+                matches!(got.background, Some(format_fuzz::Background::Var(_)))
+                    && got.outcome == "none: loaded"
+            }
+            // A map that loads and whose two tamper edits both fire, at
+            // two different arms (`TamperRead::faults` lists only the
+            // edits that changed the document), so the step's edits are
+            // reached from a committed seed and not only in a fuzzing run.
+            "tamper_two_edits" => {
+                got.outcome == "none: loaded"
+                    && got
+                        .tamper
+                        .as_ref()
+                        .is_some_and(|read| read.faults.len() == 2 && read.faults[0] != read.faults[1])
+            }
             // A bounded field written past its bound, refused as `Bound`
             // at its path, so a dropped check fails on the seed itself.
             n if n.starts_with("bounded_") && n.ends_with("_past") => {
@@ -164,6 +201,38 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
     }
     assert_eq!(named, seeds.len());
     assert!(named >= 20, "precondition: the seeds are read ({named})");
+    // The steps after the map are a seed's to take too: the corpus keeps
+    // a seed that loads the map again in another key order, one that
+    // tampers with the loaded document, and a background whose place in
+    // the key order is shuffled — so a change to the choice sequence
+    // that drops one of them fails here, not only in a fuzzing run.
+    assert!(
+        !reordered.is_empty() && !tampered.is_empty() && !reordered_backgrounds.is_empty(),
+        "the corpus reorders {reordered:?}, tampers {tampered:?}, and reorders a background in {reordered_backgrounds:?}"
+    );
+    // A tampered seed makes edits that fire, not only draws the step: an
+    // edit whose fault has no arm for its target's kind changes nothing,
+    // and a corpus of those reaches none of the step's arms.
+    assert!(
+        tamper_reads.values().any(|read| !read.faults.is_empty()),
+        "a tampered seed makes at least one edit that fires: {tamper_reads:?}"
+    );
+    // **A seed makes the edits it made.** The named seeds' fired arms and
+    // bounds, as they were when each seed was written — the two
+    // `outcome_*` seeds before backgrounds existed — so a change to the
+    // order the tamper step draws its choices in, which reads other edits
+    // and another bound from the same bytes, fails here.
+    for (seed, faults, small) in [
+        ("outcome_none_loaded", vec![], 42),
+        ("outcome_structure_loaded", vec![], 40),
+        ("tamper_two_edits", vec![5, 1], 25),
+    ] {
+        assert_eq!(
+            tamper_reads.get(seed),
+            Some(&format_fuzz::TamperRead { faults, small }),
+            "{seed} reads the tamper edits and the bound it was written with"
+        );
+    }
     let fields: BTreeSet<String> = format_fuzz::BOUNDED_FIELDS
         .iter()
         .map(|field| field.name.replace('_', " "))
@@ -181,7 +250,7 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
 #[test]
 fn test_the_structured_glyph_mutation_seeds_hold_the_values_they_are_named_for() {
     let seeds = files(&repo_path("fuzz/seeds/glyph_mutation_structured"));
-    assert!(seeds.len() >= 10, "precondition: the seeds are read");
+    assert!(seeds.len() >= 9, "precondition: the seeds are read");
     for (name, bytes) in &seeds {
         let (_, _, assigned) = glyph_layer_fuzz::generate(&mut Choices::new(bytes));
         let scale = |pred: fn(f32) -> bool| {
@@ -202,9 +271,6 @@ fn test_the_structured_glyph_mutation_seeds_hold_the_values_they_are_named_for()
                 matches!(m, GfxMutation::RunOverrides(RunOverrideOp::Offset { value, .. }) if !value.is_finite() && !value.is_nan())
             }),
             "origin_nan" => assigned.iter().any(|(_, m)| matches!(m, GfxMutation::RunOrigin(v) if v.is_nan())),
-            "fill_rect_infinite" => assigned
-                .iter()
-                .any(|(_, m)| matches!(m, GfxMutation::FillRect(r) if !(r.origin + r.size).is_finite())),
             "range_to_usize_max" => assigned.iter().any(|(_, m)| {
                 matches!(m, GfxMutation::RunOverrides(RunOverrideOp::Scale { range, .. } | RunOverrideOp::Offset { range, .. })
                     if range.start == 0 && range.end == usize::MAX)

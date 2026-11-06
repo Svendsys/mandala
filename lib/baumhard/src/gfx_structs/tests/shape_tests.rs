@@ -7,21 +7,19 @@
 //! [`TEST_CONVENTIONS.md §T2.2`] so the criterion bench harness at
 //! `lib/baumhard/benches/test_bench.rs` can reuse each body as a
 //! micro-benchmark. The shape math sits on the BVH hot path
-//! (`bvh_find`), so the rect-pipeline SDF in the renderer and
-//! the lasso / editor hit-tests all pay for it every interaction
-//! frame — benching is §B8-mandatory, not optional.
+//! (`bvh_find`), so the click, lasso and editor hit-tests all pay
+//! for it every interaction frame — benching is §B8-mandatory, not
+//! optional.
 
 use glam::Vec2;
 use strum::IntoEnumIterator;
 
-use crate::gfx_structs::shape::{
-    NodeShape, ShapeReport, ShapeSpelling, KNOWN_SHAPES, SHAPE_ID_ELLIPSE, SHAPE_ID_RECTANGLE,
-};
+use crate::gfx_structs::shape::{NodeShape, ShapeReport, ShapeSpelling, KNOWN_SHAPES};
 
 /// Parse every documented shape spelling, plus the `"circle"`
 /// alias and the empty-string fallback. Pins the author-facing
 /// vocabulary: changing a spelling here would silently change
-/// which JSON maps still render as the intended shape.
+/// which JSON maps still resolve to the intended shape.
 #[test]
 pub fn test_shape_from_style_string_known_names() {
     do_shape_from_style_string_known_names();
@@ -39,9 +37,8 @@ pub fn do_shape_from_style_string_known_names() {
 }
 
 /// An empty or unknown string falls back to the default
-/// `Rectangle` variant. Mirrors how `tree_builder/node.rs` treats
-/// malformed background hex: survive a typo rather than crash the
-/// render. Which of these is *reported* is
+/// `Rectangle` variant: survive a typo rather than crash the scene
+/// build. Which of these is *reported* is
 /// `test_shape_classification_partitions_by_warning`'s subject —
 /// the resolved shape is the same either way.
 #[test]
@@ -91,8 +88,8 @@ pub fn do_shape_every_known_spelling_is_non_warning() {
 
 /// The classification of every canonical spelling, derived from the
 /// two sources of truth rather than restated: a spelling one of the
-/// `NodeShape` variants claims is `Rendered`, and every other
-/// `KNOWN_SHAPES` entry is `KnownNotYetRendered`. This is the pin
+/// `NodeShape` variants claims is `Modeled`, and every other
+/// `KNOWN_SHAPES` entry is `KnownNotYetModeled`. This is the pin
 /// that fails when a `KNOWN_SHAPES` entry is added that the
 /// classifier does not account for, and equally when a spelling
 /// silently changes sides.
@@ -105,8 +102,8 @@ pub fn do_shape_classification_partitions_by_warning() {
     for known in KNOWN_SHAPES {
         let claimed_by = NodeShape::iter().find(|shape| shape.style_spellings().contains(known));
         let expected = match claimed_by {
-            Some(shape) => ShapeSpelling::Rendered(shape),
-            None => ShapeSpelling::KnownNotYetRendered,
+            Some(shape) => ShapeSpelling::Modeled(shape),
+            None => ShapeSpelling::KnownNotYetModeled,
         };
         assert_eq!(
             ShapeSpelling::classify(known),
@@ -116,16 +113,16 @@ pub fn do_shape_classification_partitions_by_warning() {
         );
     }
     // Both halves must be non-empty, or the partition above is
-    // asserting nothing about one of them. Today: three rendered
-    // spellings, four awaiting a shader case.
-    let rendered = KNOWN_SHAPES
+    // asserting nothing about one of them. Today: three modeled
+    // spellings, four awaiting a variant.
+    let modeled = KNOWN_SHAPES
         .iter()
-        .filter(|known| matches!(ShapeSpelling::classify(known), ShapeSpelling::Rendered(_)))
+        .filter(|known| matches!(ShapeSpelling::classify(known), ShapeSpelling::Modeled(_)))
         .count();
-    assert!(rendered > 0, "no canonical spelling maps to a NodeShape variant");
+    assert!(modeled > 0, "no canonical spelling maps to a NodeShape variant");
     assert!(
-        rendered < KNOWN_SHAPES.len(),
-        "every canonical spelling is rendered — the KnownNotYetRendered \
+        modeled < KNOWN_SHAPES.len(),
+        "every canonical spelling is modeled — the KnownNotYetModeled \
          half of this test is now vacuous and needs rewriting"
     );
 }
@@ -133,7 +130,7 @@ pub fn do_shape_classification_partitions_by_warning() {
 /// A spelling no `NodeShape` variant claims may still be canonical,
 /// but a spelling that claims to be canonical while sitting outside
 /// `KNOWN_SHAPES` is a bug in the other direction: `maptool verify`
-/// would reject a map the runtime renders correctly. Exhaustive over
+/// would reject a map the runtime models correctly. Exhaustive over
 /// the variants via `EnumIter`, so a new variant is covered
 /// automatically.
 #[test]
@@ -155,7 +152,7 @@ pub fn do_shape_variant_spellings_are_all_known() {
             );
             assert_eq!(
                 ShapeSpelling::classify(spelling),
-                ShapeSpelling::Rendered(shape),
+                ShapeSpelling::Modeled(shape),
                 "{spelling:?} does not classify back to {shape:?}"
             );
         }
@@ -177,7 +174,7 @@ pub fn do_shape_variant_spellings_are_all_known() {
 /// variant's `style_spellings` contains the entry, and
 /// `do_shape_variant_spellings_are_all_known` asks the mirror
 /// question of `KNOWN_SHAPES`. Uppercase a variant-claimed spelling
-/// and it silently changes sides of the rendered / not-yet-rendered
+/// and it silently changes sides of the modeled / not-yet-modeled
 /// partition; both go red, and this test is what names the cause
 /// rather than leaving two derived failures neither of which says
 /// "the list is mixed case".
@@ -224,11 +221,11 @@ pub fn do_shape_unrecognized_spelling_still_warns() {
 
     assert!(ShapeSpelling::Unrecognized.is_author_error());
     assert!(!ShapeSpelling::Unspecified.is_author_error());
-    assert!(!ShapeSpelling::KnownNotYetRendered.is_author_error());
+    assert!(!ShapeSpelling::KnownNotYetModeled.is_author_error());
     for shape in NodeShape::iter() {
         assert!(
-            !ShapeSpelling::Rendered(shape).is_author_error(),
-            "{shape:?} renders as asked, so there is nothing to report"
+            !ShapeSpelling::Modeled(shape).is_author_error(),
+            "{shape:?} resolves as asked, so there is nothing to report"
         );
     }
 }
@@ -256,21 +253,21 @@ pub fn test_shape_reporting_predicates_partition() {
 pub fn do_shape_reporting_predicates_partition() {
     let mut cases = vec![
         ShapeSpelling::Unspecified,
-        ShapeSpelling::KnownNotYetRendered,
+        ShapeSpelling::KnownNotYetModeled,
         ShapeSpelling::Unrecognized,
     ];
-    cases.extend(NodeShape::iter().map(ShapeSpelling::Rendered));
+    cases.extend(NodeShape::iter().map(ShapeSpelling::Modeled));
     assert!(
         cases.len() > 3,
-        "no NodeShape variant produced a Rendered case — the loop below \
+        "no NodeShape variant produced a Modeled case — the loop below \
          would never exercise one"
     );
 
     for spelling in cases {
         let expected = match spelling {
             ShapeSpelling::Unrecognized => (true, false),
-            ShapeSpelling::KnownNotYetRendered => (false, true),
-            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) => (false, false),
+            ShapeSpelling::KnownNotYetModeled => (false, true),
+            ShapeSpelling::Unspecified | ShapeSpelling::Modeled(_) => (false, false),
         };
         assert_eq!(
             (spelling.is_author_error(), spelling.is_quiet_fallback()),
@@ -310,21 +307,21 @@ pub fn test_shape_report_routes_every_classification() {
 pub fn do_shape_report_routes_every_classification() {
     let mut cases = vec![
         ShapeSpelling::Unspecified,
-        ShapeSpelling::KnownNotYetRendered,
+        ShapeSpelling::KnownNotYetModeled,
         ShapeSpelling::Unrecognized,
     ];
-    cases.extend(NodeShape::iter().map(ShapeSpelling::Rendered));
+    cases.extend(NodeShape::iter().map(ShapeSpelling::Modeled));
     assert!(
         cases.len() > 3,
-        "no NodeShape variant produced a Rendered case — the loop below \
+        "no NodeShape variant produced a Modeled case — the loop below \
          would never exercise one"
     );
 
     for spelling in cases {
         let expected = match spelling {
             ShapeSpelling::Unrecognized => Some(ShapeReport::UnknownSpelling),
-            ShapeSpelling::KnownNotYetRendered => Some(ShapeReport::RectangleSubstituted),
-            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) => None,
+            ShapeSpelling::KnownNotYetModeled => Some(ShapeReport::RectangleSubstituted),
+            ShapeSpelling::Unspecified | ShapeSpelling::Modeled(_) => None,
         };
         assert_eq!(
             spelling.report(),
@@ -397,14 +394,14 @@ pub fn do_shape_report_levels_are_warn_and_trace() {
     );
     assert!(
         ShapeReport::RectangleSubstituted.level() > log::Level::Warn,
-        "a canonical spelling awaiting its shader case is the format working \
+        "a canonical spelling awaiting its variant is the format working \
          as designed; reporting it above the release cap is issue #118"
     );
 }
 
 /// The three spellings named in the issue, asserted one at a time
 /// because each pins a different property: `"HEXAGON"` that the
-/// canonical-but-unrendered path is case-insensitive (uppercase is
+/// canonical-but-unmodeled path is case-insensitive (uppercase is
 /// how the warning was first noticed to be spelling-sensitive),
 /// `"Circle"` that the alias survives mixed case, `""` that unset
 /// is still silent.
@@ -416,31 +413,31 @@ pub fn test_shape_classify_case_and_alias() {
 pub fn do_shape_classify_case_and_alias() {
     assert_eq!(
         ShapeSpelling::classify("HEXAGON"),
-        ShapeSpelling::KnownNotYetRendered
+        ShapeSpelling::KnownNotYetModeled
     );
     assert_eq!(
         ShapeSpelling::classify("hexagon"),
-        ShapeSpelling::KnownNotYetRendered
+        ShapeSpelling::KnownNotYetModeled
     );
     assert_eq!(NodeShape::from_style_string("HEXAGON"), NodeShape::Rectangle);
 
     assert_eq!(
         ShapeSpelling::classify("Circle"),
-        ShapeSpelling::Rendered(NodeShape::Ellipse)
+        ShapeSpelling::Modeled(NodeShape::Ellipse)
     );
     assert_eq!(
         ShapeSpelling::classify("CIRCLE"),
-        ShapeSpelling::Rendered(NodeShape::Ellipse)
+        ShapeSpelling::Modeled(NodeShape::Ellipse)
     );
     assert_eq!(NodeShape::from_style_string("Circle"), NodeShape::Ellipse);
 
     assert_eq!(
         ShapeSpelling::classify("RECTANGLE"),
-        ShapeSpelling::Rendered(NodeShape::Rectangle)
+        ShapeSpelling::Modeled(NodeShape::Rectangle)
     );
     assert_eq!(
         ShapeSpelling::classify("Ellipse"),
-        ShapeSpelling::Rendered(NodeShape::Ellipse)
+        ShapeSpelling::Modeled(NodeShape::Ellipse)
     );
 
     assert_eq!(ShapeSpelling::classify(""), ShapeSpelling::Unspecified);
@@ -464,7 +461,7 @@ pub fn do_shape_classify_case_and_alias() {
 /// rather than restated here: the fence against `KNOWN_SHAPES` in
 /// order, the live sentence against the canonical spelling of each
 /// `NodeShape` variant, the remaining parenthesis against the entries
-/// that classify `KnownNotYetRendered`. The three are then required
+/// that classify `KnownNotYetModeled`. The three are then required
 /// to cover `KNOWN_SHAPES` between them, so an entry cannot be
 /// dropped from the section as a whole either.
 ///
@@ -502,7 +499,7 @@ pub fn do_shape_format_doc_publishes_exactly_known_shapes() {
     assert_eq!(
         live, expected_live,
         "format/enums.md's live-shapes sentence and the NodeShape \
-         variant set disagree about what the renderer can draw"
+         variant set disagree about which shapes the app models"
     );
 
     // 3. The "remaining values" parenthesis: exactly the canonical
@@ -511,7 +508,7 @@ pub fn do_shape_format_doc_publishes_exactly_known_shapes() {
     let expected_remaining: Vec<&str> = KNOWN_SHAPES
         .iter()
         .copied()
-        .filter(|known| ShapeSpelling::classify(known) == ShapeSpelling::KnownNotYetRendered)
+        .filter(|known| ShapeSpelling::classify(known) == ShapeSpelling::KnownNotYetModeled)
         .collect();
     assert_eq!(
         remaining, expected_remaining,
@@ -892,28 +889,6 @@ pub fn do_shape_ellipse_intersects_aabb_fully_outside() {
     let min = Vec2::new(200.0, 200.0);
     let max = Vec2::new(300.0, 300.0);
     assert!(!NodeShape::Ellipse.intersects_local_aabb(min, max, b));
-}
-
-/// The `shader_id` values are wire-format: the fragment shader
-/// matches on the same integers via `SHAPE_RECT` / `SHAPE_ELLIPSE`
-/// WGSL constants. Pinning them here catches the silent-breakage
-/// case where a future reorder of the enum variants reassigns the
-/// ids and every ellipse in every map quietly renders as a
-/// rectangle.
-#[test]
-pub fn test_shape_shader_ids_are_stable() {
-    do_shape_shader_ids_are_stable();
-}
-
-pub fn do_shape_shader_ids_are_stable() {
-    assert_eq!(NodeShape::Rectangle.shader_id(), SHAPE_ID_RECTANGLE);
-    assert_eq!(NodeShape::Ellipse.shader_id(), SHAPE_ID_ELLIPSE);
-    // The absolute values are also part of the wire format — the
-    // WGSL fragment shader hard-codes `0u` / `1u` in its `switch`
-    // arms. Keeping the numeric assertion here means a rename
-    // alone can't drift them.
-    assert_eq!(NodeShape::Rectangle.shader_id(), 0);
-    assert_eq!(NodeShape::Ellipse.shader_id(), 1);
 }
 
 /// **The reporting half of `from_style_string`, pinned by parsing

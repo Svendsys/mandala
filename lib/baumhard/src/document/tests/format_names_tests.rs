@@ -31,7 +31,7 @@ fn map_naming(slot: usize, name: &str) -> String {
         pick(5, "v"),
     );
     format!(
-        r##"{{"format":1,"name":"t","theme":{{"active":"{variant}","variants":{{"{variant}":{{"{variable}":"#000000"}}}}}},"palettes":{{"{palette}":[{{"fill":"#000000","frame":"#000000","text":"#000000"}}]}},"edits":[{{"id":"{edit}","name":"E"}}],"presentations":[{{"id":"{presentation}","name":"S"}}],"verbs":[{{"id":"{verb}","name":"V"}}]}}"##
+        r##"{{"format":1,"name":"t","theme":{{"active":"{variant}","variants":{{"{variant}":{{"{variable}":"#000000"}}}}}},"palettes":{{"{palette}":[{{"frame":"#000000","text":"#000000"}}]}},"edits":[{{"id":"{edit}","name":"E"}}],"presentations":[{{"id":"{presentation}","name":"S"}}],"verbs":[{{"id":"{verb}","name":"V"}}]}}"##
     )
 }
 
@@ -90,18 +90,16 @@ fn test_a_name_that_is_not_an_identifier_is_quoted_in_a_path() {
     // "My Palette" is a name, and an error inside it says so in quotes.
     let palette = |name: &str, fill: &str| {
         map_with(
-            &format!(
-                r##","palettes":{{"{name}":[{{"fill":"{fill}","frame":"#000000","text":"#000000"}}]}}"##
-            ),
+            &format!(r##","palettes":{{"{name}":[{{"frame":"{fill}","text":"#000000"}}]}}"##),
             "",
         )
     };
     assert!(load(&palette("My Palette", "#000000")).is_ok());
     let error = rejection(&palette("My Palette", "var(nope)"));
-    assert_eq!(error.path, r#"palettes["My Palette"][0].fill"#);
+    assert_eq!(error.path, r#"palettes["My Palette"][0].frame"#);
     // Control: a plain name is written bare.
     let error = rejection(&palette("plain", "var(nope)"));
-    assert_eq!(error.path, "palettes.plain[0].fill");
+    assert_eq!(error.path, "palettes.plain[0].frame");
 }
 
 #[test]

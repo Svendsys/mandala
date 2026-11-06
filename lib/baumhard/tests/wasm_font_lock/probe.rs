@@ -5,8 +5,8 @@
 //! font-lock helpers — or, in `flow_shape_and_place`, TextFlow's
 //! shaping and placement under the guard, and in
 //! `deep_mutator_validates`, the document validator's deep walk, and in
-//! `deep_glyph_chain_hits`, the glyph tree's hit test over runs and
-//! fills 100,000 levels down — so a node runner can execute them in a
+//! `deep_glyph_chain_hits`, the glyph tree's hit test over an area and
+//! a run 100,000 levels down — so a node runner can execute them in a
 //! real WebAssembly engine.
 //!
 //! This file is not part of any cargo target in the repository. The
@@ -427,15 +427,15 @@ pub extern "C" fn memory_palettes() -> u32 {
     measure_memory("palettes")
 }
 
-/// Hit-test a glyph tree 100,000 levels deep that ends in a fill and a
-/// run (design §20 rule 11): the box passes that read a run's and a
-/// fill's bounds iterate, so they fit wasm32's default stack in a debug
-/// build. Runs the native test's body,
-/// `do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain`, which panics
+/// Hit-test a glyph tree 100,000 levels deep that ends in an area and a
+/// run (design §20 rule 11): the box passes that read a run's bounds
+/// iterate, so they fit wasm32's default stack in a debug build. Runs
+/// the native test's body, `do_hit_test_reaches_a_run_in_a_deep_chain`,
+/// which panics
 /// on any failure.
 #[no_mangle]
 pub extern "C" fn deep_glyph_chain_hits() -> u32 {
     install_hook();
-    baumhard::gfx_structs::tests::glyph_layer_tests::do_hit_test_reaches_a_run_and_a_fill_in_a_deep_chain();
+    baumhard::gfx_structs::tests::glyph_layer_tests::do_hit_test_reaches_a_run_in_a_deep_chain();
     1
 }

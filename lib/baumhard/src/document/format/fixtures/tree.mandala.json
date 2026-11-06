@@ -16,16 +16,15 @@
       }
     }
   },
+  "background": "var(bg)",
   "palettes": {
     "rainbow": [
       {
-        "fill": "#2a1b3d",
         "frame": "#a239ca",
         "text": "#e0e0e0",
         "title": "#ffffff"
       },
       {
-        "fill": "var(bg)",
         "frame": "var(accent)",
         "text": "var(fg)"
       }

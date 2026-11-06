@@ -748,7 +748,7 @@ decoders and every regression test compile and run on stable, in every
 | `load_structured` | the loader, maps built from choices | `document::tests::format_fuzz::check_structured` |
 | `flow_raw` | TextFlow (B5), any bytes as text | `flow::tests::flow_fuzz::check_flow_bytes` |
 | `flow_structured` | TextFlow, spans and geometry from choices | `flow::tests::flow_fuzz::check_flow_structured` |
-| `glyph_mutation_raw` | authored run and fill mutations (B6), any bytes as JSON | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_json` |
+| `glyph_mutation_raw` | authored run mutations (B6; there is no fill since B12), any bytes as JSON | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_json` |
 | `glyph_mutation_structured` | the same, built from choices | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_structured` |
 
 What they hold, in short (each module's docs are the full list):
@@ -772,7 +772,11 @@ What they hold, in short (each module's docs are the full list):
   label, line links and portal ends, and of each style of the header's
   `defaults` (`BOUNDED_FIELDS`), at its bound, just past it, just inside
   it and at any `f32`, refused at its path exactly when the value read
-  is outside the bound. Only the header's counts (palettes, theme
+  is outside the bound, and the map's `background` (B12): none, a
+  literal, a theme variable — loaded — or, on a map with no other
+  fault, a translucent literal, a variable the map lacks or a spelling
+  no background has, refused at `background`. A map that loads holds
+  an opaque background. Only the header's counts (palettes, theme
   variables and variants, verbs, edits, presentations) are left to
   `load_raw`. The second key order, and the
   tampered-document check, run on the inputs a choice selects (one in
@@ -800,7 +804,7 @@ What they hold, in short (each module's docs are the full list):
   replays exactly. The raw target mutates the tree a fixed choice
   sequence (`JSON_TREE`) builds, which a test holds to having what these
   properties can fail on: multi-glyph box and path runs, filler, boxes
-  and fills of positive size, and overrides already materialized.
+  of positive size, and overrides already materialized.
 
 **Where their tests live.** A property module is `pub`, in its
 surface's tests tree (`format_fuzz`, `flow_fuzz`, `glyph_layer_fuzz`,

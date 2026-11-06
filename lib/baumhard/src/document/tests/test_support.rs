@@ -95,6 +95,7 @@ impl DocumentBuilder {
     pub fn new() -> Self {
         let mut tree = Tree::new_non_indexed_with(DocElement::Map(MapData {
             name: "test".to_string(),
+            ..MapData::default()
         }));
         let root = tree.root();
         let theme = tree
@@ -434,12 +435,11 @@ pub fn example() -> (DocumentBuilder, Example) {
 }
 
 /// The palette group of depth `n` in [`example`]'s palette: every
-/// color distinct, and each one naming its group and field — fill
-/// `(n, 0, 0)`, frame `(0, n, 0)`, text `(0, 0, n)`, title `(n, n, 0)`.
+/// color distinct, and each one naming its group and field — frame
+/// `(0, n, 0)`, text `(0, 0, n)`, title `(n, n, 0)`.
 pub fn palette_group(n: u8) -> crate::document::element::PaletteGroup {
     use crate::document::values::{PlainColor, Rgba};
     crate::document::element::PaletteGroup {
-        fill: PlainColor::Rgba(Rgba::opaque(n, 0, 0)),
         frame: PlainColor::Rgba(Rgba::opaque(0, n, 0)),
         text: PlainColor::Rgba(Rgba::opaque(0, 0, n)),
         title: Some(PlainColor::Rgba(Rgba::opaque(n, n, 0))),

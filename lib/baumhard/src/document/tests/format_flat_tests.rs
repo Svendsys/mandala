@@ -240,12 +240,12 @@ fn test_an_error_names_its_node_by_id_and_excerpt() {
             node_of(3, r#","sections":[{"spans":[{"text":"plain"}]}]"#),
             node_of(
                 7,
-                &format!(r#","fill":"var(nope)","sections":[{{"spans":[{{"text":"{text}"}}]}}]"#)
+                &format!(r#","color":"var(nope)","sections":[{{"spans":[{{"text":"{text}"}}]}}]"#)
             ),
         ),
     );
     let error = rejection(&json);
-    assert_eq!(error.path, "nodes[1].fill");
+    assert_eq!(error.path, "nodes[1].color");
     let context = error.node.clone().expect("an error in a node names it");
     assert_eq!((context.index, context.id), (1, Some(7)));
     assert_eq!(
@@ -258,7 +258,7 @@ fn test_an_error_names_its_node_by_id_and_excerpt() {
         "",
         &node_of(
             4,
-            r#","fill":"var(nope)","sections":[{"spans":[{"text":"first"}]},{"channel":1,"spans":[{"text":"second"}]}]"#,
+            r#","color":"var(nope)","sections":[{"spans":[{"text":"first"}]},{"channel":1,"spans":[{"text":"second"}]}]"#,
         ),
     );
     assert_eq!(
@@ -270,7 +270,7 @@ fn test_an_error_names_its_node_by_id_and_excerpt() {
         "",
         &node_of(
             4,
-            r#","fill":"var(nope)","frame":{"rings":[{"spans":[{"text":"around"}]}]}"#,
+            r#","color":"var(nope)","frame":{"rings":[{"spans":[{"text":"around"}]}]}"#,
         ),
     );
     assert_eq!(
@@ -278,7 +278,7 @@ fn test_an_error_names_its_node_by_id_and_excerpt() {
         Some("around")
     );
     // Control: a node with no text has no excerpt.
-    let json = map_with("", &node_of(4, r#","fill":"var(nope)""#));
+    let json = map_with("", &node_of(4, r#","color":"var(nope)""#));
     assert_eq!(rejection(&json).node.map(|node| node.excerpt), Some(None));
 }
 
@@ -313,8 +313,8 @@ fn test_a_node_that_does_not_read_is_still_named_by_its_id() {
 #[test]
 fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     let tree = fixture("tree");
-    // The nodes start on line 47; node 3's block opens on line 70, its
-    // `id` on 71 and its `parent` on 72.
+    // The nodes start on line 46; node 3's block opens on line 69, its
+    // `id` on 70 and its `parent` on 71.
     let lines: Vec<&str> = tree.lines().collect();
     let line_of = |id: u32| {
         1 + lines
@@ -322,7 +322,7 @@ fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
             .position(|pair| pair[0] == "    {" && pair[1].starts_with(&format!("      \"id\": {id},")))
             .unwrap()
     };
-    assert_eq!((line_of(1), line_of(3)), (47, 70));
+    assert_eq!((line_of(1), line_of(3)), (46, 69));
     // A reader's error, an unknown key on a line of its own in node 3's
     // block: its line, and the column of the key.
     let bad = tree.replace(
@@ -332,19 +332,19 @@ fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     let error = rejection(&bad);
     assert_eq!(error.path, "nodes[3].bogus");
     let position = error.position.expect("a reader's error has a place");
-    assert_eq!(position.line, 73);
-    let key_at = bad.lines().nth(72).unwrap().find("\"bogus\"").unwrap() as u32 + 1;
+    assert_eq!(position.line, 72);
+    let key_at = bad.lines().nth(71).unwrap().find("\"bogus\"").unwrap() as u32 + 1;
     // The reader stops at the key's closing quote, the seventh byte of
     // `"bogus"`: the column in the whole line, not in the node's extent,
     // which starts four bytes into the block's first line.
     assert_eq!(position.column, key_at + 6, "the column of the key's end");
     assert!(
-        error.to_string().ends_with(r#"(node 3 "the earth", line 73)"#),
+        error.to_string().ends_with(r#"(node 3 "the earth", line 72)"#),
         "{error}"
     );
-    // Control: the same error in the first node reports its line, 49.
+    // Control: the same error in the first node reports its line, 48.
     let bad = tree.replace("      \"id\": 1,\n", "      \"id\": 1,\n      \"bogus\": 0,\n");
-    assert_eq!(rejection(&bad).position.map(|p| p.line), Some(49));
+    assert_eq!(rejection(&bad).position.map(|p| p.line), Some(48));
     // An error found after the node was read: the line where its block
     // opens, at the `{`.
     let bad = tree.replace(
@@ -353,26 +353,26 @@ fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     );
     let error = rejection(&bad);
     assert_eq!(error.path, "nodes[3].sections[0].spans[0].color");
-    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((70, 5)));
+    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((69, 5)));
     // In a top-level value: the start of the value.
-    let bad = tree.replace(r##""fill": "#2a1b3d""##, r#""fill": "var(nope)""#);
+    let bad = tree.replace(r##""frame": "#a239ca""##, r#""frame": "var(nope)""#);
     let error = rejection(&bad);
-    assert_eq!(error.path, "palettes.rainbow[0].fill");
-    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((19, 15)));
+    assert_eq!(error.path, "palettes.rainbow[0].frame");
+    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((20, 15)));
 }
 
 // ---- which error is first -------------------------------------------
 
 #[test]
 fn test_which_of_several_errors_is_reported_is_fixed() {
-    let bad_var = r#","fill":"var(nope)""#;
+    let bad_var = r#","color":"var(nope)""#;
     // Syntax anywhere beats meaning anywhere: a broken end, a bad first
     // node.
     let json = list(&[(1, bad_var)]);
     let truncated = &json[..json.len() - 1];
     assert!(matches!(rejection(truncated).kind, LoadErrorKind::Syntax { .. }));
     // Control: whole, the node's error is the one.
-    assert_eq!(rejection(&json).path, "nodes[0].fill");
+    assert_eq!(rejection(&json).path, "nodes[0].color");
 
     // A newer format is reported before the keys it may define.
     let newer = r#"{"format":2,"name":"t","buttons":[]}"#;
@@ -397,17 +397,17 @@ fn test_which_of_several_errors_is_reported_is_fixed() {
 
     // A top-level value beats a node, wherever it sits in the text.
     let json = format!(
-        r#"{{"nodes":[{}],"format":1,"name":"t","palettes":{{"p":[{{"fill":"var(x)","frame":"var(x)","text":"var(x)"}}]}}}}"#,
+        r#"{{"nodes":[{}],"format":1,"name":"t","palettes":{{"p":[{{"frame":"var(x)","text":"var(x)"}}]}}}}"#,
         node_of(1, bad_var)
     );
-    assert_eq!(rejection(&json).path, "palettes.p[0].fill");
+    assert_eq!(rejection(&json).path, "palettes.p[0].frame");
 
     // Within a node, its structure beats its content.
     let json = list(&[(1, ""), (2, &format!(r#","parent":9{bad_var}"#))]);
     assert_eq!(rejection(&json).path, "nodes[1].parent");
     // Control: with the parent fixed, the content's error is next.
     let json = list(&[(1, ""), (2, &format!(r#","parent":1{bad_var}"#))]);
-    assert_eq!(rejection(&json).path, "nodes[1].fill");
+    assert_eq!(rejection(&json).path, "nodes[1].color");
     // But an error the JSON reader finds anywhere in a node — a wrong
     // type, an unknown key — beats its structure: the node is read whole
     // before its `parent` is looked at.
@@ -432,7 +432,7 @@ fn test_which_of_several_errors_is_reported_is_fixed() {
     // Links come last: a dangling link in the first node waits for the
     // second node's error.
     let json = list(&[(1, r#","links":[{"to":9,"kind":"line"}]"#), (2, bad_var)]);
-    assert_eq!(rejection(&json).path, "nodes[1].fill");
+    assert_eq!(rejection(&json).path, "nodes[1].color");
     // Control: with the second node fixed, the link's error is next,
     // named by its node and placed at its line.
     let error = rejection(&list(&[(1, r#","links":[{"to":9,"kind":"line"}]"#), (2, "")]));

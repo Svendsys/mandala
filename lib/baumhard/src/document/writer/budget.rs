@@ -56,7 +56,7 @@ impl Budget {
 /// O(the element's strings); reads lengths only.
 pub fn text_bytes(element: &DocElement) -> u64 {
     match element {
-        DocElement::Map(MapData { name }) => len(name),
+        DocElement::Map(MapData { name, .. }) => len(name),
         DocElement::Theme(ThemeData {
             variables,
             variants,

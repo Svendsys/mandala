@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `GfxElement` — the value type every `GfxTree` node
-//! holds. Five variants cover the four renderable glyph types
+//! holds. Four variants cover the three renderable glyph types
 //! (`GlyphArea` for text regions, `GlyphModel` for composed glyph
-//! shapes, `GlyphRun` for a whole shaped and placed TextFlow, `Fill`
-//! for a node background) plus a lightweight `Void` placeholder used
+//! shapes, `GlyphRun` for a whole shaped and placed TextFlow) plus a
+//! lightweight `Void` placeholder used
 //! to pad tree structure without rendering cost. This module also owns the
 //! field-selector enum (`GfxElementField`) used by the mutator
 //! pipeline to address a single facet of an element, the
@@ -12,12 +12,9 @@
 //! caching that accelerates the hit-test BVH descent.
 
 use crate::core::primitives::{ColorFontRegionField, Flag, Flaggable, Range};
-use crate::document::values::Rgba;
 use crate::engine::element::TreeElement;
 use crate::engine::interpolate::{Interpolable, Interpolate, Snap};
-use crate::flow::Rect;
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
-use crate::gfx_structs::fill::FillData;
 use crate::gfx_structs::model::{GlyphModel, GlyphModelField};
 use crate::gfx_structs::mutator::GlyphTreeEventInstance;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData};
@@ -56,26 +53,25 @@ pub enum GfxElementField {
     Id(usize),
     /// Toggle or set a [`Flag`] on the element.
     Flag(Flag),
-    /// The element's variant, so a predicate can select runs or fills
-    /// (or areas, models, voids) from among their siblings. `Equals`
+    /// The element's variant, so a predicate can select runs (or
+    /// areas, models, voids) from among their siblings. `Equals`
     /// compares the variant; `Exists` is always present, like a
     /// channel; an ordering comparator on a tag has no meaning and is a
     /// non-match.
     ElementType(GfxElementType),
-    /// The opacity of a [`GlyphRun`](GfxElement::GlyphRun) or
-    /// [`Fill`](GfxElement::Fill), compared with the comparator's
-    /// ordering; any other element does not match.
+    /// The opacity of a [`GlyphRun`](GfxElement::GlyphRun), compared
+    /// with the comparator's ordering; any other element does not
+    /// match.
     Opacity(OrderedFloat<f32>),
 }
 
 /// A node element in the Baumhard glyph tree.
 ///
 /// Every node in a [`GfxTree`](crate::gfx_structs::tree::GfxTree)
-/// stores one `GfxElement`. The five variants cover the four renderable
+/// stores one `GfxElement`. The four variants cover the three renderable
 /// glyph types ([`GlyphArea`] for text regions, [`GlyphModel`] for
 /// composed glyph shapes, [`GlyphRun`](GfxElement::GlyphRun) for a
-/// whole shaped TextFlow, [`Fill`](GfxElement::Fill) for a node
-/// background) and a lightweight [`Void`](GfxElement::Void)
+/// whole shaped TextFlow) and a lightweight [`Void`](GfxElement::Void)
 /// placeholder used to pad tree structure without rendering cost.
 ///
 /// All variants carry a `channel` (branch routing), a `unique_id`
@@ -132,17 +128,6 @@ pub enum GfxElement {
     /// split into per-glyph elements. Nothing renders it until V1-C2.
     GlyphRun {
         run: Box<GlyphRunData>,
-        flags: FxHashSet<Flag>,
-        channel: usize,
-        unique_id: usize,
-        event_subscribers: Vec<EventSubscriber>,
-    },
-    /// A node background: a color shaped like the node's outline with a
-    /// soft edge fade (design §13.4).
-    ///
-    /// Wraps a heap-allocated [`FillData`]. Hit-tested by its rectangle.
-    Fill {
-        fill: Box<FillData>,
         flags: FxHashSet<Flag>,
         channel: usize,
         unique_id: usize,
@@ -283,24 +268,6 @@ impl GfxElement {
         }
     }
 
-    /// Create a [`Fill`](GfxElement::Fill) element.
-    ///
-    /// * `fill` — the fill payload.
-    /// * `channel` — branch-routing index.
-    /// * `unique_id` — application-assigned identity.
-    ///
-    /// Cost: one heap allocation (`Box<FillData>`). Flags and
-    /// subscribers start empty.
-    pub fn new_fill(fill: FillData, channel: usize, unique_id: usize) -> GfxElement {
-        GfxElement::Fill {
-            fill: Box::new(fill),
-            flags: Default::default(),
-            channel,
-            unique_id,
-            event_subscribers: vec![],
-        }
-    }
-
     /// Return a mutable reference to this element's event-subscriber list.
     ///
     /// Works across all variants. O(1) — single match, no allocation.
@@ -313,9 +280,6 @@ impl GfxElement {
                 event_subscribers, ..
             } => event_subscribers,
             GfxElement::GlyphRun {
-                event_subscribers, ..
-            } => event_subscribers,
-            GfxElement::Fill {
                 event_subscribers, ..
             } => event_subscribers,
             GfxElement::Void {
@@ -338,9 +302,6 @@ impl GfxElement {
             GfxElement::GlyphRun {
                 event_subscribers, ..
             } => event_subscribers,
-            GfxElement::Fill {
-                event_subscribers, ..
-            } => event_subscribers,
             GfxElement::Void {
                 event_subscribers, ..
             } => event_subscribers,
@@ -357,7 +318,6 @@ impl GfxElement {
             GfxElement::GlyphArea { unique_id, .. } => *unique_id = id,
             GfxElement::GlyphModel { unique_id, .. } => *unique_id = id,
             GfxElement::GlyphRun { unique_id, .. } => *unique_id = id,
-            GfxElement::Fill { unique_id, .. } => *unique_id = id,
             GfxElement::Void { unique_id, .. } => *unique_id = id,
         }
     }
@@ -371,10 +331,7 @@ impl GfxElement {
             GfxElement::GlyphArea {
                 glyph_area: section, ..
             } => Some(section.as_mut()),
-            GfxElement::Void { .. }
-            | GfxElement::GlyphModel { .. }
-            | GfxElement::GlyphRun { .. }
-            | GfxElement::Fill { .. } => None,
+            GfxElement::Void { .. } | GfxElement::GlyphModel { .. } | GfxElement::GlyphRun { .. } => None,
         }
     }
 
@@ -387,10 +344,7 @@ impl GfxElement {
             GfxElement::GlyphArea {
                 glyph_area: section, ..
             } => Some(section),
-            GfxElement::Void { .. }
-            | GfxElement::GlyphModel { .. }
-            | GfxElement::GlyphRun { .. }
-            | GfxElement::Fill { .. } => None,
+            GfxElement::Void { .. } | GfxElement::GlyphModel { .. } | GfxElement::GlyphRun { .. } => None,
         }
     }
 
@@ -427,17 +381,6 @@ impl GfxElement {
         }
     }
 
-    /// Return a shared reference to the inner [`FillData`], or `None`
-    /// if this element is not a `Fill` variant.
-    ///
-    /// O(1) match, no allocation.
-    pub fn fill(&self) -> Option<&FillData> {
-        match self {
-            GfxElement::Fill { fill, .. } => Some(fill),
-            _ => None,
-        }
-    }
-
     /// Return the application-assigned identity for this element.
     ///
     /// Works across all variants. O(1), no allocation.
@@ -447,7 +390,6 @@ impl GfxElement {
             GfxElement::Void { unique_id, .. } => *unique_id,
             GfxElement::GlyphModel { unique_id, .. } => *unique_id,
             GfxElement::GlyphRun { unique_id, .. } => *unique_id,
-            GfxElement::Fill { unique_id, .. } => *unique_id,
         }
     }
 
@@ -455,8 +397,7 @@ impl GfxElement {
     ///
     /// * `GlyphArea` / `GlyphModel` — returns the stored position as a
     ///   `Vec2`.
-    /// * `GlyphRun` — the top-left of its bounds. `Fill` — the top-left
-    ///   of its rectangle.
+    /// * `GlyphRun` — the top-left of its bounds.
     /// * `Void` — returns `Vec2::NAN` (void nodes have no spatial
     ///   meaning).
     ///
@@ -469,7 +410,6 @@ impl GfxElement {
             GfxElement::Void { .. } => Vec2::NAN,
             GfxElement::GlyphModel { glyph_model, .. } => glyph_model.position.to_vec2(),
             GfxElement::GlyphRun { run, .. } => run.bounds().0,
-            GfxElement::Fill { fill, .. } => fill.rect.origin,
         }
     }
 
@@ -487,10 +427,7 @@ impl GfxElement {
             GfxElement::GlyphArea { glyph_area, .. } => {
                 glyph_area.regions.get(range).and_then(|region| region.color)
             }
-            GfxElement::GlyphModel { .. }
-            | GfxElement::GlyphRun { .. }
-            | GfxElement::Fill { .. }
-            | GfxElement::Void { .. } => None,
+            GfxElement::GlyphModel { .. } | GfxElement::GlyphRun { .. } | GfxElement::Void { .. } => None,
         }
     }
 
@@ -498,8 +435,7 @@ impl GfxElement {
     ///
     /// * `GlyphArea` / `GlyphModel` — overwrites the stored position.
     /// * `GlyphRun` — moves the run so its bounds' top-left is at
-    ///   `position` (the origin shifts by the difference). `Fill` —
-    ///   moves the rectangle's top-left to `position`.
+    ///   `position` (the origin shifts by the difference).
     /// * `Void` — no-op (void nodes have no spatial meaning).
     ///
     /// O(1), no allocation.
@@ -521,9 +457,6 @@ impl GfxElement {
             GfxElement::GlyphRun { ref mut run, .. } => {
                 let shift = position - run.bounds().0;
                 run.set_origin(run.origin() + shift);
-            }
-            GfxElement::Fill { ref mut fill, .. } => {
-                fill.rect.origin = position;
             }
         }
     }
@@ -547,7 +480,6 @@ impl Flaggable for GfxElement {
             GfxElement::GlyphArea { flags, .. } => flags.contains(&flag),
             GfxElement::GlyphModel { flags, .. } => flags.contains(&flag),
             GfxElement::GlyphRun { flags, .. } => flags.contains(&flag),
-            GfxElement::Fill { flags, .. } => flags.contains(&flag),
             GfxElement::Void { .. } => false,
         }
     }
@@ -563,9 +495,6 @@ impl Flaggable for GfxElement {
             GfxElement::GlyphRun { flags, .. } => {
                 flags.insert(flag);
             }
-            GfxElement::Fill { flags, .. } => {
-                flags.insert(flag);
-            }
             GfxElement::Void { .. } => {}
         }
     }
@@ -579,9 +508,6 @@ impl Flaggable for GfxElement {
                 flags.remove(&flag);
             }
             GfxElement::GlyphRun { flags, .. } => {
-                flags.remove(&flag);
-            }
-            GfxElement::Fill { flags, .. } => {
                 flags.remove(&flag);
             }
             GfxElement::Void { .. } => {}
@@ -623,11 +549,6 @@ impl Debug for GfxElement {
                     run.shaped().glyph_count()
                 )
             }
-            GfxElement::Fill {
-                channel, unique_id, ..
-            } => {
-                write!(f, "Fill(id={}, ch={})", unique_id, channel)
-            }
             GfxElement::Void {
                 channel, unique_id, ..
             } => {
@@ -651,7 +572,6 @@ impl PartialEq for GfxElement {
                 GfxElement::GlyphModel { glyph_model: b, .. },
             ) => a == b,
             (GfxElement::GlyphRun { run: a, .. }, GfxElement::GlyphRun { run: b, .. }) => a == b,
-            (GfxElement::Fill { fill: a, .. }, GfxElement::Fill { fill: b, .. }) => a == b,
             (GfxElement::Void { .. }, GfxElement::Void { .. }) => true,
             _ => false,
         }
@@ -688,8 +608,8 @@ impl TreeEventConsumer for GfxElement {
 /// channel-only; no inherited state; the AABB memo and region index
 /// are the tree's [`GlyphTreeCache`]. Spatial: a `GlyphArea` with a
 /// positive render size answers [`TreeElement::spatial_bounds`]
-/// with its position and render bounds, a `GlyphRun` with its bounds
-/// and a `Fill` with its rectangle; a model or a `Void` has no
+/// with its position and render bounds and a `GlyphRun` with its
+/// bounds; a model or a `Void` has no
 /// box of its own. A glyph element is never split or merged
 /// (`SplitPoint = ()`, the default `split` and `merge`), so a glyph
 /// tree refuses those two structural commands.
@@ -708,7 +628,6 @@ impl TreeElement for GfxElement {
             GfxElement::Void { channel, .. } => *channel,
             GfxElement::GlyphModel { channel, .. } => *channel,
             GfxElement::GlyphRun { channel, .. } => *channel,
-            GfxElement::Fill { channel, .. } => *channel,
         }
     }
 
@@ -719,7 +638,7 @@ impl TreeElement for GfxElement {
     /// The same variant with the same payload state
     /// ([`GlyphArea::same_state`], [`GlyphModel::same_state`],
     /// [`GlyphRunData::same_state`] — which compares the shaping by
-    /// `Arc` identity — and [`FillData::same_state`]), the
+    /// `Arc` identity), the
     /// same flags, channel and unique id. The event subscribers are
     /// callbacks, not state, and are not compared; the subtree AABBs
     /// are derived, and live in the tree's [`GlyphTreeCache`], not on
@@ -790,27 +709,6 @@ impl TreeElement for GfxElement {
                     && unique_id == other_id
             }
             (
-                GfxElement::Fill {
-                    fill,
-                    flags,
-                    channel,
-                    unique_id,
-                    event_subscribers: _,
-                },
-                GfxElement::Fill {
-                    fill: other_fill,
-                    flags: other_flags,
-                    channel: other_channel,
-                    unique_id: other_id,
-                    event_subscribers: _,
-                },
-            ) => {
-                fill.same_state(other_fill)
-                    && flags == other_flags
-                    && channel == other_channel
-                    && unique_id == other_id
-            }
-            (
                 GfxElement::Void {
                     channel,
                     unique_id,
@@ -835,11 +733,10 @@ impl TreeElement for GfxElement {
     /// rule, as the BVH behind `Tree::descendant_at` uses:
     ///
     /// - a `GlyphArea`: its position and render bounds;
-    /// - a `GlyphRun`: its [`bounds`](GlyphRunData::bounds);
-    /// - a `Fill`: its rectangle.
+    /// - a `GlyphRun`: its [`bounds`](GlyphRunData::bounds).
     ///
     /// Every box must be finite, corner to corner: an authored origin,
-    /// rectangle or move (`RunOrigin`, `FillRect`, an area's `MoveTo`)
+    /// or move (`RunOrigin`, an area's `MoveTo`)
     /// can be any number a map spells — `1e39` reads as infinity — and a
     /// box at infinity would stretch every ancestor's subtree box to it.
     /// An area's box was left unchecked until the glyph_mutation_raw
@@ -851,7 +748,6 @@ impl TreeElement for GfxElement {
                 finite_box((glyph_area.position.to_vec2(), glyph_area.render_bounds.to_vec2()))?
             }
             GfxElement::GlyphRun { run, .. } => finite_box(run.bounds())?,
-            GfxElement::Fill { fill, .. } => finite_box((fill.rect.origin, fill.rect.size))?,
             GfxElement::GlyphModel { .. } | GfxElement::Void { .. } => return None,
         };
         (size.x > 0.0 && size.y > 0.0).then_some((top_left, size))
@@ -864,17 +760,13 @@ fn finite_box((top_left, size): (Vec2, Vec2)) -> Option<(Vec2, Vec2)> {
 }
 
 /// The glyph instantiation's interpolation. Between two `GlyphArea`s,
-/// `position`, `render_bounds`, `scale` and `line_height` interpolate,
-/// and so does `background_color` when both sides have one (per
-/// channel, rounded); between two `GlyphModel`s, `position`
-/// interpolates; between two `GlyphRun`s, `origin`, `opacity` and each
-/// override vector do (element-wise, and only when the two vectors are
-/// the same length; a glyph's color blends only where both sides color
-/// it); between two `Fill`s, `rect`, `color` (per channel), `fade` and
-/// `opacity` do. A run's `shaped` and `zoom` and a fill's `shape` and
-/// `zoom` snap. Every other field — the text, the regions, a
-/// background color present on one side only, the flags, the channel,
-/// the id — takes the before or the after element by `snap`, and so
+/// `position`, `render_bounds`, `scale` and `line_height` interpolate;
+/// between two `GlyphModel`s, `position` interpolates; between two
+/// `GlyphRun`s, `origin`, `opacity` and each override vector do
+/// (element-wise, and only when the two vectors are the same length; a
+/// glyph's color blends only where both sides color it). A run's
+/// `shaped` and `zoom` snap. Every other field — the text, the regions,
+/// the flags, the channel, the id — takes the before or the after element by `snap`, and so
 /// does the whole element when the two are different variants.
 ///
 /// Cost: one clone of the element `snap` picks, plus O(1) per
@@ -892,9 +784,6 @@ impl Interpolable for GfxElement {
                 area.render_bounds = OrderedVec2::lerp(&from.render_bounds, &to.render_bounds, t);
                 area.scale = OrderedFloat::lerp(&from.scale, &to.scale, t);
                 area.line_height = OrderedFloat::lerp(&from.line_height, &to.line_height, t);
-                if let (Some(from_color), Some(to_color)) = (from.background_color, to.background_color) {
-                    area.background_color = Some(<[u8; 4]>::lerp(&from_color, &to_color, t));
-                }
             }
             (
                 GfxElement::GlyphModel {
@@ -916,19 +805,6 @@ impl Interpolable for GfxElement {
                 run.set_opacity(f32::lerp(&from.opacity(), &to.opacity(), t));
                 let overrides = GlyphOverrides::lerped(from.overrides(), to.overrides(), run.overrides(), t);
                 run.set_overrides(overrides);
-            }
-            (
-                GfxElement::Fill { fill: from, .. },
-                GfxElement::Fill { fill: to, .. },
-                GfxElement::Fill { fill, .. },
-            ) => {
-                fill.rect = Rect::new(
-                    <Vec2 as Interpolate>::lerp(&from.rect.origin, &to.rect.origin, t),
-                    <Vec2 as Interpolate>::lerp(&from.rect.size, &to.rect.size, t),
-                );
-                fill.color = Rgba::lerp(&from.color, &to.color, t);
-                fill.fade = f32::lerp(&from.fade, &to.fade, t);
-                fill.opacity = f32::lerp(&from.opacity, &to.opacity, t);
             }
             _ => {}
         }

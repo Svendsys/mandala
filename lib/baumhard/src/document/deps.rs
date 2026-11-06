@@ -120,9 +120,11 @@ fn classify(before: &DocElement, after: &DocElement) -> Touched {
     use DocElement as E;
     match before {
         E::Map(a) => {
-            let E::Map(_) = after else { return Touched::ALL };
-            let MapData { name: _ } = a;
-            Touched::default()
+            let E::Map(b) = after else { return Touched::ALL };
+            // The name is read by no resolver; the background is the
+            // map's one style field.
+            let MapData { name: _, background } = a;
+            style(background != &b.background)
         }
         E::Theme(a) => {
             let E::Theme(b) = after else { return Touched::ALL };

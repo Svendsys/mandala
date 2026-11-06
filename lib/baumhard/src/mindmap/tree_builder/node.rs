@@ -15,8 +15,9 @@
 //!         └── …
 //! ```
 //!
-//! The container area owns the per-node visual chrome
-//! (background fill, frame padding, shape, zoom window). The
+//! The container area owns the per-node hit shape and zoom window,
+//! and draws nothing: a node has no background fill (V1-B12; every
+//! color but the canvas background comes from a glyph). The
 //! section-areas are the text-bearing surfaces — the renderer's
 //! tree walker (`renderer/tree_walker.rs`) iterates every
 //! `GlyphArea` descendant and shapes each one's text into a
@@ -40,7 +41,6 @@ use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::model::{GlyphComponent, GlyphLine, GlyphModel};
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::tree::GfxTree;
-use crate::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
 use crate::mindmap::model::{ChildIndex, MindMap, MindNode, MindSection};
 use crate::util::color::{self, Color as BaumhardColor};
 use crate::util::grapheme_chad;
@@ -103,29 +103,13 @@ pub fn effective_section_scale(section: &MindSection) -> f32 {
     }
 }
 
-/// Build the *container* `GlyphArea` for a mind node — the chrome-
-/// bearing area that owns background fill, border padding, shape,
-/// and zoom window, but renders no glyphs of its own (sections do).
-///
-/// Empty `text` and empty `regions`: the renderer's `walk_tree_into_buffers`
-/// short-circuits for empty-text areas after yielding the
-/// background rect, so the container contributes one fill quad
-/// and zero shaped buffers — the historical visual cost of an
-/// untextured node.
-///
-/// The canvas default border cascades into `background_padding` so
-/// the fill extends out to the surrounding border glyphs (drawn
-/// by the per-role border subtree). Same math as before the
-/// section refactor; only the *target* of the math moved from
-/// the text-bearing area to the chrome-only container.
-///
-/// Takes the whole `map` rather than the two canvas fields it
-/// reads because fill and frame both resolve through the palette
-/// cascade ([`MindMap::node_background_color`],
-/// [`MindMap::node_frame_color`]), which needs `map.palettes`.
-pub(super) fn mindnode_container_area(map: &MindMap, node: &MindNode) -> GlyphArea {
-    let vars = &map.canvas.theme_variables;
-    let canvas_default_border = map.canvas.default_border.as_ref();
+/// Build the *container* `GlyphArea` for a mind node — the area that
+/// owns the node's hit-test shape and zoom window, and renders no
+/// glyphs of its own (sections do). Empty `text` and empty `regions`:
+/// the renderer's walker skips an empty-text area, so the container
+/// draws nothing. A node has no background fill (V1-B12): its style's
+/// `background_color` is no longer drawn by anything.
+pub(super) fn mindnode_container_area(node: &MindNode) -> GlyphArea {
     // Container metrics: scale and line_height are nominal — no
     // glyphs render here, but the area still needs valid metrics
     // so the subtree-AABB cache stays well-defined.
@@ -137,62 +121,7 @@ pub(super) fn mindnode_container_area(map: &MindMap, node: &MindNode) -> GlyphAr
         position,
         bounds,
     );
-
-    // Parsed once and read twice below. The two reads used to parse
-    // separately, which on an unrecognized spelling meant the same
-    // node reported the same typo twice from inside one function.
-    // The motive is the duplicate log line, not cost: the surviving
-    // call is `ShapeSpelling::classify`, which walks more spellings
-    // than the chain it replaced, and no claim either way is made or
-    // measurable here (CLAUDE.md §6).
-    let shape = NodeShape::from_style_string(&node.style.shape);
-
-    // `background_padding` math — see `mindmap/border.rs` for the
-    // derivation. Same shape as pre-section nodes; the container
-    // is the natural carrier because a section sits *inside* the
-    // node AABB and never touches the surrounding border.
-    if node.style.show_frame && shape == NodeShape::Rectangle {
-        let themed_frame = map
-            .node_frame_theme_tier(node)
-            .map(|c| color::resolve_var(c, vars));
-        let style_frame = color::resolve_var(&node.style.frame_color, vars);
-        let border_style = resolve_border_style(
-            node.style.border.as_ref(),
-            canvas_default_border,
-            themed_frame,
-            style_frame,
-        );
-        let fs = border_style.font_size_pt;
-        let acw = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
-        let corner_overlap = fs * crate::mindmap::border::BORDER_CORNER_OVERLAP_FRAC;
-        let nw = node.size_vec2().x;
-        let char_count = ((nw / acw) + 2.0).ceil().max(3.0);
-        let pad_top_bottom = 0.5 * fs - corner_overlap;
-        let pad_left = 0.5 * acw;
-        let pad_right = char_count * acw - 1.5 * acw - nw;
-        area.background_padding =
-            crate::gfx_structs::area::EdgePadding::new(pad_top_bottom, pad_right, pad_top_bottom, pad_left);
-    }
-
-    // Background-color resolution — same trade-off as before:
-    // empty / parse-fail / fully-transparent → `None` (canvas
-    // shows through); otherwise pack as u8 RGBA.
-    area.background_color = {
-        let raw = map.node_background_color(node);
-        if raw.is_empty() {
-            None
-        } else {
-            let resolved = color::resolve_var(raw, vars);
-            let rgba = color::hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 0.0]);
-            if rgba[3] <= 0.0 {
-                None
-            } else {
-                Some(color::convert_f32_to_u8(&rgba))
-            }
-        }
-    };
-
-    area.shape = shape;
+    area.shape = NodeShape::from_style_string(&node.style.shape);
     area.zoom_visibility = node.zoom_window();
     area
 }
@@ -500,14 +429,13 @@ pub(super) fn append_section(
 /// container area's construction plus one insert — O(1) when the
 /// parent's row is added in key order.
 fn push_container(
-    map: &MindMap,
     node: &MindNode,
     parent: NodeId,
     tree: &mut GfxTree,
     node_map: &mut HashMap<String, NodeId>,
     id_counter: &mut usize,
 ) -> Option<NodeId> {
-    let area = mindnode_container_area(map, node);
+    let area = mindnode_container_area(node);
     let element = GfxElement::new_area_non_indexed_with_id(area, node.channel, *id_counter);
     *id_counter += 1;
     let node_id = super::push_element(tree, parent, element)?;
@@ -595,7 +523,7 @@ pub(super) fn build_nodes<'a>(
     let tree_root = tree.root();
     let mut placed: Vec<(&'a MindNode, NodeId)> = Vec::new();
     for root in roots {
-        if let Some(node_id) = push_container(map, root, tree_root, tree, node_map, id_counter) {
+        if let Some(node_id) = push_container(root, tree_root, tree, node_map, id_counter) {
             placed.push((root, node_id));
         }
     }
@@ -629,7 +557,7 @@ pub(super) fn build_nodes<'a>(
                     append_section(map, node, index, section, node_id, tree, section_map, id_counter)
                 }
                 RowCell::Node(child) => {
-                    if let Some(child_id) = push_container(map, child, node_id, tree, node_map, id_counter) {
+                    if let Some(child_id) = push_container(child, node_id, tree, node_map, id_counter) {
                         placed.push((child, child_id));
                     }
                 }

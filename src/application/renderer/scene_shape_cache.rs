@@ -29,18 +29,14 @@
 //! - the same tree ([`SceneTreeId`]),
 //! - the same `GfxElement::unique_id`,
 //! - the same registered tree offset (the walker adds it to every
-//!   emitted buffer's `pos` and to the fill rect's `position`),
+//!   emitted buffer's `pos`),
 //! - a `GlyphArea` equal to the stored one — or, for an element that
 //!   carries no area, still no area.
 //!
 //! That list is exactly what [`shape_one_element_into_buffers`]
 //! reads: `element.glyph_area()`, `element.unique_id()`, and its
-//! `offset` argument. Nothing else reaches the emitted buffers — or
-//! the background fill, which
-//! [`extract_background_rect`]
-//! derives from `background_color`, `background_padding`,
-//! `position`, `render_bounds`, `shape` and `zoom_visibility` of the
-//! same area plus the same `unique_id` and `offset`.
+//! `offset` argument. Nothing else reaches the emitted buffers. (An
+//! element emits no fill: a map draws no rect, V1-B12.)
 //!
 //! The consequence worth naming: because the check compares against
 //! live state rather than trusting a producer to announce itself,
@@ -60,19 +56,19 @@
 //!
 //! Two of those inputs never reach cosmic-text: `GlyphArea::position`
 //! and the registered tree offset. The walker adds them to each
-//! emitted buffer's `pos` and to the fill rect's `position` *after*
-//! shaping, and nothing else reads them. So the key splits in two,
+//! emitted buffer's `pos` *after* shaping, and nothing else reads
+//! them. So the key splits in two,
 //! and [`ShapedSceneElement::classify`] answers in three:
 //!
 //! - **must re-shape** — the tree, the `unique_id`, and every area
 //!   field but `position` (text, scale, line height, bounds, regions,
-//!   outline, shape, alignment, fill inputs, zoom window). Any
+//!   outline, shape, alignment, zoom window). Any
 //!   difference here is [`Verdict::Stale`], and the element goes back
 //!   through [`shape_one_element_into_buffers`];
 //! - **may be patched** — `position` and the tree offset. When these
 //!   are the *only* difference the verdict is [`Verdict::Moved`], and
 //!   [`ShapedSceneElement::patch_placement`] rewrites the held
-//!   buffers' positions and the held fill in place, with no shaping
+//!   buffers' positions in place, with no shaping
 //!   and no `FONT_SYSTEM` lock;
 //! - **neither differs** — [`Verdict::Current`], nothing to do.
 //!
@@ -150,36 +146,27 @@
 //!
 //! ## Draw order across a partial re-shape
 //!
-//! Each entry owns its own output — its buffers *and* its fill —
-//! and entries sit in walk order, so re-shaping one element writes
-//! back into the position that element already occupied. That is
-//! what keeps the two order-sensitive draw streams stable while
-//! only part of the scene re-shapes: `render.rs` pushes one quad per
-//! fill into a single vertex stream, so a later fill paints over an
-//! earlier one, and text areas are handed to glyphon in the same
-//! order for the same reason.
+//! Each entry owns its own output and entries sit in walk order, so
+//! re-shaping one element writes back into the position that element
+//! already occupied. That is what keeps the order-sensitive draw
+//! streams stable while only part of the scene re-shapes: text areas
+//! are handed to glyphon in walk order, so a later one paints over an
+//! earlier one. Grouping by walk position is the structural answer to
+//! a hazard an earlier flat list keyed by element had — re-inserting
+//! an edited element's output at the end floated it above every
+//! other's — rather than its bookkeeping one: there is no removal for
+//! an insertion point to be lost across.
 //!
-//! The mindmap's own keyed re-shape had to solve this the other way
-//! round, because its fills live in one flat list keyed by element
-//! rather than grouped by walk position: `reshape_buffer_for` drops
-//! an element's fill and re-inserts it at the index the old one held
-//! (see [`BackgroundRectSlot`](super::tree_buffers::BackgroundRectSlot)),
-//! having first shipped the version that appended and floated the
-//! element being edited above every other node's fill. Grouping by
-//! walk position is that hazard's structural answer rather than its
-//! bookkeeping one — there is no removal for an insertion point to
-//! be lost across.
-//!
-//! Two functions carry that order to the render pass, and between
-//! them they decide it for **all four** order-sensitive streams:
-//! [`background_fills`] for the rect pipeline, and [`text_buffers`]
-//! for each of the two glyphon passes. `text_buffers` carries a
+//! One function carries that order to the render pass, and it decides
+//! it for **all three** order-sensitive streams: [`text_buffers`], for
+//! each of the two glyphon passes, beside [`glyph_runs`] for the
+//! positioned-glyph pass. `text_buffers` carries a
 //! second ordering besides the one between elements — the walker
 //! emits an element's halo stamps before the glyph they ring, so
 //! that the glyph draws on top — which makes its inner order
 //! load-bearing too.
 //!
-//! Both are pinned **absolutely**, by
+//! The order is pinned **absolutely**, by
 //! `test_the_draw_streams_come_out_in_walk_order` and
 //! `test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings`,
 //! and the reason they have to be — rather than the comparison a
@@ -188,11 +175,11 @@
 //! does", and
 //! `test_canvas_partial_reshape_matches_a_full_one_stream_for_stream`
 //! makes it; it catches a per-entry difference the in-place path
-//! introduces. What it cannot catch is a reordering these two
-//! functions apply *uniformly*, because it reads both of its sides
-//! through them — a comparison between two runs of one reader can
-//! only see what the reader is not doing to both. Before the two
-//! absolute assertions existed, reversing either function left that
+//! introduces. What it cannot catch is a reordering the reader
+//! applies *uniformly*, because it reads both of its sides through it
+//! — a comparison between two runs of one reader can only see what
+//! the reader is not doing to both. Before the absolute assertions
+//! existed, reversing the reader left that
 //! test and every other test in the workspace green; they are what
 //! closed that, and the boundary is recorded here because it is a
 //! property of the comparison's *shape* and will hold again for the
@@ -214,15 +201,14 @@ use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::GlyphRunData;
 use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
 
-use super::tree_walker::{extract_background_rect, shape_one_element_into_buffers};
-use super::{MindMapTextBuffer, NodeBackgroundRect};
+use super::tree_walker::shape_one_element_into_buffers;
+use super::MindMapTextBuffer;
 
 /// Which of the two sub-scenes a [`refresh`] pass is walking.
 ///
-/// The passes differ in exactly two things, and both of them live
-/// on this enum: whether the walker's background fills are kept,
-/// and the site name the `FONT_SYSTEM` write guard is acquired
-/// under. Everything else — the walk, the reuse rule, the
+/// The passes differ in exactly one thing, and it lives on this enum:
+/// the site name the `FONT_SYSTEM` write guard is acquired under.
+/// Everything else — the walk, the reuse rule, the
 /// truncation — is one body serving both.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum ScenePassKind {
@@ -235,23 +221,6 @@ pub(crate) enum ScenePassKind {
 }
 
 impl ScenePassKind {
-    /// Whether this pass keeps the background fills the walker
-    /// emits.
-    ///
-    /// The canvas pass does: its fills are drawn by the
-    /// camera-transformed rect pipeline alongside the mindmap's own.
-    /// The overlay pass does not, because there is no screen-space
-    /// rect pipeline for them to reach — when a screen-space overlay
-    /// actually needs fills, this arm starts keeping them and the
-    /// palette pass reads
-    /// [`background_fills`] the way the main pass already does.
-    fn keeps_background_fills(self) -> bool {
-        match self {
-            ScenePassKind::Canvas => true,
-            ScenePassKind::Overlay => false,
-        }
-    }
-
     /// The site name passed to
     /// [`fonts::acquire_font_system_write`], which reports it when a
     /// re-entrant same-thread acquire is caught. Distinct per pass
@@ -285,8 +254,8 @@ pub(crate) struct ScenePassCounts {
     /// counter is incremented at that call's only site.
     pub(crate) reshaped: usize,
     /// Walk positions whose placement changed and nothing else —
-    /// [`Verdict::Moved`] — so whatever output they hold (buffers, a
-    /// fill, or for a `Void` / `GlyphModel` element nothing but the
+    /// [`Verdict::Moved`] — so whatever output they hold (buffers,
+    /// or for a `Void` / `GlyphModel` element nothing but the
     /// recorded offset) was re-placed in place and no shaping ran for
     /// them. Counted the way `reshaped` counts: per walk position, a
     /// `Void` whose tree moved included. The rest,
@@ -342,11 +311,6 @@ pub(crate) struct ShapedSceneElement {
     /// The shaped buffers, in emission order: halo stamps first,
     /// main glyph last.
     pub(super) buffers: Vec<MindMapTextBuffer>,
-    /// The element's background fill, if it authored one and the
-    /// pass keeps fills — see
-    /// [`ScenePassKind::keeps_background_fills`]. An overlay-pass
-    /// entry is always `None`.
-    pub(super) background: Option<NodeBackgroundRect>,
     /// The element's run, when it is a `GlyphRun`: what the
     /// positioned-glyph pass draws ([`super::glyph_runs`]). Held by
     /// clone, which shares the run's shaping and placement (`Arc`s).
@@ -361,7 +325,6 @@ impl ShapedSceneElement {
         element: &GfxElement,
         offset: Vec2,
         buffers: Vec<MindMapTextBuffer>,
-        background: Option<NodeBackgroundRect>,
     ) -> Self {
         ShapedSceneElement {
             tree,
@@ -369,7 +332,6 @@ impl ShapedSceneElement {
             offset,
             area: element.glyph_area().cloned(),
             buffers,
-            background,
             run: element.glyph_run().cloned(),
         }
     }
@@ -455,19 +417,10 @@ impl ShapedSceneElement {
     /// path, and the common case here: the picker's wheel cells are
     /// outlined.
     ///
-    /// **The fill** is re-derived by
-    /// [`extract_background_rect`],
-    /// the same function the walker emits it through, so a moved
-    /// fill and a freshly shaped one cannot drift. Whether there is
-    /// one cannot have changed — every fill input but the position is
-    /// on the must-re-shape side — so only a fill already held is
-    /// re-derived, which is also what keeps an overlay entry at
-    /// `None`.
-    ///
     /// # Costs
     ///
-    /// O(halos + 1) position writes and one fill re-derivation. No
-    /// shaping, no `FONT_SYSTEM` lock, no allocation.
+    /// O(halos + 1) position writes. No shaping, no `FONT_SYSTEM`
+    /// lock, no allocation.
     pub(super) fn patch_placement(&mut self, element: &GfxElement, offset: Vec2) {
         self.offset = offset;
         let (Some(cached), Some(live)) = (self.area.as_mut(), element.glyph_area()) else {
@@ -477,9 +430,6 @@ impl ShapedSceneElement {
         let anchor = (live.position.x.0, live.position.y.0);
         for buffer in &mut self.buffers {
             buffer.place_at(anchor, offset);
-        }
-        if self.background.is_some() {
-            self.background = extract_background_rect(element, live, offset);
         }
     }
 }
@@ -491,8 +441,7 @@ impl ShapedSceneElement {
 /// visits every descendant of every *visible* one, in that order, so
 /// entry `i` of `shaped` describes walk position `i`. Each position
 /// is [classified](ShapedSceneElement::classify) against the entry
-/// sitting there: a current one keeps its buffers and its fill
-/// untouched, a moved one has their positions patched in place, and
+/// sitting there: a current one keeps its buffers untouched, a moved one has their positions patched in place, and
 /// only a stale one is re-shaped — also in place. Positions past the
 /// end of the walk belong to a tree that has since been unregistered
 /// or shortened and are dropped.
@@ -514,7 +463,6 @@ pub(crate) fn refresh(
     shaped: &mut Vec<ShapedSceneElement>,
     kind: ScenePassKind,
 ) -> ScenePassCounts {
-    let keep_fills = kind.keeps_background_fills();
     // Lazily acquired: a pass in which every element still matches
     // its cached inputs never touches the lock.
     let mut font_system: Option<fonts::FontSystemWriteGuard> = None;
@@ -553,7 +501,7 @@ pub(crate) fn refresh(
             if element.glyph_run().is_some() {
                 // A run is drawn from the shaping it carries: hold it
                 // again, without the font lock.
-                let fresh = ShapedSceneElement::new(id, element, offset, Vec::new(), None);
+                let fresh = ShapedSceneElement::new(id, element, offset, Vec::new());
                 match shaped.get_mut(slot) {
                     Some(existing) => *existing = fresh,
                     None => shaped.push(fresh),
@@ -564,19 +512,10 @@ pub(crate) fn refresh(
             let font_system =
                 font_system.get_or_insert_with(|| fonts::acquire_font_system_write(kind.font_system_site()));
             let mut buffers = Vec::new();
-            let mut background = None;
-            shape_one_element_into_buffers(
-                element,
-                offset,
-                font_system,
-                &mut |_unique_id, buffer| buffers.push(buffer),
-                &mut |rect| {
-                    if keep_fills {
-                        background = Some(rect);
-                    }
-                },
-            );
-            let fresh = ShapedSceneElement::new(id, element, offset, buffers, background);
+            shape_one_element_into_buffers(element, offset, font_system, &mut |_unique_id, buffer| {
+                buffers.push(buffer)
+            });
+            let fresh = ShapedSceneElement::new(id, element, offset, buffers);
             match shaped.get_mut(slot) {
                 Some(existing) => *existing = fresh,
                 None => shaped.push(fresh),
@@ -620,17 +559,6 @@ pub(super) fn glyph_runs<'a>(
     shaped
         .into_iter()
         .filter_map(|element| element.run.as_ref().map(|run| (run, element.offset)))
-}
-
-/// Every background fill of a pass's output, in draw order —
-/// [`text_buffers`]'s sibling for the rect pipeline. Empty for an
-/// overlay pass, which keeps no fills.
-pub(super) fn background_fills<'a>(
-    shaped: impl IntoIterator<Item = &'a ShapedSceneElement>,
-) -> impl Iterator<Item = &'a NodeBackgroundRect> {
-    shaped
-        .into_iter()
-        .filter_map(|element| element.background.as_ref())
 }
 
 // ---------------------------------------------------------------------

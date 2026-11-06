@@ -308,6 +308,16 @@ pub enum LoadErrorKind {
     /// A `palette(...)` color inside `palettes`: a palette cannot refer
     /// to a palette.
     PaletteInPalette,
+    /// The map's `background` is a literal with an alpha below 255
+    /// (V1-B12). Nothing is drawn behind the canvas for it to blend
+    /// with, so a translucent background would be stored and never
+    /// shown; write it as `#rrggbb`. A theme variable's alpha is not
+    /// refused: the glyphs that name the same variable use it, and the
+    /// background is drawn opaque.
+    TranslucentBackground {
+        /// The alpha given.
+        alpha: u8,
+    },
     /// A top-level node has a `connector`: a connector is the line to
     /// the node's parent, and a top-level node has none.
     ConnectorOnRoot,
@@ -443,6 +453,11 @@ impl fmt::Display for LoadErrorKind {
             LoadErrorKind::PaletteInPalette => {
                 f.write_str("a palette's colors are `#rrggbb` or `var(name)`, never `palette(...)`")
             }
+            LoadErrorKind::TranslucentBackground { alpha } => write!(
+                f,
+                "a background is opaque, and this one has alpha {alpha:#04x}: nothing is drawn behind the \
+                 canvas, so write it as `#rrggbb`"
+            ),
             LoadErrorKind::ConnectorOnRoot => {
                 f.write_str("a top-level node has no parent, so it has no connector")
             }

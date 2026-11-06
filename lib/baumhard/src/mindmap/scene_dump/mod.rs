@@ -18,13 +18,12 @@
 //! **Three facts per element, each from the renderer's own seam:**
 //!
 //! - its **canvas** rect: the extent the renderer draws for it — the
-//!   union of its background fill
-//!   ([`GlyphArea::background_rect`](crate::gfx_structs::area::GlyphArea::background_rect),
-//!   the box grown by its padding) and every text stamp
+//!   union of its text stamps
 //!   ([`GlyphArea::text_stamp_offsets`](crate::gfx_structs::area::GlyphArea::text_stamp_offsets):
 //!   the main glyph and each outline-halo stamp), offset by its tree's
-//!   registered scene offset. An area that draws nothing itself, an
-//!   unfilled node container, is placed by its layout box;
+//!   registered scene offset. An area that draws nothing itself — a
+//!   node container, whose node draws nothing behind its text since
+//!   V1-B12 — is placed by its layout box;
 //! - its **surface** rect, that rect through
 //!   [`Camera2D::canvas_to_screen`](crate::gfx_structs::camera::Camera2D::canvas_to_screen),
 //!   in physical pixels;
@@ -179,22 +178,18 @@ impl ScenePlacement {
     }
 
     /// Place a `GlyphArea` of a tree registered at `offset` the way the
-    /// renderer draws it: the union of its background fill
-    /// ([`GlyphArea::background_rect`]) and its text stamps
+    /// renderer draws it: the union of its text stamps
     /// ([`GlyphArea::text_stamp_offsets`], each a `render_bounds` box),
     /// each culled under the area's zoom window as the renderer culls
     /// it, the verdict being the most visible of theirs. An area that
-    /// draws neither is placed by its `position` / `render_bounds` box.
+    /// draws none is placed by its `position` / `render_bounds` box.
     ///
-    /// O(1): at most one fill and nine stamps, no allocation.
+    /// O(1): at most nine stamps, no allocation.
     pub fn of_area(area: &GlyphArea, offset: Vec2, camera: &Camera2D) -> Self {
         let window = area.zoom_visibility;
         let origin = area.position() + offset;
         let bounds = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
         let mut extent = Extent::default();
-        if let Some((pos, size)) = area.background_rect() {
-            extent.add(&Self::of_rect(pos + offset, size, window, camera));
-        }
         for (dx, dy) in area.text_stamp_offsets() {
             extent.add(&Self::of_rect(origin + Vec2::new(dx, dy), bounds, window, camera));
         }
@@ -291,8 +286,8 @@ pub struct NodeDump {
     /// The model's `folded` flag: this node's descendants are hidden.
     /// The node itself is drawn — it is in the scene.
     pub folded: bool,
-    /// The node container's placement: its background fill grown by
-    /// its padding, or its layout box when it draws no fill.
+    /// The node container's placement: its layout box, since a
+    /// container draws nothing (a node has no fill, V1-B12).
     #[serde(flatten)]
     pub placement: ScenePlacement,
     /// Each rendered section the filter keeps, in model order. A
