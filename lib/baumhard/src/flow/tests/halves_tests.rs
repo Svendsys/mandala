@@ -1168,6 +1168,183 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
     assert_eq!(RingLayout::of(&bare).sides, None);
 }
 
+/// Issue #309's first comment (the B9 final review, 5757429244; ruling
+/// B16.1d): a line no tracking gap brings to its part's end — its length
+/// steps past the end as a letter crosses a bend — is brought there by its
+/// secondary rule where it lies, and nothing else moves. Over every frame
+/// of the aspect sweep, laid with the rule and without it
+/// (`NO_SECONDARY_RULE`): a frame the rule changes had a line short of its
+/// end without it; no line is short with it that was not without it; and
+/// the rule brings lines home, by its last letter or its word gaps, so
+/// fewer are short with it — those left are each the frame's to report
+/// (`Trace::short`): their step lies in their last word, past every word
+/// gap, where no even line ends at its end. `MANDALA_FLOW_SWEEP_REPORT=1`
+/// prints the counts.
+///
+/// Controls (run, not committed): the rule off (`NO_SECONDARY_RULE` for
+/// the whole suite), red on "brings no line home"; its word gaps changed
+/// from the line's first cluster, not past its step, red on "too few
+/// lines" (the stepping letter moves with them: 15 lines stay short, and
+/// none is brought home by shrinking); every line, not only one of one gap,
+/// brought home as it is laid, red on "changed with no line short".
+#[test]
+fn test_flow_halves_the_secondary_rule_brings_short_lines_home_and_moves_nothing_else() {
+    use crate::flow::place::halves::{NO_SECONDARY_RULE, RULE_KEPT};
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            NO_SECONDARY_RULE.with(|off| off.set(false));
+        }
+    }
+    let lay = |off: bool,
+               text: &str,
+               points: f32,
+               shape: &Outline,
+               fit: &FitMode,
+               layout: &RingLayout,
+               out: bool| {
+        let _reset = Off;
+        NO_SECONDARY_RULE.with(|o| o.set(off));
+        frame_with(text, points, shape, fit, layout, out)
+    };
+    let bits = |placed: &PlacedRun| -> Vec<(u32, u32, u32)> {
+        placed
+            .glyphs
+            .iter()
+            .map(|g| (g.glyph, g.pos.x.to_bits(), g.pos.y.to_bits()))
+            .collect()
+    };
+    let kept_before = RULE_KEPT.with(std::cell::Cell::get);
+    let (mut frames, mut changed, mut short_without, mut short_with) = (0, 0, 0, 0);
+    let mut faults: Vec<String> = Vec::new();
+    for (name, shape, _, points) in sweep_outlines() {
+        for text in [ECCLESIASTES, QUATRAIN] {
+            for outward in [true, false] {
+                for fit in [FIT, FitMode::Once { filler: None }] {
+                    let sides_tried = if outward { 2 } else { 1 };
+                    for sides in [None, Some(("·".to_owned(), Rgba::opaque(9, 9, 9)))]
+                        .into_iter()
+                        .take(sides_tried)
+                    {
+                        for span in [
+                            LineSpan::WHOLE,
+                            LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+                            LineSpan::NATURAL,
+                        ] {
+                            let layout = RingLayout {
+                                span,
+                                sides: sides.clone(),
+                                ..RingLayout::whole()
+                            };
+                            let what = format!(
+                                "{name} {:.10}… {} {fit:?} span {} sides {}",
+                                text,
+                                if outward { "outward" } else { "inward" },
+                                span.get(),
+                                sides.is_some()
+                            );
+                            let (_, without, t0) = lay(true, text, points, &shape, &fit, &layout, outward);
+                            let (_, with, t1) = lay(false, text, points, &shape, &fit, &layout, outward);
+                            frames += 1;
+                            short_without += t0.short.len();
+                            short_with += t1.short.len();
+                            if bits(&without) != bits(&with) {
+                                changed += 1;
+                                if t0.short.is_empty() {
+                                    faults.push(format!("{what}: changed with no line short of its end"));
+                                }
+                            }
+                            for (half, by) in &t1.short {
+                                if !t0.short.iter().any(|(k, _)| k == half) {
+                                    faults.push(format!(
+                                        "{what}: line {half} short by {by} only with the rule"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let kept_after = RULE_KEPT.with(std::cell::Cell::get);
+    let kept: Vec<usize> = (0..3).map(|i| kept_after[i] - kept_before[i]).collect();
+    if std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some() {
+        eprintln!(
+            "the secondary rule over the sweep's {frames} frames: {changed} changed; lines short of their ends {short_without} without it, {short_with} with it; kept by last letter {}, words stretched {}, words shrunk {}",
+            kept[0], kept[1], kept[2]
+        );
+    }
+    assert!(
+        faults.is_empty(),
+        "{} faults:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+    assert!(
+        short_without > 0,
+        "precondition: the sweep lays lines no tracking gap brings to their ends"
+    );
+    assert!(
+        short_with < short_without && changed > 0,
+        "the secondary rule brings no line home: {short_with} short with it, {short_without} without, {changed} frames changed"
+    );
+    // Both of its word gaps' changes bring lines home here: those past the
+    // step stretched where the line laid short of the step is nearer its
+    // end, shrunk where the line laid past it is.
+    assert!(
+        kept[1] > 0 && kept[2] > 0,
+        "the word gaps past the step bring home too few lines: {} stretched, {} shrunk",
+        kept[1],
+        kept[2]
+    );
+}
+
+/// Review 5810838863 (#309, ruling B16.1d): in a frame whose lines touch
+/// already, a line its secondary rule brings home may make no touch they
+/// did not — the pairs that touch after are a subset of those before —
+/// where once any touch at all waived the check. On two lines' boxes: the
+/// first line's first ink touching the second line's one ink before, and
+/// after either as it was, or with that ink widened onto the first line's
+/// second as well, or with the touch gone; and a line's neighbors excused,
+/// before and after, as the frame's touch check excuses them.
+///
+/// Control (run, not committed): `touching_anew` excusing every pair once
+/// two touched before — the waiver it replaced — red on "a touch they did
+/// not make".
+#[test]
+fn test_flow_halves_a_line_brought_home_makes_no_touch_its_lines_did_not() {
+    use crate::flow::place::halves::touching_anew_seam;
+    let ink = |x0: f32, x1: f32| (Vec2::new(x0, 0.0), Vec2::new(x1, 10.0));
+    let before = vec![
+        vec![ink(0.0, 5.0), ink(10.0, 15.0), ink(20.0, 25.0)],
+        vec![ink(4.0, 8.0)],
+    ];
+    assert!(
+        touching_anew_seam(&[vec![], vec![]], &before),
+        "precondition: the first line's first ink and the second line's touch"
+    );
+    assert!(
+        !touching_anew_seam(&before, &before),
+        "lines as they were make no touch they did not"
+    );
+    let wider = vec![before[0].clone(), vec![ink(4.0, 11.0)]];
+    assert!(
+        touching_anew_seam(&before, &wider),
+        "the second line's ink widened onto the first line's second: a touch they did not make"
+    );
+    let apart = vec![before[0].clone(), vec![ink(6.0, 8.0)]];
+    assert!(!touching_anew_seam(&before, &apart), "the touch gone: none new");
+    let neighbors = vec![
+        vec![ink(0.0, 11.0), ink(10.0, 15.0), ink(20.0, 25.0)],
+        vec![ink(4.0, 8.0)],
+    ];
+    assert!(
+        !touching_anew_seam(&before, &neighbors),
+        "a line's neighboring inks are excused, as the frame's touch check excuses them"
+    );
+}
+
 #[test]
 fn test_flow_halves_hold_on_every_aspect() {
     the_sweep();
