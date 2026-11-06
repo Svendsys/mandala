@@ -34,7 +34,11 @@
 //! origin is set: for a box run the shaped size at the origin; for a
 //! path run the union of its placed glyphs' boxes (`pos .. pos +
 //! (advance, line_height)`, offset by the origin). Overrides do not move
-//! it — a glyph offset out of the box is not hit.
+//! it — a glyph offset out of the box is not hit. The box only finds the
+//! candidates: a box run is hit anywhere in it, a path run only on one of
+//! its placed glyphs' boxes ([`GlyphRunData::placed_glyph_at`](crate::gfx_structs::run::GlyphRunData::placed_glyph_at)),
+//! so a ring's interior and the empty corner of a diagonal connection's
+//! box are not the run's (#287's review).
 //!
 //! The fields are private because they are tied together: `bounds`
 //! derives from `shaped` and `origin`, and `overrides` is as long as
@@ -409,6 +413,49 @@ impl GlyphRunData {
     /// of its glyph boxes offset by the origin. O(1).
     pub fn bounds(&self) -> (Vec2, Vec2) {
         (self.origin + self.extent.0, self.extent.1)
+    }
+
+    /// The placed glyph whose box holds `point`, each box grown by `slack`
+    /// on every side: the first, in placement order, of a path run's
+    /// glyphs whose `advance × line_height` box at `origin + pos` holds
+    /// it. `None` for a box run, which a hit test takes whole, and for a
+    /// point between a path run's glyphs — a frame ring's interior, the
+    /// empty corner of a diagonal connection's bounds — which its bounds
+    /// hold but no glyph does (#287's review). A box that is not finite
+    /// holds nothing.
+    ///
+    /// Cost: O(placed glyphs) for a path run; O(1) for a box run.
+    pub fn placed_glyph_at(&self, point: Vec2, slack: f32) -> Option<usize> {
+        let RunShape::Path { run, placed } = &self.shaped else {
+            return None;
+        };
+        let grow = Vec2::splat(slack);
+        placed.glyphs.iter().position(|glyph| {
+            let Some(metrics) = run.glyphs.get(glyph.glyph as usize) else {
+                return false;
+            };
+            let min = self.origin + glyph.pos - grow;
+            let max = self.origin + glyph.pos + Vec2::new(metrics.advance, run.line_height) + grow;
+            min.is_finite()
+                && max.is_finite()
+                && point.x >= min.x
+                && point.y >= min.y
+                && point.x <= max.x
+                && point.y <= max.y
+        })
+    }
+
+    /// Whether a hit test that found `point` inside the run's bounds,
+    /// grown by `slack`, lands on the run: always for a box run, whose box
+    /// is drawn whole; for a path run, only on one of its placed glyphs'
+    /// boxes ([`placed_glyph_at`](Self::placed_glyph_at)).
+    ///
+    /// Cost: O(placed glyphs) for a path run; O(1) for a box run.
+    pub fn hit_by(&self, point: Vec2, slack: f32) -> bool {
+        match &self.shaped {
+            RunShape::Box(_) => true,
+            RunShape::Path { .. } => self.placed_glyph_at(point, slack).is_some(),
+        }
     }
 
     /// Whether `self` and `other` hold the same state: the shape by

@@ -474,7 +474,10 @@ is not the shaped glyph count, because `Repeat` and fillers reuse
 indices, and a range op skips filler glyphs. The run's `bounds` (its
 hit-test box) are computed when the shape or origin is set: the
 shaped size at the origin for a box, the union of the glyph boxes for
-a path. Overrides do not move them. `zoom` is evaluated at render
+a path. Overrides do not move them. The bounds find the candidates; a
+box run is hit anywhere in them, a path run only on one of its placed
+glyphs' boxes (`GlyphRunData::placed_glyph_at`), so a click inside a
+ring or in the empty corner of a diagonal connection's box misses it. `zoom` is evaluated at render
 time, never by projection.
 
 The run changes through `RunSet` (the whole payload, what projection

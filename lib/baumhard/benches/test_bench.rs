@@ -2761,6 +2761,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("predicates_select_runs_by_element_type_and_opacity", |b| {
         b.iter(do_predicates_select_runs_by_element_type_and_opacity)
     });
+    c.bench_function("descendant_at_misses_a_rings_empty_interior", |b| {
+        b.iter(do_descendant_at_misses_a_rings_empty_interior)
+    });
+    c.bench_function("descendant_at_misses_a_diagonal_connections_empty_bounds", |b| {
+        b.iter(do_descendant_at_misses_a_diagonal_connections_empty_bounds)
+    });
     c.bench_function("descendant_at_finds_runs_by_their_boxes", |b| {
         b.iter(do_descendant_at_finds_runs_by_their_boxes)
     });
