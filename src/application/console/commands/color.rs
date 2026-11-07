@@ -20,10 +20,8 @@ use super::range_kv::TARGET_KEYS;
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
-    bare_words, free_words, kvs, usage, Bare, Descent, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word,
+    bare_words, free_words, Bare, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word,
 };
 use crate::application::console::{ConsoleEffects, ExecResult};
 

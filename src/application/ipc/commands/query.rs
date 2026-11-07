@@ -2,16 +2,16 @@
 
 //! The `query` family: read-only views of what the application knows
 //! (`format/ipc.md` §`query`): the document, the selection, the camera,
-//! the interaction mode, the status line, the running animations, the
-//! modal editors and the undo stack. What a person reads off the screen
+//! the interaction mode, the status line, the open modals and the undo
+//! history. What a person reads off the screen
 //! chrome and the app's mental state, as JSON.
 //!
 //! **Read-only by construction.** A handler reaches the app through
 //! [`Call::observe`] (`&`), never [`Call::drive`], and the two reads the
 //! target offers are `&MindMapDocument` and a `&self` projection of the
 //! shell state ([`CommandTarget::document`], [`CommandTarget::shell_state`]).
-//! So a query cannot flip `dirty`, push an undo entry, rebuild a scene
-//! or ask for a frame. There is no mutation route to defend because
+//! So a query cannot change the document, push an undo entry, project
+//! anything or ask for a frame. There is no mutation route to defend because
 //! none is reachable.
 //!
 //! **No mirror structs.** The wire form of each piece of state is a
@@ -45,23 +45,23 @@ pub(super) const FAMILY: Family = Family {
     commands: &[
         CommandSpec {
             name: "query.document",
-            summary: "The open document: path, dirty flag, undo depth, map metadata, counts, and \
-                      on request the whole model.",
+            summary: "The open document: path, dirty flag, name, node count, revision, history \
+                      depth, and on request the whole model.",
             params: &[
                 ParamSpec::new(
                     "fields",
                     ParamType::Array,
                     false,
-                    "Which parts to return, as strings: file_path, dirty, undo_depth, map, counts, \
-                     mindmap. Default: all but mindmap, the one part whose size is unbounded.",
+                    "Which parts to return, as strings: file_path, dirty, name, nodes, revision, history, \
+                     document. Default: all but document, the one part whose size is unbounded.",
                 ),
                 ParamSpec::new(
                     "pointer",
                     ParamType::String,
                     false,
-                    "An RFC 6901 JSON Pointer into the serialized model (\"/nodes/1.2\", \"/edges/0\"). \
-                     The reply's mindmap is then the value found there. Implies fields=[\"mindmap\"] \
-                     when fields is omitted; refused when fields lacks mindmap.",
+                    "An RFC 6901 JSON Pointer into the saved map (\"/name\", \"/nodes/0\"). The reply's \
+                     document is then the value found there. Implies fields=[\"document\"] when fields \
+                     is omitted; refused when fields lacks document.",
                 ),
                 // Native: the browser has no filesystem (`format/ipc.md`
                 // §Transport "Browser").
@@ -98,26 +98,22 @@ pub(super) const FAMILY: Family = Family {
                     ParamType::Boolean,
                     "Whether the document has unsaved changes.",
                 ),
+                ResultSpec::new("name", ParamType::String, "The map's name."),
+                ResultSpec::new("nodes", ParamType::Integer, "How many nodes the map holds."),
                 ResultSpec::new(
-                    "undo_depth",
+                    "revision",
                     ParamType::Integer,
-                    "How many entries the undo stack holds.",
+                    "The document's revision: it advances with every change, an undo and a redo included.",
                 ),
                 ResultSpec::new(
-                    "map",
+                    "history",
                     ParamType::Object,
-                    "{name, version} of the loaded map.",
+                    "{undo, redo}: how many entries the history holds each way.",
                 ),
                 ResultSpec::new(
-                    "counts",
+                    "document",
                     ParamType::Object,
-                    "{nodes, edges, sections, palettes, custom_mutations, macros}.",
-                ),
-                ResultSpec::new(
-                    "mindmap",
-                    ParamType::Object,
-                    "The model through its own serde, in the .mindmap.json shape; with pointer, the \
-                     value found there.",
+                    "The map in the .mandala.json shape a save writes; with pointer, the value found there.",
                 ),
                 ResultSpec::new(
                     "path",
@@ -135,14 +131,17 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "query.selection",
-            summary: "The current selection: the SelectionState variant and its ids.",
+            summary: "The current selection: the selected elements, by name, in the order they were selected.",
             params: &[],
-            result: &[ResultSpec::new(
-                "kind",
-                ParamType::String,
-                "The variant: None, Single, Multi, Section, MultiSection, SectionRange, Edge, \
-                 EdgeLabel, PortalLabel or PortalText. The variant's own ids sit beside it.",
-            )],
+            result: &[
+                ResultSpec::new("count", ParamType::Integer, "How many elements are selected."),
+                ResultSpec::new(
+                    "elements",
+                    ParamType::Array,
+                    "Each selected element by its name: {node: <id>} for a node, {node: <id>, \
+                     connector: true} or {node: <id>, link: <index>} for a path.",
+                ),
+            ],
             support: Support::Everywhere,
             run: selection,
         },
@@ -174,36 +173,31 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "query.mode",
-            summary: "The interaction mode, the drag state machine, the open modal, the hovered node and the pointer.",
+            summary: "The interaction mode, the drag state machine, the open modals and the pointer.",
             params: &[],
             result: &[
                 ResultSpec::new(
                     "interaction_mode",
                     ParamType::Object,
-                    "{kind: Default|Reparent|Connect|NodeEdit|Resize, …}: the mode and its ids.",
+                    "{kind: Default}: the mode.",
                 ),
                 ResultSpec::new(
                     "drag_state",
                     ParamType::Object,
-                    "{kind: None|Pending|PendingRight|Panning|SelectingRect|Throttled, …}; a Throttled \
-                     drag names its gesture.",
+                    "{kind: None|Pending|PendingRight|Panning|SelectingRect, …}; a pending press names \
+                     the element it landed on.",
                 ),
                 ResultSpec::new(
                     "modals",
                     ParamType::Array,
                     "Every open modal, in the order the keyboard handler consults them: console, \
-                     color_picker, single_line_edit, text_edit. The picker claims only its own keys.",
+                     color_picker. The picker claims only its own keys.",
                 ),
                 ResultSpec::new(
                     "key_owner",
                     ParamType::String,
-                    "Who receives an ordinary key: console, single_line_edit, text_edit, or none \
-                     (normal dispatch). Never color_picker, which claims only its own keys.",
-                ),
-                ResultSpec::new(
-                    "hovered_node",
-                    ParamType::String,
-                    "The node id under the pointer, or null.",
+                    "Who receives an ordinary key: console, or none (normal dispatch). Never \
+                     color_picker, which claims only its own keys.",
                 ),
                 ResultSpec::new(
                     "cursor_pos",
@@ -216,47 +210,27 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "query.status",
-            summary: "The mode-status line the renderer shows, such as \"editing: <id> — section [1 of 3]\".",
+            summary: "The status lines: the renderer's mode line and the document's last refusal.",
             params: &[],
-            result: &[ResultSpec::new(
-                "text",
-                ParamType::String,
-                "The status line, or null when none is showing (Default mode).",
-            )],
+            result: &[
+                ResultSpec::new(
+                    "text",
+                    ParamType::String,
+                    "The mode-status line, or null when none is showing (Default mode).",
+                ),
+                ResultSpec::new(
+                    "document",
+                    ParamType::String,
+                    "The line the document's last refused change left, such as the busy message an \
+                     open interactive edit answers with; null when the last change was accepted.",
+                ),
+            ],
             support: Support::Everywhere,
             run: status,
         },
         CommandSpec {
-            name: "query.animations",
-            summary: "The running animations and their clocks.",
-            params: &[],
-            result: &[
-                ResultSpec::new(
-                    "active",
-                    ParamType::Boolean,
-                    "Whether any animation instance is running (it is ticking unless paused).",
-                ),
-                ResultSpec::new(
-                    "paused",
-                    ParamType::Boolean,
-                    "Whether a tree-mutating drag has suspended the tick; the animations are then \
-                     frozen and each reports phase paused.",
-                ),
-                ResultSpec::new("count", ParamType::Integer, "How many animations are running."),
-                ResultSpec::new(
-                    "animations",
-                    ParamType::Array,
-                    "One entry per instance: target_id, section_idx, mutation_id, start_ms, \
-                     elapsed_ms, phase (delay|running|due|paused), progress (0 to 1, before easing), \
-                     timing.",
-                ),
-            ],
-            support: Support::Everywhere,
-            run: animations,
-        },
-        CommandSpec {
             name: "query.editors",
-            summary: "The modal editors' live state and the document's active previews.",
+            summary: "The open modals' live state: the console and the color picker.",
             params: &[],
             result: &[
                 ResultSpec::new(
@@ -269,31 +243,13 @@ pub(super) const FAMILY: Family = Family {
                     ParamType::Object,
                     "The open color picker: mode, hue_deg, sat, val, gesture; null when closed.",
                 ),
-                ResultSpec::new(
-                    "single_line_edit",
-                    ParamType::Object,
-                    "The edge-label / portal-caption editor: target, buffer, cursor_grapheme_pos, \
-                     original; null when closed.",
-                ),
-                ResultSpec::new(
-                    "text_edit",
-                    ParamType::Object,
-                    "The node text editor: node_id, section_idx, buffer, cursor_grapheme_pos, \
-                     selection_anchor; null when closed.",
-                ),
-                ResultSpec::new(
-                    "previews",
-                    ParamType::Object,
-                    "The scene-only substitutions the document is showing: label_edit, portal_text_edit, \
-                     color_picker, border, rect_select; each null when none is live.",
-                ),
             ],
             support: Support::Everywhere,
             run: editors,
         },
         CommandSpec {
             name: "query.undo",
-            summary: "The undo stack: its depth and its newest entries, newest first.",
+            summary: "The undo history: its depth each way and its newest entries, newest first.",
             params: &[ParamSpec::new(
                 "limit",
                 ParamType::Integer,
@@ -301,11 +257,12 @@ pub(super) const FAMILY: Family = Family {
                 "How many entries to return, newest first. Default 20, at most 1000.",
             )],
             result: &[
-                ResultSpec::new("depth", ParamType::Integer, "How many entries the stack holds."),
+                ResultSpec::new("depth", ParamType::Integer, "How many entries Undo can take."),
+                ResultSpec::new("redo_depth", ParamType::Integer, "How many entries Redo can take."),
                 ResultSpec::new(
                     "entries",
                     ParamType::Array,
-                    "Newest first: {kind, node_ids?, index?}, the order Undo takes them.",
+                    "Newest first, the order Undo takes them: {label, source, revision}.",
                 ),
             ],
             support: Support::Everywhere,
@@ -364,7 +321,8 @@ fn parse_document_request(
             if words.is_empty() {
                 return Err(Refusal::Invalid(
                     "fields",
-                    "`fields` must name at least one of file_path, dirty, undo_depth, map, counts, mindmap"
+                    "`fields` must name at least one of file_path, dirty, name, nodes, revision, history, \
+                     document"
                         .into(),
                 ));
             }
@@ -405,14 +363,14 @@ fn parse_document_request(
         }
     };
     let fields = match (explicit, &pointer) {
-        (Some(fields), Some(_)) if !fields.contains(&DocumentField::Mindmap) => {
+        (Some(fields), Some(_)) if !fields.contains(&DocumentField::Document) => {
             return Err(Refusal::Invalid(
                 "pointer",
-                "`pointer` narrows `mindmap`, which `fields` does not select".into(),
+                "`pointer` narrows `document`, which `fields` does not select".into(),
             ))
         }
         (Some(fields), _) => fields,
-        (None, Some(_)) => vec![DocumentField::Mindmap],
+        (None, Some(_)) => vec![DocumentField::Document],
         (None, None) => DocumentField::ALL
             .into_iter()
             .filter(|f| f.is_default())
@@ -468,7 +426,7 @@ fn document(call: &mut Call<'_>) -> Reply {
 }
 
 fn selection(call: &mut Call<'_>) -> Reply {
-    with_document(call, |doc, _| doc.selection.to_ipc_json())
+    with_document(call, |doc, _| doc.ipc_selection_json())
 }
 
 fn camera(call: &mut Call<'_>) -> Reply {
@@ -481,18 +439,6 @@ fn mode(call: &mut Call<'_>) -> Reply {
 
 fn status(call: &mut Call<'_>) -> Reply {
     with_shell(call, ShellState::Status)
-}
-
-fn animations(call: &mut Call<'_>) -> Reply {
-    // The app clock: the one the per-frame drain ticks animations
-    // against, so `elapsed_ms` and `phase` agree with what the next
-    // tick will do — virtual milliseconds under a virtual clock, which
-    // makes them a pure function of the step sequence. A
-    // drag-suspended tick is reported as a pause rather than as a
-    // clock that keeps running.
-    with_document(call, |doc, app| {
-        doc.ipc_animations_json(app.clock().now_whole_ms(), app.animation_pause())
-    })
 }
 
 fn editors(call: &mut Call<'_>) -> Reply {

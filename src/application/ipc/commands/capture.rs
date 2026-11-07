@@ -387,7 +387,7 @@ fn canvas_result_of(capture: &CanvasCapture) -> Value {
         "rendered": matches!(capture.outcome, CanvasOutcome::Drawn { .. }),
         "width": camera.viewport_size.0,
         "height": camera.viewport_size.1,
-        "scale": crate::application::document::f32_json(camera.pixel_ratio),
+        "scale": crate::application::view::inspect::f32_json(camera.pixel_ratio),
         "camera": CameraInfo::of(camera),
         "settled": capture.settled,
     });
@@ -566,7 +566,7 @@ fn result_of(screenshot: &Screenshot) -> Value {
         "rendered": files.is_ok(),
         "width": camera.viewport_size.0,
         "height": camera.viewport_size.1,
-        "scale": crate::application::document::f32_json(camera.pixel_ratio),
+        "scale": crate::application::view::inspect::f32_json(camera.pixel_ratio),
         "camera": CameraInfo::of(camera),
         "settled": screenshot.settled,
     });

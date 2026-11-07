@@ -164,7 +164,6 @@ use log::{error, info, warn};
 // its passes.
 pub(crate) use target_encoding::TargetEncoding;
 
-use rustc_hash::FxHashMap;
 
 use wgpu::{Color, Device, Instance, MultisampleState, Queue, Surface, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;

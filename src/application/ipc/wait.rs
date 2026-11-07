@@ -91,24 +91,10 @@ impl Settling {
     /// What still keeps `until` from holding, for a timeout's message.
     fn owed(self, until: Until) -> &'static str {
         match until {
- {
-                "the app still had frames to run (a pending drag or picker hover, or a camera \
-                 rebuild)"
-            }
-            Until::Settled if self.continuing => {
-                "the app still had frames to run (an animation, a pending drag or picker hover, \
-                 queued input or a camera rebuild)"
-            }=>            // Queued input is owed to future virtual instants, so it
+            // Queued input is owed to future virtual instants, so it
             // never keeps a virtual clock unsettled and is not named.
             Until::Settled if self.continuing && self.virtual_clock => "the app still had frames to run",
-            Until::Settled if self.continuing => "the app still had frames to run (queued input)",=> {
-                "the app still had frames to run (a pending drag or picker hover, or a camera \
-                 rebuild)"
-            }
-            Until::Settled if self.continuing => {
-                "the app still had frames to run (an animation, a pending drag or picker hover, \
-                 queued input or a camera rebuild)"
-            }
+            Until::Settled if self.continuing => "the app still had frames to run (queued input)",
             Until::Settled => "the renderer had not drawn the latest frame",
         }
     }

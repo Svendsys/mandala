@@ -241,10 +241,10 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "input.click_node",
-            summary: "Move the pointer to a node's (or one section's) center in the model and click \
+            summary: "Move the pointer to the center of a node's (or one section's) drawn box and click \
                       there: sugar for input.mouse_move plus input.mouse_button click.",
             params: &[
-                ParamSpec::new("node_id", ParamType::String, true, "The node to click."),
+                ParamSpec::new("node_id", ParamType::Integer, true, "The node to click, by its integer id."),
                 ParamSpec::new(
                     "section",
                     ParamType::Integer,
@@ -486,9 +486,10 @@ fn drag(call: &mut Call<'_>) -> Reply {
 }
 
 fn click_node(call: &mut Call<'_>) -> Reply {
-    let Some(node_id) = call.str_param("node_id") else {
+    let Some(node_value) = call.param("node_id").cloned() else {
         return call.invalid_params("node_id", "missing `node_id`");
     };
+    let node_id = node_value.to_string();
     let section = match call.param("section") {
         None => None,
         Some(value) => match value.as_u64().and_then(|i| usize::try_from(i).ok()) {
@@ -523,7 +524,7 @@ fn click_node(call: &mut Call<'_>) -> Reply {
         let Some(view) = app.scene() else {
             return no_loaded_document(call);
         };
-        match node_target(view.document, node_id, section, view.camera.zoom) {
+        match node_target(&view, &node_value, section) {
             Ok(canvas) => {
                 let (x, y) = app.surface_point(Point {
                     x: canvas.x,
@@ -535,7 +536,7 @@ fn click_node(call: &mut Call<'_>) -> Reply {
                     return call.error(
                         code::NOT_FOUND,
                         format!(
-                            "node '{node_id}' is not on screen: its center lands at surface ({x:.1}, {y:.1}), \
+                            "node {node_id} is not on screen: its center lands at surface ({x:.1}, {y:.1}), \
                              outside the {width}×{height} surface; bring it into view first (act.action \
                              with a pan or zoom Action)"
                         ),
@@ -544,18 +545,20 @@ fn click_node(call: &mut Call<'_>) -> Reply {
                 }
                 (x, y)
             }
+            Err(Aim::NotANode(message)) => return call.invalid_params("node_id", message),
             Err(Aim::Missing) => {
                 return call.error(
                     code::NOT_FOUND,
-                    format!("no node '{node_id}' in the document"),
+                    format!("no node {node_id} in the document"),
                     None,
                 )
             }
-            Err(Aim::Folded) => {
+            Err(Aim::NotDrawn) => {
                 return call.error(
                     code::NOT_FOUND,
                     format!(
-                        "node '{node_id}' is hidden by a folded ancestor: nothing of it is drawn to click"
+                        "node {node_id} draws nothing to click: it is hidden (by a fold or its own \
+                         `hidden`) or has no text"
                     ),
                     None,
                 )
@@ -564,8 +567,8 @@ fn click_node(call: &mut Call<'_>) -> Reply {
                 return call.error(
                     code::NOT_FOUND,
                     format!(
-                        "node '{node_id}' is not drawn at zoom {}: it is outside its \
-                         min/max_zoom_to_render window; zoom into the window first",
+                        "node {node_id} is not drawn at zoom {}: it is outside its zoom window; zoom \
+                         into the window first",
                         view.camera.zoom
                     ),
                     None,
@@ -574,7 +577,7 @@ fn click_node(call: &mut Call<'_>) -> Reply {
             Err(Aim::NoSection(count)) => {
                 return call.invalid_params(
                     "section",
-                    format!("node '{node_id}' has {count} section(s); `section` is an index below that"),
+                    format!("node {node_id} has {count} section(s); `section` is an index below that"),
                 )
             }
         }
@@ -830,48 +833,50 @@ fn drag_samples(
 /// Why `input.click_node` has nowhere to click.
 #[derive(Debug, PartialEq)]
 enum Aim {
+    /// `node_id` is not an integer node id; the message says why.
+    NotANode(String),
+    /// No node has that id.
     Missing,
-    Folded,
-    /// The camera's zoom is outside the node's `min/max_zoom_to_render`
-    /// window, so the scene does not draw it.
+    /// The node, or the section, draws nothing: hidden, folded away or
+    /// empty.
+    NotDrawn,
+    /// The camera's zoom is outside the node's zoom window, so it is not
+    /// drawn at this zoom.
     OutsideZoomWindow,
     /// The node has this many sections, and `section` is not below it.
     NoSection(usize),
 }
 
 /// The canvas point `input.click_node` aims at: the center of the
-/// node's model AABB, or of one section's, by the tree builder's own
-/// section rule. A node the scene does not draw at `zoom` — hidden
-/// by a fold, or outside its zoom window — has nothing to click.
-fn node_target(
-    document: &crate::application::document::MindMapDocument,
-    node_id: &str,
-    section: Option<usize>,
-    zoom: f32,
-) -> Result<glam::Vec2, Aim> {
-    let map = &document.mindmap;
-    let node = map.nodes.get(node_id).ok_or(Aim::Missing)?;
-    if map.is_hidden_by_fold(node) {
-        return Err(Aim::Folded);
-    }
-    if !node.zoom_window().contains(zoom) {
-        return Err(Aim::OutsideZoomWindow);
-    }
-    let Some(index) = section else {
-        return Ok(node.center_vec2());
+/// node's drawn box, or of one section's — what the projector drew for
+/// it (`view::inspect::element_bounds`), so a click lands where the
+/// pixels are. A node the view does not draw at the camera's zoom has
+/// nothing to click.
+fn node_target(scene: &crate::application::ipc::SceneView<'_>, node: &Value, section: Option<usize>) -> Result<glam::Vec2, Aim> {
+    use crate::application::view::inspect::{children_of_kind, element_bounds, element_visibility, node_named};
+    use baumhard::document::element::DocKind;
+    let doc = scene.document.doc();
+    let (projector, layers) = (scene.view.projector(), scene.view.layers());
+    // An integer that names no node is missing; anything else is not a
+    // node id at all.
+    let node = node_named(doc, node).map_err(|message| match node.as_u64() {
+        Some(_) => Aim::Missing,
+        None => Aim::NotANode(message),
+    })?;
+    let target = match section {
+        None => node,
+        Some(index) => {
+            let sections: Vec<_> = children_of_kind(doc, node, DocKind::Section).collect();
+            *sections.get(index).ok_or(Aim::NoSection(sections.len()))?
+        }
     };
-    let section = node
-        .sections
-        .get(index)
-        .ok_or(Aim::NoSection(node.sections.len()))?;
-    let ((x, y), (width, height)) = baumhard::mindmap::tree_builder::section_aabb(
-        section,
-        node.position.x as f32,
-        node.position.y as f32,
-        node.size.width as f32,
-        node.size.height as f32,
-    );
-    Ok(glam::Vec2::new(x + width / 2.0, y + height / 2.0))
+    match element_visibility(doc, projector, layers, target, scene.camera) {
+        None => return Err(Aim::NotDrawn),
+        Some("outside_zoom_window") => return Err(Aim::OutsideZoomWindow),
+        Some(_) => {}
+    }
+    let rect = element_bounds(doc, projector, layers, target).ok_or(Aim::NotDrawn)?;
+    Ok(rect.origin + rect.size / 2.0)
 }
 
 #[cfg(test)]

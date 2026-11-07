@@ -23,15 +23,12 @@
 //! grammar, help and completion stand, and running it refuses with
 //! that issue named ([`super::rebuilt_by`]).
 
-use baumhard::util::geometry::is_positive_finite;
 
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::route::{self, Routes};
-use crate::application::console::spec::{kvs, usage, Bare, Form, Grammar, Key, Subverb, Vocabulary, Word};
+use crate::application::console::spec::{Bare, Form, Grammar, Key, Subverb, Vocabulary, Word};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 
 /// Zoom levels the popup suggests. The camera clamps to

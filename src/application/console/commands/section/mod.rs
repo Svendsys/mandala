@@ -36,10 +36,6 @@ pub(crate) mod grammar;
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::node_or_section_selected_single_node;
-use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::kvs::Pair;
-use crate::application::console::spec::route::{self, Routes};
-use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 
 pub const COMMAND: Command = Command {

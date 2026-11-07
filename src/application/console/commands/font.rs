@@ -45,10 +45,8 @@ use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
-    kvs, usage, Bare, Descent, Form, Grammar, Key, Slot, Subverb, Vocabulary,
+    Bare, Form, Grammar, Key, Slot, Subverb, Vocabulary,
 };
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 

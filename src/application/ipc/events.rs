@@ -518,11 +518,7 @@ impl Session {
     /// of everything that waited behind it — unless a newer event of
     /// its class has queued meanwhile, which supersedes it.
     pub(crate) fn requeue(&mut self, queued: Queued) {
-        // A delta event is never superseded: it goes back in front of
-        // the newer one of its class, which the next queue folds into.
-        if !self.subscriptions.verbose
-            && !queued.class.is_delta()
-            && self.pending.iter().any(|waiting| waiting.class == queued.class)
+        if !self.subscriptions.verbose && self.pending.iter().any(|waiting| waiting.class == queued.class)
         {
             return;
         }

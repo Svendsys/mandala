@@ -14,15 +14,12 @@
 //! grammar, help and completion stand, and running it refuses with
 //! that issue named ([`super::rebuilt_by`]).
 
-use baumhard::util::geometry::pretty_inequal;
 
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::path_selected;
-use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
-    bare_words, free, kvs, usage, Bare, Form, Grammar, Key, Subverb, Vocabulary, Word,
+    bare_words, free, Bare, Form, Grammar, Key, Subverb, Vocabulary, Word,
 };
 use crate::application::console::{ConsoleEffects, ExecResult};
 

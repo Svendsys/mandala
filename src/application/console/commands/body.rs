@@ -10,8 +10,7 @@
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::path_selected;
-use crate::application::console::spec::descent::descend;
-use crate::application::console::spec::{kvs, usage, Bare, Form, Grammar, Key, Vocabulary, Word};
+use crate::application::console::spec::{Bare, Form, Grammar, Key, Vocabulary, Word};
 use crate::application::console::{ConsoleEffects, ExecResult};
 
 /// Body-glyph presets. Kept as `(name, glyph)` pairs so the command

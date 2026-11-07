@@ -8,7 +8,7 @@
 use baumhard::gfx_structs::camera::Camera2D;
 use serde_json::{json, Value};
 
-use crate::application::document::f32_json;
+use crate::application::view::inspect::f32_json;
 
 /// Where a coordinate pair lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -90,23 +90,33 @@ impl InputHandlerContext<'_> {
     /// frame lands one — ahead of the drains, where a winit event lands —
     /// then [`Self::drain_inputs`]. The recorder runs in
     /// [`Self::record_tick`], after whatever the caller orders between the
-    /// two (the event loop runs the IPC drain there).
-    pub(super) fn drain_frame(&mut self, beat: Beat) {
+    /// two (the event loop runs the IPC drain there). Returns whether the
+    /// view changed.
+    pub(super) fn drain_frame(&mut self, beat: Beat) -> bool {
         if beat.lands_injected(self.clock) {
             let renderer = &*self.renderer;
             if let Some(sample) = self.injected.pop(|point| surface_of(renderer, point)) {
                 let _ = self.apply_injected(sample);
             }
         }
-        self.drain_inputs();
+        self.drain_inputs()
     }
 
-    /// The per-frame drains: the rubber band (`drain_frame`). Does **not**
-    /// render: the event loop decides whether to `request_redraw` from
-    /// the post-drain [`needs_continuation`], and the render runs from the
-    /// `WindowEvent::RedrawRequested` arm.
-    pub(super) fn drain_inputs(&mut self) {
+    /// The per-frame drains: the rubber band (`drain_frame`), then the
+    /// view's sync — the one pipeline (`view::MapView::sync`) — so a
+    /// change any path made reaches the layers this frame even if the
+    /// path did not sync it itself; a sync with nothing to do does
+    /// nothing. Does **not** render: the event loop decides whether to
+    /// `request_redraw` from what this returns and the post-drain
+    /// [`needs_continuation`], and the render runs from the
+    /// `WindowEvent::RedrawRequested` arm. Returns whether the view
+    /// changed.
+    pub(super) fn drain_inputs(&mut self) -> bool {
         drain_frame::drain_rect_select(self.drag_state, self.document, self.view, self.renderer);
+        match (self.document.as_mut(), self.view.as_mut()) {
+            (Some(doc), Some(view)) => view.sync(doc, self.renderer),
+            _ => false,
+        }
     }
 
     /// Take the active recording's next frame if one is due: a no-op
@@ -161,7 +171,7 @@ impl Steps for InputHandlerContext<'_> {
     fn beat(&mut self, beat: Beat, at_ms: f64) {
         self.clock.advance_to(at_ms);
         self.watchdog.tick();
-        self.drain_frame(beat);
+        let _ = self.drain_frame(beat);
         self.record_tick(beat);
     }
 }

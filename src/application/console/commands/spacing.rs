@@ -11,8 +11,7 @@
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::path_selected;
-use crate::application::console::spec::descent::descend;
-use crate::application::console::spec::{bare_words, free_words, kvs, usage, Bare, Form, Grammar, Key, Word};
+use crate::application::console::spec::{bare_words, free_words, Bare, Form, Grammar, Key, Word};
 use crate::application::console::{ConsoleEffects, ExecResult};
 
 pub const PRESETS: &[(&str, f32)] = &[("tight", 0.0), ("normal", 2.0), ("wide", 6.0)];

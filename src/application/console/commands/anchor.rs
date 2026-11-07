@@ -13,8 +13,7 @@
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::path_selected;
-use crate::application::console::spec::descent::descend;
-use crate::application::console::spec::{bare_words, kvs, usage, Bare, Form, Grammar, Key, Vocabulary, Word};
+use crate::application::console::spec::{bare_words, Bare, Form, Grammar, Key, Vocabulary, Word};
 use crate::application::console::{ConsoleEffects, ExecResult};
 
 pub const SIDES: &[&str] = &["auto", "top", "right", "bottom", "left"];

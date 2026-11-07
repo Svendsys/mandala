@@ -17,9 +17,7 @@
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::descent::{descend, Stop};
-use crate::application::console::spec::route::{self, Routes};
-use crate::application::console::spec::{free, kvs, usage, Descent, Form, Grammar, Slot, Subverb};
+use crate::application::console::spec::{free, Form, Grammar, Slot, Subverb};
 use crate::application::console::{ConsoleEffects, ExecResult};
 
 const SUBVERBS: &[Subverb] = &[
