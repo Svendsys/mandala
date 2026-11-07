@@ -17,7 +17,7 @@
 //! unrecognized key is warned about and dropped. Keys starting with
 //! `_` are comments and are not reported.
 
-use baumhard::document::DEFAULT_HISTORY_LIMIT;
+use baumhard::document::writer::DEFAULT_HISTORY_LIMIT;
 
 use super::salvage::{parse_object, take_field};
 

@@ -3,7 +3,7 @@
 //! Clipboard trait tests for `ColorPickerState`.
 
 use crate::application::color_picker::{ColorPickerState, OpenPicker, PickerMode, CROSSHAIR_CENTER_CELL};
-use crate::application::console::traits::{ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome};
+use crate::application::color_picker::{ClipboardContent, Outcome};
 
 /// Build an open `ColorPickerState` in Standalone mode with given HSV.
 /// Only the fields the clipboard traits read/write are meaningful;

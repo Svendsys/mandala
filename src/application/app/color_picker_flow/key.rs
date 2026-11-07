@@ -23,7 +23,7 @@
 
 use crate::application::clipboard;
 use crate::application::color_picker::{ColorPickerState, OpenPicker};
-use crate::application::console::traits::{ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome};
+use crate::application::color_picker::{ClipboardContent, Outcome};
 use crate::application::keybinds::Action;
 
 

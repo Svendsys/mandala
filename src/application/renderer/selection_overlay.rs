@@ -27,9 +27,10 @@ const SELECTION_RECT_ALPHA: u8 = 200;
 /// [`SELECTION_RECT_ALPHA`]. Derived rather than written out, which
 /// is how this used to read `Color::rgba(0, 230, 255, 200)` against
 /// a `#00E5FF` whose green channel is 229.
-pub(crate) const SELECTION_RECT_COLOR: Color = baumhard::font::color::cosmic_color_from_color(
-    baumhard::mindmap::SELECTION_HIGHLIGHT.with_alpha(SELECTION_RECT_ALPHA),
-);
+pub(crate) const SELECTION_RECT_COLOR: Color = {
+    let [r, g, b, _] = crate::application::view::overlay::SELECTION_HIGHLIGHT.0;
+    Color::rgba(r, g, b, SELECTION_RECT_ALPHA)
+};
 
 impl Renderer {
     /// Build overlay buffers for a selection rectangle using dashed box-drawing glyphs.

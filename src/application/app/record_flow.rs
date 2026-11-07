@@ -97,7 +97,7 @@ pub(super) fn start(
     let live_size = scene.renderer.camera().viewport_size;
     request.size.get_or_insert(live_size);
     let watchdog = scene.watchdog;
-    let revision = scene.document.as_ref().map_or(0, |doc| doc.revision());
+    let revision = scene.document.as_ref().map_or(0, |doc| doc.revision().0);
     let now = clock.now_ms();
 
     let mut made: Option<MadeDir> = None;
@@ -176,7 +176,7 @@ pub(super) fn tick(scene: CaptureScene<'_>, recorder: &mut Recorder, artifacts: 
         return;
     };
     let watchdog = scene.watchdog;
-    let revision = scene.document.as_ref().map_or(0, |doc| doc.revision());
+    let revision = scene.document.as_ref().map_or(0, |doc| doc.revision().0);
     let request = active.config().request;
     match active.step(now) {
         Step::Wait { .. } => return,

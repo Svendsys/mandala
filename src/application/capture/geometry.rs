@@ -6,20 +6,24 @@
 //! arithmetic instead of by guessing.
 //!
 //! **It describes the image, not the document.** Each node and section
-//! is read off the drawn node tree through Baumhard's scene serializer
-//! ([`dump_nodes`]) at the camera the image was drawn through, so its
-//! rects are in the image's own pixels and its membership is the
-//! renderer's cull verdict at that camera: a node a fold hides, a zoom
-//! window suppresses, or the framing leaves outside is absent, exactly
-//! as it is absent from the pixels. Everything else about the scene is
-//! `scene.dump`'s.
+//! is measured by the glyph runs the projector made for it
+//! (`view::inspect::element_bounds`), at the camera the image was drawn
+//! through, so its rects are in the image's own pixels and its membership
+//! is the draw verdict at that camera (`view::inspect::element_visibility`):
+//! a node a fold hides, a zoom window suppresses, or the framing leaves
+//! outside is absent, exactly as it is absent from the pixels. Everything
+//! else about the scene is `scene.dump`'s.
 
+use baumhard::document::element::DocKind;
+use baumhard::document::ids::Document;
+use baumhard::flow::Rect;
 use baumhard::gfx_structs::camera::Camera2D;
-use baumhard::mindmap::model::MindMap;
-use baumhard::mindmap::scene_dump::{dump_nodes, DumpFilter, SceneRect};
-use baumhard::mindmap::tree_builder::MindMapTree;
+use baumhard::projection::{GlyphLayers, Projector};
 use baumhard::util::shortest_float::serialize_shortest;
 use serde::Serialize;
+
+use crate::application::document::selection::every_node;
+use crate::application::view::inspect::{children_of_kind, element_bounds, element_visibility, ident_of, surface_rect};
 
 /// The whole sidecar.
 #[derive(Debug, Serialize)]
@@ -79,20 +83,21 @@ impl SurfaceInfo {
 /// One node in the image.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct NodeGeometry {
-    pub(crate) id: String,
+    /// The node's integer id (`format/ipc.md` §"Naming elements").
+    pub(crate) id: u32,
     /// The node's drawn extent in image pixels, before clipping: a node
     /// half outside the image has a rect that runs past its edge.
     pub(crate) rect: SceneRect,
     /// Whether `rect` runs past an edge of the image.
     pub(crate) clipped: bool,
-    /// Its sections the image shows, in model order.
+    /// Its sections the image shows, in document order.
     pub(crate) sections: Vec<SectionGeometry>,
 }
 
 /// One section in the image.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct SectionGeometry {
-    /// The section's index in `MindNode.sections`.
+    /// The section's index among its node's sections.
     pub(crate) index: usize,
     pub(crate) rect: SceneRect,
 }
@@ -102,38 +107,68 @@ fn clipped(rect: &SceneRect, width: u32, height: u32) -> bool {
     rect.x < 0.0 || rect.y < 0.0 || rect.x + rect.w > width as f32 || rect.y + rect.h > height as f32
 }
 
+/// A rect in image pixels, as the sidecar carries it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub(crate) struct SceneRect {
+    #[serde(serialize_with = "serialize_shortest")]
+    pub(crate) x: f32,
+    #[serde(serialize_with = "serialize_shortest")]
+    pub(crate) y: f32,
+    #[serde(serialize_with = "serialize_shortest")]
+    pub(crate) w: f32,
+    #[serde(serialize_with = "serialize_shortest")]
+    pub(crate) h: f32,
+}
+
+impl SceneRect {
+    fn of(rect: Rect) -> Self {
+        SceneRect {
+            x: rect.origin.x,
+            y: rect.origin.y,
+            w: rect.size.x,
+            h: rect.size.y,
+        }
+    }
+}
+
 /// The sidecar for an image drawn through `camera`: every node and
-/// section the camera shows, from `tree` (`None` before the first scene
-/// build, which shows nothing).
+/// section the camera shows, in document order, measured off `layers`.
 ///
 /// # Costs
 ///
-/// One walk of the node tree ([`dump_nodes`] without text) and one id
-/// `String` per node shown.
+/// One walk of the document's nodes, and per node shown its runs and its
+/// sections' runs.
 pub(crate) fn sidecar(
-    tree: Option<&MindMapTree>,
-    map: &MindMap,
+    doc: &Document,
+    projector: &Projector,
+    layers: &GlyphLayers,
     camera: &Camera2D,
     protocol: u32,
     document_revision: u64,
 ) -> Sidecar {
     let (width, height) = camera.viewport_size;
-    let nodes = tree
-        .map(|tree| dump_nodes(tree, map, camera, DumpFilter::VISIBLE_IDS))
-        .unwrap_or_default()
-        .into_iter()
-        .map(|node| NodeGeometry {
-            id: node.node_id,
-            rect: node.placement.surface,
-            clipped: clipped(&node.placement.surface, width, height),
-            sections: node
-                .sections
-                .into_iter()
-                .map(|section| SectionGeometry {
-                    index: section.section_idx,
-                    rect: section.placement.surface,
+    let shown = |element| element_visibility(doc, projector, layers, element, camera) == Some("visible");
+    let nodes = every_node(doc)
+        .filter(|&node| shown(node))
+        .filter_map(|node| {
+            let rect = SceneRect::of(surface_rect(element_bounds(doc, projector, layers, node)?, camera));
+            let sections = children_of_kind(doc, node, DocKind::Section)
+                .enumerate()
+                .filter(|&(_, section)| shown(section))
+                .filter_map(|(index, section)| {
+                    let rect = element_bounds(doc, projector, layers, section)?;
+                    Some(SectionGeometry {
+                        index,
+                        rect: SceneRect::of(surface_rect(rect, camera)),
+                    })
                 })
-                .collect(),
+                .collect();
+            Some(NodeGeometry {
+                id: ident_of(doc, node)?.0,
+                clipped: clipped(&rect, width, height),
+                rect,
+                sections,
+            })
         })
         .collect();
     Sidecar {
@@ -151,37 +186,36 @@ mod tests {
     use crate::application::document::MindMapDocument;
     use glam::Vec2;
 
-    fn testament() -> MindMapDocument {
-        let path = baumhard::util::doc_fixtures::repo_path("maps/testament.mindmap.json");
-        MindMapDocument::load(path.to_str().expect("a UTF-8 repo path")).expect("the testament map loads")
-    }
-
-    /// A camera centered on `node_id`'s laid-out box at `zoom`, drawing
-    /// a `width × height` image at `scale`.
-    fn camera_on(tree: &MindMapTree, map: &MindMap, node_id: &str, size: (u32, u32), scale: f32) -> Camera2D {
-        let probe = Camera2D::new(1, 1);
-        let node = baumhard::mindmap::scene_dump::dump_node(tree, map, &probe, node_id).expect("drawn");
-        let canvas = node.placement.canvas;
-        Camera2D {
-            position: Vec2::new(canvas.x + canvas.w / 2.0, canvas.y + canvas.h / 2.0),
-            zoom: 1.0,
-            viewport_size: size,
-            pixel_ratio: scale,
-        }
+    /// The converted testament map, projected.
+    fn testament() -> (MindMapDocument, Projector, GlyphLayers) {
+        let path = baumhard::util::doc_fixtures::repo_path("maps/testament.mandala.json");
+        let doc = MindMapDocument::load(path.to_str().expect("a UTF-8 repo path"), 50).expect("the testament map loads");
+        baumhard::font::fonts::init();
+        let mut layers = GlyphLayers::new();
+        let mut fonts = baumhard::font::fonts::FontSystemLease::new("geometry tests");
+        let projector = Projector::project_full(doc.doc(), &mut layers, &mut fonts);
+        (doc, projector, layers)
     }
 
     /// The node the camera centers on is in the sidecar, at the image's
-    /// middle, unclipped; its rect scales with `scale` while the set of
-    /// nodes does not; and a node the camera does not show is absent.
+    /// middle; its rect scales with `scale` while the set of nodes does
+    /// not; and a node the camera does not show is absent.
     #[test]
     fn test_the_sidecar_maps_the_image_and_only_what_it_shows() {
-        let doc = testament();
-        let tree = doc.build_tree();
-        let map = &doc.mindmap;
-        let first = map.nodes.keys().min().expect("a node").clone();
-
-        let plain = camera_on(&tree, map, &first, (1600, 1200), 1.0);
-        let one = sidecar(Some(&tree), map, &plain, 1, 0);
+        let (doc, projector, layers) = testament();
+        let doc = doc.doc();
+        let first = every_node(doc)
+            .find(|&n| element_bounds(doc, &projector, &layers, n).is_some())
+            .expect("a drawn node");
+        let first_id = ident_of(doc, first).expect("a node").0;
+        let canvas = element_bounds(doc, &projector, &layers, first).expect("drawn");
+        let plain = Camera2D {
+            position: canvas.origin + canvas.size / 2.0,
+            zoom: 1.0,
+            viewport_size: (1600, 1200),
+            pixel_ratio: 1.0,
+        };
+        let one = sidecar(doc, &projector, &layers, &plain, 1, 0);
         assert_eq!(
             (one.protocol, one.surface),
             (
@@ -196,7 +230,7 @@ mod tests {
         let centered = one
             .nodes
             .iter()
-            .find(|n| n.id == first)
+            .find(|n| n.id == first_id)
             .expect("the centered node is shown");
         let middle = Vec2::new(
             centered.rect.x + centered.rect.w / 2.0,
@@ -209,10 +243,10 @@ mod tests {
             pixel_ratio: 2.0,
             ..plain
         };
-        let two = sidecar(Some(&tree), map, &doubled, 1, 0);
-        let ids = |s: &Sidecar| s.nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
+        let two = sidecar(doc, &projector, &layers, &doubled, 1, 0);
+        let ids = |s: &Sidecar| s.nodes.iter().map(|n| n.id).collect::<Vec<_>>();
         assert_eq!(ids(&one), ids(&two), "a pixel ratio changes no membership");
-        let twice = two.nodes.iter().find(|n| n.id == first).expect("shown");
+        let twice = two.nodes.iter().find(|n| n.id == first_id).expect("shown");
         assert!((twice.rect.w - 2.0 * centered.rect.w).abs() < 1e-3);
         assert_eq!(
             two.camera, one.camera,
@@ -232,12 +266,8 @@ mod tests {
             ..plain
         };
         assert!(
-            sidecar(Some(&tree), map, &far, 1, 0).nodes.is_empty(),
+            sidecar(doc, &projector, &layers, &far, 1, 0).nodes.is_empty(),
             "nothing out there"
-        );
-        assert!(
-            sidecar(None, map, &plain, 1, 0).nodes.is_empty(),
-            "no tree, nothing drawn"
         );
     }
 
@@ -275,7 +305,7 @@ mod tests {
                 zoom: 0.75,
             },
             nodes: vec![NodeGeometry {
-                id: "1.2.3".into(),
+                id: 7,
                 rect: SceneRect {
                     x: 401.0,
                     y: 92.5,
@@ -303,7 +333,7 @@ mod tests {
                 "surface": {"width": 1920, "height": 1080, "scale": 1.0},
                 "camera": {"center_x": 12.0, "center_y": -340.5, "zoom": 0.75},
                 "nodes": [
-                    {"id": "1.2.3",
+                    {"id": 7,
                      "rect": {"x": 401.0, "y": 92.5, "w": 218.0, "h": 64.0},
                      "clipped": false,
                      "sections": [{"index": 0, "rect": {"x": 401.0, "y": 92.5, "w": 218.0, "h": 30.0}}]}

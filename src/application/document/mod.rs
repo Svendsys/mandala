@@ -23,12 +23,14 @@
 //! the map (V1-C4..C8, D1, D3) inherits the same answer to "what does
 //! the user see?".
 
+pub mod placard;
 pub mod selection;
 
 // Both targets': the IPC module reads it on native over the socket
 // and in the browser over its WebSocket (`format/ipc.md` §Transport).
 mod ipc_state;
 
+pub(crate) use ipc_state::{DocumentField, PointerMiss};
 pub use selection::Selection;
 
 use std::path::Path;
@@ -82,7 +84,12 @@ pub struct MindMapDocument {
     status: Option<&'static str>,
     /// Whether this is [`Self::load_failure_placard`]'s document.
     load_failure: bool,
+    /// Which document of the process this is ([`Self::generation`]).
+    generation: u64,
 }
+
+/// The generation the next [`MindMapDocument`] gets.
+static NEXT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl MindMapDocument {
     /// The handle on `doc`, loaded from `file_path`, with nothing
@@ -96,6 +103,7 @@ impl MindMapDocument {
             transaction: None,
             status: None,
             load_failure: false,
+            generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -152,7 +160,13 @@ impl MindMapDocument {
     /// failed to load, which is likely the only copy of what its author
     /// was editing.
     pub fn load_failure_placard(source: &str, message: &str, history_limit: usize) -> Self {
-        let text = format!("could not load {source}\n{message}");
+        // The source on a line of its own, unless the message already
+        // names it (`placard::message_names_source`).
+        let text = if placard::message_names_source(source, message) {
+            format!("could not load the map\n{message}")
+        } else {
+            format!("could not load {source}\n{message}")
+        };
         let placard = serde_json::json!({
             "format": 1,
             "name": "load failure",
@@ -175,6 +189,13 @@ impl MindMapDocument {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn is_load_failure_placard(&self) -> bool {
         self.load_failure
+    }
+
+    /// Which document of the process this is: every document built gets
+    /// the next number, so a change of generation is a replaced document
+    /// — what the IPC event stream reports as `document_replaced`. O(1).
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// The map, to read. O(1).

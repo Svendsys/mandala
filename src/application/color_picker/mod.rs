@@ -46,6 +46,7 @@ pub use glyph_tables::{
     sat_value_to_cell, val_cell_to_value, val_value_to_cell, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT,
     SAT_CELL_COUNT, VAL_CELL_COUNT,
 };
+pub use clipboard::{ClipboardContent, Outcome};
 pub use hit::PickerHit;
 pub use layout::ColorPickerLayout;
 

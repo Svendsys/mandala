@@ -49,6 +49,8 @@ use rustc_hash::FxHashMap;
 
 use crate::application::document::selection::kind_of;
 
+use super::inspect::runs_of;
+
 /// The selection tint: the one "this is active" color, shared with the
 /// mode-status line (`renderer::MODE_STATUS_COLOR`), `#00E5FF`.
 pub(crate) const SELECTION_HIGHLIGHT: Rgba = Rgba::opaque(0x00, 0xE5, 0xFF);
@@ -229,31 +231,5 @@ fn owner_of(doc: &Document, projector: &Projector, layer: Layer, glyph: NodeId) 
             DocKind::Node | DocKind::Connector | DocKind::Link => return Some(at),
             _ => at = doc.parent(at)?,
         }
-    }
-}
-
-/// The runs `element` owns ([module docs](self)): a node's runs in the
-/// sections and frames layers — its group's own runs, not its child
-/// nodes' — or a path's runs. O(the runs).
-fn runs_of(doc: &Document, projector: &Projector, layers: &GlyphLayers, element: NodeId) -> Vec<(Layer, NodeId)> {
-    match kind_of(doc, element) {
-        Some(DocKind::Node) => projector
-            .glyphs_of(element)
-            .into_iter()
-            .filter(|(layer, _)| matches!(layer, Layer::Sections | Layer::Frames))
-            .flat_map(|(layer, group)| {
-                let tree = layers.tree(layer);
-                group
-                    .children(tree.arena())
-                    .filter(|&child| {
-                        tree.get(child)
-                            .is_some_and(|node| node.get().glyph_run().is_some())
-                    })
-                    .map(move |child| (layer, child))
-                    .collect::<Vec<_>>()
-            })
-            .collect(),
-        Some(DocKind::Connector | DocKind::Link) => projector.glyphs_of(element),
-        _ => Vec::new(),
     }
 }

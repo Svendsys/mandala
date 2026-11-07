@@ -44,18 +44,17 @@ pub(crate) enum Until {
     /// The rendered scene is the final consequence of every command so
     /// far: nothing continuing, nothing owed to the window.
     Settled,
-    /// The document has no active animation.
-    AnimationsComplete,
 }
 
 impl Until {
-    /// Every condition, in the order the wire lists them.
-    pub(crate) const ALL: [Until; 2] = [Until::Settled, Until::AnimationsComplete];
+    /// Every condition, in the order the wire lists them. The second the
+    /// wire had, `animations_complete`, went with the animations; it
+    /// returns with presentations (V1-D2, #251).
+    pub(crate) const ALL: [Until; 1] = [Until::Settled];
 
     pub(crate) const fn word(self) -> &'static str {
         match self {
             Until::Settled => "settled",
-            Until::AnimationsComplete => "animations_complete",
         }
     }
 
@@ -69,14 +68,10 @@ impl Until {
 /// the `ipc` modules do not name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Settling {
-    /// The document has an active animation.
-    pub(crate) animations_active: bool,
-    /// The loop needs another iteration with no further input: a
-    /// throttled drag or picker hover pending, camera geometry to
-    /// rebuild — and, in real time, an animation running or injected
-    /// input queued. Under a virtual clock those last two are owed to
-    /// future virtual instants, which only `clock.step` reaches, so
-    /// they are nothing the app still owes *now*.
+    /// The loop needs another iteration with no further input: in real
+    /// time, injected input queued. Under a virtual clock that is owed
+    /// to future virtual instants, which only `clock.step` reaches, so
+    /// it is nothing the app still owes *now*.
     pub(crate) continuing: bool,
     /// A redraw has been asked for that no render has drawn yet.
     pub(crate) redraw_owed: bool,
@@ -90,23 +85,23 @@ impl Settling {
     pub(crate) fn holds(self, until: Until) -> bool {
         match until {
             Until::Settled => !self.continuing && !self.redraw_owed,
-            Until::AnimationsComplete => !self.animations_active,
         }
     }
 
     /// What still keeps `until` from holding, for a timeout's message.
     fn owed(self, until: Until) -> &'static str {
         match until {
-            // Under a virtual clock an animation is frozen between
-            // steps, and no wait outlasts that: the remedy is a step.
-            Until::AnimationsComplete if self.virtual_clock => {
-                "an animation is still running, and the clock is virtual: it advances only by \
-                 clock.step, so step it to the animation's end"
+ {
+                "the app still had frames to run (a pending drag or picker hover, or a camera \
+                 rebuild)"
             }
-            Until::AnimationsComplete => "an animation is still running",
-            // Animations and queued input are owed to future virtual
-            // instants, so they never keep a virtual clock unsettled.
-            Until::Settled if self.continuing && self.virtual_clock => {
+            Until::Settled if self.continuing => {
+                "the app still had frames to run (an animation, a pending drag or picker hover, \
+                 queued input or a camera rebuild)"
+            }=>            // Queued input is owed to future virtual instants, so it
+            // never keeps a virtual clock unsettled and is not named.
+            Until::Settled if self.continuing && self.virtual_clock => "the app still had frames to run",
+            Until::Settled if self.continuing => "the app still had frames to run (queued input)",=> {
                 "the app still had frames to run (a pending drag or picker hover, or a camera \
                  rebuild)"
             }
@@ -183,7 +178,6 @@ mod tests {
     }
 
     const QUIET: Settling = Settling {
-        animations_active: false,
         continuing: false,
         redraw_owed: false,
         virtual_clock: false,
@@ -203,7 +197,7 @@ mod tests {
     }
 
     /// `settled` needs both halves: nothing continuing and nothing owed
-    /// to the window. `animations_complete` reads the animations alone.
+    /// to the window.
     #[test]
     fn test_settled_needs_nothing_continuing_and_nothing_undrawn() {
         assert!(QUIET.holds(Until::Settled));
@@ -218,17 +212,7 @@ mod tests {
             },
         ] {
             assert!(!app.holds(Until::Settled), "{app:?}");
-            assert!(app.holds(Until::AnimationsComplete), "{app:?}");
         }
-        let animating = Settling {
-            animations_active: true,
-            ..QUIET
-        };
-        assert!(!animating.holds(Until::AnimationsComplete));
-        assert!(
-            animating.holds(Until::Settled),
-            "under a virtual clock an animation frozen between steps is settled"
-        );
     }
 
     #[test]
@@ -270,10 +254,8 @@ mod tests {
         assert_eq!(wait.deadline(), at);
     }
 
-    /// Under a virtual clock an animation never finishes on its own, so
-    /// a wait for it that runs out names the clock and the remedy, and
-    /// a `settled` one does not blame animations or queued input, which
-    /// virtual time does not owe.
+    /// Under a virtual clock a `settled` wait that runs out does not
+    /// blame queued input, which virtual time does not owe.
     #[test]
     fn test_a_timeout_under_a_virtual_clock_says_so() {
         let since = Instant::now();
@@ -286,18 +268,6 @@ mod tests {
             );
             reply["error"]["message"].as_str().expect("message").to_string()
         };
-        let frozen = Settling {
-            animations_active: true,
-            virtual_clock: true,
-            ..QUIET
-        };
-        let frozen_message = message(Until::AnimationsComplete, frozen);
-        assert!(frozen_message.contains("clock is virtual") && frozen_message.contains("clock.step"));
-        let real = Settling {
-            virtual_clock: false,
-            ..frozen
-        };
-        assert!(!message(Until::AnimationsComplete, real).contains("virtual"));
         let dragging = Settling {
             continuing: true,
             virtual_clock: true,
@@ -305,7 +275,7 @@ mod tests {
         };
         let dragging_message = message(Until::Settled, dragging);
         assert!(
-            !dragging_message.contains("animation") && !dragging_message.contains("queued input"),
+            !dragging_message.contains("queued input"),
             "{dragging_message}"
         );
     }

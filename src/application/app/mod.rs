@@ -58,8 +58,6 @@ pub(crate) mod dispatch;
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]
 mod capture_flow;
-#[cfg(not(target_arch = "wasm32"))]
-mod click;
 // The picker's open, draw and input paths, kept for V1-C7 (#248) to
 // put on a transaction: nothing opens the picker until then
 // (`Action::OpenColorPicker` is unhandled, the `color pick` console

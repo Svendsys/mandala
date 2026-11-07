@@ -37,6 +37,7 @@
 //! the projection map; nothing reads a glyph layer to learn what the
 //! document is.
 
+pub(crate) mod inspect;
 pub(crate) mod overlay;
 #[cfg(test)]
 mod tests;
@@ -122,11 +123,12 @@ impl MapView {
     /// Does nothing to any tree, and calls the renderer not at all, when
     /// the document did not change and the highlight's targets did not
     /// either: what a frame with nothing to do, a pan and a zoom cost.
+    /// Returns whether it did anything — whether the frame owes a redraw.
     ///
     /// Cost: the projector's update (proportional to the changes and their
     /// readers), the overlay's re-stamp (the runs named), the renderer's
     /// apply (the elements the journals name).
-    pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) {
+    pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> bool {
         let records = doc.take_changes();
         let changes: Option<LayerChanges> = (!records.is_empty()).then(|| {
             doc.retain_live_selection();
@@ -139,7 +141,7 @@ impl MapView {
             None => doc.selection.iter().collect(),
         };
         if changes.is_none() && targets == self.highlight.targets() {
-            return;
+            return false;
         }
         let stamps: OverlayJournals =
             self.highlight
@@ -155,6 +157,7 @@ impl MapView {
         }
         stamps.discard(&mut self.layers);
         self.feed.extend(records);
+        true
     }
 
     /// The change records synced since the last call, oldest first: what
