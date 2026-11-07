@@ -1447,6 +1447,165 @@ name = "test_bench"
         assert_eq!(resolved(&read("fuzz/Cargo.toml"), "fuzz"), root);
     }
 
+    /// Where a patched crate's `mandala.patch`, a unified diff against
+    /// its published release, disagrees with the vendored files it names
+    /// (read through `read`, by path relative to the crate) and with the
+    /// files that carry `MANDALA PATCH` (`marked`): a line the patch adds
+    /// that its file does not hold in that order, a file the patch
+    /// changes that is not marked or a marked file it does not change,
+    /// and a changed file `listing` (the crate's PATCHES.md) does not
+    /// name.
+    fn patch_mismatches(
+        patch: &str,
+        read: impl Fn(&str) -> Option<String>,
+        marked: &BTreeSet<String>,
+        listing: &str,
+    ) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut files: Vec<(String, Vec<&str>)> = Vec::new();
+        for line in patch.lines() {
+            if let Some(path) = line.strip_prefix("+++ b/") {
+                files.push((path.trim().to_string(), Vec::new()));
+            } else if let (Some(added), Some((_, lines))) = (line.strip_prefix('+'), files.last_mut()) {
+                lines.push(added);
+            }
+        }
+        for (path, added) in &files {
+            let Some(text) = read(path) else {
+                found.push(format!("{path}: the patch changes it, and it is not there"));
+                continue;
+            };
+            let mut held = text.lines();
+            if let Some(missing) = added.iter().find(|line| !held.any(|held| held == **line)) {
+                found.push(format!(
+                    "{path}: the patch adds {missing:?}, which the file does not hold in order"
+                ));
+            }
+            if path.starts_with("src/") && !marked.contains(path) {
+                found.push(format!("{path}: changed, and not marked `MANDALA PATCH`"));
+            }
+            if !listing.contains(&format!("`{path}`")) {
+                found.push(format!("{path}: changed, and PATCHES.md does not list it"));
+            }
+        }
+        for path in marked {
+            if !files.iter().any(|(changed, _)| changed == path) {
+                found.push(format!(
+                    "{path}: marked `MANDALA PATCH`, and the patch does not change it"
+                ));
+            }
+        }
+        found
+    }
+
+    /// The checker, held to a planted mismatch of each kind and to a
+    /// patch that matches.
+    #[test]
+    fn test_the_patch_listing_checker_finds_each_mismatch() {
+        let patch = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1,2 @@\n kept\n+// MANDALA PATCH: added\n";
+        let file = |text: &'static str| move |path: &str| (path == "src/a.rs").then(|| text.to_string());
+        let marked = BTreeSet::from(["src/a.rs".to_string()]);
+        let listed = "| `src/a.rs` | ... |";
+        let kept = patch_mismatches(patch, file("kept\n// MANDALA PATCH: added\n"), &marked, listed);
+        assert!(kept.is_empty(), "a matching patch: {kept:?}");
+        for (found, clause) in [
+            (
+                patch_mismatches(patch, file("kept\n"), &marked, listed),
+                "does not hold in order",
+            ),
+            (
+                patch_mismatches(patch, |_: &str| None, &marked, listed),
+                "it is not there",
+            ),
+            (
+                patch_mismatches(
+                    patch,
+                    file("kept\n// MANDALA PATCH: added\n"),
+                    &BTreeSet::new(),
+                    listed,
+                ),
+                "not marked",
+            ),
+            (
+                patch_mismatches(patch, file("kept\n// MANDALA PATCH: added\n"), &marked, ""),
+                "does not list it",
+            ),
+            (
+                patch_mismatches(
+                    "",
+                    file("kept\n"),
+                    &BTreeSet::from(["src/b.rs".to_string()]),
+                    listed,
+                ),
+                "the patch does not change it",
+            ),
+        ] {
+            assert!(
+                found.iter().any(|v| v.contains(clause)),
+                "expected {clause:?}, got {found:?}"
+            );
+        }
+    }
+
+    /// Every `.rs` file under `dir` (repo-relative), relative to `base`.
+    fn rust_files_under(dir: &str, base: &str, out: &mut Vec<String>) {
+        let entries = std::fs::read_dir(repo_path(dir)).unwrap_or_else(|e| panic!("{dir}: {e}"));
+        for entry in entries {
+            let path = entry.expect("directory entry").path();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let rel = format!("{dir}/{name}");
+            if path.is_dir() {
+                rust_files_under(&rel, base, out);
+            } else if name.ends_with(".rs") {
+                out.push(rel.trim_start_matches(base).trim_start_matches('/').to_string());
+            }
+        }
+    }
+
+    /// The patched cosmic-text (#304): `mandala.patch` is what the
+    /// vendored directory differs by, every change it makes is marked
+    /// `MANDALA PATCH` and listed in PATCHES.md, and nothing marked is
+    /// left out of it. (That the patch applies to the published 0.19.0
+    /// and reproduces the directory was checked when it was generated;
+    /// the published crate is not in the repository to check it here.)
+    #[test]
+    fn test_the_vendored_patch_is_the_one_listed() {
+        const CRATE: &str = "vendor/cosmic-text";
+        let read = |path: &str| std::fs::read_to_string(repo_path(&format!("{CRATE}/{path}"))).ok();
+        let patch = read("mandala.patch").expect("the vendored crate carries mandala.patch");
+        let listing = read("PATCHES.md").expect("the vendored crate carries PATCHES.md");
+        let mut sources = Vec::new();
+        rust_files_under(&format!("{CRATE}/src"), CRATE, &mut sources);
+        assert!(
+            sources.len() > 10,
+            "precondition: the vendored sources are read ({sources:?})"
+        );
+        let marked: BTreeSet<String> = sources
+            .into_iter()
+            .filter(|path| read(path).is_some_and(|text| text.contains("MANDALA PATCH")))
+            .collect();
+        assert!(
+            marked.contains("src/shape.rs"),
+            "precondition: the patch's main file is marked ({marked:?})"
+        );
+        assert!(
+            patch.contains("+++ b/src/shape.rs"),
+            "precondition: the patch changes the shaper"
+        );
+        for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
+            assert!(read(license).is_some(), "{CRATE} keeps its own {license}");
+        }
+        let found = patch_mismatches(&patch, read, &marked, &listing);
+        assert!(
+            found.is_empty(),
+            "mandala.patch and the vendored crate disagree: {found:?}"
+        );
+    }
+
     /// A wrapped declaration is the same declaration. This is the
     /// `web-sys` line — 190 columns in the root manifest — as a
     /// formatter would leave it.

@@ -8,14 +8,17 @@
 # graph here: baumhard's and glyphon's alike, so there is one copy of
 # its types.
 #
-# What differs from the published source is marked `MANDALA PATCH` in
-# `src/`, and `src/shape.rs`'s module docs list it. In short: the font
-# fallback's merge of a fallback face's glyphs is linear in the run
-# instead of quadratic, a codepoint no face draws is found once per
-# font system instead of once per shaping, and the shaper counts its
-# work (`FontSystem::shape_work`). Drop the patch when upstream
-# releases an equivalent fix; until then, upgrading cosmic-text means
-# re-applying it.
+# The crate keeps its own license, MIT OR Apache-2.0 (LICENSE-MIT,
+# LICENSE-APACHE); the repository's MPL-2.0 header check skips
+# `vendor/`. What differs from the published source is listed, with
+# why, in PATCHES.md, is the whole of `mandala.patch` (this file
+# included), and is marked `MANDALA PATCH` where it is. In short: the
+# font fallback's merge is linear in the run instead of quadratic, a
+# code point no face draws is found once per font system instead of once
+# per shaping, a line can take another's shaping at other sizes, and the
+# shaper counts its work per thread (`shape_work`). Drop the patch when
+# upstream releases an equivalent fix; until then, upgrading cosmic-text
+# means re-applying it (PATCHES.md says how).
 
 [package]
 edition = "2021"
