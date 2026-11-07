@@ -758,8 +758,8 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/shape_tests.rs",
-            "test_flow_shaping_needs_fonts_init_before_the_guard",
-            DrivesAPanic,
+            "test_flow_shaping_without_init_sees_every_compiled_face",
+            CannotCompileIntoTheLibrary,
         ),
         (
             "util/tests/grapheme_chad_tests.rs",
