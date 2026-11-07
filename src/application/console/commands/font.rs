@@ -17,7 +17,7 @@
 //! - `EdgeLabel`: writes `label_config.{font_size_pt, min_font_size_pt,
 //!   max_font_size_pt}` so the label can be sized independently of
 //!   the edge body.
-//! - `PortalLabel`: writes the owning edge's `glyph_connection` —
+//! - `PortalLabel`: writes the owning edge's `glyph_connection` (gone) —
 //!   the icon inherits edge-body clamps and splitting icon clamps
 //!   off from the edge is outside the user-level spec.
 //! - `PortalText`: writes `PortalEndpointState.{text_font_size_pt,

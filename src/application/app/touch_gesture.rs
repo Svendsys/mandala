@@ -1307,7 +1307,7 @@ mod tests {
     /// the recognizer reads, so the two ends of the comparison are two
     /// derivations from one source — planting that literal leaves the
     /// whole `mandala` suite green but for the one test written for it,
-    /// `event_cursor_moved::tests::test_the_mouse_drag_arms_name_the_shared_pointer_threshold`,
+    /// `test_the_mouse_drag_arms_name_the_shared_pointer_threshold` (gone),
     /// which reads the mouse arms out of the source. That pin and this
     /// test are the parity claim together.
     #[test]

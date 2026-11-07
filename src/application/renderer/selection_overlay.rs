@@ -2,10 +2,9 @@
 
 //! Selection-rectangle overlay buffers — the dashed box-drawing
 //! frame the rubber-band select draws in canvas space. Every other
-//! canvas visual (nodes, borders, connections, labels, portals,
-//! handles) reaches the GPU through the Baumhard tree pipeline
-//! (`tree_walker.rs` → `canvas_scene_elements`); this overlay is the
-//! one transient rectangle that has no model behind it, so it
+//! canvas visual (nodes, frames, paths, labels, portals) reaches the GPU
+//! as the projector's glyph runs through the layer renderer; this overlay
+//! is the one transient rectangle that has no document behind it, so it
 //! shapes its own buffers directly.
 
 use baumhard::font::fonts;
@@ -111,11 +110,9 @@ impl Renderer {
     /// clears the selection rectangle and no other overlay, since the
     /// store it empties holds nothing else.
     ///
-    /// Two callers, both ending a rubber band:
+    /// One caller, ending a rubber band:
     /// `app::drain_frame::end_rect_select_gesture` (every frame no band
-    /// is live, and the left release that finishes one) and
-    /// `app::dispatch::native::end_target_picker_rubber_band` (a
-    /// target-picker mode taking the pointer mid-band). Code spans
+    /// is live, and the left release that finishes one). Code spans
     /// rather than links: `app` is a private module.
     pub fn clear_selection_rect_overlay(&mut self) {
         self.overlay_buffers.clear();

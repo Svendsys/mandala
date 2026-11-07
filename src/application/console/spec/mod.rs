@@ -258,7 +258,7 @@ impl Key {
 /// only in their keys — `section move`'s `dx=`/`dy=` against its
 /// `x=`/`y=` — are equally admitted by an empty positional list, so
 /// the engine offers and accepts their union and the exclusion stays
-/// the verb's own: `execute_move` refuses the mix by hand, with a
+/// the verb's own: `execute_move` (gone) refuses the mix by hand, with a
 /// message naming both shapes. Deciding it here would mean letting
 /// whichever key was typed first pick the form, which is a guess, not
 /// a grammar.

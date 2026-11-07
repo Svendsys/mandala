@@ -1,6 +1,7 @@
 # Map formats
 
-This directory documents the on-disk representation of a Mandala map.
+This directory documents the on-disk representation of a Mandala map and
+the app's other file and wire formats.
 
 ## Start here
 
@@ -12,36 +13,19 @@ This directory documents the on-disk representation of a Mandala map.
   labels and portal ends. The projector is
   `lib/baumhard/src/projection/`.
 
-Everything below describes the older `.mindmap.json` format and its tooling,
-which the app reads until V1-C3 replaces it; the documents specific to it
-are deleted with it.
-
-- [`legacy-schema.md`](./legacy-schema.md) — complete field reference for
-  every type of the `.mindmap.json` format
-- [`validation.md`](./validation.md) — the invariants a valid file must
-  satisfy (and what `maptool verify` checks)
+The older `.mindmap.json` format, its tooling and the documents that
+described only it were deleted with the old model (V1-C3, #244). The
+concept explainers for the new format are written by V1-E4 (#256).
 
 ## Concept explainers
 
-Each of these documents one decision, with the reasoning:
-
-- [`ids.md`](./ids.md) — Dewey-decimal structural IDs
-- [`palettes.md`](./palettes.md) — map-level palette definitions
-- [`channels.md`](./channels.md) — the `channel` field and mutation targeting
-- [`enums.md`](./enums.md) — named string enums over integer codes
-- [`sections.md`](./sections.md) — node sections (where the text lives post-refactor)
-- [`text-runs.md`](./text-runs.md) — rich text formatting
-- [`border-patterns.md`](./border-patterns.md) — side-pattern grammar
-  for `GlyphBorderConfig.glyphs` (atomic-repeat vs.
-  prefix/fill/suffix, escapes, palette cycling)
-- [`zoom-bounds.md`](./zoom-bounds.md) — per-element
-  `min_zoom_to_render` / `max_zoom_to_render` window gating render
-  presence on camera zoom
-- [`mutations.md`](./mutations.md) — `CustomMutation` carrier,
-  four-source loader, the `mutation` console verb, and the contexts
-  taxonomy
-- [`macros.md`](./macros.md) — `Macro` carrier, four-source loader,
-  privilege gates, and the threat model for non-User tiers
+- [`fonts.md`](./fonts.md) — the bundled faces, how a map names a
+  family, weight within a family, and ornament fallback
+- [`mutations.md`](./mutations.md) — the glyph mutation vocabulary
+  (`GfxMutation`, the `MutatorNode` AST); its custom-mutation carrier
+  sections describe the deleted model, which edits replace (V1-D1, #250)
+- [`macros.md`](./macros.md) — `Macro` carrier, the two-tier loader,
+  privilege gates, and the threat model
 
 ## Wire protocol
 
@@ -51,47 +35,8 @@ Each of these documents one decision, with the reasoning:
   it is a privilege-bearing surface under the same source-of-truth
   discipline.
 
-## Tools
+## Examples
 
-- [`migration.md`](./migration.md) — converting legacy miMind-derived files
-  with `maptool convert --legacy`
-
-## Minimum-viable example
-
-```json
-{
-  "version": "1.0",
-  "name": "hello",
-  "canvas": { "background_color": "#000000" },
-  "nodes": {
-    "0": {
-      "id": "0",
-      "parent_id": null,
-      "position": { "x": 0.0, "y": 0.0 },
-      "size": { "width": 200.0, "height": 60.0 },
-      "sections": [
-        { "text": "Hello" }
-      ],
-      "style": {
-        "background_color": "#141414",
-        "frame_color": "#30b082",
-        "text_color": "#ffffff",
-        "shape": "rectangle",
-        "corner_radius_percent": 10.0,
-        "frame_thickness": 4.0,
-        "show_frame": true,
-        "show_shadow": false
-      },
-      "layout": { "type": "map", "direction": "auto", "spacing": 50.0 },
-      "folded": false,
-      "notes": "",
-      "color_schema": null,
-      "channel": 0
-    }
-  },
-  "edges": []
-}
-```
-
-That's a complete, valid mindmap with a single root node. Everything beyond
-this is optional or additive.
+`lib/baumhard/src/document/format/fixtures/` holds a corpus of maps that
+load and save back byte for byte, and `maps/` the repository's converted
+maps, which do too.

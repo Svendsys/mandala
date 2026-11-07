@@ -934,7 +934,7 @@ fn test_a_long_press_binding_resolves_to_enter_resize_mode() {
 ///    `EnterResizeMode`, then a finger on a handle — which until #160
 ///    panned the camera instead, so a touch-only user could not resize
 ///    at all. A finger that lands on a handle in Resize mode now drives
-///    the handle drag (`app::touch_handle`); native-only, as the drag
+///    the handle drag (`app::touch_handle` (gone)); native-only, as the drag
 ///    state is (CLAUDE.md's Dual-target registry).
 /// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` used to
 ///    be **silently accepted and never match**: `KeyBind::parse`

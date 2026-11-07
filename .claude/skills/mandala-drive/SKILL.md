@@ -26,7 +26,7 @@ display that was already running.
 **Just need one picture?** No socket, no teardown:
 
 ```sh
-target/release/mandala --headless --screenshot /tmp/map.png maps/testament.mindmap.json
+target/release/mandala --headless --screenshot /tmp/map.png maps/testament.mandala.json
 # exit 0: /tmp/map.png and /tmp/map.png.geometry.json, the map as loaded, 800×600
 # (--size 1920x1080 for more pixels; --overwrite to replace an existing file)
 ```
@@ -63,7 +63,7 @@ cargo build --release -p mandala -p mandalactl
 #    where you want to watch, drop `--headless`).
 BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
 export MANDALA_IPC="${XDG_RUNTIME_DIR:-/tmp/mandala-$(id -u)}/mandala.sock"
-setsid nohup "$BIN/mandala" --headless maps/testament.mindmap.json --ipc "$MANDALA_IPC" \
+setsid nohup "$BIN/mandala" --headless maps/testament.mandala.json --ipc "$MANDALA_IPC" \
   > /tmp/mandala-app.log 2>&1 < /dev/null &
 
 # 3. Wait until it answers.
@@ -76,8 +76,8 @@ mandalactl ping                      # now_ms: 171.69…   (exit 0)
 export MANDALA_IPC="${XDG_RUNTIME_DIR:-/tmp/mandala-$(id -u)}/mandala.sock"
 BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
 export PATH="$BIN:$PATH"
-# 4. Where is 3.2? (canvas units; the scene's own laid-out rect)
-mandalactl scene.node_geometry 3.2 | grep -E '^(in_scene|canvas)'
+# 4. Where is node 3? (canvas units; the scene's own laid-out rect)
+mandalactl scene.node_geometry 3 | grep -E '^(in_scene|canvas)'
 #   canvas.h: 115.399994   canvas.w: 378.0   canvas.x: -25.4   canvas.y: 11697.3   in_scene: true
 
 # 5. Frame a region around it — the rect grown by one node on each side:
@@ -98,9 +98,9 @@ before and after.
 ## Launch
 
 ```sh
-"$BIN/mandala" --headless <map.mindmap.json> --ipc <socket-path>   # no display; BIN as in the quick start
-"$BIN/mandala" <map.mindmap.json> --ipc <socket-path>              # a window, on a desktop
-cargo run --release -- maps/testament.mindmap.json --ipc "$MANDALA_IPC"   # a window, building first
+"$BIN/mandala" --headless <map.mandala.json> --ipc <socket-path>   # no display; BIN as in the quick start
+"$BIN/mandala" <map.mandala.json> --ipc <socket-path>              # a window, on a desktop
+cargo run --release -- maps/testament.mandala.json --ipc "$MANDALA_IPC"   # a window, building first
 ```
 
 - **Headless or a window.** `--headless` opens no window and needs no X
@@ -229,7 +229,7 @@ $ mandalactl query.document
 counts.edges: 258
 counts.nodes: 252
 dirty: false
-file_path: "maps/testament.mindmap.json"
+file_path: "maps/testament.mandala.json"
 map.name: "testament"
 undo_depth: 0
 …
@@ -265,7 +265,7 @@ after an undo returns the model to where it was.
 |---|---|---|
 | `act.action <Action>` | one named `Action`, as a key binding fires it | `mandalactl act.action ZoomIn x=165 y=11755` (canvas point to zoom at) |
 | `act.console "<line>"` | a console line, without opening the console | `mandalactl act.console "fps on"` |
-| `input.*` | the hand on mouse and keyboard: clicks, drags, keys, typing | `mandalactl input.click_node 3.2` |
+| `input.*` | the hand on mouse and keyboard: clicks, drags, keys, typing | `mandalactl input.click_node 3` |
 
 **`--wait-settled`** on a mutating command waits, on the same connection,
 until the result is rendered (animations done, queued input landed, camera
@@ -278,7 +278,7 @@ samples land on a step; in a window (real time) the `--wait-settled` on the
 drag waits for them itself and the `clock.step` line is not needed:
 
 ```text
-$ mandalactl input.click_node 3.2
+$ mandalactl input.click_node 3
 error: not_found: node '3.2' is not on screen: its center lands at surface (350.0, 645.6), outside the 800×600 surface; bring it into view first …
 $ mandalactl scene.hit_test 780 580 space=surface | grep click_hit.kind
 click_hit.kind: "Empty"                       # empty canvas: a drag here pans
@@ -289,7 +289,7 @@ wait.elapsed_ms: 0
 $ mandalactl clock.step frames=20             # headless only: land the queued samples
 frames_run: 20
 now_ms: 321.0
-$ mandalactl input.click_node 3.2 --wait-settled
+$ mandalactl input.click_node 3 --wait-settled
 applied: true
 $ mandalactl query.selection
 kind: "Single"
@@ -409,7 +409,7 @@ export MANDALA_WS="$(sed -n 's/^controller_url: "\(.*\)"$/\1/p' /tmp/bridge.txt)
 #    beside ?map=. In a desktop browser, paste the URL; from a script, any
 #    browser automation does (the repo's cloud container has Playwright's Chromium).
 trunk serve --release &                        # or: trunk build --release && python3 -m http.server -d dist 41815
-echo "http://127.0.0.1:41815/?map=maps/testament.mindmap.json&ipc=$APP_URL"
+echo "http://127.0.0.1:41815/?map=maps/testament.mandala.json&ipc=$APP_URL"
 
 # 3. Drive it. A controller before the page is refused `no_app` (exit 2) with the remedy.
 for i in $(seq 1 30); do mandalactl --timeout 2 ping >/dev/null 2>&1 && break; sleep 0.5; done
@@ -520,12 +520,11 @@ cleans up after itself: it exits on its own, through the graceful path.
 | `mandalactl: no socket path. Pass --ipc <path> or set MANDALA_IPC.` (exit 3) | your shell lost the export | re-export `MANDALA_IPC`, or pass `--ipc` |
 | `no greeting within N s. App busy or frozen?` (exit 2) | the process exists but its loop is not answering | wait and retry once; if it stays, it is wedged — see the next row |
 | app log: `!!! MANDALA FREEZE WATCHDOG !!!` (the banner `src/application/app/freeze_watchdog.rs` prints), process aborted | the main loop made no progress for 10 s, and the watchdog aborted it on purpose | a real hang: report what you sent last. An **idle** app is parked, not frozen — it answers `ping` instantly and is never aborted |
-| `query.document` shows `file_path: null`, `map.name: "load-failure"` | the map failed to load; the app is up with a placeholder | the app log's `startup: could not load …` line says why |
+| `query.document` shows `file_path: null`, `name: "load-failure"` | the map failed to load; the app is up with a placeholder | the app log's `startup: could not load …` line says why |
 | screenshot is all background | the frame rendered, but nothing is in it: check the sidecar — `"nodes":[]` means the framing missed the map | frame by a node's `canvas` rect, or `fit=true` with a large `width`/`height` |
 | reply `rendered: false` | the frame was not drawn; no file written | `skipped` says why; `font_system_contended` → just retry |
 | `input.click_node … not_found: … not on screen` | the node is off the surface | pan (drag empty canvas, see **Act**) and retry |
 | `error: busy: 202 injected samples are still queued …` from `input.click_node` | an earlier `input.drag` still has samples queued | in real time, `mandalactl clock.wait settled` (or `--wait-settled` the drag), then resend; on a virtual clock — headless, by default — `mandalactl clock.step frames=<n>` lands them first |
-| `clock.wait animations_complete` times out headless | the clock is virtual: animations move only when stepped | `mandalactl clock.step ms=<n>` past the animation, or `clock.set_mode real` |
 
 ## Recording a behavior
 

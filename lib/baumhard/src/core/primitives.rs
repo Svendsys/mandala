@@ -285,9 +285,10 @@ impl ColorFontRegions {
     /// Insert a region, replacing any existing region with the same
     /// key. An inverted range (`start > end`) is dropped with a
     /// warning rather than panicking — `submit_region` is reachable
-    /// from interactive text-edit paths (the `Type` action in the
-    /// app-level `text_edit` module), and CODE_CONVENTIONS.md §9 says
-    /// those must not abort the editor over a single bad mutation.
+    /// from interactive text-edit paths (the app-level `text_edit` (gone)
+    /// module's `Type` action, which V1-C8 rebuilds), and
+    /// CODE_CONVENTIONS.md §9 says those must not abort the editor over a
+    /// single bad mutation.
     pub fn submit_region(&mut self, region: ColorFontRegion) {
         if region.range.start > region.range.end {
             warn!(
@@ -608,7 +609,7 @@ impl ColorFontRegions {
     ///   remaining-text boundary.
     ///
     /// Used by the text-edit path's backspace / delete handlers (the
-    /// app-level `text_edit` module) to keep per-run color and
+    /// app-level `text_edit` (gone) module, which V1-C8 rebuilds) to keep per-run color and
     /// `AppFont` pins intact across character deletion instead of
     /// rebuilding the region set from a heuristic.
     ///
@@ -998,8 +999,8 @@ pub enum Flag {
     /// [`crate::mindmap::model::MindSection`]). The flag is *not*
     /// limited to the literal "root" of a section despite the
     /// variant name; spreading it across both elements lets
-    /// arena-walking consumers (`apply_drag_delta`,
-    /// `apply_tree_highlights`) recurse on a flag check without
+    /// arena-walking consumers (`apply_drag_delta` (gone),
+    /// `apply_tree_highlights` (gone)) recurse on a flag check without
     /// re-deriving section identity per step. The container area
     /// of a mindmap node and any child mind-node areas inside the
     /// same parent are *not* flagged.

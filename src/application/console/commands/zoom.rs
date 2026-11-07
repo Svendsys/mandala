@@ -4,8 +4,8 @@
 //! clear the zoom-visibility window on the current selection.
 //!
 //! Orthogonal to `font min=/max=` (which writes screen-space font
-//! clamps): this command writes `min_zoom_to_render` /
-//! `max_zoom_to_render` — the presence gate controlling whether
+//! clamps): this command writes `min_zoom_to_render` (gone) /
+//! `max_zoom_to_render` (gone) — the presence gate controlling whether
 //! an element is rendered at all at the current camera zoom.
 //!
 //! Routing against the active selection:

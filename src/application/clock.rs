@@ -33,10 +33,9 @@
 //! axis from the animations'.
 //!
 //! **Cross-platform.** The type and its modes compile for both
-//! targets and the browser holds one, in real mode. The tick that
-//! reads it runs on both targets' frames (`app::animation_drain`), and
-//! the browser's frame already stands still under a virtual clock as
-//! native's loop frame does. What advances virtual time is the step
+//! targets and the browser holds one, in real mode. Both targets'
+//! frames read it (`app::step::Beat`), and the browser's frame stands
+//! still under a virtual clock as native's loop frame does. What advances virtual time is the step
 //! driver (`heartbeat::step` / `run_step`), which lives on native's
 //! handler context and is commanded over IPC and the console, both
 //! native — so `clock.step` is native for the driver's reason, not

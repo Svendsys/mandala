@@ -960,7 +960,7 @@ pub fn truncate_to_display_width(s: &str, max_width: usize) -> &str {
 /// overflow away, this one folds it onto the next line. Both measure
 /// in the same monospace cells [`grapheme_display_width`] counts, so
 /// a caller rendering into a proportional font — the load-failure
-/// placard in [`crate::mindmap::placard`] is the one in-tree example
+/// placard (the app's `MindMapDocument::load_failure_placard`) is the one in-tree example
 /// — is using a column count as an approximation of a pixel width,
 /// deliberately, because the alternative costs a `FONT_SYSTEM`
 /// acquisition per candidate break.

@@ -44,7 +44,7 @@ repo's cloud container.
 ## One command
 
 ```sh
-scripts/record_demo.sh maps/testament.mindmap.json \
+scripts/record_demo.sh maps/testament.mandala.json \
     .claude/skills/mandala-record/examples/zoom-in.demo \
     /tmp/73-zoom-in-20261025.gif
 ```
@@ -98,7 +98,7 @@ on — without them a half-second recording is over before anyone has looked.
 on a map already open, framed and settled. A reviewer should see the
 behavior, not you finding it. In the setup section:
 
-- Pick the map (`maps/testament.mindmap.json` unless the behavior needs
+- Pick the map (`maps/testament.mandala.json` unless the behavior needs
   another) and the size (`--size`, default 800×600; bigger is only bigger
   bytes).
 - **Frame the subject.** Nothing is framed for you: testament's initial view
@@ -170,8 +170,8 @@ and `@stop` is two beats and a jump — correct for an *instant* change, wrong
 for an animation. Check what the thing you demonstrate actually does before
 you choose: **a single `ZoomIn` is instant** (one 1.1× jump, no animation —
 `apply_zoom_step`), so the worked example below shows it as a ramp of steps.
-An animated `CustomMutation` is the case for `clock.step` across its
-duration (`query.animations` says when it is done).
+Animations return with edits and presentations (V1-D1, V1-D2); until
+then nothing on a map animates by itself.
 
 **Two traps found while writing this.** `input.wheel 26` is one notch, not
 twenty-six — it moved zoom 0.05 → 0.055; to repeat an action, repeat the
@@ -322,7 +322,7 @@ whole script, `examples/zoom-in.demo`:
 
 ```text
 # Demo: ZoomIn zooms toward the point under it, one 1.1x step at a time.
-# Map: maps/testament.mindmap.json, 800x600 (the default size).
+# Map: maps/testament.mandala.json, 800x600 (the default size).
 #
 # --- setup (never in the picture) ---------------------------------------
 # Frame the node "Arpachshad" (1.2.0.0.0.0.0.0.0.0.0.2) dead center at
@@ -334,7 +334,7 @@ whole script, `examples/zoom-in.demo`:
 # virtual) and in a window (which starts real); setting it again is a no-op.
 clock.set_mode virtual
 act.action ZoomFit --wait-settled
-input.click_node 1.2.0.0.0.0.0.0.0.0.0.2 --wait-settled
+input.click_node 12 --wait-settled
 act.action CenterOnSelection --wait-settled
 act.action ZoomReset --wait-settled
 act.action DeselectAll --wait-settled
@@ -369,7 +369,7 @@ query.camera
 ```
 
 ```sh
-scripts/record_demo.sh maps/testament.mindmap.json \
+scripts/record_demo.sh maps/testament.mandala.json \
     .claude/skills/mandala-record/examples/zoom-in.demo /tmp/73-zoom-in-20261025.gif
 # RECORDED: /tmp/73-zoom-in-20261025.gif (449076 bytes, 37 frames, 1850 ms, stepped pacing)
 # the run's query.camera lines: zoom: 1.0 before, zoom: 2.143589 after (1.1^8)
@@ -390,7 +390,7 @@ neighbor Shelah pushed off the right edge. The caption posted with it:
 > zooming about the wrong point would make it slide off center as it grew.
 > Pacing: stepped — eight `ZoomIn`s 100 ms of virtual time apart; this shows
 > the order and size of the steps, not real-time feel.
-> Map `testament.mindmap.json`, 800×600, headless. Script and command below.
+> Map `testament.mandala.json`, 800×600, headless. Script and command below.
 
 ## Worked example 2: double-click opens the section editor
 
@@ -405,11 +405,11 @@ multi-section node, `3.7`, three sections. The recording half of
 
 ```text
 @record region:='{"x":330,"y":11800,"w":512,"h":320}' width=640 height=400
-input.click_node 3.7 section=2 --wait-settled
+input.click_node 7 section=2 --wait-settled
 query.selection        # kind: "Single", node 3.7 — the first click selects the node
 query.mode
 clock.step ms=150
-input.click_node 3.7 section=2 --wait-settled
+input.click_node 7 section=2 --wait-settled
 clock.step ms=1000
 @stop
 query.mode             # key_owner: "text_edit"   (was "none")

@@ -380,7 +380,7 @@ fn covered_slices<'t>(
 /// The text a styled run actually puts on screen: the concatenation
 /// of the slices its regions cover, in region order.
 ///
-/// A section with `text_runs` renders **only its covered graphemes**
+/// A section with text runs renders **only its covered graphemes**
 /// (`CONCEPTS.md`, "TextRun"): an uncovered cluster drops silently, so
 /// the model's `text` and what a user reads diverge. This answers the
 /// second, through the same coverage rule the renderer shapes by

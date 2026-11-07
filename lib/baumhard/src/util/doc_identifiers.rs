@@ -53,7 +53,7 @@
 //! - **`module::name`** where `module` is declared in the workspace:
 //!   the name must exist somewhere — declared as an item, or written
 //!   in some file's code.
-//! - **bare** (`` `pre_clip_positions` ``): the name must exist
+//! - **bare** (`` `app_font_by_family` ``): the name must exist
 //!   somewhere in the same sense, and is read only when it has an
 //!   underscore. A single word is where English, tools, crates and
 //!   stdlib methods live; a two-word name that no file writes and

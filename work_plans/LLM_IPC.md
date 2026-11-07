@@ -1012,7 +1012,7 @@ view-only change is fenced exactly like a document one.
 **Determinism, verified rather than believed.** With virtual time
 engaged before a script, the laid-out scene is a pure function of the
 document and the command sequence:
-`test_the_same_stepped_script_twice_dumps_byte_identical_scenes` holds
+`test_the_same_stepped_script_twice_dumps_byte_identical_scenes` (gone) holds
 two independently built documents — every `HashMap` in each seeded
 apart — to byte-identical `scene.dump`s mid-animation and after it,
 with virtual time engaged at different readings. The hunt for the

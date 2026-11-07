@@ -2,11 +2,11 @@
 
 //! `node resize <w> <h>` and `node fit` — node-size verbs.
 //!
-//! Validation messages mirror the document-side `set_node_size`
-//! and `fit_node_to_content` setters: finite + strictly positive
+//! Validation messages mirror the document-side `set_node_size` (gone)
+//! and `fit_node_to_content` (gone) setters: finite + strictly positive
 //! components and an absolute astronomical-typo ceiling
 //! (`MAX_NODE_AXIS = 1_000_000`). Position stays unchanged for
-//! `resize`; the drag gesture's release path uses `set_node_aabb`
+//! `resize`; the drag gesture's release path uses `set_node_aabb` (gone)
 //! for the atomic `(position, size)` write. `fit` reaches a
 //! state the ambient `grow_*` passes can't (shrink to text floor).
 //!

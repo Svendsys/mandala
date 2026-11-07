@@ -4,7 +4,7 @@
 //!
 //! Component-specific (edge only); the anchor concept doesn't
 //! generalize to nodes or portals, so this bypasses the trait layer
-//! and calls `set_edge_anchor` directly.
+//! and calls `set_edge_anchor` (gone) directly.
 //!
 //! **Rebuilt on the one writer by V1-C6 (#247).** Until then the verb's
 //! grammar, help and completion stand, and running it refuses with

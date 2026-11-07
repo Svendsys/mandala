@@ -73,7 +73,7 @@ ordered-float = {version = "5.5.0", features = ["serde"]}
 # matches by handing its value to `deserialize_ignored_any`, and
 # nothing in `serde` itself says *where* that happened; this wraps a
 # deserializer to answer that. `mindmap::unknown_keys` is the only
-# consumer, and the only crate member that loads `.mindmap.json` is
+# consumer, and the only crate member that loads `.mandala.json` is
 # this one — so it stays out of `[workspace.dependencies]` per §13.
 serde_ignored = "0.1.14"
 # Where a `.mandala.json` load went wrong. serde reports *what* was

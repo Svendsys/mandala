@@ -310,8 +310,8 @@ lazy_static! {
 /// Call once at program start before any shaping / measurement
 /// path. Doing both eagerly here closes a latent re-entrant-read
 /// risk: `FAMILY_INDEX`'s lazy build acquires `FONT_SYSTEM.read()`,
-/// and `mindnode_section_area` indirectly calls
-/// `app_font_by_family` from inside the tree builder; if a future
+/// and the projector calls `app_font_by_family` from inside a
+/// projection pass; if a future
 /// caller ever holds `FONT_SYSTEM.write()` while invoking the tree
 /// builder, the lazy path would deadlock. Eager init at startup
 /// makes that impossible.
@@ -367,8 +367,8 @@ pub fn clamp_font_metric(value: f32, fallback: f32) -> f32 {
 ///
 /// **`f32::clamp` panics when its bounds cross**, and the size
 /// cascades hand it a `min` and a `max` that need not come from the
-/// same place: a label may set only `min_font_size_pt` and inherit
-/// `max` from its edge, a portal endpoint from its config. Checking
+/// same place: a label may set only its minimum and inherit the
+/// maximum from its path, a portal end from its defaults. Checking
 /// each struct's own pair at load therefore cannot see every window
 /// the cascade can build — the two halves are individually valid and
 /// jointly inverted.
@@ -1062,7 +1062,7 @@ fn adopt_write(
 ///
 /// Guard-holding callers that need to measure a nested value must
 /// thread their `&mut FontSystem` into a `*_with` variant (see
-/// `metric_cache` / `border_run_specs_with`) rather than re-acquire.
+/// `metric_cache`) rather than re-acquire.
 ///
 /// **No clock on the uncontended path.** `std::time::Instant::now()`
 /// traps on `wasm32-unknown-unknown`, and the browser takes only the

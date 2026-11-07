@@ -230,7 +230,7 @@ decision, not a drive-by edit.
     sanction.** An earlier draft of this bullet explained their
     ungated-ness by saying the trust boundary for document content
     is the loader — which contradicts this project's actual stated
-    threat model, where a `.mindmap.json` is *untrusted* and a
+    threat model, where a `.mandala.json` is *untrusted* and a
     "hostile shared mindmap" is named as the adversary
     (`src/application/macros/mod.rs`). The loader validates shape,
     not intent. The correct statement is that `OnClick` triggers
@@ -299,7 +299,7 @@ decision, not a drive-by edit.
   **"Every site" is the load-bearing phrase, and this paragraph
   used to say "at the `dispatch_macro` site" instead — which is
   wrong in the direction that matters.** `dispatch_macro` is not
-  the only route from a `.mindmap.json` to
+  the only route from a `.mandala.json` to
   `MindMapDocument::apply_document_actions`. There are three, and
   the second is the one a hostile map would take:
 

@@ -15,7 +15,7 @@
 //! narrows on it and `section resize fill w=99` is refused by name
 //! (`spec::Form::admits_prefix`). `move`'s lives only in its key
 //! lists, which an empty positional list admits equally, so the
-//! engine offers and accepts their union and `execute_move` refuses
+//! engine offers and accepts their union and `execute_move` (gone) refuses
 //! the mix by hand, naming both shapes. That handwritten guard is
 //! one of the two bespoke semantics issue #27's fix plan names as
 //! staying behind the table.

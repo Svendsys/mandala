@@ -55,9 +55,8 @@ pub(super) fn walk_tree_into_buffers(
 
 /// Shape a single `GfxElement` into its buffer set via the same
 /// per-element work the full walker does.
-/// Extracted so the keyed-reshape API
-/// (`Renderer::reshape_buffer_for`) can re-shape one element
-/// without walking the whole tree on every keystroke. `Void` /
+/// Extracted so one element can be re-shaped without walking the whole
+/// tree (the overlay rebuilds and the tests use it). `Void` /
 /// `GlyphModel` elements (no text-bearing payload) yield
 /// nothing — same fast-skip the full walker uses.
 pub(super) fn shape_one_element_into_buffers(

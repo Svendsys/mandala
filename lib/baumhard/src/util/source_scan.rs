@@ -8,9 +8,9 @@
 //! used to carry its own answer to the same question — *which of
 //! these bytes are shipped code?*
 //!
-//! - `mindmap::loader::tests::test_every_mindmap_write_goes_through_the_contract`
-//!   asks whether any path outside `loader::to_json_value` turns a
-//!   `MindMap` into bytes.
+//! - `test_every_mindmap_write_goes_through_the_contract` (gone), the
+//!   old loader's, asked whether any path outside its serializer turned
+//!   the old model into bytes.
 //! - [`crate::util::serde_coverage::TypeGraph`] asks which types a
 //!   deserializer can be handed.
 //! - [`tests::test_no_doc_cites_a_test_that_does_not_exist`] asks
@@ -550,7 +550,7 @@ pub(crate) struct CitationScan {
 /// A citation is one of two things, decided by the name itself:
 ///
 /// - **a family**, when it ends in `_` — the trailing-`*` glob
-///   (`test_delete_node_*prefix*`) a comment uses to point at a group
+///   (`test_writer_*prefix*`) a comment uses to point at a group
 ///   of tests, and equally the shape a doc comment leaves behind when
 ///   rustfmt breaks a long name across two lines. It resolves when
 ///   any declared name starts with it.
@@ -628,7 +628,11 @@ fn citation_resolves(name: &str, declared: &BTreeSet<String>) -> bool {
 
 /// Every `test_…` identifier in `text` that is not part of a longer
 /// word. A trailing `*` is dropped by the character class and leaves
-/// the `_` before it, which is what makes a glob read as a family.
+/// the `_` before it, which is what makes a glob read as a family. A
+/// citation followed by `(gone)` — after its closing backtick, as
+/// CODE_CONVENTIONS §8 spells the marker for every other identifier —
+/// names a test that was deleted on purpose, and is history rather
+/// than a pointer.
 fn test_names_in(text: &str) -> Vec<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
@@ -644,7 +648,9 @@ fn test_names_in(text: &str) -> Vec<String> {
         }
         from = end.max(start + 1);
         let preceded_by_word = start > 0 && is_word_byte(bytes[start - 1]);
-        if !preceded_by_word && end > start + "test_".len() {
+        let after = &text[end..];
+        let gone = after.strip_prefix('`').unwrap_or(after).starts_with(" (gone)");
+        if !preceded_by_word && end > start + "test_".len() && !gone {
             out.push(text[start..end].to_string());
         }
     }
@@ -1573,12 +1579,33 @@ mod tests {
             vec!["test_delete_node_".to_string()]
         );
         assert_eq!(
-            test_names_in("/// `test_hit_test_direct_hit` is the exemplar"),
-            vec!["test_hit_test_direct_hit".to_string()]
+            test_names_in("/// `test_a_citation_marked_gone_reads_as_history` is the exemplar"),
+            vec!["test_a_citation_marked_gone_reads_as_history".to_string()]
         );
         assert!(
             test_names_in("no_test_foo and pretest_bar name nothing").is_empty(),
             "a `test_` inside a longer word is not a citation"
+        );
+    }
+
+    /// A citation marked `(gone)` is history and is not read; the same
+    /// name without the marker is. The control is what makes the
+    /// exemption a marker rather than a blind spot.
+    #[test]
+    fn test_a_citation_marked_gone_reads_as_history() {
+        assert!(
+            test_names_in("`test_the_old_check` (gone) held this").is_empty(),
+            "a marked citation is not a pointer"
+        );
+        assert_eq!(
+            test_names_in("`test_the_old_check` holds this"),
+            vec!["test_the_old_check".to_string()],
+            "control: unmarked, the same citation is read"
+        );
+        assert_eq!(
+            test_names_in("`test_a` (gone) and `test_b` held it"),
+            vec!["test_b".to_string()],
+            "the marker covers the one citation it follows"
         );
     }
 

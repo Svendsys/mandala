@@ -73,8 +73,8 @@ use super::bind::KeyBind;
 /// arm for the values that stay stringly-typed.
 ///
 /// Args are positional rather than keyed so the same shape covers
-/// single-payload (1 arg, e.g. `set_edge_body_glyph(["dash"])`),
-/// from/to (2 args, e.g. `set_edge_anchor(["top", "auto"])`), and
+/// single-payload (1 arg, e.g. `set_path_content(["dash"])`),
+/// from/to (2 args, e.g. `set_path_anchor(["top", "auto"])`), and
 /// field/value (2 args) variants. Per-variant arg names come from
 /// the payload field names in the `keybind_surface!` table and are
 /// quoted back at the user in the warn-log when the count is wrong.

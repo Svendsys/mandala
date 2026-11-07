@@ -7,7 +7,7 @@ id in `keybinds.json` and pressing the key runs the whole sequence.
 
 Macros are a *user-authoring layer* on top of the existing dispatch
 funnel — they don't introduce new behaviors, just orchestrate
-existing ones (`Action`, `CustomMutation`, console verbs).
+existing ones (`Action`, edits, console verbs).
 
 This document is the on-disk format reference. For the Rust-side
 types see `src/application/macros/`; the dispatcher lives in
@@ -18,29 +18,25 @@ the native shim that wraps `InputHandlerContext` is at
 
 ## Where macros come from
 
-Four loader tiers contribute to the active registry, in ascending
-precedence (later writers override earlier ones with the same `id`):
+Two loader tiers contribute to the active registry, in ascending
+precedence (a later writer overrides an earlier one with the same
+`id`):
 
 <!-- SOURCE-OF-TRUTH: the tier order below is also encoded in
-     five other places that must move together when the order or
+     four other places that must move together when the order or
      set of tiers changes:
        1. src/application/source_tier.rs — the SourceTier enum
-          variant order, shared with the custom-mutation registry
-          and pinned by that module's tests.
-       2. src/application/app/run_native_init.rs::build — the load
-          order of the App + User tier calls AND the
-          rebuild_map_macros + rebuild_inline_macros calls.
-       3. src/application/app/console_input/exec.rs — the
-          rebuild_map_macros + rebuild_inline_macros invocations
-          in the document-replace path. Inline rebuilds AFTER Map
-          so Inline's higher precedence wins on id collision.
-       4. src/application/macros/loader/ — the parse_*_macros /
-          rebuild_*_macros helpers themselves.
-       5. format/ipc.md §"Trust model" + work_plans/LLM_IPC.md §D4
+          variant order, pinned by that module's tests.
+       2. src/application/macros/loader/ — build_macro_registry and
+          the parse_* helpers, which both targets' init call
+          (app/run_native_init.rs::build, app/run_wasm/mod.rs::run).
+       3. src/application/macros/mod.rs — MacroRegistry, whose
+          lookup walks the tiers in this order.
+       4. format/ipc.md §"Trust model" + work_plans/LLM_IPC.md §D4
           — the IPC surface is pinned to the User tier (it is
           deliberately NOT a tier of its own); adding or reordering
           tiers must re-evaluate that mapping.
-     Update all six in the same commit. -->
+     Update all five in the same commit. -->
 
 1. **Application bundle** — `assets/macros/application.json`,
    compiled into the binary via `include_str!`. Lowest precedence so
@@ -53,15 +49,11 @@ precedence (later writers override earlier ones with the same `id`):
    it, and this tier may run console verbs. Both targets parse through
    the shared `loader::parse_user_macros_json`. Tier:
    `SourceTier::User`.
-3. **Map-inline** — `MindMap.macros` on the loaded document.
-   Refreshed at initial load on both targets, plus every `open` /
-   `new` console verb on native. Tier: `SourceTier::Map`.
-4. **Node-inline** — `MindNode.inline_macros` on individual nodes.
-   Loaded alongside Map tier (same trigger sites). Highest
-   precedence — overrides Map / User / App on id collisions.
-   Authors should namespace ids (e.g. `"node-id.action"`) to
-   avoid collisions across nodes since the registry is
-   id-keyed flat. Tier: `SourceTier::Inline`. Cross-platform.
+
+**A map carries no macros.** The old format's map and node-inline
+tiers were deleted with it (V1-C3, #244); a map's own behavior is its
+verbs (V1-D3, #252), which replace them. Opening another map therefore
+leaves the registry as it was.
 
 The `SourceTier` of a macro is **loader-pinned** — assigned at the
 loader call site, never read from the on-disk content. A user
@@ -70,59 +62,18 @@ into their entries.
 
 ### Within-tier and cross-tier collision semantics
 
-Two entries with the same `id` in the same tier (e.g. a Map-tier
-`macros` array containing two entries both `id: "x"`) follow
-last-writer-wins — the second entry overwrites the first.
-Authoring tip: keep ids unique within a single source.
-
-**Inline tier is special.** Inline macros are scoped per-node,
-but the registry is flat (id-keyed across all nodes). So
-"within-tier" for Inline means "across every node in the
-document." The loader walks the nodes in id order and keeps
-the entry of the **lowest node id** for an id duplicated across
-nodes — in every process, although `MindMap.nodes` is a
-`HashMap` (the walk is sorted, and a later node's duplicate is
-dropped rather than handed to the registry's last-writer-wins
-insert). "Lowest" is string order, the order the ids sort in as
-text: `"10"` sorts before `"2"`. It emits a `warn!` naming both
-nodes and the winner. A deterministic winner is still an
-accident of numbering, so the robust fix is namespacing: prefix
-each inline-macro id with the owning node's id (e.g.
-`"3.2.1.save-and-quit"`).
-
-> **Changed in IPC-09 (#69).** Before it, the walk was already
-> sorted and the warning already named the lowest node id as the
-> winner, but every duplicate still reached the registry, whose
-> insert is last-writer-wins — so the entry that actually ran
-> was the **highest** node id's. A document with a cross-node
-> Inline collision now runs the other entry. The `warn!` names
-> both nodes; namespacing the ids makes the order moot.
-
-Cross-tier: a higher-tier entry **shadows** a lower-tier entry
-with the same id — both coexist in their own tier slots, with
-lookup walking high-to-low precedence and returning the first
-hit. Higher tiers take precedence on lookup, but the lower-tier
-entry is preserved underneath:
-
-- Open document A with `Map`-tier `id: "save-and-quit"`. Lookup
-  returns the Map version while document A is open.
-- Open document B with no `macros` → `clear_tier(Map)` runs,
-  removing only the Map slot. The User-tier entry **re-emerges**
-  on the next lookup — shadowing is reversible.
-
-Within-tier last-writer-wins still applies (two entries with
-the same id in the same tier — the second wins). Authors
-should still namespace ids defensively when targeting the
-Inline tier specifically, since a cross-node Inline collision is
-won by whichever node id sorts lowest; see the Inline-tier note
-above.
+Two entries with the same `id` in the same tier: the second wins. Cross-tier: a User entry
+**shadows** an App entry with the same id — both coexist in their own
+tier slots, and lookup returns the User one. A User entry that fails
+to parse is skipped (see [Loader resilience](#loader-resilience)), so
+the App entry it would have shadowed stays in effect.
 
 ## Privilege model — read this before shipping a non-User loader
 
 The dispatcher gates two surfaces on the macro's `SourceTier`:
 
 - **`MacroStep::ConsoleLine`** runs an arbitrary console verb
-  (`save`, `open`, `mutation apply`, kv-shaped style setters, etc.).
+  (`save`, `open`, `new`, the clock and capture verbs, etc.).
   User-tier-only via `SourceTier::allows_console_line`.
 - **Destructive / I/O / clipboard `Action` variants**
   (`SaveDocument`, `DeleteSelection`, `Cut`, `Paste`, `Copy`,
@@ -152,176 +103,42 @@ IPC reply carries as a warning. Rationale: `work_plans/LLM_IPC.md`
 
 ### The load-time trust boundary
 
-The privilege gates above answer "what may a map *do*". They are
-only half the question, because a map does not need a capability to
-kill the editor — it only needs a number the renderer trusts. Every
-`f32` in the format ends up in something that is not defensive:
-cosmic-text asserts a line height is non-zero, `f32::clamp` panics
-on inverted bounds, and the border and connection builders size a
-`String` and a `Vec` from authored geometry. None of those degrade;
-an `assert!` inside the scene build and an allocator abort are not
-panics, so CODE_CONVENTIONS §9's "log and keep running" has nothing
-to run.
-
-So the numbers are screened once, at the door, by
-`lib/baumhard/src/mindmap/model/validate.rs`, which the loader runs
-as its last invariant. It **rejects rather than repairs** — the same
-posture the loader already took for structure — and the message
-names the part to fix. What it covers:
-
-- **Font metrics** — every `font_size_pt`, `size_pt`, and min/max
-  pair on borders, connections, labels, portals, and text runs must
-  be finite and within `[0.5, 4096]`pt. Zero is what aborts the
-  shaper; a sub-point size asks the border fitter for millions of
-  glyphs.
-- **Inverted clamps** — a `min > max` pair is refused, because the
-  size cascades hand one straight to `f32::clamp`.
-- **Geometry** — node sizes, positions, section offsets, and Bezier
-  control points must be finite and bounded. JSON has no `Infinity`
-  literal, but `1e39` does not fit an `f32` and arrives as one.
-- **Text runs** — sorted, non-overlapping, non-empty, inside the
-  section's text. These were always the model's assumption;
-  overlapping runs made the styled-span bridge re-emit the same
-  graphemes once per covering run.
-- **Identity** — a `nodes` key must equal its node's `id`. The two
-  spellings address different graphs (the cycle check walks keys,
-  `ChildIndex` walks `node.id`), and a mismatch let a self-loop past
-  the cycle rejection into a scene build that never terminates.
-- **Mutation timing** — `custom_mutations` and `inline_mutations`
-  are walked for their animation envelopes, since a map's own
-  mutation fires on a click and would otherwise deliver its numbers
-  one interaction after the checks. The *mutator payload* itself —
-  the `MutatorNode` AST, whose leaves can set a font scale directly
-  — is deliberately **not** screened here. It is defended the other
-  way, by clamping where the value lands (`GlyphArea`'s scale
-  setters and its delta path), because console verbs, macros and IPC
-  write the same fields without passing the loader at all. Screening
-  the AST as well would be a second wall, not the only one.
-- **File size** — `MAX_MAP_BYTES`, checked by `stat` before the read
-  commits to the allocation.
-
-Two structural defenses sit behind it. Every walker over `parent_id`
-depth is **iterative** — a linear chain is a legal acyclic tree, and
-recursing over one exhausted the stack and killed the process from
-`fold_hidden_set`, the scene build, the subtree-AABB pass, and the
-BVH hit-test. Three more sit outside `baumhard` and are held to the
-same rule: `walk_drag_subtree`
-(`src/application/document/hit_test.rs`), which died on the first
-*drag* over a deep map — after the load and the scene build had both
-survived, which is exactly what made it easy to miss;
-`arena_utils::clone_subtree`, which no shipping path reaches today
-but is `pub`, with the undo stack as its named consumer; and
-`maptool`'s legacy id assignment (`convert/ids.rs`), which walks a
-*legacy* file's parent chain during `convert --legacy` — a file from
-wherever the user got it, so the same depth argument applies to the
-migration tool as to the editor. And the
-font metric is **clamped where it lands**
-(`GlyphArea`'s scale setters), not only at the door, because console
-verbs, macros, and IPC write there without passing the loader at
-all.
-
-`maptool verify` deliberately does *not* inherit this door: it uses
-`loader::parse_for_inspection`, because the files worth asking about
-are exactly the ones the editor refuses, and "cannot load" is the
-one answer the user already has.
+The privilege gates above answer "what may a macro *do*". A map is the
+other input a user opens from wherever they got it, and since V1-C3 it
+is read by the `.mandala.json` loader, which is strict: every key is
+defined, every value is typed and bounded, and a file is either valid or
+does not load ([`schema.md`](./schema.md) §"Bounds"). A number the
+renderer would trust — a zero font size, an inverted clamp, absurd
+geometry — is refused at the door with a message naming the part to
+fix, not repaired. `MAX_MAP_BYTES` bounds the read itself before it
+commits to the allocation.
 
 ### Threat model
 
-Map and Inline tiers ship today, and **a third-party
-`.mindmap.json` is still a privilege event** — a smaller one than it
-was, but the capability surface above is what decides that, not the
-numeric screening. Treat third-party mindmap files as code, not
-data:
-
-- A hostile mindmap can bind any non-destructive Action to a hotkey
-  the user is likely to press (Enter, Tab, etc.).
-- A hostile mindmap can carry CustomMutation steps that mutate
-  document state in surprising ways (the changes are in-memory and
-  undoable; the worst case is an annoying user experience, not data
-  exfiltration).
-- A hostile mindmap CANNOT run console verbs, save the file, delete
-  selection, or touch the clipboard — those are all gated above.
-- A hostile mindmap can no longer *crash* the editor with a number:
-  the cases that did — a zero font size, an inverted clamp, absurd
-  geometry, a deep `parent_id` chain, a key that disagreed with its
-  node's `id` — are refused at load or bounded where they land. See
-  the trust boundary above.
+**A map carries no macros and binds no keys** since V1-C3: the map and
+node-inline tiers went with the old format. What a third-party map can
+do is be drawn. Its own behavior returns as verbs and triggers (V1-D3,
+#252), which bring their own gate; until then the capability surface of
+this document is the user's file and the application bundle, both of
+which the user owns.
 
 **What is not yet closed**, so nobody reads the section above as a
 finished job:
 
-- The resource caps are mostly **per element**, and element count is
-  not capped. One border side cannot emit more than 100k glyphs, and a
-  map may carry a great many sides; the aggregate per frame is still
-  unbounded for everything except connection glyphs.
-  A frame budget is the real answer and exists only for that one axis.
-
-  Connection sampling *is* now bounded in aggregate:
-  `MAX_TOTAL_PATH_SAMPLES` (500k) is divided equally among the map's
-  edges, because the per-path cap alone let a 73 KB file with 200 edges
-  ask for 2 000 000 glyph areas — a 2 000 201-node arena and 1 642 MiB
-  resident, from a file smaller than any map in this repository. The
-  same file now reaches 500 000 samples and 416 MiB, and no document
-  can exceed that however many edges it declares.
-  `maps/testament.mindmap.json` (16 259 samples over 258 edges) and
-  `maps/stress_long_edges.mindmap.json` (46 290 over 124) are
-  unaffected — the budget is an order of magnitude above the heavier
-  of them.
-
-  **The share is equal per edge, not first-come**, so the outcome does
-  not depend on iteration order and no edge renders while a later one
-  vanishes. What degrades under a pathological map is glyph *density*
-  along every connection at once, which is the graceful form of this
-  failure. A map with a hundred thousand edges gets five glyphs each;
-  that is thin, and it is the trade against not opening at all.
-- **Edge hit-testing re-samples curved edges on every click.**
-  `hit_test_edge` walks each Bezier from scratch per canvas click
-  rather than reusing the samples the scene build already produced,
-  so a map full of long curved edges makes every click expensive.
-  The per-path cap bounds one edge; nothing bounds the sum, and the
-  fix is a cache or a spatial pre-filter rather than a smaller cap.
-- The `OnClick` trigger path consults no `SourceTier`. Today's two
-  `DocumentAction` variants are pure in-memory theme writes, so the
-  reachable damage is bounded — but the gate the privilege model
-  describes lives on the macro dispatcher only, and a new variant
-  would widen this silently. `DocumentAction`'s `#[non_exhaustive]`
-  is the reminder; an `allows_document_action` sibling to
-  `allows_action` is the fix.
-- `MAX_FONT_SIZE_PT` combined with the maximum camera zoom can still
-  ask the rasterizer for a very large glyph.
 - **The browser's `?map=` takes a whole URL, not a path.** The value
-  goes to `fetch` verbatim, so an absolute one loads a third-party
-  map cross-origin (the attacker's own server decides its CORS). The
-  content is screened like any other — the WASM path runs
-  `load_from_str` — but the *provenance* step is gone: there is no
-  file the user chose to open, only a link they clicked. Restricting
-  the parameter to a same-origin path is a product decision, not a
-  bug fix, which is why it is named here rather than changed.
-- **Map and Inline outrank User in the tier order.** That is
-  deliberate — a map should be able to specialize behavior for its
-  own content — but it means an opened map shadows the user's own
-  macro on an id collision, so a key bound in
-  `~/.config/mandala/macros.json` can do what the map chose instead.
-  The gates bound *what* that is (no console verbs, nothing
-  destructive), and the shadowing is reversible: closing the map
-  clears the Map tier and the user's entry re-emerges. Reversing the
-  order is a format-wide decision touching the six places the
-  SOURCE-OF-TRUTH comment above names.
-- A node's `sections` array is capped *after* serde has already
-  allocated it, so the cap bounds the model rather than the parse.
-  `MAX_MAP_BYTES` is what actually bounds the allocation today.
-
-If a future contributor adds a `DocumentAction` variant that
-performs file I/O, network access, or arbitrary content load, the
-gate must extend to cover it. `DocumentAction` is `#[non_exhaustive]`
-specifically to surface this when the variant is added — see
-`lib/baumhard/src/mindmap/custom_mutation/mod.rs`.
+  goes to `fetch` verbatim, so an absolute one loads a third-party map
+  cross-origin (the attacker's own server decides its CORS). The
+  content is screened like any other — the browser runs the same
+  loader — but the *provenance* step is gone: there is no file the user
+  chose to open, only a link they clicked. Restricting the parameter to
+  a same-origin path is a product decision, not a bug fix, which is why
+  it is named here rather than changed.
 
 ## On-disk format
 
-Macros are loaded as a top-level JSON array of macro objects.
-Application-bundle, user-file, and map-inline tiers all use this
-same shape; tier is assigned by the loader, not the file.
+Macros are loaded as a top-level JSON array of macro objects. The
+application bundle and the user file use this same shape; tier is
+assigned by the loader, not the file.
 
 ```json
 [
@@ -381,10 +198,11 @@ Some Actions are gated for non-User tiers — see
 
 #### `CustomMutation`
 
-Apply a custom mutation by id, against a resolvable target node.
-Routes through the same path keybind-triggered custom mutations
-use (animation-aware via `cm.timing`, always invokes
-`apply_document_actions`).
+Fire an edit by id, against a resolvable target node: the path a key
+bound in `edit_bindings` takes (`dispatch::families::edits`). Edits are
+rebuilt on the document's one writer by V1-D1 (#250), which also renames
+this step; until then the step is answered unhandled, logs a `debug!`
+naming its owner, and does not count as run.
 
 ```json
 { "kind": "CustomMutation", "id": "nudge-right" }
@@ -400,22 +218,19 @@ use (animation-aware via `cm.timing`, always invokes
 
 | field | type | notes |
 |---|---|---|
-| `id` | `string` | Required. Must resolve in the document's `mutation_registry`; unknown ids log a `warn!` and the step is skipped. |
+| `id` | `string` | Required. The edit's id. |
 | `target` | `MacroTarget` | Optional, defaults to `"current_selection"`. |
 
 `MacroTarget` is one of:
-- `"current_selection"` — use the currently-selected single node.
-  Multi / edge / portal selections cause the step to skip.
-- `{ "node_id": "..." }` — always target the named node. The
-  dispatcher checks the id exists in the document; missing ids
-  log a `warn!` and the step is skipped.
+- `"current_selection"` — the current selection.
+- `{ "node_id": "..." }` — the named node.
 
 #### `ConsoleLine`
 
 **User-tier-only.** Re-parse the given line through the console
 parser and run it as if typed. Lets macros leverage every
-parameterized verb (`border preset=triple`, `color bg=#fafafa`,
-etc.) without needing a bespoke step kind.
+parameterized verb (`fps on`, `clock virtual`, `screenshot`, etc.)
+without needing a bespoke step kind.
 
 ```json
 { "kind": "ConsoleLine", "line": "save" }
@@ -437,13 +252,13 @@ WASM has no console runtime — the `console_input` module is
 `execute_console_line` to call. **User-tier ConsoleLine steps on
 WASM log `warn!` and skip; the macro continues with the next
 step** (fail-soft, NOT abort). This matches the User-tier "step
-failed" posture used elsewhere (e.g. unknown CustomMutation id),
+failed" posture used elsewhere (e.g. an unhandled Action),
 and prevents a copy-pasted-from-desktop macro shaped
 `[Action::ZoomIn, ConsoleLine("save"), Action::ZoomIn]` from
 fail-closed-aborting at step 2 and never running step 3.
 
-The privilege gate above is unchanged — non-User tiers
-(`App` / `Map` / `Inline`) still fail-closed-abort the macro on
+The privilege gate above is unchanged — the non-User tier
+(`App`) still fail-closed-aborts the macro on
 the FIRST ConsoleLine encounter, identical to native. Only the
 User-tier branch differs in *what* execution looks like
 (log-skip on WASM, real exec on native).
@@ -456,8 +271,8 @@ tiers in order:
 1. `keybinds.action_for_context(...)` — built-in `Action` variants.
 2. `keybinds.macro_for(...)` — user-defined macros from
    `macro_bindings`. Unknown macro ids fall through to tier 3.
-3. `keybinds.custom_mutation_for(...)` — per-node custom mutations
-   from `custom_mutation_bindings`.
+3. `keybinds.edit_for(...)` — edits from `edit_bindings`, fired by
+   V1-D1 (#250).
 
 A built-in `Action` wins over a colliding macro binding. To
 override a built-in Action with a macro, first unbind the Action's
@@ -473,8 +288,7 @@ keybind:
 ## Loader resilience
 
 Each loader is best-effort, and a broken part costs only that part.
-On every tier except the application bundle, the unit is the
-**macro**: an entry that does not parse (unknown step kind, invalid
+In the user file the unit is the **macro**: an entry that does not parse (unknown step kind, invalid
 action name, missing `steps`) logs a `warn!` naming its index and
 `id` and is skipped, and every other macro in the same list loads.
 A macro is never loaded with a step missing — that would run a
@@ -482,12 +296,9 @@ different program under the same id. Only a user file that is not a
 JSON array at all (or is not JSON) yields an empty user tier, again
 with a `warn!`; an empty file is an empty tier. A skipped user macro
 that overrode an App-tier macro of the same id leaves the App macro
-in effect. A field written twice inside a macro **in the user file**
-uses its last occurrence and logs a `warn!` naming its path
-(`[2].id`); in a map's `macros` or a node's `inline_macros` the last
-occurrence is used silently, because the document parse has already
-kept it before the macro loader sees the entry. The application
-boots even if the macros file is broken.
+in effect. A field written twice inside a macro in the user file uses
+its last occurrence and logs a `warn!` naming its path (`[2].id`). The
+application boots even if the macros file is broken.
 The application bundle is a build-time invariant and is parsed with
 `expect()` — a malformed bundle is a startup-time bug, not a user
 input error.

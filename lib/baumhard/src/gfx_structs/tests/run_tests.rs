@@ -868,7 +868,7 @@ fn test_authored_run_mutations_leave_other_elements_unchanged() {
 }
 
 /// The three authored mutations (`RunOrigin`, `RunOpacity`,
-/// `RunOverrides`) come from a map's `custom_mutations`, so they reach elements of every kind: at
+/// `RunOverrides`) come from authored input, so they reach elements of every kind: at
 /// any element but their own they change nothing, in every build
 /// profile, and never assert (ruling R18 on #240). Each is first shown
 /// to change an element of its own kind, so "unchanged" is not just a

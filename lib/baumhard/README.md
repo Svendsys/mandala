@@ -12,8 +12,11 @@ declarative `MutatorTree` rather than rebuilt each frame.
 - Mutator DSL (deltas, commands, instructions, predicates) for
   declarative model edits
 - Animation envelopes (timing + easing) layered over mutators
-- Cross-platform `.mindmap.json` loader / saver with legacy-shape
-  detection
+- The document — elements in an arena, one writer every change goes
+  through, its history and change feed — and its cross-platform
+  `.mandala.json` loader / saver
+- The projector: the document drawn as glyph layers, with the hit test
+  over them
 - Cosmic-text font system wrapped behind a thin façade
   (`baumhard::font`)
 - Spatial region indexer for hit-testing and rect-intersection
@@ -25,7 +28,7 @@ declarative `MutatorTree` rather than rebuilt each frame.
 | ----------------------------------------- | --------------------------------------------------------------- |
 | [`CONVENTIONS.md`](CONVENTIONS.md)        | Crate-local rules — mutation-not-rebuild, arena discipline, no-unsafe, perf invariants. **Mandatory before editing anything under `src/`.** |
 | [`../../CONCEPTS.md`](../../CONCEPTS.md)  | Workspace-wide conceptual building-blocks (`GlyphArea`, `Channel`, `MutatorTree`, ...) |
-| [`../../format/`](../../format/)          | `.mindmap.json` format spec — the on-disk shape of every scene  |
+| [`../../format/`](../../format/)          | `.mandala.json` format spec — the on-disk shape of every map    |
 
 ## Module layout
 

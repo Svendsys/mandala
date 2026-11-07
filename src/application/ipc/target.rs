@@ -219,10 +219,9 @@ pub(crate) trait CommandTarget {
     /// and report whether the app was settled once it was taken.
     /// `None` when the app has no document.
     ///
-    /// Changes nothing a frame would show: the capture draws through a
-    /// camera of its own, and what another zoom needs is projected
-    /// into a scratch scene of the capture's own, never into the live
-    /// one (`app::capture_scene`). [`Self::changed_view`] is untouched.
+    /// Changes nothing a frame would show: the capture draws the glyph
+    /// layers through a camera of its own, and writes neither the layers
+    /// nor the live camera. [`Self::changed_view`] is untouched.
     #[cfg(not(target_arch = "wasm32"))]
     fn capture(
         &mut self,

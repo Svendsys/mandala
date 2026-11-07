@@ -1,13 +1,23 @@
 # Custom Mutations
 
-Custom mutations are named, reusable bundles of operations a mindmap
-can attach to nodes or expose through the `mutation` console verb.
-They cover everything from "grow every descendant's font by 2pt" to
-size-aware layouts like `flower-layout` and `tree-cascade`.
+> **Status (V1-C3, #244).** The custom-mutation *carrier* this document
+> describes — the `CustomMutation` object a `.mindmap.json` map, a user
+> file or the app bundle held, its four-source loader, the `mutation`
+> console verb and the `OnClick` triggers that fired it — was deleted
+> with the old model. Edits replace it (V1-D1, #250), and V1-E4 (#256)
+> rewrites this document for them. What is **live** is the glyph
+> mutation vocabulary the carrier wrapped: `GfxMutation`, its delta and
+> glyph-run forms ([Mutation vocabulary](#mutation-vocabulary),
+> [Glyph run mutations](#glyph-run-mutations)) and the `MutatorNode`
+> AST ([`mutator`](#mutator--the-mutatornode-ast)), which baumhard's
+> `GlyphModel` family keeps (design decision D24) and whose published
+> examples the tests read from here. Read every other section as the
+> record of the format that was.
 
-This document is the format reference. For the Rust-side types see
-`lib/baumhard/src/mindmap/custom_mutation/`; the loader lives in
-`src/application/document/mutations_loader/`.
+Custom mutations were named, reusable bundles of operations a mindmap
+could attach to nodes or expose through the `mutation` console verb.
+They covered everything from "grow every descendant's font by 2pt" to
+size-aware layouts like `flower-layout` and `tree-cascade`.
 
 ## Where mutations come from
 

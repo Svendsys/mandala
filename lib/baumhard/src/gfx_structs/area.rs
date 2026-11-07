@@ -90,8 +90,7 @@ pub struct GlyphArea {
 /// identity. Written out rather than derived: the destructuring names
 /// every field, so a field added to `GlyphArea` does not compile here
 /// until it is either compared or ignored by name — the renderer's
-/// overlay cache rests on `==` seeing every field it should
-/// (`renderer::scene_shape_cache`).
+/// overlay rebuilds rest on `==` seeing every field it should.
 impl PartialEq for GlyphArea {
     fn eq(&self, other: &Self) -> bool {
         let GlyphArea {
@@ -150,8 +149,8 @@ impl GlyphArea {
     /// both `==` and `hash` unmoved — which is exactly what a
     /// color-picker hover produces. Anything folding "would a rebuild of this area
     /// draw differently?" into one integer must call this instead;
-    /// the canvas-role dispatchers in `scene_rebuild` do, to decide
-    /// whether the registered tree is already correct.
+    /// the overlay dispatchers do, to decide whether the registered
+    /// tree is already correct.
     ///
     /// Floats go in as `to_bits`, so `-0.0` and `0.0` are distinct
     /// values here while `==` calls them equal. That is the safe
@@ -164,7 +163,8 @@ impl GlyphArea {
     /// consumer that skips work on a hash match therefore skips
     /// re-stamping hit boxes too, so it owes its own proof that its
     /// builder writes none — see
-    /// `test_border_and_portal_areas_carry_no_hitbox`.
+    /// `test_border_and_portal_areas_carry_no_hitbox` (gone), deleted
+    ///    with the old builders.
     ///
     /// Cost: O(text bytes + region count); no allocation. The body
     /// destructures `self`, so a field added to this struct will not

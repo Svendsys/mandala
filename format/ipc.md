@@ -2352,12 +2352,11 @@ that observes behavior and must not become observable behavior.
 script starts, the same document and the same command sequence leave
 the same laid-out scene: `scene.dump` is byte-identical across runs,
 whatever the wall clock did meanwhile and whenever virtual time began
-(`test_the_same_stepped_script_twice_dumps_byte_identical_scenes`
-holds two independently built documents — every `HashMap` in each
-seeded apart — to it). The one `HashMap`-order dependence the hunt for
-this contract found was the inline-macro collision winner, which is
-now the lowest node id in every process (`format/macros.md`). What the
-contract does not cover: `now_ms` itself, whose virtual origin is the
+(`test_the_same_document_twice_dumps_byte_identical_scenes` holds two
+independently loaded views of one document to it: the document's arena,
+the projector's layers and the dump's walk are all in document order,
+so nothing depends on an order a process chooses). What the contract
+does not cover: `now_ms` itself, whose virtual origin is the
 real reading at engagement, and anything a concurrent human does.
 
 **Also a console verb.** `clock status`, `clock real`, `clock

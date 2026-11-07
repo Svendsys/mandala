@@ -123,14 +123,14 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 }
 
 /// AABB center from a top-left position + size pair. O(1), no
-/// heap. Equivalent to [`crate::mindmap::model::MindNode::center_vec2`]
+/// heap. Equivalent to the old model's `MindNode::center_vec2` (gone)
 /// for the case where only the geometry is in scope (anchor
 /// resolution paths, scene-builder portal-pair midpoint compute);
 /// where a `MindNode` is in scope, prefer the method.
 ///
 /// **Finding the ones that got away.** Every open-coded `pos + size *
-/// 0.5` in the workspace routes through this function or through
-/// `center_vec2`, and the census that says so has to be re-run with a
+/// 0.5` in the workspace routes through this function, and the census
+/// that says so has to be re-run with a
 /// pattern whose operand class admits tuple indices and casts —
 /// `[a-zA-Z_.]+` matches neither `.0` (digits) nor ` as f32 `
 /// (spaces), and a sweep verified with it reported "done" while six
@@ -153,9 +153,9 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 /// `preview_pos + preview_size * 0.5` the picker computes without
 /// ever naming a `Vec2`), deliberately off-center probe points, and
 /// half-extent terms inside larger anchor formulas. It also leaves
-/// the model-space centers in `document::mutations` (`flower_layout`,
-/// `tree_cascade`), which this helper cannot express at all:
-/// [`crate::mindmap::model::Position`] and
+/// the old model-space centers in `document::mutations`
+/// (`flower_layout` (gone), `tree_cascade` (gone)), which this helper could
+/// not express at all: the old model's `Position` and
 /// [`crate::mindmap::model::Size`] are `f64`, and routing them
 /// through a `Vec2` would round the layout arithmetic to `f32` to
 /// save a multiplication. The other
@@ -197,7 +197,7 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// answered "outside is false, descend" for a `NaN` box — walking a
 /// subtree whose bounds are not a box. No reachable `NaN` was found
 /// on the way in (`serde_json` rejects the literals,
-/// `renderable_section` screens non-finite section geometry,
+/// the format's loader screens non-finite section geometry,
 /// mutation payloads are finiteness-screened, and
 /// `clamp_canvas_coord` maps `NaN` to 0.0), so this is not a bug
 /// fixed but an answer chosen: a box with a `NaN` bound contains
@@ -209,7 +209,7 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// `AGENTS.md` forbids an agent from running one, so omission is the
 /// only compliant outcome. There would be something to resolve —
 /// this is `pub` with a cross-crate caller (`mandala`'s
-/// `document::hit_test::point_in_node_aabb`) and the workspace
+/// `document::hit_test::point_in_node_aabb` (gone)) and the workspace
 /// release profile keeps `codegen-units = 16` with thin-local LTO,
 /// which by the root `Cargo.toml`'s own words leaves cross-crate
 /// inlining on the table. The stakes are small — the genuinely hot

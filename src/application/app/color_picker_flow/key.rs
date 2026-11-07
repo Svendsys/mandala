@@ -28,8 +28,8 @@ use crate::application::keybinds::Action;
 
 /// A picker-modal effect named by an `Action`. Produced by
 /// [`picker_op_for`]; consumed by the `dispatch_action` arm, which
-/// owns the renderer-driving half (`cancel_color_picker`,
-/// `commit_color_picker`, `commit_color_picker_to_selection`,
+/// owns the renderer-driving half (`cancel_color_picker` (gone),
+/// `commit_color_picker` (gone), `commit_color_picker_to_selection` (gone),
 /// [`apply_picker_nudge`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::application::app) enum PickerOp {

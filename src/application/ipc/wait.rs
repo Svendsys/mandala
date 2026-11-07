@@ -48,7 +48,7 @@ pub(crate) enum Until {
 
 impl Until {
     /// Every condition, in the order the wire lists them. The second the
-    /// wire had, `animations_complete`, went with the animations; it
+    /// wire had, `animations_complete` (gone), went with the animations; it
     /// returns with presentations (V1-D2, #251).
     pub(crate) const ALL: [Until; 1] = [Until::Settled];
 

@@ -75,7 +75,7 @@
 //!
 //! ## Why not just measure inline at every call site?
 //!
-//! `border_run_specs` runs per visible node per scene rebuild and
+//! A frame's ring fitting runs per visible node per projection and
 //! asks for roughly a dozen clusters per node. Measuring one
 //! cluster means allocating a cosmic-text `Buffer`, setting its
 //! text, running `shape_until_scroll` and walking the layout runs

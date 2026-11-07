@@ -129,8 +129,8 @@ pub enum GlyphTreeEvent {
 /// mutation carrying a `NaN` is not equal to itself. Use
 /// [`GfxMutation::writes_the_same`] — not `==` — for "would these two
 /// write the same thing", which is the question
-/// [`flat_mutations`](crate::mindmap::custom_mutation::flat_mutations)
-/// asks before collapsing an AST's nested payloads into one list.
+/// `flat_mutations` (gone) asked before collapsing an AST's nested
+/// payloads into one list.
 /// `==` is still the right operator for an ordinary value
 /// comparison; it is only the *agreement* predicate that needs the
 /// reflexive form.
@@ -221,8 +221,8 @@ impl GfxMutation {
     /// Derived `PartialEq` over `f32` is not an equivalence relation:
     /// `NaN != NaN`, so a mutation carrying a `NaN` is not `==` to
     /// itself. That matters because
-    /// [`flat_mutations`](crate::mindmap::custom_mutation::flat_mutations)
-    /// collapses an AST only when every payload beneath the root
+    /// `flat_mutations` (gone) collapsed an AST only when every payload
+    /// beneath the root
     /// agrees with the one it returns, and
     /// [`scope::self_and_descendants`](crate::mindmap::custom_mutation::scope::self_and_descendants)
     /// builds its AST by cloning **one** list into two `Macro` nodes
@@ -345,7 +345,7 @@ impl GfxMutation {
     /// nothing changes, in every build profile.
     ///
     /// The three authored variants (`RunOrigin`, `RunOpacity`,
-    /// `RunOverrides`) can come from a map's `custom_mutations`, which is untrusted input, and a
+    /// `RunOverrides`) can come from authored input, which is untrusted, and a
     /// scope such as `SelfAndDescendants` sends one list to elements of
     /// every kind. They are a logged no-op, as an area or model payload
     /// at the wrong element is, and never assert.

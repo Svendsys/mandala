@@ -44,13 +44,14 @@ pub const FIT_MIN: f32 = 0.5;
 /// bounds: the upper end of [`BUILT_IN`]'s fit.
 pub const FIT_MAX: f32 = 2.0;
 
-/// The color of connector text: `default_parent_child_edge`'s
-/// `#888888`, `src/application/document/defaults.rs`.
+/// The color of connector text: `#888888`, the old model's parent-child
+/// edge default (`default_parent_child_edge` (gone)), kept so a converted
+/// map draws as it did.
 const CONNECTOR_COLOR: Rgba = Rgba::opaque(0x88, 0x88, 0x88);
 
-/// The color of line-link and portal text: `default_cross_link_edge`'s
-/// and `default_portal_edge`'s `#aa88cc`,
-/// `src/application/document/defaults.rs`.
+/// The color of line-link and portal text: `#aa88cc`, the old model's
+/// cross-link and portal edge defaults (`default_cross_link_edge` (gone),
+/// `default_portal_edge` (gone)), kept so a converted map draws as it did.
 const LINK_COLOR: Rgba = Rgba::opaque(0xaa, 0x88, 0xcc);
 
 /// The size of a portal marker, in points:
@@ -58,9 +59,9 @@ const LINK_COLOR: Rgba = Rgba::opaque(0xaa, 0x88, 0xcc);
 /// `lib/baumhard/src/mindmap/tree_builder/portal_style.rs`.
 pub const PORTAL_MARKER_SIZE_PT: f32 = 50.0;
 
-/// The size of connector and link text, in points:
-/// `default_connection_font_size()` in
-/// `lib/baumhard/src/mindmap/model/edge.rs`.
+/// The size of connector and link text, in points: the old model's
+/// connection default (`default_connection_font_size` (gone)), kept so a
+/// converted map draws as it did.
 pub const PATH_TEXT_SIZE_PT: f32 = 12.0;
 
 /// How much larger a label's text is than its path's:

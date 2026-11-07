@@ -1835,8 +1835,10 @@ anywhere — a hand-kept list is the twin surface
 `lib/baumhard/CONVENTIONS.md` §B4 warns about — so
 `lib/baumhard/src/util/serde_coverage.rs` walks baumhard's own sources
 with `syn` and
-`loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`
-fails the moment one appears.
+`test_no_loadable_type_can_swallow_an_unknown_key` (gone) failed the
+moment one appeared. (The old model and its unknown-key capture were
+deleted in V1-C3; the strict format's gate is
+`format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`.)
 
 **A derivation is a reading, and a reading can be wrong in a way the
 document it feeds is wrong in too.** The same walk produces the list
@@ -1870,8 +1872,8 @@ walk is no longer the only witness.
 that satisfies it and records what was asked — no source text, no
 `syn`, no list, and `serde_derive`'s own expansion as the authority
 on both member names and array-ness.
-`unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
-and its member-name sibling fail when the two disagree. Neither is a
+`test_the_derived_positional_arrays_survive_an_independent_derivation` (gone)
+and its member-name sibling failed when the two disagreed. Neither is a
 replacement for the other: the probe cannot see a serialize-only
 proxy, and the walk cannot see through a generic instantiation. Their
 disagreement is the signal. Both see `#[serde(alias = "…")]` and both
@@ -3569,8 +3571,8 @@ handle non-modal — not a divergence to repair.
 
 Issue #48 reported the *portal* case as such a divergence,
 reading the promotion order without the capture rule.
-`test_portal_label_drag_capture_is_gated_by_the_same_node_hit_the_click_ladder_uses`
-now holds the two paths together, and names the gate that had
+`test_portal_label_drag_capture_is_gated_by_the_same_node_hit_the_click_ladder_uses` (gone)
+held the two paths together until V1-C3 deleted the drag, and names the gate that had
 been an unpinnable inline `if` inside the press handler.
 
 **A press never clobbers a gesture already in flight.** All three

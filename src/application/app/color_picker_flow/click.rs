@@ -276,7 +276,7 @@ mod tests {
     }
 
     /// Contextual outside-click is a cancel, and it goes out as an
-    /// Action rather than calling `cancel_color_picker` here.
+    /// Action rather than calling `cancel_color_picker` (gone) here.
     #[test]
     fn test_outside_click_dispatches_picker_cancel_in_contextual_mode() {
         assert_eq!(

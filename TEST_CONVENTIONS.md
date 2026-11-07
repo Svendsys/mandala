@@ -19,8 +19,9 @@ The fundamentals are:
   `almost_equal_vec2`, `RegionIndexer`, the region params math.
   Every spatial-index assertion is a frame that does not stutter under
   selection.
-- **Loader edges** — every shape `.mindmap.json` can take, including
-  malformed ones, missing fields, and unknown `edge_type` values.
+- **Loader edges** — every shape `.mandala.json` can take, including
+  malformed ones, missing fields, unknown keys and values past their
+  bounds — each one a refusal that names the part to fix.
 - **Platform-shared logic** — gesture math, viewport math, anything
   that has to behave identically on native and WASM.
 
@@ -40,12 +41,11 @@ pattern for anything that does not need to be called from outside the
 test harness.
 
 Representative exemplars:
-- `src/application/document.rs` — fundamentals coverage of
-  hit-testing, selection, undo stacks, portal mutations.
-- `lib/baumhard/src/mindmap/border.rs` — border run-spec geometry
-  and the resolver cascade.
-- `lib/baumhard/src/mindmap/connection.rs` — anchor points, path
-  sampling, Bezier curves.
+- `src/application/view/tests.rs` — the view's sync: what a change
+  re-projects and re-stamps, the click through the projector's hit,
+  undo and redo reaching the layers.
+- `src/application/document/ipc_state.rs` — the document's IPC
+  projections, held against changes made through the writer.
 
 If you are not sure where a new test should go, put it inline.
 
@@ -100,8 +100,8 @@ declared explicitly with `harness = false` to exist at all.
 ## §T3 Naming
 
 - **Test functions:** `test_<topic>_<specific_case>`. Lowercase
-  snake_case. Examples: `test_hit_test_direct_hit`,
-  `test_portal_endpoint_color_channels_are_independent`.
+  snake_case. Examples: `test_writer_a_handle_from_before_an_undo_reads_not_open`,
+  `test_a_citation_marked_gone_reads_as_history`.
 
   **Every test named in this document, and in any comment or spec in
   the repository, is a real one.** `baumhard`'s
@@ -112,7 +112,9 @@ declared explicitly with `harness = false` to exist at all.
   citations had already rotted that way before the scan existed. Write
   a *shape* rather than a name when you mean a shape — the
   `test_<topic>_<case>` spelling above, or a trailing `*` for a family
-  (`test_delete_node_*prefix*`) — and the scan reads it as one. Its
+  (`test_writer_*prefix*`) — and the scan reads it as one; a citation
+  of a test deleted on purpose takes `(gone)` after its closing backtick,
+  as any other identifier does. Its
   sibling `test_no_doc_names_an_identifier_that_does_not_exist` holds
   the names that are *not* tests to the same standard inside doc
   comments — a backticked `Type::method`, `module::function` or
@@ -155,8 +157,8 @@ declared explicitly with `harness = false` to exist at all.
   ```
 
 - **Fixture helpers:** free functions inside `mod tests { ... }`,
-  named by what they return. See `load_test_doc` / `load_test_tree` /
-  `test_map_path` in `src/application/document.rs`.
+  named by what they return. See `load_test_doc` / `load_map` /
+  `map_path` in `src/application/document/tests_common.rs`.
 
 - **Lazy-static test data:** `TEST_<NOUN>` in SCREAMING_SNAKE. Pattern
   is in `lib/baumhard/src/gfx_structs/tests/region_tests.rs` and
@@ -164,24 +166,25 @@ declared explicitly with `harness = false` to exist at all.
 
 ## §T4 Fixtures and test data
 
-- `maps/testament.mindmap.json` is the canonical fixture. Prefer
-  loading it through the `load_test_doc()` / `load_test_tree()`
-  helpers over hand-constructing `MindMap` literals. A test that
-  exercises the loader path at the same time as the feature under
-  test catches more regressions for free.
+- `maps/testament.mandala.json` is the canonical fixture. Prefer
+  loading it through the `load_test_doc()` / `testament()` helpers
+  (`src/application/document/tests_common.rs`) over composing a
+  document by hand. A test that exercises the loader path at the same
+  time as the feature under test catches more regressions for free.
 
 - Build fixture paths with `env!("CARGO_MANIFEST_DIR")` so tests work
   regardless of working directory. The pattern lives in
-  `src/application/document.rs`'s test module.
+  `src/application/document/tests_common.rs`.
 
 - For heavy repeated data (large region tables, primitive truth
   tables), declare it once per test module via `lazy_static!`. See
   `primitives_tests.rs::OVERLAPS_TEST` and `region_tests.rs` for the
   shape.
 
-- New fixture mindmaps go in `maps/` with a `*.mindmap.json` suffix so
-  the build-script walker and the CLI loader both handle them
-  uniformly.
+- New fixture maps go in `maps/` with a `*.mandala.json` suffix so the
+  browser bundle (`web/index.html`), the fuzz corpora and the CLI loader
+  all handle them uniformly. A map in `lib/baumhard/src/document/format/fixtures/`
+  is a format fixture: it must save back byte for byte.
 
 ## §T5 Assertions
 
@@ -695,10 +698,10 @@ Two refinements, each paid for in that epic:
 A test whose meaning depends on its fixture holding some property
 asserts that property before the assertion that depends on it, with
 a message that says what the test would otherwise prove.
-`test_border_show_reports_the_effective_frame_color` guards its
-readout assertion with `assert_ne!(effective, node.style.frame_color,
-"the fixture must keep its tiers apart or this test proves nothing")`,
-and
+`test_the_same_document_twice_dumps_byte_identical_scenes` guards its
+comparison with `assert!(one.len() > 10_000, "precondition: the dump
+holds the map …")`, so two empty dumps cannot agree their way to a
+pass, and
 `test_the_console_source_scan_reads_what_it_claims_to` exists because
 a scan that read nothing finds nothing. These guards are the cheap,
 committed half of §T13.2: they turn shape 2 and shape 4 from a silent

@@ -262,10 +262,9 @@ pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
 ///
 /// Forward conversion through `convert_f32_to_u8`, identical to
 /// `hsv_to_hex`'s shape — every model-side `#RRGGBB` site uses
-/// the same quantisation path. Used by the section-mutation
-/// reverse converter (`region_to_text_run`) where a tree-side
-/// `ColorFontRegion.color: FloatRgba` rolls back into the
-/// model's `TextRun.color: String`.
+/// the same quantization path. Used where a tree-side
+/// `ColorFontRegion.color: FloatRgba` rolls back into a `#RRGGBB`
+/// string.
 ///
 /// Lossy on `var(--name)` references — by construction. The
 /// forward path resolves variables before shaping; this reverse

@@ -59,9 +59,12 @@
 //! exists — the silence is reported as a place rather than left as an
 //! absence. What the module is good for is exactly one thing: being a
 //! **second, independent** answer to "which JSON members hold
-//! growable arrays of key-bearing values", so
-//! `mindmap::unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
-//! has something that can disagree.
+//! growable arrays of key-bearing values" and "which member names does
+//! a type accept", so the source walk in `serde_coverage` has something
+//! that can disagree:
+//! `serde_coverage::tests::test_the_scan_and_the_derived_impls_agree_on_a_planted_shape`
+//! holds the two together. (Its first consumer, the old model's
+//! unknown-key capture, was deleted with it in V1-C3.)
 //!
 //! Test-only: nothing in a shipped build deserializes a model type
 //! from a probe. Unlike its counterpart it reads no files and pulls in
@@ -181,11 +184,6 @@ impl DerivedShape {
     /// reached. Struct variants are keyed `"Enum::Variant"`.
     pub fn members_of(&self, container: &str) -> Option<&BTreeSet<String>> {
         self.members.get(container)
-    }
-
-    /// Every container name the sweep reached, in sorted order.
-    pub fn containers(&self) -> impl Iterator<Item = &str> {
-        self.members.keys().map(String::as_str)
     }
 
     /// The variant names the derived impl for `container` accepts.
@@ -678,9 +676,8 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
     /// variant accepts a unit and drops every other variant's shape
     /// with no error, which would be the module's one *silent* blind
     /// spot. Naming the site turns it into a loud one: an untagged
-    /// enum appears here as a place the probe stopped seeing, and
-    /// `mindmap::unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
-    /// holds the list of such places to the ones the model means.
+    /// enum appears here as a place the probe stopped seeing, which a
+    /// caller holds to the places it means.
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         let site = site_of(self.run, &self.member, &self.slot);
         self.run.shape.opaque_sites.insert(site);

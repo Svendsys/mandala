@@ -790,9 +790,9 @@ mod tests {
     /// **A placard is not announced as a map that loaded.** Under
     /// `RUST_LOG=info` the shell used to print
     /// `document: loaded mindmap "load-failure" with 1 node(s)`
-    /// immediately beside `startup: could not load …`, because
-    /// `MindMapDocument::finalize` carried the announcement and the
-    /// placard goes through `finalize` like any other map. A log
+    /// immediately beside `startup: could not load …`, because the old
+    /// `MindMapDocument::finalize` (gone) carried the announcement and the
+    /// placard went through it like any other map. A log
     /// that contradicts itself in two consecutive lines is worse
     /// than a quiet one.
     ///

@@ -164,7 +164,11 @@ const AT_Y: Param = param("y", NUMBER, false);
 const BUTTON: Param = param("button", STRING, false);
 
 /// Every command the connected build's registry holds, as of this
-/// commit — see the module header for how that is enforced.
+/// commit — see the module header for how that is enforced: the app
+/// crate's `test_mandalactl_has_a_verb_for_every_registered_command_and_no_other`
+/// holds the names to its registry in both directions, and
+/// `test_every_mandalactl_verb_declares_the_parameters_its_command_registers`
+/// the parameters.
 pub const VERBS: &[Verb] = &[
     Verb {
         name: "describe",

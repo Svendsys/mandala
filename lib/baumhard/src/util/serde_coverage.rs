@@ -300,7 +300,7 @@ impl TypeInfo {
     /// load through this type, or empty when it would.
     ///
     /// The predicate behind
-    /// `mindmap::loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`,
+    /// `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`,
     /// which reads the policy narrative; this is the mechanism. It
     /// lives here rather than inline in that test for two reasons:
     /// the question is entirely about serde attributes, which is what
@@ -459,17 +459,16 @@ impl TypeGraph {
     /// **Two document files are not indexed either:
     /// `document/element.rs` and `document/values.rs`** ([`UNINDEXED`]).
     /// The index is keyed by bare type name, and those two files
-    /// declare names other files declare too — `NodeStyle` and
-    /// `PaletteField` (the `.mindmap.json` model's), `Anchor`
+    /// declare names other files declare too — `Anchor`
     /// (`core::primitives`) and `Rgba` (`util::color`'s alias) — which
     /// one bare-name key cannot hold twice. Every other file under
     /// `document/` is indexed, so a gate that walks a document type
-    /// declared elsewhere — B2's format types among them — sees it. No
-    /// walk from `MindMap` reaches either file
-    /// (`test_the_mindmap_model_is_walked_without_the_document` holds
-    /// that). The exclusion stays until the index is keyed by module
-    /// path: `Anchor` and `Rgba` outlive the model, so deleting the
-    /// model (V1-C3) does not remove the collision.
+    /// declared elsewhere — the format's types among them — sees it. No
+    /// walk from the format's roots reaches either file
+    /// (`test_the_format_is_walked_inside_its_own_module` holds that).
+    /// The exclusion stays until the index is keyed by module path:
+    /// `Anchor` and `Rgba` outlived the old model, so deleting it
+    /// (V1-C3) did not remove the collision.
     ///
     /// Panics if a file cannot be read or parsed, or if a `mod x;`
     /// names no file on disk: this backs a test whose entire job is to
@@ -558,19 +557,17 @@ impl TypeGraph {
     /// set of places a captured key's route is positional and an edit
     /// can therefore move it.
     ///
-    /// `format/legacy-schema.md` §"Unknown keys are kept" publishes this set
-    /// for the reader, and
-    /// `loader::tests::test_the_published_positional_arrays_are_the_ones_the_model_has`
-    /// holds the two together in both directions. It was a
-    /// hand-written list before that, and it had already drifted —
-    /// `control_points` and a palette's `groups` were missing — which
-    /// is the twin-surface shape `lib/baumhard/CONVENTIONS.md` §B4 is
-    /// about.
+    /// The old format's schema published this set for the reader, and
+    /// `test_the_published_positional_arrays_are_the_ones_the_model_has` (gone)
+    /// held the two together in both directions, until the strict
+    /// format — which captures no unknown key — made the question moot
+    /// (V1-C3). It was a hand-written list before that, and it had
+    /// already drifted, which is the twin-surface shape
+    /// `lib/baumhard/CONVENTIONS.md` §B4 is about.
     ///
-    /// "Can carry named keys" is the discriminator, not "is an
-    /// array": `macros` and `inline_macros` are `Vec<Value>`, held
-    /// deliberately opaque, so nothing inside one is ever captured
-    /// and no route ever crosses their indexes.
+    /// "Can carry named keys" is the discriminator, not "is an array": a
+    /// `Vec<Value>` is held deliberately opaque, so nothing inside one is
+    /// ever captured and no route ever crosses its indexes.
     ///
     /// **Every alias a field accepts is published too.** A route is
     /// recorded against the spelling the *file* used, and
@@ -788,8 +785,19 @@ impl TypeGraph {
     /// Cost: same walk as `reachable_from` plus one set insert per
     /// referenced name; no I/O.
     pub fn unresolved_from(&self, root: &str) -> BTreeSet<String> {
+        self.unresolved_from_excluding(root, &[])
+    }
+
+    /// [`unresolved_from`](Self::unresolved_from) **without passing
+    /// through** any type named in `blocked`, as
+    /// [`reachable_from_excluding`](Self::reachable_from_excluding) walks:
+    /// for a type whose `Deserialize` is written by hand, whose fields
+    /// are therefore not what a deserializer reads.
+    ///
+    /// Cost: same walk as `reachable_from`; no I/O.
+    pub fn unresolved_from_excluding(&self, root: &str, blocked: &[&str]) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
-        for reached in self.walk(root, FollowSerializeProxy::No, &[]) {
+        for reached in self.walk(root, FollowSerializeProxy::No, blocked) {
             let mut mentioned = Vec::new();
             for declared in &reached.info.referenced {
                 self.mentions(&self.substitute(&declared.0, &reached.bindings), &mut mentioned);
@@ -2107,87 +2115,110 @@ pub fn crate_src_root() -> PathBuf {
 mod tests {
     use super::*;
 
-    /// Every name the walk from `MindMap` is allowed to stop at.
+    /// The types the format's loader reads a file into: the header and
+    /// each node of the list (`document::tests::format_strict_tests`
+    /// names the same two). Everything a load can hand a deserializer is
+    /// reachable from one of them.
+    const FORMAT_ROOTS: [&str; 2] = ["MapHeaderDto", "NodeDto"];
+
+    /// The format's types whose `Deserialize` is written by hand, which
+    /// the terminator walk does not enter: `Source`, what a `Rows` holds
+    /// — its array's text, read item by item, or the saver's trait
+    /// object (`Source::Arena`), which no deserializer is handed. What a
+    /// row's items are is followed through `Rows`' `items` marker.
+    const HAND_READ: &[&str] = &["Source"];
+
+    /// Every name the walk from [`FORMAT_ROOTS`] stops at, gathered.
+    fn format_terminators(graph: &TypeGraph) -> BTreeSet<String> {
+        FORMAT_ROOTS
+            .iter()
+            .flat_map(|root| graph.unresolved_from_excluding(root, HAND_READ))
+            .collect()
+    }
+
+    /// The exclusion is the hand-read type and nothing wider: walked
+    /// into, `Source` stops at the trait object and the raw text the
+    /// loader holds, which no derived impl reads; walked around, the
+    /// row's items are still reached.
+    #[test]
+    fn test_the_hand_read_rows_are_walked_around_not_dropped() {
+        let graph = TypeGraph::build(&crate_src_root());
+        let through = graph.unresolved_from("NodeDto");
+        assert!(
+            through.contains("<dyn Trait>") && through.contains("RawValue"),
+            "control: walked into, the hand-read source stops at the saver's trait object              and the raw text: {through:?}"
+        );
+        let around = format_terminators(&graph);
+        assert!(
+            !around.contains("<dyn Trait>") && !around.contains("RawValue"),
+            "walked around, neither is a terminator: {around:?}"
+        );
+        let reached: Vec<&str> = graph
+            .reachable_from_excluding("NodeDto", HAND_READ)
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect();
+        assert!(
+            reached.contains(&"SpanDto"),
+            "a row's items are reached around the source: {reached:?}"
+        );
+    }
+
+    /// Every name the walk from the format's roots is allowed to stop at.
     ///
-    /// Four kinds of entry, and the distinction is the whole point of
-    /// the list:
+    /// Two kinds of entry, and the distinction is the whole point of the
+    /// list:
     ///
-    /// 1. **Primitives and containers** — `String`, `f32`, `Option`,
-    ///    `Vec`, `HashMap`, `Value`. No fields of ours; stopping is
-    ///    correct and always will be.
-    /// 2. **Module path qualifiers.** `collect_type_names` pushes
-    ///    every segment of a path, so
-    ///    `crate::mindmap::animation::AnimationTiming` contributes
-    ///    three names that are not types alongside the one that is.
-    /// 3. **Foreign types and traits** — `Vec2` (glam), `OrderedFloat`
-    ///    (ordered-float), and the `Discriminated` trait named by a
-    ///    `<F as Discriminated>::Discriminant` qself. A generic
-    ///    parameter is not on the list: the walk follows it as what the
-    ///    reference bound it to (`TypeInfo::generics`), so one that
-    ///    reaches this list was left unbound. Their shape is not ours to annotate;
-    ///    if one ever grows named JSON keys a map can write, that is
-    ///    a review decision, not a silent one.
-    /// 4. **Types this walk genuinely cannot see** — `AppFont`, which
-    ///    `lib/baumhard/build.rs` emits into `$OUT_DIR`, and strum's
-    ///    generated tags — `Discriminant` and `GfxElementType`, the
-    ///    payload-free tag `GfxElementField::ElementType` names. Both
-    ///    kinds are unit enums today,
-    ///    so they carry no JSON keys and cost nothing. They are on
-    ///    the list because the module's promise — a new field of a
-    ///    new type extends the covered set on its own — is *false*
-    ///    for anything a build script emits, and a comment saying so
-    ///    drifts where a checked list does not.
+    /// 1. **Primitives and containers** — `String`, `str`, `f32`,
+    ///    `Option`, `Vec`, `Cow`, and the `PhantomData` a `Rows` names its
+    ///    items with. No fields of ours; stopping is correct and always
+    ///    will be.
+    /// 2. **Foreign types** — none today. A generic parameter is not on
+    ///    the list: the walk follows it as what the reference bound it to
+    ///    (`TypeInfo::generics`), so one that reaches this list was left
+    ///    unbound. A foreign type's shape is not ours to annotate; if one
+    ///    ever lands on the load path, adding it here is a review
+    ///    decision, not a silent one. The walk's sentinels for a form it
+    ///    cannot read (`<dyn Trait>` and the like) are never listed: see
+    ///    [`HAND_READ`] for the one the format holds, walked around.
+    ///
+    /// A type a build script emits into `$OUT_DIR` would be a third kind:
+    /// the module's promise — a new field of a new type extends the
+    /// covered set on its own — is *false* for it. The format names
+    /// fonts by family string, so none is reachable today, and the list
+    /// is what says so the day one is.
     const EXPECTED_TERMINATORS: &[&str] = &[
         // 1. primitives and containers
-        "BTreeSet",
-        "Box",
-        "FxHashMap",
-        "HashMap",
+        "Cow",
         "Option",
+        "PhantomData",
         "String",
-        "Value",
         "Vec",
         "bool",
         "f32",
-        "f64",
-        "i16",
-        "i32",
+        "str",
+        "u16",
         "u32",
+        "u64",
         "u8",
-        "usize",
-        // 2. module path qualifiers, not types
-        "animation",
-        "crate",
-        "mindmap",
-        "serde_json",
-        // 3. foreign types and traits
-        "Discriminated",
-        "OrderedFloat",
-        "Vec2",
-        // 4. real types this walk cannot see
-        "AppFont",
-        "Discriminant",
-        "GfxElementType",
     ];
 
     /// **The walker's blind spot, made visible.** The walk stops at
     /// any name it did not index, and it cannot tell "known-terminal
-    /// primitive" from "type I failed to resolve" — `AppFont` lives
-    /// in `$OUT_DIR` and is reachable from a real map, and nothing
-    /// about the walk announces that.
+    /// primitive" from "type I failed to resolve" — a type in `$OUT_DIR`
+    /// reachable from a real map would look exactly like `String`.
     ///
     /// So the list is here rather than in a comment: every terminator
-    /// must be one somebody looked at. When a field of a new
-    /// unindexed type lands, this fails naming it, and the reader
-    /// decides whether it belongs on the list or whether the walk has
-    /// to learn to reach it. That is the same drift discipline
-    /// `test_no_loadable_type_can_swallow_an_unknown_key` applies to the
-    /// types the walk *does* see.
+    /// must be one somebody looked at. When a field of a new unindexed
+    /// type lands, this fails naming it, and the reader decides whether
+    /// it belongs on the list or whether the walk has to learn to reach
+    /// it. That is the same drift discipline
+    /// `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`
+    /// applies to the types the walk *does* see.
     #[test]
     fn test_every_walk_terminator_is_an_expected_one() {
         let graph = TypeGraph::build(&crate_src_root());
-        let unexpected: Vec<String> = graph
-            .unresolved_from("MindMap")
+        let unexpected: Vec<String> = format_terminators(&graph)
             .into_iter()
             .filter(|name| !EXPECTED_TERMINATORS.contains(&name.as_str()))
             .collect();
@@ -2196,65 +2227,50 @@ mod tests {
             "the reachability walk stops at {} name(s) nobody has vetted. Each is \
              either a primitive (add it to EXPECTED_TERMINATORS) or a type that is \
              part of the on-disk contract and is silently missing from the \
-             unknown-key coverage — the case `AppFont` is on the list for:\n  {}",
+             strictness coverage:\n  {}",
             unexpected.len(),
             unexpected.join("\n  ")
         );
     }
 
-    /// The allowlist itself must not rot: an entry for a name the
-    /// walk no longer reaches is a claim about the model that stopped
-    /// being true, and it would keep covering for a *different* name
-    /// that happened to reappear later.
+    /// The allowlist itself must not rot: an entry for a name the walk
+    /// no longer reaches is a claim about the format that stopped being
+    /// true, and it would keep covering for a *different* name that
+    /// happened to reappear later.
     #[test]
     fn test_no_expected_terminator_is_stale() {
         let graph = TypeGraph::build(&crate_src_root());
-        let actual = graph.unresolved_from("MindMap");
+        let actual = format_terminators(&graph);
         let stale: Vec<&&str> = EXPECTED_TERMINATORS
             .iter()
             .filter(|name| !actual.contains(**name))
             .collect();
         assert!(
             stale.is_empty(),
-            "EXPECTED_TERMINATORS lists name(s) the walk from MindMap no longer \
-             stops at — delete them: {stale:?}"
+            "EXPECTED_TERMINATORS lists name(s) the walk from the format's roots no \
+             longer stops at — delete them: {stale:?}"
         );
     }
 
-    /// The two unindexed document files cost the `MindMap` walk
-    /// nothing: nothing it reaches is declared under `src/document/`,
-    /// and where a name collides the index holds the model's — an index
-    /// that took the document's `NodeStyle` would walk the wrong type
-    /// silently. The exclusion is exactly those two files: `DocElement`
-    /// (in `element.rs`) is not indexed, and `Document` (in `ids.rs`)
-    /// and `ShapeError` (in `shape.rs`) are.
+    /// The format's types live in one module: every type a load can
+    /// reach is declared under `document/format/`, so a name another
+    /// module declares can never be the one the walk resolves — the
+    /// format's types carry a `Dto` suffix for exactly that reason.
     #[test]
-    fn test_the_mindmap_model_is_walked_without_the_document() {
+    fn test_the_format_is_walked_inside_its_own_module() {
         let graph = TypeGraph::build(&crate_src_root());
-        assert!(graph.get("MindMap").is_some(), "the model is indexed");
-        assert!(graph.get("DocElement").is_none(), "element.rs is not");
-        for indexed in ["Document", "ShapeError"] {
-            assert!(
-                graph
-                    .get(indexed)
-                    .is_some_and(|info| info.file.starts_with(crate_src_root().join("document"))),
-                "the rest of document/ is indexed: {indexed}"
-            );
+        let format = crate_src_root().join("document").join("format");
+        for root in FORMAT_ROOTS {
+            assert!(graph.get(root).is_some(), "{root} is indexed");
+            for reached in graph.reachable_from(root) {
+                assert!(
+                    reached.file.starts_with(&format),
+                    "{} is reached from {root} and declared outside the format: {}",
+                    reached.name,
+                    reached.file.display()
+                );
+            }
         }
-        let document = crate_src_root().join("document");
-        for reached in graph.reachable_from("MindMap") {
-            assert!(
-                !reached.file.starts_with(&document),
-                "{} is reached from MindMap and declared in the document",
-                reached.name
-            );
-        }
-        let node_style = graph.get("NodeStyle").expect("the model's NodeStyle is indexed");
-        assert!(
-            node_style.file.ends_with("mindmap/model/node.rs"),
-            "the index holds the model's NodeStyle, not the document's: {}",
-            node_style.file.display()
-        );
     }
 
     /// The walk is only as good as its index: a name declared twice
@@ -2272,64 +2288,91 @@ mod tests {
     }
 
     /// A spot check that the walk actually descends rather than
-    /// returning its root: `MindMap` must reach a type three field
-    /// hops away (`MindMap` → `MindNode` → `MindSection` →
-    /// `TextRun`).
+    /// returning its root: `NodeDto` must reach a type two field hops
+    /// away (`NodeDto` → `SectionDto` → `SpanDto`), and the header its
+    /// theme.
     #[test]
     fn test_reachable_from_follows_nested_fields() {
         let graph = TypeGraph::build(&crate_src_root());
-        let reached: Vec<&str> = graph
-            .reachable_from("MindMap")
-            .iter()
-            .map(|info| info.name.as_str())
-            .collect();
-        for expected in ["MindMap", "MindNode", "MindSection", "TextRun"] {
-            assert!(
-                reached.contains(&expected),
-                "{expected} must be reachable from MindMap"
-            );
+        for (root, expected) in [
+            ("NodeDto", ["NodeDto", "SectionDto", "SpanDto"]),
+            ("MapHeaderDto", ["MapHeaderDto", "ThemeDto", "DefaultsDto"]),
+        ] {
+            let reached: Vec<&str> = graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.name.as_str())
+                .collect();
+            for name in expected {
+                assert!(reached.contains(&name), "{name} must be reachable from {root}");
+            }
         }
     }
 
-    /// `#[serde(from = "...")]` moves the on-disk shape onto the
-    /// proxy, so the walk has to follow it — `CustomMutationIn` is
-    /// named only in that attribute, never as a field type.
+    /// `#[serde(from = "...")]` moves the on-disk shape onto the proxy,
+    /// so the walk has to follow it — the proxy is named only in that
+    /// attribute, never as a field type. Planted, because the format
+    /// reads through no proxy today; the control is the same root with
+    /// the attribute taken off, which reaches neither.
     #[test]
     fn test_reachable_from_follows_a_serde_proxy() {
-        let graph = TypeGraph::build(&crate_src_root());
-        let reached: Vec<&str> = graph
-            .reachable_from("MindMap")
+        let with_proxy = graph_of(
+            "#[derive(serde::Deserialize)]\n#[serde(from = \"WireIn\")]\npub struct Model { pub a: u8 }\n\
+             #[derive(serde::Deserialize)]\npub struct WireIn { pub inner: Inner }\n\
+             #[derive(serde::Deserialize)]\npub struct Inner { pub b: u8 }\n",
+        );
+        let reached: Vec<&str> = with_proxy
+            .reachable_from("Model")
             .iter()
             .map(|info| info.name.as_str())
             .collect();
         assert!(
-            reached.contains(&"CustomMutationIn"),
-            "the deserialize proxy behind CustomMutation must be reachable"
+            reached.contains(&"WireIn") && reached.contains(&"Inner"),
+            "the deserialize proxy and what it holds must be reachable: {reached:?}"
+        );
+        let without = graph_of(
+            "#[derive(serde::Deserialize)]\npub struct Model { pub a: u8 }\n\
+             #[derive(serde::Deserialize)]\npub struct WireIn { pub inner: Inner }\n\
+             #[derive(serde::Deserialize)]\npub struct Inner { pub b: u8 }\n",
+        );
+        let reached: Vec<&str> = without
+            .reachable_from("Model")
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect();
+        assert_eq!(
+            reached,
+            vec!["Model"],
+            "control: with no proxy, nothing else is reached"
         );
     }
 
-    /// The write graph is not the read graph. `CustomMutation`'s keys
-    /// are written by `CustomMutationOut` via
-    /// `#[serde(into = "...")]`, a type no deserializer ever sees —
-    /// so `reachable_from` must not reach it while
-    /// `omit_predicates_from` must. `String::is_empty` appears on
-    /// exactly one field in the whole crate, `CustomMutationOut`'s,
-    /// which makes it the witness.
+    /// The write graph is not the read graph. A type whose keys are
+    /// written by a proxy through `#[serde(into = "...")]` hands that
+    /// proxy to no deserializer — so `reachable_from` must not reach it
+    /// while `omit_predicates_from` must. Planted, as the proxy test
+    /// above is: `String::is_empty` sits on the proxy's one field, which
+    /// makes it the witness.
     #[test]
     fn test_omit_predicates_follow_the_serialize_proxy() {
-        let graph = TypeGraph::build(&crate_src_root());
+        let graph = graph_of(
+            "#[derive(serde::Serialize, serde::Deserialize)]\n#[serde(into = \"WireOut\")]\n\
+             pub struct Model { pub a: String }\n\
+             #[derive(serde::Serialize)]\npub struct WireOut {\n\
+             #[serde(skip_serializing_if = \"String::is_empty\")]\n    pub a: String,\n}\n",
+        );
         let read_side: Vec<&str> = graph
-            .reachable_from("MindMap")
+            .reachable_from("Model")
             .iter()
             .map(|info| info.name.as_str())
             .collect();
         assert!(
-            !read_side.contains(&"CustomMutationOut"),
+            !read_side.contains(&"WireOut"),
             "a serialize-only proxy must stay out of the load-path coverage set"
         );
         assert!(
-            graph.omit_predicates_from("MindMap").contains("String::is_empty"),
-            "the write walk must reach CustomMutationOut and see its \
+            graph.omit_predicates_from("Model").contains("String::is_empty"),
+            "the write walk must reach the serialize proxy and see its \
              skip_serializing_if predicates"
         );
     }
@@ -2403,8 +2446,8 @@ mod tests {
     /// none of them.
     ///
     /// That is not a cosmetic gap in a source walker. The guard this
-    /// feeds — `loader::tests::test_no_loadable_type_can_swallow_an_
-    /// unknown_key` — asks "does any loadable type carry
+    /// feeds — `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`
+    /// — asks "does any loadable type carry
     /// `deny_unknown_fields`?", and an unread attribute answers *no*.
     /// A `#[serde(rename_all(deserialize = "camelCase"),
     /// deny_unknown_fields)]` on any model struct would therefore
@@ -3384,9 +3427,9 @@ pub struct HiddenLeaf {
 
     /// **"Reachable from X" and "only reachable through X" are
     /// different questions, and only the second one is worth
-    /// asking.** `loader`'s
-    /// `test_every_variant_bearing_enum_sits_inside_a_skippable_construct`
-    /// asks whether every enum a load can meet sits inside something
+    /// asking.** The old loader's
+    /// `test_every_variant_bearing_enum_sits_inside_a_skippable_construct` (gone)
+    /// asked whether every enum a load can meet sits inside something
     /// the loader can excise; a type used in *both* a skippable and
     /// an unskippable position answers the weaker question yes and
     /// the real one no, and the unskippable use is the one that kills

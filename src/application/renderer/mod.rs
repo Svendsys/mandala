@@ -46,7 +46,7 @@
 //! - [`color_picker`] — the glyph-wheel picker overlay.
 //! - [`camera`] — camera framing and the screen-space ↔
 //!   canvas-space mapping (`screen_to_canvas`,
-//!   `canvas_per_pixel`, `fit_camera_to_tree`).
+//!   `fit_camera_to_content`).
 //! - `capture` (native-only) — the offscreen frame a screenshot
 //!   draws through the same prepare / encode pair as the window,
 //!   and its readback.
@@ -301,7 +301,7 @@ pub struct Renderer {
     /// atlas, because glyphon's cannot be reached from outside it.
     glyph_runs: glyph_runs::GlyphRunPass,
     /// The render state of the projection's glyph layers (design §13.1):
-    /// kept per glyph element, written by [`Self::load_layers`] and
+    /// kept per glyph element, written by [`Self::load_view`] and
     /// [`Self::apply_layer_journals`] only, and drawn every frame through
     /// `glyph_runs`, after the canvas trees' runs.
     layer_renderer: layers::LayerRenderer,

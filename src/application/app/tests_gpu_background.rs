@@ -90,9 +90,9 @@ fn document_text(background: Option<&str>) -> String {
 /// The frame is cleared to the map's resolved background: black for a
 /// document that gives none, a theme variable's value in the active
 /// variant — opaque, though the variable holds an alpha — and the other
-/// variant's once it is the active one. The legacy map the app loads
-/// takes the same path at load (`MindMapDocument::background`):
-/// `theme_demo`'s `var(--bg)` is `#141414`, `testament`'s is black.
+/// variant's once it is the active one. The maps the app loads take the
+/// same path at load (`MapView::load` resolves it): `theme_demo`'s
+/// `var(--bg)` is `#141414`, `testament`'s is black.
 /// Controls: each step changes the clear color the one before it left,
 /// so none of these is the renderer's starting black restated.
 #[test]

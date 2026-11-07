@@ -60,7 +60,7 @@ done
 # A relative --map names a file relative to where the script was run from,
 # so it is made absolute before the cd to the repo root below; the default
 # is the repo's own testament.
-[ -n "$MAP" ] || MAP="$(cd "$(dirname "$0")/.." && pwd)/maps/testament.mindmap.json"
+[ -n "$MAP" ] || MAP="$(cd "$(dirname "$0")/.." && pwd)/maps/testament.mandala.json"
 case "$MAP" in
     /*) ;;
     *) MAP="$PWD/$MAP" ;;

@@ -8,9 +8,8 @@
 //! different shape. This module collapses them onto one helper so
 //! a future format swap (or a richer error wrapper) is one edit.
 //!
-//! The mindmap format itself is handled by
-//! [`crate::mindmap::loader`] — that module owns the entire on-disk
-//! schema and its legacy-detection rules, so it stays separate.
+//! The map format itself is handled by [`crate::document::format`] —
+//! that module owns the entire on-disk schema, so it stays separate.
 //!
 //! Maptool (the CLI) keeps using `serde_json` directly because it
 //! works below the typed shape (raw `Value` migrations) — the
@@ -36,10 +35,9 @@ pub use serde_json::Map;
 /// caller-readable error string on failure. Wraps
 /// [`serde_json::from_str`].
 ///
-/// Use for any non-mindmap typed loader (keybinds, user macros,
-/// embedded widget specs). The mindmap format has its own
-/// loader at [`crate::mindmap::loader::load_from_str`] which
-/// also handles legacy detection.
+/// Use for any typed loader other than the map's (keybinds, user
+/// macros, embedded widget specs). The map format has its own loader
+/// at [`crate::document::format::load`].
 #[inline]
 pub fn parse<T: DeserializeOwned>(source: &str) -> Result<T, String> {
     serde_json::from_str(source).map_err(|e| e.to_string())

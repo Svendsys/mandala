@@ -661,6 +661,43 @@ mod tests {
         }
     }
 
+    /// **The determinism contract** (`format/ipc.md` §`clock`): the same
+    /// document, loaded twice into two independent views, dumps the same
+    /// scene byte for byte — every element, its box, its verdict and its
+    /// text. Nothing in the dump depends on an iteration order a process
+    /// chooses: the document's arena, the projector's layers and the
+    /// dump's walk are all in document order.
+    ///
+    /// Control: the same document at another camera dumps differently,
+    /// so the comparison is of a reading that depends on its input, not
+    /// of two empty replies.
+    #[test]
+    fn test_the_same_document_twice_dumps_byte_identical_scenes() {
+        let all = Kinds {
+            nodes: true,
+            paths: true,
+            labels: true,
+            portals: true,
+        };
+        let (first, first_view, camera) = fixture();
+        let (second, second_view, _) = fixture();
+        let one = serde_json::to_string(&read_scene(&scene(&first, &first_view, &camera), all, true))
+            .expect("the dump serializes");
+        let two = serde_json::to_string(&read_scene(&scene(&second, &second_view, &camera), all, true))
+            .expect("the dump serializes");
+        assert!(
+            one.len() > 10_000,
+            "precondition: the dump holds the map ({} bytes)",
+            one.len()
+        );
+        assert_eq!(one, two, "two independent loads dump the same scene");
+        let mut moved = camera;
+        moved.zoom *= 2.0;
+        let three = serde_json::to_string(&read_scene(&scene(&first, &first_view, &moved), all, true))
+            .expect("the dump serializes");
+        assert_ne!(one, three, "control: another camera dumps another scene");
+    }
+
     /// The dump names every node it reports by integer id, at a box whose
     /// surface rect is the canvas rect through the camera, and a camera
     /// far away sees nothing — while `include=all` still lists it all.

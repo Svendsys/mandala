@@ -101,7 +101,7 @@ pub enum MouseGesture {
     ///
     /// Half of the touch route to a resize: once in Resize mode, a
     /// finger that lands on a handle drags it, on native
-    /// (`app::touch_handle`, #160). `FastResizeStart` has no touch
+    /// (`app::touch_handle` (gone), #160). `FastResizeStart` has no touch
     /// binding because this is its touch route.
     ///
     /// **The only touch gesture that reaches this table**, and
