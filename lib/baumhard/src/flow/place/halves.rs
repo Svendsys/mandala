@@ -154,6 +154,7 @@ use glam::Vec2;
 use super::lines::{frame_halves, frame_lines, line_partition, place_lines_in};
 use super::*;
 use crate::document::values::FontSize;
+use crate::flow::path::{Bend, EllipseForm};
 use crate::flow::shape::shape_run;
 use crate::flow::span::FlowSpan;
 use crate::font::fonts::{face_char_ink, glyph_outline_ink};
@@ -1119,6 +1120,13 @@ struct Set {
     /// Its center on the canvas, and its half size.
     at: Vec2,
     half: Vec2,
+    /// Where its anchor lies on the frame's band curve (#308): the curve's
+    /// point at [`center`](Self::center), what the osculating model of
+    /// the curve on from it starts at ([`osculating`], #309).
+    on: Vec2,
+    /// How the curve bends on from there, where its stretch has one form
+    /// ([`Bend`]): what that model is exact on.
+    bend: Option<Bend>,
     /// Where along the path it is set.
     center: f32,
     /// The way it moves there as its center moves on: the way its
@@ -1144,7 +1152,7 @@ const PAIR_ROUNDS: usize = 21;
 /// a gap measured afresh from the inks as placed, with the float error
 /// of their positions, is not read as nearer than the line's by a
 /// tolerance.
-const NEARER: f32 = 0.25 * INK_TOLERANCE;
+pub(crate) const NEARER: f32 = 0.25 * INK_TOLERANCE;
 
 /// How many inks before a letter's neighbor it is held clear of too
 /// ([`track`]): round a sharp corner inward a letter set at the corner
@@ -1461,10 +1469,12 @@ impl<'w> InkLay<'w> {
     ///
     /// Cost: one path lookup.
     fn set_at(&self, c: f32, half: Vec2, rise: f32) -> Set {
-        let on = self.walk.path.offset_at(c, self.band.offset);
+        let (on, bend) = self.walk.path.offset_bend_at(c, self.band.offset);
         Set {
             at: on.point + Vec2::new(0.0, rise),
             half,
+            on: on.point,
+            bend,
             center: c,
             moves: on.moves,
             normal: on.normal,
@@ -1551,13 +1561,34 @@ impl<'w> InkLay<'w> {
             (Some(before), None) => {
                 let owed = self.owed.max(0.0);
                 let straight = along(Vec2::ZERO, before.moves, before.half + half, owed);
-                let guess = if straight.is_finite() {
-                    before.center + straight * self.ratio
-                } else {
-                    f32::NAN
+                // The first center tried: the exact root on the curve's
+                // osculating circle at the last ink, where the turn from
+                // the ink before it tells its curvature (#309, ruling
+                // B16.1b); else the straight path's answer, scaled by the
+                // share of it the last letter's step took.
+                let model = osculating(
+                    &before,
+                    self.earlier[0].as_ref(),
+                    (half, rise),
+                    owed,
+                    self.band.offset,
+                );
+                let guess = match model {
+                    Some(at) => at,
+                    None if straight.is_finite() => before.center + straight * self.ratio,
+                    None => f32::NAN,
                 };
                 let mut rounds = PAIR_ROUNDS;
                 let mut set = pair(self, before, (half, rise), guess, owed, &mut rounds);
+                #[cfg(test)]
+                OSCULATED.with(|count| {
+                    let (offered, first, misses) = count.get();
+                    count.set(match model {
+                        Some(_) if rounds + 1 == PAIR_ROUNDS => (offered + 1, first + 1, misses),
+                        Some(_) => (offered + 1, first, misses),
+                        None => (offered, first, misses + 1),
+                    });
+                });
                 // Clear of the inks before its neighbor too, by its gap —
                 // and past touching, at no gap — moved on to the nearest
                 // center the rule finds that far from the one it is too
@@ -1661,6 +1692,11 @@ thread_local! {
     /// Test control (#309): with it set, no line's secondary rule runs
     /// ([`Layout::reach_its_end`]) — what the rule's pins are shown red
     /// without.
+    /// Test counter (#309, ruling B16.1b): the letters whose first center
+    /// tried was their root on the osculating model ([`osculating`]), of
+    /// them those that center held, and the letters that had no model.
+    #[cfg(test)]
+    pub(crate) static OSCULATED: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     #[cfg(test)]
     pub(crate) static NO_SECONDARY_RULE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test counter (#309): the lines frames on this thread kept as their
@@ -1876,6 +1912,215 @@ fn along(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
         }
     }
     outside
+}
+
+/// The rounds of bisection [`osculating`] closes its root in: a bracket of
+/// some points to well under a millionth of one, all arithmetic.
+const OSCULATING_ROUNDS: usize = 32;
+
+/// Where along the path to set a letter whose ink is of half size `half`,
+/// its center `rise` below its anchor, so that it is `owed` from the ink
+/// `last` — the pairwise rule's root (ruling R31) — solved on the band
+/// curve's osculating circle at `last` (#309, ruling B16.1b): the circle
+/// tangent to the way `last`'s anchor moves, whose curvature is the turn
+/// from the way the ink before it, `earlier`, moved over the path between
+/// them. On a side, or on an arc both inks are set on, that circle is the
+/// path, and the root is the rule's, exact to float error; round an
+/// ellipse, or across a bend from one stretch to the next, a near start
+/// that [`pair`] closes. Each center the bisection tries is the model's
+/// arithmetic, no path lookup: the first center past `last` at which the
+/// two are `owed` apart — [`NEARER`] past it, within the rule's own
+/// resolution — as [`along`] brackets it and closes it.
+///
+/// `None` where there is no ink before `last` to tell the curve's turn,
+/// the letter is already apart from `last` where `last` is set, the model
+/// sets no root within a half turn of its circle or the form it reads, or
+/// any number on the way is not finite: [`track`]'s straight warm start
+/// then.
+///
+/// Cost: O(1): [`ALONG_DOUBLINGS`] and [`OSCULATING_ROUNDS`] rounds at
+/// most, no path lookup.
+fn osculating(
+    last: &Set,
+    earlier: Option<&Set>,
+    (half, rise): (Vec2, f32),
+    owed: f32,
+    offset: f32,
+) -> Option<f32> {
+    // Within a corner's stretch the curve has no circle to model it.
+    let bend = last.bend?;
+    if let Some(form) = bend.ellipse {
+        return on_ellipse(last, &form, bend.holds, (half, rise), owed);
+    }
+    let kappa = match bend.curvature {
+        Some(kappa) => kappa,
+        // A table's: the turn from the ink before over the path between.
+        None => {
+            let earlier = earlier?;
+            let run = last.center - earlier.center;
+            let (a, b) = (earlier.moves, last.moves);
+            let turn = (a.x * b.y - a.y * b.x).atan2(a.dot(b));
+            if !run.gt(&0.0) || earlier.bend.is_none() {
+                return None;
+            }
+            turn / run
+        }
+    };
+    let (holds, speed) = (bend.holds, bend.speed);
+    if !kappa.is_finite() {
+        return None;
+    }
+    let (t0, n0) = (last.moves, last.normal);
+    let perp = Vec2::new(-t0.y, t0.x);
+    // The outline's point under `last`'s anchor, its anchor `offset` along
+    // the normal there.
+    let base = last.on - n0 * offset;
+    let reach = last.half + half;
+    let lift = Vec2::new(0.0, rise);
+    // The gap aimed at: what is owed, [`NEARER`] past it, the middle of
+    // what the rule may set short of it and the float error of the
+    // centers set — so the ink set there is owed its gap as measured afresh
+    // from where it lies — and past touching where nothing is owed: boxes
+    // no gap apart may overlap.
+    let aim = owed + NEARER;
+    // Round a sharp corner outward, the curve's own form, past the side's
+    // end and round its sweep: exact over half of each side.
+    let corner = bend.corner;
+    let reach_of = corner.map(|form| form.reach(last.center));
+    // `last`'s ink and one `d` on along the circle, as far apart as their
+    // boxes' gap less what is owed.
+    let miss = |d: f32| {
+        if let Some(form) = corner {
+            return match form.at(last.center + d) {
+                Some((point, _)) => {
+                    let at = point + lift;
+                    ((at - last.at).abs() - reach).max(Vec2::ZERO).length() - aim
+                }
+                None => f32::NAN,
+            };
+        }
+        let phi = kappa * d;
+        let (sin, cos) = phi.sin_cos();
+        let along = if phi.abs() < 1e-4 {
+            (t0 * d + perp * (0.5 * kappa * d * d)) * speed
+        } else {
+            (t0 * sin + perp * (1.0 - cos)) * (speed / kappa)
+        };
+        let normal = Vec2::new(n0.x * cos - n0.y * sin, n0.x * sin + n0.y * cos);
+        let at = base + along + normal * offset + lift;
+        ((at - last.at).abs() - reach).max(Vec2::ZERO).length() - aim
+    };
+    let near = |m: f32| m < 0.0;
+    // Already apart where `last` is, the letter has no root on from it:
+    // the rule's own search sets it ([`pair`]).
+    if !near(miss(0.0)) {
+        return None;
+    }
+    // The model holds a half turn of its circle at most, and no further
+    // than the stretch it is the form of; a corner's, half its side after.
+    let half_turn = match reach_of {
+        Some(reach) => reach,
+        None => (std::f32::consts::PI / kappa.abs()).min(holds),
+    };
+    let unit = (owed + reach.max_element()).max(INK_TOLERANCE);
+    let (mut inside, mut outside) = (0.0_f32, unit);
+    let mut doublings = 0;
+    loop {
+        let m = miss(outside);
+        if m.is_nan() {
+            return None;
+        }
+        if !near(m) {
+            break;
+        }
+        if doublings == ALONG_DOUBLINGS || !outside.lt(&half_turn) {
+            return None;
+        }
+        inside = outside;
+        outside *= 2.0;
+        doublings += 1;
+    }
+    if !outside.le(&half_turn) {
+        return None;
+    }
+    for _ in 0..OSCULATING_ROUNDS {
+        let middle = inside.midpoint(outside);
+        if middle <= inside || middle >= outside {
+            break;
+        }
+        if near(miss(middle)) {
+            inside = middle;
+        } else {
+            outside = middle;
+        }
+    }
+    let at = last.center + outside;
+    at.is_finite().then_some(at)
+}
+
+/// [`osculating`]'s root on an ellipse's table (#309): solved over the
+/// ellipse's parameter on its own form ([`EllipseForm`]), from where
+/// `last` lies on along the way the path runs, the first parameter at
+/// which the two inks are [`NEARER`] past `owed` apart; then how far along
+/// the path that is, its arc by Simpson's rule. `None` past `holds`, the
+/// table's end, or a half turn of the parameter.
+///
+/// Cost: O(1): [`ALONG_DOUBLINGS`] and [`OSCULATING_ROUNDS`] rounds at
+/// most, no path lookup.
+fn on_ellipse(
+    last: &Set,
+    form: &EllipseForm,
+    holds: f32,
+    (half, rise): (Vec2, f32),
+    owed: f32,
+) -> Option<f32> {
+    let reach = last.half + half;
+    let lift = Vec2::new(0.0, rise);
+    let aim = owed + NEARER;
+    let miss = |dt: f32| {
+        let (point, _) = form.at(form.t + form.forward * dt);
+        ((point + lift - last.at).abs() - reach).max(Vec2::ZERO).length() - aim
+    };
+    // A first step of the inks' reach and what is owed at the ellipse's
+    // speed there.
+    let (sin, cos) = form.t.sin_cos();
+    let speed = crate::flow::path::length_of(Vec2::new(form.radii_x() * sin, form.radii_y() * cos));
+    let unit = (owed + reach.max_element()).max(INK_TOLERANCE) / speed;
+    let most = std::f32::consts::PI;
+    if !miss(0.0).lt(&0.0) {
+        return None;
+    }
+    let (mut inside, mut outside) = (0.0_f32, unit);
+    let mut doublings = 0;
+    loop {
+        let m = miss(outside);
+        if m.is_nan() || !outside.is_finite() {
+            return None;
+        }
+        if m >= 0.0 {
+            break;
+        }
+        if doublings == ALONG_DOUBLINGS || !outside.lt(&most) {
+            return None;
+        }
+        inside = outside;
+        outside *= 2.0;
+        doublings += 1;
+    }
+    for _ in 0..OSCULATING_ROUNDS {
+        let middle = inside.midpoint(outside);
+        if middle <= inside || middle >= outside {
+            break;
+        }
+        if miss(middle) < 0.0 {
+            inside = middle;
+        } else {
+            outside = middle;
+        }
+    }
+    let along = form.along(form.t + form.forward * outside);
+    let at = last.center + along;
+    (along <= holds && at.is_finite()).then_some(at)
 }
 
 /// One line of the frame before it is laid: the half it takes, its
@@ -3327,12 +3572,14 @@ impl<'s> SideArc<'s> {
         // Each end ink's anchor lies on the band curve where it is set
         // along the path, the outline's point nearest it (#308).
         let cb = unwrap(near_b, ca, path.length());
-        let on = path.offset_at(ca, side.band.offset);
+        let (on, bend) = path.offset_bend_at(ca, side.band.offset);
         Some(SideArc {
             side,
             start: Set {
                 at: middle(from),
                 half: 0.5 * (from.1 - from.0),
+                on: on.point,
+                bend,
                 center: ca,
                 moves: on.moves,
                 normal: on.normal,
@@ -3482,8 +3729,9 @@ impl<'s> SideArc<'s> {
     /// its gaps' count a point — one before each ink of every copy, and
     /// the join to `to` — bent only by the path, so it is solved as a
     /// line's tracking is (ruling R44.3, [`solve_tracking`]): the straight
-    /// path's root ([`straight`](Self::straight)), aimed a hair past it,
-    /// widened until it brackets the root, and closed by [`falsi`]. A copy
+    /// path's root ([`straight`](Self::straight)), taken where it lands
+    /// within the tolerance — on a straight run it is the root (#309) —
+    /// else widened until it brackets the root, and closed by [`falsi`]. A copy
     /// past `to`'s center reads as past the end. The frame's budget spent,
     /// the widest gap found to fit so far.
     ///
@@ -3536,12 +3784,21 @@ impl<'s> SideArc<'s> {
             stopped
         };
         let mut low = (self.floor, at_floor, floor_out);
-        let mut g = self.straight(n, at_floor) + (at_floor / gaps) * 1e-3 + f32::MIN_POSITIVE;
+        // The straight path's root first, exactly: on a straight run, its
+        // copies each set at their pairwise root (ruling B16.1b), the room
+        // falls with the gap by its gaps' count a point, and this is the
+        // answer, laid once (#309). Past it, a hair further each widening,
+        // so that a probe brackets the root a bend moved.
+        let mut g = self.straight(n, at_floor);
+        let mut first = true;
         for _ in 0..TRACK_DOUBLINGS {
             if !g.is_finite() || stop() {
                 break;
             }
             let (v, out) = room(g);
+            if std::mem::take(&mut first) && v.abs() <= tolerance {
+                return (g, out, true);
+            }
             if v < 0.0 {
                 let (gap, out) = falsi(
                     room,
@@ -6266,6 +6523,81 @@ pub(super) fn place_halves(
     glyphs.extend(sides);
     let placed = PlacedRun { glyphs, truncated };
     (changed.then(|| uninked(drawn)), placed)
+}
+
+/// What [`pair_seam`] finds for one letter (#309, ruling B16.1b).
+pub(crate) struct PairSeam {
+    /// Whether the ink it is set after lies where the band curve has one
+    /// form the model reads — a side, an arc, a sharp corner's sweep — so
+    /// that the model's root is the rule's, to float error.
+    pub(crate) exact: bool,
+    /// Whether that form is a side's, away from any corner: where the gap
+    /// rises with the center from none, so the rule has one root.
+    pub(crate) side: bool,
+    /// The model's center, and the gap the letter set there is at
+    /// ([`osculating`]): `None` where it has none.
+    pub(crate) model: Option<(f32, f32)>,
+    /// The center [`pair`] sets it at from the straight path's warm start,
+    /// the iterative rule the model is held to, and its gap.
+    pub(crate) iterative: (f32, f32),
+}
+
+/// Test seam (#309, ruling B16.1b): the closed-form layer held to the
+/// pairwise rule's iterative solve as its oracle — a letter of half size
+/// `half`, its center `rise` below its anchor, owed `owed` from an ink of
+/// half size `before` set at `last` along half `k` of `outline`, an ink
+/// of that size set at `earlier` before it, every ink on the band curve
+/// at `offset`.
+#[allow(clippy::too_many_arguments)] // The outline, the curve, two inks and the letter.
+pub(crate) fn pair_seam(
+    outline: &Outline,
+    k: usize,
+    offset: f32,
+    (earlier, last): (f32, f32),
+    (before, half): (Vec2, Vec2),
+    rise: f32,
+    owed: f32,
+) -> PairSeam {
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
+    let walk = PathWalk {
+        path: halves.path(k),
+        memo: None,
+        work: None,
+        line_height: 0.0,
+        outward: true,
+        limit: f32::INFINITY,
+        level: false,
+        ornament: true,
+        baseline: 0.0,
+    };
+    let band = Band {
+        offset,
+        centers: Rc::from(Vec::new()),
+    };
+    let lay = InkLay::new(&walk, &[], earlier, owed, band);
+    let (e, l) = (lay.set_at(earlier, before, 0.0), lay.set_at(last, before, 0.0));
+    let gap_of = |c: f32| {
+        let set = lay.set_at(c, half, rise);
+        ((set.at - l.at).abs() - (l.half + half)).max(Vec2::ZERO).length()
+    };
+    let bend = l.bend;
+    let exact = bend.is_some_and(|b| b.ellipse.is_none() && (b.corner.is_some() || b.curvature.is_some()));
+    let side = bend.is_some_and(|b| b.corner.is_none() && b.curvature == Some(0.0) && b.speed == 1.0);
+    let model = osculating(&l, Some(&e), (half, rise), owed, offset).map(|c| (c, gap_of(c)));
+    let straight = along(Vec2::ZERO, l.moves, l.half + half, owed);
+    let guess = if straight.is_finite() {
+        last + straight
+    } else {
+        f32::NAN
+    };
+    let mut rounds = PAIR_ROUNDS;
+    let set = pair(&lay, l, (half, rise), guess, owed, &mut rounds);
+    PairSeam {
+        exact,
+        side,
+        model,
+        iterative: (set.center, gap_of(set.center)),
+    }
 }
 
 /// Test seam (#294): [`solve_tracking`] of a line whose lay at gap `g`
