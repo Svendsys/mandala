@@ -141,15 +141,25 @@ pub(crate) fn at_or_below_seam(sorted: &[f32], s: f32, hint: usize) -> (usize, u
 ///
 /// Cost: O(log d) for an answer `d` from `hint`.
 fn gallop(sorted: &[f32], s: f32, hint: usize) -> usize {
-    let n = sorted.len();
+    gallop_by(sorted.len(), |i| sorted[i] <= s, hint)
+}
+
+/// [`gallop`] over any predicate `holds` that is true and then false
+/// along `0..n`: the last index it holds at, saturating — the bracket
+/// round it doubled from `hint` the way it lies, then bisected. What an
+/// ellipse's form searches its table's parameters with, which fall along
+/// it where the path runs against the ellipse's turn
+/// ([`EllipseForm::walked`], #309).
+///
+/// Cost: O(log d) for an answer `d` from `hint`.
+fn gallop_by(n: usize, holds: impl Fn(usize) -> bool, hint: usize) -> usize {
     if n == 0 {
         return 0;
     }
-    let holds = |i: usize| sorted[i] <= s;
     let hint = hint.min(n - 1);
     // `low` holds (or is the slice's start) and `high` does not (or is
     // its end): the answer's partition point lies in `low..=high`.
-    let (low, high) = if holds(hint) {
+    let (mut low, mut high) = if holds(hint) {
         let (mut low, mut step) = (hint, 1usize);
         loop {
             let probe = low.saturating_add(step);
@@ -176,7 +186,16 @@ fn gallop(sorted: &[f32], s: f32, hint: usize) -> usize {
             step = step.saturating_mul(2);
         }
     };
-    (low + sorted[low..high].partition_point(|&d| d <= s)).saturating_sub(1)
+    // The partition point of `low..high`, as `partition_point` finds it.
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if holds(mid) {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    low.saturating_sub(1)
 }
 
 impl Stretch {
@@ -429,20 +448,28 @@ impl EllipseForm {
     pub(crate) fn walked(&self, u: f32, (params, distances): (&[f32], &[f32])) -> Option<EllipseForm> {
         let t = self.t + self.forward * u;
         let last = params.len().checked_sub(2)?;
-        let mut i = self.sample.min(last);
-        // The sample pair whose parameters hold `t`, walked to one at a time.
-        let holds = |i: usize| {
-            let (a, b) = (params[i], params[i + 1]);
-            (a.min(b)..=a.max(b)).contains(&t)
+        // The parameters rise along the table, or fall: the sample at or
+        // below `t` the way they run, found from the form's own.
+        let rising = params[last + 1] >= params[0];
+        let holds = |i: usize| if rising { params[i] <= t } else { params[i] >= t };
+        let (first, end) = (params[0], params[last + 1]);
+        let within = if rising {
+            first <= t && t <= end
+        } else {
+            first >= t && t >= end
         };
-        while !holds(i) {
-            let on = (params[i + 1] - params[i]) * (t - params[i]) > 0.0;
-            i = if on {
-                (i < last).then_some(i + 1)?
-            } else {
-                i.checked_sub(1)?
-            };
+        if !within {
+            return None;
         }
+        let hint = self.sample.min(last);
+        let i = if holds(hint) && !holds(hint + 1) {
+            hint
+        } else {
+            #[cfg(test)]
+            PATH_SEARCHES.with(|count| count.set(count.get() + 1));
+            gallop_by(params.len(), holds, hint)
+        }
+        .min(last);
         let (t0, t1) = (params[i], params[i + 1]);
         let (d0, d1) = (distances[i], distances[i + 1]);
         let local = if t1 != t0 {
@@ -467,7 +494,9 @@ impl EllipseForm {
     /// How far on, by the parameter in the way the path runs, the table
     /// `(params, _)` of its stretch ends.
     pub(crate) fn to_end(&self, (params, _): (&[f32], &[f32])) -> f32 {
-        params.last().map_or(0.0, |end| ((end - self.t) * self.forward).max(0.0))
+        params
+            .last()
+            .map_or(0.0, |end| ((end - self.t) * self.forward).max(0.0))
     }
 
     /// How far into its stretch the point lies.

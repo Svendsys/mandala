@@ -2453,6 +2453,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_tracking_grows_with_the_gap", |b| {
         b.iter(do_flow_halves_tracking_grows_with_the_gap)
     });
+    c.bench_function("flow_halves_closed_form_roots_are_the_rules", |b| {
+        b.iter(do_flow_halves_closed_form_roots_are_the_rules)
+    });
+    c.bench_function("flow_halves_a_side_arc_is_filled_from_its_model_lays", |b| {
+        b.iter(do_flow_halves_a_side_arc_is_filled_from_its_model_lays)
+    });
     c.bench_function("flow_halves_sides_hold_the_junctions", |b| {
         b.iter(do_flow_halves_sides_hold_the_junctions)
     });

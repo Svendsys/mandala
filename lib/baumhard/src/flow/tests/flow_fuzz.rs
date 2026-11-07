@@ -623,7 +623,8 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
 }
 
 /// The frame's closed-form layer held to the pairwise rule's iterative
-/// solve as its oracle (#309, ruling B16.1b): a letter after two inks on
+/// solve as its oracle (#309, ruling B16.1b): the tangent line's root
+/// ([`check_line_root`]), and a letter after two inks on
 /// an outline the choices draw — a sharp or rounded rectangle, an
 /// ellipse, at normal scale, the band curve on it, in it or off it — at a
 /// gap they draw. Where the ink before it lies on one form the model
@@ -634,7 +635,50 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
 /// rising from none with the center, one root — the model and the
 /// iterative rule set it at one center, to the rule's window's width.
 pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
+    check_line_root(choices)?;
     pair_model_held(choices).map(|_| ())
+}
+
+/// The tangent line's root in closed form held to the iterative rule's
+/// bisection of it as its oracle (#309, ruling B16.1b; `line_root`,
+/// `along`): two inks some way apart, their half sizes summing to a reach
+/// the choices draw, one stepped along a way they draw until the two are
+/// owed apart — on where they are nearer, back where they are further.
+/// The gap along a line is convex in the step, so each way has one root:
+/// where the bisection brackets one, the closed form finds it, to the
+/// bracket's width; and where only the closed form does, the boxes are
+/// owed apart there.
+pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
+    use crate::flow::place::halves::line_root_seam;
+    let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
+    let delta = Vec2::new(unit(choices) - 0.5, unit(choices) - 0.5) * 40.0;
+    let angle = unit(choices) * std::f32::consts::TAU;
+    let dir = Vec2::new(angle.cos(), angle.sin()) * (0.25 + 2.0 * unit(choices));
+    let reach = Vec2::new(unit(choices), unit(choices)) * 12.0;
+    let owed = if choices.below(8) == 0 {
+        0.0
+    } else {
+        unit(choices) * 12.0
+    };
+    let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
+    let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
+    let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
+    // The bisection's last bracket, and the floats of the step and the gap.
+    let width = (bisected.abs() + owed + reach.max_element()).max(INK_TOLERANCE) * 1e-5;
+    match (closed.is_finite(), bisected.is_finite()) {
+        (true, true) if (closed - bisected).abs() <= width => Ok(()),
+        (false, true) => Err(format!(
+            "{what}: the bisection steps {bisected}, the closed form finds none"
+        )),
+        (true, false) if owed > 0.0 && (gap(closed) - owed).abs() > 1e-4 * (owed + 1.0) => Err(format!(
+            "{what}: the closed form steps {closed}, where the gap is {}",
+            gap(closed)
+        )),
+        (true, true) => Err(format!(
+            "{what}: the closed form steps {closed}, the bisection {bisected}"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// [`check_pair_model`], and which of its two holds it held the letter

@@ -1125,11 +1125,11 @@ struct Set {
     at: Vec2,
     half: Vec2,
     /// Where its anchor lies on the frame's band curve (#308): the curve's
-    /// point at [`center`](Self::center), what the osculating model of
-    /// the curve on from it starts at ([`osculating`], #309).
+    /// point at [`center`](Self::center), where the curve's form on from it
+    /// is taken ([`Form`], #309).
     on: Vec2,
     /// How the curve bends on from there, where its stretch has one form
-    /// ([`Bend`]): what that model is exact on.
+    /// ([`Bend`]): what [`Form::of`] reads.
     bend: Option<Bend>,
     /// Where along the path it is set.
     center: f32,
@@ -1396,6 +1396,11 @@ struct InkLay<'w> {
     /// and a space placed nowhere. What a side arc's gap is solved on
     /// before a lay is read from the path at it ([`SideArc::solve`]).
     modeled: bool,
+    /// The letters a model lay has set from the band curve's form, and
+    /// those it set from the path; and whether it stopped, the forms not
+    /// reading the copies ([`MODEL_MISSES`]).
+    formed: (usize, usize),
+    abandoned: bool,
     /// Whether it lays a side ornament's copies, not a line: which work
     /// counter its steps are counted in ([`note_step`]).
     #[cfg(test)]
@@ -1467,6 +1472,8 @@ impl<'w> InkLay<'w> {
             band,
             reaches: Vec::new(),
             modeled: false,
+            formed: (0, 0),
+            abandoned: false,
             #[cfg(test)]
             side: false,
         }
@@ -1515,6 +1522,9 @@ impl<'w> InkLay<'w> {
         #[cfg(test)]
         let before = crate::flow::path::PATH_LOOKUPS.with(Cell::get);
         let walk = self.walk;
+        if self.abandoned {
+            return;
+        }
         if cluster.blank && self.modeled {
             // A model lay places nothing: a space only owes its room.
             self.owed += cluster.advance + g + self.stretch;
@@ -1550,144 +1560,157 @@ impl<'w> InkLay<'w> {
         let rise = 0.5 * (ink.min.y + ink.max.y) - self.band.anchor(&self.glyphs[cluster.glyphs.start], ink);
         // A model lay's letter, where its form sets it.
         let modeled = match (self.modeled, self.last, self.pin) {
-            (true, Some(before), None) => self.model_letter(&before, (half, rise), g),
+            (true, Some(before), None) => {
+                // The forms do not read these copies — their canvas too
+                // coarse for any, or more of them read from the path than
+                // a few ends of forms round corners take: the lay stops
+                // rather than read them from the path.
+                if resolution_at(&before, before.half + half, self.owed).is_none() {
+                    self.abandoned = true;
+                    return;
+                }
+                let set = self.model_letter(&before, (half, rise), g);
+                if set.is_some() {
+                    self.formed.0 += 1;
+                } else {
+                    self.formed.1 += 1;
+                    if self.formed.1 > self.formed.0 + MODEL_MISSES {
+                        self.abandoned = true;
+                        return;
+                    }
+                }
+                set
+            }
             _ => None,
         };
-        let set = if let Some(set) = modeled {
-            #[cfg(test)]
-            MODEL_LETTERS.with(|count| count.set(count.get() + 1));
-            set
-        } else {
-            match (self.last, self.pin.take()) {
-                // Set where it is pinned, the gaps there held to the rule's:
-                // no nearer its neighbor than owed, nor its gap to the inks
-                // before that (the secondary rule, `Layout::reach_its_end`).
-                (Some(before), Some(at)) => {
-                    let set = self.set_at(at, half, rise);
-                    let apart = |e: &Set| {
+        let set = match (self.last, self.pin.take(), modeled) {
+            (_, _, Some(set)) => {
+                #[cfg(test)]
+                MODEL_LETTERS.with(|count| count.set(count.get() + 1));
+                set
+            }
+            // Set where it is pinned, the gaps there held to the rule's:
+            // no nearer its neighbor than owed, nor its gap to the inks
+            // before that (the secondary rule, `Layout::reach_its_end`).
+            (Some(before), Some(at), None) => {
+                let set = self.set_at(at, half, rise);
+                let apart = |e: &Set| {
+                    ((set.at - e.at).abs() - (set.half + e.half))
+                        .max(Vec2::ZERO)
+                        .length()
+                };
+                let gap = apart(&before);
+                let clear = g.max(2.0 * TOUCH);
+                let owed = self.owed.max(0.0);
+                // A line's only gap has no other to be even with: it takes
+                // what the end leaves, no tighter than its font's own gap.
+                // Any other is held to the pairwise rule's window, so the
+                // line stays even.
+                let held = if self.boxes.len() == 1 {
+                    gap >= self.pin_floor - NEARER
+                } else {
+                    gap >= owed - NEARER && gap <= owed + INK_TOLERANCE
+                };
+                if !(gap > 0.0 && held) || self.earlier.iter().flatten().any(|e| apart(e) < clear - NEARER) {
+                    self.refused = true;
+                }
+                set
+            }
+            (Some(before), None, None) => {
+                let owed = self.owed.max(0.0);
+                let straight = along(Vec2::ZERO, before.moves, before.half + half, owed);
+                // The first center tried: its root on the band curve's
+                // form at the last ink, aimed at what is owed ([`osculating`];
+                // #309, rulings B16.1b, B16.2c); else the straight path's
+                // answer, scaled by the share of it the last letter's step
+                // took.
+                let model = osculating(
+                    walk.path,
+                    &before,
+                    self.earlier[0].as_ref(),
+                    (half, rise),
+                    owed,
+                    self.band.offset,
+                );
+                let guess = match model {
+                    Some(at) => at,
+                    None if straight.is_finite() => before.center + straight * self.ratio,
+                    None => f32::NAN,
+                };
+                let mut rounds = PAIR_ROUNDS;
+                let mut set = pair(self, before, (half, rise), guess, owed, &mut rounds);
+                #[cfg(test)]
+                if model.is_some() {
+                    let gap = ((set.at - before.at).abs() - (before.half + half))
+                        .max(Vec2::ZERO)
+                        .length();
+                    let miss = gap - owed;
+                    if (-NEARER..=INK_TOLERANCE).contains(&miss) {
+                        MODEL_GAPS.with(|count| {
+                            let (n, sum, squares) = count.get();
+                            let miss = f64::from(miss);
+                            count.set((n + 1, sum + miss, squares + miss * miss));
+                        });
+                    }
+                }
+                #[cfg(test)]
+                OSCULATED.with(|count| {
+                    let (offered, first, misses) = count.get();
+                    count.set(match model {
+                        Some(_) if rounds + 1 == PAIR_ROUNDS => (offered + 1, first + 1, misses),
+                        Some(_) => (offered + 1, first, misses),
+                        None => (offered, first, misses + 1),
+                    });
+                });
+                // Clear of the inks before its neighbor too, by its gap —
+                // and past touching, at no gap — moved on to the nearest
+                // center the rule finds that far from the one it is too
+                // near: a letter is never nearer than its gap to any
+                // letter but its neighbors (rulings R34, R38.1). Near is
+                // what `pair` would move: short of its acceptance, so a
+                // round never solves for the center it already has.
+                let clear = g.max(2.0 * TOUCH);
+                for _ in 0..EARLIER {
+                    let near = |e: &Set| {
                         ((set.at - e.at).abs() - (set.half + e.half))
                             .max(Vec2::ZERO)
                             .length()
+                            < clear - NEARER
                     };
-                    let gap = apart(&before);
-                    let clear = g.max(2.0 * TOUCH);
-                    let owed = self.owed.max(0.0);
-                    // A line's only gap has no other to be even with: it takes
-                    // what the end leaves, no tighter than its font's own gap.
-                    // Any other is held to the pairwise rule's window, so the
-                    // line stays even.
-                    let held = if self.boxes.len() == 1 {
-                        gap >= self.pin_floor - NEARER
-                    } else {
-                        gap >= owed - NEARER && gap <= owed + INK_TOLERANCE
+                    let Some(e) = self.earlier.iter().flatten().find(|e| near(e)).copied() else {
+                        break;
                     };
-                    if !(gap > 0.0 && held)
-                        || self.earlier.iter().flatten().any(|e| apart(e) < clear - NEARER)
-                    {
-                        self.refused = true;
-                    }
-                    set
-                }
-                (Some(before), None) => {
-                    let owed = self.owed.max(0.0);
-                    let straight = along(Vec2::ZERO, before.moves, before.half + half, owed);
-                    // The first center tried: the exact root on the curve's
-                    // osculating circle at the last ink, where the turn from
-                    // the ink before it tells its curvature (#309, ruling
-                    // B16.1b); else the straight path's answer, scaled by the
-                    // share of it the last letter's step took.
-                    let model = osculating(
-                        walk.path,
-                        &before,
-                        self.earlier[0].as_ref(),
-                        (half, rise),
-                        owed,
-                        self.band.offset,
-                    );
-                    let guess = match model {
-                        Some(at) => at,
-                        None if straight.is_finite() => before.center + straight * self.ratio,
-                        None => f32::NAN,
-                    };
-                    let mut rounds = PAIR_ROUNDS;
-                    #[cfg(test)]
-                    XX_TRACE.with(|t| t.borrow_mut().clear());
-                    let mut set = pair(self, before, (half, rise), guess, owed, &mut rounds);
-                    #[cfg(test)]
-                    if std::env::var_os("XX_DBG").is_some() && PAIR_ROUNDS - rounds > 4 {
-                        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                        if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 12 {
-                            eprintln!("PAIRTRACE last {} model {model:?} straight {} owed {owed} : {:?}", before.center, before.center + straight * self.ratio, XX_TRACE.with(|t| t.borrow().clone()));
-                        }
+                    // `pair`'s first try is the center the letter has,
+                    // which is too near: a round with one try left would
+                    // only set it there again (ruling R44.7) — as round a
+                    // sharp corner inward on the band curve, where the
+                    // neighbor's own pairing takes all but one (#308).
+                    if rounds < 2 {
+                        break;
                     }
                     #[cfg(test)]
-                    XX_BIAS.with(|b| {
-                        if let Some(v) = b.borrow_mut().as_mut() {
-                            let gap = ((set.at - before.at).abs() - (before.half + half))
-                                .max(Vec2::ZERO)
-                                .length();
-                            v.push((gap - owed, if model.is_some() { 1.0 } else { 0.0 }, 0.0, owed));
-                        }
-                    });
+                    let was = set.center;
+                    set = pair(self, e, (half, rise), set.center, clear, &mut rounds);
                     #[cfg(test)]
-                    OSCULATED.with(|count| {
-                        let (offered, first, misses) = count.get();
-                        count.set(match model {
-                            Some(_) if rounds + 1 == PAIR_ROUNDS => (offered + 1, first + 1, misses),
-                            Some(_) => (offered + 1, first, misses),
-                            None => (offered, first, misses + 1),
+                    EARLIER_ROUNDS.with(|count| {
+                        let (moved, idle) = count.get();
+                        count.set(if set.center == was {
+                            (moved, idle + 1)
+                        } else {
+                            (moved + 1, idle)
                         });
                     });
-                    // Clear of the inks before its neighbor too, by its gap —
-                    // and past touching, at no gap — moved on to the nearest
-                    // center the rule finds that far from the one it is too
-                    // near: a letter is never nearer than its gap to any
-                    // letter but its neighbors (rulings R34, R38.1). Near is
-                    // what `pair` would move: short of its acceptance, so a
-                    // round never solves for the center it already has.
-                    let clear = g.max(2.0 * TOUCH);
-                    for _ in 0..EARLIER {
-                        let near = |e: &Set| {
-                            ((set.at - e.at).abs() - (set.half + e.half))
-                                .max(Vec2::ZERO)
-                                .length()
-                                < clear - NEARER
-                        };
-                        let Some(e) = self.earlier.iter().flatten().find(|e| near(e)).copied() else {
-                            break;
-                        };
-                        // `pair`'s first try is the center the letter has,
-                        // which is too near: a round with one try left would
-                        // only set it there again (ruling R44.7) — as round a
-                        // sharp corner inward on the band curve, where the
-                        // neighbor's own pairing takes all but one (#308).
-                        if rounds < 2 {
-                            break;
-                        }
-                        #[cfg(test)]
-                        let was = set.center;
-                        set = pair(self, e, (half, rise), set.center, clear, &mut rounds);
-                        #[cfg(test)]
-                        EARLIER_ROUNDS.with(|count| {
-                            let (moved, idle) = count.get();
-                            count.set(if set.center == was {
-                                (moved, idle + 1)
-                            } else {
-                                (moved + 1, idle)
-                            });
-                        });
-                    }
-                    let taken = (set.center - before.center) / straight;
-                    self.ratio = if taken.is_finite() {
-                        taken.clamp(PAIR_RATIO.0, PAIR_RATIO.1)
-                    } else {
-                        1.0
-                    };
-                    set
                 }
-                // The first ink centered at the lay's start.
-                (None, _) => self.set_at(self.s, half, rise),
+                let taken = (set.center - before.center) / straight;
+                self.ratio = if taken.is_finite() {
+                    taken.clamp(PAIR_RATIO.0, PAIR_RATIO.1)
+                } else {
+                    1.0
+                };
+                set
             }
+            // The first ink centered at the lay's start.
+            (None, _, _) => self.set_at(self.s, half, rise),
         };
         let corner = set.at - (ink.min + ink.max) * 0.5 - Vec2::new(0.0, walk.baseline);
         self.marks.push(self.out.len());
@@ -1765,19 +1788,18 @@ thread_local! {
     /// ornament's runs — and the runs it has inked.
     #[cfg(test)]
     pub(crate) static RESHAPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    #[cfg(test)]
-    pub(crate) static XX_SOLVE: std::cell::Cell<[usize; 8]> = const { std::cell::Cell::new([0; 8]) };
-    #[cfg(test)]
-    pub(crate) static XX_PAIR: std::cell::Cell<[usize; 8]> = const { std::cell::Cell::new([0; 8]) };
-    #[cfg(test)]
-    pub(crate) static XX_TRACE: std::cell::RefCell<Vec<(f32, f32)>> = const { std::cell::RefCell::new(Vec::new()) };
-    #[cfg(test)]
-    pub(crate) static XX_BIAS: std::cell::RefCell<Option<Vec<(f32, f32, f32, f32)>>> = const { std::cell::RefCell::new(None) };
     /// Test counter (#309, ruling B16.1b): the letters whose first center
     /// tried was their root on the band curve's form ([`osculating`]), of
     /// them those that center held, and the letters that had no form.
     #[cfg(test)]
     pub(crate) static OSCULATED: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
+    /// Test counter (#309, ruling B16.2c): over the letters whose first
+    /// center tried was their root on the band curve's form and whose gap
+    /// the rule took ([`pair`]'s window), how many, and the sum of how far
+    /// each gap is from what is owed and of its square: what the layer's
+    /// bias is measured by.
+    #[cfg(test)]
+    pub(crate) static MODEL_GAPS: std::cell::Cell<(usize, f64, f64)> = const { std::cell::Cell::new((0, 0.0, 0.0)) };
     /// Test counter (#309, ruling B16.2d): the letters model lays set from
     /// the band curve's form ([`InkLay::modeled`]), no step of the path.
     #[cfg(test)]
@@ -1860,7 +1882,9 @@ pub(crate) fn note_reshape() {
 /// where it is, and close where the path bends. It is held inside the
 /// bracket the centers tried have closed — one too near, one far enough
 /// — by regula falsi (Illinois) where it falls outside, and, while
-/// nothing tried is far enough, to a stride on. The gap is continuous in
+/// nothing tried is far enough, to a stride on. Where that step is less
+/// than the center's float can take, the next float toward the root is
+/// tried (#309, ruling B16.2c). The gap is continuous in
 /// the center, so the bracket holds a root, and the line's length moves
 /// continuously with its gap wherever the root it closes on does: what
 /// [`solve_tracking`] solves (ruling R43).
@@ -1904,21 +1928,11 @@ fn pair(
     } else {
         low + stride
     };
-    #[cfg(test)]
-    XX_PAIR.with(|w| { let mut a = w.get(); a[0] += 1; w.set(a); });
     while *rounds > 0 {
         *rounds -= 1;
-        #[cfg(test)]
-        XX_PAIR.with(|w| { let mut a = w.get(); a[1] += 1; w.set(a); });
         let set = set_at(c);
         let gap = gap_of(&set);
-        #[cfg(test)]
-        if std::env::var_os("XX_DBG").is_some() {
-            XX_TRACE.with(|t| t.borrow_mut().push((c, gap - owed)));
-        }
         if gap > 0.0 && gap >= owed - NEARER && gap <= owed + INK_TOLERANCE {
-            #[cfg(test)]
-            XX_PAIR.with(|w| { let mut a = w.get(); a[2] += 1; w.set(a); });
             return set;
         }
         tried = Some(set);
@@ -1986,8 +2000,6 @@ fn pair(
         // A bracket closed to a float, or a step that leaves the center
         // where it was, finds nothing more.
         if !next.gt(&low) || next.to_bits() == c.to_bits() || high.is_some_and(|(h, _)| next >= h.center) {
-            #[cfg(test)]
-            XX_PAIR.with(|w| { let mut a = w.get(); a[3] += 1; w.set(a); });
             break;
         }
         c = next;
@@ -2040,6 +2052,12 @@ fn along(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
     }
     outside
 }
+
+/// How many more of its letters a model lay may read from the path than
+/// it sets from the band curve's forms before it stops ([`InkLay::modeled`],
+/// #309): a few, where forms end round corners; past them the forms do
+/// not read the copies, and a lay read from the path costs no more.
+const MODEL_MISSES: usize = 8;
 
 /// Whether the closed-form layer is on (#309, ruling B16.1b): always, but
 /// in a test that turns it off ([`NO_CLOSED_FORM`]).
@@ -2457,6 +2475,17 @@ fn solve_in(
     InForm::Failed
 }
 
+/// How finely the band curve's forms measure a gap from the ink `last`
+/// to a letter, their half sizes summing to `reach`, `owed` apart: their
+/// arithmetic at points that far out carries the float error of a few
+/// units of their last place. `None` where that is coarser than the inks
+/// and their gap: the forms have nothing to tell them apart by.
+fn resolution_at(last: &Set, reach: Vec2, owed: f32) -> Option<f32> {
+    let scale = last.at.abs().max_element() + reach.max_element() + owed.max(0.0);
+    let resolution = 4.0 * f32::EPSILON * scale;
+    (resolution < reach.min_element() + owed.max(0.0)).then_some(resolution)
+}
+
 /// Where along the band curve at `offset` to set a letter of half size
 /// `half`, its center `rise` below its anchor, so that it is `owed` from
 /// the ink `last` — the pairwise rule's root (ruling R31) on the curve's
@@ -2483,10 +2512,7 @@ fn model_root<'p>(
     let lift = Vec2::new(0.0, rise);
     let delta_of = |on: &FormPoint| on.point + lift - last.at;
     let gap_at = |on: &FormPoint| (delta_of(on).abs() - reach).max(Vec2::ZERO).length();
-    // The form's arithmetic at points this far out carries their float
-    // error: a few units of their last place.
-    let scale = last.at.abs().max_element() + reach.max_element() + owed.max(0.0);
-    let resolution = 4.0 * f32::EPSILON * scale;
+    let resolution = resolution_at(last, reach, owed)?;
     let owed = if owed > 0.0 { owed } else { resolution };
     if !(gap_at(&form.on(0.0)?) < owed) {
         return None;
@@ -4187,14 +4213,6 @@ impl<'s> SideArc<'s> {
     ///
     /// Cost: one lay of the copies that fit and the one that does not.
     fn floor_row(&self, most: usize) -> Option<FloorRow> {
-        #[cfg(test)]
-        let l0 = crate::flow::path::PATH_LOOKUPS.with(Cell::get);
-        #[cfg(test)]
-        struct Guard(usize);
-        #[cfg(test)]
-        impl Drop for Guard { fn drop(&mut self) { XX_SOLVE.with(|w| { let mut a = w.get(); a[5] += crate::flow::path::PATH_LOOKUPS.with(Cell::get) - self.0; w.set(a); }); } }
-        #[cfg(test)]
-        let _g = Guard(l0);
         let gap = self.floor;
         let mut lay = self.begun(gap);
         let mut rooms = Vec::new();
@@ -4242,14 +4260,17 @@ impl<'s> SideArc<'s> {
     /// ink is the gap from `to`'s. That room falls with the gap by about
     /// its gaps' count a point — one before each ink of every copy, and
     /// the join to `to` — bent only by the path, so it is solved as a
-    /// line's tracking is (ruling R44.3, [`solve_tracking`]): the straight
-    /// path's root ([`straight`](Self::straight)), taken where it lands
-    /// within the tolerance — on a straight run it is the root (#309) —
-    /// else widened until it brackets the root, and closed by [`falsi`]. A copy
-    /// past `to`'s center reads as past the end. The frame's budget spent,
-    /// the widest gap found to fit so far.
+    /// line's tracking is (ruling R44.3, [`solve_tracking`]): from the gap
+    /// solved on model lays ([`model_gap`](Self::model_gap); #309, ruling
+    /// B16.2d), taken where the copies laid from the path at it land within
+    /// the tolerance — where the band curve's forms are the curve, they
+    /// do — or else from the straight path's root
+    /// ([`straight`](Self::straight)), widened until it brackets the root,
+    /// and closed by [`falsi`]. A copy past `to`'s center reads as past the
+    /// end. The frame's budget spent, the widest gap found to fit so far.
     ///
-    /// Cost: a lay of `n` copies a widening, and [`falsi`]'s, at most
+    /// Cost: [`model_gap`](Self::model_gap)'s, a lay of `n` copies where
+    /// it holds, else one a widening and [`falsi`]'s, at most
     /// [`SIDE_ROUNDS`]; none at all where the floor is the answer.
     fn solve(&self, n: usize, at_floor: f32, floor_out: Copies) -> (f32, Copies, bool) {
         let gaps = self.gaps(n);
@@ -4257,47 +4278,15 @@ impl<'s> SideArc<'s> {
         // pairwise rule's tolerance, as a line's end is ([`line_tolerance`]).
         let tolerance = resolved(SIDE_PRECISION, self.cb).max(gaps * INK_TOLERANCE);
         if at_floor <= tolerance {
-            {
-                #[cfg(test)]
-                XX_SOLVE.with(|w| {
-                    let mut a = w.get();
-                    a[3] += 1;
-                    w.set(a);
-                });
-            }
             return (self.floor, floor_out, true);
         }
         // Each probe's gap and how far it misses, so that the answer is
         // known to hold the equal-gap rule or not.
         let probes: std::cell::RefCell<Vec<(f32, f32)>> = std::cell::RefCell::new(Vec::new());
-        // A room of none fits, and reads as positive to `falsi`. A miss
-        // whose last ink touches `to`'s, or is set past its center, reads
-        // as at least twice the tolerance short, so `falsi` never takes it
-        // for the answer: copies a hair short of `to` close with a join a
-        // hair narrower than their gaps, as a line's end a hair past its
-        // part's is laid, but copies that touch the text are no answer.
-        {
-            #[cfg(test)]
-            XX_SOLVE.with(|w| {
-                let mut a = w.get();
-                a[0] += 1;
-                w.set(a);
-            });
-        }
+        // The room each lay leaves, as `falsi` reads it
+        // (`solved_room`).
         let room = |gap: f32| {
-            {
-                #[cfg(test)]
-                XX_SOLVE.with(|w| {
-                    let mut a = w.get();
-                    a[1] += 1;
-                    w.set(a);
-                });
-            }
-            #[cfg(test)]
-            let l0 = crate::flow::path::PATH_LOOKUPS.with(Cell::get);
             let (lay, _) = self.lay(n, gap);
-            #[cfg(test)]
-            XX_SOLVE.with(|w| { let mut a = w.get(); a[7] += crate::flow::path::PATH_LOOKUPS.with(Cell::get) - l0; w.set(a); });
             let v = self.solved_room(&lay, gap, tolerance);
             probes.borrow_mut().push((gap, v));
             (
@@ -4321,9 +4310,10 @@ impl<'s> SideArc<'s> {
         // The gap solved on model lays first (#309, ruling B16.2d): each
         // copy set where the band curve's form puts it, so that where the
         // forms are the curve, the copies laid from the path at that gap
-        // fill the arc, laid once. Else the straight path's root. Past it,
-        // a hair further each widening, so that a probe brackets the root
-        // a bend moved.
+        // fill the arc, laid once. Else the straight path's root, a hair
+        // past it — as the iterative rule alone starts — and past it a
+        // hair further each widening, so that a probe brackets the root a
+        // bend moved.
         let straight = self.straight(n, at_floor);
         let layer = layer_on();
         let mut modeled = layer
@@ -4341,14 +4331,6 @@ impl<'s> SideArc<'s> {
             }
             let (v, out) = room(g);
             if std::mem::take(&mut first) && v.abs() <= tolerance {
-                {
-                    #[cfg(test)]
-                    XX_SOLVE.with(|w| {
-                        let mut a = w.get();
-                        a[2] += 1;
-                        w.set(a);
-                    });
-                }
                 return (g, out, true);
             }
             if v < 0.0 {
@@ -4412,8 +4394,9 @@ impl<'s> SideArc<'s> {
     /// The gap at which `n` copies fill the arc as model lays set them
     /// (#309, ruling B16.2d; [`InkLay::modeled`]): each copy's letters
     /// where the band curve's form puts them, no path lookup but where a
-    /// form ends. A model lay at the floor first tells how far its room
-    /// is from the room `at_floor` the copies read from the path leave
+    /// form ends. A model lay at the floor first tells whether the forms
+    /// read the arc — most of its letters set from them — and how far its
+    /// room is from the room `at_floor` the copies read from the path leave
     /// there — none to float error at normal scale; far out, where each
     /// letter the rule sets lies a float past its root, their sum — and
     /// every model room is read moved by that much, so it is the room a
@@ -4437,14 +4420,6 @@ impl<'s> SideArc<'s> {
         let gaps = self.gaps(n);
         let aim = 0.25 * tolerance;
         let lay_at = |gap: f32| {
-            #[cfg(test)]
-            let l0 = crate::flow::path::PATH_LOOKUPS.with(Cell::get);
-            #[cfg(test)]
-            struct G(usize);
-            #[cfg(test)]
-            impl Drop for G { fn drop(&mut self) { XX_SOLVE.with(|w| { let mut a = w.get(); a[6] += crate::flow::path::PATH_LOOKUPS.with(Cell::get) - self.0; w.set(a); }); } }
-            #[cfg(test)]
-            let _g = G(l0);
             let mut lay = self.begun(gap);
             lay.modeled = true;
             for _ in 0..n {
@@ -4458,10 +4433,17 @@ impl<'s> SideArc<'s> {
         if stop() {
             return None;
         }
-        // Further than the tolerance off at the floor, the model does not
-        // tell how the copies read from the path lie: far out, where the
-        // float each letter lies past its root moves with the gap.
-        let shift = at_floor - self.room_of(&lay_at(self.floor), self.floor);
+        // A model lay at the floor that read more of its letters from the
+        // path than from the band curve's forms is a lay read from the
+        // path: no model of the arc. Further than the tolerance off at the
+        // floor, the model does not tell how the copies read from the path
+        // lie: far out, where the float each letter lies past its root
+        // moves with the gap.
+        let at = lay_at(self.floor);
+        if at.abandoned || at.formed.1 > at.formed.0 {
+            return None;
+        }
+        let shift = at_floor - self.room_of(&at, self.floor);
         if !(shift.abs() <= tolerance) {
             return None;
         }
@@ -4518,14 +4500,6 @@ impl<'s> SideArc<'s> {
         let most = MAX_SIDE_COPIES.min(budget / per_copy);
         if most == 0 {
             return None;
-        }
-        {
-            #[cfg(test)]
-            XX_SOLVE.with(|w| {
-                let mut a = w.get();
-                a[4] += 1;
-                w.set(a);
-            });
         }
         let Some((row, rooms)) = self.floor_row(most) else {
             return Some(SideLoss::Empty);
@@ -7267,6 +7241,14 @@ pub(crate) fn pair_seam(
         model,
         iterative: (set.center, gap_of(set.center)),
     }
+}
+
+/// Test seam (#309, ruling B16.1b): the tangent line's root in closed form
+/// ([`line_root`]) and as the iterative rule brackets and bisects it
+/// ([`along`]), for two inks `delta` apart, their half sizes summing to
+/// `reach`, one stepped along `dir` until they are `owed` apart.
+pub(crate) fn line_root_seam(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> (f32, f32) {
+    (line_root(delta, dir, reach, owed), along(delta, dir, reach, owed))
 }
 
 /// Test seam (#294): [`solve_tracking`] of a line whose lay at gap `g`

@@ -28,5 +28,3 @@ pub(crate) mod support;
 /// A frame's work counted by kind of outline (#309).
 #[cfg(test)]
 mod work_tests;
-#[cfg(test)]
-mod scratch_w4;
