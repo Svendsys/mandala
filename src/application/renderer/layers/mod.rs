@@ -253,8 +253,9 @@ impl LayerRenderer {
     }
 
     /// Whether the render state is exactly `layers`: each mirror holds
-    /// its layer's elements in the layer's pre-order, and each run's state
-    /// is the run its element holds (`GlyphRunData::same_state`). `Err`
+    /// its layer's elements in the layer's pre-order, one slot each and
+    /// no slot more, and each run's state is the run its element holds
+    /// (`GlyphRunData::same_state`). `Err`
     /// names the first difference. Test builds only: what the tests that
     /// hold `apply` to a fresh `load` compare by, reading the layers
     /// themselves and not their journals.
@@ -268,14 +269,29 @@ impl LayerRenderer {
             let want: Vec<NodeId> = tree.root().descendants(tree.arena()).collect();
             let have = mirror.ids();
             if want != have {
+                let at = want.iter().zip(&have).take_while(|(a, b)| a == b).count();
+                let around =
+                    |order: &[NodeId]| order[at.saturating_sub(2)..(at + 4).min(order.len())].to_vec();
                 return Err(format!(
-                    "{layer:?}: the layer's pre-order is {want:?}, the renderer's {have:?}"
+                    "{layer:?}: the pre-orders differ at {at} of {} in the layer and {} kept: \
+                     the layer has {:?} there, the renderer {:?}",
+                    want.len(),
+                    have.len(),
+                    around(&want),
+                    around(&have),
                 ));
             }
             if mirror.len() != want.len() {
                 return Err(format!(
                     "{layer:?}: {} elements in the layer, {} kept",
                     want.len(),
+                    mirror.len()
+                ));
+            }
+            if mirror.slots_in_use() != mirror.len() {
+                return Err(format!(
+                    "{layer:?}: {} slots in use for {} elements: the slab leaked",
+                    mirror.slots_in_use(),
                     mirror.len()
                 ));
             }

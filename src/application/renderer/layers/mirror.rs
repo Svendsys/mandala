@@ -75,15 +75,19 @@ pub(super) struct Mirror {
 impl Mirror {
     /// The mirror of `tree`, with `state` making each element's: one
     /// pre-order walk, each element appended as its parent's last child.
-    /// The one full walk of a layer the renderer makes, at load.
+    /// The one full walk of a layer the renderer makes, at load. The
+    /// slots and the index are reserved from the arena's live count, an
+    /// O(1) bound of the layer's elements — it counts the detached
+    /// subtrees the journals still hold too — so the walk is not taken
+    /// twice to count them.
     ///
     /// Cost: O(the layer's elements); one slot and one index entry each.
     pub(super) fn of(tree: &GfxTree, mut state: impl FnMut(NodeId) -> Option<RunState>) -> Mirror {
         let arena = tree.arena();
         let mut mirror = Mirror::default();
-        let count = tree.root().descendants(arena).count();
-        mirror.slots.reserve(count);
-        mirror.index.reserve(count);
+        let bound = arena.live_count();
+        mirror.slots.reserve(bound);
+        mirror.index.reserve(bound);
         for id in tree.root().descendants(arena) {
             let slot = mirror.alloc(id, state(id));
             match id.parent(arena).and_then(|parent| mirror.slot_of(parent)) {
@@ -121,6 +125,15 @@ impl Mirror {
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
         self.index.len()
+    }
+
+    /// How many slots are in use: every slot not on the free list. Equal
+    /// to [`Self::len`] unless a slot leaked — freed and never put on the
+    /// free list, or left in use with no element indexed to it — or was
+    /// put on it twice. O(1).
+    #[cfg(test)]
+    pub(super) fn slots_in_use(&self) -> usize {
+        self.slots.len() - self.free.len()
     }
 
     /// A slot for `id`, holding `state`, under no parent yet. O(1),
