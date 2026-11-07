@@ -1350,6 +1350,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("a_face_added_to_the_database_draws_what_no_face_drew", |b| {
         b.iter(do_a_face_added_to_the_database_draws_what_no_face_drew)
     });
+    // The outline cache serves the locked font system alone: an ornament
+    // measured twice in a font system of its own, and twice in the
+    // locked one.
+    c.bench_function("another_font_system_never_reads_the_outline_cache", |b| {
+        b.iter(do_another_font_system_never_reads_the_outline_cache)
+    });
     // The patched merge's and early stop's guards, on fixtures built of
     // shaped glyphs (and a font system with no faces).
     c.bench_function(

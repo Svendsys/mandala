@@ -9,7 +9,7 @@
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
@@ -1040,8 +1040,22 @@ fn adopt_write(
         panicking_at_acquire: thread::panicking(),
         _not_send: PhantomData,
     };
+    LOCKED_FONT_SYSTEM.store(address_of(&adopted.guard), Ordering::Relaxed);
     refuse_if_poisoned(site);
     adopted
+}
+
+/// Where the locked font system lives, once a write guard of it has been
+/// taken (0 before): what the outline cache asks to tell the one font
+/// system it serves from any other (`cached_outline_bounds`, #304). The
+/// value inside `FONT_SYSTEM` never moves, and a `&mut FontSystem` of it
+/// can only come from a write guard, so a font system at another address
+/// is not it.
+static LOCKED_FONT_SYSTEM: AtomicUsize = AtomicUsize::new(0);
+
+/// `font_system`'s address, to compare with [`LOCKED_FONT_SYSTEM`].
+fn address_of(font_system: &FontSystem) -> usize {
+    std::ptr::from_ref(font_system) as usize
 }
 
 /// Acquire the `FONT_SYSTEM` write guard, panicking with `site` in the
@@ -1439,12 +1453,15 @@ thread_local! {
     /// glyph id, size, weight and flags (its scaler's [`CacheKey`]),
     /// `None` for a glyph with no outline.
     ///
-    /// Read and written only through `cached_outline_bounds`, whose
-    /// `&mut FontSystem` argument is the guard of the font lock the
-    /// caller holds, so the cache is used under the font-lock discipline
-    /// (lib/baumhard/CONVENTIONS.md §B5) and needs no lock of its own. A
-    /// face's id names that face for as long as the font system lives
-    /// (`fontdb` ids are never reused), so an entry cannot go stale.
+    /// Read and written only through `cached_outline_bounds`, and only for
+    /// the locked font system (`FONT_SYSTEM`), whose `&mut FontSystem`
+    /// the caller holds through its guard: the cache is used under the
+    /// font-lock discipline (lib/baumhard/CONVENTIONS.md §B5) and needs no
+    /// lock of its own. A face id names its face for as long as its font
+    /// system lives, and only in that font system (`fontdb` ids are a
+    /// database's own), so serving the locked font system alone is what
+    /// keeps an entry from naming another system's face; another font
+    /// system's measures read their outlines every time.
     static OUTLINE_BOUNDS: std::cell::RefCell<rustc_hash::FxHashMap<CacheKey, Option<(Vec2, Vec2)>>> =
         std::cell::RefCell::default();
     /// Outlines read on this thread: the cache's misses.
@@ -1469,21 +1486,33 @@ pub fn outline_reads() -> u64 {
 /// scaling them afterwards would round differently: the cache answers
 /// exactly what a read would.
 ///
-/// Cost: one hash lookup; on a miss, one outline scale through
-/// `swash_cache`'s scaler and one pass over its commands, and the whole
-/// cache let go first if it holds [`OUTLINE_CACHE_ENTRIES`].
+/// Only the locked font system (`FONT_SYSTEM`) is served from the cache:
+/// a face id means a face only within its own database, so an entry kept
+/// for one font system would name another face in any other. Any other
+/// font system's outline is read every time.
+///
+/// Cost: one hash lookup; on a miss, or for another font system, one
+/// outline scale through `swash_cache`'s scaler and one pass over its
+/// commands, and the whole cache let go first if it holds
+/// [`OUTLINE_CACHE_ENTRIES`].
 fn cached_outline_bounds(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
     key: CacheKey,
 ) -> Option<(Vec2, Vec2)> {
-    if let Some(bounds) = OUTLINE_BOUNDS.with(|cache| cache.borrow().get(&key).copied()) {
-        return bounds;
+    let locked = address_of(font_system) == LOCKED_FONT_SYSTEM.load(Ordering::Relaxed);
+    if locked {
+        if let Some(bounds) = OUTLINE_BOUNDS.with(|cache| cache.borrow().get(&key).copied()) {
+            return bounds;
+        }
     }
     OUTLINE_READS.with(|reads| reads.set(reads.get() + 1));
     let bounds = swash_cache
         .get_outline_commands_uncached(font_system, key)
         .and_then(|commands| outline_bounds(&commands));
+    if !locked {
+        return bounds;
+    }
     OUTLINE_BOUNDS.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= OUTLINE_CACHE_ENTRIES {

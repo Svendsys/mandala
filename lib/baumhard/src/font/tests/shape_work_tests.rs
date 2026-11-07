@@ -576,6 +576,65 @@ pub fn do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces() 
 }
 
 #[test]
+fn test_another_font_system_never_reads_the_outline_cache() {
+    do_another_font_system_never_reads_the_outline_cache();
+}
+
+/// The outline cache serves the locked font system alone (#304 review,
+/// fonts.rs:1447): a face id means a face only within its own database, so
+/// a font system of its own, whose ids start again from the first, could
+/// otherwise be answered with another face's outline. Measured twice in
+/// such a font system, an ornament's outline is read twice, and its ink is
+/// the same both times. The precondition: in the locked font system, the
+/// second measure reads nothing.
+pub fn do_another_font_system_never_reads_the_outline_cache() {
+    use crate::font::fonts::{glyph_outline_ink, outline_reads};
+    use cosmic_text::SwashCache;
+    let mut fs = private_font_system(&[AppFont::MandalaOrnaments]);
+    let family = family_in(&fs, AppFont::MandalaOrnaments);
+    let (buffer, _) = shaped_in_family(&mut fs, &family, "\u{2726}");
+    let laid = buffer
+        .layout_runs()
+        .flat_map(|run| run.glyphs.iter().cloned())
+        .next()
+        .expect("precondition: the ornament is laid out");
+    let mut cache = SwashCache::new();
+    let measure = |fs: &mut FontSystem, cache: &mut SwashCache| {
+        let before = outline_reads();
+        let ink = glyph_outline_ink(fs, cache, &laid);
+        (ink, outline_reads() - before)
+    };
+    let first = measure(&mut fs, &mut cache);
+    let second = measure(&mut fs, &mut cache);
+    assert!(first.0.is_some(), "precondition: the ornament has ink");
+    assert_eq!(
+        (first.1, second.1),
+        (1, 1),
+        "a font system of its own reads its outline at every measure"
+    );
+    assert_eq!(first.0, second.0, "and measures the same ink");
+
+    let (locked, locked_buffer) = under_lock(|fs| {
+        let (buffer, _) = shaped_in(fs, AppFont::MandalaOrnaments, "\u{2726}");
+        let glyph = buffer
+            .layout_runs()
+            .flat_map(|run| run.glyphs.iter().cloned())
+            .next()
+            .expect("precondition: the ornament is laid out");
+        let mut cache = SwashCache::new();
+        glyph_outline_ink(fs, &mut cache, &glyph);
+        let before = outline_reads();
+        glyph_outline_ink(fs, &mut cache, &glyph);
+        (outline_reads() - before, buffer)
+    });
+    drop(locked_buffer);
+    assert_eq!(
+        locked, 0,
+        "precondition: the locked font system's second measure reads nothing"
+    );
+}
+
+#[test]
 fn test_the_shape_work_bodies_repeat() {
     // Every `do_*` body here is a bench body too (TEST_CONVENTIONS §T6),
     // which a bench calls over and over in one process: each must hold
@@ -599,6 +658,7 @@ fn test_the_shape_work_bodies_repeat() {
         do_the_fallback_merge_lays_out_what_the_published_merge_did();
     }
     for _ in 0..20 {
+        do_another_font_system_never_reads_the_outline_cache();
         do_a_run_the_merge_cannot_reason_about_is_merged_as_published();
         do_the_early_stop_needs_every_missing_entry_matched();
         do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces();
