@@ -538,6 +538,11 @@ thread_local! {
     /// Test counter (R24.2): how many times [`new_buffer`] has laid text
     /// out again with its tabs as spaces on this thread.
     pub(crate) static TABS_RELAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test hook (#304): while set on a thread, [`reshape`] shapes a
+    /// size-only rescale again rather than laying out the run's shaping
+    /// at the new size ([`resized_buffer`]): the reference the
+    /// resized buffer is held to.
+    pub(crate) static RESHAPE_BY_SHAPING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The lines of `buffer` the last-resort check finds failing: what a test
@@ -560,13 +565,17 @@ fn hooked_tab(line: &str, glyph: &LayoutGlyph) -> bool {
 }
 
 /// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
+///
+/// The buffer starts empty (`Buffer::new_empty`), not as `Buffer::new`
+/// makes one: that shapes an empty line, and its ellipsis in the default
+/// family, for `set_rich_text` to throw away (#304).
 fn filled_buffer(
     fs: &mut FontSystem,
     rich: Vec<(&str, Attrs<'_>)>,
     metrics: Metrics,
     align: Option<Align>,
 ) -> Buffer {
-    let mut buffer = Buffer::new(fs, metrics);
+    let mut buffer = Buffer::new_empty(metrics);
     buffer.set_wrap(Wrap::None);
     buffer.set_size(None, None);
     let defaults = Attrs::new().metrics(metrics);
@@ -942,9 +951,16 @@ fn run_from_assembly(assembly: Assembly<'_>, fs: &mut FontSystem) -> ShapedRun {
 /// shaping (kerning, joining, bidi order) nor the filler's depends on
 /// the other: the text's glyphs, and their indices, are those of `run`.
 ///
-/// Cost: one shaping pass over the run's text and the filler; one
-/// `String` per drawn stretch (the stretch's text is copied out of the
-/// old buffer), and the piece table and glyph list.
+/// **A size-only reshape shapes nothing** (#304): with no filler, the
+/// new buffer takes `run`'s shaping, its glyphs' sizes read from the
+/// scaled attributes ([`resized_buffer`]), and is only laid out — which
+/// is what shaping it again would make, since shaping is in units of the
+/// em. A run whose text holds a tab, or that already carries a filler,
+/// is shaped again, as before.
+///
+/// Cost: with a filler, one shaping pass over the run's text and the
+/// filler; without one, one layout pass and no shaping. Either way the
+/// piece table and glyph list, and attributes per drawn stretch.
 pub(crate) fn reshape(
     run: &ShapedRun,
     factor: f32,
@@ -1036,7 +1052,13 @@ pub(crate) fn reshape(
             line_break: 0,
         });
     }
-    let buffer = new_buffer(fs, rich, font_size, line_height, None);
+    let resized = (filler_text.is_empty() || filler.is_none())
+        .then(|| resized_buffer(fs, &run.buffer, &rich, font_size, line_height))
+        .flatten();
+    let buffer = match resized {
+        Some(buffer) => buffer,
+        None => new_buffer(fs, rich, font_size, line_height, None),
+    };
     let glyphs = glyph_metrics(&buffer, &pieces, fs);
     let run = ShapedRun {
         buffer: Arc::new(buffer),
@@ -1048,6 +1070,55 @@ pub(crate) fn reshape(
     crate::flow::place::halves::SHAPED_STEPS
         .with(|count| count.set(count.get() + crate::flow::place::halves::shaping_steps(&run)));
     run
+}
+
+/// `rich`, the stretches of `shaped`'s one line with their attributes
+/// rescaled, laid out at their new sizes in a buffer that takes `shaped`'s
+/// shaping instead of shaping them again
+/// ([`BufferLine::adopt_shape`](cosmic_text::BufferLine::adopt_shape)):
+/// glyph for glyph what [`new_buffer`] would lay out, since the
+/// attributes differ from the ones `shaped` was shaped with only in their
+/// metrics, and shaping is in units of the em.
+///
+/// `None`, to be shaped instead, when `shaped` is not one line (it holds
+/// a filler), when the text holds a tab (whose last-resort check
+/// [`new_buffer`] makes after shaping), or when the line will not take
+/// the shaping. In test builds, also while [`RESHAPE_BY_SHAPING`] is set.
+///
+/// Cost: one layout pass; no shaping.
+fn resized_buffer(
+    fs: &mut FontSystem,
+    shaped: &Buffer,
+    rich: &[(&str, Attrs<'_>)],
+    font_size: f32,
+    line_height: f32,
+) -> Option<Buffer> {
+    #[cfg(test)]
+    if RESHAPE_BY_SHAPING.with(std::cell::Cell::get) {
+        return None;
+    }
+    let [from] = shaped.lines.as_slice() else {
+        return None;
+    };
+    if rich.iter().any(|(text, _)| text.contains('\t')) {
+        return None;
+    }
+    let font_size = font_size.max(MIN_FONT_SIZE_PT);
+    let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
+    let metrics = Metrics::new(font_size, line_height);
+    let mut buffer = Buffer::new_empty(metrics);
+    buffer.set_wrap(Wrap::None);
+    buffer.set_size(None, None);
+    let defaults = Attrs::new().metrics(metrics);
+    buffer.set_rich_text(rich.iter().cloned(), &defaults, SHAPING_ADVANCED, None);
+    let [line] = buffer.lines.as_mut_slice() else {
+        return None;
+    };
+    if !line.adopt_shape(from) {
+        return None;
+    }
+    buffer.shape_until_scroll(fs, false);
+    Some(buffer)
 }
 
 /// `attrs` with its size and line height times `factor`, clamped to

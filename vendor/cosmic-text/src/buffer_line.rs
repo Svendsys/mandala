@@ -199,6 +199,30 @@ impl BufferLine {
         self.reset_shaping();
     }
 
+    /// MANDALA PATCH (V1-B14, #304): take `from`'s shaping as this line's,
+    /// with every glyph's size read from this line's attributes, so the
+    /// line is laid out without being shaped. What shaping this line would
+    /// have made, when the two lines hold the same text, shaped the same
+    /// way, and their attributes differ only in their sizes: shaping is in
+    /// units of the em, and a size reaches a shaped glyph only as the
+    /// metrics its attributes carry ([`ShapeLine::with_sizes_of`]).
+    ///
+    /// `false`, and nothing changed, when `from` is not shaped or its text
+    /// or shaping strategy differs. The caller vouches for the rest: that
+    /// the attributes differ in nothing but their metrics.
+    pub fn adopt_shape(&mut self, from: &BufferLine) -> bool {
+        let Some(shape) = from.shape_opt.get() else {
+            return false;
+        };
+        if from.text != self.text || from.shaping != self.shaping {
+            return false;
+        }
+        let line = shape.with_sizes_of(&self.attrs_list);
+        self.shape_opt.set_used(line);
+        self.layout_opt.set_unused();
+        true
+    }
+
     /// Reset shaping and layout caches
     pub fn reset_shaping(&mut self) {
         self.shape_opt.set_unused();

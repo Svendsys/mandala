@@ -28,6 +28,9 @@
 //!   every face once per code point, direction and weight, and kept in
 //!   the font system's shape buffer ([`ShapeBuffer`]) until its
 //!   database changes.
+//! - **A line can take another's shaping at other sizes**
+//!   ([`ShapeLine::with_sizes_of`], [`BufferLine::adopt_shape`](crate::BufferLine::adopt_shape)), so a
+//!   text rescaled is laid out again without being shaped again.
 //! - **The published merge stays selectable per thread**
 //!   ([`set_reference_merge`]), so a test can hold the linear merge, and
 //!   the early stop, to the same glyphs and see the counted work they
@@ -1807,6 +1810,44 @@ impl VisualLine {
 }
 
 impl ShapeLine {
+    /// MANDALA PATCH (V1-B14, #304): this shaping with each glyph's size
+    /// taken from `attrs_list`, as [`Self::build`] with `attrs_list` would
+    /// set it, for a line whose attributes differ from the ones it was
+    /// shaped with in their metrics alone ([`BufferLine::adopt_shape`](crate::BufferLine::adopt_shape)).
+    ///
+    /// Shaping keeps advances, offsets, ascents and descents in units of
+    /// the em; the size is applied at layout, from the metrics each glyph
+    /// carries — its attributes' at its first byte (`shape_fallback`), the
+    /// line's defaults for the line, and the first span's (or the
+    /// defaults') for the ellipsis (`shape_ellipsis`). Those are the
+    /// fields rewritten here, the same way; nothing else is size.
+    ///
+    /// Cost: one pass over the glyphs, and one attribute lookup each.
+    pub(crate) fn with_sizes_of(&self, attrs_list: &AttrsList) -> Self {
+        let mut line = self.clone();
+        for span in &mut line.spans {
+            for word in &mut span.words {
+                for glyph in &mut word.glyphs {
+                    glyph.metrics_opt = attrs_list.get_span(glyph.start).metrics_opt.map(Into::into);
+                }
+            }
+        }
+        line.metrics_opt = attrs_list.defaults().metrics_opt.map(Into::into);
+        let ellipsis = if attrs_list.spans.is_empty() {
+            attrs_list.defaults()
+        } else {
+            attrs_list.get_span(0)
+        };
+        if let Some(span) = &mut line.ellipsis_span {
+            for word in &mut span.words {
+                for glyph in &mut word.glyphs {
+                    glyph.metrics_opt = ellipsis.metrics_opt.map(Into::into);
+                }
+            }
+        }
+        line
+    }
+
     /// Creates an empty line.
     ///
     /// The returned line is in an invalid state until [`Self::build_in_buffer`] is called.
