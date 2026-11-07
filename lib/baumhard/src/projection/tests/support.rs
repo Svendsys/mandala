@@ -112,7 +112,7 @@ impl Projected {
     /// The oracle (#241): the layers as kept up to date equal a full
     /// projection of the document as it now stands, and so does what the
     /// projector says of each node's drawn rectangle — and what its
-    /// consumers read of it ([`Self::consumers_agree`]). `Err` names the
+    /// consumers read of it (`consumers_agree`). `Err` names the
     /// first difference.
     pub fn check(&mut self) -> Result<(), String> {
         let mut fresh = GlyphLayers::new();
