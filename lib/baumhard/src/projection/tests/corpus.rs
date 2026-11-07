@@ -3,7 +3,7 @@
 //! The oracle's corpus (#241, Tests): seeded documents of fifty nodes or
 //! more using everything the projection draws, and seeded edits drawing
 //! on every op of the mutation vocabulary and every composite builder.
-//! Built from [`Choices`], so a sweep's case replays from its seed.
+//! Built from [`Choices`](crate::util::tests::choices::Choices), so a sweep's case replays from its seed.
 
 use glam::Vec2;
 
@@ -234,7 +234,7 @@ pub fn generated(c: &mut Choices) -> Document {
         .map(|i| (i > 0 && !c.one_in(8)).then(|| c.index(i)))
         .collect();
     let mut records: Vec<Value> = (0..count).map(|i| node_record(c, i, parents[i])).collect();
-    for i in 0..count {
+    for (i, record) in records.iter_mut().enumerate() {
         if !c.one_in(5) {
             continue;
         }
@@ -261,9 +261,9 @@ pub fn generated(c: &mut Choices) -> Document {
             }
             link
         };
-        match records[i].get_mut("links").and_then(Value::as_array_mut) {
+        match record.get_mut("links").and_then(Value::as_array_mut) {
             Some(links) => links.push(link),
-            None => records[i]["links"] = json!([link]),
+            None => record["links"] = json!([link]),
         }
     }
     // The flat list's order: depth-first pre-order, children in order.

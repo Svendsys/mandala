@@ -26,9 +26,11 @@
 //! can ask for more work than a fuzz input's time (#316). Where the
 //! engine's bound lies past the timeout the harness bounds what it feeds
 //! (TEST_CONVENTIONS §T14): a map is projected here when it holds at most
-//! one ring with text, of at most [`MAX_FRAME_GLYPHS`] characters — the
+//! one ring with text, of at most
+//! [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS) characters — the
 //! flow harnesses' one frame an input — and every coordinate a path or an
-//! outline is drawn from is within [`EXTENT`], so no path is long enough
+//! outline is drawn from is within
+//! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT), so no path is long enough
 //! for a placement near the cap.
 
 use std::sync::atomic::{AtomicUsize, Ordering};

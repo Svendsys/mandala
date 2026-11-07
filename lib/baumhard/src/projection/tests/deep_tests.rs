@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The projection of a document as deep as memory allows (design D30,
-//! §20 rule 11): a chain of [`DEEP`] nodes projected in full, edited at
+//! §20 rule 11): a chain of [`DEEP`](crate::document::tests::deep_tests::DEEP) nodes projected in full, edited at
 //! its leaf, hidden and shown again whole, moved whole, held to the
 //! oracle and hit at its leaf — every walk the projector makes over it
 //! iterative, on a default test thread and through the wasm32 node probe

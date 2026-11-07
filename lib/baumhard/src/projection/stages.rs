@@ -858,7 +858,7 @@ impl Projector {
             Content::Spans => resolve_spans(tree, id, binding, NO_RECT, &mut reads),
             Content::Text(content) => (Vec::new(), vec![(content.clone(), in_points(text, NO_RECT))]),
         };
-        let cap_flows: Vec<Option<(NodeId, Vec<NodeId>, Vec<(String, ResolvedText)>)>> = caps
+        let cap_flows: Vec<Option<CapSpans>> = caps
             .iter()
             .map(|cap| {
                 cap.map(|cap| {
@@ -1126,8 +1126,8 @@ impl Projector {
             return;
         };
         line.curve = curve;
-        for k in 0..3 {
-            unit.slots[k].want = placed[k].as_ref().and_then(|p| {
+        for (k, placed) in placed.iter_mut().enumerate() {
+            unit.slots[k].want = placed.as_ref().and_then(|p| {
                 run_data(
                     RunShape::Path {
                         run: p.run.clone(),
@@ -1138,7 +1138,7 @@ impl Projector {
                     path.zoom,
                 )
             });
-            line.flows[k].placed = placed[k].take();
+            line.flows[k].placed = placed.take();
         }
         if let Some(label) = label_at {
             line.label.t = label.t;
@@ -1253,6 +1253,10 @@ impl Projector {
     }
 }
 
+/// A cap of a line, resolved: its element, its spans' ids, and their
+/// texts and styles.
+type CapSpans = (NodeId, Vec<NodeId>, Vec<(String, ResolvedText)>);
+
 /// `flow::ring_offset` over a ring's inner extent: `inset`, the summed line
 /// heights of the rings inside it, and a `gap` after each of them. The
 /// same arithmetic in the same order — the sum is a prefix kept ring by
@@ -1268,7 +1272,7 @@ fn clearance(inset: f32, gap: f32, (heights, rings): (f32, u32)) -> f32 {
 /// debug build that shaping is most of the suite's time. Shaping is a
 /// pure function of the shape key, and the oracle compares shapes by
 /// value, so the full projection a check makes may share the shaping of
-/// an equal key it shaped before ([`memo::sharing`]). Nothing else ever
+/// an equal key it shaped before (`memo::sharing`). Nothing else ever
 /// shares: the projector's own reuse is its state's, by key, and the
 /// tests of that reuse (pointer-equal `Arc`s) never run inside
 /// `sharing`. Outside the test build the memo is not there: each
@@ -1278,24 +1282,6 @@ pub(crate) mod memo {
 
     use crate::flow::{ShapedBox, ShapedRun};
     use crate::projection::state::{BoxKey, RunKey};
-
-    #[cfg(test)]
-    mod shared {
-        use std::cell::{Cell, RefCell};
-        use std::sync::Arc;
-
-        use rustc_hash::FxHashMap;
-
-        use crate::flow::{ShapedBox, ShapedRun};
-
-        thread_local! {
-            pub(super) static ON: Cell<bool> = const { Cell::new(false) };
-            pub(super) static RUNS: RefCell<FxHashMap<String, Arc<ShapedRun>>> = RefCell::default();
-            pub(super) static BOXES: RefCell<FxHashMap<String, Arc<ShapedBox>>> = RefCell::default();
-            #[allow(clippy::type_complexity)]
-            pub(super) static PLACED: RefCell<FxHashMap<String, (Arc<ShapedRun>, Option<ShapedRun>, crate::flow::PlacedRun)>> = RefCell::default();
-        }
-    }
 
     /// Run `f` with equal keys sharing their shaping on this thread; a
     /// `sharing` inside another leaves it on when it returns.
@@ -1307,7 +1293,7 @@ pub(crate) mod memo {
         out
     }
 
-    /// The shaping of `key`: `shape`'s, or inside [`sharing`] an equal
+    /// The shaping of `key`: `shape`'s, or inside `sharing` an equal
     /// key's.
     pub(crate) fn run(key: &RunKey, shape: impl FnOnce() -> Arc<ShapedRun>) -> Arc<ShapedRun> {
         #[cfg(test)]
@@ -1325,7 +1311,7 @@ pub(crate) mod memo {
     }
 
     /// A placement of `input` with `params`: `place`'s, or inside
-    /// [`sharing`] that of an equal placement of the very same input.
+    /// `sharing` that of an equal placement of the very same input.
     pub(crate) fn placed<P: std::fmt::Debug>(
         input: &Arc<ShapedRun>,
         params: &P,
@@ -1368,5 +1354,26 @@ pub(crate) mod memo {
         }
         let _ = key;
         shape()
+    }
+
+    #[cfg(test)]
+    mod shared {
+        use std::cell::{Cell, RefCell};
+        use std::sync::Arc;
+
+        use rustc_hash::FxHashMap;
+
+        use crate::flow::{ShapedBox, ShapedRun};
+
+        /// A placement kept: the shaping it was of, the run it returned
+        /// and its positions.
+        type Kept = (Arc<ShapedRun>, Option<ShapedRun>, crate::flow::PlacedRun);
+
+        thread_local! {
+            pub(super) static ON: Cell<bool> = const { Cell::new(false) };
+            pub(super) static RUNS: RefCell<FxHashMap<String, Arc<ShapedRun>>> = RefCell::default();
+            pub(super) static BOXES: RefCell<FxHashMap<String, Arc<ShapedBox>>> = RefCell::default();
+            pub(super) static PLACED: RefCell<FxHashMap<String, Kept>> = RefCell::default();
+        }
     }
 }

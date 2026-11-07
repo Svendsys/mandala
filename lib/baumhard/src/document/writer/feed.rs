@@ -16,13 +16,14 @@
 //! reader of the current state cannot tell which of an element's
 //! resolution inputs a change touched, nor which parent a removed
 //! subtree hung from, and the projector needs both: it re-resolves only
-//! the readers of what changed ([`inputs_changed`]), and a children row
+//! the readers of what changed
+//! ([`inputs_changed`](crate::document::deps::inputs_changed)), and a children row
 //! that gained or lost an element (which section is a node's first)
 //! dirties the readers of that row. So a record also carries
 //! [`inputs`](crate::document::writer::feed::ChangeRecord::inputs) and
 //! [`rows`](crate::document::writer::feed::ChangeRecord::rows), read from
 //! the journals' own images and positions by
-//! [`effects`](crate::document::writer::feed::effects) — never from the
+//! `effects` — never from the
 //! document, which it is not given.
 
 use crate::arena::NodeId;

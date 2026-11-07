@@ -81,7 +81,7 @@
 //! # One-off questions, and walks
 //!
 //! Each resolver answers for one element. Asked as a one-off
-//! ([`Binding::Climb`]), the palette tier finds its binding by climbing
+//! ([`Binding::Climb`](crate::document::resolve::Binding::Climb)), the palette tier finds its binding by climbing
 //! from the owning node to the nearest node with a palette — O(distance
 //! to that binding), the whole depth of the node when no node above it
 //! binds one — and records the `palette` field of every node it passes.
@@ -89,9 +89,10 @@
 //! every node of a map that way would be quadratic in depth, in time and
 //! in what it records (design §20 rule 11; ruling R16 on #282).
 //!
-//! A walk carries the binding down instead ([`Binding::Carried`]): it
+//! A walk carries the binding down instead
+//! ([`Binding::Carried`](crate::document::resolve::Binding::Carried)): it
 //! works out each node's binding from its parent's once, with
-//! [`carry_binding`], and hands each resolution the owning node's. The
+//! [`carry_binding`](crate::document::resolve::carry_binding), and hands each resolution the owning node's. The
 //! palette tier then reads that one value —
 //! [`Input::Binding`](crate::document::resolve::Input::Binding) of the
 //! owning node — in place of the climb, and records nothing above it;

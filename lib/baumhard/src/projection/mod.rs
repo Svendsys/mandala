@@ -4,12 +4,12 @@
 //! proportional to what changed** (design §12, V1-B7 #241).
 //!
 //! The [`Projector`](crate::projection::Projector) turns a
-//! [`Document`] into five [`GlyphLayers`](crate::projection::GlyphLayers)
+//! [`Document`](crate::document::ids::Document) into five [`GlyphLayers`](crate::projection::GlyphLayers)
 //! — sections, frames, connections, labels and portals; there is no fill
 //! layer (D12, ruling B7.1) — each mirroring the visible nodes as nested
 //! `Void` groups that hold the nodes' `GlyphRun`s. It projects everything
-//! once at load ([`Projector::project_full`]), then consumes the
-//! document's change feed ([`Projector::update`]) and re-projects exactly
+//! once at load ([`Projector::project_full`](crate::projection::Projector::project_full)), then consumes the
+//! document's change feed ([`Projector::update`](crate::projection::Projector::update)) and re-projects exactly
 //! what the changes touched and whatever **read** something they touched,
 //! updating the layers in place through journaled glyph mutations.
 //!
