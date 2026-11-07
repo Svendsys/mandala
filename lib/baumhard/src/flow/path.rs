@@ -556,6 +556,19 @@ impl CornerForm {
         })
     }
 
+    /// Whether `s` lies within the corner's stretch, where its sides'
+    /// offsets and its sweep are walked: not on a side's offset.
+    pub(crate) fn swept(&self, s: f32) -> bool {
+        let s = s.rem_euclid(self.length);
+        let mut from = s - self.corner.at;
+        if from > 0.5 * self.length {
+            from -= self.length;
+        } else if from < -0.5 * self.length {
+            from += self.length;
+        }
+        from.abs() < self.w
+    }
+
     /// How far past `s` along the path the form holds.
     pub(crate) fn reach(&self, s: f32) -> f32 {
         let s = s.rem_euclid(self.length);

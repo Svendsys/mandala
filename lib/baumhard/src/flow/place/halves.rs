@@ -1610,7 +1610,16 @@ impl<'w> InkLay<'w> {
                         None => f32::NAN,
                     };
                     let mut rounds = PAIR_ROUNDS;
+                    #[cfg(test)]
+                    XX_TRACE.with(|t| t.borrow_mut().clear());
                     let mut set = pair(self, before, (half, rise), guess, owed, &mut rounds);
+                    #[cfg(test)]
+                    if std::env::var_os("XX_DBG").is_some() && PAIR_ROUNDS - rounds > 4 {
+                        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                        if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 12 {
+                            eprintln!("PAIRTRACE last {} model {model:?} straight {} owed {owed} : {:?}", before.center, before.center + straight * self.ratio, XX_TRACE.with(|t| t.borrow().clone()));
+                        }
+                    }
                     #[cfg(test)]
                     XX_BIAS.with(|b| {
                         if let Some(v) = b.borrow_mut().as_mut() {
@@ -1759,6 +1768,10 @@ thread_local! {
     #[cfg(test)]
     pub(crate) static XX_SOLVE: std::cell::Cell<[usize; 8]> = const { std::cell::Cell::new([0; 8]) };
     #[cfg(test)]
+    pub(crate) static XX_PAIR: std::cell::Cell<[usize; 8]> = const { std::cell::Cell::new([0; 8]) };
+    #[cfg(test)]
+    pub(crate) static XX_TRACE: std::cell::RefCell<Vec<(f32, f32)>> = const { std::cell::RefCell::new(Vec::new()) };
+    #[cfg(test)]
     pub(crate) static XX_BIAS: std::cell::RefCell<Option<Vec<(f32, f32, f32, f32)>>> = const { std::cell::RefCell::new(None) };
     /// Test counter (#309, ruling B16.1b): the letters whose first center
     /// tried was their root on the band curve's form ([`osculating`]), of
@@ -1891,11 +1904,21 @@ fn pair(
     } else {
         low + stride
     };
+    #[cfg(test)]
+    XX_PAIR.with(|w| { let mut a = w.get(); a[0] += 1; w.set(a); });
     while *rounds > 0 {
         *rounds -= 1;
+        #[cfg(test)]
+        XX_PAIR.with(|w| { let mut a = w.get(); a[1] += 1; w.set(a); });
         let set = set_at(c);
         let gap = gap_of(&set);
+        #[cfg(test)]
+        if std::env::var_os("XX_DBG").is_some() {
+            XX_TRACE.with(|t| t.borrow_mut().push((c, gap - owed)));
+        }
         if gap > 0.0 && gap >= owed - NEARER && gap <= owed + INK_TOLERANCE {
+            #[cfg(test)]
+            XX_PAIR.with(|w| { let mut a = w.get(); a[2] += 1; w.set(a); });
             return set;
         }
         tried = Some(set);
@@ -1922,7 +1945,21 @@ fn pair(
             modeled = false;
         }
         last_miss = miss.abs();
-        let model = c + along(set.at - last.at, set.moves, reach, owed);
+        let step = along(set.at - last.at, set.moves, reach, owed);
+        let model = c + step;
+        // A step the center's float cannot take: the root lies within a
+        // float of it, and the next float toward it is tried — the nudge
+        // of the closed-form layer (#309, ruling B16.2c) — where the rule
+        // alone strides on and bisects back to it.
+        let model = if model.to_bits() == c.to_bits() && step != 0.0 && layer_on() {
+            if step > 0.0 {
+                c.next_up()
+            } else {
+                c.next_down()
+            }
+        } else {
+            model
+        };
         let next = match high {
             None if model > low => model.min(low + stride),
             None => low + stride,
@@ -1949,6 +1986,8 @@ fn pair(
         // A bracket closed to a float, or a step that leaves the center
         // where it was, finds nothing more.
         if !next.gt(&low) || next.to_bits() == c.to_bits() || high.is_some_and(|(h, _)| next >= h.center) {
+            #[cfg(test)]
+            XX_PAIR.with(|w| { let mut a = w.get(); a[3] += 1; w.set(a); });
             break;
         }
         c = next;
@@ -2000,6 +2039,16 @@ fn along(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
         }
     }
     outside
+}
+
+/// Whether the closed-form layer is on (#309, ruling B16.1b): always, but
+/// in a test that turns it off ([`NO_CLOSED_FORM`]).
+fn layer_on() -> bool {
+    #[cfg(test)]
+    if NO_CLOSED_FORM.with(Cell::get) {
+        return false;
+    }
+    true
 }
 
 /// The most Newton rounds [`model_root`] takes on a form of the band
@@ -2084,6 +2133,16 @@ impl<'p> Form<'p> {
             offset,
             most: (std::f32::consts::PI / kappa.abs()).min(bend.holds),
         })
+    }
+
+    /// Whether the curve is straight where the form was taken: a side, or
+    /// a side's offset beside a corner's sweep.
+    fn straight(&self) -> bool {
+        match *self {
+            Form::Circle { kappa, .. } => kappa == 0.0,
+            Form::Corner { form, from, .. } => !form.swept(from),
+            Form::Ellipse { .. } => false,
+        }
     }
 
     /// The furthest on, in the form's own measure, that it holds.
@@ -2490,11 +2549,17 @@ fn osculating(
     owed: f32,
     offset: f32,
 ) -> Option<f32> {
-    #[cfg(test)]
-    if NO_CLOSED_FORM.with(Cell::get) {
+    if !layer_on() {
         return None;
     }
     let form = Form::of(path, last, earlier, offset)?;
+    // On a straight stretch, where the center's floats are coarser than
+    // the rule's window, the root is no better a start than the last
+    // letter's step, whose share of the straight path follows the floats
+    // the line is set on.
+    if form.straight() && ulp(last.center) >= INK_TOLERANCE + NEARER {
+        return None;
+    }
     let rooted = model_root(path, offset, form, last, letter, owed)?;
     let at = last.center + rooted.along;
     at.is_finite().then_some(at)
@@ -4260,13 +4325,15 @@ impl<'s> SideArc<'s> {
         // a hair further each widening, so that a probe brackets the root
         // a bend moved.
         let straight = self.straight(n, at_floor);
-        let mut modeled = self.model_gap(n, (straight, at_floor), tolerance, &stop);
+        let layer = layer_on();
+        let mut modeled = layer
+            .then(|| self.model_gap(n, (straight, at_floor), tolerance, &stop))
+            .flatten();
         let mut g = modeled.unwrap_or(straight);
         let mut first = true;
-        #[cfg(test)]
-        if NO_CLOSED_FORM.with(Cell::get) {
+        if !layer {
             g = straight + (at_floor / gaps) * 1e-3 + f32::MIN_POSITIVE;
-            (first, modeled) = (false, None);
+            first = false;
         }
         for _ in 0..TRACK_DOUBLINGS {
             if !g.is_finite() || stop() {
@@ -4324,7 +4391,14 @@ impl<'s> SideArc<'s> {
     /// their gaps, as a line's end a hair past its part's is laid, but
     /// copies that touch the text are no answer.
     fn solved_room(&self, lay: &InkLay<'_>, gap: f32, tolerance: f32) -> f32 {
-        let v = self.room_of(lay, gap);
+        self.shifted_room(lay, gap, tolerance, 0.0)
+    }
+
+    /// [`solved_room`](Self::solved_room), the room `lay` leaves moved by
+    /// `shift` first: a model lay's room as the copies read from the path
+    /// would leave it ([`model_gap`](Self::model_gap)).
+    fn shifted_room(&self, lay: &InkLay<'_>, gap: f32, tolerance: f32, shift: f32) -> f32 {
+        let v = self.room_of(lay, gap) + shift;
         let (end, at) = self.end_of(lay);
         if v >= 0.0 {
             v.max(f32::MIN_POSITIVE)
@@ -4338,16 +4412,21 @@ impl<'s> SideArc<'s> {
     /// The gap at which `n` copies fill the arc as model lays set them
     /// (#309, ruling B16.2d; [`InkLay::modeled`]): each copy's letters
     /// where the band curve's form puts them, no path lookup but where a
-    /// form ends. Solved as [`solve`](Self::solve) solves the copies laid
-    /// from the path — from `straight`, the straight path's root, widened
-    /// until it brackets the room `at_floor` the floor leaves, and closed
-    /// by [`falsi`] — to a quarter of `tolerance`, the middle of what a lay
-    /// read at it is judged to. `None` where it brackets no root, or the
-    /// frame cannot afford a lay (`stop`).
+    /// form ends. A model lay at the floor first tells how far its room
+    /// is from the room `at_floor` the copies read from the path leave
+    /// there — none to float error at normal scale; far out, where each
+    /// letter the rule sets lies a float past its root, their sum — and
+    /// every model room is read moved by that much, so it is the room a
+    /// lay read from the path would leave. Solved as [`solve`](Self::solve)
+    /// solves the copies read from the path — from `straight`, the
+    /// straight path's root, widened until it brackets the root, and
+    /// closed by [`falsi`] — to a quarter of `tolerance`, the middle of
+    /// what a lay read at it is judged to. `None` where it brackets no
+    /// root, or the frame cannot afford a lay (`stop`).
     ///
-    /// Cost: a model lay of `n` copies a widening and each of [`falsi`]'s
-    /// rounds, at most [`SIDE_ROUNDS`], each counted at its weight
-    /// ([`SideOrnament::modeled`]).
+    /// Cost: a model lay of `n` copies at the floor, one a widening and
+    /// one each of [`falsi`]'s rounds, at most [`SIDE_ROUNDS`], each
+    /// counted at its weight ([`SideOrnament::modeled`]).
     fn model_gap(
         &self,
         n: usize,
@@ -4357,9 +4436,15 @@ impl<'s> SideArc<'s> {
     ) -> Option<f32> {
         let gaps = self.gaps(n);
         let aim = 0.25 * tolerance;
-        let room = |gap: f32| {
+        let lay_at = |gap: f32| {
             #[cfg(test)]
             let l0 = crate::flow::path::PATH_LOOKUPS.with(Cell::get);
+            #[cfg(test)]
+            struct G(usize);
+            #[cfg(test)]
+            impl Drop for G { fn drop(&mut self) { XX_SOLVE.with(|w| { let mut a = w.get(); a[6] += crate::flow::path::PATH_LOOKUPS.with(Cell::get) - self.0; w.set(a); }); } }
+            #[cfg(test)]
+            let _g = G(l0);
             let mut lay = self.begun(gap);
             lay.modeled = true;
             for _ in 0..n {
@@ -4367,11 +4452,20 @@ impl<'s> SideArc<'s> {
                     lay.cluster(cluster, gap);
                 }
             }
-            #[cfg(test)]
-            XX_SOLVE.with(|w| { let mut a = w.get(); a[6] += crate::flow::path::PATH_LOOKUPS.with(Cell::get) - l0; w.set(a); });
             self.side.modeled(n);
-            (self.solved_room(&lay, gap, tolerance), ())
+            lay
         };
+        if stop() {
+            return None;
+        }
+        // Further than the tolerance off at the floor, the model does not
+        // tell how the copies read from the path lie: far out, where the
+        // float each letter lies past its root moves with the gap.
+        let shift = at_floor - self.room_of(&lay_at(self.floor), self.floor);
+        if !(shift.abs() <= tolerance) {
+            return None;
+        }
+        let room = |gap: f32| (self.shifted_room(&lay_at(gap), gap, tolerance, shift), ());
         let mut low = (self.floor, at_floor, ());
         let mut g = straight;
         for _ in 0..TRACK_DOUBLINGS {
