@@ -1083,7 +1083,7 @@ pub(crate) fn reshape(
 /// `None`, to be shaped instead, when `shaped` is not one line (it holds
 /// a filler), when the text holds a tab (whose last-resort check
 /// [`new_buffer`] makes after shaping), or when the line will not take
-/// the shaping. In test builds, also while [`RESHAPE_BY_SHAPING`] is set.
+/// the shaping. In test builds, also while `RESHAPE_BY_SHAPING` is set.
 ///
 /// Cost: one layout pass; no shaping.
 fn resized_buffer(

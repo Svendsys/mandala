@@ -1352,7 +1352,7 @@ pub fn measure_glyph_ink_bounds(
 /// point off the curve does not widen it. The flow's ornaments are
 /// stepped by it (#291, ruling R31).
 ///
-/// Cost: one lookup in the outline cache ([`cached_outline_bounds`]);
+/// Cost: one lookup in the outline cache (`cached_outline_bounds`);
 /// on a miss, one outline scale through `swash_cache`'s scaler and one
 /// pass over its commands.
 pub fn glyph_outline_ink(
@@ -1387,7 +1387,7 @@ pub fn glyph_outline_ink(
 /// frame's text reads its x-height from, the ink of an `x` (#308).
 ///
 /// Cost: one character-map lookup, and one lookup in the outline cache
-/// ([`cached_outline_bounds`]), an outline scale on a miss.
+/// (`cached_outline_bounds`), an outline scale on a miss.
 pub fn face_char_ink(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -1414,7 +1414,7 @@ pub fn face_char_ink(
     (min.is_finite() && max.is_finite()).then_some((min, max))
 }
 
-/// How many outline bounds [`cached_outline_bounds`] keeps on a thread
+/// How many outline bounds `cached_outline_bounds` keeps on a thread
 /// before it lets them all go and starts again: a bound on its memory,
 /// which a `Fit` that probes many sizes would otherwise grow without one.
 /// An entry is a key and two points, some 40 bytes.
@@ -1425,7 +1425,7 @@ thread_local! {
     /// glyph id, size, weight and flags (its scaler's [`CacheKey`]),
     /// `None` for a glyph with no outline.
     ///
-    /// Read and written only through [`cached_outline_bounds`], whose
+    /// Read and written only through `cached_outline_bounds`, whose
     /// `&mut FontSystem` argument is the guard of the font lock the
     /// caller holds, so the cache is used under the font-lock discipline
     /// (lib/baumhard/CONVENTIONS.md §B5) and needs no lock of its own. A
@@ -1438,7 +1438,7 @@ thread_local! {
 }
 
 /// How many outlines have been read off their faces on this thread
-/// ([`cached_outline_bounds`]'s misses): a work counter, so a test reads
+/// (`cached_outline_bounds`'s misses): a work counter, so a test reads
 /// what inking cost by difference, never by a clock.
 pub fn outline_reads() -> u64 {
     OUTLINE_READS.with(std::cell::Cell::get)

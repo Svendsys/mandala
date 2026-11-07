@@ -150,11 +150,12 @@ fn test_a_reshape_with_a_filler_still_shapes() {
     assert!(work.shapes > 0, "a filler is shaped");
 }
 
+/// A placement's shapings, its rescaled run's facts, and what it placed.
+type Placed = (u64, Option<(String, Vec<String>)>, PlacedRun);
+
 /// What placing `run` costs in shapings, and what it places, once laying
 /// its shaping out at each new size and once shaping it again.
-fn placed_both_ways(
-    place: &dyn Fn(&mut FontSystemLease) -> (Option<ShapedRun>, PlacedRun),
-) -> [(u64, Option<(String, Vec<String>)>, PlacedRun); 2] {
+fn placed_both_ways(place: &dyn Fn(&mut FontSystemLease) -> (Option<ShapedRun>, PlacedRun)) -> [Placed; 2] {
     [false, true].map(|by_shaping| {
         reshaping(by_shaping, || {
             with_fonts(|fs| {
