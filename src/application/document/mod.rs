@@ -26,6 +26,8 @@
 pub mod placard;
 pub mod selection;
 #[cfg(test)]
+mod tests;
+#[cfg(test)]
 pub(crate) mod tests_common;
 
 // Both targets': the IPC module reads it on native over the socket

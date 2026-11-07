@@ -89,7 +89,6 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "clock step frames=fast"),
     (Sel::None, "clock pause"),
     (Sel::None, "clock real ms=5"),
-
     // The verbs an owner rebuilds on the one writer refuse, naming it
     // (`commands::rebuilt_by`); their grammars stand, and the
     // completion corpus below pins those.
@@ -103,6 +102,10 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Path, "cap x=1"),
     (Sel::Path, "label x=1"),
     (Sel::Path, "spacing x=1"),
+    // A multi-selection reaches the same refusals: the owner, not the
+    // selection, decides them.
+    (Sel::Multi, "node x=1"),
+    (Sel::Multi, "mode resize"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for
@@ -218,20 +221,11 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
 /// errno string would assert the tester's locale, not the
 /// console's behavior. The prefix that stops short of it is not
 /// vacuous — it is every byte the console itself contributes, so
-/// it pins `open.rs`'s `"open {path}: {e}"` wrapper and the
-/// loader's own `"Failed to read file {path}: "` inside it, and a
-/// change to either fails this row.
+/// it pins `open.rs`'s `"open: {message}"` wrapper and
+/// `MindMapDocument::load`'s `"{path}: could not read: "` inside it,
+/// and a change to either fails this row.
 ///
 /// **Prefix matching is the weaker check, so exactly one row gets
-/// it.** The three `border show` readouts sat here too, under a
-/// "measured layout" heading claiming their bodies depend on the
-/// host's installed fonts. They do not: the cluster count is
-/// `node.size.x / (14.0 * BORDER_APPROX_CHAR_WIDTH_FRAC)` — a
-/// constant fraction of a constant floor, never a font metric —
-/// and the side runs are `SidePattern::render`'s string
-/// repetition. Nothing there is measured off a face, so all three
-/// are pinned whole in [`EXEC_CORPUS`] instead. Under a prefix
-/// they were not merely weaker but *silently* weaker: inserting a
-/// whole new line into the readout between `padding:` and `size:`
-/// passed every test in the workspace.
+/// it**: every other readout in [`EXEC_CORPUS`] is made of the
+/// console's own bytes and is pinned whole.
 pub const EXEC_PREFIX_CORPUS: &[(Sel, &str)] = &[(Sel::Node, "open /nonexistent-dir-xyz/x.mandala.json")];

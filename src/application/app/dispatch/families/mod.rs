@@ -170,4 +170,31 @@ mod tests {
         assert_eq!(dispatch(&Action::Undo), None);
         assert_eq!(dispatch(&Action::SelectAll), None);
     }
+
+    /// **No family's Action ships a binding** (V1-C3 removed each
+    /// binding with its body): the default keybinds resolve no key, no
+    /// gesture and no context to an Action a family owns, so nothing a
+    /// user presses before a rebuild lands reaches an `Unhandled` arm by
+    /// default. A user's own keybinds naming one still load.
+    ///
+    /// Control: the app's own Actions are bound, so a resolve that bound
+    /// nothing at all fails here rather than passing the loop vacuously.
+    #[test]
+    fn test_no_familys_action_ships_a_default_binding() {
+        let bound = crate::application::keybinds::KeybindConfig::default()
+            .resolve()
+            .bound_action_kinds();
+        for family in FAMILIES {
+            for kind in family.kinds {
+                assert!(
+                    !bound.contains(kind),
+                    "{kind:?} ships a default binding, but {} has not rebuilt it",
+                    family.owner
+                );
+            }
+        }
+        for kind in [ActionKind::Undo, ActionKind::Redo, ActionKind::OpenConsole] {
+            assert!(bound.contains(&kind), "control: {kind:?} is bound by default");
+        }
+    }
 }

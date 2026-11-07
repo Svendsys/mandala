@@ -1621,10 +1621,15 @@ mod tests {
         let node = crate::application::document::selection::every_node(doc.doc())
             .find(|&n| children_of_kind(doc.doc(), n, DocKind::Section).count() >= 2)
             .expect("a node with two sections");
-        let second = children_of_kind(doc.doc(), node, DocKind::Section).nth(1).expect("the second");
+        let second = children_of_kind(doc.doc(), node, DocKind::Section)
+            .nth(1)
+            .expect("the second");
         let count = children_of_kind(doc.doc(), node, DocKind::Section).count();
         let id = json!(ident(&doc, node));
-        assert_eq!(node_target(&scene, &id, Some(1)), Ok(drawn_center(&doc, &view, second)));
+        assert_eq!(
+            node_target(&scene, &id, Some(1)),
+            Ok(drawn_center(&doc, &view, second))
+        );
         assert_ne!(
             node_target(&scene, &id, Some(1)),
             node_target(&scene, &id, None),
@@ -1632,7 +1637,10 @@ mod tests {
         );
         assert_eq!(node_target(&scene, &id, Some(count)), Err(Aim::NoSection(count)));
         assert_eq!(node_target(&scene, &json!(4_000_000), None), Err(Aim::Missing));
-        assert!(matches!(node_target(&scene, &json!("1.2"), None), Err(Aim::NotANode(_))));
+        assert!(matches!(
+            node_target(&scene, &json!("1.2"), None),
+            Err(Aim::NotANode(_))
+        ));
     }
 
     /// What a hand could not click is refused, and nothing is sent: an

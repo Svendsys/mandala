@@ -22,7 +22,7 @@ use super::run_native_init::InitState;
 use super::step::Beat;
 use super::tests_gpu::TempFile;
 use crate::application::ipc::run_attached;
-use crate::application::renderer::{CanvasSource, CaptureFailure, FrameSkip, ModalLayer};
+use crate::application::renderer::{CaptureFailure, FrameSkip, ModalLayer};
 
 fn map_path(name: &str) -> String {
     format!("{}/maps/{name}", env!("CARGO_MANIFEST_DIR"))
@@ -36,7 +36,7 @@ fn draw(init: &mut InitState) {
     loop {
         match init
             .renderer
-            .capture_frame(&camera, ModalLayer::Drawn, CanvasSource::Live, &mut || {})
+            .capture_frame(&camera, ModalLayer::Drawn, &mut || {})
         {
             Ok(_) => return,
             Err(CaptureFailure::Skipped(FrameSkip::FontSystemContended)) if Instant::now() < deadline => {
@@ -97,7 +97,7 @@ fn document_text(background: Option<&str>) -> String {
 /// so none of these is the renderer's starting black restated.
 #[test]
 fn test_the_frame_is_cleared_to_the_maps_resolved_background() {
-    let Some(mut app) = headless_app(&map_path("theme_demo.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("theme_demo.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
@@ -152,109 +152,33 @@ fn act(init: &mut InitState, request: serde_json::Value) -> serde_json::Value {
 }
 
 /// **The clear follows the background through the app's own routes**,
-/// not only at load: a theme-variant switch fired by a click on
-/// `theme_demo`'s "light" node (its `OnClick` binding to the map's
-/// `switch-light` mutation, whose one document action is
-/// `SetThemeVariant`), the undo of that switch, and a reload of another
-/// map through the console's `open`. `theme_demo`'s background is
-/// `var(--bg)`, so the variant is what moves it. (The document has no
-/// redo to exercise.)
+/// not only at load: a reload of another map through the console's
+/// `open`. `theme_demo`'s background is `var(--bg)` in its dark variant,
+/// testament's is black.
 ///
-/// Controls: each step's expectation is checked against the clear the
-/// step before it left, and the two differ, so a clear that stayed
-/// where load put it — the defect this pins — fails at the first step;
-/// the document's own background is asserted to have moved first, so a
-/// click that missed the node cannot pass as a clear that did not
-/// follow.
+/// Control: the step's expectation differs from the clear load left, so
+/// a clear that stayed where load put it — the defect this pins — fails.
+/// (The theme-variant switch a click fired, and its undo, return with
+/// the map's verbs and edits: V1-D3 #252, V1-D1 #250.)
 #[test]
-fn test_the_clear_follows_a_theme_variant_switch_its_undo_and_a_reload() {
-    let Some(mut app) = headless_app(&map_path("theme_demo.mindmap.json")) else {
+fn test_the_clear_follows_a_reload_through_the_console() {
+    let Some(mut app) = headless_app(&map_path("theme_demo.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
-    let background = |init: &InitState| {
-        init.document
-            .as_ref()
-            .expect("the harness builds a document")
-            .background()
-    };
-
     draw(init);
-    let dark = srgb_clear([0x14, 0x14, 0x14]);
     assert_clear(
         init.renderer.clear_color(),
-        dark,
+        srgb_clear([0x14, 0x14, 0x14]),
         "the control: theme_demo's dark variant at load",
     );
-
-    // The click: node 2's body, the "light" switch.
-    let light_node = init
-        .document
-        .as_ref()
-        .expect("document")
-        .mindmap
-        .nodes
-        .get("2")
-        .expect("theme_demo has node 2");
-    assert!(
-        light_node
-            .trigger_bindings
-            .iter()
-            .any(|binding| binding.mutation_id == "switch-light"),
-        "precondition: node 2 is the light switch"
-    );
-    let center = glam::Vec2::new(
-        light_node.position.x as f32 + light_node.size.width as f32 / 2.0,
-        light_node.position.y as f32 + light_node.size.height as f32 / 2.0,
-    );
     act(
         init,
-        json!({"id": 1, "cmd": "input.mouse_move", "x": center.x, "y": center.y, "space": "canvas"}),
+        json!({"id": 5, "cmd": "act.console", "line": format!("open {}", map_path("testament.mandala.json"))}),
     );
-    act(
-        init,
-        json!({"id": 2, "cmd": "input.mouse_button", "button": "left", "state": "click"}),
-    );
+    let background = resolve_background(init.document.as_ref().expect("document").doc().tree(), &mut ());
     assert_eq!(
-        background(init),
-        [0xf5, 0xf1, 0xe8, 0xff],
-        "precondition: the click switched the document to the light variant"
-    );
-    draw(init);
-    let light = srgb_clear([0xf5, 0xf1, 0xe8]);
-    assert_clear(
-        init.renderer.clear_color(),
-        light,
-        "the light variant, switched by a click (the control is the dark clear above)",
-    );
-
-    // The undo restores the dark variant, and the clear with it.
-    act(init, json!({"id": 3, "cmd": "act.action", "action": "Undo"}));
-    assert_eq!(
-        background(init),
-        [0x14, 0x14, 0x14, 0xff],
-        "precondition: the undo restored the dark variant"
-    );
-    draw(init);
-    assert_clear(
-        init.renderer.clear_color(),
-        dark,
-        "the dark variant after the undo (the control is the light clear above)",
-    );
-
-    // A reload: another map, through the console. The switch dirtied the
-    // map, so it is saved first, as the dirty guard asks.
-    let saved = TempFile::new("background-reload", "mindmap.json");
-    act(
-        init,
-        json!({"id": 4, "cmd": "act.console", "line": format!("save {}", saved.as_str())}),
-    );
-    act(
-        init,
-        json!({"id": 5, "cmd": "act.console", "line": format!("open {}", map_path("testament.mindmap.json"))}),
-    );
-    assert_eq!(
-        background(init),
+        background.0,
         [0, 0, 0, 0xff],
         "precondition: testament is open, and its background is black"
     );
@@ -283,20 +207,15 @@ fn test_the_clear_follows_a_theme_variant_switch_its_undo_and_a_reload() {
 /// section on screen — a content fill, counted.
 #[test]
 fn test_a_frame_draws_no_content_fill() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
     let doc = init.document.as_ref().expect("the harness builds a document");
-    let filled = doc
-        .mindmap
-        .nodes
-        .values()
-        .filter(|node| !node.style.background_color.is_empty())
-        .count();
+    let nodes = crate::application::document::selection::every_node(doc.doc()).count();
     assert!(
-        filled > 100,
-        "precondition: testament's nodes carry the background colors the old pass drew ({filled})"
+        nodes > 100,
+        "precondition: testament is drawn whole ({nodes} nodes)"
     );
 
     draw(init);
@@ -339,27 +258,49 @@ fn test_a_frame_draws_no_content_fill() {
     // The canvas half's control: testament with every section's text a
     // fill block in the backdrop's face.
     let mut map: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(map_path("testament.mindmap.json")).expect("testament"),
+        &std::fs::read_to_string(map_path("testament.mandala.json")).expect("testament"),
     )
     .expect("testament is JSON");
-    let mut sections = 0;
-    for node in map["nodes"].as_object_mut().expect("nodes").values_mut() {
-        for section in node["sections"].as_array_mut().into_iter().flatten() {
-            section["text"] = json!("\u{2588}");
-            section["text_runs"] =
-                json!([{"start": 0, "end": 1, "font": "Public Pixel", "size_pt": 74.0, "color": "#ffffff"}]);
-            sections += 1;
+    fn block_every_section(value: &mut serde_json::Value, sections: &mut usize) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(spans) = object.get_mut("spans") {
+                    *spans = json!([{"text": "\u{2588}", "font": "Public Pixel", "size": 74.0, "color": "#ffffff"}]);
+                    *sections += 1;
+                }
+                // A frame's rings are sized by the ring, not by their
+                // spans: only a section's text is rewritten.
+                for (key, child) in object.iter_mut() {
+                    if key != "frame" {
+                        block_every_section(child, sections);
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    block_every_section(item, sections);
+                }
+            }
+            _ => {}
         }
     }
+    let mut sections = 0;
+    block_every_section(&mut map, &mut sections);
     assert!(
         sections > 100,
         "precondition: the map's sections are rewritten ({sections})"
     );
-    let blocks = TempFile::new("fill-census", "mindmap.json");
+    let blocks = TempFile::new("fill-census", "mandala.json");
     std::fs::write(blocks.as_str(), map.to_string()).expect("the temp map is written");
     let Some(mut blocked) = headless_app(blocks.as_str()) else {
         return;
     };
+    let loaded = blocked.init.document.as_ref().expect("a document");
+    assert!(
+        !loaded.is_load_failure_placard(),
+        "precondition: the rewritten map loads ({:?})",
+        loaded.status()
+    );
     draw(&mut blocked.init);
     let census = blocked.init.renderer.fill_census_of_last_frame();
     assert!(
@@ -381,7 +322,7 @@ fn test_a_frame_draws_no_content_fill() {
 /// fresh rebuild rather than passing it by coincidence.
 #[test]
 fn test_a_resize_lays_the_open_console_out_again() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
@@ -454,7 +395,7 @@ fn test_a_linear_target_hands_both_glyph_passes_the_linear_encoding() {
 
     // The control first: the app's own renderer.
     {
-        let Some(app) = headless_app(&map_path("testament.mindmap.json")) else {
+        let Some(app) = headless_app(&map_path("testament.mandala.json")) else {
             return;
         };
         assert_eq!(
@@ -479,7 +420,7 @@ fn test_a_linear_target_hands_both_glyph_passes_the_linear_encoding() {
     loop {
         match linear
             .renderer
-            .capture_frame(&camera, ModalLayer::Drawn, CanvasSource::Live, &mut || {})
+            .capture_frame(&camera, ModalLayer::Drawn, &mut || {})
         {
             Ok(_) => break,
             Err(CaptureFailure::Skipped(FrameSkip::FontSystemContended)) if Instant::now() < deadline => {

@@ -533,8 +533,14 @@ mod tests {
         drop(effects);
         assert!(!outcome.applied(), "a refused line did not apply");
         let message = console_output(outcome).expect_err("the refusal is an error reply");
-        assert!(message.starts_with("section: "), "the verb names itself: {message}");
-        assert!(message.contains("V1-C5 (#246)"), "the error names the owner: {message}");
+        assert!(
+            message.starts_with("section: "),
+            "the verb names itself: {message}"
+        );
+        assert!(
+            message.contains("V1-C5 (#246)"),
+            "the error names the owner: {message}"
+        );
         assert_eq!(doc.revision(), revision);
     }
 

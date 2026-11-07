@@ -16,8 +16,6 @@
 
 use std::collections::HashMap;
 
-#[cfg(test)]
-use baumhard::arena::NodeId;
 use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
 use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use glam::Vec2;
@@ -160,33 +158,10 @@ impl AppScene {
         }
     }
 
-    /// Hit-test the overlay scene: which overlay, and which element of
-    /// its tree, is under `screen_pt`. Test-gated: each modal hit-tests
-    /// its own geometry (the picker's `hit_test_picker`, the console's
-    /// row math), so nothing asks the scene which overlay a point is
-    /// over.
-    #[cfg(test)]
-    pub fn overlay_at(&mut self, screen_pt: Vec2) -> Option<(OverlayRole, NodeId)> {
-        let hit = self.overlay.component_at(screen_pt)?;
-        let role = self.overlay_role_for_id(hit.0)?;
-        Some((role, hit.1))
-    }
-
     fn overlay_role_slot_mut(&mut self, role: OverlayRole) -> &mut Option<SceneTreeId> {
         match role {
             OverlayRole::Console => &mut self.console,
             OverlayRole::ColorPicker => &mut self.color_picker,
-        }
-    }
-
-    #[cfg(test)]
-    fn overlay_role_for_id(&self, id: SceneTreeId) -> Option<OverlayRole> {
-        if Some(id) == self.console {
-            Some(OverlayRole::Console)
-        } else if Some(id) == self.color_picker {
-            Some(OverlayRole::ColorPicker)
-        } else {
-            None
         }
     }
 }
@@ -211,12 +186,16 @@ mod tests {
             scene.overlay_dispatch(OverlayRole::Console, 8),
             OverlayDispatch::FullRebuild
         );
+        assert_eq!(
+            scene.overlay_ids_in_layer_order(),
+            vec![first],
+            "control: one tree before"
+        );
         let second = scene.register_overlay(OverlayRole::Console, GfxTree::new_non_indexed(), Vec2::ZERO);
-        assert_ne!(first, second);
         assert_eq!(
             scene.overlay_ids_in_layer_order(),
             vec![second],
-            "the first tree was removed"
+            "one tree after: the first was removed, not kept beside the second (its slot may be reused)"
         );
         scene.unregister_overlay(OverlayRole::Console);
         assert_eq!(scene.overlay_id(OverlayRole::Console), None);

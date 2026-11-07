@@ -709,6 +709,17 @@ impl Renderer {
         }
     }
 
+    /// How many glyphon text buffers the renderer holds: the overlays'
+    /// (FPS, mode status, rubber band, console and picker). The glyph
+    /// layers add none — what the GPU-backed tests hold a run to.
+    #[cfg(test)]
+    pub(crate) fn glyphon_buffer_count(&self) -> usize {
+        self.fps_overlay_buffers.len()
+            + self.mode_status_overlay_buffers.len()
+            + self.overlay_buffers.len()
+            + self.overlay_scene_elements.len()
+    }
+
     /// What the positioned-glyph pass held at the last prepared frame,
     /// and its running totals — for the GPU-backed tests, which assert
     /// on structure (runs, instances, draw calls, atlas insertions),

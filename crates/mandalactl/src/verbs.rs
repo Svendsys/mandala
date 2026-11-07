@@ -259,7 +259,7 @@ pub const VERBS: &[Verb] = &[
     Verb {
         name: "query.status",
         summary:
-            "The mode-status line the screen shows (\"editing: 1.2 ...\"), or null when none is showing.",
+            "The status lines: the mode line the screen shows, and the document's last refused change.",
         params: &[],
         positional: &[],
         effect: Effect::Reads,
@@ -267,17 +267,8 @@ pub const VERBS: &[Verb] = &[
         example: "mandalactl query.status",
     },
     Verb {
-        name: "query.animations",
-        summary: "Running animations with their phase and progress; active=false means they have settled.",
-        params: &[],
-        positional: &[],
-        effect: Effect::Reads,
-        render: Render::Flat,
-        example: "mandalactl query.animations",
-    },
-    Verb {
         name: "query.editors",
-        summary: "Live state of the console, color picker, text editors and the document's active previews.",
+        summary: "Live state of the open modals: the console and the color picker; null when closed.",
         params: &[],
         positional: &[],
         effect: Effect::Reads,
@@ -296,7 +287,7 @@ pub const VERBS: &[Verb] = &[
     Verb {
         name: "scene.dump",
         summary:
-            "What is drawn: nodes, edges, labels, portals with canvas/surface rects, visibility and text.",
+            "What is drawn: nodes, paths, labels, portals with canvas/surface rects, visibility and text.",
         params: &[
             param("include", STRING, false),
             param("kinds", ARRAY, false),
@@ -320,11 +311,11 @@ pub const VERBS: &[Verb] = &[
     Verb {
         name: "scene.node_geometry",
         summary: "One node: model position and size, whether it is drawn and where, what overlaps it.",
-        params: &[param("node_id", STRING, true)],
+        params: &[param("node_id", INTEGER, true)],
         positional: &["node_id"],
         effect: Effect::Reads,
         render: Render::Flat,
-        example: "mandalactl scene.node_geometry 1.2",
+        example: "mandalactl scene.node_geometry 2",
     },
     Verb {
         name: "scene.hit_test",
@@ -439,7 +430,7 @@ pub const VERBS: &[Verb] = &[
         name: "input.click_node",
         summary: "Click the center of a node (or of one section=) by id; mods=shift extends the selection.",
         params: &[
-            param("node_id", STRING, true),
+            param("node_id", INTEGER, true),
             param("section", INTEGER, false),
             BUTTON,
             MODS,
@@ -447,7 +438,7 @@ pub const VERBS: &[Verb] = &[
         positional: &["node_id"],
         effect: Effect::Mutates,
         render: Render::Flat,
-        example: "mandalactl input.click_node 1.2",
+        example: "mandalactl input.click_node 2",
     },
     Verb {
         name: "input.pending",
@@ -542,7 +533,7 @@ pub const VERBS: &[Verb] = &[
     Verb {
         name: "clock.wait",
         summary:
-            "Wait until the app is settled (or animations_complete); timeout_ms= is wall-clock, default 10000.",
+            "Wait until the app is settled: no frames left to run, the latest one drawn; timeout_ms= is wall-clock, default 10000.",
         params: &[param("until", STRING, true), param("timeout_ms", INTEGER, false)],
         positional: &["until"],
         effect: Effect::Reads,

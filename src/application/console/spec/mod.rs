@@ -413,12 +413,9 @@ impl Subverb {
     }
 
     /// A subverb opening a nested level.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-        )
+    #[expect(
+        dead_code,
+        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
     )]
     pub const fn nested(
         name: &'static str,

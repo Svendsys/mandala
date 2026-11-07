@@ -57,6 +57,9 @@ pub enum Sel {
 /// The testament map with `sel` selected.
 pub fn doc_for(sel: Sel) -> MindMapDocument {
     let mut doc = testament();
+    // Unbound, so a bare `save` in the corpus is refused rather than
+    // writing over the committed map.
+    doc.file_path = None;
     let nodes: Vec<_> = every_node(doc.doc()).collect();
     match sel {
         Sel::None => {}
@@ -273,5 +276,4 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
             );
         }
     }
-
 }

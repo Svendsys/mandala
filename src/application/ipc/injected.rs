@@ -402,19 +402,16 @@ mod tests {
             "event_mouse_click.rs",
             "event_cursor_moved.rs",
             "event_keyboard.rs",
-            "click.rs",
             "touch_gesture.rs",
-            "modal_editor.rs",
+            "drain_frame.rs",
         ]
         .iter()
         .map(|f| repo_path(&format!("src/application/app/{f}")))
         .collect();
         for dir in [
-            "throttled_interaction",
             "dispatch",
             "dispatch/cross_dispatch",
-            "text_edit",
-            "single_line_edit",
+            "dispatch/families",
             "console_input",
             "color_picker_flow",
         ] {

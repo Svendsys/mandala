@@ -69,20 +69,14 @@ pub struct Descent<'a> {
     /// `canvas border show`, `["section-frame", "focused"]` for
     /// `canvas section-frame focused preset heavy`. Empty when the
     /// walk never left the verb's own level.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-        )
+    #[expect(
+        dead_code,
+        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
     )]
     path: [Option<&'static Subverb>; MAX_DEPTH],
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-        )
+    #[expect(
+        dead_code,
+        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
     )]
     depth: usize,
 }
@@ -99,12 +93,9 @@ impl<'a> Descent<'a> {
     /// The subverb the walk descended through at step `i`, counting
     /// from the verb's own level. This is how a handler asks "which
     /// branch am I in" without ever seeing a token index.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-        )
+    #[expect(
+        dead_code,
+        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
     )]
     pub fn parent(&self, i: usize) -> Option<&'static Subverb> {
         if i >= self.depth {
@@ -115,12 +106,9 @@ impl<'a> Descent<'a> {
 
     /// The name of [`Self::parent`] at step `i`, for the `match` a
     /// handler writes.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-        )
+    #[expect(
+        dead_code,
+        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
     )]
     pub fn parent_name(&self, i: usize) -> Option<&'static str> {
         self.parent(i).map(|s| s.name)
@@ -175,12 +163,9 @@ impl<'a> Descent<'a> {
     /// the same sentence. Reading it off the descent is also what
     /// keeps the raw token slice out of a verb's hands: the only
     /// thing a handler passes is the `args` it already has.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-        )
+    #[expect(
+        dead_code,
+        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
     )]
     pub fn quoting_hint(&self, args: &Args) -> String {
         unquoted_multiword_hint(
@@ -344,12 +329,9 @@ pub fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> bool {
 /// message exists for — suggested ``border palette="Sans"``, naming
 /// a key the user had not typed and quoting the tail of the value
 /// rather than the value.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-    )
+#[expect(
+    dead_code,
+    reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
 )]
 fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb: &str) -> String {
     let suggestion = split_kv_suggestion(tokens, verb_pos).unwrap_or_else(|| format!("<key>=\"{}\"", verb));
@@ -380,12 +362,9 @@ fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb
 ///
 /// `None` only if no kv precedes the positional — impossible at
 /// every call site, since the hint fires precisely when one does.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
-    )
+#[expect(
+    dead_code,
+    reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
 )]
 fn split_kv_suggestion(tokens: &[String], verb_pos: usize) -> Option<String> {
     let end = tokens

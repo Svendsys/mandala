@@ -446,8 +446,6 @@ mod tests {
         assert_eq!(
             events,
             [
-                "animation_completed",
-                "animation_started",
                 "camera_changed",
                 "connection_rejected",
                 "document_changed",

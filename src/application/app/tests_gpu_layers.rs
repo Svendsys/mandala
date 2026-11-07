@@ -50,7 +50,7 @@ use serde_json::{json, Value};
 use super::gpu_harness::{headless_app, HARNESS_SIZE};
 use super::run_native_init::InitState;
 use crate::application::renderer::LayerRenderer;
-use crate::application::renderer::{CanvasSource, CaptureFailure, CapturedPixels, FrameSkip, ModalLayer};
+use crate::application::renderer::{CaptureFailure, CapturedPixels, FrameSkip, ModalLayer};
 
 /// Where the documents are drawn: far from every node of the harness's
 /// own map.
@@ -63,7 +63,7 @@ const OUT_ENV: &str = "MANDALA_LAYERS_OUT";
 const FILL: f32 = 0.94;
 
 fn harness_map() -> String {
-    format!("{}/maps/testament.mindmap.json", env!("CARGO_MANIFEST_DIR"))
+    format!("{}/maps/testament.mandala.json", env!("CARGO_MANIFEST_DIR"))
 }
 
 /// The map `text`, every node moved by [`FAR`], loaded. A node's
@@ -247,7 +247,7 @@ fn draw(init: &mut InitState, camera: &Camera2D) -> CapturedPixels {
     loop {
         match init
             .renderer
-            .capture_frame(camera, ModalLayer::Omitted, CanvasSource::Live, &mut || {})
+            .capture_frame(camera, ModalLayer::Omitted, &mut || {})
         {
             Ok(pixels) => return pixels,
             Err(CaptureFailure::Skipped(FrameSkip::FontSystemContended)) if Instant::now() < deadline => {
@@ -275,7 +275,10 @@ fn write_png(name: &str, pixels: &CapturedPixels) {
 fn show(init: &mut InitState, p: &Projected) {
     init.renderer
         .set_background(resolve_background(p.doc.tree(), &mut ()).0);
-    init.renderer.load_layers(&p.layers);
+    init.renderer.load_view(
+        &p.layers,
+        &baumhard::gfx_structs::tree::GfxTree::new_non_indexed(),
+    );
 }
 
 /// Bring the renderer up to date with every change `p`'s document
@@ -329,7 +332,7 @@ fn test_gpu_layers_draw_every_run_of_the_layers_in_one_draw() {
         return;
     };
     let init = &mut app.init;
-    let buffers_before = init.renderer.canvas_text_buffer_count();
+    let buffers_before = init.renderer.glyphon_buffer_count();
     let mut cases: Vec<(String, Document)> = maps()
         .into_iter()
         .map(|(name, path)| {
@@ -362,7 +365,7 @@ fn test_gpu_layers_draw_every_run_of_the_layers_in_one_draw() {
         assert_eq!(counts.draws, 1, "{name}: one draw call: {counts:?}");
         assert!(counts.instances > 0, "{name}: glyphs are drawn: {counts:?}");
         assert_eq!(
-            init.renderer.canvas_text_buffer_count(),
+            init.renderer.glyphon_buffer_count(),
             buffers_before,
             "{name}: the layers add no glyphon buffer"
         );

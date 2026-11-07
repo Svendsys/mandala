@@ -256,15 +256,29 @@ mod tests {
     fn test_run_macro_steps_gates_an_anonymous_sequence_by_the_tier_it_is_given() {
         let steps = vec![
             MacroStep::Action { action: Action::Undo },
-            MacroStep::ConsoleLine { line: "fps on".into() },
+            MacroStep::ConsoleLine {
+                line: "fps on".into(),
+            },
         ];
         let mut user = MockTarget::new(MacroRegistry::new());
-        assert!(run_macro_steps("(ipc steps)", &steps, SourceTier::User, &mut user));
-        assert_eq!(user.calls, vec!["action:Undo".to_string(), "console:fps on".to_string()]);
+        assert!(run_macro_steps(
+            "(ipc steps)",
+            &steps,
+            SourceTier::User,
+            &mut user
+        ));
+        assert_eq!(
+            user.calls,
+            vec!["action:Undo".to_string(), "console:fps on".to_string()]
+        );
 
         let mut app = MockTarget::new(MacroRegistry::new());
         assert!(run_macro_steps("(ipc steps)", &steps, SourceTier::App, &mut app));
-        assert_eq!(app.calls, vec!["action:Undo".to_string()], "the console line is refused");
+        assert_eq!(
+            app.calls,
+            vec!["action:Undo".to_string()],
+            "the console line is refused"
+        );
     }
 
     /// Both rejections are logged under `GATE_REJECTED_CODE`, so a
@@ -328,7 +342,10 @@ mod tests {
         };
         let only = macro_with_steps("only", vec![edit.clone()]);
         let mixed = macro_with_steps("mixed", vec![edit, MacroStep::Action { action: Action::Undo }]);
-        let mut t = MockTarget::new(registry_with(vec![(only, SourceTier::User), (mixed, SourceTier::User)]));
+        let mut t = MockTarget::new(registry_with(vec![
+            (only, SourceTier::User),
+            (mixed, SourceTier::User),
+        ]));
         assert!(!dispatch_macro("only", &mut t));
         assert!(t.calls.is_empty());
         assert!(dispatch_macro("mixed", &mut t));
@@ -343,7 +360,9 @@ mod tests {
             "m",
             vec![
                 MacroStep::Action { action: Action::Undo },
-                MacroStep::ConsoleLine { line: "fps on".into() },
+                MacroStep::ConsoleLine {
+                    line: "fps on".into(),
+                },
             ],
         );
         let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));

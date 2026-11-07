@@ -16,7 +16,7 @@
 //! is still callable, typed from the app's own `describe`.
 //!
 //! **Kept apart from `maptool` on purpose.** That tool reads
-//! `.mindmap.json` files and never talks to a process; this talks to a
+//! `.mandala.json` files and never talks to a process; this talks to a
 //! process and never reads a map. Its one client-side command,
 //! `record assemble <dir>` (the `assemble` module) reads a *recording's* frames
 //! and manifest — never a map, and never the socket.

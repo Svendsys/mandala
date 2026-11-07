@@ -665,7 +665,11 @@ mod tests {
         let doc = app.doc.as_mut().expect("loaded");
         assert!(doc.is_dirty(), "dirty is untouched");
         assert_eq!(doc.revision(), revision, "no change is made or undone");
-        assert_eq!(doc.save_json().expect("saves"), model_before, "the model is untouched");
+        assert_eq!(
+            doc.save_json().expect("saves"),
+            model_before,
+            "the model is untouched"
+        );
     }
 
     /// The queries answer with what the document holds, through the
@@ -685,7 +689,9 @@ mod tests {
         };
         let doc = app.doc.as_ref().expect("loaded");
         let node_count = crate::application::document::selection::every_node(doc.doc()).count();
-        let ident = crate::application::view::inspect::ident_of(doc.doc(), node).expect("a node").0;
+        let ident = crate::application::view::inspect::ident_of(doc.doc(), node)
+            .expect("a node")
+            .0;
         let name = doc.name().to_string();
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.document"}"#, &mut app);
@@ -712,7 +718,10 @@ mod tests {
         assert_eq!(reply["result"]["depth"], json!(1));
         assert_eq!(reply["result"]["entries"][0]["label"], json!("test: create root"));
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.selection"}"#, &mut app);
-        assert_eq!(reply["result"], json!({ "count": 1, "elements": [{ "node": ident }] }));
+        assert_eq!(
+            reply["result"],
+            json!({ "count": 1, "elements": [{ "node": ident }] })
+        );
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.camera"}"#, &mut app);
         assert_eq!(reply["result"], json!({ "shell_state": "Camera" }));
     }

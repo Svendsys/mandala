@@ -338,8 +338,8 @@ mod tests {
     /// small enough that "these two and nothing else" is a statement
     /// a test can make.
     const WASM_ENTRY_BODY: &str = "{ let fetched = fetch_map_json(url).await; \
-                                   adopt(startup_surface(url, browser_load(url, fetched, history_limit), \
-                                   history_limit)) }";
+                                   adopt(startup_surface( url, browser_load(url, fetched, history_limit), \
+                                   history_limit, )) }";
 
     /// `code` with every run of whitespace collapsed to one space.
     fn flatten(code: &str) -> String {

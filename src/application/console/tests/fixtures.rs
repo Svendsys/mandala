@@ -16,12 +16,6 @@ pub(super) fn load_test_doc() -> MindMapDocument {
     crate::application::document::tests_common::testament()
 }
 
-/// Collapse a slice of `OutputLine` values into one `\n`-joined
-/// `String`, for the substring assertions across the console tests.
-pub(in crate::application::console) fn join_lines(lines: &[crate::application::console::OutputLine]) -> String {
-    lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n")
-}
-
 /// Assert `result` is `ExecResult::Err(_)` whose message contains
 /// `needle`. Surfaces both halves of the assertion in the panic message
 /// so a substring drift doesn't print just `false`.

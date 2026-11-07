@@ -96,14 +96,7 @@ fn test_default_config_resolves_every_documented_binding() {
     let cases: &[BindingCase] = &[
         // Document context (the bare-context resolver).
         (None, "z", true, false, false, Action::Undo),
-        (None, "p", true, false, false, Action::EnterReparentMode),
-        (None, "d", true, false, false, Action::EnterConnectMode),
-        (None, "delete", false, false, false, Action::DeleteSelection),
         (None, "escape", false, false, false, Action::ExitMode),
-        (None, "n", true, false, false, Action::CreateOrphanNode),
-        (None, "o", true, false, false, Action::OrphanSelection),
-        (None, "enter", false, false, false, Action::EditSelection),
-        (None, "backspace", false, false, false, Action::EditSelectionClean),
         (None, "undo", false, false, false, Action::Undo), // bare alias
         // Console.
         (
@@ -187,80 +180,8 @@ fn test_default_config_resolves_every_documented_binding() {
             Action::ConsoleInsertSpace,
         ),
         // ColorPicker.
-        (
-            Some(InputContext::ColorPicker),
-            "escape",
-            false,
-            false,
-            false,
-            Action::PickerCancel,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "enter",
-            false,
-            false,
-            false,
-            Action::PickerCommit,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "h",
-            false,
-            false,
-            false,
-            Action::PickerNudgeHueDown,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "h",
-            false,
-            true,
-            false,
-            Action::PickerNudgeHueUp,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "s",
-            false,
-            false,
-            false,
-            Action::PickerNudgeSatDown,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "v",
-            false,
-            false,
-            false,
-            Action::PickerNudgeValDown,
-        ),
         // LabelEdit.
-        (
-            Some(InputContext::LabelEdit),
-            "escape",
-            false,
-            false,
-            false,
-            Action::LabelEditCancel,
-        ),
-        (
-            Some(InputContext::LabelEdit),
-            "enter",
-            false,
-            false,
-            false,
-            Action::LabelEditCommit,
-        ),
         // TextEdit.
-        (
-            Some(InputContext::TextEdit),
-            "escape",
-            false,
-            false,
-            false,
-            Action::TextEditCancel,
-        ),
     ];
 
     for &(ctx, key, ctrl, shift, alt, ref expected) in cases {
@@ -715,15 +636,6 @@ fn test_wasm_compatibility_label_edit_primitives_are_native_only() {
 // re-introducing the empty-canvas double-click that the user
 // asked us to remove) fails one of these tests.
 
-#[test]
-fn test_double_click_activate_default_resolves_to_action() {
-    let r = KeybindConfig::default().resolve();
-    assert_eq!(
-        r.action_for_context(InputContext::Document, "doubleclick", false, false, false),
-        Some(Action::DoubleClickActivate)
-    );
-}
-
 /// `Action::SetFramePreview` round-trips through the JSON
 /// config — pre-fix the Action variant existed and was
 /// dispatched but had no `KeybindConfig` field, so users could
@@ -913,12 +825,17 @@ fn test_action_for_gesture_falls_back_to_unmodified_binding() {
     );
 }
 
-/// Default `Ctrl+RightDrag` resolves to `FastResizeStart`. Pins
-/// the gesture binding — without it, threshold-cross on
-/// PendingRight would no-op silently.
+/// A `Ctrl+RightDrag` binding resolves to its Action through the
+/// gesture lookup. The binding is the test's own: `FastResizeStart`
+/// ships unbound until V1-C7 (#248) rebuilds it, and a user's keybinds
+/// naming it still load.
 #[test]
-fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
-    let r = KeybindConfig::default().resolve();
+fn test_a_ctrl_right_drag_binding_resolves_to_fast_resize_start() {
+    let r = KeybindConfig {
+        fast_resize_start: vec!["Ctrl+RightDrag".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
     assert_eq!(
         r.action_for_gesture("rightdrag", true, false, false),
         Some(Action::FastResizeStart),
@@ -926,22 +843,33 @@ fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
     );
 }
 
-/// Bare `RightDrag` (no Ctrl) returns `None` with the default
-/// config — only `Ctrl+RightDrag` is bound. The
-/// modifier-fallback mechanism flows the *other* way: a key
-/// pressed with modifiers can fall back to a bare binding, but
-/// a key pressed bare can't escalate to a modified binding.
-/// This pins the default posture so a user pressing right-drag
-/// without Ctrl doesn't accidentally trigger fast-resize.
+/// Bare `RightDrag` (no Ctrl) returns `None` when only
+/// `Ctrl+RightDrag` is bound. The modifier-fallback mechanism flows
+/// the *other* way: a key pressed with modifiers can fall back to a
+/// bare binding, but a key pressed bare can't escalate to a modified
+/// binding, so a user pressing right-drag without Ctrl doesn't
+/// trigger the modified binding by accident.
+///
+/// Control: the modified form resolves under the same binding, so the
+/// `None` is the escalation refused rather than a binding that never
+/// loaded.
 #[test]
-fn test_bare_right_drag_returns_none_with_default_config() {
-    let r = KeybindConfig::default().resolve();
+fn test_bare_right_drag_does_not_escalate_to_a_ctrl_binding() {
+    let r = KeybindConfig {
+        fast_resize_start: vec!["Ctrl+RightDrag".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        Some(Action::FastResizeStart),
+        "control: the bound form resolves"
+    );
     assert_eq!(
         r.action_for_gesture("rightdrag", false, false, false),
         None,
-        "bare RightDrag must not resolve to anything by default; \
-         the default binding is Ctrl+RightDrag and modifier-fallback \
-         doesn't escalate from bare to modified"
+        "bare RightDrag must not resolve to the Ctrl+RightDrag binding; \
+         modifier-fallback doesn't escalate from bare to modified"
     );
 }
 
@@ -968,11 +896,17 @@ fn test_user_rebind_to_bare_right_drag_works() {
     );
 }
 
-/// `LongPress` resolves to `EnterResizeMode` by default — the
-/// touch peer of the keyboard's `r`.
+/// A `LongPress` binding resolves to its Action through the gesture
+/// lookup — the touch peer of the keyboard's `r`. The binding is the
+/// test's own: `EnterResizeMode` ships unbound until V1-C7 (#248)
+/// rebuilds it.
 #[test]
-fn test_default_long_press_resolves_to_enter_resize_mode() {
-    let r = KeybindConfig::default().resolve();
+fn test_a_long_press_binding_resolves_to_enter_resize_mode() {
+    let r = KeybindConfig {
+        enter_resize_mode: vec!["r".into(), "LongPress".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
     assert_eq!(
         r.action_for_gesture("longpress", false, false, false),
         Some(Action::EnterResizeMode),
@@ -1127,38 +1061,6 @@ fn test_every_retired_name_is_normalized_and_out_of_the_live_vocabulary() {
             retired.spelling
         );
     }
-}
-
-/// Default `enter_resize_mode` config carries both `r` (kbd)
-/// and `LongPress` (touch). Pins the JSON-default shape so a
-/// regression that drops the touch entry is caught at config-
-/// resolution time.
-#[test]
-fn test_default_enter_resize_mode_includes_long_press() {
-    let cfg = KeybindConfig::default();
-    assert!(
-        cfg.enter_resize_mode.iter().any(|s| s == "LongPress"),
-        "default enter_resize_mode must include LongPress; got: {:?}",
-        cfg.enter_resize_mode
-    );
-    assert!(
-        cfg.enter_resize_mode.iter().any(|s| s == "r"),
-        "default enter_resize_mode must still include `r`; got: {:?}",
-        cfg.enter_resize_mode
-    );
-}
-
-/// `fast_resize_start` keeps its mouse gesture and has no touch
-/// entry: the touch peer it used to carry, `TwoFingerDrag`, is gone
-/// (see `test_two_finger_drag_is_not_a_bindable_gesture`).
-#[test]
-fn test_default_fast_resize_start_is_the_right_drag_only() {
-    let cfg = KeybindConfig::default();
-    assert_eq!(
-        cfg.fast_resize_start,
-        vec!["Ctrl+RightDrag".to_string()],
-        "fast_resize_start ships bound to Ctrl+RightDrag and nothing else"
-    );
 }
 
 /// `RightClick` ships unbound by default. Pins the default
@@ -1394,22 +1296,11 @@ fn test_all_document_defaults_resolve_via_action_for_context() {
     let cases: &[(Action, &str, bool, bool, bool)] = &[
         (Action::Undo, "z", true, false, false),
         (Action::Undo, "undo", false, false, false),
-        (Action::EnterReparentMode, "p", true, false, false),
-        (Action::EnterConnectMode, "d", true, false, false),
-        (Action::DeleteSelection, "delete", false, false, false),
+        (Action::Redo, "z", true, true, false),
+        (Action::Redo, "y", true, false, false),
         (Action::ExitMode, "escape", false, false, false),
-        (Action::CreateOrphanNode, "n", true, false, false),
-        (Action::OrphanSelection, "o", true, false, false),
-        (Action::EditSelection, "enter", false, false, false),
-        (Action::EditSelectionClean, "backspace", false, false, false),
         (Action::OpenConsole, "/", false, false, false),
         (Action::SaveDocument, "s", true, false, false),
-        (Action::Copy, "c", true, false, false),
-        (Action::Copy, "copy", false, false, false),
-        (Action::Paste, "v", true, false, false),
-        (Action::Paste, "paste", false, false, false),
-        (Action::Cut, "x", true, false, false),
-        (Action::Cut, "cut", false, false, false),
     ];
     for (action, key, ctrl, shift, alt) in cases {
         assert_eq!(
@@ -1443,7 +1334,7 @@ fn test_partial_json_uses_defaults_for_missing_fields() {
     let cfg = KeybindConfig::from_json(json).unwrap();
     assert_eq!(cfg.undo, vec!["Ctrl+Y"]);
     // Other fields should still have defaults
-    assert_eq!(cfg.enter_reparent_mode, vec!["Ctrl+P"]);
+    assert_eq!(cfg.open_console, vec!["/"]);
     assert_eq!(cfg.exit_mode, vec!["Escape"]);
 }
 
@@ -1519,15 +1410,27 @@ fn test_picker_context_falls_through_to_document() {
     );
 }
 
+/// The picker's own binding outranks the Document's on the same key.
+/// The picker's keys are the test's own: they ship unbound until
+/// V1-C7 (#248) rebuilds the picker. Control: the Document context
+/// still answers `ExitMode` on that key.
 #[test]
 fn test_picker_context_prefers_picker_action_over_document() {
-    let resolved = KeybindConfig::default().resolve();
-    // Escape is ExitMode at Document level but PickerCancel at picker level
+    let resolved = KeybindConfig {
+        picker_cancel: vec!["Escape".into()],
+        picker_commit: vec!["Enter".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "escape", false, false, false),
+        Some(Action::ExitMode),
+        "control: Escape is ExitMode at Document level"
+    );
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "escape", false, false, false),
         Some(Action::PickerCancel),
     );
-    // Enter is EditSelection at Document level but PickerCommit at picker level
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "enter", false, false, false),
         Some(Action::PickerCommit),
@@ -1632,11 +1535,18 @@ fn test_user_can_override_component_keybinds() {
     );
 }
 
+/// Copy/Paste/Cut are Document-level actions that fall through to the
+/// color picker context. The bindings are the test's own: the three
+/// ship unbound until V1-C4 (#245) rebuilds the clipboard.
 #[test]
 fn test_copy_paste_cut_fall_through_to_picker() {
-    let resolved = KeybindConfig::default().resolve();
-    // Copy/Paste/Cut are Document-level actions that fall through
-    // to the color picker context
+    let resolved = KeybindConfig {
+        copy: vec!["Ctrl+C".into()],
+        paste: vec!["Ctrl+V".into()],
+        cut: vec!["Ctrl+X".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "c", true, false, false),
         Some(Action::Copy),
@@ -1658,8 +1568,7 @@ fn test_partial_json_preserves_component_defaults() {
     // Console defaults should still be present
     assert_eq!(cfg.console_close, vec!["Escape"]);
     assert_eq!(cfg.console_clear_line, vec!["Ctrl+C"]);
-    // Picker defaults should still be present
-    assert_eq!(cfg.picker_nudge_hue_down, vec!["h"]);
+    assert_eq!(cfg.console_scroll_page_up, vec!["PageUp"]);
 }
 
 #[test]
@@ -1702,9 +1611,17 @@ fn test_action_for_context_document_filters_component_actions() {
     );
 }
 
+/// A config survives a JSON round trip in every context. The picker,
+/// label and text editor keys are the test's own: they ship unbound
+/// until V1-C7 (#248) and V1-C8 (#249) rebuild them.
 #[test]
 fn test_json_roundtrip_all_contexts() {
-    let cfg = KeybindConfig::default();
+    let cfg = KeybindConfig {
+        picker_nudge_hue_down: vec!["h".into()],
+        label_edit_commit: vec!["Enter".into()],
+        text_edit_cancel: vec!["Escape".into()],
+        ..KeybindConfig::default()
+    };
     let json = serde_json::to_string(&cfg).unwrap();
     let parsed = KeybindConfig::from_json(&json).unwrap();
     let resolved = parsed.resolve();
@@ -2457,11 +2374,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             &["cross_link"],
             Action::SetEdgeType("cross_link".into()),
         ),
-        (
-            "set_link_kind",
-            &["portal"],
-            Action::SetLinkKind("portal".into()),
-        ),
+        ("set_link_kind", &["portal"], Action::SetLinkKind("portal".into())),
         ("reset_path", &["style"], Action::ResetPath("style".into())),
         (
             "set_font_family",
@@ -2476,17 +2389,17 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
                 value: "14".into(),
             },
         ),
-        (
-            "set_label_text",
-            &["hello"],
-            Action::SetLabelText("hello".into()),
-        ),
+        ("set_label_text", &["hello"], Action::SetLabelText("hello".into())),
         (
             "set_label_position",
             &["middle"],
             Action::SetLabelPosition("middle".into()),
         ),
-        ("set_path_spacing", &["wide"], Action::SetPathSpacing("wide".into())),
+        (
+            "set_path_spacing",
+            &["wide"],
+            Action::SetPathSpacing("wide".into()),
+        ),
         (
             "set_zoom",
             &["min", "0.5"],
@@ -2966,7 +2879,7 @@ const SHIPPED_TEMPLATE: &str = include_str!(concat!(
 /// hand.
 ///
 /// **Nothing here is derivable.** The template is a curated subset —
-/// nine of the schema's ~139 action keys, chosen for what a
+/// five of the schema's ~139 action keys, chosen for what a
 /// first-time user needs to see — so a test that asks the template
 /// which keys it has is asking the thing under test. That was the
 /// defect this list replaces: the check below used to compare the
@@ -2980,17 +2893,7 @@ const SHIPPED_TEMPLATE: &str = include_str!(concat!(
 /// template fails because the loop never verifies it; a key that
 /// appears fails until it is added here, which is the deliberate act
 /// the template's contents deserve.
-const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &[
-    "create_orphan_node",
-    "delete_selection",
-    "enter_connect_mode",
-    "enter_reparent_mode",
-    "exit_mode",
-    "open_console",
-    "orphan_selection",
-    "save_document",
-    "undo",
-];
+const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &["exit_mode", "open_console", "redo", "save_document", "undo"];
 
 /// The rest of the template's top-level keys: the `_comment` the
 /// file carries its instructions in, and the non-Action schema keys
@@ -3170,19 +3073,16 @@ fn test_shipped_keybinds_template_escape_exits_the_mode() {
     );
 }
 
-/// The space bar inserts a space in every editor whether or not Shift
+/// The space bar inserts a space in the console whether or not Shift
 /// is still held: bindings match modifiers exactly, and typing
 /// "New York" quickly presses Space with Shift down from the capital.
-/// Each editor's insert-space Action answers both forms, and nothing
-/// else in its context claims them.
+/// The console's insert-space Action answers both forms, and nothing
+/// else in its context claims them. (The text and label editors'
+/// insert-space keys ship unbound until V1-C8 (#249) rebuilds them.)
 #[test]
-fn test_space_inserts_a_space_with_or_without_shift_in_every_editor() {
+fn test_space_inserts_a_space_with_or_without_shift_in_the_console() {
     let resolved = KeybindConfig::default().resolve();
-    for (context, insert) in [
-        (InputContext::Console, Action::ConsoleInsertSpace),
-        (InputContext::TextEdit, Action::TextEditInsertSpace),
-        (InputContext::LabelEdit, Action::LabelEditInsertSpace),
-    ] {
+    for (context, insert) in [(InputContext::Console, Action::ConsoleInsertSpace)] {
         for shift in [false, true] {
             assert_eq!(
                 resolved.action_for_context(context, "space", false, shift, false),

@@ -639,20 +639,20 @@ industrial cost/benefit reasoning. This is not license for speculation.
   *program precondition* that did not hold — no adapter, no fonts,
   nonsense on the command line. There is no window yet and nothing
   sensible to draw into it, so a loud abort is the honest outcome. A
-  `.mindmap.json` the loader rejects is not that: it is a user
+  `.mandala.json` the loader rejects is not that: it is a user
   *input* the program is supposed to have an opinion about, and
   `expect` turns having an opinion into a crash. On a desktop launch
   — double-click, `.desktop` entry, file association — that crash is
   a process that vanishes leaving no window at all, which tells the
   person holding the file strictly less than the empty window it
-  would replace. So the initial `loader::load_from_file` on native
+  would replace. So the initial `MindMapDocument::load` on native
   and the `?map=` fetch + parse in the browser **put the loader's
   message in front of the user and keep the shell alive**: both
   resolve through `app::startup_load`, which logs the message —
   behind the path or URL that was asked for, because most of the
   loader's messages do not name it — and hands the shell
-  `baumhard::mindmap::placard`'s one-node map carrying the same
-  words, installed by the same code that installs a real document.
+  `MindMapDocument::load_failure_placard`'s one-node document carrying
+  the same words, installed by the same code that installs a real document.
   Each target makes exactly one call into that module and is handed a
   document, never a `Result`: a startup-error surface that exists on
   only one of them is not a fix (§4), and a `Result` in an init site's

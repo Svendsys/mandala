@@ -56,8 +56,7 @@ use glam::Vec2;
 
 use super::gpu_harness::headless_app;
 use super::run_native_init::InitState;
-use crate::application::renderer::{CanvasSource, CaptureFailure, CapturedPixels, FrameSkip, ModalLayer};
-use crate::application::scene_host::CanvasRole;
+use crate::application::renderer::{CaptureFailure, CapturedPixels, FrameSkip, ModalLayer};
 
 /// The directory the demo maps live in.
 const DEMOS: &str = "maps/demos";
@@ -466,9 +465,11 @@ fn show(init: &mut InitState, runs: Vec<GlyphRunData>) {
         )
         .expect("a child of the root");
     }
-    init.app_scene
-        .register_canvas(CanvasRole::SectionFrames, tree, Vec2::ZERO);
-    init.renderer.rebuild_canvas_scene_buffers(&mut init.app_scene);
+    // The runs go in as the chrome layer, over no glyph layers at all,
+    // so the frame draws exactly them through the layer renderer.
+    tree.layer = baumhard::projection::Layer::ALL.len();
+    init.renderer
+        .load_view(&baumhard::projection::GlyphLayers::new(), &tree);
 }
 
 fn draw(init: &mut InitState, camera: &Camera2D) -> CapturedPixels {
@@ -476,7 +477,7 @@ fn draw(init: &mut InitState, camera: &Camera2D) -> CapturedPixels {
     loop {
         match init
             .renderer
-            .capture_frame(camera, ModalLayer::Omitted, CanvasSource::Live, &mut || {})
+            .capture_frame(camera, ModalLayer::Omitted, &mut || {})
         {
             Ok(pixels) => return pixels,
             Err(CaptureFailure::Skipped(FrameSkip::FontSystemContended)) if Instant::now() < deadline => {
@@ -494,7 +495,7 @@ fn test_demo_maps_draw_every_ring_and_path() {
         maps.len() >= 4,
         "the README's demo maps must be found, else this would pass over none: {maps:?}"
     );
-    let harness = format!("{}/maps/testament.mindmap.json", env!("CARGO_MANIFEST_DIR"));
+    let harness = format!("{}/maps/testament.mandala.json", env!("CARGO_MANIFEST_DIR"));
     let Some(mut app) = headless_app(&harness) else {
         return;
     };
