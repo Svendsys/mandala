@@ -47,16 +47,18 @@ fn kinds(record: &ChangeRecord) -> FxHashSet<(NodeId, InputKind)> {
 }
 
 #[test]
-fn test_writer_feed_reports_input_kinds_and_undo_reverses_them() {
-    do_writer_feed_reports_input_kinds_and_undo_reverses_them();
+fn test_writer_feed_reports_input_kinds_and_undo_and_redo_report_them_again() {
+    do_writer_feed_reports_input_kinds_and_undo_and_redo_report_them_again();
 }
 
 /// An edit's record names, for each element it changed, the input kinds
 /// it touched: a span's color is its style, a node's palette its binding,
 /// and a node's position no input at all, so a drag dirties no
-/// resolution. The undo's record names the same kinds again, read from
-/// the edit's journal with its two images swapped, and so does the redo's.
-pub fn do_writer_feed_reports_input_kinds_and_undo_reverses_them() {
+/// resolution. The undo's record and the redo's name the same kinds as
+/// the edit's. Which direction each compares its images in is not held
+/// here: `inputs_changed` is symmetric in its two images, so no
+/// assertion could tell (`feed::field_inputs`).
+pub fn do_writer_feed_reports_input_kinds_and_undo_and_redo_report_them_again() {
     let (mut doc, ids) = built();
     let edit = EditRequest::new(
         [
@@ -106,7 +108,7 @@ pub fn do_writer_feed_reports_input_kinds_and_undo_reverses_them() {
     assert_eq!(
         kinds(&records[0]),
         expected,
-        "the undo touches what the edit touched, the other way"
+        "the undo reports the kinds the edit did"
     );
     doc.redo().unwrap();
     let records = doc.take_changes();
@@ -219,5 +221,61 @@ pub fn do_writer_feed_a_move_reports_both_parents() {
     assert!(
         rows.contains(&ids.b) && rows.contains(&ids.d),
         "both again on the way back: {rows:?}"
+    );
+}
+
+#[test]
+fn test_writer_feed_a_move_and_a_restyle_in_one_request_report_the_style() {
+    do_writer_feed_a_move_and_a_restyle_in_one_request_report_the_style();
+}
+
+/// Re-parenting `c` and setting its text size in one request leaves `c`
+/// re-parented ([`Touch::Moved`]) with another value: its record names
+/// its style (ruling B7.5 on #241), and so do the undo's and the redo's. The move alone names no style of `c`: the
+/// control that the kind comes from the restyle, not from the move.
+pub fn do_writer_feed_a_move_and_a_restyle_in_one_request_report_the_style() {
+    use crate::document::values::FontSize;
+    let (mut doc, ids) = built();
+    let mut steps = reparent(&doc, &[ids.c], ids.d).unwrap();
+    steps.extend(
+        request(
+            single(
+                DocKind::Node,
+                DocMutation::Node(NodeOp::Text(TextOp::SetSize(Some(FontSize::Pt(40.0))))),
+            ),
+            vec![ids.c],
+            "restyle",
+        )
+        .steps,
+    );
+    doc.apply(EditRequest::new(steps, "move and restyle c"), ChangeSource::Action)
+        .unwrap();
+    let records = doc.take_changes();
+    assert!(
+        records[0].touched.contains(&(ids.c, Touch::Moved)),
+        "the fixture re-parented c"
+    );
+    assert!(
+        kinds(&records[0]).contains(&(ids.c, InputKind::Style)),
+        "a re-parented element's restyle is reported: {:?}",
+        records[0].inputs
+    );
+    doc.undo().unwrap();
+    let records = doc.take_changes();
+    assert!(kinds(&records[0]).contains(&(ids.c, InputKind::Style)), "and by its undo");
+    doc.redo().unwrap();
+    let records = doc.take_changes();
+    assert!(kinds(&records[0]).contains(&(ids.c, InputKind::Style)), "and by its redo");
+
+    // The control: the move alone.
+    let (mut doc, ids) = built();
+    let steps = reparent(&doc, &[ids.c], ids.d).unwrap();
+    doc.apply(EditRequest::new(steps, "move c"), ChangeSource::Action)
+        .unwrap();
+    let records = doc.take_changes();
+    assert!(
+        !kinds(&records[0]).contains(&(ids.c, InputKind::Style)),
+        "a move alone changes no style of c: {:?}",
+        records[0].inputs
     );
 }

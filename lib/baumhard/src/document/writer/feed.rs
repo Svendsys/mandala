@@ -60,25 +60,31 @@ pub struct ChangeRecord {
     /// Every element the change took out of the tree, with the address it
     /// had there.
     pub removed: Vec<(NodeId, RemovedAddress)>,
-    /// For every element the change left in the tree with another value
-    /// ([`Touch::Field`]), each kind of resolution input the change
+    /// For every element the change left in the tree with both images —
+    /// changed in place ([`Touch::Field`]) or re-parented
+    /// ([`Touch::Moved`]), which can change its fields in the same journal
+    /// (ruling B7.5 on #241) — each kind of resolution input the change
     /// touched: [`inputs_changed`] of its image before the change and its
     /// image after, in the direction the change went (an undo compares
-    /// the edit's after-image with its before-image). An element named
-    /// once per journal the change wrote can be named once per journal
-    /// here.
+    /// the edit's after-image with its before-image). An inserted element
+    /// has no earlier reader and a removed one no later one, so neither is
+    /// named here. An element named once per journal the change wrote can
+    /// be named once per journal here.
     pub inputs: Vec<(NodeId, InputKind)>,
     /// Every element whose children row the change rearranged: the parent
     /// before and the parent after of each element the change inserted,
-    /// removed, re-parented or moved within its row — of a subtree, its
-    /// top's, the elements under it keeping their parents. A parent that
-    /// is both is named once per element.
+    /// removed or re-parented — of a subtree, its top's, the elements
+    /// under it keeping their parents. A parent that is both is named once
+    /// per element. A move that keeps its parent is a field change of its
+    /// key, not a row here: it arrives in [`Self::inputs`] as
+    /// [`InputKind::ParentRow`].
     pub rows: Vec<NodeId>,
 }
 
 /// What `journal`, written forward — or backward when `back` — changed
 /// for the readers of the document: the input kinds of each element it
-/// left in the tree with another value, appended to `inputs`, and every
+/// left in the tree with both images, changed or re-parented, appended to
+/// `inputs`, and every
 /// parent whose row it rearranged, appended to `rows`
 /// ([`ChangeRecord::inputs`], [`ChangeRecord::rows`]).
 ///
@@ -94,7 +100,7 @@ pub(super) fn effects(
     rows: &mut Vec<NodeId>,
 ) {
     for (id, touch) in journal.touched() {
-        if touch == Touch::Field {
+        if matches!(touch, Touch::Field | Touch::Moved) {
             field_inputs(journal, id, back, inputs);
         }
         if let Some((before, after)) = journal.parents(id) {
@@ -109,6 +115,12 @@ pub(super) fn effects(
 /// The input kinds a change to `id` touched, from `journal`'s two images
 /// of it in the direction `back` names, appended to `inputs`. Nothing for
 /// an element the journal holds no images of. O(1); no clone.
+///
+/// The direction is carried for the ruling's contract (B7.2): an undo
+/// compares the edit's after-image with its before-image. While
+/// [`inputs_changed`] is symmetric in its two images no reader can tell
+/// the two directions apart, so no test can observe it; an input kind
+/// that is not symmetric would make it observable.
 pub(super) fn field_inputs(
     journal: &Journal<DocElement>,
     id: NodeId,
