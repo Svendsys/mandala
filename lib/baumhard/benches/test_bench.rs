@@ -1295,6 +1295,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("outline_bounds_follows_the_curve", |b| {
         b.iter(do_outline_bounds_follows_the_curve)
     });
+    c.bench_function(
+        "flow_a_closed_paths_table_samples_are_known_before_it_is_built",
+        |b| b.iter(do_flow_a_closed_paths_table_samples_are_known_before_it_is_built),
+    );
+    c.bench_function("flow_a_closed_paths_length_is_finite_as_its_build_says", |b| {
+        b.iter(do_flow_a_closed_paths_length_is_finite_as_its_build_says)
+    });
     c.bench_function("nearest_weight_follows_css_fonts_4", |b| {
         b.iter(do_nearest_weight_follows_css_fonts_4)
     });

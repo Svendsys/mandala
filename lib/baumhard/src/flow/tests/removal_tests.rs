@@ -277,3 +277,44 @@ fn test_flow_a_frames_remembered_lines_are_the_lines_and_cost_what_they_are() {
         "precondition: the sweep's frames read lines from their memo ({hits} in {frames} frames)"
     );
 }
+
+/// An ellipse's frame builds its outline's two paths once (#309), shared
+/// by its halves, R27's lines and its partition, and no table to learn the
+/// outline's length, which is always finite: the table samples it builds
+/// are its two halves', each the one table
+/// [`closed_table_samples`](crate::flow::path::ArcPath::closed_table_samples)
+/// counts at the frame's spacing (`table_spacing`). Over the aspect
+/// sweep's ellipses that are not circles, every census frame.
+///
+/// Controls (run, not committed): the probe table at
+/// `MIN_TABLE_SPACING` built again (`lay_on_closed`), red ("13968 table
+/// samples built, its two halves' 1400", round the 10:1 ellipse); R27's
+/// lines laid round paths of their own (`frame_lines`), red ("2800").
+#[test]
+fn test_flow_an_ellipses_frame_builds_its_two_tables_and_no_more() {
+    use crate::flow::path::ArcPath;
+    use crate::flow::place::table_spacing;
+    use crate::flow::tests::halves_tests::spans_run;
+    use crate::flow::tests::support::{style, with_fonts};
+    let mut frames = 0;
+    for (name, shape, text, points, fit, layout, outward) in sweep_frames() {
+        if Kind::of(&shape) != Kind::Ellipse {
+            continue;
+        }
+        let run = with_fonts(|fs| spans_run(&[(text.to_string(), points)], fs));
+        let one = ArcPath::closed_table_samples(&shape, table_spacing(&run, &fit, &style(points)));
+        let before = Counters::now();
+        frame_with(text, points, &shape, &fit, &layout, outward);
+        let work = Counters::now().since(before);
+        assert!(one > 0, "precondition, {name}: its path has a table");
+        assert_eq!(
+            work.table_samples,
+            2 * one,
+            "{name} {text:.10}… {fit:?} outward {outward}: {} table samples built, its two halves' {}",
+            work.table_samples,
+            2 * one
+        );
+        frames += 1;
+    }
+    assert!(frames > 50, "precondition: {frames} ellipse frames laid");
+}
