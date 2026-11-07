@@ -39,6 +39,8 @@ impl Projected {
         let mut fonts = fonts();
         let mut layers = GlyphLayers::new();
         let projector = Projector::project_full(&doc, &mut layers, &mut fonts);
+        drop(fonts);
+        let fonts = FontSystemLease::new("projection tests");
         Projected {
             doc,
             projector,
@@ -59,20 +61,32 @@ impl Projected {
         let projector = crate::projection::stages::memo::sharing(|| {
             Projector::project_full(&doc, &mut layers, &mut fonts)
         });
-        Projected {
+        let mut projected = Projected {
             doc,
             projector,
             layers,
             fonts,
-        }
+        };
+        projected.release();
+        projected
     }
 
     /// Feed the document's change feed to the projector, and return what
     /// changed in each layer, its journals not yet discarded.
     pub fn sync(&mut self) -> LayerChanges {
         let changes = self.doc.take_changes();
-        self.projector
-            .update(&self.doc, &changes, &mut self.layers, &mut self.fonts)
+        let out = self
+            .projector
+            .update(&self.doc, &changes, &mut self.layers, &mut self.fonts);
+        self.release();
+        out
+    }
+
+    /// Give back the font lock the lease took, as a caller does between
+    /// frames: a sweep holding it from one call to the next would keep
+    /// every other test thread waiting on it.
+    pub fn release(&mut self) {
+        self.fonts = FontSystemLease::new("projection tests");
     }
 
     /// [`Self::sync`], the journals discarded as the renderer would once
@@ -103,6 +117,7 @@ impl Projected {
         });
         #[cfg(not(test))]
         let full = Projector::project_full(&self.doc, &mut fresh, &mut self.fonts);
+        self.release();
         layers_equivalent(&self.layers, &fresh).map_err(|d| d.to_string())?;
         if full.nodes.len() != self.projector.nodes.len() {
             return Err(format!(

@@ -10,3 +10,9 @@ pub mod corpus;
 mod oracle_tests;
 /// The projected document and the oracle's check.
 pub mod support;
+/// One test per kind of dependency.
+#[cfg(test)]
+mod dependency_tests;
+/// Hit testing.
+#[cfg(test)]
+mod hit_tests;
