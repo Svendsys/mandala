@@ -17,38 +17,33 @@ art makes them. A frame's text takes the shape of its node and still
 reads forward: the first line runs over the top and down the right
 side, the second down the left side and along the bottom, and a few
 ornaments mark where one line ends and the next begins. Each image is
-drawn by the new glyph-run renderer in a single draw call. They are
-rendered offscreen from the V1 work in progress
+drawn by the new glyph-run renderer in a single draw call, rendered
+offscreen from the V1 work in progress
 ([#230](https://github.com/Svendsys/mandala/issues/230)); the app
-draws this way once V1 lands, and these images will be replaced by
-renders of committed demo maps as that work is polished.
+draws this way once V1 lands. The Ecclesiastes, Blake and frames images
+are renders of V1's committed demo maps. The Dickinson image is one
+frame of an animation, which those maps cannot spell yet, so it is
+still drawn by hand.
 
 ![Ecclesiastes 3 as a mind map: "To every thing there is a season" at the center, framed by "and a time to every purpose under the heaven", with six child nodes joined by glyph connectors](docs/images/demo-ecclesiastes.png)
 
 *Ecclesiastes 3:1–8 (King James Version) as a mind map: each node in a
-frame of text or ornaments, joined by glyph connectors that meet each
-node at the middle of a side.*
+frame of text or ornaments, joined by straight glyph connectors.*
 
 ![William Blake's Auguries of Innocence following an ellipse, with Psalm 19:1 on an inner ring](docs/images/demo-blake.png)
 
 *William Blake, "Auguries of Innocence", following the whole outline of
 an ellipse, with Psalm 19:1 (King James Version) on an inner ring.*
 
-![The same Blake frames with their text spread halfway, ornaments closing the rest](docs/images/demo-blake-half.png)
-
-*How far the text spreads is a setting: here each line spreads halfway
-between its natural width and its whole half, and ornaments close the
-rest.*
-
 ![Emily Dickinson's "Hope" is the thing with feathers, the letters of "feathers" drifting up and fading](docs/images/demo-dickinson.png)
 
 *Emily Dickinson, "'Hope' is the thing with feathers": one frame of an
 animation, with each glyph offset, scaled and faded on its own.*
 
-![Text around a rounded rectangle and an ellipse, joined by a connector, with emoji markers at full and half opacity](docs/images/demo-frames.png)
+![Text around a rounded rectangle and an ellipse, joined by a curved line, with emoji markers at full and half opacity](docs/images/demo-frames.png)
 
-*Text around a rounded rectangle and an ellipse, a curved connector at
-half opacity, and emoji at full and half opacity.*
+*Text around a rounded rectangle and an ellipse, joined by a curved
+line, with emoji at full and half opacity.*
 
 ## What..?
 
