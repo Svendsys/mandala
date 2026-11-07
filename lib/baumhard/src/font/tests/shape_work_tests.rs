@@ -21,7 +21,7 @@ use crate::font::SHAPING_ADVANCED;
 /// holding almost nothing (so every letter falls back), a Latin text
 /// face, and two faces of scripts with marks and reordering, one of them
 /// right to left.
-const FACES: [AppFont; 5] = [
+pub const FACES: [AppFont; 5] = [
     AppFont::Any,
     AppFont::MandalaOrnaments,
     AppFont::GalatiaSIL,
@@ -32,7 +32,7 @@ const FACES: [AppFont; 5] = [
 /// The oracle's texts: plain words, ornaments glued to letters, right to
 /// left and mixed direction, combining marks, conjuncts, code points no
 /// face draws, emoji, ideographs, a tab, a ligature, and a long word.
-const TEXTS: [&str; 15] = [
+pub const TEXTS: [&str; 15] = [
     "aaaa",
     "Sand, well-known \u{2726} star",
     "a\u{2726}b\u{2766}c\u{00b7}d",
