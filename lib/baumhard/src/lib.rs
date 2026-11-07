@@ -69,9 +69,6 @@ pub mod format;
 /// `GfxElement`, `GfxMutation` / `GfxMutator`, `GlyphArea`,
 /// `GfxTree` / `GfxMutatorTree`, and the glyph spatial queries.
 pub mod gfx_structs;
-/// `.mindmap.json` data model, loaders, scene/tree builders, and
-/// the `CustomMutation` carrier.
-pub mod mindmap;
 /// Projection: the document into glyph layers, forward only, with work
 /// proportional to what changed (design §12).
 pub mod projection;

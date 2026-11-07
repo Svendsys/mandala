@@ -68,14 +68,6 @@ pub struct GlyphArea {
     /// test. Default [`NodeShape::Rectangle`], the whole bounding box.
     /// Nothing draws it — an area draws its text and nothing behind
     /// it (V1-B12).
-    ///
-    /// Round-trip fidelity for unknown-spelling shapes is owned by
-    /// the format layer (`NodeStyle.shape: String` in
-    /// `crate::mindmap::model::node`), *not* by this field: the
-    /// string-to-enum conversion in
-    /// [`NodeShape::from_style_string`](crate::gfx_structs::shape::NodeShape::from_style_string)
-    /// collapses unknowns to `Rectangle`, but the original string
-    /// is preserved on the `MindNode` and rewritten on save.
     #[serde(default)]
     pub shape: NodeShape,
     /// Optional `[min, max]` window on `camera.zoom` controlling

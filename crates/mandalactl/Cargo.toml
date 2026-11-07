@@ -36,7 +36,7 @@ gif = "0.14.2"
 interprocess.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
+tempfile = "3.27.0"
 
 # The relay (`src/bridge/`) and the `--ws` client (`src/client.rs`):
 # `tungstenite` is the WebSocket codec and handshake, blocking `std`
