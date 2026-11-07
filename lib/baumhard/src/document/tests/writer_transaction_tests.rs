@@ -24,6 +24,40 @@ use crate::engine::interpolate::Snap;
 use crate::engine::journal::Touch;
 use glam::Vec2;
 
+/// A handle goes stale when its transaction ends by any route but its
+/// own call: an undo or a redo that cancels an interactive one, a change
+/// that finishes an animated one first (D28). `is_open` says so, and
+/// says the handle of a transaction still open is open.
+#[test]
+fn test_writer_a_handle_from_before_an_undo_reads_not_open() {
+    let (mut doc, ids) = built();
+    let tx = doc.begin(ChangeSource::Input, Interactive).unwrap();
+    assert!(doc.is_open(&tx), "the transaction just begun is open");
+    doc.stage(&tx, place(vec![ids.a], Vec2::new(5.0, 5.0))).unwrap();
+    assert!(doc.is_open(&tx), "a stage leaves it open");
+    doc.undo();
+    assert!(!doc.is_open(&tx), "the undo cancelled it");
+
+    let tx = doc.begin(ChangeSource::Input, Interactive).unwrap();
+    doc.redo();
+    assert!(!doc.is_open(&tx), "a redo cancels it the same way");
+
+    let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
+    doc.stage(&tx, place(vec![ids.a], Vec2::new(9.0, 9.0))).unwrap();
+    doc.apply(place(vec![ids.d], Vec2::new(1.0, 1.0)), ChangeSource::Action)
+        .unwrap();
+    assert!(!doc.is_open(&tx), "the apply finished and committed it first");
+
+    let tx = doc.begin(ChangeSource::Input, Interactive).unwrap();
+    let other = {
+        let (mut elsewhere, _) = built();
+        elsewhere.begin(ChangeSource::Input, Interactive).unwrap()
+    };
+    assert!(doc.is_open(&tx));
+    assert!(!doc.is_open(&other), "another document's handle names nothing here");
+    doc.cancel(tx);
+}
+
 #[test]
 fn test_writer_thirty_stages_commit_as_one_apply_of_the_last() {
     do_writer_thirty_stages_commit_as_one_apply_of_the_last();

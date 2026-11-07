@@ -292,6 +292,14 @@ impl Document {
         self.tree.root()
     }
 
+    /// The map's name: what its root holds. O(1).
+    pub fn name(&self) -> &str {
+        match self.tree.get(self.tree.root()).map(|node| node.get()) {
+            Some(DocElement::Map(map)) => &map.name,
+            _ => "",
+        }
+    }
+
     /// The node an external caller names by `ident` — the loader
     /// resolving a link, the console, IPC. Not for document-internal
     /// code, which holds `NodeId`s. O(1).
