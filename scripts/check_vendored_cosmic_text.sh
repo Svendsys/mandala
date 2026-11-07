@@ -23,10 +23,10 @@
 #      (PATCHES.md, mandala.patch).
 #   3. Put the patched src/ in the unpacked crate, which keeps its own
 #      manifest, tests and fonts, and run its library and integration
-#      tests with its own lockfile. One test is skipped:
-#      `test_fonts_load_time` reads the host locale through sys-locale and
-#      fails on a machine with none set (a CI runner, a container), with
-#      or without the patch; it times font loading and checks no shaping.
+#      tests with its own lockfile, every one of them. `LANG` is set to
+#      `en_US.UTF-8` when the caller has none: `test_fonts_load_time`
+#      reads the host locale through sys-locale and panics where none is
+#      set (a CI runner, a container), patched or not.
 #
 # Exit codes: 0 everything holds, 1 a check failed.
 
@@ -65,8 +65,7 @@ cp -r "$VENDORED/src" "$PUBLISHED/src"
 # From the repository root, so the toolchain rust-toolchain.toml pins
 # builds it, as it builds the app.
 cd "$ROOT"
-cargo test --locked --manifest-path "$PUBLISHED/Cargo.toml" --lib --tests \
-  -- --skip test_fonts_load_time \
+LANG="${LANG:-en_US.UTF-8}" cargo test --locked --manifest-path "$PUBLISHED/Cargo.toml" --lib --tests \
   || { echo "FAILED: cosmic-text's own tests fail against the patched src/" >&2; exit 1; }
 
 echo "vendor/cosmic-text is cosmic-text $VERSION plus mandala.patch, and its tests pass."

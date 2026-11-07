@@ -25,8 +25,10 @@ the checksum the lockfile recorded for it from crates.io until this patch
 replaced the registry source with a path, which has none.
 `scripts/check_vendored_cosmic_text.sh` fetches the crate, checks that
 sha256, applies `mandala.patch`, and compares the result with this
-directory file for file. It then runs cosmic-text's own test suite, which
-is not vendored, against the patched `src/`. CI runs it as the
+directory file for file. It then runs cosmic-text's whole own test
+suite, which is not vendored, against the patched `src/`, with `LANG`
+set to `en_US.UTF-8` where the caller has none, since
+`test_fonts_load_time` reads the host locale. CI runs it as the
 `vendored-cosmic-text` job (`.github/workflows/test.yml`). It needs the
 network, so `./test.sh` does not run it.
 
