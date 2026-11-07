@@ -326,7 +326,10 @@ lazy_static! {
     /// yet, and takes no lock. Read-only.
     pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = {
         lazy_static::initialize(&FONT_SYSTEM);
-        COMPILED_IDS.get().cloned().unwrap_or_default()
+        COMPILED_IDS
+            .get()
+            .cloned()
+            .expect("COMPILED_IDS is set by complete_font_system")
     };
 }
 

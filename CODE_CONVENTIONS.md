@@ -575,7 +575,11 @@ industrial cost/benefit reasoning. This is not license for speculation.
   poisoned, re-entrant or unavailable guard raises — a message rather
   than an `expect` only because the helper has no `Result` to hand
   back: a lock that cannot be had is not something the caller can
-  recover from. Two
+  recover from. And `COMPILED_IDS.get`, where the compiled font table
+  reads the ids the font system's build recorded: the build sets them
+  before the lock holds it, so an unset table is that invariant broken,
+  and an empty one in its place would resolve every compiled pin to
+  nothing in silence (#323). Two
   things in the phase list cannot fail, and are inside the boundary
   rather than exceptions to it: `fonts::init` itself returns `()`, and
   the query-string extractor is infallible by construction —
