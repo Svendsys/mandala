@@ -694,3 +694,97 @@ fn test_a_refused_change_is_drawn_on_the_status_line() {
         "the undo closed the transaction and the frame cleared the line"
     );
 }
+
+/// **The change feed's second consumer, the IPC event stream, through
+/// the real loop** (#244 amendment 3): the frame's sync drains the
+/// document's records once, keeps them for the iteration
+/// (`MapView::pending_feed`), and an app-driven `document_changed`
+/// names the source of the last of them. A Ctrl+Z pressed on the
+/// keyboard — resolved by the keybinds and dispatched by the native
+/// keyboard handler — reports `"undo"`; the iteration's last step
+/// (`clear_feed`) leaves the feed empty.
+///
+/// The steps are the iteration's, in its order (`pump::iterate`): the
+/// frame's drain, the server's observation (`Session::observe` with
+/// `Driver::App`, as `IpcServer::observe` makes it), the feed cleared.
+///
+/// Controls: the same frame after a plain edit reports `"action"`, so
+/// the source is read from the records rather than restated; an
+/// observation with no records falls back to `"input"`, which is what a
+/// feed that never reached the stream would read; and the feed is
+/// non-empty before the clear.
+#[test]
+fn test_an_app_driven_change_reports_its_source_through_the_change_feed() {
+    use super::event_keyboard::handle_keyboard_input;
+    use super::pump::{Iteration, Running};
+    use crate::application::ipc::events::{Class, Classes, Driver, Session};
+    use crate::application::platform::input::{Key, Modifiers};
+
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+    let mut session = Session::default();
+    let mut classes = Classes::default();
+    classes.insert(Class::DocumentChanged);
+    session.subscribe(classes, true);
+    session.baseline(&init.observed());
+
+    let source_of = |session: &mut Session| -> Option<String> {
+        let queued = session.pop_pending()?;
+        let event = serde_json::to_value(&queued.event).expect("an event serializes");
+        event["data"]["source"].as_str().map(str::to_string)
+    };
+    let clear = |init: &mut InitState| {
+        let (mut ipc, mut one_shot) = (None, None);
+        Running {
+            init,
+            ipc: &mut ipc,
+            one_shot: &mut one_shot,
+        }
+        .clear_feed();
+    };
+
+    init.document.as_mut().expect("document").create_root_for_test();
+    frame(init);
+    assert!(
+        !view(init).pending_feed().is_empty(),
+        "the frame kept the records"
+    );
+    session.observe(&init.observed(), Driver::App);
+    assert_eq!(
+        source_of(&mut session).as_deref(),
+        Some("action"),
+        "control: a plain edit"
+    );
+    clear(init);
+    assert!(
+        view(init).pending_feed().is_empty(),
+        "the iteration's end clears the feed"
+    );
+
+    init.modifiers = Modifiers::CONTROL;
+    handle_keyboard_input(Key::Character("z".into()), &mut init.input_context());
+    init.modifiers = Modifiers::empty();
+    frame(init);
+    session.observe(&init.observed(), Driver::App);
+    assert_eq!(
+        source_of(&mut session).as_deref(),
+        Some("undo"),
+        "Ctrl+Z on the keyboard"
+    );
+    clear(init);
+    assert!(view(init).pending_feed().is_empty());
+
+    // What a feed that never reached the stream would read.
+    init.document.as_mut().expect("document").create_root_for_test();
+    frame(init);
+    clear(init);
+    session.observe(&init.observed(), Driver::App);
+    assert_eq!(
+        source_of(&mut session).as_deref(),
+        Some("input"),
+        "control: with no records the source falls back"
+    );
+}
