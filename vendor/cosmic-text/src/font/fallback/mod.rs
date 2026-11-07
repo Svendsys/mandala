@@ -269,6 +269,12 @@ impl<'a> FontFallbackIter<'a> {
         &mut self.font_system.shape_buffer
     }
 
+    /// MANDALA PATCH: the font system the iterator walks, for a question
+    /// of every face (`shape::drawn_by_no_face`) asked between two steps.
+    pub(crate) fn font_system(&mut self) -> &mut FontSystem {
+        self.font_system
+    }
+
     fn face_contains_family(&self, id: fontdb::ID, family_name: &str) -> bool {
         self.font_system
             .db()

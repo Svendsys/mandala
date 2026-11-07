@@ -34,12 +34,7 @@ fn projected(text: &str, fonts: &mut FontSystemLease) -> ShapeWork {
     let projector = Projector::project_full(&doc, &mut layers, fonts);
     let after = cosmic_text::shape_work();
     assert_eq!(projector.nodes.len(), 1, "precondition: the node is projected");
-    ShapeWork {
-        shapes: after.shapes - before.shapes,
-        bytes_shaped: after.bytes_shaped - before.bytes_shaped,
-        fallback_rounds: after.fallback_rounds - before.fallback_rounds,
-        merge_steps: after.merge_steps - before.merge_steps,
-    }
+    after.since(before)
 }
 
 /// The work of one span of `n`, `2n` and `4n` letters, in `font`.
@@ -48,6 +43,10 @@ fn at_three_lengths(n: usize, font: Option<&str>) -> [ShapeWork; 3] {
     // counted between two readings, whether or not the lease lets the
     // lock go between them.
     let mut fonts = fonts();
+    // Once first: the font system answers once whether some face draws a
+    // letter (`cosmic_text::ShapeWork::coverage_probes`), and that answer
+    // is no part of what one more letter costs.
+    projected(&one_span(n, font), &mut fonts);
     [n, 2 * n, 4 * n].map(|n| projected(&one_span(n, font), &mut fonts))
 }
 

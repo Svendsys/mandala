@@ -3,7 +3,9 @@
 //! The shaper's font fallback, as patched (V1-B14, #304;
 //! `vendor/cosmic-text/src/shape.rs`): its merge of a fallback face's
 //! glyphs makes the glyphs the published merge made, and costs work
-//! linear in the run where the published one's was quadratic.
+//! linear in the run where the published one's was quadratic; and a code
+//! point no face draws is asked of the faces once per font system, after
+//! which a run holding it tries no fallback face for it.
 //!
 //! Work is read off the shaper's own counters
 //! ([`cosmic_text::ShapeWork`]), never a clock. They count this thread's
@@ -75,17 +77,7 @@ fn shaped(fs: &mut FontSystem, font: AppFont, text: &str) -> (Buffer, ShapeWork)
     buffer.set_rich_text([(text, attrs.clone())], &attrs, SHAPING_ADVANCED, None);
     buffer.shape_until_scroll(fs, false);
     let after = shape_work();
-    (buffer, difference(after, before))
-}
-
-/// `after - before`, counter by counter.
-fn difference(after: ShapeWork, before: ShapeWork) -> ShapeWork {
-    ShapeWork {
-        shapes: after.shapes - before.shapes,
-        bytes_shaped: after.bytes_shaped - before.bytes_shaped,
-        fallback_rounds: after.fallback_rounds - before.fallback_rounds,
-        merge_steps: after.merge_steps - before.merge_steps,
-    }
+    (buffer, after.since(before))
 }
 
 /// Everything a laid-out buffer says about its glyphs: each line's width
@@ -116,9 +108,11 @@ fn test_the_fallback_merge_lays_out_what_the_published_merge_did() {
 
 /// The oracle: every text of [`TEXTS`] in every face of [`FACES`], and a
 /// long word of each, is laid out glyph for glyph as the published merge
-/// lays it out. The corpus is held to have made the merge choose: some
-/// shapings fell back, and the linear merge counted less work than the
-/// published one did over them.
+/// and loop lay it out, though the patched loop stops early at code
+/// points no face draws. The corpus is held to have made the merge
+/// choose and the loop stop: some shapings fell back, the linear merge
+/// counted less work than the published one did over them, and the
+/// patched loop shaped in fewer fallback faces.
 pub fn do_the_fallback_merge_lays_out_what_the_published_merge_did() {
     crate::font::fonts::init();
     let long: Vec<String> = TEXTS.iter().map(|text| text.repeat(40)).collect();
@@ -126,6 +120,7 @@ pub fn do_the_fallback_merge_lays_out_what_the_published_merge_did() {
     let mut linear_steps = 0;
     let mut reference_steps = 0;
     let mut rounds = 0;
+    let mut reference_rounds = 0;
     for font in FACES {
         for text in TEXTS.iter().copied().chain(long.iter().map(String::as_str)) {
             let (linear, work) = merging(false, || shaped(&mut fs, font, text));
@@ -135,23 +130,23 @@ pub fn do_the_fallback_merge_lays_out_what_the_published_merge_did() {
                 layout_of(&reference),
                 "{font:?} {text:?}: the linear merge laid out glyphs the published merge did not"
             );
-            assert_eq!(
-                (work.shapes, work.bytes_shaped, work.fallback_rounds),
-                (
-                    reference_work.shapes,
-                    reference_work.bytes_shaped,
-                    reference_work.fallback_rounds
-                ),
-                "{font:?} {text:?}: the two merges shaped in different faces"
+            assert!(
+                work.fallback_rounds <= reference_work.fallback_rounds,
+                "{font:?} {text:?}: the patched loop tried more fallback faces than the published one"
             );
             linear_steps += work.merge_steps;
             reference_steps += reference_work.merge_steps;
             rounds += work.fallback_rounds;
+            reference_rounds += reference_work.fallback_rounds;
         }
     }
     assert!(
         rounds > 0 && linear_steps > 0,
         "precondition: the corpus fell back ({rounds} rounds), or the merge was never asked to choose"
+    );
+    assert!(
+        rounds < reference_rounds,
+        "precondition: the loop stopped early on some text ({rounds} rounds against {reference_rounds})"
     );
     assert!(
         linear_steps < reference_steps,
@@ -196,6 +191,10 @@ pub fn do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length() {
         2 * N
     );
 
+    // Once first, so that asking whether some face draws `a`, which the
+    // font system answers once (`do_a_code_point_no_face_draws_...`), is
+    // not counted at one length and not the others.
+    at(&mut fs, N, false);
     let works = [
         at(&mut fs, N, false),
         at(&mut fs, 2 * N, false),
@@ -234,4 +233,96 @@ pub fn do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length() {
         merged_per_byte > 0,
         "precondition: the merge did the fallback's work"
     );
+}
+
+/// A code point no face draws, for the two tests below: a private-use code point of plane 16, which no other test shapes, so
+/// its answer is not already kept when the test begins.
+pub const UNDRAWN: char = '\u{10fff3}';
+
+#[test]
+fn test_a_code_point_no_face_draws_is_asked_of_the_faces_once() {
+    do_a_code_point_no_face_draws_is_asked_of_the_faces_once();
+}
+
+/// Text in a face that draws its letters, with one code point no face
+/// draws ([`UNDRAWN`]): the first shaping asks the font system's faces
+/// about it, once each at most, and tries no fallback face; every later
+/// shaping, of that text or of any other holding the code point, asks
+/// nothing and tries no fallback face either, and costs what the same
+/// text without it costs. The published loop, the precondition, tried
+/// the run in fallback faces every time.
+pub fn do_a_code_point_no_face_draws_is_asked_of_the_faces_once() {
+    crate::font::fonts::init();
+    let face = AppFont::GalatiaSIL;
+    let text = format!("ab{UNDRAWN}cd");
+    let mut fs = acquire_font_system_write("test_a_code_point_no_face_draws_is_asked_of_the_faces_once");
+    let faces = fs.db().faces().count() as u64;
+
+    let reference = merging(true, || shaped(&mut fs, face, &text)).1;
+    assert!(
+        reference.fallback_rounds > 0,
+        "precondition: the published loop tries fallback faces for a code point no face draws"
+    );
+    // What the font system kept is let go with its database, so the
+    // first shaping below asks afresh even when the test runs twice.
+    let _ = fs.db_mut();
+    let plain = shaped(&mut fs, face, "abcd").1;
+    assert_eq!(
+        plain.fallback_rounds, 0,
+        "precondition: {face:?} draws the letters"
+    );
+
+    let first = shaped(&mut fs, face, &text).1;
+    assert!(
+        first.coverage_probes > 0 && first.coverage_probes <= faces,
+        "the first shaping asks the faces about {UNDRAWN:?}, each once at most: {} of {faces}",
+        first.coverage_probes
+    );
+    assert_eq!(first.fallback_rounds, 0, "and tries no fallback face");
+
+    for again in [text.clone(), format!("x{UNDRAWN}y{UNDRAWN}")] {
+        let work = shaped(&mut fs, face, &again).1;
+        assert_eq!(
+            (work.coverage_probes, work.fallback_rounds),
+            (0, 0),
+            "{again:?}: the answer is kept, so nothing is asked and no fallback face is tried"
+        );
+        assert_eq!(
+            work.shapes, plain.shapes,
+            "{again:?}: shaped as often as the text without the code point"
+        );
+    }
+}
+
+#[test]
+fn test_a_hundred_contiguous_undrawn_code_points_cost_one_shaping() {
+    do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping();
+}
+
+/// About a hundred contiguous code points no face draws (#304, from the
+/// B9 review): what they cost does not grow with their number. Shaped
+/// with letters around them, a hundred of them try no fallback face and
+/// cost the shapings two of them cost; the published loop's rounds over
+/// them, the precondition, are each a shaping of the whole run.
+pub fn do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping() {
+    crate::font::fonts::init();
+    let face = AppFont::GalatiaSIL;
+    let run = |n: usize| format!("one {} two", UNDRAWN.to_string().repeat(n));
+    let mut fs = acquire_font_system_write("test_a_hundred_contiguous_undrawn_code_points_cost_one_shaping");
+    // Once, so the code point's answer is kept before anything is read.
+    shaped(&mut fs, face, &run(1));
+
+    let reference = merging(true, || shaped(&mut fs, face, &run(100))).1;
+    assert!(
+        reference.fallback_rounds > 0,
+        "precondition: the published loop shapes the run in fallback faces"
+    );
+    let two = shaped(&mut fs, face, &run(2)).1;
+    let hundred = shaped(&mut fs, face, &run(100)).1;
+    assert_eq!(
+        (hundred.fallback_rounds, hundred.coverage_probes),
+        (0, 0),
+        "a hundred undrawn code points try no fallback face and ask nothing"
+    );
+    assert_eq!(hundred.shapes, two.shapes, "a hundred cost the shapings two cost");
 }

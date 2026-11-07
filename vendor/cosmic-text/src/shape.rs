@@ -19,9 +19,19 @@
 //!   shapings, bytes shaped, fallback rounds and merge steps, per
 //!   thread, so a caller can show cost growing with its input without
 //!   timing anything.
+//! - **A code point no face draws is found once per font system**
+//!   ([`drawn_by_no_face`]). The published loop tries every face of the
+//!   font system before it gives a missing glyph up, shaping the whole
+//!   run in each, and it did so at every shaping of a run that holds
+//!   one. The loop here stops as soon as every glyph still missing is a
+//!   cluster of one code point that no face draws, which is asked of
+//!   every face once per code point, direction and weight, and kept in
+//!   the font system's shape buffer ([`ShapeBuffer`]) until its
+//!   database changes.
 //! - **The published merge stays selectable per thread**
-//!   ([`set_reference_merge`]), so a test can hold the linear merge to
-//!   the same glyphs and to see the counted work it removed.
+//!   ([`set_reference_merge`]), so a test can hold the linear merge, and
+//!   the early stop, to the same glyphs and see the counted work they
+//!   removed. With it on, neither is used.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -130,15 +140,33 @@ pub struct ShapeWork {
     /// published merge ([`set_reference_merge`]) counts each comparison
     /// of its scans and each element its removes and inserts shift.
     pub merge_steps: u64,
+    /// One-code-point shapings that asked whether any face draws a code
+    /// point ([`drawn_by_no_face`]): at most one per face, per code point,
+    /// direction and weight, per font system. Counted in
+    /// [`shapes`](Self::shapes) too.
+    pub coverage_probes: u64,
 }
 
 impl ShapeWork {
+    /// The work done between the reading `before` and this one: each
+    /// count's difference.
+    pub fn since(self, before: Self) -> Self {
+        Self {
+            shapes: self.shapes - before.shapes,
+            bytes_shaped: self.bytes_shaped - before.bytes_shaped,
+            fallback_rounds: self.fallback_rounds - before.fallback_rounds,
+            merge_steps: self.merge_steps - before.merge_steps,
+            coverage_probes: self.coverage_probes - before.coverage_probes,
+        }
+    }
+
     /// `self` with `other`'s counts added.
     fn add(&mut self, other: &Self) {
         self.shapes += other.shapes;
         self.bytes_shaped += other.bytes_shaped;
         self.fallback_rounds += other.fallback_rounds;
         self.merge_steps += other.merge_steps;
+        self.coverage_probes += other.coverage_probes;
     }
 }
 
@@ -151,6 +179,7 @@ std::thread_local! {
             bytes_shaped: 0,
             fallback_rounds: 0,
             merge_steps: 0,
+            coverage_probes: 0,
         })
     };
 }
@@ -207,6 +236,13 @@ pub struct ShapeBuffer {
 
     /// Buffer for sets of layout glyphs.
     glyph_sets: Vec<Vec<LayoutGlyph>>,
+
+    /// MANDALA PATCH: whether any face of the font system draws a code
+    /// point, by code point, direction (right to left) and weight
+    /// ([`drawn_by_no_face`]): `true` for one that none draws. Cleared
+    /// when the font system's database is handed out to change
+    /// ([`FontSystem::db_mut`]).
+    pub(crate) undrawn: crate::HashMap<(char, bool, u16), bool>,
 }
 
 impl fmt::Debug for ShapeBuffer {
@@ -673,6 +709,102 @@ fn reference_round(
     }
 }
 
+/// MANDALA PATCH: whether every glyph of `glyphs` (a run's, in `line`)
+/// that is still missing (`merge`) is a cluster of one code point that no
+/// face of the font system draws, in the run's direction and at its
+/// weight ([`drawn_by_no_face`]). The published loop would try every face
+/// left and keep each such glyph as it is, so the loop can stop.
+///
+/// `false` when some missing glyph is a cluster of several code points,
+/// whose composition a face could draw though it draws none of them, and
+/// when the missing list and the run's missing glyphs do not match one to
+/// one (a case shaping does not make), so that only the published reasoning
+/// decides those.
+fn only_undrawn(
+    font_iter: &mut FontFallbackIter<'_>,
+    merge: &FallbackMerge,
+    glyphs: &[ShapeGlyph],
+    line: &str,
+    rtl: bool,
+    weight: fontdb::Weight,
+    work: &mut ShapeWork,
+) -> bool {
+    if !merge.outside.is_empty() {
+        return false;
+    }
+    let font_system = font_iter.font_system();
+    let mut matched = 0;
+    for glyph in glyphs {
+        work.merge_steps += 1;
+        if glyph.glyph_id != 0 || !merge.has(glyph.start) {
+            continue;
+        }
+        matched += 1;
+        let mut cluster = match line.get(glyph.start..glyph.end) {
+            Some(cluster) => cluster.chars(),
+            None => return false,
+        };
+        // The first glyph that some face may draw ends the question, so
+        // a run of letters that fall back is asked about one of them.
+        match (cluster.next(), cluster.next()) {
+            (Some(ch), None) if drawn_by_no_face(font_system, ch, rtl, weight, work) => {}
+            _ => return false,
+        }
+    }
+    matched == merge.count
+}
+
+/// MANDALA PATCH: whether no face of `font_system` draws `ch`: shaped
+/// alone, in the given direction and at `weight`, every face gives it the
+/// missing glyph. Asked of every face once per code point, direction and
+/// weight, and kept ([`ShapeBuffer`]'s `undrawn`); each face asked is a
+/// [`ShapeWork::coverage_probes`].
+///
+/// Shaping the code point, rather than reading each face's character map,
+/// is what makes the answer the shaper's: a face can draw a code point its
+/// map lacks (a decomposition it holds the parts of, a space it widens), and
+/// a run's fallback asks the same shaping of each face.
+fn drawn_by_no_face(
+    font_system: &mut FontSystem,
+    ch: char,
+    rtl: bool,
+    weight: fontdb::Weight,
+    work: &mut ShapeWork,
+) -> bool {
+    let key = (ch, rtl, weight.0);
+    if let Some(&undrawn) = font_system.shape_buffer.undrawn.get(&key) {
+        return undrawn;
+    }
+    let mut text = [0u8; 4];
+    let text: &str = ch.encode_utf8(&mut text);
+    let attrs_list = AttrsList::new(&Attrs::new().weight(weight));
+    let ids: Vec<fontdb::ID> = font_system.db().faces().map(|face| face.id).collect();
+    let mut undrawn = true;
+    for id in ids {
+        let Some(font) = font_system.get_font(id, weight) else {
+            continue;
+        };
+        let mut glyphs = Vec::new();
+        let missing = shape_fallback(
+            &mut font_system.shape_buffer,
+            &mut glyphs,
+            &font,
+            text,
+            &attrs_list,
+            0,
+            text.len(),
+            rtl,
+        );
+        work.coverage_probes += 1;
+        if missing.is_empty() && !glyphs.is_empty() {
+            undrawn = false;
+            break;
+        }
+    }
+    font_system.shape_buffer.undrawn.insert(key, undrawn);
+    undrawn
+}
+
 fn shape_run(
     glyphs: &mut Vec<ShapeGlyph>,
     font_system: &mut FontSystem,
@@ -706,6 +838,7 @@ fn shape_run(
     let fonts = font_system.get_font_matches(&attrs);
 
     let default_families = [&attrs.family];
+    let weight = attrs.weight;
     let mut font_iter = FontFallbackIter::new(
         font_system,
         &fonts,
@@ -739,6 +872,13 @@ fn shape_run(
         };
         if !left {
             break;
+        }
+        // MANDALA PATCH: no face after this one can draw what is left.
+        if let Some(merge) = &merge {
+            let glyphs = &glyphs[glyph_start..];
+            if only_undrawn(&mut font_iter, merge, glyphs, line, span_rtl, weight, &mut work) {
+                break;
+            }
         }
         let Some(font) = font_iter.next() else {
             break;

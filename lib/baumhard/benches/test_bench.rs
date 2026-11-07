@@ -1338,6 +1338,15 @@ fn criterion_benchmark(c: &mut Criterion) {
         "a_word_its_face_lacks_costs_fallback_work_linear_in_its_length",
         |b| b.iter(do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length),
     );
+    // A code point no face draws: the font system's answer let go and
+    // asked again of every face, then kept; and a hundred of them in a
+    // run, shaped with their answer kept.
+    c.bench_function("a_code_point_no_face_draws_is_asked_of_the_faces_once", |b| {
+        b.iter(do_a_code_point_no_face_draws_is_asked_of_the_faces_once)
+    });
+    c.bench_function("a_hundred_contiguous_undrawn_code_points_cost_one_shaping", |b| {
+        b.iter(do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping)
+    });
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
         b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
     });

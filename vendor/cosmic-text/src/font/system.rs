@@ -290,6 +290,8 @@ impl FontSystem {
     /// Get a mutable reference to the database.
     pub fn db_mut(&mut self) -> &mut fontdb::Database {
         self.font_matches_cache.clear();
+        // MANDALA PATCH: which faces draw a code point may change with it.
+        self.shape_buffer.undrawn.clear();
         &mut self.db
     }
 
