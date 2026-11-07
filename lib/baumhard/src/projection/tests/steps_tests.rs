@@ -110,7 +110,7 @@ fn test_projection_a_frames_rings_read_one_ring_each() {
     let reads = p.projector.dependency_count();
     let units = p.projector.units.len() + p.projector.nodes.len();
     assert!(units > RINGS as usize, "every ring is a unit: {units}");
-    // Each ring reads its node, its frame's row and fields, its own
+    // Each ring reads its node, its frame's fields, its own
     // fields and the one ring just inside it: nothing per ring inside.
     assert!(
         reads <= 40 * units,
