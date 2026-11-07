@@ -324,7 +324,7 @@ impl Renderer {
         // why omitting the modal omits the whole sub-scene: it holds
         // nothing else.
         let modal: &[super::MindMapTextBuffer] = match modal_layer {
-            ModalLayer::Drawn => &self.overlay_scene_elements,
+            ModalLayer::Drawn => &self.overlay_shapes.elements,
             ModalLayer::Omitted => &[],
         };
         // The backdrops, in this target's pixels: the console's and the

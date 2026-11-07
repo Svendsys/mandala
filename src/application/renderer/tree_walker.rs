@@ -11,52 +11,14 @@ use glam::Vec2;
 use baumhard::font::attrs::{rich_text_spans_into, RegionFamilies};
 use baumhard::font::{buffer, Align, Attrs, Color, FontSystem, SHAPING_ADVANCED};
 use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::tree::GfxTree;
 
 use super::MindMapTextBuffer;
 
 /// Shared tree → cosmic-text buffer walker.
 ///
-/// Iterates every `GlyphArea` descendant of `tree`, shapes a
-/// `cosmic_text::Buffer` for each one, and hands the result to
-/// `yield_buffer` together with the element's `unique_id` (raw
-/// `usize`, not stringified — keying is the caller's choice). An area
-/// draws its text and nothing behind it (V1-B12), so a text-empty
-/// area yields nothing.
-///
-/// `offset` is added to every `position` — callers pass
-/// `Vec2::ZERO` whenever the tree's areas are already in the
-/// destination coordinate space (e.g. the mindmap, whose nodes
-/// hold canvas-space positions); pass the registered tree offset
-/// for scene trees that lay out in their own local frame.
-///
-/// # Costs
-///
-/// O(descendants). One `cosmic_text::Buffer` allocated per
-/// non-empty-text area. No
-/// per-area `String` allocation — the `unique_id` flows as a raw
-/// integer all the way to the buffer map's key. Holds the provided
-/// `font_system` write guard for the duration of the walk — keep
-/// the call site's own guard scope tight.
-pub(super) fn walk_tree_into_buffers(
-    tree: &GfxTree,
-    offset: Vec2,
-    font_system: &mut FontSystem,
-    mut yield_buffer: impl FnMut(usize, MindMapTextBuffer),
-) {
-    for descendant_id in tree.root().descendants(tree.arena()) {
-        let node = match tree.arena().get(descendant_id) {
-            Some(n) => n,
-            None => continue,
-        };
-        shape_one_element_into_buffers(node.get(), offset, font_system, &mut yield_buffer);
-    }
-}
-
-/// Shape a single `GfxElement` into its buffer set via the same
-/// per-element work the full walker does.
-/// Extracted so one element can be re-shaped without walking the whole
-/// tree (the overlay rebuilds and the tests use it). `Void` /
+/// Shape a single `GfxElement` into its buffer set: what the overlay
+/// rebuild (`overlay_dispatch::reshape_overlays`) does for an area
+/// whose reuse key changed. `Void` /
 /// `GlyphModel` elements (no text-bearing payload) yield
 /// nothing — same fast-skip the full walker uses.
 pub(super) fn shape_one_element_into_buffers(

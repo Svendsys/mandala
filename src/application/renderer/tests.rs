@@ -1481,3 +1481,88 @@ fn test_a_backdrop_covers_the_pixels_its_rectangle_did() {
         );
     }
 }
+
+/// **A console keystroke reshapes the prompt line and nothing else.**
+/// The real console tree, the real in-place mutator (which writes every
+/// slot on every keystroke), and the overlay rebuild's per-area reuse
+/// (`overlay_dispatch::reshape_overlays`): of the many areas, only the
+/// one whose text changed is shaped again.
+///
+/// Controls: the first rebuild shapes every area (so the store starts
+/// from nothing); a mutator that writes the state already on screen
+/// shapes none; and the same keystroke against a store that forgot its
+/// keys shapes every area again — what the rebuild cost before the
+/// reuse, and what a key that missed would cost.
+#[test]
+fn test_console_keystroke_reshapes_only_the_prompt_line() {
+    use super::console_pass::{
+        build_console_overlay_mutator, build_console_overlay_tree, console_overlay_signature,
+    };
+    use super::overlay_dispatch::{reshape_overlays, OverlayShapes};
+    use baumhard::gfx_structs::scene::Scene;
+
+    baumhard::font::fonts::init();
+    let mut before = sample_console_geometry();
+    before.input = "anchor".into();
+    before.cursor_grapheme = 6;
+    let layout_before = compute_console_frame_layout(&before, 1280.0, 720.0);
+    let mut after = sample_console_geometry();
+    after.input = "anchors".into();
+    after.cursor_grapheme = 7;
+    let layout_after = compute_console_frame_layout(&after, 1280.0, 720.0);
+    assert_eq!(
+        console_overlay_signature(&layout_before),
+        console_overlay_signature(&layout_after),
+        "precondition: a keystroke keeps the structure, so it takes the in-place arm"
+    );
+
+    let tree = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (keystroke tree)");
+        build_console_overlay_tree(&before, &layout_before, &mut fs)
+    };
+    let mut scene = Scene::new();
+    let id = scene.insert(tree, 0, Vec2::ZERO);
+    let mut shapes = OverlayShapes::default();
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    let areas = shapes.shaped;
+    assert!(
+        areas > 5,
+        "control: the first rebuild shapes every area ({areas})"
+    );
+
+    let same = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (keystroke same)");
+        build_console_overlay_mutator(&before, &layout_before, &mut fs)
+    };
+    scene.apply_mutator(id, &same);
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    assert_eq!(
+        shapes.shaped, areas,
+        "control: the state already on screen shapes nothing"
+    );
+
+    let keystroke = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (keystroke)");
+        build_console_overlay_mutator(&after, &layout_after, &mut fs)
+    };
+    scene.apply_mutator(id, &keystroke);
+    let drawn = shapes.elements.len();
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    assert_eq!(
+        shapes.shaped,
+        areas + 1,
+        "a keystroke reshapes the prompt line alone"
+    );
+    assert_eq!(
+        shapes.elements.len(),
+        drawn,
+        "and every other area keeps its buffers"
+    );
+
+    let mut forgot = OverlayShapes::default();
+    reshape_overlays(&mut forgot, &scene, &[id]);
+    assert_eq!(
+        forgot.shaped, areas,
+        "control: without the keys every area is shaped"
+    );
+}

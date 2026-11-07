@@ -379,7 +379,7 @@ pub struct Renderer {
     /// order: made from the overlay trees of the app's
     /// [`AppScene`](crate::application::scene_host::AppScene) by
     /// [`Self::rebuild_overlay_scene_buffers`], drawn in the chrome pass.
-    overlay_scene_elements: Vec<MindMapTextBuffer>,
+    overlay_shapes: overlay_dispatch::OverlayShapes,
     /// Screen-space geometry of the console's opaque backdrop, in
     /// window pixels: `(left, top, width, height)`. Captured inside
     /// `rebuild_console_overlay_buffers` so each frame can lay its
@@ -667,7 +667,7 @@ impl Renderer {
             viewport,
             camera,
             color_picker_backdrop: None,
-            overlay_scene_elements: Vec::new(),
+            overlay_shapes: overlay_dispatch::OverlayShapes::default(),
             console_backdrop: None,
             backdrop_cell: None,
             #[cfg(test)]
@@ -690,7 +690,7 @@ impl Renderer {
     pub(crate) fn glyphon_buffer_count(&self) -> usize {
         self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len()
-            + self.overlay_scene_elements.len()
+            + self.overlay_shapes.elements.len()
     }
 
     /// What the positioned-glyph pass held at the last prepared frame,
