@@ -1065,3 +1065,41 @@ fn test_projection_a_resize_that_keeps_the_least_side_builds_no_ring_key() {
     );
     p.check().unwrap();
 }
+
+#[test]
+fn test_projection_a_label_of_a_path_not_drawn_has_no_position() {
+    use crate::document::mutation::ops::PathOp;
+    let doc = dragged_parts();
+    let connector = kid(&doc, ident(&doc, 2), DocKind::Connector);
+    let label = kid(&doc, connector, DocKind::Label);
+    let mut p = Projected::new(doc);
+    assert!(
+        p.projector.label_pos(label).is_some(),
+        "a drawn connector's label is placed"
+    );
+    let visible = |p: &mut Projected, on: bool| {
+        apply(
+            p,
+            request(
+                single(DocKind::Connector, DocMutation::Path(PathOp::SetVisible(on))),
+                vec![connector],
+                "show or hide",
+            ),
+        )
+        .discard(&mut p.layers);
+    };
+    visible(&mut p, false);
+    assert_eq!(p.projector.label_pos(label), None, "hidden, its label is nowhere");
+    assert!(
+        !p.projector.label_hosts.contains_key(&label),
+        "and out of the label index"
+    );
+    p.check().unwrap();
+    // The control: shown again, the label is placed again.
+    visible(&mut p, true);
+    assert!(
+        p.projector.label_pos(label).is_some(),
+        "shown again, its label is placed"
+    );
+    p.check().unwrap();
+}

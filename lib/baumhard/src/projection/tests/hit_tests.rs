@@ -209,7 +209,10 @@ fn test_projection_a_label_over_its_connection_is_hit_before_it() {
     }
     let point = both.expect("a glyph of each layer is under one point near the label");
     let hit = p.projector.hit(&mut p.layers, point).expect("glyphs are there");
-    assert_eq!(hit.element, label, "the labels layer is above the connections layer");
+    assert_eq!(
+        hit.element, label,
+        "the labels layer is above the connections layer"
+    );
     assert_eq!(hit.node, two, "the label is its connector's node's");
     // The control: asked in draw order — bottom-up — the same point is
     // the connection's, so the order decides the answer.
@@ -217,7 +220,11 @@ fn test_projection_a_label_over_its_connection_is_hit_before_it() {
         .iter()
         .find(|&&layer| drawn_at(&mut p, layer, point))
         .copied();
-    assert_eq!(bottom_up, Some(Layer::Connections), "bottom-up, the connection is found first");
+    assert_eq!(
+        bottom_up,
+        Some(Layer::Connections),
+        "bottom-up, the connection is found first"
+    );
 }
 
 #[test]
@@ -239,7 +246,10 @@ fn test_projection_a_click_inside_a_nested_body_hits_the_innermost_node() {
     let mut p = Projected::new(doc);
     let point = Vec2::new(380.0, 280.0);
     for layer in Layer::ALL {
-        assert!(!drawn_at(&mut p, layer, point), "no glyph of the {layer:?} layer is under the point");
+        assert!(
+            !drawn_at(&mut p, layer, point),
+            "no glyph of the {layer:?} layer is under the point"
+        );
     }
     let hit = p.projector.hit(&mut p.layers, point).expect("two bodies hold it");
     assert_eq!(
@@ -249,6 +259,9 @@ fn test_projection_a_click_inside_a_nested_body_hits_the_innermost_node() {
     );
     // The control: a point inside the outer body only is the outer node's,
     // so both bodies are in the index and the inner one wins by size.
-    let hit = p.projector.hit(&mut p.layers, Vec2::new(580.0, 380.0)).expect("the outer body holds it");
+    let hit = p
+        .projector
+        .hit(&mut p.layers, Vec2::new(580.0, 380.0))
+        .expect("the outer body holds it");
     assert_eq!(hit.node, outer, "outside the inner body, the outer node");
 }

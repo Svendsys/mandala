@@ -217,24 +217,42 @@ fn test_projection_a_ring_edit_re_places_only_the_rings_outside_it() {
         .unwrap();
     let new = kids(&p.doc, frame, DocKind::Ring)[3];
     assert!(!rings.contains(&new), "the new ring is the fourth");
-    assert_eq!(placed(&p), vec![3, 4, 5], "an inserted ring re-places the rings outside it");
+    assert_eq!(
+        placed(&p),
+        vec![3, 4, 5],
+        "an inserted ring re-places the rings outside it"
+    );
     p.check().unwrap();
 
     // Removed again: the same three.
     p.apply(structure(StructOp::Remove, DocKind::Ring, new, "remove the ring"))
         .unwrap();
-    assert_eq!(placed(&p), vec![3, 4, 5], "a removed ring re-places the rings outside it");
+    assert_eq!(
+        placed(&p),
+        vec![3, 4, 5],
+        "a removed ring re-places the rings outside it"
+    );
     p.check().unwrap();
 
     // The ring on channel 5 moved inward, to 3: it, and the rings outside
     // where it lay and where it lies, are placed; the three inside not.
     let to = |channel| single(DocKind::Ring, DocMutation::Ring(RingOp::SetChannel(channel)));
-    p.apply(request(to(3), vec![rings[4]], "move a ring inward")).unwrap();
-    assert_eq!(placed(&p), vec![3, 4, 5], "a ring moved inward re-places the rings outside it");
+    p.apply(request(to(3), vec![rings[4]], "move a ring inward"))
+        .unwrap();
+    assert_eq!(
+        placed(&p),
+        vec![3, 4, 5],
+        "a ring moved inward re-places the rings outside it"
+    );
     p.check().unwrap();
 
     // The second ring moved outermost: every ring but the innermost.
-    p.apply(request(to(7), vec![rings[1]], "move a ring outward")).unwrap();
-    assert_eq!(placed(&p), vec![1, 2, 3, 4, 5], "a ring moved outward re-places all outside the first");
+    p.apply(request(to(7), vec![rings[1]], "move a ring outward"))
+        .unwrap();
+    assert_eq!(
+        placed(&p),
+        vec![1, 2, 3, 4, 5],
+        "a ring moved outward re-places all outside the first"
+    );
     p.check().unwrap();
 }

@@ -865,6 +865,10 @@ impl Projector {
         if !drawn {
             self.deps.record(Dependent::new(id, Stage::Resolve), &reads);
             self.deps.clear(Dependent::new(id, Stage::Place));
+            // Its labels are not drawn either, so they leave the label
+            // index: a label of a path not drawn has no position. They
+            // keep their ids, so drawing the path again indexes them anew.
+            let mut labels: [Option<NodeId>; 2] = [None, None];
             if let Some(unit) = self.units.get_mut(&id) {
                 for slot in &mut unit.slots {
                     slot.want = None;
@@ -873,12 +877,19 @@ impl Projector {
                     UnitBody::Line(line) => {
                         line.drawn = false;
                         line.ends = ends;
+                        labels = [line.label.id, None];
                     }
                     UnitBody::Portal(p) => {
                         p.drawn = false;
                         p.ends = ends;
+                        labels = [p.end[0].label.id, p.end[1].label.id];
                     }
                     _ => {}
+                }
+            }
+            for label in labels.into_iter().flatten() {
+                if self.label_hosts.get(&label) == Some(&id) {
+                    self.label_hosts.remove(&label);
                 }
             }
             return;

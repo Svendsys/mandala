@@ -315,6 +315,16 @@ fn single(kind: DocKind, mutation: DocMutation, anchors: Vec<NodeId>) -> EditReq
     )
 }
 
+/// One request of `mutations` in turn, each a step of its own at
+/// `target`, a mutator of `kind`, named `name`.
+fn many(kind: DocKind, mutations: Vec<DocMutation>, target: NodeId, name: &'static str) -> EditRequest {
+    let steps = mutations
+        .into_iter()
+        .flat_map(|m| single(kind, m, vec![target]).steps)
+        .collect();
+    EditRequest::new(steps, name)
+}
+
 /// A text op, its sizes in the unit of `rel`.
 fn text_op(c: &mut Choices, rel: bool) -> (&'static str, TextOp) {
     match c.below(7) {
@@ -671,6 +681,88 @@ pub fn edit_named(
             let node = pick(c, doc, K::Node)?;
             EditRequest::new(compose::add_section(doc, node, None).ok()?, name)
         }
+        // Several steps on one element in one request, so one record
+        // carries them all: a structural step and a field step, or a
+        // geometry field and a field its resolution reads (the review of
+        // #317).
+        "multi::reparent and restyle" => {
+            let node = pick(c, doc, K::Node)?;
+            let to = pick(c, doc, K::Node)?;
+            let size = TextOp::SetSize(Some(FontSize::Pt(8.0 + c.below(30) as f32)));
+            let mut steps = compose::reparent(doc, &[node], to).ok()?;
+            steps.extend(single(K::Node, DocMutation::Node(NodeOp::Text(size)), vec![node]).steps);
+            EditRequest::new(steps, name)
+        }
+        "multi::move and resize" => {
+            let node = pick(c, doc, K::Node)?;
+            let to = Vec2::new(c.below(1500) as f32, c.below(1200) as f32);
+            let size = Vec2::new(80.0 + c.below(300) as f32, 40.0 + c.below(200) as f32);
+            many(
+                K::Node,
+                vec![
+                    DocMutation::Node(NodeOp::SetPosition(to)),
+                    DocMutation::Node(NodeOp::SetMinSize(Some(size))),
+                ],
+                node,
+                name,
+            )
+        }
+        "multi::nudge, align and restyle a section" => {
+            let section = pick(c, doc, K::Section)?;
+            let align = *c.pick(&[Align::Left, Align::Center, Align::Right]);
+            many(
+                K::Section,
+                vec![
+                    DocMutation::Section(SectionOp::Nudge(Vec2::new(5.0, -3.0))),
+                    DocMutation::Section(SectionOp::SetAlign(Some(align))),
+                    DocMutation::Section(SectionOp::Text(text_op(c, false).1)),
+                ],
+                section,
+                name,
+            )
+        }
+        "multi::drag and restyle a label" => {
+            let label = pick(c, doc, K::Label)?;
+            many(
+                K::Label,
+                vec![
+                    DocMutation::Label(LabelOp::SetT(Some(c.below(5) as f32 * 0.25))),
+                    DocMutation::Label(LabelOp::SetOffset(Some(c.below(20) as f32 - 10.0))),
+                    DocMutation::Label(LabelOp::Text(text_op(c, false).1)),
+                ],
+                label,
+                name,
+            )
+        }
+        "multi::drag a marker and change its content" => {
+            let end = pick(c, doc, K::PortalEnd)?;
+            many(
+                K::PortalEnd,
+                vec![
+                    DocMutation::PortalEnd(PortalEndOp::SetBorderT(Some(c.below(4) as f32 * 0.25))),
+                    DocMutation::PortalEnd(PortalEndOp::SetContent(Some("◆".into()))),
+                ],
+                end,
+                name,
+            )
+        }
+        "multi::bend and show or hide a path" => {
+            let kind = if c.one_in(2) { K::Connector } else { K::Link };
+            let path = pick(c, doc, kind)?;
+            many(
+                kind,
+                vec![
+                    DocMutation::Path(PathOp::SetControlPoints(vec![Vec2::new(30.0, -40.0)])),
+                    DocMutation::Path(PathOp::SetVisible(c.one_in(2))),
+                    DocMutation::Path(PathOp::MoveControlPoint {
+                        index: 0,
+                        to: Vec2::new(c.below(80) as f32, 20.0),
+                    }),
+                ],
+                path,
+                name,
+            )
+        }
         _ => return None,
     };
     Some((name, req))
@@ -693,8 +785,9 @@ fn layout_op(c: &mut Choices) -> LayoutOp {
 }
 
 /// Every edit [`edit`] draws: each op of the vocabulary — a `Text` op
-/// named per owner, its seven text ops drawn within it — and each
-/// composite builder. `LinkOp::SetKind` is drawn as
+/// named per owner, its seven text ops drawn within it — each
+/// composite builder, and requests of several steps on one element
+/// (`multi::`). `LinkOp::SetKind` is drawn as
 /// `compose::set_link_kind`, the one shape the validator lets it take.
 pub const EDITS: &[&str] = &[
     "Map::SetName",
@@ -771,4 +864,10 @@ pub const EDITS: &[&str] = &[
     "compose::delete_text",
     "compose::split_section",
     "compose::add_section",
+    "multi::reparent and restyle",
+    "multi::move and resize",
+    "multi::nudge, align and restyle a section",
+    "multi::drag and restyle a label",
+    "multi::drag a marker and change its content",
+    "multi::bend and show or hide a path",
 ];

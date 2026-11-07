@@ -116,6 +116,7 @@ fn sweep_group(group: u64) {
                 "transaction::stage",
                 "transaction::interpolate",
                 "history::undo_and_redo",
+                "batch",
             ]
             .iter(),
         )

@@ -194,8 +194,10 @@ pub fn check_projection_edits(bytes: &[u8]) -> Result<(), String> {
 
 /// Take `p` through `steps` edits — the edit [`EDITS`] names at `turn`,
 /// advancing it, its targets and values drawn from `c`, applied and, one
-/// in three, undone and redone — and transaction stages, the oracle
-/// checked after every change; each edit applied is counted in
+/// in three, undone and redone — transaction stages, and batches: two to
+/// five edits and undos applied before one update is fed every record
+/// they made, as a frame feeds them (the review of #317). The oracle is
+/// checked after every update; each edit applied is counted in
 /// `covered`. `Err` names the case, the step and the edit.
 pub fn sweep(
     case: &str,
@@ -209,6 +211,32 @@ pub fn sweep(
         .map_err(|e| format!("{case}, the full projection: {e}"))?;
     for step in 0..steps {
         let at = |what: &str, e: String| format!("{case}, step {step}, {what}: {e}");
+        if c.one_in(6) {
+            // A batch: several records, one update.
+            let mut names = Vec::new();
+            for _ in 0..2 + c.below(4) {
+                if c.one_in(4) {
+                    if p.doc.undo().is_some() {
+                        names.push("undo");
+                    }
+                    continue;
+                }
+                let name = EDITS[*turn % EDITS.len()];
+                *turn += 1;
+                if let Some((name, req)) = edit_named(c, &p.doc, name) {
+                    if p.doc.apply(req, ChangeSource::Action).is_ok() {
+                        *covered.entry(name).or_default() += 1;
+                        names.push(name);
+                    }
+                }
+            }
+            if names.len() > 1 {
+                *covered.entry("batch").or_default() += 1;
+            }
+            p.sync_and_discard();
+            p.check().map_err(|e| at(&format!("the batch {names:?}"), e))?;
+            continue;
+        }
         if c.one_in(6) {
             // A transaction: two stages, then a commit or a cancel; an
             // animated one is interpolated half-way first.
