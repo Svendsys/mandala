@@ -8,7 +8,6 @@
 //! caller of the pair and the offscreen capture is the other, so a
 //! screenshot draws through the very code the window does.
 
-use glam::Vec2;
 use glyphon::{TextArea, TextBounds};
 use log::debug;
 use wgpu::StoreOp;
@@ -307,28 +306,12 @@ impl Renderer {
         };
         let default_color = COLOR_WHITE;
 
-        // Collect "main" text areas: the canvas's text buffers, the
-        // rubber band's edges. Chrome buffers go into a separate list so
-        // they render in a second glyphon pass, over the glyph-run pass
-        // that draws between the two (hence the split).
-        let main_capacity = self.overlay_buffers.len();
-        let mut main_text_areas: Vec<TextArea> = Vec::with_capacity(main_capacity);
-        main_text_areas.extend(self.overlay_buffers.iter().filter_map(|tb| {
-            if !tb.visible_at(camera) {
-                return None;
-            }
-            let canvas_pos = Vec2::new(tb.pos.0, tb.pos.1);
-            let screen_pos = camera.canvas_to_screen(canvas_pos);
-            Some(TextArea {
-                buffer: &tb.buffer,
-                left: screen_pos.x,
-                top: screen_pos.y,
-                scale: camera.pixels_per_unit(),
-                bounds: vp_bounds,
-                default_color,
-                custom_glyphs: &[],
-            })
-        }));
+        // The main glyphon pass holds no text areas of its own: every
+        // canvas visual, the rubber band included (the chrome layer),
+        // reaches the GPU as a glyph run of the layer renderer. Chrome
+        // buffers go into a separate list so they render in a second
+        // glyphon pass, over the glyph-run pass that draws between the two.
+        let main_text_areas: Vec<TextArea> = Vec::new();
 
         // Chrome: screen-space text, drawn in its own glyphon pass over
         // the canvas's — first an open modal's backdrop cells, so they

@@ -37,8 +37,6 @@
 //! - [`backdrop`] — the opaque backdrops behind the console and the
 //!   color picker, drawn as a grid of full-block glyphs (`█`) in the
 //!   console's pass, under the modal's text.
-//! - [`selection_overlay`] — the rubber-band selection
-//!   rectangle, the one canvas visual with no model behind it.
 //! - [`chrome_text`] — the screen-space chrome's text buffers and
 //!   the glyph-advance measurement modal frames are laid out with.
 //! - [`console_pass`] / [`console_geometry`] — the console
@@ -100,7 +98,6 @@ mod target_encoding;
 // Rubber-band selection rectangle. Driven by the native-gated
 // drag state machine.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-mod selection_overlay;
 mod tree_walker;
 
 #[cfg(test)]
@@ -378,27 +375,6 @@ pub struct Renderer {
     /// whenever the picker is closed, and when its spec asks for a
     /// transparent backdrop.
     color_picker_backdrop: Option<(f32, f32, f32, f32)>,
-    /// The rubber-band selection rectangle's four shaped edges, and
-    /// nothing else. Camera-transformed. Written only by
-    /// [`Self::rebuild_selection_rect_overlay`] and dropped only by
-    /// [`Self::clear_selection_rect_overlay`]; the color picker, the FPS
-    /// readout and the mode-status line each have their own store.
-    ///
-    /// The exclusivity is load-bearing rather than incidental:
-    /// `app::drain_frame::drain_rect_select` — a plain code span
-    /// because `app` is a private module and rustdoc cannot resolve
-    /// a link into one — clears this on every frame no rubber band
-    /// is live, so anything else parked here would be wiped. The
-    /// doc used to read "temporary overlay buffers (e.g., selection
-    /// rectangle)", which invited exactly that.
-    overlay_buffers: Vec<MindMapTextBuffer>,
-    /// `(char_count, row_count)` of the most recent selection-rect
-    /// shape held in [`Self::overlay_buffers`]. Per-tick rebuilds
-    /// reuse the existing shaped buffers (just update positions)
-    /// when these counts match, avoiding 4 fresh `cosmic_text`
-    /// shapings per drag tick. `None` whenever the overlay is
-    /// cleared or holds a non-selection-rect shape.
-    selection_rect_shape_cache: Option<(usize, usize)>,
     /// The console's and the color picker's shaped buffers, in draw
     /// order: made from the overlay trees of the app's
     /// [`AppScene`](crate::application::scene_host::AppScene) by
@@ -691,8 +667,6 @@ impl Renderer {
             viewport,
             camera,
             color_picker_backdrop: None,
-            overlay_buffers: Vec::new(),
-            selection_rect_shape_cache: None,
             overlay_scene_elements: Vec::new(),
             console_backdrop: None,
             backdrop_cell: None,
@@ -716,7 +690,6 @@ impl Renderer {
     pub(crate) fn glyphon_buffer_count(&self) -> usize {
         self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len()
-            + self.overlay_buffers.len()
             + self.overlay_scene_elements.len()
     }
 
@@ -819,6 +792,24 @@ impl Renderer {
         journals: impl IntoIterator<Item = (Layer, &'j Journal<GfxElement>)>,
     ) {
         self.layer_renderer.apply(layers, journals);
+    }
+
+    /// Bring the drawn chrome layer up to date after a glyph mutator was
+    /// applied to it, from that change's journal
+    /// ([`layers::LayerRenderer::apply_chrome`]): what
+    /// `view::MapView::apply_chrome` hands over before it discards the
+    /// journal.
+    ///
+    /// Cost: O(the elements the journal names).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
+        )
+    )]
+    pub(crate) fn apply_chrome_journal(&mut self, chrome: &GfxTree, journal: &Journal<GfxElement>) {
+        self.layer_renderer.apply_chrome(chrome, journal);
     }
 
     /// The color every frame is cleared to, as the render pass is
@@ -1203,13 +1194,6 @@ impl Renderer {
 pub struct MindMapTextBuffer {
     pub buffer: Buffer,
     pub pos: (f32, f32),
-    pub bounds: (f32, f32),
-    /// Per-`GlyphArea` zoom window copied in at buffer-build time.
-    /// The main render loop skips this buffer whenever
-    /// `camera.zoom` falls outside the window. Default (both
-    /// bounds `None`) renders at every zoom — existing buffers pay
-    /// nothing.
-    pub zoom_visibility: baumhard::gfx_structs::zoom_visibility::ZoomVisibility,
 }
 
 impl MindMapTextBuffer {
@@ -1225,17 +1209,6 @@ impl MindMapTextBuffer {
             anchor.0 + emission_offset.0 + offset.x,
             anchor.1 + emission_offset.1 + offset.y,
         )
-    }
-
-    /// Should this text buffer render at the current camera
-    /// state? Asks the one cull predicate, `Camera2D::visibility`,
-    /// which the IPC scene introspection reports verbatim. Pure,
-    /// no allocation; the render loop calls this once per buffer
-    /// per frame in the `main_text_areas` collector.
-    pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
-        let pos = Vec2::new(self.pos.0, self.pos.1);
-        let size = Vec2::new(self.bounds.0, self.bounds.1);
-        camera.visibility(pos, size, self.zoom_visibility).is_visible()
     }
 }
 

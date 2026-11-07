@@ -165,10 +165,10 @@ decision, not a drive-by edit.
   pipeline; do not add one.
 
   **Transient chrome is the carve-out**, and the list is small and
-  closed: the rubber-band selection rectangle
-  (`renderer/selection_overlay.rs`), the console overlay
+  closed: the chrome layer (`view/band.rs`'s rubber band, and V1-C7's
+  handles and V1-C8's section frames to come), the console overlay
   (`renderer/console_pass.rs`), the glyph-wheel color picker
-  (`renderer/color_picker.rs`), and the FPS / mode-status overlays.
+  (`renderer/color_picker.rs`), and the FPS / status-line overlays.
   The discriminator is *what the visual is a projection of*, not
   whether it ever reads the model: each of these belongs to an
   interaction rather than to document content, so it has no model

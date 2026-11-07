@@ -183,7 +183,6 @@ fn install_document(ctx: &mut InputHandlerContext<'_>, new_doc: MindMapDocument)
     *ctx.last_click = None;
     *ctx.interaction_mode = super::super::InteractionMode::Default;
     ctx.renderer.set_mode_status_text(None);
-    ctx.renderer.clear_selection_rect_overlay();
 }
 
 /// Print what [`execute_console_line`] produced to the console

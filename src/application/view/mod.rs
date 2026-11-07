@@ -38,6 +38,8 @@
 //! the projection map; nothing reads a glyph layer to learn what the
 //! document is.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod band;
 pub(crate) mod inspect;
 pub(crate) mod overlay;
 #[cfg(test)]
@@ -46,10 +48,17 @@ mod tests;
 use baumhard::arena::NodeId;
 use baumhard::document::resolve::resolve_background;
 use baumhard::document::writer::feed::ChangeRecord;
+use baumhard::engine::anchor::Anchors;
+use baumhard::engine::journal::JournalBuilder;
+use baumhard::engine::tree::TreeError;
 #[cfg(not(target_arch = "wasm32"))]
 use baumhard::flow::Rect;
 use baumhard::font::fonts::FontSystemLease;
-use baumhard::gfx_structs::tree::GfxTree;
+#[cfg(not(target_arch = "wasm32"))]
+use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
+use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
+#[cfg(not(target_arch = "wasm32"))]
+use baumhard::projection::RUN_CHANNEL;
 use baumhard::projection::{GlyphLayers, Hit, LayerChanges, Projector};
 use glam::Vec2;
 
@@ -65,10 +74,19 @@ pub(crate) struct MapView {
     /// The five glyph layers the projector writes.
     layers: GlyphLayers,
     /// The chrome layer (design §12.1): view-only glyphs built from app
-    /// state rather than the document — V1-C7's handles, V1-C8's section
-    /// frames. Drawn above the five layers; nothing in V1-C3 puts a run
-    /// in it.
+    /// state rather than the document — the rubber band
+    /// ([`band`]), and V1-C7's handles and V1-C8's section frames to
+    /// come. Drawn above the five layers; written only through
+    /// [`Self::apply_chrome`], whose journal the renderer applies.
     chrome: GfxTree,
+    /// The rubber band's four runs in [`Self::chrome`]. Native, with
+    /// the rubber band.
+    #[cfg(not(target_arch = "wasm32"))]
+    band: band::BandRuns,
+    /// The rectangle the band is drawn over, while one is out. Native,
+    /// with the rubber band.
+    #[cfg(not(target_arch = "wasm32"))]
+    band_rect: Option<Rect>,
     /// The selection tint, stamped on the selection — or, while a rubber
     /// band is out, on what it covers (`band_targets`).
     highlight: Overlay,
@@ -115,10 +133,21 @@ impl MapView {
             let mut fonts = FontSystemLease::new("view::load");
             Projector::project_full(doc.doc(), &mut layers, &mut fonts)
         };
+        #[cfg_attr(
+            target_arch = "wasm32",
+            expect(unused_mut, reason = "the band is planted on native only")
+        )]
+        let mut chrome = chrome_layer();
+        #[cfg(not(target_arch = "wasm32"))]
+        let band = band::plant(&mut chrome);
         let mut view = MapView {
             projector,
             layers,
-            chrome: chrome_layer(),
+            chrome,
+            #[cfg(not(target_arch = "wasm32"))]
+            band,
+            #[cfg(not(target_arch = "wasm32"))]
+            band_rect: None,
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
             band_targets: None,
             feed: Vec::new(),
@@ -293,6 +322,88 @@ impl MapView {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn band_targets(&self) -> Option<&[NodeId]> {
         self.band_targets.as_deref()
+    }
+
+    /// Apply `mutators` — each a glyph mutator and the chrome elements it
+    /// is anchored at — to the chrome layer, under one journal, and hand
+    /// the journal to the renderer before it is discarded: the chrome's
+    /// one write path, as the projector's journals are the glyph layers'.
+    /// A refusal reverts everything this call applied and is returned;
+    /// the renderer is then not called.
+    ///
+    /// Cost: the walks the mutators make, and the renderer's apply of
+    /// the elements the journal names.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
+        )
+    )]
+    pub(crate) fn apply_chrome(
+        &mut self,
+        mutators: &[(GfxMutatorTree, Anchors)],
+        renderer: &mut Renderer,
+    ) -> Result<(), TreeError> {
+        let mut journal = JournalBuilder::new();
+        for (mutator, anchors) in mutators {
+            mutator.apply_at_journaled(&mut self.chrome, anchors, |_, _| (), &mut journal)?;
+        }
+        let journal = journal.close(&self.chrome);
+        renderer.apply_chrome_journal(&self.chrome, &journal);
+        journal.discard(&mut self.chrome);
+        Ok(())
+    }
+
+    /// Draw the rubber band over `rect`, or hide it with `None`, through
+    /// [`Self::apply_chrome`]: the band's four runs get new payloads, and
+    /// nothing else is touched. Nothing at all when the band is already
+    /// so. Returns whether it changed. Native, with the rubber band's
+    /// gesture (`CLAUDE.md` "Dual-target status"); the chrome's write
+    /// path is both targets'.
+    ///
+    /// Cost: four box shapings, under one font lease, and the renderer's
+    /// apply of four runs.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_band(&mut self, rect: Option<Rect>, renderer: &mut Renderer) -> bool {
+        if self.band_rect == rect {
+            return false;
+        }
+        let mutators: Vec<(GfxMutatorTree, Anchors)> = band::runs_for(rect)
+            .into_iter()
+            .zip(self.band)
+            .map(|(run, id)| {
+                (
+                    GfxMutatorTree::new_with(GfxMutator::new(
+                        GfxMutation::RunSet(Box::new(run)),
+                        RUN_CHANNEL,
+                    )),
+                    Anchors::Nodes(vec![id]),
+                )
+            })
+            .collect();
+        match self.apply_chrome(&mutators, renderer) {
+            Ok(()) => {
+                self.band_rect = rect;
+                true
+            }
+            Err(error) => {
+                log::warn!("view: the rubber band was refused: {error}");
+                false
+            }
+        }
+    }
+
+    /// The chrome layer, for the tests that read what the band wrote.
+    #[cfg(test)]
+    pub(crate) fn chrome(&self) -> &GfxTree {
+        &self.chrome
+    }
+
+    /// The rubber band's four runs in the chrome layer. Test builds only.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn band_runs(&self) -> [NodeId; 4] {
+        self.band
     }
 
     /// The projection state, to read geometry from (`Projector`'s

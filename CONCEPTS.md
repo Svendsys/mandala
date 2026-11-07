@@ -2128,10 +2128,9 @@ pipelines:
   draw call per frame: the canvas trees' runs, then the glyph layers'
   ([layer renderer](#layer-renderer)).
 
-Sub-passes sit in `borders.rs`, `console_pass.rs`,
-`color_picker.rs` and `selection_overlay.rs`; connection glyphs
-have no pass of their own — they are a canvas-role tree walked by
-`tree_walker.rs` like every other role. Visibility culling is
+Sub-passes sit in `console_pass.rs` and `color_picker.rs`; the
+document's glyphs and the chrome layer's (the rubber band) are glyph
+runs of the layer renderer. Visibility culling is
 `Camera2D::visibility`, which answers the spatial cull and the
 [`ZoomVisibility`](#zoomvisibility) window in one verdict.
 

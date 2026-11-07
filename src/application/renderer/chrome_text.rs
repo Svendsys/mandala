@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Text buffers for the screen-space chrome — the FPS readout, the
-//! mode-status line, the rubber band's edges — and the glyph-advance
-//! measurement the console and the color picker lay their frames out
-//! with. Every buffer is a [`MindMapTextBuffer`] with
-//! [`ZoomVisibility::unbounded`]: chrome is drawn at every zoom.
+//! Text buffers for the screen-space chrome — the FPS readout and the
+//! status line — and the glyph-advance measurement the console and the
+//! color picker lay their frames out with. Every buffer is a
+//! [`MindMapTextBuffer`], drawn at every zoom. (The rubber band is a
+//! glyph run of the chrome layer, `view::band`.)
 //!
 //! Per CODE_CONVENTIONS §1, styled-region → cosmic-text spans go
 //! through `baumhard::font::attrs` — never inlined here. Hex-colour
@@ -16,7 +16,6 @@ use baumhard::font::fonts::AppFont;
 use baumhard::font::metric_cache::glyph_advance_with;
 use baumhard::font::metrics::monospace_advance;
 use baumhard::font::{buffer, Attrs, FontSystem, SHAPING_ADVANCED};
-use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
 
 use super::MindMapTextBuffer;
 
@@ -109,7 +108,5 @@ pub(super) fn create_text_buffer_lh(
         pos,
         // Chrome buffers are authored directly at their final
         // position rather than stamped around a `GlyphArea` anchor.
-        bounds,
-        zoom_visibility: ZoomVisibility::unbounded(),
     }
 }

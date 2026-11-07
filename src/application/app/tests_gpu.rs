@@ -788,3 +788,108 @@ fn test_an_app_driven_change_reports_its_source_through_the_change_feed() {
         "control: with no records the source falls back"
     );
 }
+
+/// **The rubber band is drawn on the chrome layer, through its journaled
+/// write path** (design §12.1; `MapView::apply_chrome`): a band's frame
+/// applies one chrome journal that names exactly the band's four runs,
+/// and a move of the band touches those four and nothing else in the
+/// chrome; a pan applies nothing, to the glyph layers or to the chrome.
+///
+/// Controls: the same rectangle on the next frame applies nothing (the
+/// band is not redrawn per frame); the band's runs are hidden before it
+/// and after it ends and shown while it is out; and the move changes
+/// the runs' drawn origin, so the apply is of a real change.
+#[test]
+fn test_the_rubber_band_is_drawn_on_the_chrome_layer() {
+    use super::DragState;
+    use glam::Vec2;
+
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+    let chrome_applies = |init: &InitState| init.renderer.layer_renderer().log().chrome_applies;
+    let band_opacity = |init: &InitState| -> Vec<f32> {
+        let view = view(init);
+        view.band_runs()
+            .iter()
+            .map(|&id| {
+                view.chrome().arena()[id]
+                    .get()
+                    .glyph_run()
+                    .expect("a band element is a run")
+                    .opacity()
+            })
+            .collect()
+    };
+    let mut band_runs = view(init).band_runs().to_vec();
+    band_runs.sort();
+    assert_eq!(
+        band_opacity(init),
+        vec![0.0; 4],
+        "control: the band is hidden before it starts"
+    );
+
+    let (layer_applies, chrome_before) = (applies(init), chrome_applies(init));
+    let reply = action(init, "PanCameraEast");
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    frame(init);
+    assert_eq!(
+        applies(init),
+        layer_applies,
+        "a pan applies nothing to the glyph layers"
+    );
+    assert_eq!(chrome_applies(init), chrome_before, "nor to the chrome");
+
+    init.drag_state = DragState::SelectingRect {
+        start_canvas: Vec2::new(-400.0, -300.0),
+        current_canvas: Vec2::new(200.0, 100.0),
+    };
+    frame(init);
+    assert_eq!(
+        chrome_applies(init),
+        chrome_before + 1,
+        "the band's first frame applies the chrome once"
+    );
+    let mut visited = init.renderer.layer_renderer().log().chrome_visited.clone();
+    visited.sort();
+    assert_eq!(visited, band_runs, "and names exactly the band's four runs");
+    assert_eq!(band_opacity(init), vec![1.0; 4], "the band is shown");
+    let origin = |init: &InitState| {
+        let view = view(init);
+        view.chrome().arena()[view.band_runs()[0]]
+            .get()
+            .glyph_run()
+            .expect("a run")
+            .origin()
+    };
+    let first = origin(init);
+
+    frame(init);
+    assert_eq!(
+        chrome_applies(init),
+        chrome_before + 1,
+        "control: the same band applies nothing again"
+    );
+
+    init.drag_state = DragState::SelectingRect {
+        start_canvas: Vec2::new(-250.0, -300.0),
+        current_canvas: Vec2::new(200.0, 100.0),
+    };
+    frame(init);
+    assert_eq!(chrome_applies(init), chrome_before + 2);
+    let mut visited = init.renderer.layer_renderer().log().chrome_visited.clone();
+    visited.sort();
+    assert_eq!(visited, band_runs, "a band move touches only its own runs");
+    assert_ne!(origin(init), first, "control: the move moved the band");
+
+    init.drag_state = DragState::None;
+    frame(init);
+    assert_eq!(
+        chrome_applies(init),
+        chrome_before + 3,
+        "the band's end is one more apply"
+    );
+    assert_eq!(band_opacity(init), vec![0.0; 4], "and hides it");
+}

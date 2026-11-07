@@ -38,14 +38,14 @@ pub(super) fn drain_rect_select(
     };
     match rect_select_frame(drag_state) {
         RectSelectFrame::Track { rect } => {
-            renderer.rebuild_selection_rect_overlay(rect.origin, rect.max());
+            view.set_band(Some(rect), renderer);
             if view.set_band_targets(Some(view.nodes_in(rect))) {
                 view.sync(doc, renderer);
             }
         }
         RectSelectFrame::End => {
+            view.set_band(None, renderer);
             if view.band_targets().is_some() {
-                renderer.clear_selection_rect_overlay();
                 view.set_band_targets(None);
                 view.sync(doc, renderer);
             }
@@ -99,7 +99,7 @@ pub(super) fn end_rect_select_gesture(
     let covered = view.nodes_in(band(start_canvas, current_canvas));
     view.set_band_targets(None);
     doc.selection.set(covered);
-    ctx.renderer.clear_selection_rect_overlay();
+    view.set_band(None, ctx.renderer);
     if let Some(mut vc) = view_ctx!(ctx, doc) {
         vc.sync();
     }

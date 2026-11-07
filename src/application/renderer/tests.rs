@@ -1255,12 +1255,6 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
 #[test]
 fn test_every_selection_highlight_form_carries_one_rgb_triple() {
     let tint = crate::application::view::overlay::SELECTION_HIGHLIGHT.0;
-    let rect = super::selection_overlay::SELECTION_RECT_COLOR;
-    assert_eq!(
-        [rect.r(), rect.g(), rect.b()],
-        [tint[0], tint[1], tint[2]],
-        "the rubber band's cyan"
-    );
     let status = super::MODE_STATUS_COLOR;
     assert_eq!(
         [status.r(), status.g(), status.b(), status.a()],

@@ -100,13 +100,24 @@ pub(crate) struct LayerRenderer {
     log: ApplyLog,
 }
 
+/// The scratch index of the chrome layer: after the five glyph layers'.
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
+    )
+)]
+const CHROME: usize = 5;
+
 /// [`LayerRenderer::apply`]'s working space.
 #[derive(Default)]
 struct Scratch {
-    /// Per layer, the last touch of each element the journals name.
-    touches: [FxHashMap<NodeId, Touch>; 5],
+    /// Per layer — the five, then the chrome — the last touch of each
+    /// element the journals name.
+    touches: [FxHashMap<NodeId, Touch>; 6],
     /// Per layer, those elements in the order they were first named.
-    order: [Vec<NodeId>; 5],
+    order: [Vec<NodeId>; 6],
     /// Slots waiting to be put in their row.
     pending: Vec<SlotId>,
     /// The walk of a removed subtree, and the chain of rows a splice
@@ -126,6 +137,11 @@ struct Scratch {
 pub(crate) struct ApplyLog {
     /// How many times [`LayerRenderer::apply`] has been called.
     pub(crate) applies: u64,
+    /// How many times [`LayerRenderer::apply_chrome`] has been called.
+    pub(crate) chrome_applies: u64,
+    /// Every chrome element the last `apply_chrome` visited, each once,
+    /// in the order its journal named it.
+    pub(crate) chrome_visited: Vec<NodeId>,
     /// Every element the last call visited, each once, by layer, in the
     /// order the journals first named it.
     pub(crate) visited: Vec<(Layer, NodeId)>,
@@ -202,6 +218,8 @@ impl LayerRenderer {
         {
             self.log = ApplyLog {
                 applies: self.log.applies + 1,
+                chrome_applies: self.log.chrome_applies,
+                chrome_visited: std::mem::take(&mut self.log.chrome_visited),
                 ..ApplyLog::default()
             };
         }
@@ -215,8 +233,38 @@ impl LayerRenderer {
             }
         }
         for layer in Layer::ALL {
-            self.apply_layer(layer, layers.tree(layer));
+            self.apply_mirror(layer.index(), layers.tree(layer));
         }
+    }
+
+    /// Bring the chrome layer's render state up to date with `chrome`
+    /// after the change `journal` records — a glyph mutator applied to it
+    /// (`view::MapView::apply_chrome`) — as [`Self::apply`] does for the
+    /// five glyph layers, and with the same contract: the journal is read
+    /// before it is discarded, and an element it does not name is not
+    /// looked at.
+    ///
+    /// Cost: O(the elements the journal names).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
+        )
+    )]
+    pub(crate) fn apply_chrome(&mut self, chrome: &GfxTree, journal: &Journal<GfxElement>) {
+        #[cfg(test)]
+        {
+            self.log.chrome_applies += 1;
+            self.log.chrome_visited.clear();
+        }
+        let (touches, order) = (&mut self.scratch.touches[CHROME], &mut self.scratch.order[CHROME]);
+        for (id, touch) in journal.touched() {
+            if touches.insert(id, touch).is_none() {
+                order.push(id);
+            }
+        }
+        self.apply_mirror(CHROME, chrome);
     }
 
     /// The projector's journals, each with its layer: what
@@ -327,11 +375,14 @@ impl LayerRenderer {
     /// Apply the touches collected for `layer` against `tree`, the layer
     /// as it now stands: drop what left, write what entered or changed,
     /// then splice everything whose place changed into its row.
-    fn apply_layer(&mut self, layer: Layer, tree: &GfxTree) {
-        let i = layer.index();
+    fn apply_mirror(&mut self, i: usize, tree: &GfxTree) {
+        let layer = Layer::ALL.get(i).copied();
         let mut order = std::mem::take(&mut self.scratch.order[i]);
         let mut touches = std::mem::take(&mut self.scratch.touches[i]);
-        let mirror = &mut self.mirrors[i];
+        let mirror = match layer {
+            Some(_) => &mut self.mirrors[i],
+            None => &mut self.chrome,
+        };
         let (pending, stack, given_up) = (
             &mut self.scratch.pending,
             &mut self.scratch.stack,
@@ -344,7 +395,10 @@ impl LayerRenderer {
 
         for id in &order {
             #[cfg(test)]
-            log.visited.push((layer, *id));
+            match layer {
+                Some(layer) => log.visited.push((layer, *id)),
+                None => log.chrome_visited.push(*id),
+            }
             if touches.get(id) == Some(&Touch::Removed) {
                 if let Some(slot) = mirror.slot_of(*id) {
                     // A slot under it that a later journal took out of
@@ -366,7 +420,7 @@ impl LayerRenderer {
                 continue;
             }
             let Some(node) = tree.get(id) else {
-                warn!("renderer::layers: {layer:?} names {id:?}, which the layer does not hold");
+                warn!("renderer::layers: {layer:?} (None: the chrome) names {id:?}, which the layer does not hold");
                 continue;
             };
             let run = node.get().glyph_run();
