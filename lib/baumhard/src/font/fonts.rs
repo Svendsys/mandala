@@ -44,25 +44,28 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
     map
 }
 
-/// Register every compiled-in font with [`FONT_SYSTEM`], returning
-/// the `AppFont → fontdb ID` map callers use to resolve faces.
+/// The font system [`FONT_SYSTEM`] holds, built complete before it is put
+/// in the lock (#323): the host's faces, every compiled-in face, each
+/// [`fallback::ORNAMENT_FALLBACK`] face at every weight
+/// ([`fallback::register_every_weight`], #297), and none of the host's
+/// faces that bear a compiled family's name ([`remove_shadowing_faces`],
+/// ruling R30.1). The compiled faces' ids go to `COMPILED_IDS`, which
+/// [`COMPILED_FONT_ID_MAP`] reads.
 ///
-/// Acquires the `FONT_SYSTEM` **write** guard through
-/// [`acquire_font_system_write`] (§B5: every write acquire routes
-/// through the helper). A caller already holding any `FONT_SYSTEM`
-/// guard on this thread makes the acquire panic at once, naming both
-/// sites, instead of hanging — but that never happens in practice
-/// because [`init`] runs `load_fonts` at startup, before any guard
-/// is held. Each [`fallback::ORNAMENT_FALLBACK`] face is registered at
-/// every weight ([`fallback::register_every_weight`], #297). Once they
-/// are registered, every other face that bears a compiled family's name
-/// is removed ([`remove_shadowing_faces`], ruling R30.1). Costs: one lock
-/// acquisition, one `load_font_source` call per entry in
+/// So the set of faces anything is shaped with is the same from the first
+/// shaping on, whoever takes the lock first and whatever it shapes. Until
+/// #323 the compiled faces were registered lazily, on the first read of
+/// `COMPILED_FONT_ID_MAP` — at [`init`], or when a span first pinned a
+/// compiled family — and text in the default family shaped before that
+/// was shaped with the host's faces alone: one map laid out differently
+/// after another had been opened.
+///
+/// It takes no lock: the value is not yet in one. Costs:
+/// `fallback::new_font_system`, one `load_font_source` call per entry in
 /// [`FONT_SOURCES`], eight database inserts per fallback face, and one
 /// walk over every face in the database.
-fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
-    debug!("Waiting for font-system write lock");
-    let mut font_system = acquire_font_system_write("load_fonts");
+fn complete_font_system() -> FontSystem {
+    let mut font_system = fallback::new_font_system();
     // Where the host's faces are: indexed by `FontSystem::new`, ahead of
     // the compiled set.
     #[cfg(test)]
@@ -85,13 +88,16 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     let _ = SHADOWING_FACES_REMOVED.set(removed);
     #[cfg(not(test))]
     drop(removed);
-    drop(font_system);
-    debug!("Released font-system lock.");
-    compiled_font_id_map
+    let _ = COMPILED_IDS.set(compiled_font_id_map);
+    font_system
 }
 
+/// The compiled faces' ids, as [`complete_font_system`] registered them.
+static COMPILED_IDS: OnceLock<FxHashMap<AppFont, TinyVec<[ID; 8]>>> = OnceLock::new();
+
 /// How many times the font system's set of faces has been changed: once,
-/// when [`init`] registers the compiled faces (`load_fonts`). A cache of
+/// when the font system is built with the compiled faces
+/// ([`complete_font_system`]), before anything can shape with it. A cache of
 /// shapings records it and lets its entries go when it moves
 /// (`projection::shapes`, #304), since a shaping depends on the faces
 /// installed as well as on its text and style.
@@ -309,26 +315,33 @@ lazy_static! {
     /// hold the lock invisibly, and a same-thread re-acquire under it
     /// could no longer be told from ordinary contention.
     ///
-    /// Built by [`fallback::new_font_system`], whose fallback lists reach
-    /// the compiled ornament faces before any host face (#297).
-    static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(fallback::new_font_system());
-    /// `AppFont → fontdb face IDs` map populated on first access by
-    /// [`load_fonts`]. Read-only after initialization.
-    pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = load_fonts();
+    /// Built complete by [`complete_font_system`] — every compiled face
+    /// registered, the fallback lists reaching the compiled ornament faces
+    /// before any host face (#297) — before it is put in the lock, so the
+    /// first acquire, by anyone, already holds the faces every later one
+    /// does (#323).
+    static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(complete_font_system());
+    /// `AppFont → fontdb face IDs` map, from the same build as
+    /// [`FONT_SYSTEM`]: reading it builds the font system if nothing has
+    /// yet, and takes no lock. Read-only.
+    pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = {
+        lazy_static::initialize(&FONT_SYSTEM);
+        COMPILED_IDS.get().cloned().unwrap_or_default()
+    };
 }
 
-/// Force lazy initialization of [`COMPILED_FONT_ID_MAP`] — and, via
-/// it, the one-time `FONT_SYSTEM` write-lock that registers every
-/// compiled-in font — and the `FAMILY_INDEX` that
-/// [`loaded_families_iter`] / [`app_font_by_family`] read.
-/// Call once at program start before any shaping / measurement
-/// path. Doing both eagerly here closes a latent re-entrant-read
-/// risk: `FAMILY_INDEX`'s lazy build acquires `FONT_SYSTEM.read()`,
-/// and `mindnode_section_area` indirectly calls
-/// `app_font_by_family` from inside the tree builder; if a future
-/// caller ever holds `FONT_SYSTEM.write()` while invoking the tree
-/// builder, the lazy path would deadlock. Eager init at startup
-/// makes that impossible.
+/// Warm up the font state now rather than at its first use: build the
+/// font system, with every compiled face ([`complete_font_system`]), and
+/// the `FAMILY_INDEX` that [`loaded_families_iter`] /
+/// [`app_font_by_family`] read. **Warm-up only** (#323): what anything is
+/// shaped with does not depend on whether, or when, this ran, since the
+/// font system is built complete whoever reaches it first. The app calls
+/// it at startup so the build's cost is paid there, not in a first frame.
+/// It also builds `FAMILY_INDEX` before anything could hold the write
+/// guard: that build takes the read guard, and `mindnode_section_area`
+/// reaches `app_font_by_family` from inside the tree builder, so a caller
+/// holding `FONT_SYSTEM.write()` while invoking the tree builder would
+/// otherwise re-enter the lock.
 pub fn init() {
     ensure_warm();
 }
@@ -405,8 +418,8 @@ pub fn clamp_to_font_window(value: f32, min: f32, max: f32) -> f32 {
 }
 
 /// Force the font lazy-statics a `FONT_SYSTEM` write acquire depends
-/// on to build **now** — `COMPILED_FONT_ID_MAP` (via `load_fonts`,
-/// which itself takes the write guard) and `FAMILY_INDEX` (via
+/// on to build **now** — `COMPILED_FONT_ID_MAP` (which builds the font
+/// system and takes no lock) and `FAMILY_INDEX` (via
 /// `build_family_index`, which takes the read guard). Library-callable
 /// counterpart to the app-only [`init`]: a caller that is about to
 /// hold the write guard and will reach `face_family_name_for_pin` /
@@ -452,18 +465,8 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 /// native-only divergence `format/fonts.md` opens by describing.
 /// Sorting is alphabetical so a UI list is stable.
 fn build_family_index() -> Vec<(String, AppFont)> {
-    // Force `COMPILED_FONT_ID_MAP`'s lazy-static init **before** we
-    // grab the `FONT_SYSTEM` read lock. `load_fonts()` (the lazy
-    // initializer) needs `FONT_SYSTEM.write()`, and a same-thread
-    // read-then-write deadlocks the worker. `init()` documents this
-    // ordering at the top of the module and explicitly does both
-    // initializations in the right order, but tests / call paths
-    // that reach `app_font_by_family` without going through
-    // `init()` first (the cosmic-text tree builder, the inline text
-    // editor, the console completion popup) would otherwise hit the
-    // race. Touching `.capacity()` is enough to drive the
-    // lazy_static — `load_fonts()` runs on this line, returns, and
-    // releases its write guard before the read below acquires.
+    // The compiled faces' ids, which come with the font system's build
+    // and take no lock (#323).
     COMPILED_FONT_ID_MAP.capacity();
 
     // Reverse map id → AppFont so we can attribute each face to a
@@ -1052,7 +1055,7 @@ fn adopt_write(
 /// compile:
 ///
 /// 1. **This function**, the default. Used by every call site that
-///    must measure or shape and can afford to wait: `load_fonts`, the
+///    must measure or shape and can afford to wait: the
 ///    metric cache's miss path, and the renderer's border / handle /
 ///    overlay rebuilds.
 /// 2. [`try_acquire_font_system_write`] — non-blocking, for the

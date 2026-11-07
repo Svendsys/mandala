@@ -897,13 +897,10 @@ fn word_breaks(text: &str, out: &mut Vec<usize>) {
 ///
 /// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
 ///
-/// **Precondition: call [`fonts::init`](crate::font::fonts::init) before
-/// the lease first takes the lock.** Resolving a span's face reads the
-/// compiled font table, whose first read registers the fonts under the
-/// font lock; with the table still cold, that read would re-enter the
-/// lock the lease holds and panic. The app initializes at startup; any
-/// other caller (a tool, a fuzz target) does it once before its first
-/// lease or guard.
+/// The faces it shapes with are the font system's whole set from the
+/// first shaping on, whether or not [`fonts::init`](crate::font::fonts::init)
+/// ran first (#323), so the run is a function of the spans, the scale and
+/// the font database alone.
 ///
 /// Cost: one cosmic-text buffer and one shaping pass over the text,
 /// under the lock `fs` holds (an acquire first when it holds none,
@@ -1152,9 +1149,7 @@ fn usable_min_size(min: Vec2) -> Vec2 {
 /// non-negative length: a `NaN`, infinite or negative axis asks for
 /// nothing.
 ///
-/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)),
-/// and [`fonts::init`](crate::font::fonts::init) must have run before the
-/// lease first took the lock, as for [`shape_run`].
+/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
 ///
 /// Cost: one cosmic-text buffer, shaped once and laid out twice (once
 /// unbounded to measure, once at the box's width to align — the second
