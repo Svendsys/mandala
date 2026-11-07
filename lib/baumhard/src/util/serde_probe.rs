@@ -4,11 +4,11 @@
 //! generated code rather than of the source text that produced it.
 //!
 //! [`crate::util::serde_coverage`] answers the same questions by
-//! parsing baumhard's own `.rs` files with `syn`. That walk is the
-//! only thing `format/legacy-schema.md`'s published array list rests on, and
-//! a walk is a *reading* of the source — it can be wrong in ways the
-//! document it feeds is then wrong in too. The two agree because they
-//! share a derivation, not because the derivation is right, and
+//! parsing baumhard's own `.rs` files with `syn`, and the format's
+//! strictness gates rest on that walk's member names — and a walk is a
+//! *reading* of the source: it can be wrong in ways whatever it feeds is
+//! then wrong in too. A walk and the document it feeds agree because
+//! they share a derivation, not because the derivation is right, and
 //! [issue #122](https://github.com/Svendsys/mandala/issues/122) is the
 //! record of that: a `Vec` behind a type alias, a `VecDeque`, a
 //! `#[serde(rename(deserialize = "…"))]`, a container `rename_all` —
@@ -31,8 +31,8 @@
 //! [`derived_shape`] hands the derived impls a `Deserializer` that
 //! answers every request with the emptiest value that satisfies it and
 //! writes down what was asked. Nothing is parsed, nothing is listed,
-//! and no `.mindmap.json` is involved: the walk is the compiler's own
-//! expansion of the model, driven from `MindMap::deserialize` outward.
+//! and no file is involved: the walk is the compiler's own expansion of
+//! a type, driven from its `deserialize` outward.
 //!
 //! `#[serde(alias = "…")]` is in that truth too, and reading it the
 //! other way round was the module's first real defect. The derive
@@ -58,13 +58,15 @@
 //! shape without an error. That is why [`DerivedShape::opaque_sites`]
 //! exists — the silence is reported as a place rather than left as an
 //! absence. What the module is good for is exactly one thing: being a
-//! **second, independent** answer to "which JSON members hold
-//! growable arrays of key-bearing values" and "which member names does
-//! a type accept", so the source walk in `serde_coverage` has something
-//! that can disagree:
-//! `serde_coverage::tests::test_the_scan_and_the_derived_impls_agree_on_a_planted_shape`
-//! holds the two together. (Its first consumer, the old model's
-//! unknown-key capture, was deleted with it in V1-C3.)
+//! **second, independent** answer to "which member names and variant
+//! names does a type accept", so the source walk in `serde_coverage`
+//! has something that can disagree:
+//! `serde_coverage::tests::test_every_rename_all_rule_is_the_one_serde_applies`
+//! and `serde_coverage::tests::test_every_alias_reaches_both_published_surfaces`
+//! hold the two together. Its array half — which members hold growable
+//! arrays of key-bearing values — served the old model's unknown-key
+//! capture, deleted in V1-C3, and is kept only as far as the probe's own
+//! tests exercise it.
 //!
 //! Test-only: nothing in a shipped build deserializes a model type
 //! from a probe. Unlike its counterpart it reads no files and pulls in
@@ -160,7 +162,7 @@ pub struct DerivedShape {
 impl DerivedShape {
     /// Every JSON member name that holds a growable array whose
     /// elements can carry named keys — the compiler's answer to the
-    /// question `format/legacy-schema.md` publishes.
+    /// question the old format's schema published.
     ///
     /// Cost: one pass over the recorded sequences; allocates the set.
     pub fn key_bearing_sequences(&self) -> BTreeSet<String> {
@@ -202,10 +204,9 @@ impl DerivedShape {
     /// positional route the document cannot warn anybody about, and
     /// silence about it reads as absence.
     ///
-    /// The nesting case is one only this derivation can see.
-    /// [`crate::util::serde_coverage::TypeGraph::unnamed_sequences_from`]
-    /// inspects *fields*, and `Vec<Vec<T>>` is one field, so the walk
-    /// classifies the outer array and never asks about the inner one.
+    /// The nesting case is one only this derivation can see: a walk of
+    /// *fields* (the source walk's array half, deleted in V1-C3) sees
+    /// `Vec<Vec<T>>` as one field and never asks about the inner array.
     pub fn unnamed_sequences(&self) -> &BTreeSet<String> {
         &self.unnamed_sequences
     }
@@ -350,9 +351,8 @@ impl Memory {
     ///
     /// A route is recorded against the spelling the *file* used, so an
     /// array reached through an aliased field is published under all
-    /// of them — the same answer
-    /// [`crate::util::serde_coverage::TypeGraph::key_bearing_sequences_from`]
-    /// gives from the other side.
+    /// of them — the answer the source walk's array half gave from the
+    /// other side until V1-C3 deleted it.
     fn spellings(&self, container: &str, fields: &[&str], at: usize) -> Vec<String> {
         let mut out: Vec<String> = fields
             .get(at)
@@ -1678,7 +1678,7 @@ mod tests {
     }
 
     /// An array at a place with no member name is reported rather
-    /// than dropped. `format/legacy-schema.md` publishes member names, and
+    /// than dropped. A schema publishes member names, and
     /// there is none here to publish — so the honest answer is to
     /// hand it to a reader, not to leave a positional route the
     /// document cannot mention.

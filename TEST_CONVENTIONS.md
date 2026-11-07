@@ -651,7 +651,7 @@ names the instance that taught it.
    published a list of field spellings and checked it with a walker,
    but both came from the same token matching, so the doc and the
    walker could agree on being wrong and nothing was left to
-   disagree. `test_the_scan_and_the_derived_impls_agree_on_a_planted_shape`
+   disagree. `test_every_rename_all_rule_is_the_one_serde_applies`
    is the fixed shape: the scan is held against what `serde_derive`
    actually accepts, a source that shares no code with it. The same
    epic hit the shape twice at smaller scale — a plant macro whose two
