@@ -101,13 +101,12 @@ impl MindMapDocument {
 
     /// Read the map at `path`: refused unless it ends in
     /// [`MAP_EXTENSION`], then read and loaded by
-    /// [`format::load_from_bytes`]. Native: the browser has no files and
-    /// goes through [`Self::from_json_str`].
+    /// [`format::load_from_bytes`]. The browser has no files (its read
+    /// fails and says so) and loads through [`Self::from_json_str`].
     ///
     /// **The error is returned, not reported.** Reporting belongs to the
     /// surface that asked — the console `open` verb prints it, startup
     /// draws it on the canvas through [`Self::load_failure_placard`].
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn load(path: &str, history_limit: usize) -> Result<Self, String> {
         if !has_map_extension(path) {
             return Err(extension_refusal(path));
@@ -290,8 +289,13 @@ impl MindMapDocument {
         self.doc.take_changes()
     }
 
-    /// Hold the history to `limit` entries (D18): what `settings.json`'s
-    /// `history_limit` sets.
+    /// The most entries the history holds (D18).
+    pub fn history_limit(&self) -> usize {
+        self.doc.history_limit()
+    }
+
+    /// Hold the history to at most `limit` entries (D18): what
+    /// `settings.json`'s `history_limit` sets.
     pub fn set_history_limit(&mut self, limit: usize) {
         self.doc.set_history_limit(limit);
     }
@@ -305,7 +309,6 @@ impl MindMapDocument {
     /// [`MAP_EXTENSION`] — through a temporary file beside it and a
     /// rename, so a failed write never leaves half a map where a whole one
     /// was; then record the saved state and bind the document to `path`.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_to(&mut self, path: &str) -> Result<(), String> {
         if !has_map_extension(path) {
             return Err(extension_refusal(path));
@@ -352,11 +355,24 @@ impl MindMapDocument {
     pub(crate) fn apply_for_test(&mut self, req: EditRequest) -> Result<Revision, ApplyError> {
         self.apply(req, ChangeSource::Action)
     }
+
+    /// One real edit, for the tests that need the document changed and
+    /// do not care how: a new root node with one empty section, through
+    /// [`Self::apply_for_test`]. Returns the revision it made.
+    #[cfg(test)]
+    pub(crate) fn create_root_for_test(&mut self) -> Revision {
+        let steps = baumhard::document::mutation::compose::create_root(&self.doc, glam::Vec2::new(40.0, 40.0))
+            .expect("a root node composes");
+        self.apply_for_test(EditRequest {
+            steps,
+            label: "test: create root".to_string(),
+        })
+        .expect("the root applies")
+    }
 }
 
 /// The loader's error for `path`, its message prefixed by where it was
 /// read from: most of the loader's messages do not name the file.
-#[cfg(not(target_arch = "wasm32"))]
 fn load_message(path: &str, error: &LoadError) -> String {
     format!("{}: {error}", baumhard::util::log::tilde_path(Path::new(path)))
 }
@@ -383,7 +399,6 @@ fn log_loaded(doc: &Document) {
 
 /// Write `bytes` to `path` through a temporary file in the same
 /// directory and a rename over `path`.
-#[cfg(not(target_arch = "wasm32"))]
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let shown = || baumhard::util::log::tilde_path(path);

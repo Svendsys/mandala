@@ -13,16 +13,12 @@
 //! click outside cancels. Keyboard fallback: h/H nudges hue, s/S sat,
 //! v/V value, Enter commits, Esc cancels.
 //!
-//! The picker wires to `MindEdge.color` (via `set_edge_color`) and the
-//! three node color axes. Portal-mode edges flow through the same
-//! `set_edge_color` sink as line-mode edges — portals are a render mode
-//! on the same entity, so there's no separate portal setter. Node
-//! colors and theme-variable editing become a follow-up session.
-//!
-//! Live preview uses direct in-place model mutation during hover —
-//! mirroring `apply_edge_handle_drag` in `app.rs`. The pre-picker
-//! snapshot is captured at open time, so cancel restores it without
-//! touching the undo stack and commit pushes a single `EditEdge` entry.
+//! **What it writes to returns with V1-C7 (#248).** The picker is a
+//! transaction there: opening it is `Document::begin`, each hover
+//! change stages the color op for its target, a click commits and a
+//! close or cancel cancels. This module is the widget — layout,
+//! hit-testing, glyph tables, its modal state — and nothing in it reads
+//! or writes the document.
 //!
 //! Pure-function layout (`compute_color_picker_layout`) and hit-testing
 //! (`hit_test_picker`) are extracted so unit tests don't need a GPU.
@@ -36,7 +32,6 @@ mod glyph_tables;
 mod hit;
 mod layout;
 mod state;
-mod targets;
 
 #[cfg(test)]
 pub(in crate::application) mod tests;
@@ -53,7 +48,6 @@ pub use glyph_tables::{
 };
 pub use hit::PickerHit;
 pub use layout::ColorPickerLayout;
-pub use targets::{ColorTarget, NodeColorAxis, SectionColorAxis};
 
 // Native-only surface — consumed exclusively by `app/color_picker_flow/`
 // (mouse / open / commit / rebuild) and `run_native.rs`. WASM has
@@ -70,5 +64,3 @@ pub use state::{
     request_error_flash, ColorPickerState, FlashKind, OpenPicker, PickerDynamicApplyKey, PickerGesture,
     PickerMode,
 };
-#[cfg(not(target_arch = "wasm32"))]
-pub use targets::{current_color_at, current_hsv_at, PickerHandle};

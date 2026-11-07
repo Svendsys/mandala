@@ -24,11 +24,8 @@
 use crate::application::clipboard;
 use crate::application::color_picker::{ColorPickerState, OpenPicker};
 use crate::application::console::traits::{ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome};
-use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
 
-use super::super::throttled_interaction::ColorPickerHoverInteraction;
-use super::commit::apply_picker_preview;
 
 /// A picker-modal effect named by an `Action`. Produced by
 /// [`picker_op_for`]; consumed by the `dispatch_action` arm, which
@@ -182,18 +179,11 @@ pub(in crate::application::app) fn nudged_hsv(nudge: PickerNudge, hsv: (f32, f32
 
 /// Apply a nudge to the open picker: step the selected HSV, drop
 /// any mouse `hover_preview` (the keyboard just took over from the
-/// pointer), and restamp the document preview so the targeted edge
-/// repaints on the next drain. Returns `true` when the picker was
-/// open and the nudge landed.
-///
-/// Renderer-free by construction — [`apply_picker_preview`] marks
-/// `picker_hover.dirty` / `.canvas_dirty` and the per-frame drain
-/// does the rebuilding.
+/// pointer). Returns `true` when the picker was open and the nudge
+/// landed. The target's preview returns with V1-C7 (#248).
 pub(in crate::application::app) fn apply_picker_nudge(
     nudge: PickerNudge,
     state: &mut ColorPickerState,
-    doc: &mut MindMapDocument,
-    picker_hover: &mut ColorPickerHoverInteraction,
 ) -> bool {
     let Some(OpenPicker {
         hue_deg,
@@ -210,7 +200,8 @@ pub(in crate::application::app) fn apply_picker_nudge(
     *sat = ns;
     *val = nv;
     *hover_preview = None;
-    apply_picker_preview(state, doc, picker_hover);
+    // V1-C7 (#248) stages the previewed color on the picker's
+    // transaction here.
     true
 }
 
@@ -230,8 +221,6 @@ pub(in crate::application::app) fn apply_picker_nudge(
 pub(in crate::application::app) fn handle_color_picker_clipboard_key(
     action: Option<&Action>,
     state: &mut ColorPickerState,
-    doc: &mut MindMapDocument,
-    picker_hover: &mut ColorPickerHoverInteraction,
 ) -> bool {
     match action {
         Some(Action::Copy) => {
@@ -243,7 +232,8 @@ pub(in crate::application::app) fn handle_color_picker_clipboard_key(
         Some(Action::Paste) => {
             if let Some(text) = clipboard::read_clipboard() {
                 if let Outcome::Applied = state.clipboard_paste(&text) {
-                    apply_picker_preview(state, doc, picker_hover);
+                    // V1-C7 (#248) stages the previewed color on the picker's
+                    // transaction here.
                 }
             }
             true

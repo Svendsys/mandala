@@ -7,10 +7,7 @@
 use crate::application::keybinds::Action;
 use crate::application::platform::input::MouseButton;
 
-use crate::application::document::MindMapDocument;
 
-use super::super::throttled_interaction::ColorPickerHoverInteraction;
-use super::commit::apply_picker_preview;
 
 /// What the caller should do with a press the picker was offered.
 ///
@@ -126,8 +123,6 @@ pub(in crate::application::app) fn handle_color_picker_click(
     cursor_pos: (f64, f64),
     button: MouseButton,
     state: &mut crate::application::color_picker::ColorPickerState,
-    doc: &mut MindMapDocument,
-    picker_hover: &mut ColorPickerHoverInteraction,
 ) -> PickerClick {
     use crate::application::color_picker::{
         hit_test_picker, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, OpenPicker,
@@ -161,7 +156,8 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 *hue_deg = hue_slot_to_degrees(slot);
                 *hover_preview = None;
             }
-            apply_picker_preview(state, doc, picker_hover);
+            // V1-C7 (#248) stages the previewed color on the picker's
+            // transaction here.
         }
         PickerHit::SatCell(i) => {
             if let Some(OpenPicker {
@@ -171,7 +167,8 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 *sat = sat_cell_to_value(i);
                 *hover_preview = None;
             }
-            apply_picker_preview(state, doc, picker_hover);
+            // V1-C7 (#248) stages the previewed color on the picker's
+            // transaction here.
         }
         PickerHit::ValCell(i) => {
             if let Some(OpenPicker {
@@ -181,7 +178,8 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 *val = val_cell_to_value(i);
                 *hover_preview = None;
             }
-            apply_picker_preview(state, doc, picker_hover);
+            // V1-C7 (#248) stages the previewed color on the picker's
+            // transaction here.
         }
         // `terminal_route_for_hit` already returned for these two.
         PickerHit::Outside | PickerHit::Commit => {}

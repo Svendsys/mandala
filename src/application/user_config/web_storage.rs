@@ -2,9 +2,8 @@
 
 //! WASM-side `localStorage` access for the user-tier JSON configs.
 //!
-//! The three browser loaders (`keybinds::platform_web`,
-//! `macros::loader::platform_web`,
-//! `document::mutations_loader::platform_web`) read their config from
+//! The browser loaders (`keybinds::platform_web`,
+//! `macros::loader::platform_web`, `settings::load`) read their config from
 //! one place, `localStorage`, through [`load_web_storage_only`] — the
 //! browser peer of `desktop::load_desktop_layered`, running on the
 //! same [`super::layered::load_layered`] driver so the size cap and
@@ -46,7 +45,7 @@ const LOCAL_STORAGE_SOURCE: &str = "localStorage";
 ///
 /// So no user-tier config reads the URL, and no URL layer exists to
 /// opt into: the argument is strongest for macros, which run console
-/// verbs, and holds unchanged for keybinds and mutations, which reach
+/// verbs, and holds unchanged for keybinds and settings, which reach
 /// the same `User` tier (each loader states its own case). The blast
 /// radius
 /// was bounded by the browser sandbox — no filesystem, no process —

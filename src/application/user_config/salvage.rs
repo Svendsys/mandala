@@ -29,8 +29,8 @@
 //! **Why the parsers own this and the driver does not.** The driver
 //! sees an opaque payload and a `Result`, and what counts as a "piece"
 //! is a fact about each config's shape — a field of the keybinds
-//! object, an entry of the macros list, an entry of the mutations
-//! envelope's list. Teaching the driver that would make it parse every
+//! object, an entry of the macros list, a key of the settings
+//! object. Teaching the driver that would make it parse every
 //! config's schema; keeping it to `Result<T, String>` keeps its one
 //! job (precedence across layers), and `Err` keeps its one meaning
 //! (this layer has nothing usable). What would otherwise be written
@@ -118,9 +118,9 @@ pub fn take_field<T: DeserializeOwned>(label: &str, object: &mut JsonObject, key
 /// Deserialize entry `index` of a list as `T`, or warn and skip it.
 ///
 /// The warning names the entry by index and, when it carries one, by
-/// its `id` — macros and mutations are addressed by id, so
+/// its `id` — macros are addressed by id, so
 /// `entry [3] (id=save-and-quit)` is what a user can find in the file.
-/// `tier` says which list it came from (`"user"`, `"Map-tier"`, ...),
+/// `tier` says which list it came from (`"user"`, `"App"`, ...),
 /// since the same id can live in several.
 ///
 /// Deserializes straight out of the borrowed `value`; nothing is

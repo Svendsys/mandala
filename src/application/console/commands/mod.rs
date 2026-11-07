@@ -13,37 +13,28 @@
 //! One rule, and the engine is now the one place that applies it:
 //!
 //! - **Command names, aliases and positional subverbs are matched
-//!   case-insensitively.** `mode DEFAULT`, `font SET Norse` and
-//!   `border PRESET heavy` all run. The grammar descent lowercases
+//!   case-insensitively.** `mode DEFAULT`, `fps ON` and
+//!   `clock STEP 16` all run. The grammar descent lowercases
 //!   once and the popup filters its partial the same way, so the
 //!   two cannot disagree; before the declaration, five verbs
 //!   honored the rule and the rest did not, which meant a word the
 //!   popup listed could still be refused when typed out in full.
-//! - **Kv *keys* are exact.** `border TOP=x` is `unknown key
-//!   'TOP'`, and the engine's key rows filter case-sensitively to
+//! - **Kv *keys* are exact.** `screenshot WIDTH=9` is `unknown key
+//!   'WIDTH'`, and the engine's key rows filter case-sensitively to
 //!   say so. A key is a field name, not a word the user picks.
 //! - **Kv *values* belong to the key's own parser.** A closed
-//!   vocabulary is matched case-insensitively (`preset=HEAVY`,
-//!   `color=ACCENT`, `side=TOP`); a document-derived one is
-//!   matched the way its own rows are found, which is how a
-//!   palette name is stored verbatim and still found by
-//!   `palette=CO`. A positional *slot word* from a closed vocabulary
-//!   follows the same rule as a closed kv value: `border show
-//!   VERBOSE` and `mutation list --ALL` both run. The console has
-//!   no flag grammar; `--all` is one such word, spelled with `--` so
-//!   it cannot be mistaken for the free filter in the slot beside it,
-//!   and `mutation list` refuses any other `--` word by name (#135).
-//!   (The refusal calls it a *flag*, the user's word for a `--`
-//!   token; there is no flag grammar behind the name.) Like a closed
-//!   kv value, a slot word outside its list is refused by name, never
-//!   read as the slot's absence — `border show verbos` is an error,
-//!   not the plain readout.
+//!   vocabulary is matched case-insensitively; a document-derived one
+//!   is matched the way its own rows are found. A positional *slot
+//!   word* from a closed vocabulary follows the same rule as a closed
+//!   kv value. The console has no flag grammar; a `--` word is one
+//!   more slot word. Like a closed kv value, a slot word outside its
+//!   list is refused by name, never read as the slot's absence.
 //! - **A refusal reports the token as typed.** Matching
 //!   case-insensitively and *reporting* the normalized form are
 //!   separate decisions, and only the first is intended: a user
-//!   reads the message back looking for their own spelling, so
-//!   `canvas section-frame color=Coral` answers `canvas
-//!   section-frame: unknown color 'Coral'`, never `'coral'` (#136).
+//!   reads the message back looking for their own spelling, so a
+//!   refused `Coral` is reported as `'Coral'`, never `'coral'`
+//!   (#136).
 //!
 //! What makes the first bullet checkable rather than aspirational
 //! is `console::tests::oracle_corpus`: every verb whose subverb
@@ -90,18 +81,14 @@ use crate::application::console::spec::{self, Grammar};
 
 pub mod anchor;
 pub mod body;
-pub mod border;
-pub mod canvas;
 pub mod cap;
 pub mod clock;
 pub mod color;
-pub mod edge;
 pub mod font;
 pub mod fps;
 pub mod help;
 pub mod label;
 pub mod mode;
-pub mod mutation;
 pub mod new;
 pub mod node;
 pub mod open;
@@ -172,17 +159,13 @@ pub const COMMANDS: &[Command] = &[
     help::COMMAND,
     anchor::COMMAND,
     body::COMMAND,
-    border::COMMAND,
-    canvas::COMMAND,
     cap::COMMAND,
     color::COMMAND,
-    edge::COMMAND,
     font::COMMAND,
     fps::COMMAND,
     spacing::COMMAND,
     label::COMMAND,
     mode::COMMAND,
-    mutation::COMMAND,
     save::COMMAND,
     screenshot::COMMAND,
     record::COMMAND,
@@ -202,21 +185,30 @@ pub fn command_by_name(name: &str) -> Option<&'static Command> {
     })
 }
 
-/// Single-source success-or-no-op message for verbs that aggregate
-/// across a set of selection targets. `verb` is the noun the user
-/// typed (`"font"`, `"zoom"`, `"color"`, …); `kind` is the
-/// selection scope (`"node"`, `"section"`, `"edge"`, …); `changed`
-/// is whether at least one target actually mutated.
-///
-/// Two formats: `"<verb> applied to <kind>"` on change, `"<verb>:
-/// no change on <kind>"` on no-op. Mirrors the previous open-coded
-/// `finalize` helpers in `commands/font.rs` and `commands/zoom.rs`.
-pub(super) fn applied_or_no_change(verb: &str, kind: &str, changed: bool) -> ExecResult {
-    if changed {
-        ExecResult::ok_msg(format!("{verb} applied to {kind}"))
-    } else {
-        ExecResult::ok_msg(format!("{verb}: no change on {kind}"))
-    }
+/// The owner of the node, section and style verbs (`node`, `section`,
+/// `color`, `font`, `zoom`), as a refusal names it.
+pub(super) const FIELD_NODES_OWNER: &str = "V1-C5 (#246)";
+
+/// The owner of the connector, link and label verbs (`anchor`,
+/// `body`, `cap`, `label`, `spacing`), as a refusal names it.
+pub(super) const FIELD_PATHS_OWNER: &str = "V1-C6 (#247)";
+
+/// The owner of Resize mode and its handle drags (`mode resize`), as a
+/// refusal names it.
+pub(super) const TRANSACTIONS_OWNER: &str = "V1-C7 (#248)";
+
+/// The owner of node editing (`mode node-edit`), as a refusal names it.
+pub(super) const TEXT_OWNER: &str = "V1-C8 (#249)";
+
+/// The answer a console verb that edited the old model gets until
+/// `owner` rebuilds it on the one writer: an error naming the owner, and
+/// the same at `debug!` — the console's peer of an unhandled Action
+/// (`app::dispatch::families::unhandled`). The verb's grammar stays
+/// registered, so its help and completion are the ones the owner
+/// extends.
+pub(super) fn rebuilt_by(verb: &str, owner: &str) -> ExecResult {
+    log::debug!("console: `{verb}` is rebuilt on the one writer by {owner}; refused until then");
+    ExecResult::err(format!("{verb}: rebuilt on the one writer by {owner}; not available yet"))
 }
 
 #[cfg(test)]
@@ -227,7 +219,7 @@ mod tests {
     /// returns `None` on unknown, and resolves aliases to their
     /// canonical entry. Also pins the registered verb names — the
     /// compiler enforces that the `COMMANDS` slice exists, but a
-    /// typo in `name: "border"` → `"boder"` would compile and
+    /// typo in `name: "label"` → `"lable"` would compile and
     /// silently break user-facing console input without this list.
     #[test]
     fn test_command_by_name_lookup() {
@@ -238,13 +230,51 @@ mod tests {
         assert!(command_by_name("nope").is_none());
 
         for name in [
-            "help", "anchor", "body", "border", "cap", "color", "edge", "font", "fps", "spacing", "label",
-            "mutation", "save", "open", "new", "zoom",
+            "help", "anchor", "body", "cap", "color", "font", "fps", "spacing", "label", "save", "open", "new",
+            "zoom",
         ] {
             assert!(
                 command_by_name(name).is_some(),
                 "console verb '{name}' missing from registry"
             );
+        }
+    }
+
+    /// A verb an owner rebuilds refuses with the owner named, whatever
+    /// the line, takes no write on the document, and stays registered
+    /// with its grammar for help and completion.
+    #[test]
+    fn test_a_rebuilt_verb_refuses_naming_its_owner() {
+        for (verb, owner) in [
+            ("node", FIELD_NODES_OWNER),
+            ("section", FIELD_NODES_OWNER),
+            ("color", FIELD_NODES_OWNER),
+            ("font", FIELD_NODES_OWNER),
+            ("zoom", FIELD_NODES_OWNER),
+            ("anchor", FIELD_PATHS_OWNER),
+            ("body", FIELD_PATHS_OWNER),
+            ("cap", FIELD_PATHS_OWNER),
+            ("label", FIELD_PATHS_OWNER),
+            ("spacing", FIELD_PATHS_OWNER),
+        ] {
+            let command = command_by_name(verb).expect("registered");
+            let mut doc = crate::application::document::MindMapDocument::new_blank(None, 50);
+            let revision = doc.revision();
+            let mut eff = ConsoleEffects::new(&mut doc);
+            let line = format!("{verb} x=1");
+            let crate::application::console::ParseResult::Ok { args, .. } =
+                crate::application::console::parse(&line)
+            else {
+                panic!("{line} parses");
+            };
+            let args = crate::application::console::parser::Args::new(&args);
+            match (command.execute)(&args, &mut eff) {
+                ExecResult::Err(message) => assert!(message.contains(owner), "{verb}: {message}"),
+                other => panic!("{verb} must refuse, ran: {other:?}"),
+            }
+            drop(eff);
+            assert_eq!(doc.revision(), revision, "{verb} must not change the document");
+            assert!(!command.usage_forms().is_empty(), "{verb} keeps its grammar");
         }
     }
 }

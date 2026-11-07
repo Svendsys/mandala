@@ -2,15 +2,11 @@
 
 //! Mouse-move dispatch: feed active drag gestures on one branch,
 //! hit-test and update hover_preview / hovered_hit on the other.
-//! Delegates to `apply_picker_preview` when the preview changes so
-//! the document's transient preview stays in sync with the hover
-//! color. The real `hue_deg`/`sat`/`val` only change on click or
+//! The live preview of the hover color on the target returns with
+//! V1-C7 (#248), which stages it on the picker's transaction. The real `hue_deg`/`sat`/`val` only change on click or
 //! keyboard nudge — hover is purely visual.
 
-use crate::application::document::MindMapDocument;
 
-use super::super::throttled_interaction::ColorPickerHoverInteraction;
-use super::commit::apply_picker_preview;
 
 /// Mouse-move handler for the picker. Branches on active-drag vs
 /// hover:
@@ -35,8 +31,6 @@ use super::commit::apply_picker_preview;
 pub(in crate::application::app) fn handle_color_picker_mouse_move(
     cursor_pos: (f64, f64),
     state: &mut crate::application::color_picker::ColorPickerState,
-    doc: &mut MindMapDocument,
-    picker_hover: &mut ColorPickerHoverInteraction,
 ) -> bool {
     use crate::application::color_picker::{
         hit_test_picker, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, OpenPicker, PickerHit,
@@ -88,7 +82,7 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
                     .clamp(geom.resize_scale_min, geom.resize_scale_max);
             }
         }
-        picker_hover.mark_dirty();
+        // V1-C7 (#248) schedules the overlay rebuild here.
         return true;
     }
 
@@ -174,13 +168,14 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
     // — which is fine: the readout was already showing the
     // current value.
     if state_changed {
-        picker_hover.mark_dirty();
+        // V1-C7 (#248) schedules the overlay rebuild here.
         // Preview the updated HSV onto the (possibly contextual)
         // target so the map reflects the hover color live. No-op
         // in Standalone mode — no bound target — but the ࿕ glyph
         // in the wheel still shows the current HSV so the user
         // gets immediate color feedback on the wheel itself.
-        apply_picker_preview(state, doc, picker_hover);
+        // V1-C7 (#248) stages the previewed color on the picker's
+        // transaction here.
     }
     true
 }

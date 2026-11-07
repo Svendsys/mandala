@@ -1,114 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Picker open paths: Contextual (bound target) and Standalone
-//! (persistent palette). The shared `open_picker_inner` performs the
+//! The picker's open path: Standalone (persistent palette). The
+//! Contextual open, bound to a target, returns with V1-C7 (#248). The shared `open_picker_inner` performs the
 //! one-time font-system measurement pass that seeds
 //! `max_cell_advance`, `max_ring_advance`, and the per-glyph ink
 //! offsets the pure-function layout later consumes.
 
-use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
 
-use super::super::scene_rebuild::rebuild_scene_only;
 use super::rebuild::rebuild_color_picker_overlay;
 
-/// Open the color picker in contextual mode, bound to the given
-/// target. Resolves the target ref to a concrete handle, seeds HSV
-/// from the target's currently-displayed color, and shows the
-/// modal-style wheel. Commit writes to the bound target; Esc and
-/// outside-click cancel (restore the original). See
-/// [`open_color_picker_standalone`] for the persistent-palette flavor
-/// that writes to the document's current selection.
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn open_color_picker_contextual(
-    target: crate::application::color_picker::ColorTarget,
-    doc: &mut MindMapDocument,
-    state: &mut crate::application::color_picker::ColorPickerState,
-    interaction_mode: &super::super::InteractionMode,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-) {
-    use crate::application::color_picker::{current_color_at, current_hsv_at, PickerMode};
-    use baumhard::util::color::resolve_var;
-
-    // Resolve the target to a picker handle up front. If the
-    // edge / portal / node was deleted between the open trigger
-    // and Enter being pressed, warn and bail — the picker never
-    // opens. Should never happen because the dispatcher runs
-    // synchronously, but defensive.
-    let handle = match target.resolve(doc) {
-        Some(h) => h,
-        None => {
-            log::warn!("color picker: target ref did not resolve; ignoring open");
-            return;
-        }
-    };
-
-    // Seed HSV from the currently-displayed (possibly theme-resolved)
-    // color so the picker opens right where the user already is.
-    let hsv = current_hsv_at(doc, &handle);
-
-    // Capture the raw color string the seed came from. When it's a
-    // `var(--name)` reference (i.e. resolution non-identity), keep
-    // it so the commit path can preserve the variable when the user
-    // doesn't move the wheel. Plain-hex seeds need no preservation
-    // and store `None`.
-    let seed_var_ref = current_color_at(doc, &handle).and_then(|raw| {
-        let resolved = resolve_var(&raw, &doc.mindmap.canvas.theme_variables);
-        if resolved == raw {
-            None
-        } else {
-            Some(raw)
-        }
-    });
-
-    // Seed the document preview so the initial render already shows
-    // the same HSV the picker opened at. Overwritten on the next
-    // hover frame, but this avoids a one-frame flash of the original
-    // color when the picker opens. Nodes don't have a scene-builder
-    // preview path yet (commit-only for the first version of the
-    // `color bg/text/border` picker flow), so the helper is a no-op
-    // for the Node arm.
-    seed_initial_preview(doc, &handle, hsv.0, hsv.1, hsv.2);
-
-    open_picker_inner(
-        PickerMode::Contextual {
-            handle,
-            seed_var_ref,
-            seed_hsv: hsv,
-        },
-        doc,
-        state,
-        interaction_mode,
-        app_scene,
-        renderer,
-        scene_cache,
-    );
-}
-
 /// Open the color picker in standalone mode — a persistent palette
-/// that applies the current HSV to the document's selection on ࿕
-/// click and stays open until dismissed via `color picker off`.
+/// that stays open until dismissed via `color picker off`.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn open_color_picker_standalone(
-    doc: &mut MindMapDocument,
     state: &mut crate::application::color_picker::ColorPickerState,
-    interaction_mode: &super::super::InteractionMode,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     use crate::application::color_picker::PickerMode;
 
     open_picker_inner(
         PickerMode::Standalone,
-        doc,
         state,
-        interaction_mode,
         app_scene,
         renderer,
-        scene_cache,
     );
 }
 
@@ -133,12 +49,9 @@ const STANDALONE_SEED_HSV: (f32, f32, f32) = (0.0, 1.0, 1.0);
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn open_picker_inner(
     mode: crate::application::color_picker::PickerMode,
-    doc: &mut MindMapDocument,
     state: &mut crate::application::color_picker::ColorPickerState,
-    interaction_mode: &super::super::InteractionMode,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     use crate::application::color_picker::{
         arm_bottom_font, arm_bottom_glyphs, arm_left_glyphs, arm_right_glyphs, arm_top_glyphs,
@@ -276,7 +189,6 @@ pub(in crate::application::app) fn open_picker_inner(
     }));
 
     rebuild_color_picker_overlay(state, app_scene, renderer);
-    rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
 }
 
 /// The picker's crosshair cell: the widest arm glyph, each arm
@@ -302,42 +214,6 @@ fn measure_crosshair_cell(
         pinned,
         font_size,
     ))
-}
-
-/// Helper: write the initial HSV into `doc.color_picker_preview` on
-/// picker open so the first rendered frame already shows the
-/// previewed color instead of the model's stored one.
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn seed_initial_preview(
-    doc: &mut MindMapDocument,
-    handle: &crate::application::color_picker::PickerHandle,
-    hue_deg: f32,
-    sat: f32,
-    val: f32,
-) {
-    use crate::application::color_picker::PickerHandle;
-    use crate::application::document::ColorPickerPreview;
-    use baumhard::util::color::hsv_to_hex;
-
-    let hex = hsv_to_hex(hue_deg, sat, val);
-    match handle {
-        PickerHandle::Edge(index) => {
-            if let Some(edge) = doc.mindmap.edges.get(*index) {
-                let key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(edge);
-                doc.color_picker_preview = Some(ColorPickerPreview { key, color: hex });
-            }
-        }
-        PickerHandle::Node { .. } => {
-            // Node preview not yet plumbed through the scene
-            // builder — commit-only for v1. The picker still opens
-            // and lets the user pick + commit; it just doesn't
-            // hover-preview on the underlying node.
-        }
-        PickerHandle::Section { .. } => {
-            // Section text preview not plumbed through the scene
-            // builder either — commit-only, same shape as Node.
-        }
-    }
 }
 
 // The helper under test is native-gated with the open path it serves.

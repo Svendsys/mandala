@@ -2,12 +2,7 @@
 
 //! `section …`'s grammar.
 //!
-//! Two things here are worth naming. First, `frame` is a nested
-//! level rather than a special case: the whole border vocabulary
-//! hangs off it, and the descent reaches it without `section`
-//! knowing anything about borders.
-//!
-//! Second, `move` and `resize` each declare **two forms**, because
+//! `move` and `resize` each declare **two forms**, because
 //! their shapes are genuinely alternatives rather than a menu.
 //! `section move` takes `dx=`/`dy=` *or* `x=`/`y=`; `section resize`
 //! takes the `fill` literal *or* `w=`/`h=`. Bracketing either pair
@@ -33,7 +28,6 @@
 use crate::application::console::commands::range_kv::SECTION_KEYS;
 use crate::application::console::spec::{free, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word};
 
-use super::frame::grammar::SECTION_FRAME;
 
 /// The two run-handling modes `section text runs=` accepts.
 const RUNS_WORDS: &[Word] = &[
@@ -133,12 +127,6 @@ const SUBVERBS: &[Subverb] = &[
     )
     .taking(&[Form::keys(&["at"], &["section"])])
     .gated(),
-    Subverb::nested(
-        "frame",
-        "subject",
-        "configure the section's frame border (subverb tree)",
-        &SECTION_FRAME,
-    ),
 ];
 
 /// `section …`. No bare form: every operation names a subverb, which
