@@ -430,3 +430,76 @@ fn test_a_linear_target_hands_both_glyph_passes_the_linear_encoding() {
         }
     }
 }
+
+/// **The clear follows the document's background through a change, its
+/// undo and its redo**: the view's sync hands the resolved background to
+/// the renderer whenever the document changed (`MapView::sync`), so a
+/// `SetBackground` edit, an `Undo` and a `Redo` each move the clear the
+/// next frame draws with.
+///
+/// Control: the clear at load is theme_demo's `#141414`, and every step
+/// is asserted against the one before it with a color that differs, so a
+/// clear that stayed where load put it fails at the first step.
+#[test]
+fn test_the_clear_follows_a_background_change_its_undo_and_its_redo() {
+    use baumhard::document::element::DocKind;
+    use baumhard::document::mutation::ops::{DocMutation, DocMutatorTree, MapOp};
+    use baumhard::document::mutation::step::{DocStep, DocWalk};
+    use baumhard::document::values::PlainColor;
+    use baumhard::document::writer::EditRequest;
+    use baumhard::engine::anchor::Anchors;
+    use baumhard::engine::key::BranchKey;
+    use baumhard::engine::mutator::Mutator;
+
+    let Some(mut app) = headless_app(&map_path("theme_demo.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.input_context().drain_frame(Beat::Loop);
+    draw(init);
+    let loaded = srgb_clear([0x14, 0x14, 0x14]);
+    assert_clear(
+        init.renderer.clear_color(),
+        loaded,
+        "control: theme_demo's var(--bg) at load",
+    );
+
+    let doc = init.document.as_mut().expect("document");
+    let root = doc.doc().root();
+    let mutator = DocMutatorTree::new_with(Mutator::new(
+        DocMutation::Map(MapOp::SetBackground(PlainColor::Rgba(Rgba::opaque(
+            0x30, 0x60, 0x90,
+        )))),
+        BranchKey::new(DocKind::Map, 0),
+    ));
+    let request = EditRequest::new(
+        vec![DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(vec![root])))],
+        "test: set the background",
+    );
+    doc.apply_for_test(request)
+        .expect("the background change applies");
+    init.input_context().drain_frame(Beat::Loop);
+    draw(init);
+    let changed = srgb_clear([0x30, 0x60, 0x90]);
+    assert_clear(init.renderer.clear_color(), changed, "the change");
+
+    let reply = run_attached(
+        &json!({"id": 1, "cmd": "act.action", "action": "Undo"}).to_string(),
+        &mut IpcCommandTarget::new(init),
+    )
+    .0;
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    init.input_context().drain_frame(Beat::Loop);
+    draw(init);
+    assert_clear(init.renderer.clear_color(), loaded, "the undo");
+
+    let reply = run_attached(
+        &json!({"id": 1, "cmd": "act.action", "action": "Redo"}).to_string(),
+        &mut IpcCommandTarget::new(init),
+    )
+    .0;
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    init.input_context().drain_frame(Beat::Loop);
+    draw(init);
+    assert_clear(init.renderer.clear_color(), changed, "the redo");
+}
