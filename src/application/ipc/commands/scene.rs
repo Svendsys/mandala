@@ -768,7 +768,7 @@ mod tests {
         assert_eq!(parse_include(None), Ok(false));
         assert_eq!(parse_include(Some("all")), Ok(true));
         assert!(parse_include(Some("some")).is_err());
-        assert_eq!(parse_kinds(Some(&json!(["paths"]))).unwrap().paths, true);
+        assert!(parse_kinds(Some(&json!(["paths"]))).unwrap().paths);
         assert!(parse_kinds(Some(&json!([]))).is_err());
         assert!(
             parse_kinds(Some(&json!(["edges"]))).is_err(),

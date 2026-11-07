@@ -995,8 +995,8 @@ pub enum Flag {
     MutationEvents,
     /// Marks every element belonging to a *section* subtree — both
     /// the section-area `GlyphArea` and the structural section-model
-    /// `GlyphModel` grandchild that sits beneath it (see
-    /// [`crate::mindmap::model::MindSection`]). The flag is *not*
+    /// `GlyphModel` grandchild that sits beneath it (the old model's
+    /// `MindSection` (gone)). The flag is *not*
     /// limited to the literal "root" of a section despite the
     /// variant name; spreading it across both elements lets
     /// arena-walking consumers (`apply_drag_delta` (gone),
@@ -1008,9 +1008,8 @@ pub enum Flag {
     /// Click-routing, scene-builder iteration, and per-section
     /// style mutations filter on this flag. Flag-only — payload-
     /// free; the section's index inside its owning node lives on
-    /// the document-side
-    /// [`crate::mindmap::tree_builder::MindMapTree`] reverse-lookup
-    /// tables, not on the flag itself.
+    /// the document side (the old `MindMapTree` (gone) reverse-lookup
+    /// tables), not on the flag itself.
     SectionRoot,
 }
 

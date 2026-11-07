@@ -763,10 +763,9 @@ impl Renderer {
     }
 
     /// The text of the cyan mode-status line, or `None` when none is
-    /// showing. Read-only: [`Self::set_mode_status_text`] is the
-    /// writer, called by the app's scene-rebuild paths.
-    // Native-driver-only: the IPC `query.status` reader, as above.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// showing. Read-only: `set_mode_status_text` is the writer, called
+    /// by native's console when it switches the mode; `query.status`
+    /// reads it on both targets.
     pub fn mode_status_text(&self) -> Option<&str> {
         self.mode_status_text.as_deref()
     }

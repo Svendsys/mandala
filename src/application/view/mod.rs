@@ -33,7 +33,8 @@
 //! when the pass ends, never across frames.
 //!
 //! **What is read here, and what is not.** Selection and hit testing ask
-//! the projector — [`MapView::hit`], [`MapView::nodes_in`] — which keeps
+//! the projector — [`MapView::hit`], and natively `MapView::nodes_in` for
+//! the rubber band — which keeps
 //! the projection map; nothing reads a glyph layer to learn what the
 //! document is.
 

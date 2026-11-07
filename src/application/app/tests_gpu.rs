@@ -593,7 +593,7 @@ fn test_input_click_node_aims_by_integer_id_and_selects_the_node() {
     };
     let init = &mut app.init;
     frame(init);
-    let camera = init.renderer.camera().clone();
+    let camera = *init.renderer.camera();
     let node = {
         let doc = document(init).doc();
         let view = view(init);

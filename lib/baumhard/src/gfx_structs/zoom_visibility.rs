@@ -108,10 +108,8 @@ impl ZoomVisibility {
         true
     }
 
-    /// Build a window from a pair of optional bounds (the flat
-    /// serde shape the mindmap model uses on
-    /// [`crate::mindmap::model::MindNode`],
-    /// [`crate::mindmap::model::MindEdge`], etc.). Does not
+    /// Build a window from a pair of optional bounds (the flat shape a
+    /// zoom window is read in). Does not
     /// validate the bounds — see [`ZoomVisibility::try_new`]
     /// for the invariant-enforcing constructor. O(1).
     pub const fn from_pair(min: Option<f32>, max: Option<f32>) -> Self {

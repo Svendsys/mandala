@@ -33,7 +33,7 @@ fn test_writer_a_handle_from_before_an_undo_reads_not_open() {
     do_writer_a_handle_from_before_an_undo_reads_not_open();
 }
 
-/// The body of [`test_writer_a_handle_from_before_an_undo_reads_not_open`].
+/// The body of `test_writer_a_handle_from_before_an_undo_reads_not_open`.
 pub fn do_writer_a_handle_from_before_an_undo_reads_not_open() {
     let (mut doc, ids) = built();
     let tx = doc.begin(ChangeSource::Input, Interactive).unwrap();

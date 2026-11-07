@@ -224,12 +224,12 @@ impl GfxMutation {
     /// `flat_mutations` (gone) collapsed an AST only when every payload
     /// beneath the root
     /// agrees with the one it returns, and
-    /// [`scope::self_and_descendants`](crate::mindmap::custom_mutation::scope::self_and_descendants)
-    /// builds its AST by cloning **one** list into two `Macro` nodes
+    /// `scope::self_and_descendants` (gone)
+    /// built its AST by cloning **one** list into two `Macro` nodes
     /// — so that comparison is a payload against itself. Under `==`
     /// a `NaN` there declines the whole mutator while the identical
     /// payload under
-    /// [`scope::self_only`](crate::mindmap::custom_mutation::scope::self_only)
+    /// `scope::self_only` (gone)
     /// applies: two helpers differing only in scope disagreeing on
     /// whether the mutation runs at all.
     ///

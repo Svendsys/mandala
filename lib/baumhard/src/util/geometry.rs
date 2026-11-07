@@ -155,8 +155,8 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 /// half-extent terms inside larger anchor formulas. It also leaves
 /// the old model-space centers in `document::mutations`
 /// (`flower_layout` (gone), `tree_cascade` (gone)), which this helper could
-/// not express at all: the old model's `Position` and
-/// [`crate::mindmap::model::Size`] are `f64`, and routing them
+/// not express at all: the old model's `Position` and `Size` were
+/// `f64`, and routing them
 /// through a `Vec2` would round the layout arithmetic to `f32` to
 /// save a multiplication. The other
 /// midpoint *form* — `(min + max) * 0.5` over two corners rather
