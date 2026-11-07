@@ -205,4 +205,31 @@ mod tests {
             OverlayDispatch::FullRebuild
         );
     }
+
+    /// A fresh scene holds nothing and rebuilds whatever is asked of it;
+    /// with both modals open the console draws above the color picker
+    /// whichever registered first; and a mutator for a role with no tree
+    /// reaches nothing. Control: the picker alone is the one tree.
+    #[test]
+    fn test_the_console_draws_above_the_picker_and_an_empty_scene_rebuilds() {
+        let mut scene = AppScene::default();
+        assert!(scene.overlay_ids_in_layer_order().is_empty());
+        for role in [OverlayRole::Console, OverlayRole::ColorPicker] {
+            assert_eq!(scene.overlay_id(role), None);
+            assert_eq!(scene.overlay_signature(role), None);
+            assert_eq!(scene.overlay_dispatch(role, 0), OverlayDispatch::FullRebuild);
+        }
+        scene.apply_overlay_mutator(OverlayRole::Console, &GfxMutatorTree::new());
+        assert!(scene.overlay_ids_in_layer_order().is_empty(), "nothing to mutate");
+
+        let console = scene.register_overlay(OverlayRole::Console, GfxTree::new_non_indexed(), Vec2::ZERO);
+        let picker = scene.register_overlay(OverlayRole::ColorPicker, GfxTree::new_non_indexed(), Vec2::ZERO);
+        assert_eq!(
+            scene.overlay_ids_in_layer_order(),
+            vec![picker, console],
+            "the console is the higher layer, drawn last"
+        );
+        scene.unregister_overlay(OverlayRole::Console);
+        assert_eq!(scene.overlay_ids_in_layer_order(), vec![picker], "control");
+    }
 }

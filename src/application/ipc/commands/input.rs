@@ -1746,4 +1746,62 @@ mod tests {
             "raw input needs no document: a hand can click an empty window"
         );
     }
+
+    /// What the format can hide is refused by name, and nothing is sent:
+    /// in the format's full fixture, node 1 has the zoom window
+    /// `[0.25, 8]` and is folded, and node 2 under it is `hidden`. Below
+    /// the window node 1 is "not drawn at zoom"; node 2 "draws nothing
+    /// to click". Control: inside its window, centered on screen, node 1
+    /// is clicked.
+    #[test]
+    fn test_click_node_refuses_a_node_its_zoom_window_or_a_fold_hides() {
+        let path = baumhard::util::doc_fixtures::repo_path(
+            "lib/baumhard/src/document/format/fixtures/full.mandala.json",
+        );
+        let doc = MindMapDocument::load(path.to_str().expect("UTF-8"), 50).expect("the full fixture loads");
+        let view = MapView::for_test(&doc);
+        let node_one = crate::application::document::selection::every_node(doc.doc())
+            .find(|&n| ident(&doc, n) == 1)
+            .expect("node 1");
+        let mut camera = Camera2D::new(1280, 720);
+        camera.zoom = 2.0;
+        camera.position = drawn_center(&doc, &view, node_one);
+        let mut app = InputApp {
+            doc: Some(doc),
+            view,
+            camera,
+            queue: InjectedQueue::default(),
+            applied: Vec::new(),
+        };
+
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"input.click_node","node_id":1}"#, &mut app);
+        assert_eq!(
+            reply["ok"],
+            json!(true),
+            "control: inside its window node 1 is clicked: {reply}"
+        );
+        let sent = app.applied.len();
+        assert!(sent > 0, "control: the click was sent");
+
+        app.camera.zoom = 0.1;
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"input.click_node","node_id":1}"#, &mut app);
+        assert_eq!(reply["error"]["code"], json!("not_found"), "{reply}");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("zoom window")),
+            "{reply}"
+        );
+
+        app.camera.zoom = 2.0;
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"input.click_node","node_id":2}"#, &mut app);
+        assert_eq!(reply["error"]["code"], json!("not_found"), "{reply}");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("draws nothing to click")),
+            "{reply}"
+        );
+        assert_eq!(app.applied.len(), sent, "a refused click sends nothing");
+    }
 }
