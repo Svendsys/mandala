@@ -107,6 +107,9 @@ struct Laid {
     /// budget was scaled by.
     copy: usize,
     glyphs: usize,
+    /// The samples its path's table is built with, as the harnesses count
+    /// it before it is laid (`setup_table_samples`, ruling B16.3a).
+    tables: usize,
     /// How far past what its budget left after its hold for phase 2 it
     /// was when a walk first found it spent (`RING_CROSSED`).
     crossed: Option<usize>,
@@ -154,6 +157,7 @@ fn ring(text: &str, shape: &Outline, outward: bool, budget: Option<usize>, cap: 
                 budget: trace.budget,
                 copy: run.glyphs.len(),
                 glyphs: trace.glyphs,
+                tables: crate::flow::place::setup_table_samples(&run, shape, &FitMode::Repeat, &flow),
                 crossed: RING_CROSSED.with(std::cell::Cell::get),
                 late: RING_LATE.with(std::cell::Cell::get),
                 held: LAST_RING
@@ -340,7 +344,7 @@ fn test_flow_ring_budget_a_ring_past_its_budget_takes_its_overshoot_at_most() {
             own.glyphs
         );
         for laid in &case.rings {
-            let allowed = ring_overshoot(laid.copy);
+            let allowed = ring_overshoot(laid.copy, laid.tables);
             if laid.past > allowed || laid.spent > laid.budget + allowed {
                 broken.push(format!(
                     "{}: {} past its budget of {}, {} in all, against {allowed} allowed past it",
