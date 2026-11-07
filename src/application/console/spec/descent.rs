@@ -69,14 +69,22 @@ pub struct Descent<'a> {
     /// `canvas border show`, `["section-frame", "focused"]` for
     /// `canvas section-frame focused preset heavy`. Empty when the
     /// walk never left the verb's own level.
-    #[expect(
-        dead_code,
-        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+    // On wasm32 the console shell is native, so the whole `Descent` is
+    // unconstructed there and the field-level lint never fires.
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        expect(
+            dead_code,
+            reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+        )
     )]
     path: [Option<&'static Subverb>; MAX_DEPTH],
-    #[expect(
-        dead_code,
-        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        expect(
+            dead_code,
+            reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+        )
     )]
     depth: usize,
 }

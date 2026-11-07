@@ -26,12 +26,20 @@ pub fn write_clipboard(text: &str) {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[expect(
+    dead_code,
+    reason = "the browser's copy and paste return with the clipboard Actions in V1-C4 (#245)"
+)]
 pub fn read_clipboard() -> Option<String> {
     log::debug!("clipboard read not yet supported on WASM");
     None
 }
 
 #[cfg(target_arch = "wasm32")]
+#[expect(
+    dead_code,
+    reason = "the browser's copy and paste return with the clipboard Actions in V1-C4 (#245)"
+)]
 pub fn write_clipboard(_text: &str) {
     log::debug!("clipboard write not yet supported on WASM");
 }

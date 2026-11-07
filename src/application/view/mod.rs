@@ -45,6 +45,7 @@ mod tests;
 use baumhard::arena::NodeId;
 use baumhard::document::resolve::resolve_background;
 use baumhard::document::writer::feed::ChangeRecord;
+#[cfg(not(target_arch = "wasm32"))]
 use baumhard::flow::Rect;
 use baumhard::font::fonts::FontSystemLease;
 use baumhard::gfx_structs::tree::GfxTree;
@@ -240,14 +241,19 @@ impl MapView {
     }
 
     /// The visible nodes `rect`, on the canvas, covers: what a rubber band
-    /// over it selects (`Projector::nodes_in`).
+    /// over it selects (`Projector::nodes_in`). Native with the rubber
+    /// band's gesture (`CLAUDE.md` "Dual-target status"); the highlight
+    /// that reads the preview is both targets'.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn nodes_in(&self, rect: Rect) -> Vec<NodeId> {
         self.projector.nodes_in(rect)
     }
 
     /// Point the highlight at `covered` while a rubber band is out, or
     /// back at the selection with `None`. Takes effect at the next
-    /// [`Self::sync`]. Returns whether it changed.
+    /// [`Self::sync`]. Returns whether it changed. Native, with the
+    /// rubber band.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn set_preview(&mut self, covered: Option<Vec<NodeId>>) -> bool {
         if self.preview == covered {
             return false;
@@ -256,7 +262,9 @@ impl MapView {
         true
     }
 
-    /// The rubber band's covered set, while one is out.
+    /// The rubber band's covered set, while one is out. Native, with the
+    /// rubber band.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn preview(&self) -> Option<&[NodeId]> {
         self.preview.as_deref()
     }

@@ -36,10 +36,13 @@ mod state;
 #[cfg(test)]
 pub(in crate::application) mod tests;
 
+// The picker's clipboard answers, read by native's key flow
+// (`app::color_picker_flow`): the browser has no picker key flow.
+#[cfg(not(target_arch = "wasm32"))]
+pub use clipboard::{ClipboardContent, Outcome};
 // Cross-platform surface — consumed by the picker widget on both
 // native and WASM (the spec-driven dynamic-context tree builder is
 // cross-platform).
-pub use clipboard::{ClipboardContent, Outcome};
 pub use geometry::ColorPickerOverlayGeometry;
 pub use glyph_tables::{
     arm_bottom_font, arm_bottom_glyphs, arm_left_glyphs, arm_right_glyphs, arm_top_glyphs,

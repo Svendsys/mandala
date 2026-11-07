@@ -177,7 +177,9 @@ pub(crate) enum ClickHit {
 }
 
 impl ClickHit {
-    /// The element hit, if any.
+    /// The element hit, if any. Native: what reads it is the drag state's
+    /// wire form (`app::ipc_state`), and the browser has no drag state.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn element(self) -> Option<NodeId> {
         match self {
             ClickHit::Empty => None,

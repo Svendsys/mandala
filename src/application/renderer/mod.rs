@@ -107,10 +107,13 @@ mod tree_walker;
 pub(crate) use adapter::probe_adapter;
 pub use adapter::AdapterPolicy;
 pub use chrome_text::measure_max_glyph_advance;
+// Both targets': the scene inspection measures an element by it
+// (`view::inspect`).
+pub(crate) use camera::content_bounds;
 // The screenshot engine's half of the renderer's surface, native-only
 // with the engine (`application::capture`).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use camera::{content_bounds, FIT_PADDING_FRACTION};
+pub(crate) use camera::FIT_PADDING_FRACTION;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use capture::{CaptureFailure, CapturedPixels};
 // For the watchdog's test that holds the two bounds together.
@@ -950,6 +953,9 @@ impl Renderer {
     /// frame. Called from the app's scene-rebuild paths on every
     /// mode-affecting action — the renderer trusts the app to
     /// recompute the string when (mode, selection, doc) changes.
+    /// Native: the console's mode switches are what set it, and the
+    /// console shell is native.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_mode_status_text(&mut self, text: Option<String>) {
         self.mode_status_text = text;
     }
