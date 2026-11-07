@@ -369,6 +369,7 @@ pub(crate) fn place_lines(
 ) -> (Option<ShapedRun>, PlacedRun) {
     let work = Work::new(run.glyphs.len().min(MAX_PLACED_GLYPHS));
     let halves = frame_halves(outline, table_spacing(run, fit, flow));
+    work.tabled(halves.iter().map(|(path, _)| path));
     lay_lines(run, &halves, fit, outward, flow, fs, trace, true, &work)
 }
 

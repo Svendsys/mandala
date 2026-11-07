@@ -616,6 +616,10 @@ pub(crate) struct Trace {
     /// For a text frame, the glyph steps its tracking took in all, what
     /// its budget bounds (`halves::frame_budget`).
     pub(crate) spent: usize,
+    /// For a text frame or a `Repeat` ring, the samples its paths' tables
+    /// were built with, counted in `spent` (ruling B16.3a): what
+    /// [`setup_table_samples`] says they are.
+    pub(crate) tables: usize,
     /// For a text frame, its budget, and the glyphs of its text it was
     /// scaled by (ruling R44.2).
     pub(crate) budget: usize,
@@ -780,6 +784,8 @@ pub(crate) struct LastRing {
     pub(crate) placed: usize,
     pub(crate) spent: usize,
     pub(crate) budget: usize,
+    /// The samples its path's table was built with (ruling B16.3a).
+    pub(crate) tables: usize,
     pub(crate) loss: Option<RingLoss>,
     /// What was held back for phase 2 when it began, and whether the ring
     /// had closed then (`RingWork::held_again`).
@@ -2907,6 +2913,28 @@ pub(crate) fn table_spacing(run: &ShapedRun, fit: &FitMode, flow: &ResolvedText)
     }
 }
 
+/// The samples the paths of a placement of `run` round `outline` in
+/// `fit` build their tables with ([`ArcPath::table_samples`]), counted
+/// in its setup (ruling B16.3a): a `Repeat` ring's one path, or a frame's
+/// two halves ([`frame_halves`]), at [`table_spacing`]. What the flow
+/// fuzzers bound a frame's setup by, before it is laid; a frame that
+/// builds other tables than these fails their property.
+///
+/// Cost: O(1), no table built ([`ArcPath::closed_table_samples`]).
+pub(crate) fn setup_table_samples(
+    run: &ShapedRun,
+    outline: &Outline,
+    fit: &FitMode,
+    flow: &ResolvedText,
+) -> usize {
+    let path = ArcPath::closed_table_samples(outline, table_spacing(run, fit, flow));
+    if matches!(fit, FitMode::Repeat) {
+        path
+    } else {
+        path.saturating_mul(2)
+    }
+}
+
 /// Where the readable walk (ruling R25) must end.
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum Ends {
@@ -3049,6 +3077,7 @@ fn place(
         let (budget, glyphs, _) = ring.budget();
         if let Some(trace) = trace {
             trace.spent = spent;
+            trace.tables = ring.tables();
             trace.budget = budget;
             trace.glyphs = glyphs;
             trace.ring = ring.loss();
@@ -3067,6 +3096,7 @@ fn place(
                     placed: placed.1.glyphs.len(),
                     spent,
                     budget,
+                    tables: ring.tables(),
                     loss: ring.loss(),
                     held: ring.held_again(),
                 }))
