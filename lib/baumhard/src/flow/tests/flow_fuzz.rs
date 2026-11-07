@@ -53,7 +53,9 @@ use crate::document::values::{
 };
 use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks};
 use crate::flow::place::ring::ring_work_steps;
-use crate::flow::place::{frame_halves, place_on_closed_capped, size_factor, Trace, MIN_TABLE_SPACING};
+use crate::flow::place::{
+    frame_halves, place_on_closed_capped, setup_table_samples, size_factor, Trace, MIN_TABLE_SPACING,
+};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
     PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
@@ -96,17 +98,27 @@ pub const MAX_FRAME_GLYPHS: usize = 150;
 /// copy. Its copy is a frame's text, cut to fit as a frame's
 /// ([`framed`]), so one copy always fits the cap.
 /// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
-/// holds it to that: the most, and no more.
+/// holds it to that: the most, and no more. That is for a path of no
+/// table, a rounded rectangle's or a circle's; a ring's table is counted
+/// in its setup (ruling B16.3a), and [`ring_cap`] lowers the cap by it.
 pub const MAX_RING_GLYPHS: usize = 154;
 
-/// The cap a harness lays a `Repeat` ring of `copy` glyphs a copy with:
-/// [`MAX_RING_GLYPHS`] held to the timeout (`bounded`); replaying a
-/// finding, as many glyphs as one copy at least, as a finding's frame
-/// text is laid as found ([`FOUND_FRAME_GLYPHS`]), so that its ring is
-/// laid once whole.
-pub(crate) fn ring_cap(copy: usize, bounded: bool) -> usize {
+/// The cap a harness lays a `Repeat` ring of `copy` glyphs a copy with,
+/// its path's table of `tables` samples (`setup_table_samples`): held to
+/// the timeout (`bounded`), the most glyphs, [`MAX_RING_GLYPHS`] at most,
+/// whose ring of a copy of [`MAX_FRAME_GLYPHS`] glyphs fits
+/// [`INPUT_STEPS`] (`ring_work_steps`) — no fewer than
+/// [`MAX_FRAME_GLYPHS`] at a table of the most samples, so one copy
+/// always fits the cap still (`test_a_rings_cap_holds_a_copy_beside_the_largest_table`);
+/// replaying a finding, as many glyphs as one copy at least, as a
+/// finding's frame text is laid as found ([`FOUND_FRAME_GLYPHS`]), so
+/// that its ring is laid once whole.
+pub(crate) fn ring_cap(copy: usize, bounded: bool, tables: usize) -> usize {
     if bounded {
-        MAX_RING_GLYPHS
+        (0..=MAX_RING_GLYPHS)
+            .rev()
+            .find(|&cap| ring_work_steps(cap, MAX_FRAME_GLYPHS, tables) <= INPUT_STEPS)
+            .unwrap_or(0)
     } else {
         MAX_RING_GLYPHS.max(copy)
     }
@@ -185,14 +197,15 @@ pub const fn frame_steps(frames: usize) -> usize {
     INPUT_STEPS / frames
 }
 
-/// Whether a frame's text shaped as `run`, its sides as `ornament`, is
-/// one the harnesses lay (rulings R45.1, R46.3): at most
+/// Whether a frame's text shaped as `run`, its sides as `ornament`, its
+/// paths' tables of `tables` samples (`setup_table_samples`, ruling
+/// B16.3a), is one the harnesses lay (rulings R45.1, R46.3): at most
 /// [`MAX_FRAME_GLYPHS`] glyphs, and laid to the whole of its budget and
 /// past it (`frame_work_steps`, a `Fit` frame's as the most) within its
 /// share of [`INPUT_STEPS`] among `frames` frames.
-pub fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize) -> bool {
+pub fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize, tables: usize) -> bool {
     run.glyphs.len() <= MAX_FRAME_GLYPHS
-        && frame_work_steps(run, ornament, true) <= frame_steps(frames.max(1))
+        && frame_work_steps(run, ornament, true, tables) <= frame_steps(frames.max(1))
 }
 
 /// The work an input's frames may take, counted as they are laid
@@ -206,10 +219,12 @@ pub(crate) struct InputWork {
 
 impl InputWork {
     /// Count a frame of `run` (sides shaped as `ornament`, a `Fit` frame
-    /// `sized`), laid with `trace`: the most it may take,
-    /// `frame_work_steps`. The engine scales a frame's budget by its
-    /// text's glyphs once cut, never more than the run has, spends no
-    /// more than its budget and its overshoot, and no touch check of it
+    /// `sized`, its paths' tables of `tables` samples), laid with `trace`:
+    /// the most it may take, `frame_work_steps`. The engine counts the
+    /// tables its setup builds, as many samples as `setup_table_samples`
+    /// said before it was laid (ruling B16.3a), scales a frame's budget
+    /// by its text's glyphs once cut, never more than the run has, spends
+    /// no more than its budget and its overshoot, and no touch check of it
     /// looks at more than `touch_looks` pairs a box of the classes of
     /// height it holds, nor a side arc's check holds more classes than its
     /// arc held back for — the two that overshoot rests on (rulings R48.2,
@@ -219,11 +234,18 @@ impl InputWork {
         run: &ShapedRun,
         ornament: Option<&ShapedRun>,
         sized: bool,
+        tables: usize,
         trace: &Trace,
         what: &str,
     ) -> Result<(), String> {
         let budget = frame_budget(run.glyphs.len());
-        let most = frame_work_steps(run, ornament, sized);
+        let most = frame_work_steps(run, ornament, sized, tables);
+        if trace.tables != tables {
+            return Err(format!(
+                "{what}: a frame's setup counted tables of {} samples, not the {tables} its outline gives (ruling B16.3a)",
+                trace.tables
+            ));
+        }
         if !trace.looks.within() {
             let (looks, boxes, classes) = trace.looks.worst;
             return Err(format!(
@@ -272,13 +294,20 @@ impl InputWork {
         &mut self,
         run: &ShapedRun,
         cap: usize,
+        tables: usize,
         placed: &PlacedRun,
         trace: &Trace,
         what: &str,
     ) -> Result<(), String> {
         let copy = run.glyphs.len();
         let budget = frame_budget(cap);
-        let most = ring_work_steps(cap, copy);
+        let most = ring_work_steps(cap, copy, tables);
+        if trace.tables != tables {
+            return Err(format!(
+                "{what}: a ring's setup counted a table of {} samples, not the {tables} its outline gives (ruling B16.3a)",
+                trace.tables
+            ));
+        }
         if trace.glyphs > cap || trace.budget > budget {
             return Err(format!(
                 "{what}: a ring budgeted {} glyph steps for {} glyphs, past the {budget} its cap of {cap} gives",
@@ -519,19 +548,42 @@ fn frames_round_a_rectangle(
     fs: &mut FontSystemLease,
 ) -> Result<(), String> {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(120.0, 40.0));
+    let path = outline(
+        rect,
+        Shape::Rectangle {
+            radius: Percent::new(50),
+        },
+    );
     let start = StartPoint {
         edge: Edge::Top,
         at: 0.0,
     };
+    // Held to the timeout, the frames drawn, a `Repeat` ring among them
+    // (#310); replaying a finding, a ring and every frame, as found.
+    let laid: Vec<&FitMode> = if bounded {
+        fits.iter().collect()
+    } else {
+        std::iter::once(&FitMode::Repeat).chain(fits).collect()
+    };
+    // The tables its frames' setups build, the most of any it lays
+    // (ruling B16.3a): none, round a rounded rectangle, so they are not
+    // held to them here — that is the structured target's, whose
+    // outlines are ellipses too.
+    let tables = |run: &ShapedRun| {
+        laid.iter()
+            .map(|fit| setup_table_samples(run, &path, fit, style))
+            .max()
+            .unwrap_or(0)
+    };
     // Its sides, then its text, held to what its frames lay inside the
     // timeout (rulings R45.1, R50.3).
     let (layout, ornament) = if bounded {
-        sides_in_time(layout, style, 1.0, fits.len(), fs)
+        sides_in_time(layout, style, 1.0, fits.len(), &tables, fs)
     } else {
         (layout.clone(), ornament_run(layout, style, 1.0, fs))
     };
     let layout = &layout;
-    let fits_in_time = |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), fits.len());
+    let fits_in_time = |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), fits.len(), tables(run));
     let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
     let framed = framed(
         &[text.to_string()],
@@ -547,23 +599,11 @@ fn frames_round_a_rectangle(
     }];
     let frame_run = shape_run(&frame_spans, 1.0, fs);
     let mut work = InputWork::default();
-    // Held to the timeout, the frames drawn, a `Repeat` ring among them
-    // (#310); replaying a finding, a ring and every frame, as found.
-    let laid: Vec<&FitMode> = if bounded {
-        fits.iter().collect()
-    } else {
-        std::iter::once(&FitMode::Repeat).chain(fits).collect()
-    };
-    // A ring's cap (rulings B17.2a, B17.2b): what fits the timeout, or
-    // replaying a finding, a copy at least.
-    let cap = ring_cap(frame_run.glyphs.len(), bounded);
     for fit in laid {
-        let path = outline(
-            rect,
-            Shape::Rectangle {
-                radius: Percent::new(50),
-            },
-        );
+        let tables = setup_table_samples(&frame_run, &path, fit, style);
+        // A ring's cap (rulings B17.2a, B17.2b): what fits the timeout, or
+        // replaying a finding, a copy at least.
+        let cap = ring_cap(frame_run.glyphs.len(), bounded, tables);
         let mut trace = Trace::default();
         let placed = place_on_closed_capped(
             &frame_run,
@@ -579,10 +619,10 @@ fn frames_round_a_rectangle(
             Some(&mut trace),
         );
         if matches!(fit, FitMode::Repeat) {
-            work.ring(&frame_run, cap, &placed.1, &trace, "around a rectangle")?;
+            work.ring(&frame_run, cap, tables, &placed.1, &trace, "around a rectangle")?;
         } else {
             let sized = matches!(fit, FitMode::Fit { .. });
-            work.frame(&frame_run, ornament.as_ref(), sized, &trace, "around a rectangle")?;
+            work.frame(&frame_run, ornament.as_ref(), sized, tables, &trace, "around a rectangle")?;
         }
         // A line cut so that no two inks touch, and reported so, is owed
         // no longer (ruling R38.1); a frame its sides leave unheld is
@@ -767,14 +807,18 @@ fn check_generated_pinning(
                         // its frame lays inside the timeout (rulings R45.1,
                         // R46.3, R50.3) — or, replaying a finding, its text
                         // to what a frame laid when it was found.
+                        // Its paths' tables, counted in its setup (ruling
+                        // B16.3a), for the text it is laid with.
+                        let tables = |run: &ShapedRun| setup_table_samples(run, &path, &fit, &flow);
                         let (layout, ornament) = if bounded {
-                            sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &mut fs)
+                            sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &tables, &mut fs)
                         } else {
                             (layout.clone(), ornament_run(layout, &flow, scale, &mut fs))
                         };
                         let layout = &layout;
-                        let fits_in_time =
-                            |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES);
+                        let fits_in_time = |run: &ShapedRun| {
+                            fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES, tables(run))
+                        };
                         let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
                         let framed = framed(
                             frame_texts,
@@ -799,7 +843,8 @@ fn check_generated_pinning(
                         };
                         let mut trace = Trace::default();
                         // A ring's cap (rulings B17.2a, B17.2b).
-                        let cap = ring_cap(run.glyphs.len(), bounded);
+                        let laid_tables = tables(&run);
+                        let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
                         let placed = place_on_closed_capped(
                             &run,
                             &path,
@@ -823,9 +868,9 @@ fn check_generated_pinning(
                         let mut work = InputWork::default();
                         let sized = matches!(fit, FitMode::Fit { .. });
                         let counted = if matches!(fit, FitMode::Repeat) {
-                            work.ring(&run, cap, &placed.1, &trace, "around an outline")
+                            work.ring(&run, cap, laid_tables, &placed.1, &trace, "around an outline")
                         } else {
-                            work.frame(&run, ornament.as_ref(), sized, &trace, "around an outline")
+                            work.frame(&run, ornament.as_ref(), sized, laid_tables, &trace, "around an outline")
                         };
                         let checked = counted
                             .and_then(|()| {
@@ -1018,6 +1063,7 @@ pub fn sides_in_time(
     style: &ResolvedText,
     scale: f32,
     frames: usize,
+    tables: &dyn Fn(&ShapedRun) -> usize,
     fs: &mut FontSystemLease,
 ) -> (RingLayout, Option<ShapedRun>) {
     let empty = shape_run(
@@ -1035,7 +1081,7 @@ pub fn sides_in_time(
         let Some(shaped) = &ornament else {
             return (layout, None);
         };
-        if fits_in_time(&empty, Some(shaped), frames) {
+        if fits_in_time(&empty, Some(shaped), frames, tables(&empty)) {
             return (layout, ornament);
         }
         let cut = layout.sides.as_ref().and_then(|(text, color)| {

@@ -107,8 +107,9 @@
 //! first whether its lines fit at all, and a frame's budget,
 //! [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at least
 //! [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work — its
-//! tracking and side lays, its shaping and inking, its touch checks and
-//! R27's walks, each weighted to about one tracking step's time — and is
+//! tracking and side lays, its shaping and inking, its touch checks,
+//! R27's walks and its paths' tables, each weighted to about one tracking
+//! step's time — and is
 //! read before every lay, build and reshape — in each tracking solve,
 //! slide, shrink (its floor build too), cut and backtrack, R27's fit and
 //! a `Once` filler's copies — and before each copy of a side ornament,
@@ -530,8 +531,23 @@ pub(crate) fn height_classes(sizes: impl IntoIterator<Item = Vec2>) -> usize {
 /// 1.3 µs = 12 clusters, rounded down to 8.
 pub(crate) const CLUSTERS_A_STEP: usize = 8;
 
-/// A frame's own setup, past what it counts — its halves' tables, its
-/// partition, its runs cloned — some 1 ms ÷ 16 µs, rounded up.
+/// Samples of an arc-length table one glyph step weighs, where a frame's
+/// setup builds its halves' paths or a `Repeat` ring its path
+/// ([`ArcPath::closed`], [`ArcPath::table_samples`]; #309, ruling
+/// B16.3a): MEASURED.
+pub(crate) const TABLE_SAMPLES_A_STEP: usize = 64;
+
+/// The glyph steps building tables of `samples` samples in all counts
+/// (ruling B16.3a): [`TABLE_SAMPLES_A_STEP`] samples a step, none for
+/// none.
+pub(crate) fn table_steps(samples: usize) -> usize {
+    samples.div_ceil(TABLE_SAMPLES_A_STEP)
+}
+
+/// A frame's own setup, past what it counts — its partition, its runs
+/// cloned — some 1 ms ÷ 16 µs, rounded up. (That 1 ms held its halves'
+/// tables too, which are counted since #309 at their samples,
+/// [`table_steps`].)
 pub(crate) const FRAME_STEPS: usize = 64;
 
 /// The distinct faces `run`'s glyphs are drawn in, and how many of its
@@ -604,8 +620,10 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 
 /// The most glyph steps a frame of `text` may take past its budget
 /// (ruling R47.2): what runs before its budget is first read — its own
-/// setup ([`FRAME_STEPS`]) and, for a `Fit` frame (`sized`), R27's
-/// reshape at the size it fits — one build's shaping and inking
+/// setup ([`FRAME_STEPS`]), its paths' tables of `tables` samples
+/// ([`table_steps`]; ruling B16.3a, `place::setup_table_samples`) and,
+/// for a `Fit` frame (`sized`), R27's reshape at the size it fits — one
+/// build's shaping and inking
 /// ([`build_steps`]), and a lay of each line ([`OVERSHOOT_TRACKS`]
 /// `track`s of every glyph), which the touch checks that end the frame
 /// fall within. A budget is read before each build, each reshape of
@@ -623,20 +641,21 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// fuzzer draws long mixed side ornaments and texts of up to 16 sizes, as
 /// a map may hold (rulings R50.3, R51.2), so a geometry that breaks it is
 /// a finding.
-pub(crate) fn overshoot_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
+pub(crate) fn overshoot_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool, tables: usize) -> usize {
     let r27 = if sized { shaping_steps(text) } else { 0 };
     FRAME_STEPS
+        .saturating_add(table_steps(tables))
         .saturating_add(r27)
         .saturating_add(build_steps(text, ornament))
         .saturating_add(OVERSHOOT_TRACKS.saturating_mul(text.glyphs.len() + TRACK_CALL_STEPS))
 }
 
-/// The most glyph steps a frame of `text` may take in all: its budget
-/// ([`frame_budget`]) and the most it may take past it
-/// ([`overshoot_steps`]). What the flow fuzzers hold an input's frames
-/// to, at their cost a step under ASan (ruling R45.1).
-pub(crate) fn frame_work_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool) -> usize {
-    frame_budget(text.glyphs.len()).saturating_add(overshoot_steps(text, ornament, sized))
+/// The most glyph steps a frame of `text` may take in all, its paths'
+/// tables of `tables` samples: its budget ([`frame_budget`]) and the most
+/// it may take past it ([`overshoot_steps`]). What the flow fuzzers hold
+/// an input's frames to, at their cost a step under ASan (ruling R45.1).
+pub(crate) fn frame_work_steps(text: &ShapedRun, ornament: Option<&ShapedRun>, sized: bool, tables: usize) -> usize {
+    frame_budget(text.glyphs.len()).saturating_add(overshoot_steps(text, ornament, sized, tables))
 }
 
 /// The glyph steps a look at `boxes` ink boxes for a touch counts.
@@ -2018,6 +2037,9 @@ struct Layout<'a> {
 /// is held back for [`untouched`].
 pub(super) struct Work {
     spent: Cell<usize>,
+    /// The samples its paths' tables were built with, counted in `spent`
+    /// ([`tabled`](Self::tabled)).
+    tables: Cell<usize>,
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
@@ -2041,6 +2063,7 @@ impl Work {
     pub(super) fn new(glyphs: usize) -> Self {
         let work = Work {
             spent: Cell::new(FRAME_STEPS),
+            tables: Cell::new(0),
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
@@ -2080,6 +2103,14 @@ impl Work {
     /// Count inking `run` (ruling R46.1).
     fn inked(&self, run: &ShapedRun) {
         self.take(inking_steps(run));
+    }
+
+    /// Count building the frame's `paths` (ruling B16.3a): their tables'
+    /// samples ([`table_steps`]).
+    pub(super) fn tabled<'p>(&self, paths: impl IntoIterator<Item = &'p ArcPath>) {
+        let samples: usize = paths.into_iter().map(ArcPath::table_samples).sum();
+        self.tables.set(self.tables.get().saturating_add(samples));
+        self.take(table_steps(samples));
     }
 
     /// Note a touch check of `boxes` boxes that looked at the pairs
@@ -2135,6 +2166,11 @@ impl Work {
     /// The share of the budget held back for [`untouched`].
     pub(super) fn reserve(&self) -> usize {
         self.reserve.get()
+    }
+
+    /// The samples of the tables counted so far ([`tabled`](Self::tabled)).
+    pub(super) fn tables(&self) -> usize {
+        self.tables.get()
     }
 }
 
@@ -5725,6 +5761,10 @@ pub(super) fn place_halves(
     // frame: R27 sizes and parts its text on them, and its lines are laid
     // along them (#309).
     let level = frame_halves(outline, table_spacing(run, fit, flow));
+    // Their tables, counted as they are built (ruling B16.3a): before the
+    // budget is first read, so within what the frame may take past it
+    // ([`overshoot_steps`]).
+    work.tabled(level.iter().map(|(path, _)| path));
     // R27's placement, laid in full only for a frame that keeps it.
     let keep_r27 = |trace: Option<&mut Trace>,
                     fs: &mut FontSystemLease,
@@ -5735,6 +5775,7 @@ pub(super) fn place_halves(
         if let Some(trace) = trace {
             *trace = natural_trace;
             trace.spent = work.spent.get();
+            trace.tables = work.tables();
             trace.budget = work.budget.get();
             trace.reserve = work.reserve();
             trace.glyphs = work.glyphs.get();
@@ -6258,6 +6299,7 @@ pub(super) fn place_halves(
         trace.cut_apart = cut_apart;
         trace.clear = clear;
         trace.spent = lay.work.spent.get();
+        trace.tables = lay.work.tables();
         trace.budget = lay.work.budget.get();
         trace.reserve = lay.work.reserve();
         trace.glyphs = lay.work.glyphs.get();

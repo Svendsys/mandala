@@ -3553,7 +3553,8 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         let past =
             FRAME_STEPS + inking_steps(&run) + OVERSHOOT_TRACKS * (run.glyphs.len() + TRACK_CALL_STEPS);
         assert!(
-            past <= overshoot_steps(&run, None, false),
+            // A sharp rectangle's halves build no table (ruling B16.3a).
+            past <= overshoot_steps(&run, None, false, 0),
             "precondition: the frame's overshoot is within the general bound"
         );
         let held = budget.max(trace.reserve);
@@ -3966,7 +3967,9 @@ fn a_long_side_ornament(shape: Shape, what: &str, own: &[(usize, crate::flow::pl
     let flow = style(16.0);
     let allowed = with_fonts(|fs| {
         let ornament = ornament_run(&layout, &flow, 1.0, fs);
-        overshoot_steps(&real_run(text, &flow, fs), ornament.as_ref(), false)
+        let run = real_run(text, &flow, fs);
+        let tables = crate::flow::place::setup_table_samples(&run, &shape, &FitMode::Once { filler: None }, &flow);
+        overshoot_steps(&run, ornament.as_ref(), false, tables)
     });
     let letters = text.chars().filter(|c| !c.is_whitespace()).count();
     for (budget, sides, why) in [
