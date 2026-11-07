@@ -1436,7 +1436,7 @@ undo-envelope helpers (`mutate_node_with_*_undo`), `mutate_edge`,
 ### §8.4 The gate
 
 A source-scan test (the pattern of
-`test_no_production_code_sets_dirty_directly` (gone)) fails if any code
+`test_no_production_code_sets_dirty_directly`) fails if any code
 outside `lib/baumhard/src/document/` obtains a mutable reference to a
 document element or the document tree. The loader constructs; apply
 writes; nothing else does.
